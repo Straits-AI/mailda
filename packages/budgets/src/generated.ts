@@ -35,6 +35,9 @@ export const BUDGETS = {
   "shard.plan_route_messages": 7709970,
   "shard.plan_stop_messages": 7281638,
   "shard.plan_warn_messages": 5996643,
+  "validator.bundle_bytes": 81203,
+  "validator.typical_command_us": 2,
+  "validator.worst_realistic_command_us": 46,
 } as const satisfies Record<string, number>;
 
 export type BudgetName = keyof typeof BUDGETS;
@@ -65,4 +68,7 @@ export const BUDGET_ORIGINS: Record<BudgetName, BudgetOrigin> = {
   "shard.plan_route_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
   "shard.plan_stop_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
   "shard.plan_warn_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
+  "validator.bundle_bytes": { receipt: "docs/receipts/runtime-validator.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "Zod's string length semantics change to code points, Ajv gains an O(1) maxLength fast path for BMP-only strings, or the catalog begins emitting maxLength in UTF-16 units" },
+  "validator.typical_command_us": { receipt: "docs/receipts/runtime-validator.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "Zod's string length semantics change to code points, Ajv gains an O(1) maxLength fast path for BMP-only strings, or the catalog begins emitting maxLength in UTF-16 units" },
+  "validator.worst_realistic_command_us": { receipt: "docs/receipts/runtime-validator.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "Zod's string length semantics change to code points, Ajv gains an O(1) maxLength fast path for BMP-only strings, or the catalog begins emitting maxLength in UTF-16 units" },
 };
