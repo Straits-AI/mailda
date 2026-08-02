@@ -30,6 +30,11 @@ export const BUDGETS = {
   "d1.paid.max_databases_per_account": 50000,
   "d1.paid.max_queries_per_invocation": 1000,
   "d1.paid.time_travel_days": 30,
+  "message.metadata.bytes_per_extra_delivery": 467,
+  "message.metadata.bytes_per_message": 1253,
+  "shard.plan_route_messages": 7709970,
+  "shard.plan_stop_messages": 7281638,
+  "shard.plan_warn_messages": 5996643,
 } as const satisfies Record<string, number>;
 
 export type BudgetName = keyof typeof BUDGETS;
@@ -55,4 +60,9 @@ export const BUDGET_ORIGINS: Record<BudgetName, BudgetOrigin> = {
   "d1.paid.max_databases_per_account": { receipt: "docs/receipts/d1-platform-limits.md", kind: "platform-limit", measuredOn: "2026-08-02", staleWhen: "automatic resource provisioning or read replication leaves beta; the published D1 limits page changes (last moved 2026-04-21); or D1 gains interactive transactions" },
   "d1.paid.max_queries_per_invocation": { receipt: "docs/receipts/d1-platform-limits.md", kind: "platform-limit", measuredOn: "2026-08-02", staleWhen: "automatic resource provisioning or read replication leaves beta; the published D1 limits page changes (last moved 2026-04-21); or D1 gains interactive transactions" },
   "d1.paid.time_travel_days": { receipt: "docs/receipts/d1-platform-limits.md", kind: "platform-limit", measuredOn: "2026-08-02", staleWhen: "automatic resource provisioning or read replication leaves beta; the published D1 limits page changes (last moved 2026-04-21); or D1 gains interactive transactions" },
+  "message.metadata.bytes_per_extra_delivery": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
+  "message.metadata.bytes_per_message": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
+  "shard.plan_route_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
+  "shard.plan_stop_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
+  "shard.plan_warn_messages": { receipt: "docs/receipts/message-metadata-bytes.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the messages or mailbox_items schema changes, an index is added or removed, the identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB" },
 };
