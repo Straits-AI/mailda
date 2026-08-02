@@ -1,0 +1,2439 @@
+# Mailda — Complete Product Specification and Engineering Blueprint
+
+**Status:** Authoritative target-state build contract  
+**Revision:** 2 August 2026  
+**Working product name:** Mailda / 迈达  
+**Category:** Customer-owned programmable mail and email operations  
+**Positioning:** Programmable mail for people, workflows, and agents.  
+**Deployment principle:** Open-source, single-organization Mailda Node deployed into the customer's own Cloudflare account.
+
+## Document map
+
+| Part | Sections | Purpose |
+|---|---|---|
+| Product contract | 1–9 | Scope, objects, personas, UX, onboarding, directory, authorization, authentication and mailbox model |
+| Mail and system architecture | 10–15 | Connectivity modes, Cloudflare topology, deployment, data, inbound/outbound and protocol boundaries |
+| Automation and governance | 16–22 | Butlers, LLM control, policy, approvals, API/CLI/Skill/MCP, connectors, security and consistency |
+| Operations and engineering | 23–29 | SLOs, audit, recovery, stack, workstreams, tests, definition of complete and locked ADRs |
+| Commercial and references | 30–31 | Open-source licence, paid operating model, pricing hypotheses, defensibility and technical sources |
+
+---
+
+## 1. Executive decision
+
+Mailda is an **open-source organizational mail operating system**. It turns email addresses into governed work endpoints for people, teams, deterministic programs and AI agents. It is not merely an AI inbox, a forwarding wrapper, a transactional-email dashboard, a cold-email product or a proprietary hosted mailbox service.
+
+The canonical unit is **Mailda Node**:
+
+- One production Mailda Node represents one organization and one primary security/data boundary.
+- It is scaffolded and deployed into that organization's own Cloudflare account.
+- The organization owns its domains, message data, Cloudflare resources, encryption material, provider connections, model keys and operating bill.
+- The Node remains fully functional without a Mailda company account and after disconnecting any paid Mailda service.
+- All code required to deploy, operate, secure, back up, restore and extend a Node is open source.
+
+The complete product provides:
+
+- Web/PWA mail for personal, shared, role, Butler, agent, system, archive and quarantine mailboxes.
+- Organization directory, users, teams, mailbox ownership, aliases, groups, routing, forwarding, retention and employee lifecycle.
+- Shared-inbox collaboration, assignments, approvals, cases, deadlines and source-linked operational state.
+- Deterministic rules, event workflows, cron jobs, waits, retries, webhooks and business-system integrations.
+- Optional LLM operations only inside explicit, governed workflow nodes.
+- A single policy, authorization, approval, idempotency and audit path for humans, administrators, scripts, Butlers and agents.
+- Full UI, CLI, API, SDK, Agent Skill and MCP parity over one typed command plane.
+- Three mail connectivity modes: Cloudflare-native operational mail, existing-provider connection, and optional standards-mail-core integration.
+- Security, deliverability visibility, retention, export, migration, backup and disaster-recovery controls appropriate to the selected connectivity mode.
+
+There is one complete target product. Engineering has a dependency graph and parallel workstreams, but this specification does not define intentionally incomplete V1/V2/V3 products.
+
+The defining invariants are:
+
+- **Customer ownership:** Mailda must not require a proprietary service to keep operating.
+- **One governed command plane:** Every action initiated through Mailda Web, CLI, API, Butler runtime, integrations, MCP or Agent Skill requests the same typed operation. A connected provider's native client is an external authority: actions performed there are observed/reconciled after the fact unless the provider/adapter certifies a synchronous enforcement hook. Mailda never describes post-facto observation as pre-execution governance.
+- **Determinism by default:** The CLI and Butler runtime are deterministic. AI is invoked only by an explicit LLM step or by an external agent using the deterministic interfaces.
+- **Honest mail semantics:** A forwarded copy is not synchronization; Cloudflare operational email is not silently presented as a complete Google Workspace replacement; provider and standards-mail capabilities are declared explicitly.
+
+---
+
+## 2. Product boundaries
+
+### Mailda owns in every deployment mode
+
+- Organization identities, roles, resource relationships and policy.
+- Mailda addresses, sender identities, logical mailboxes and work queues.
+- Personal and collaborative Mailda web/PWA experience.
+- Shared/role inbox assignment, internal notes, collision prevention and SLAs.
+- Cases created from one or more email conversations.
+- Butler definitions, schedules, templates, tests, runs, approvals and replay.
+- Agent/service identities, delegation and programmatic mail operations.
+- LLM provider governance, profiles, budgets, evaluations and provenance.
+- Sending proposals, approvals, DLP, audit, retention, export and eDiscovery projections.
+- Transport/provider capability discovery and truthful source-of-record status.
+- Gmail, Microsoft 365, Cloudflare and optional mail-core adapters.
+
+### Deployment-mode boundary
+
+| Mode | Source of truth | Appropriate use | Deliberate limitation |
+|---|---|---|---|
+| Cloudflare Native | Mailda Node on Workers/D1/R2/DO | Shared, role, operational, Butler, agent and system mail; web/PWA users | No native IMAP/JMAP mailbox service; Cloudflare outbound is currently transactional rather than marketing/bulk |
+| Provider Connected | Gmail or Microsoft 365, synchronized through supported APIs | Existing employee accounts and shared mailboxes without changing root MX | Provider remains protocol/delivery authority; connector lag/conflicts are visible |
+| Full Mail Adapter | A standards mail core such as Stalwart behind `MailCoreAdapter` | Organizations requiring direct MX plus JMAP/IMAP/SMTP hosted employee mail | Adds non-Workers infrastructure and its own operational burden |
+
+Cloudflare Native is the canonical open-source scaffold and must be useful on its own. Provider Connected and Full Mail Adapter are first-class optional modules, not hidden assumptions required for basic operation.
+
+### Mailda integrates with rather than recreates
+
+| Adjacent system | Mailda's responsibility |
+|---|---|
+| CRM | Synchronize contacts, account ownership, activities and opportunities; do not become the sales system of record |
+| ERP/accounting | Create or update approved records; do not become the financial ledger |
+| Help desk | Exchange case and message events where the help desk remains authoritative |
+| Files/docs | Attach, request, generate and reference files; do not become an office editor |
+| Chat | Notify and request decisions; do not become Slack or Teams |
+| Marketing platform | Enforce consent/suppression for operational mail; do not become cold-email or bulk-campaign software |
+| Generic automation | Support mail-governed work; do not become unrestricted arbitrary compute |
+
+Calendar and contacts connectors are included because scheduling and operational workflows need them. Mailda does not build a document suite, videoconferencing product, general team chat, bulk-marketing platform or unrestricted arbitrary-compute platform.
+
+### Explicit exclusions
+
+- Cold-email sequencing, list purchasing, mailbox warm-up and reputation evasion.
+- Bulk/marketing campaign creation through Cloudflare Email Service while that service is transaction-only.
+- Hidden administrator or platform-support content access.
+- Autonomous model authority to send, forward, export, grant access, modify policy or invoke arbitrary connectors.
+- Claiming that a Gmail-forwarded copy synchronizes read state, deletion, folders or Sent mail.
+- Reimplementing SMTP/IMAP/JMAP protocol servers inside Workers when a mature standards core is the correct component.
+- Making Mailda Control, telemetry, a licence server or any hosted service mandatory for a self-deployed Node.
+
+---
+
+## 3. First-class product objects
+
+Mailda is built around explicit objects instead of treating an email account as an all-in-one identity and permission boundary.
+
+| Object | Meaning |
+|---|---|
+| Organization | Node-level identity, data, region and governance boundary |
+| Deployment | One reproducible Mailda Node installation in a customer Cloudflare account |
+| Environment | Isolated local/preview/staging/production resource and credential boundary |
+| Principal | Human, team, service account, external agent, Butler runtime or system actor |
+| Grant | Versioned resource/action/constraint/expiry delegation to a principal |
+| Domain | Verified sending/receiving namespace and deliverability boundary |
+| Address | Public routing identity such as `sales@example.com` |
+| Mailbox | Storage, state, membership, retention and access boundary |
+| Sender identity | A From identity a principal may use under policy |
+| Message | Immutable parsed representation linked to original MIME |
+| Delivery | One message placed into one mailbox |
+| Conversation | Standards-linked thread graph with human split/merge controls |
+| Draft revision | Editable proposed content; immutable once referenced by approval/send |
+| Send intent | Governed request to produce an external email effect |
+| Case | Operational work object linking messages, facts, owners, deadlines and actions |
+| Butler | Versioned deterministic automation with a capability ceiling |
+| Workflow run | Durable execution of one immutable Butler version |
+| Operation receipt | Pollable identity and known/`outcome_unknown` result state of an asynchronous command/effect |
+| Policy decision | Immutable allow/deny/obligation result and inputs |
+| Approval | Time-bound decision bound to an exact action hash |
+| LLM profile | Approved model, data, prompt, schema, budget and evaluation configuration |
+| Adapter capability | Versioned declaration of provider/mail-core/search/scanner features and limits |
+| Butler pack | Source-visible, signed set of workflow/schema/template/policy/test assets |
+| Audit event | Append-only actor/action/resource/provenance record |
+
+Critical relationships:
+
+```text
+Organization → principal → mailbox → address → permission → policy → action
+```
+
+A user may own a private mailbox, respond from `sales@`, review `finance@`, and sponsor an external agent without any of those permissions bleeding into one another.
+
+---
+
+## 4. Complete user-facing surfaces
+
+| Surface | Responsibility |
+|---|---|
+| Mailda Web/PWA | Personal and shared email, cases, approvals, Butlers and daily work |
+| Mailda Admin | Directory, domains, mailboxes, policy, AI, compliance, delivery and operations |
+| Mailda CLI | Deterministic access for humans, scripts, CI, cron and AI agents |
+| REST API | Stable typed command/query API used by web, CLI and integrations |
+| JMAP | Optional standards mailbox synchronization when a certified Full Mail Adapter is installed |
+| IMAP/SMTP | Optional standards-client compatibility through a certified Full Mail Adapter or connected provider |
+| SDKs | Generated TypeScript, Python and Go clients |
+| Agent Skill | Safe operating instructions for agents invoking the deterministic CLI |
+| MCP server | Typed tools mapped to the same API and OAuth authorization model |
+| Webhooks/events | Signed outbound events, retries, replay and integration health |
+| Developer portal | API docs, OAuth clients, service accounts, schemas, fixtures and logs |
+
+The UI is an API client. It has no hidden privileged backend unavailable through an authorized CLI/API operation.
+
+---
+
+## 4A. Users and jobs to be done
+
+Roles are composable permissions, not personality labels. One person may be an employee, mailbox manager, Butler builder and approver; the interface adapts to live capabilities.
+
+| User | Primary job | Product obligations |
+|---|---|---|
+| Organization Owner | Establish and retain ultimate control | Recovery ownership, deployment/data/backup/cost visibility, administrator appointment and conspicuous break-glass procedure |
+| Organization Administrator | Operate the organization safely | Account lifecycle, mailboxes, addresses, roles, routing, organization policy, automation limits and health without hidden content privilege |
+| Employee | Handle personal and assigned correspondence | Familiar mail, clear identity, search, assignments, due work, approvals and visible automation affecting accessible mail |
+| Mailbox Manager | Keep a shared queue consistent and timely | Workload, SLA, assignment, collision prevention, escalation, templates and mailbox-level Butler control |
+| Butler Builder | Encode reliable automation | Visual/text round-trip, typed nodes, fixtures, simulation, assertions, versioning, effective permissions, replay and costs |
+| Approver | Decide with complete context | Exact effect, content diff, recipients, evidence, policy reason, AI involvement, expiry and revision-bound approval |
+| Security Administrator | Prevent and contain abuse | Authentication, policy, DLP, quarantine, credential revocation and incident controls without routine mailbox reading |
+| Compliance Supervisor | Conduct governed content matters | Purpose-bound supervised search/read/export, legal hold, dual control and chain of custody |
+| Auditor | Verify control behavior independently | Read-only policy/audit evidence without operational or message-content authority unless separately granted |
+| Developer/Integration Operator | Connect scripts, CI, cron and business systems | Stable schemas, deterministic CLI, scoped service principals, webhooks, idempotency, dry-run and machine output |
+| Agent Sponsor | Delegate bounded email work | Specific/time-bound grant, recipient/data/budget ceilings, approvals, dual attribution and immediate revocation |
+| External AI Agent | Work within delegated authority | Separate principal, deterministic Skill/MCP, capability discovery and no ambient human/provider credential |
+
+## 4B. Experience principles
+
+1. **Familiar mail, visible operations.** Reading, writing, replying, forwarding, searching and organizing behave conventionally. Work/case/Butler controls appear where relevant.
+2. **Capability-driven navigation.** Users see relevant functions; server authorization remains authoritative. A disabled control explains a missing relation, policy, prerequisite or approval.
+3. **Active identity is never ambiguous.** Mailbox and sender identity remain visible, especially when a user switches from a personal identity to `sales@`, a Butler or an agent.
+4. **AI never masquerades as deterministic logic.** AI results carry a persistent label and source/model/profile provenance. Ordinary rule nodes never receive an AI badge.
+5. **Explain restrictions.** Denials and obligations use plain language and expose a policy-decision ID without leaking sensitive policy internals.
+6. **Preview external effects.** Send, forward, export, purge, DNS/routing change, Butler publication and agent delegation show scope and consequences before execution.
+7. **Reversible by default.** Archive, pause, unassign and restore precede deletion. Irreversible actions show retention/hold conflicts and require appropriate step-up.
+8. **One operational truth.** Mail, Case, Contact, Search and Butler views reference the same message, assignment, approval and evidence objects.
+9. **Progressive disclosure.** Daily work remains clean; headers, auth results, policy traces, run inputs and command equivalents remain one level away.
+10. **Audit is contextual.** Actor, delegator, sender, Butler version, policy and approval are visible beside the action they explain.
+
+---
+
+## 5. Web application information architecture
+
+### Global shell
+
+- Organization/Node launcher only when the local browser profile stores independent Node bookmarks or optional Mailda Control has authorized metadata for several Nodes. Each Node authenticates separately; switching changes origin/session and never enables cross-organization tokens, content search or shared browser caches.
+- Mailbox/sender switcher.
+- Global authorized search.
+- Command palette.
+- Universal create button.
+- Approval and notification counters.
+- Active identity/sender indicator.
+- Test/production environment indicator.
+- Policy explanation when an operation is restricted.
+
+### User workspace
+
+```text
+Home
+Mail
+  Inbox
+  Sent
+  Drafts
+  Archive
+  Trash
+  Spam / Quarantine
+  Snoozed
+  Follow-ups
+  Saved views
+Shared mailboxes
+Cases
+Approvals
+Butlers
+Contacts
+Scheduling
+Search
+Settings
+```
+
+### Home
+
+Home is a work console, not a decorative analytics page:
+
+- Messages and cases requiring action.
+- Assigned work and SLA risks.
+- Pending approvals.
+- Butler exceptions and failed effects.
+- Follow-ups and commitments due.
+- Delivery/security warnings within accessible mailboxes.
+- Personal automation activity and spend.
+- Optional AI summary only when the user and organization enable it.
+
+### Mail workspace
+
+Desktop uses a three-pane layout:
+
+```text
+Mailbox/views | Conversation list | Thread + work/context panel
+```
+
+The context panel contains assignment, case fields, internal notes, contact history, Butler runs, policy decisions, approvals, delivery status, attachments and linked external records.
+
+Core email behavior includes:
+
+- Inbox, Sent, Drafts, Archive, Trash, Spam and Quarantine.
+- Threading, reply/reply-all/forward/redirect and resend.
+- Rich text and plain text compose.
+- Signatures, snippets, templates and approved branding.
+- Attachments, inline images, previews, safe download and original `.eml` export.
+- Scheduled send, undo-send window and visible outbox.
+- Labels, folders, stars, snooze and follow-up markers.
+- Full-text/field search and saved views.
+- Delivery, bounce, complaint and suppression status.
+- Internal notes, mentions, assignments and shared drafts.
+- Source headers and authentication results for technical users.
+- Offline/PWA draft support and secure push notifications.
+
+### Shared mailboxes
+
+- Membership and scoped permissions.
+- Assignment to person, team, queue or Butler.
+- Reply collision detection and optional temporary claims.
+- Internal notes and mentions.
+- Shared or private drafts.
+- Team templates and signatures.
+- SLA calendars, escalation and handoff history.
+- Queue capacity and workload visibility.
+- Per-thread approval/sender policy.
+
+### Cases
+
+- Custom case types: lead, enquiry, claim, invoice, application, procurement, incident and others.
+- Status, priority, owner, queue, SLA and next action.
+- Typed custom fields and validation schemas.
+- Multiple conversations/messages per case.
+- Source-linked extracted facts and commitments.
+- Internal notes, tasks, deadlines and documents.
+- Complete timeline of human, Butler, policy, approval and integration actions.
+- Board, table, queue and saved-filter views.
+
+### Butler studio
+
+- Personal, team, mailbox and organization Butlers.
+- Visual builder and YAML editor for the same canonical definition.
+- Trigger/action catalog and typed schemas.
+- Capability preview and effective-permission explanation.
+- Fixtures, simulation, historical dry-run and expected assertions.
+- Version comparison, publication, rollback, pause and retirement.
+- Run ledger, retries, failures, replay, costs and kill switch.
+
+### Admin center
+
+```text
+Overview
+Organization
+Directory
+Teams and groups
+Domains and DNS
+Mailboxes and addresses
+Delivery, routing and forwarding
+Policies and approvals
+Butlers and automation
+AI providers and profiles
+Integrations
+Developer access
+Security center
+Deliverability
+Compliance and eDiscovery
+Audit
+Retention and legal holds
+Usage, costs and services
+```
+
+### Primary screen contracts
+
+| Screen | Required implementation contract |
+|---|---|
+| Compose | Persistent From/mailbox/delegator identity; recipient expansion and external-domain warnings; rich/plain body and attachment state; save/revision status; template/AI provenance; policy preflight; exact effect preview; schedule/undo-send; approval/queued/sent/outcome-unknown state; crash/offline draft recovery |
+| Approval Center | Queues by reviewer/SLA/risk; immutable evidence snapshot; exact effect and diff; source/classification/AI provenance; policy reason; expiry and separation-of-duty state; approve/reject/request-change; revision invalidation; execution/result link |
+| Butler Studio | Overview, visual graph, canonical YAML/JSON, tests/fixtures, capability/effect diff, version history and run ledger as coordinated views; AI nodes visibly distinct; simulation cannot affect production; replay mode named before execution |
+| Directory and lifecycle | User/team/service/agent list; identity, auth, sessions, grants, mailbox ownership, cases and Butlers in one detail view; invite/suspend/archive/delete assistants show exact effects, custodianship, retention and tombstones |
+| Mailboxes and routing | Address-to-mailbox/workflow/forward graph; owners/members/senders/classification/retention; local and external deliveries shown independently; loop/limit/conflicting-MX simulation; synthetic activation test |
+| Access and delegation | Role templates plus resource relations; effective-access explanation; grant creation/revocation; agent sponsor and capability ceiling; high-risk authority diff and distinct-approver state |
+| AI control | Provider secret references, immutable profiles, allowed data/tasks/models/regions, budgets, eval suites and usage; no secret reveal; comparison/publish/rollback and degraded-provider state |
+| Developer center | OAuth clients, service principals, workload federation, PAT fallback, webhooks, schemas, SDK/Skill/MCP setup, token metadata/revocation, fixture environment and correlated request logs |
+| Supervised session | Persistent unmistakable banner with matter, reason, scope, expiry and approvers; every search/view/export stays inside the session; terminate action always visible |
+| Audit, delivery and operations | Filterable actor/delegator/resource/effect timeline; delivery/provider attempts; Node/queue/storage/connector/Butler health; policy trace; safe reconcile/retry controls; signed evidence export |
+| Notifications | In-app center plus configurable email/push/digests; categories for assignment, mention, approval, delivery, security, Butler and operations; mandatory security/break-glass notices cannot be muted by affected actors |
+| Scheduling | Invitation view and connector-backed availability/events when enabled; otherwise invitation parsing/response and connector setup—not an implied native hosted calendar |
+
+Every list, detail and command palette result applies authorization before returning counts, snippets, participants or existence. Capability-limited installations hide unsupported actions while explaining which adapter or permission is required.
+
+---
+
+## 5A. Organization onboarding and deployment experience
+
+Onboarding has one resumable setup state whether installation begins from the Deploy to Cloudflare button or the CLI. A technical operator may deploy infrastructure and hand the same checklist to a business administrator without restarting.
+
+### Entry paths
+
+**Guided installation:** review resources and estimated Cloudflare cost; authorize granular Cloudflare access or use repository deployment; select account/zone/name; provision resources; open the new Node; claim it with the one-time bootstrap secret; create the first owner and passkey.
+
+**CLI installation:**
+
+```bash
+npm create mailda@latest
+mailda cloudflare login
+mailda init
+mailda deploy --plan
+mailda deploy
+mailda doctor --output table
+```
+
+Both paths read and write `mailda.yaml` plus the same setup-state API. The CLI stores Cloudflare/user refresh credentials only in the OS keychain; the Node never retains an all-powerful account token.
+
+### Resumable setup checklist
+
+1. **Organization:** name, locale, timezone, requested region/residency, data/retention defaults and environment label; unsupported placement is shown rather than implied.
+2. **Owner security:** passkey/MFA, recovery codes and a second recovery owner.
+3. **Mode:** Cloudflare Native, Provider Connected or Full Mail Adapter, with capability comparison.
+4. **Domain:** prove control of a domain or delegated subdomain.
+5. **DNS/transport:** compare current and required records, detect conflicts and state inbound authority.
+6. **First mailboxes:** create owner, test shared mailbox and sender identities.
+7. **Outbound test:** report `unavailable`, `verified-destination-only`, `send-enabled` or adapter-specific state; validate sender path, entitlement, policy and delivery event, select another TransportAdapter, or explicitly mark the Node receive-only.
+8. **Inbound test:** send to a unique test address and show receipt, storage, normalization and routing results.
+9. **Policy choices:** explicitly select inspectable defaults for admin content supervision, external sending, AI, forwarding, retention and approval.
+10. **Directory:** invite users or connect SSO/SCIM.
+11. **Automation test:** run a harmless sample Butler against fixture mail in simulation.
+12. **Recovery:** configure a backup target and complete an integrity verification.
+13. **Readiness review:** show passed, warning, blocker and consciously deferred checks.
+
+### Safe setup mode
+
+- External sends can be forced to a verified test sink.
+- Butlers run in simulation or shadow mode.
+- DNS changes produce a plan and rollback instructions before application.
+- Fixture/synthetic messages are unmistakably marked.
+- Production activation lists every enabled external effect, sender, route, Butler and connector.
+
+Setup is complete only after owner recovery is proven; one inbound path passes end-to-end; one outbound path passes or is marked receive-only; no deployment-health blockers remain; and content-supervision/AI defaults were explicitly chosen.
+
+## 5B. Key end-to-end journeys
+
+### Employee onboarding
+
+1. Admin selects or receives a provisioned identity and previews role, personal mailbox/address, teams, shared-mailbox relations, senders, retention and personal-Butler ceiling.
+2. Mailda rejects address collisions and tombstone reuse.
+3. User completes the selected SSO/local authentication, passkey/MFA/recovery, locale/timezone and notification preferences.
+4. The UI offers a capability-aware tour and a test send/receive where permitted.
+5. Audit records inviter, generated resources, grants and activation.
+
+### Shared, role, Butler or agent mailbox creation
+
+1. Creator selects a mailbox preset, human owner(s), address(es), members/relations, senders, retention and classification.
+2. Routing is configured as local delivery, additional local delivery, verified external copy, Butler trigger, quarantine or reject.
+3. Butler/agent mailboxes additionally require an exception queue, capability ceiling, recipient/rate/budget limits, AI-profile allowlist and kill-switch owners.
+4. Mailda simulates inbound/outbound examples, detects route loops and explains provider limits.
+5. Policy/approval completes; activation waits for route and synthetic health checks.
+
+### Shared enquiry handling
+
+1. A message arrives with security, routing, assignment and SLA state.
+2. A Butler may deterministically classify it, create/link a case, extract typed fields and assign work.
+3. Assignee sees the thread, source-linked facts and every Butler action; they can correct state without rewriting evidence.
+4. Claim/collision indicators prevent duplicate replies.
+5. Send is allowed, denied or converted into an approval request by policy.
+6. One idempotent send intent drives outbox, provider receipt and delivery/bounce state; the same events update the case/audit timeline.
+
+### Lead-response Butler publication
+
+1. Builder starts from a blank definition or inspectable pack.
+2. Deterministic guards reject spam/auto-replies and perform contact/CRM lookups.
+3. An explicit `llm.extract` node produces a validated lead schema under an approved LLM profile.
+4. Rules route uncertain/high-value leads to a human and render safe drafts for eligible enquiries.
+5. Builder defines waits, retries, no-reply follow-up, cost budget and exception queue.
+6. Fixture tests and historical shadow runs report coverage, errors, proposed effects, AI spend and behavioral diff.
+7. Publication review shows capability/policy/version changes; an authorized approver publishes an immutable version.
+
+### Exact-content reply approval
+
+1. Approver sees source evidence, sender/recipients, exact text/HTML, attachment hashes, AI provenance, policy reason, diff, expiry and SLA effect.
+2. They approve, reject, request changes or edit into a new revision.
+3. Approval signs only the reviewed revision; any material change returns the send intent to `approval_required`.
+4. Execution and delivery receipt link back to the approval.
+
+### Script, cron or CI operation
+
+1. Operator creates a service principal or workload-OIDC trust rather than reusing a human credential.
+2. Grant is bound to exact mailboxes/actions/senders/recipients/time and environment.
+3. Script validates with `--plan`/`--dry-run`, requests JSON/NDJSON and supplies idempotency keys.
+4. Stable exit codes distinguish validation, denial, approval-required, conflict, retryable failure and `outcome_unknown`.
+5. Audit attributes the service actor, grant, operation, policy and result.
+
+### AI agent delegation
+
+1. Sponsor selects mailbox, readable data, actions, senders, recipient constraints, budget, expiry and approval requirements.
+2. Mailda displays both a natural-language summary and machine grant.
+3. OAuth gives the agent a separate principal; it receives no Cloudflare/provider secret or broad human token.
+4. The Agent Skill makes the agent inspect capabilities, query before mutation, plan consequential effects and report object/run/audit IDs.
+5. Audit records agent and sponsor; revocation removes authority on the next request.
+
+### Supervised content investigation
+
+1. Authorized supervisor chooses an allowed reason, narrow mailbox/person/date/case scope and duration.
+2. Mailda previews notification and second-approval obligations.
+3. Step-up/approval opens a visually distinct supervised session.
+4. Every search, preview, attachment read and export remains within scope and is logged.
+5. Expiry closes every content route and generates an access summary.
+
+### Employee suspension and archive
+
+1. Lifecycle assistant inventories sessions, tokens, agents, ownership, cases, approvals, teams, personal Butlers, schedules and senders.
+2. Suspension immediately revokes sessions/credentials/delegations, removes assignment eligibility and stops personal Butlers while preserving data/holds.
+3. Admin assigns custodians, reassigns work and configures receive-only, forwarding and auto-response policy.
+4. Archive makes the identity noninteractive; address tombstones prevent historical-identity reuse.
+
+### Failed or outcome-unknown Butler effect
+
+1. Operator sees affected runs and the last confirmed step/provider evidence.
+2. Status distinguishes known failure from `outcome_unknown`, displayed as “Outcome unknown — the provider may have accepted this effect.”
+3. Only semantically safe actions appear: reconcile, retry the same unaccepted intent, replay from a safe step, replay with a named version, skip or terminate.
+4. Outcome-unknown sends are never blindly duplicated; every intervention records actor, reason and result.
+
+### Personal compose, reply and search
+
+1. User opens their mailbox or an authorized shared mailbox; Mailda keeps the active mailbox, From identity and any delegator visible.
+2. Compose autosaves revisions, expands aliases/groups, checks attachments/recipients/classification and previews policy before send.
+3. A reply preserves standard thread headers and links the selected case without granting case members extra message access.
+4. Search returns only authorized fields/snippets, states its freshness and opens the same canonical message/thread object.
+5. Send produces the standard policy/approval/receipt path and the UI distinguishes provider acceptance from remote delivery.
+
+### Local store plus external copy
+
+1. Mailbox manager selects **Store in Mailda** and **Forward a copy**, chooses a pre-verified destination and sees provider limits plus the nonsynchronization warning.
+2. They choose `transparent_forward` (original copy after bounded synchronous checks) or `governed_relay` (deep scan/DLP before a reconstructed copy); the effect preview states the security/fidelity difference.
+3. Route simulation detects loops, auto-responder hazards and conflicts.
+4. A synthetic message proves local persistence and the independent forwarding attempt before activation.
+5. Mailda shows local receipt and external-forward status separately; Gmail read/reply/delete state is never inferred.
+
+### Provider connection or migration
+
+1. Administrator grants Gmail/Microsoft OAuth with exact requested scopes and selects mailboxes, sync direction, archive policy and authority mode.
+2. Mailda inventories counts, identifiers, labels/folders, aliases and size/feature gaps; a plan explains conflicts and rollback.
+3. Initial import and delta sync expose cursor, lag, throttling and reconciliation state without duplicate visible messages/effects.
+4. Revocation stops provider actions immediately while preserving locally governed state/evidence according to policy.
+
+### LLM provider/profile publication
+
+1. AI Admin stores an opaque provider secret reference and verifies model/region/retention capabilities without exposing the key.
+2. Builder creates an immutable profile specifying data classes, task/schema/prompt, budget, fallbacks and evaluation suite.
+3. Redacted fixtures and adversarial tests run before publication; the review shows profile/data/cost/quality changes.
+4. Authorized publication makes the profile available only to explicitly allowed Butlers/agents; rollback selects an older immutable version for future runs.
+
+### Policy publication
+
+1. Policy author edits a version against schemas and test fixtures, including allowed, denied and approval-required examples.
+2. Simulation reports affected users/mailboxes/Butlers/senders and possible lockout or content-supervision changes.
+3. Meta-policy requests distinct approval and step-up where the change adds authority or weakens controls.
+4. Publication is atomic/versioned; live commands use the new version, while in-flight external effects recheck stricter current denies before dispatch.
+
+### Owner recovery, upgrade and restore
+
+1. Recovery uses a hardware-backed recovery identity and cannot silently unlock message history.
+2. Upgrade plan shows signed release, resource/schema/config diff, compatibility, cost, backup requirement and rollback window.
+3. A verified checkpoint precedes destructive migration; health and no-effect synthetic tests gate traffic promotion.
+4. Restore plans a clean target, validates manifests/hashes/secrets/DNS and reaches readiness before cutover; all interventions are audited.
+
+### Emergency containment and recovery
+
+1. Authorized operator can pause one Butler, mailbox sender, connector or entire domain external sending without stopping inbound receipt unnecessarily.
+2. Scope, affected queued effects and reversibility are shown before step-up confirmation.
+3. Recovery requires reconciliation of outcome-unknown effects, root-cause note, policy/definition correction and a bounded test.
+4. Unfreeze is a separate governed command; queued items are re-evaluated rather than released blindly.
+
+## 5C. Status, edge-state and responsive UX contract
+
+- **Loading:** preserve usable content during refresh; return long-operation IDs; never announce send/publish/export success before authoritative commit.
+- **Empty:** distinguish truly empty, no filter/search result, no permission, unconfigured prerequisite and healthy zero. Never reveal that restricted content exists.
+- **Errors:** use stable categories for validation, authentication, authorization, policy, approval, conflict, budget/rate, retryable dependency, permanent provider, `outcome_unknown`, offline and internal correlation.
+- **Conflicts:** show draft/case field diff and merge; permission revocation clears inaccessible cached content on the next request.
+- **Optimism:** reserve optimistic UI for easily reconciled local state. Sending, publishing, approvals, grants, routes, exports and deletion await authoritative confirmation.
+- **Offline:** allow policy-controlled encrypted local drafts, never imply offline delivery, and re-evaluate sender, recipients, version, policy and approval on reconnect.
+- **Degradation:** distinguish inbound, outbound, connector, automation, search and full-service incidents.
+- **Success:** describe committed state such as “approval requested” or “queued,” not vague “done.”
+- **High-risk confirmation:** show object count, blast radius, dependencies, retention/hold consequences, reversibility and step-up/dual-control requirement.
+- **Mobile/PWA:** prioritize reading, triage, assignment, approval, short reply and alerts; complex policy/Butler editing remains responsive but may recommend desktop without blocking emergency pause/revoke.
+- **Accessibility:** WCAG 2.2 AA target, keyboard-complete operation, visible focus, semantic landmarks/headings, screen-reader labels, non-color-only states, reduced motion, zoom/reflow and accessible message/attachment previews.
+- **Internationalization:** Unicode addresses/display names, locale-aware date/number/timezone, RTL-safe shell/composer, translated system content and preserved original message language.
+
+## 5D. Visual and content design direction
+
+Mailda should feel like a calm operational console: dense enough for professional daily use, but quieter than a monitoring dashboard.
+
+- Neutral base surfaces keep message content primary; color is reserved for identity, risk, status and action.
+- Personal, shared, role, Butler, agent, system, archive and quarantine mailboxes use consistent icons/tokens, always paired with text.
+- AI, approval, policy restriction, external recipient, supervised access and production environment each have distinct persistent badges.
+- Status language names the actual state: `approval requested`, `queued`, `submitted`, `accepted`, `delivered`, `bounced`, `failed` or `outcome unknown`.
+- Product copy uses effect verbs such as **Forward a copy**, **Request approval**, **Publish version** and **Pause external sends**.
+- The UI never says Mailda “understood” a message; it says a rule matched, a Butler classified it, or an AI extraction returned a result.
+- “Synchronization” appears only for a real bidirectional connector. One-way forwarding is always called a copy or mirror.
+
+Shared design-system components cover mailbox/sender identity, actor/delegator identity, policy decisions, approvals, content classification, AI provenance, effect previews, long operations and every loading/empty/offline/error state. Their semantics remain consistent in Web/PWA, notifications, CLI labels and documentation.
+
+Operational analytics show queue volume/age, first response, resolution, SLA, handoffs, Butler coverage/exceptions, approval latency, AI cost/quality and delivery health. Metric definitions and scope are visible; raw content is excluded by default; estimated/AI-derived values are labeled; drill-through still requires underlying content permission; and Mailda never creates opaque employee productivity scores.
+
+---
+
+## 6. Directory, organization and account lifecycle
+
+### Principal types
+
+- Human user.
+- Team/group.
+- Service account.
+- OAuth application.
+- External AI agent.
+- Butler runtime identity.
+- Integration identity.
+- Platform/system identity.
+
+### Directory capabilities
+
+- Manual invites and bulk import.
+- OIDC and SAML SSO.
+- SCIM 2.0 user/group provisioning and deprovisioning.
+- Passkeys, MFA, recovery policy and session/device management.
+- Departments, locations, cost centers, managers and dynamic groups.
+- External collaborators with time-bound access.
+- HRIS and directory synchronization.
+- Service-account and OAuth-client lifecycle.
+
+### Self-service and administrative control
+
+| Capability | User self-service | Administrator authority |
+|---|---|---|
+| Personal mailbox settings | Signatures, views, notifications, permitted aliases/forwarding and delegates | Configure, freeze, receive-only, archive, assign custodian and enforce policy |
+| New personal/project mailbox | Allowed within namespace/quota or submitted for approval | Create, approve, reassign, suspend, archive and tombstone |
+| Shared/role mailbox | Request or create when delegated as mailbox manager | Create, assign owners/members, change routes/retention and retire |
+| Personal Butler | Create/publish inside personal capability and LLM ceilings | Set ceiling, inspect definition and redacted run metadata, pause/kill, archive on offboarding; run content still requires mailbox or supervised-content authority |
+| Team/mailbox Butler | Create/manage only with the relevant mailbox/team relationship | Publish, assign service owner, set exception queue and kill-switch owners |
+| Organization Butler | No implicit right; request or collaborate if delegated | Create/publish/retire under Automation Admin plus policy/approval |
+| Tokens/agent delegation | Create only within own delegable scope, with expiry and policy | Set issuance policy, inspect metadata, revoke and investigate usage |
+
+A user cannot grant a Butler, agent, delegate or token more authority than the intersection of the user's delegable rights and the organization/mailbox policy ceiling. Administrator ability to configure or archive an account remains separate from the supervised process for reading its content.
+
+### User lifecycle
+
+```text
+Invited → Active → Suspended → Archived → Pending deletion → Deleted
+```
+
+Suspension immediately:
+
+- Ends sessions.
+- Revokes refresh-token families, PATs, delegated agent grants and active service delegations.
+- Stops personal Butlers.
+- Removes the user from assignment pools.
+- Preserves mail and legal holds.
+- Allows independent receive-only/send-disabled mailbox state.
+
+Offboarding additionally:
+
+- Reassigns open cases and approvals.
+- Transfers shared mailbox responsibility.
+- Assigns mailbox custodian/manager.
+- Applies forwarding, auto-response or receive-only policy.
+- Archives personal Butlers and credentials.
+- Retains an address tombstone so a future employee cannot inherit historical identity or mail accidentally.
+
+---
+
+## 7. Authorization model
+
+Mailda uses layered authorization:
+
+1. **RBAC** for broad organizational job functions.
+2. **ReBAC** for resource relationships such as mailbox owner/responder/viewer.
+3. **ABAC** for context such as data class, recipients, device, time, risk and approval.
+4. **Policy** for organization/mailbox-specific obligations and explicit denial.
+
+Every request evaluates:
+
+```text
+authenticated principal
++ single organization binding
++ token action ceiling
++ sponsoring delegation/capability ceiling
++ live resource relationship
++ environment and adapter capability
++ contextual policy
++ approval state
+= allow, deny, or allow with obligations
+```
+
+Explicit deny and legal hold win. Long-lived tokens do not contain mailbox ACL state; resource relations are evaluated server-side on every operation. For a Butler, service principal or external agent, effective authority is the intersection of the authenticated principal, sponsoring grant, immutable Butler/version capability manifest, token resource/action ceiling, live relationship, environment, current policy and approval obligations. A broader sponsor role, refreshed token or newly expanded mailbox grant never expands an already-published Butler or delegated agent without explicit republish or renewed consent.
+
+### Stable permission vocabulary
+
+Permissions use `resource.action` names. OAuth scopes are an action ceiling and may carry resource constraints; they are not a substitute for live relationships.
+
+```text
+org.read                       org.settings.manage
+user.read                      user.lifecycle.manage
+team.read                      team.members.manage
+domain.read                    domain.verify              domain.manage
+address.read                   address.manage              route.manage
+forwarding.read                forwarding.manage
+mailbox.metadata.read          mailbox.content.read        mailbox.manage
+message.read                   attachment.read             message.export
+attachment.original.download  message.delete              draft.read
+draft.create
+draft.edit
+send.propose                   send.execute                sender.use
+case.read                      case.write                  case.manage
+butler.read                    butler.edit                 butler.publish
+butler.execute                 butler.kill
+policy.read                    policy.manage               policy.publish
+approval.request               approval.decide
+llm.profile.use                llm.profile.manage          llm.provider.manage
+audit.read                     ediscovery.search           ediscovery.export
+retention.manage               legal_hold.manage
+connector.use                  connector.manage            webhook.manage
+quarantine.metadata.read       quarantine.content.read     quarantine.release
+security.override
+credential.issue               credential.revoke
+```
+
+Resource/action/time bindings are stored in the grant/relationship system and re-evaluated. Sensitive facts such as current ACL, legal hold, classification and approval are never trusted from a token claim.
+
+### Administrative roles
+
+| Role | Authority | Content access by default |
+|---|---|---:|
+| Owner | Ownership, recovery, governance mode, billing and role delegation | No ambient read; may initiate governed supervision if policy allows |
+| Organization Admin | Broad operational administration | No |
+| Directory Admin | Users, teams, SSO, SCIM and offboarding | No |
+| Domain Admin | Domains, DNS, aliases, routes and deliverability configuration | No |
+| Mailbox Admin | Create, archive, reassign and configure mailboxes | Metadata only |
+| Automation Admin | Publish/manage organization Butlers/templates | Fixtures unless separately delegated |
+| AI Admin | Providers, models, profiles, budgets and evaluations | No raw mail by default |
+| Security Admin | Authentication, policies, incident response and token revocation | Security metadata/quarantine as policy allows |
+| Deliverability Admin | Queues, reputation, bounce/complaint/suppression operations | Envelope/delivery metadata only |
+| Compliance Admin | Supervised read, eDiscovery, legal holds and exports | Only through supervised procedure |
+| Billing Admin | Usage, budgets, subscription and invoices | No |
+| Auditor | Audit/policy evidence without operating authority | No message body unless separately granted |
+
+No built-in role combines unrestricted policy mutation with unreviewed evidence deletion. High-risk organizations can require separation of duties and dual control.
+
+Authorization administration is itself governed by a non-overridable meta-policy. No principal may approve or activate its own net-new high-risk authority, content-supervision eligibility, break-glass eligibility, audit/retention weakening or separation-of-duty bypass. These changes require a distinct currently eligible approver, step-up authentication, immutable before/after evidence and reauthentication before use; the request/session that created a grant cannot silently inherit it. Custom roles cannot remove these platform invariants.
+
+### Organization-wide administrator reading
+
+Mailda supports the requested employer-owned supervision model, but makes it explicit, disclosed and auditable. The owner selects a governance mode during onboarding:
+
+| Mode | Cross-mailbox behavior |
+|---|---|
+| Supervised organization mail | Named owners/compliance supervisors may initiate governed search/read with reason and step-up |
+| Private-by-default | Access requires a time-limited eDiscovery matter and configured approval |
+| Regulated dual control | Search/read/export requires two distinct authorized principals and matter/ticket reference |
+
+The employee interface displays the organization's supervision notice. Deployment guidance tells administrators to validate local employment, privacy and sector rules.
+
+```yaml
+admin_supervision:
+  enabled: true
+  roles: [organization_owner, compliance_admin]
+  read_reason_required: true
+  step_up_authentication: true
+  maximum_session: 30m
+  private_labels_require_dual_control: true
+  user_notification: after_matter_closes
+  export_requires_dual_control: true
+```
+
+When enabled, authorized supervisors can read received/sent mail across the approved organization scope. Every query, result opened, preview, attachment read and export records the supervisor, purpose/ticket, target, policy/approval, authentication strength, device/IP, manifest and destination. Mailbox administration alone does not imply content access. Platform support receives no content access unless the customer creates a scoped, expiring support grant; domain ownership alone never unlocks historical mail.
+
+A supervised grant is bound to purpose, matter, resource scope, session and time. Expiry or revocation terminates search cursors, event streams, attachment URLs, cached previews, export jobs and API/MCP access; widening scope requires a new approval. Dual approvers must be distinct and currently eligible. Required employee notifications are durable system jobs and cannot be disabled by the investigator.
+
+### Mailbox relations
+
+- Owner.
+- Manager.
+- Reader.
+- Responder.
+- Drafter.
+- Assigner.
+- Approver.
+- Exporter.
+- Auditor.
+- Butler delegate.
+- Agent delegate.
+
+Messages, attachments and threads inherit their base visibility from deliveries/mailboxes, with case and classification restrictions applied afterward.
+
+### Case and approval-scoped access
+
+Cases have `owner`, `member`, `reviewer`, `contributor` and `auditor` relations plus field-level classification. A case relation may reveal case metadata that policy permits—such as status, due date, owner and a restricted-content placeholder—but it never implies `message.read`, `mailbox.content.read` or `attachment.read`. Linked message bodies, snippets, participants, attachment names and extracted sensitive fields are individually authorized from their source delivery and classification. Search, notifications, counters, exports and AI retrieval enforce the same rule, so they cannot leak that restricted content exists.
+
+Approval assignment likewise does not grant whole-mailbox access. Creation materializes an immutable, minimum-necessary **approval evidence snapshot** containing the exact proposed effect, policy explanation and only those source excerpts/attachments the requester is allowed to disclose to that reviewer. The snapshot has its own classification, relation, expiry and revocation state. If policy cannot lawfully disclose enough evidence to decide, Mailda must select a different approver or reject the request; it never grants ambient mailbox access as a shortcut. `approval.decide` is the sole decision permission—draft permissions do not imply approval authority.
+
+---
+
+## 8. Authentication and credentials
+
+Each Node is the authorization server/resource server for its own CLI, SDK, MCP, agents and OAuth applications, and may federate human authentication to Cloudflare Access or a configured enterprise OIDC/SAML identity provider. Cloudflare account OAuth used to install/manage infrastructure is a separate grant and never becomes a Mailda user session.
+
+### Browser
+
+- Authorization Code + PKCE through a standards-compliant OIDC implementation.
+- Secure HttpOnly/SameSite session cookies; no refresh token in browser storage.
+- Passkeys as preferred native authentication.
+- Enterprise OIDC/SAML federation and SCIM.
+- Rotating refresh-token families and reuse detection.
+- Step-up authentication for domain changes, admin grants, token issuance, policy publication, exports, legal hold, purge and break-glass access.
+- State-changing requests require Origin/Fetch-Metadata validation plus synchronizer-token or signed double-submit CSRF protection; CORS is deny-by-default.
+- Login/callback handling validates exact redirect URI, state, nonce and PKCE; session identifiers rotate at authentication and privilege elevation.
+- Content Security Policy, `frame-ancestors`, secure headers and `Cache-Control: no-store` protect authentication, admin and content surfaces.
+
+### CLI
+
+- Authorization Code + PKCE with localhost callback.
+- Device Authorization Grant for headless terminals.
+- Short-lived, audience- and organization-bound access tokens.
+- Rotated refresh tokens stored in the OS keychain.
+- `mailda auth logout --all` and remote revocation.
+- DPoP/mTLS sender constraints where supported.
+
+### Service and agent access
+
+- Dedicated service principals; never shared human tokens.
+- Workload OIDC federation and token exchange preferred.
+- `private_key_jwt` or mTLS client authentication where needed.
+- Resource/action/time-bound grants.
+- PATs only as expiring, hashed, one-time-display compatibility credentials.
+- Cloudflare/provider credentials never exposed to users or agents.
+
+### Agent delegation
+
+Audit retains both identities:
+
+```text
+actor = external agent/service principal
+delegator = sponsoring human or organization
+```
+
+The grant binds organization, mailboxes, actions, sender identities, data classes, recipient constraints, budget, expiry and approval requirements.
+
+### Protocol credentials and sessions
+
+When a Full Mail Adapter exposes JMAP, IMAP or SMTP submission, every credential maps to one Mailda principal, organization/environment, current mailbox relationships and sender permissions. OAuth/SASL OAUTHBEARER is preferred. Any compatibility app password is individually named, scoped, expiring, hashed, one-time displayed and revocable. Protocol ACLs are projections of Mailda relationships rather than an independent grant store. Suspension, token revocation and relationship/policy changes close or reauthorize long-lived sessions before their next protected operation; SMTP submission still becomes a normal Mailda send intent and cannot bypass DLP, approval or send policy.
+
+---
+
+## 9. Domains, addresses and mailbox types
+
+### Domain capabilities
+
+Every domain feature is labeled `mailda_configurable`, `observed`, `provider_managed`, `mailcore_only` or `unsupported` by the active adapter—never displayed as a universal promise.
+
+| Capability | Cloudflare Native contract | Provider/Full Mail contract |
+|---|---|---|
+| Root/delegated subdomain, MX/SPF/DMARC/DNSSEC | Plan/apply where authorized; detect drift/conflict | Observe or configure only through the named provider/adapter |
+| DKIM, ARC, return path and sending IP | Report Cloudflare-managed state and supported choices; do not imply selector/IP control | Provider-managed or MailCore-configurable per manifest |
+| MTA-STS, TLS-RPT and BIMI | Observe and guide/apply DNS/hosting pieces separately | Same, subject to provider support |
+| Autoconfig/autodiscover | Not advertised for Web/PWA-only Native mode | Full Mail Adapter/provider only |
+| Reputation streams | Separate subdomains/sender classes and report available metrics; Cloudflare owns shared IP behavior | Provider/MailCore capability-specific |
+| Synthetic inbound/outbound/bounce tests | Available when the selected receive/send paths are entitled | Adapter conformance required |
+| Emergency quarantine/send pause | Mailda policy/routing effect, with provider limitations visible | Named connector/MailCore action where supported |
+| Region/residency | Observe/configure only where the Cloudflare plan declares support | Adapter/provider declared; otherwise unavailable |
+
+The Domain detail and `doctor` output distinguish desired, observed and effective state and show the authority that must repair drift.
+
+### Address types
+
+- Primary addresses.
+- Aliases.
+- Role addresses.
+- Distribution groups/lists.
+- Catch-all routes.
+- Temporary/expiring project addresses.
+- Plus addresses.
+- Agent addresses.
+- System addresses.
+- Reserved and tombstoned addresses.
+
+An address is a routing identity; a mailbox is storage/state/access. One address may deliver to several mailboxes and workflows, and one mailbox may have multiple addresses and sender identities.
+
+### Mailbox types
+
+| Type | Purpose |
+|---|---|
+| Personal | Employee's normal work mailbox |
+| Shared | Team-operated inbox with assignment and collaboration |
+| Role | Function such as invoices, claims or procurement |
+| Butler | Primarily automation-operated address with human oversight |
+| Agent | Independent agent/service correspondence identity |
+| System | Notifications and application mail |
+| Archive | Read-only historical mailbox |
+| Quarantine | Security-controlled evidence and inspection mailbox |
+| Provider-backed | Gmail/Microsoft/generic source retained as authority |
+
+### Routing graph
+
+Each address has an explicit, versioned policy supporting:
+
+- Store locally.
+- Deliver copies to multiple local mailboxes.
+- Forward/mirror to verified external destinations.
+- Expand a distribution group.
+- Trigger Butlers/case routing.
+- Quarantine or reject.
+- Archive/journal without daily inbox exposure.
+
+Forwarding is a copy, not synchronization. Gmail and Mailda do not share read state, folders, deletes or sent replies unless the full Gmail API connector is enabled.
+
+---
+
+## 10. Mail transport modes
+
+The product presents one Mailda mailbox/work/case experience while declaring which adapter is authoritative for transport and mailbox state.
+
+### Cloudflare Native
+
+This is the canonical scaffold:
+
+- Cloudflare Email Routing invokes the Node's `email()` handler.
+- The Node persists raw MIME in its own R2 bucket, canonical normalized metadata in D1 catalog/shards and only rebuildable coordination/projections in Durable Objects.
+- Users read and act through the Mailda web/PWA, CLI, API, Skill or MCP.
+- Outbound operational/transactional mail uses Cloudflare Email Sending when its policy and capability manifest permit.
+- A different outbound adapter is selected when size, recipient, policy or deliverability requirements do not fit.
+- External forwarding uses a verified Cloudflare destination only where supported; local storage plus forwarding is recorded as two independent delivery effects.
+
+This mode is optimized for `enquiries@`, `sales@`, `support@`, `claims@`, `accounts@`, project addresses, Butler identities and agent identities. It can also provide personal Mailda web mailboxes, but does not pretend to expose a standards IMAP/JMAP mailbox service.
+
+### Provider Connected
+
+- Gmail or Microsoft 365 remains the mailbox, MX and protocol source of truth.
+- Mailda uses organization-owned OAuth grants and provider delta/history APIs.
+- Mailda adds cases, shared operations, Butlers, policy, approvals, agent identities and audit.
+- The connector records provider identifiers, delta cursors, lag, conflicts and authority status.
+- A provider write is performed only through a named, policy-governed connector action.
+- Forwarded copies are never substituted for true connector synchronization.
+- Actions initiated in Mailda receive full pre-execution authorization/policy/approval. Actions initiated directly in Gmail, Outlook or another provider client may occur before Mailda sees them; Mailda synchronizes, classifies, audits and can trigger remediation afterward, but labels them `provider_native` and never claims it approved them in advance.
+
+This is the recommended mode for ordinary employee accounts already using Google Workspace or Microsoft 365.
+
+### Full Mail Adapter
+
+Organizations requiring direct MX and standards clients may connect a mature mail core behind `MailCoreAdapter`. The supported reference implementation is Stalwart or a replaceable equivalent providing SMTP/ESMTP, JMAP, IMAP and optional calendar/contact protocols.
+
+The mail core remains a protocol/storage component. Mailda remains authoritative for organization identity mapping, resource permissions, policy, approvals, Butlers, agent grants and product audit. Protocol sessions are mapped to a Mailda principal and every consequential submission becomes a Mailda send intent. The adapter may claim fully governed JMAP/IMAP/SMTP behavior only after conformance proves synchronous Mailda authorization for protected mailbox mutations and submission; otherwise native-client mutations are labeled external/post-facto exactly like Provider Connected mode.
+
+The reference adapter, infrastructure definitions, hooks and conformance tests are open source, but this mode adds infrastructure outside the Workers-only scaffold.
+
+### Connector installation contract
+
+Provider Connected setup is reproducible infrastructure, not merely an OAuth button. Its plan covers provider application registration or a customer-supplied app, administrator consent, exact scopes, redirect/webhook endpoints, quota prerequisites, secret/key rotation, initial cursor/backfill boundary, revocation and offboarding.
+
+- Gmail certification includes Pub/Sub topic/IAM, `watch` renewal, history cursor initialization, history-gap recovery, backoff/quota and token rotation/revocation.
+- Microsoft certification includes Entra application/tenant consent, Graph webhook validation, subscription renewal, delta cursor recovery, throttling and token rotation/revocation.
+- `mailda integration plan|apply|doctor|disconnect` exposes these resources and their backup/recovery implications. Webhook renewals are durable health-tracked jobs.
+
+Deploy to Cloudflare can **connect and verify** an already deployed Full Mail Adapter; it cannot imply that Workers provision persistent SMTP/IMAP infrastructure. The separate open `infra/mailcore` reference deployment defines supported hosts, network/firewall/TLS, Mailda-to-MailCore workload authentication, synchronous policy hooks, spool behavior during Node outage, storage/scanner dependencies, compatibility matrix, monitoring, backup, upgrade and disaster recovery. `mailda mailcore plan|deploy|connect|doctor` uses that contract on supported targets.
+
+### Outbound adapter contract
+
+Every outbound adapter publishes a machine-readable capability manifest:
+
+```yaml
+kind: TransportCapabilities
+name: cloudflare-email
+supports:
+  raw_mime: supported_legacy
+  structured_send: true
+  lifecycle_events: true
+  status_lookup: limited
+  custom_headers: restricted
+  provider_assigned_message_id: true
+preference:
+  submission: structured
+limits:
+  max_bytes: provider_reported
+  max_recipients: provider_reported
+policy:
+  traffic_classes: [transactional, operational_reply, agent_workflow]
+```
+
+Mailda evaluates the manifest before approval and rendering so a user never approves an effect the selected transport cannot execute. Built-in adapters cover Cloudflare Email, Gmail API, Microsoft Graph, SMTP relay, direct MailCore submission and customer-supplied adapters.
+
+### Domain topology
+
+- A new Cloudflare-native installation defaults to a delegated operational subdomain such as `ops.example.com` or `mail.example.com`.
+- This leaves an existing Google/Microsoft root-domain MX untouched.
+- A root-domain cutover is allowed only after Mailda proves ownership, detects conflicting MX, explains the interruption risk, runs test delivery and captures an explicit administrator confirmation.
+- Sending, inbound routing and provider connection are configured and health-checked independently.
+- Each domain advertises enabled modes and limitations in the UI and API.
+
+---
+
+## 11. Target system architecture
+
+```mermaid
+flowchart TB
+    surfaces["Web, CLI, API, Skill and MCP"]
+    node["Customer-owned Worker graph"]
+    state["D1, R2, Durable Objects"]
+    async["Queues and Workflows"]
+    adapters["Cloudflare, Gmail, Microsoft, relay, MailCore"]
+
+    surfaces --> node
+    node <--> state
+    node <--> async
+    async <--> adapters
+```
+
+### One deployable project, least-privilege Worker graph
+
+Mailda is one scaffolded repository, declarative plan and installer experience—not one all-powerful runtime principal. The planner deploys a small graph of Workers/service bindings as one Mailda Node so a public parser, web bug or third-party connector cannot automatically reach every message, administrator operation and secret.
+
+| Worker | Exposure and responsibility | Deliberately absent authority |
+|---|---|---|
+| `gateway` | Static Web/PWA, OAuth/session, OpenAPI queries/commands, WebSocket/SSE and authorization/policy entry | No provider/LLM secret values, inbound handler or direct raw-object enumeration |
+| `ingress` | Email Routing handler, recipient lookup, bounded checks, raw receipt persistence and receipt queue | No public HTTP route, connector/LLM secrets, send execution or admin mutations |
+| `processor` | Queue-only MIME parsing, sanitization, security, normalization, indexing and case/Butler event creation | No public route, user sessions, outbound credential or arbitrary egress |
+| `content` | Service-only authorized streaming of message bodies, safe previews, originals, attachments and exports from R2 | No public route, listing without a scoped content capability, write authority, provider secrets or policy mutation |
+| `effects` | Queue/service-only transport, connector, webhook and LLM capability broker | No general mailbox query, policy mutation or public route; receives minimum approved effect/input envelope |
+| `scheduler` | Cron/Workflow/Butler coordination, waits, retries and run ledger | No direct external send/secret path; effects re-enter the broker/command plane |
+| `operations` | Backup, restore, migration, signed upgrade and health jobs behind step-up commands | No public unauthenticated route or routine content browsing |
+| `extension-*` | Optional separately deployed customer extension Worker/Wasm isolate using narrow capability service binding | No direct D1/R2/Secrets bindings or ambient egress |
+
+Every internal call uses a typed envelope with source workload identity, organization/environment, operation/effect ID, expiry and replay protection. Bindings are least-privilege and generated from a checked capability manifest. The `content` broker requires a short-lived action/resource/principal-bound content capability issued after live authorization and validates its current authorization/revocation generation; a signed URL cannot outlive or widen it. Secrets are brokered to named adapter operations inside `effects`; callers receive results, not secret material. The open repository can combine low-risk handlers during local development, but production certification verifies the separated graph and fails if any Worker receives undeclared bindings.
+
+The Deploy to Cloudflare entrypoint may initially launch a minimal bootstrap/planner Worker because one-click deployment cannot safely infer every domain/provider choice. After explicit granular authorization, the open planner provisions the complete graph, runs conformance checks and retires or locks the bootstrap route. The Node remains one product/upgrade unit with shared generated contracts; the split is a security boundary, not user-visible microservice complexity.
+
+### Cloudflare resource map
+
+| Cloudflare service | Mailda use |
+|---|---|
+| Workers + Static Assets + Service Bindings | Least-privilege `gateway`, `ingress`, `processor`, `content`, `effects`, `scheduler`, `operations` and optional extension graph |
+| Email Routing | Inbound adapter for Cloudflare-managed/customer domains |
+| Email Sending | Transactional/agent/system outbound adapter when capabilities fit |
+| D1 | Single-organization relational catalog/control state, message metadata shards, relationships, policy, audit index and transactional outboxes |
+| R2 | Immutable raw MIME, attachments, safe derivatives, exports and encrypted backup bundles |
+| Durable Objects | Per-mailbox/case serialization, realtime presence, send claims, rate gates and rebuildable counters/FTS projections; not canonical hidden mailbox storage |
+| Queues | At-least-once background normalization, security, indexing, connector and effect processing |
+| Workflows | Approval waits, wait-for-reply, scheduled follow-up, long-running connector work and bounded retries |
+| Worker secrets / Secrets Store | A bounded set of root/signing/adapter secrets where the account capability permits; not a per-user credential database |
+| KV | Non-authoritative routing/config/revocation caches only |
+| Vectorize/AI Search | Optional organization-filtered semantic projection; never a source of truth |
+| AI Gateway | Optional provider routing/observability beneath Mailda's own LLM policy gateway |
+| Analytics/Logs/Traces | Redacted operational health, cost and performance telemetry |
+
+### Optional adapters and scale-out
+
+- `MailboxProviderAdapter`: Gmail and Microsoft mailbox synchronization.
+- `MailCoreAdapter`: standards mail/protocol implementation.
+- `TransportAdapter`: outbound sending and lifecycle events.
+- `ScannerAdapter`: malware, file and URL analysis.
+- `SearchAdapter`: local SQLite/FTS by default; external search where scale requires.
+- `ControlStoreAdapter`: D1 by default; optional PostgreSQL through Hyperdrive for very large or regulated deployments.
+- `ObjectStoreAdapter`: R2 by default; compatible customer object storage where policy requires.
+
+The Cloudflare-only profile is tested and supported as a complete operational-mail product. Adapters expand capabilities without turning the paid Mailda service into a hidden dependency.
+
+### Optional Mailda Control connection
+
+A Node may establish an outbound, mutually authenticated management connection to Mailda Control for fleet health, signed release channels, drift detection, backup verification and support. By default it exports only version/resource/health/error aggregates; it does not export message bodies, attachments, address books or searchable mail metadata.
+
+Control authenticates to each Node as a dedicated local service principal with an administrator-approved capability manifest. Every remote command is signed, nonce/expiry/idempotency protected and enters the ordinary Node command API for live authorization, policy, approval and local audit. Control has no direct D1, R2, Durable Object or Secrets Store path and no implicit content scope. Replayed, expired and out-of-scope commands fail closed; the Node provides a local offline revoke/kill control.
+
+The administrator sees every requested Node and Cloudflare OAuth scope, can revoke either grant locally or in Cloudflare, can disconnect the Node locally and can self-host the same management code. Cancellation removes managed operations, never runtime functionality or data access.
+
+---
+
+## 11A. Deployment, environments, upgrade and rollback
+
+### Canonical scaffold
+
+```bash
+npm create mailda@latest my-mailda
+cd my-mailda
+
+mailda cloudflare login
+mailda init
+mailda deploy --plan
+mailda deploy --apply
+mailda bootstrap-admin
+mailda domain add ops.example.com
+mailda doctor
+```
+
+`mailda init` creates declarative `mailda.yaml`, selects account/zone, identity and mail modes, generates non-secret local configuration and validates prerequisites. Credentials remain in the Cloudflare/Wrangler session or OS credential store, never the repository.
+
+The idempotent deployment plan includes:
+
+- Bootstrap plus least-privilege Worker graph, service bindings, Assets, routes and custom domains.
+- D1 catalog/initial shard, R2, DO namespaces, Queue/DLQ, Workflow and Cron bindings.
+- Schema migrations and compatibility.
+- Email Routing/Sending/domain prerequisites and catch-all behavior.
+- Unresolved secret references.
+- DNS additions/removals and conflicting MX.
+- Current plan/quota incompatibilities.
+- Exact Cloudflare permissions needed for apply.
+
+Apply uses revocable Cloudflare OAuth or the user's existing Wrangler session; it never asks for a Global API Key. Infrastructure manifests, migration history and recovery instructions live in the generated Git repository so the customer can reproduce the Node independently.
+
+### One-click equivalence
+
+The public repository exposes a Deploy to Cloudflare entrypoint that clones the source into the customer's Git provider, provisions supported bindings, deploys a bootstrap build and opens the same setup wizard. Any resource not safely provisioned by the repository build is created by the open-source planner after granular OAuth consent.
+
+One-click and CLI paths must converge on equivalent `mailda.yaml`, resource inventory, migration state and `doctor` results. The installer explicitly offers subdomain Cloudflare Native, root cutover, Gmail/Microsoft connection and connection to an existing certified Full Mail Adapter; it links to the separate reference MailCore deployment plan where needed and refuses to imply that Workers provision persistent IMAP/SMTP infrastructure or that two independent root MX authorities can coexist deterministically.
+
+### Environments
+
+- Local, preview, staging and production use different resources, secrets, routes and keys.
+- Preview cannot receive production mail or access production D1/R2.
+- Tokens, events, audit, webhooks and object prefixes carry environment identity.
+- Production-to-test data import is minimized/redacted and requires policy.
+- Promotion operates on versioned definitions/configuration, not copied live credentials.
+
+### Release and upgrade contract
+
+Each release publishes source, reproducible-build metadata, SBOM, checksums, signed manifest, supported schema range, adapter matrix and migration classification.
+
+```bash
+mailda upgrade --check
+mailda upgrade --to 1.8.0 --plan
+mailda backup create --reason pre-upgrade
+mailda upgrade --to 1.8.0 --apply
+mailda verify
+mailda rollback --to 1.7.3
+```
+
+- Schema compatibility is checked before commands/effects run.
+- Migrations are forward-only, checksum-verified, resumable and protected by a lease.
+- Expand/migrate/contract keeps old code compatible through a documented rollback window.
+- Destructive contraction is delayed and requires a verified backup plus explicit confirmation.
+- Backfills run as cursor-based maintenance jobs, not within request lifetime.
+- New Worker versions receive health and synthetic no-effect tests before traffic promotion.
+- The release manifest declares handler/queue/event/Butler ABI, Workflow interpreter and Durable Object class versions. Every queued event and run pins the compatible runtime ABI that must remain available through its retention/wait window or pass an explicit migrator.
+- HTTP traffic canary does not imply safe non-HTTP promotion: Email Routing targets, Queue consumers, Cron triggers and Workflow dispatchers change only through an explicit trigger map. Incompatible consumers/schedules are paused and drained or dual-read with versioned events before activation.
+- Durable Object migrations follow declared class/version migration rules; static assets pin a compatible API contract; service bindings and resource configuration are versioned and included in rollback/compensating plans.
+- Rollback restores a compatible Worker version; after destructive schema change it means restoring a new Node from the pre-upgrade backup, which the plan states plainly.
+- Email routes/provider subscriptions/DNS changes include compensating actions and deployment audit.
+- Unsupported version jumps are refused unless every required migration is included and certified.
+
+The updater/verifier is open source. Mailda Control may automate it, but is never required.
+
+---
+
+## 11B. Platform limits, cost visibility and failure containment
+
+Cloudflare/provider limits are adapter data, not assumptions scattered through application code. The Node snapshots observed quotas and provider capability versions, displays them in Admin and `mailda doctor`, and blocks an effect predicted to exceed a hard limit before approval when possible.
+
+As of this revision, the Cloudflare Email adapter must account for the published 25 MiB inbound limit, 5 MiB normal outbound message limit, 50-recipient limit, verified-forwarding-destination/account limit and conservative reputation-based sending quotas. Sending is currently intended for transactional email rather than marketing/bulk traffic. These values may change; release tests and runtime capability checks remain authoritative.
+
+Cloudflare Email Sending is currently a beta capability whose availability, arbitrary-destination entitlement and required paid account features must be detected—not assumed. A healthy Cloudflare Native Node may therefore be `inbound_ready/receive_only`, `outbound_verified_destinations_only` or `outbound_send_enabled`. Setup and `doctor` state the reason, documented account prerequisite and alternative TransportAdapter; no clean-account acceptance test assumes outbound entitlement.
+
+Scale and isolation rules:
+
+- One Node begins with a D1 catalog/control database plus one metadata/search shard. The planner treats the current D1 per-database size ceiling as adapter data and forecasts rows/bytes at mailbox, shard and Node level.
+- Immutable message metadata is assigned by stable mailbox hash plus time bucket through a cataloged shard map; control/identity/policy/outbox data stays in the catalog. Shard creation is a planned binding/deployment change, never an implicit runtime Cloudflare-admin call.
+- At 70% forecast/usage the Node warns and plans the next shard or external store; at 85% it stops optional bulky projections/backfills; at 90% it routes future eligible metadata to a new shard and blocks nonessential imports. Inbound raw evidence is never silently discarded because a search/index shard is full.
+- Cross-shard query uses fan-out cursors with stable sort/tie-break keys and live ACL recheck; SearchAdapter may maintain a rebuildable global projection. Rebalancing copies immutable ranges, verifies counts/hashes, atomically flips the catalog generation and retains the old shard through rollback/backup expiry.
+- Backup/restore inventories every shard and catalog generation. A Node expected to exceed practical D1 shard/query limits must select PostgreSQL `ControlStoreAdapter` during planning rather than discover the boundary in production.
+- Raw MIME and attachments never live in D1; preview and search representations are bounded.
+- Mailbox/case Durable Objects prevent racing assignments, unread state, reply claims and send claims without serializing unrelated mailboxes.
+- Inbound, security, automation, outbound, webhook and maintenance work use independent queues, DLQs, concurrency and circuit breakers.
+- Butler fan-out has organization/Butler budgets so a runaway workflow cannot starve receipt, login or another mailbox.
+- Search, export, retention, reindex and migration use resumable cursors/checkpoints.
+- A stuck Gmail/Microsoft/transport connector cannot stop Cloudflare-native mailboxes.
+- Queue age, R2 growth, D1 rows/size, DO hot spots, Workflow steps and LLM/provider spend have forecasts and configurable budget alerts.
+
+Workers-only deployment is not appropriate for every workload. Very large archives, jurisdiction requirements not met by the customer's Cloudflare plan, native antivirus/sandbox binaries, persistent protocol connections or standards-client hosting require the relevant external store/scanner/MailCore adapter. Mailda exposes that boundary rather than building an unreliable workaround.
+
+---
+
+## 12. Data architecture and invariants
+
+### Core schemas
+
+```text
+identity:
+  organizations, deployments, environments, users, identities, memberships, teams, roles,
+  relationship_tuples, service_principals, oauth_clients, delegations, sessions
+
+mail:
+  domains, dns_checks, addresses, aliases, groups, routes, sender_identities,
+  mailboxes, mailbox_memberships, message_blobs, messages, body_parts,
+  attachments, deliveries, mailbox_items, conversations, thread_edges,
+  drafts, draft_revisions, submissions, send_attempts, delivery_events,
+  forwarding_rules, relay_attempts, suppressions, quarantine_items
+
+work:
+  contacts, companies, cases, queues, case_fields, tasks, commitments,
+  assignments, sla_clocks, internal_notes, external_record_links
+
+automation:
+  butlers, butler_versions, triggers, schedules, workflow_runs, step_runs,
+  action_intents, connectors, secret_references, templates, webhook_subscriptions
+
+governance:
+  policy_sets, policy_versions, policy_decisions, approvals, legal_holds,
+  retention_rules, exports, dlp_findings, security_findings
+
+ai:
+  llm_providers, llm_profiles, prompt_versions, model_runs, usage_ledger,
+  evaluation_suites, evaluation_runs
+
+evidence:
+  audit_events, outbox_events, reconciliation_findings, incident_records
+
+operations:
+  resource_inventory, schema_migrations, release_manifests, health_checks,
+  backup_sets, restore_runs, cost_snapshots, support_grants
+```
+
+### Invariants
+
+1. A production Node is claimed by exactly one organization; every object is bound to that organization and one environment unless explicitly deployment-level.
+2. Raw inbound MIME, canonical outbound composition manifests and any materialized provider-submission representation are immutable evidence; parsed/search/AI forms are rebuildable derivatives.
+3. A message may have many deliveries; access is evaluated per delivery/mailbox.
+4. No cross-organization raw-content deduplication, including in optional Control, search, scanner or AI services.
+5. Every mailbox mutation advances a monotonic change/version number.
+6. Every draft edit produces a revision; approval and send bind one exact revision.
+7. Every external effect has an internal intent and idempotency key before execution.
+8. No `outcome_unknown` provider submission is blindly retried.
+9. Policies, Butlers, prompts, templates, connectors and LLM profiles are immutable by version.
+10. AI output is data, never authority.
+11. Every connected provider/mail core declares its source-of-truth fields and conflict semantics.
+12. Every customer-visible mutation is reachable through the command API and produces a policy decision plus audit correlation.
+13. Export and restore are tested product paths; no canonical state exists only in an opaque cache or commercial control plane.
+
+### Storage
+
+- D1 catalog plus declared D1 metadata shards are the canonical relational source of truth for organization, control, workflow, governance, receipt metadata, mailbox items and outbox state in a Cloudflare-native Node.
+- Durable Objects serialize narrow high-contention resources and hold only reconstructable presence, counters, rate state and FTS/cache projections. A canonical mutation commits to D1/outbox before the DO acknowledges it; loss of every DO can be recovered from D1/R2/events.
+- R2 keeps original MIME, attachments, safe renders, exports and encrypted backups.
+- Provider-backed mailbox content retains its declared provider authority while Mailda stores governed projections, evidence pointers and optionally an organization-approved archive copy.
+- A Full Mail Adapter owns protocol/mailbox state through a controlled contract, while Mailda remains authoritative for policy and work state.
+- Optional PostgreSQL/search adapters are supported for deployments that exceed the default storage profile or require different residency/operations.
+- Original, parsed and presentation forms are stored separately.
+- Search is a projection and may be rebuilt.
+- No public buckets; every blob fetch receives a live authorization check and short-lived URL/stream.
+- Every supported adapter implements export, backup, restore, integrity-check and migration contracts so customer ownership is operational, not merely a licensing claim.
+
+### Encryption and search disclosure
+
+- Cloudflare's platform encryption at rest protects D1/R2 by default. Mailda additionally envelope-encrypts raw MIME, attachments, exports, OAuth refresh tokens and provider/model credentials with authenticated encryption before storage where the selected security profile requires it.
+- A small root KEK lives in a scoped Worker secret, Secrets Store when entitled, or a customer `SecretManagerAdapter`. Per-object/per-credential DEKs and ciphertext live in R2/D1. The effects broker alone can unwrap connector/model credentials; Secrets Store's current account limits are never treated as a per-user token database.
+- Key rotation rewraps DEKs without rewriting every object where possible. Restore requires the external/root KEK or deliberate credential rotation; backups never pretend encrypted data is recoverable without it.
+- Default local full-text search requires normalized subject/body/search tokens to be plaintext to the Mailda runtime in D1/DO (while still protected by Cloudflare at-rest encryption, isolation and live ACL). Admin explicitly sees this leakage boundary.
+- A high-confidentiality profile application-encrypts body/subject derivatives and disables local body FTS, retaining only approved blind metadata fields, or selects an external SearchAdapter with its own declared encryption/query threat model. Mailda never claims application ciphertext and ordinary FTS over the same field simultaneously.
+- Optional customer KMS/HSM integration is a named adapter capability; Mailda does not imply Cloudflare supplies a generic KMS primitive where none is configured.
+
+---
+
+## 13. Inbound mail pipeline
+
+```mermaid
+sequenceDiagram
+    participant Sender
+    participant Transport as CF Worker or Direct MX
+    participant Receipt as Ingress Receipt
+    participant Store as MIME Store
+    participant Pipeline as Security and Normalize
+    participant State as Mailbox and Work State
+
+    Sender->>Transport: SMTP message
+    Transport->>Receipt: Envelope and raw MIME
+    Receipt->>Store: Persist immutable original
+    Receipt->>Receipt: Commit receipt and idempotency
+    Receipt-->>Sender: Accept delivery
+    Receipt->>Pipeline: Publish accepted event
+    Pipeline->>State: Create deliveries and change events
+```
+
+Synchronous acceptance performs only:
+
+- Recipient/address resolution.
+- Size and basic abuse checks.
+- Durable spool/raw MIME persistence.
+- Receipt and idempotency commit.
+- An adapter-supported accept/reject/deferral outcome. Cloudflare Email Workers expose documented permanent rejection through `setReject()` but no assumed portable temporary-deferral primitive; storage failure, Worker exception and timeout behavior must be integration-certified before Mailda advertises deferral semantics.
+
+Cloudflare Native receipt details:
+
+- Resolve recipient, mailbox lifecycle and immutable routing version before processing content.
+- Allocate `ingress_receipt_id`; record provider event identity, envelope, recipient and timestamp.
+- Persist the lossless MIME to R2 and its hash/size/pointer in D1 before treating the receipt as durable.
+- Because R2 and D1 are not one transaction, orphan-blob and missing-blob reconcilers cover each partial order; a D1 outbox ensures queue publication can resume.
+- A Cloudflare `transparent_forward` must be requested while the original Email Worker event is available. Mailda persists first, performs only bounded synchronous envelope/size/loop checks, calls `message.forward()` and discloses that asynchronous deep attachment scanning/DLP did not precede the copy. Local storage and each destination have independent outcomes; forward failure never deletes the local copy.
+- The queue receives only receipt/blob references, never the full MIME payload.
+
+Asynchronous processing performs:
+
+- Strict-resource MIME/RFC parsing.
+- Unicode/international-address/header decoding.
+- Multipart, nested message, inline content, TNEF and calendar extraction.
+- Trusted SPF/DKIM/DMARC/ARC result capture.
+- HTML sanitization and isolated rendering.
+- Attachment hashing, file-type detection, archive-bomb defense and malware scan.
+- Spam, phishing, impersonation, link and DLP classification.
+- Thread graph resolution.
+- Contact/case matching and mailbox routing.
+- Search projections.
+- Butler events only after delivery state is finalized.
+
+Workers-native checks include size/type/signature, archive recursion/bomb limits, HTML/link hygiene and configured rules/models. Mailda does not falsely label that as full antivirus or advanced sandboxing: suspicious files remain quarantined until a configured `ScannerAdapter` supplies the required verdict. Parsing failure preserves original evidence and creates a visible exception rather than silently losing the message.
+
+Quarantined messages remain evidence but cannot feed attachments/content into a Butler or LLM without a separate security decision.
+
+### Threading
+
+1. Exact `In-Reply-To`.
+2. Exact `References` ancestry.
+3. Internal `Message-ID` map.
+4. Conservative subject/participant/time heuristic.
+5. Explicit human split/merge.
+
+Heuristic relationships remain reversible and visible as such.
+
+---
+
+## 14. Outbound pipeline
+
+Every UI, CLI, API, Butler, JMAP, IMAP-client draft and SMTP submission follows:
+
+```text
+draft revision
+→ sender authorization
+→ recipient/contact resolution
+→ DLP and risk scan
+→ policy evaluation
+→ exact-content approval if required
+→ immutable send intent
+→ MIME render/sign
+→ provider selection
+→ provider attempt
+→ delivery reconciliation
+```
+
+Per-recipient/provider state:
+
+```text
+queued → submitted → provider_accepted → delivered
+                   ↘ deferred → submitted
+                   ↘ bounced | complained | failed | outcome_unknown
+```
+
+Mailda guarantees one local send intent/Sent item per idempotency key. Internet email cannot guarantee exactly-once remote delivery. If a provider may have accepted a message but its response was lost, the attempt becomes `outcome_unknown`; reconciliation occurs before any new send.
+
+Before dispatch, Mailda stores an immutable approved **composition manifest** containing envelope, From/Reply-To, To/CC/BCC, subject, normalized text/HTML, attachment hashes/filenames/disposition, approved custom headers and template/signature versions. It advances the send intent plus D1 outbox in one transaction and later claims one effect key in the queue consumer. The consumer rechecks time-sensitive suspension, sender, recipient, suppression, rate and budget obligations immediately before provider invocation.
+
+Each adapter materializes and stores its provider-submission representation separately. Structured Cloudflare/Gmail/Graph adapters may rewrite MIME boundaries/encodings, protected headers and provider identifiers, so Mailda calls the approved semantic content exact but claims byte-for-byte wire identity only when a raw-MIME adapter contract guarantees it. Provider-owned fields such as Cloudflare's Message-ID are stored from the provider result; Mailda's internal trace/idempotency identity is separate and never assumes it can override provider headers.
+
+The default product injects no open-tracking pixel and performs no covert link rewriting. Optional analytics require an explicit organization policy, disclosure and adapter capability.
+
+### Transport adapter capabilities
+
+Each adapter declares:
+
+- Maximum bytes and recipients.
+- Structured versus raw MIME support.
+- DSN, ARC, custom header and return-path support.
+- Lifecycle events and status lookup.
+- Regions and data handling.
+- Cancellation/idempotency capabilities.
+
+Built-in adapters:
+
+- Cloudflare Email binding/API/SMTP.
+- Full Mail Adapter submission through the installed standards mail core.
+- Named enterprise relay provider(s).
+- Customer BYO relay.
+- Gmail API and Microsoft Graph for provider-backed mailboxes.
+
+The router selects an adapter before sending based on domain, stream, message size, recipient count, region, reputation and policy.
+
+### Forwarding and mirroring
+
+- Store locally before an external copy by default.
+- `transparent_forward` preserves the original provider forward where supported; only bounded synchronous checks precede it, and its UI/policy must permit that risk explicitly.
+- `governed_relay` persists, parses, scans and applies DLP asynchronously, then reconstructs/submits a new copy through a TransportAdapter; it is not represented as a transparent original forward.
+- Track each destination and relay attempt.
+- Use SRS/ARC/loop protection where required.
+- Never present a forward copy as bidirectional synchronization.
+- Cloudflare `message.forward()` is one bounded adapter; large-scale forwarding uses the relay abstraction.
+
+---
+
+## 15. Mail protocols and clients
+
+Protocol availability is mode-specific and always visible to administrators and users.
+
+### Cloudflare Native clients
+
+- Mailda web/PWA is the complete human client.
+- The OpenAPI/SDK/CLI surfaces provide programmatic mailbox and work access.
+- Remote MCP and Agent Skill provide governed agent access.
+- Cloudflare's authenticated outbound SMTP endpoint is an infrastructure adapter and its account token is never distributed as an employee credential.
+- Mailda does not advertise an IMAP/JMAP endpoint in this mode.
+
+### Provider Connected clients
+
+Users may continue using Gmail, Outlook and their provider-supported native clients. Mailda's web application provides the governed path for operational work, cases, approvals, shared queues and Butler state. Provider API capabilities and synchronization lag determine which message-state operations are available. A provider-native send/read/delete/folder action is tagged as externally originated and reconciled after the fact; organizations that require pre-send Mailda enforcement must route the action through Mailda or use a certified synchronous Full Mail Adapter.
+
+### Full Mail Adapter clients
+
+The reference `MailCoreAdapter` must certify:
+
+- JMAP Core/Mail/Submission identities, blobs, queries, changes and push.
+- IMAP TLS/OAuth, `IDLE`, `UIDPLUS`, `MOVE`, `CONDSTORE`, `QRESYNC`, `ESEARCH` and stable UID/MODSEQ behavior.
+- SMTP submission on 587/STARTTLS and 465/implicit TLS, OAuth2 or restricted app credentials, SMTPUTF8, 8BITMIME and DSN.
+- Mapping of authenticated protocol principals and submissions into live Mailda authorization/policy/audit.
+- Stable projection of Mailda mailbox folders while richer case/assignment features remain in Mailda web/JMAP extensions.
+
+### Calendar and contacts
+
+- Calendar invitation parsing, safe preview and response work in every mail mode.
+- Google/Microsoft calendar and contact actions use named connectors.
+- Optional CalDAV/CardDAV/JMAP calendar/contact hosting is supplied only by an installed adapter with its own capability declaration.
+- Mailda does not emulate EWS or Exchange ActiveSync.
+
+---
+
+## 16. Butler automation system
+
+A Butler is a versioned, policy-bound deterministic program. It is not automatically an AI agent.
+
+AI can enter Mailda in exactly two declared ways:
+
+1. A Butler contains an explicit typed `llm.classify`, `llm.extract`, `llm.summarize`, `llm.draft` or `llm.evaluate` node bound to an approved LLM profile.
+2. An external AI agent uses the deterministic CLI/API through OAuth plus the Agent Skill/MCP and receives no authority beyond its live grant.
+
+The CLI never decides to invoke AI on its own. A cron job or ordinary program can rely on stable deterministic commands without installing an Agent Skill or model provider.
+
+### Ownership
+
+| Butler | Ownership/lifecycle |
+|---|---|
+| Personal | Derives from user; stops on suspension |
+| Mailbox | Owned by shared/role mailbox |
+| Team | Owned by team and independent of an individual |
+| Organization | Dedicated service identity and admin governance |
+| Agent | Runs under explicit agent/sponsor delegation |
+| System | Security/delivery/lifecycle use only |
+
+### Triggers
+
+- Message received/sent/delivered/bounced/complained/replied.
+- Thread, case, attachment or security state change.
+- Approval decision.
+- Manual UI/CLI/API invocation.
+- Signed webhook or connector event.
+- Cron/schedule.
+- No reply/no action after a duration.
+- Aggregate thresholds such as complaint rate.
+
+### Deterministic nodes
+
+- Guard, switch, bounded map/foreach, join, wait and stop.
+- Typed transforms, schema validation and lookups.
+- Label, route, archive, quarantine and assign.
+- Draft/template/render/send-proposal/forward.
+- Case create/update/task/note/SLA.
+- Named connector, CRM/database/document action.
+- Approval request.
+- Child workflow/event emission.
+- Explicit LLM classify/extract/summarize/draft/evaluate.
+
+No unrestricted JavaScript, shell, `eval`, arbitrary URL or ambient secret exists in the normal DSL. Advanced signed extensions run in isolated organization/deployment sandboxes with declared capabilities, dependency lock, egress policy and resource budgets. A signature establishes provenance, not trust: extension code runs in a memory-safe Wasm/isolate sandbox with no ambient network, filesystem, clock, randomness, secrets or direct Cloudflare bindings. Every egress/effect uses a metered capability handle that re-enters the command plane; deterministic termination and resource limits are mandatory.
+
+### DSL example
+
+```yaml
+apiVersion: mailda/v1
+kind: Butler
+
+metadata:
+  name: sales-enquiries
+  owner: team:sales
+
+capabilities:
+  - action: mailbox.content.read
+    resource: mailbox:enquiries@example.com
+  - action: case.write
+    resource: case_type:sales_lead
+  - action: draft.create
+    resource: mailbox:enquiries@example.com
+  - action: send.propose
+    resource: sender:enquiries@example.com
+  - action: llm.profile.use
+    resource: llm_profile:sales-intake@3
+
+trigger:
+  event: mail.received
+  mailbox: enquiries@example.com
+
+steps:
+  - id: security_guard
+    type: guard
+    when: event.security.malware != "clean"
+    action: stop
+
+  - id: extract
+    type: llm.extract
+    profile: sales-intake@3
+    source: "${event.message_id}"
+    outputSchema: schemas/lead.v4.json
+
+  - id: lead
+    type: case.upsert
+    caseType: sales_lead
+    fields:
+      name: "${steps.extract.output.name}"
+      company: "${steps.extract.output.company}"
+
+  - id: acknowledgement
+    type: mail.template.render
+    template: lead-acknowledgement@4
+
+  - id: send
+    type: mail.send.propose
+    message: "${steps.acknowledgement.message}"
+```
+
+### Compiler and runtime guarantees
+
+- Canonical JSON AST generated by visual/YAML editors.
+- Schema/type validation, cycle detection and bounded iteration.
+- Capability ceiling computed at publication.
+- Published versions immutable.
+- New grants do not silently expand a published Butler; republish is required.
+- Revocation or stricter policy applies immediately at runtime.
+- Static taint tracking marks email, attachments, webhooks and LLM output untrusted.
+- Untrusted content cannot select or construct policy, sender identity, To/CC/BCC or forwarding destination, attachment, integration/egress URL, connector operation/target record, financial/account identifier, secret reference, model profile or permission. Moving an untrusted value into an effect sink requires validation against trusted organization state or exact-effect human approval.
+- Durable step ledger and idempotency key per external effect.
+- Simulation is structurally unable to send or mutate production systems.
+- Retries, timeouts, backoff, concurrency, budgets, circuit breakers and DLQ.
+- IANA timezone/DST/missed-run/overlap semantics for schedules.
+- Complete run provenance and replay.
+
+Replay modes are explicit: `inspect` executes nothing; `simulate-recorded` reuses immutable recorded LLM/connector outputs and suppresses every external effect; `rerun-current` creates a new run under current policy and may re-invoke dependencies; `retry-effect` is offered only when reconciliation proves non-acceptance. A replay never reuses an old approval or idempotency key for a materially new effect.
+
+Cloudflare Queues provide at-least-once delivery; Mailda's own run/effect ledger provides idempotency. Workflows handle waits and retryable long-running execution; Durable Objects serialize only critical claims/races.
+
+### Cron and schedule semantics
+
+Every schedule declares an IANA timezone, calendar/cron expression, start/end window, missed-run policy (`skip`, `run_once`, `catch_up_bounded`), overlap policy (`forbid`, `queue_one`, `parallel_bounded`), maximum lateness, optional jitter and owning principal. The UI shows the next executions including DST transitions before publication. Organization/team/mailbox schedules survive individual offboarding; personal schedules pause immediately on suspension. A scheduled trigger creates a normal workflow run and gains no extra authority from time or ownership.
+
+---
+
+## 17. LLM control plane
+
+AI is optional and explicit. Butlers and Mailda-hosted AI operations never call model providers outside the governed LLM gateway. An external agent's own model/runtime is outside Mailda; every Mailda action it takes still uses the deterministic command plane and its delegated grant.
+
+### Provider support
+
+- OpenAI, Anthropic, Google, Cloudflare Workers AI.
+- OpenAI-compatible endpoints.
+- Private/VPC/self-hosted endpoints.
+- Customer-managed keys or Mailda-managed usage.
+- Provider health, region, retention, latency and cost tracking.
+
+### LLM profile
+
+An immutable profile pins:
+
+- Approved task classes.
+- Provider/model/revision/fallback.
+- Prompt version and decoding controls.
+- Input/output schemas.
+- Allowed message classes, attachments and connectors.
+- Redaction/minimization policy.
+- Region and provider retention requirement.
+- Per-call, per-Butler and monthly budgets.
+- Rate/concurrency/token/latency limits.
+- Confidence threshold and deterministic/human fallback.
+- Evaluation suite and minimum acceptance score.
+
+### LLM request lifecycle
+
+```text
+authorized AI node or agent request
+→ resolve immutable LLM profile
+→ recheck message/case ACL and data classification
+→ minimize/redact/scan input
+→ reserve token/cost budget
+→ invoke named provider adapter with profile-enforced parameters
+→ validate structured output and confidence
+→ store sources, model/profile/prompt/schema version, usage and concise rationale
+→ deterministic branch or human fallback
+```
+
+Provider secrets are created/rotated by an AI Admin and stored as envelope-encrypted credential records or in a customer secret adapter under opaque references; a small fixed root may use a Worker secret/Secrets Store. They cannot be read back through UI, CLI, workflow input, logs or MCP. A Butler cannot override the selected profile's provider, region, retention, budget or tool policy.
+
+### Safety invariants
+
+- Raw email is untrusted data, not instruction.
+- The model has no direct send, role, token, policy or secret authority.
+- Tool access is off by default; any enabled tool calls the same command API.
+- Structured output must validate before entering workflow state.
+- AI-generated content is a draft/send proposal, never a policy bypass.
+- Store model metadata, structured output, sources and concise rationale—not chain of thought.
+- No cross-organization caching; sensitive-content caching is disabled by default.
+- Retrieval applies live mailbox/case ACL before results reach the model.
+- Budget is reserved before invocation and reconciled afterward.
+- Provider keys remain encrypted and non-exportable.
+
+Cloudflare AI Gateway may implement routing/limits/observability, but Mailda's LLM Gateway remains the policy authority.
+
+---
+
+## 18. Policy and approvals
+
+All consequential sources follow one path:
+
+```text
+command or action proposal
+→ authentication/authorization
+→ DLP/security/risk
+→ policy decision
+→ approval if required
+→ immutable effect intent
+→ execution
+→ result and audit
+```
+
+Outcomes:
+
+- Allow.
+- Allow with obligations/redaction/rate limit.
+- Require approval.
+- Quarantine.
+- Hold.
+- Deny.
+
+Policy dimensions include actor/delegator, mailbox, data class, sender identity, internal/external recipients, contact trust, attachment/link/DLP state, time/geography/device, velocity, budget, reputation, Butler autonomy and LLM profile.
+
+Every approval binds a canonical effect envelope: command type, target resource and expected version, normalized parameters, referenced artifact hashes, actor/delegator, policy version/result, expiry and idempotency key. This covers connector writes, forwarding, export, domain/routing changes, policy/Butler publication, grants and destructive administration as well as mail. Immediately before execution, Mailda rechecks approval validity/revocation, current actor/sender authority, approver eligibility, deny/hold/suppression/DLP policy and every bound object hash. Stricter policy, lost authority or changed evidence fails closed.
+
+### Exact-content approval
+
+Mail approval is a specialized single-use effect envelope that additionally binds the canonical composition manifest:
+
+- From, To, CC and BCC.
+- Subject, rendered text and HTML.
+- Attachment hashes and filenames.
+- Draft/Butler/template/prompt versions.
+- Allowed header set and adapter capability/version.
+- DLP and policy results.
+- Approver, expiry and idempotency key.
+
+Any material edit invalidates approval. Separation-of-duty policies prevent self-approval and support sequential/parallel/dual review.
+
+### Circuit breakers
+
+- Per-user/mailbox/Butler/domain/org volume limits.
+- New-recipient/domain throttles.
+- Bounce/complaint/suppression enforcement.
+- Auto-disable offending Butler.
+- Domain-wide send pause.
+- Loop detection using trace headers, causal depth and route history.
+
+---
+
+## 19. API, CLI, SDK, Agent Skill and MCP
+
+### API
+
+Publish an OpenAPI 3.1 contract. Consequential actions use explicit command endpoints rather than ambiguous CRUD.
+
+```text
+POST /v1/commands/user.suspend
+POST /v1/commands/mailbox.archive
+POST /v1/commands/draft.create
+POST /v1/commands/send.propose
+POST /v1/commands/approval.decide
+POST /v1/commands/butler.publish
+POST /v1/commands/butler.kill
+POST /v1/commands/domain.send-freeze
+```
+
+Every mutation accepts:
+
+```text
+Idempotency-Key
+If-Match
+X-Request-ID
+X-Mailda-Reason
+```
+
+Every response returns request/correlation, policy decision, audit event, resource version and—where asynchronous—a command/operation receipt.
+
+### CLI families
+
+```text
+mailda auth
+mailda org
+mailda user
+mailda team
+mailda role
+mailda domain
+mailda address
+mailda mailbox
+mailda message
+mailda draft
+mailda send
+mailda case
+mailda butler
+mailda workflow
+mailda approval
+mailda policy
+mailda llm
+mailda integration
+mailda oauth
+mailda token
+mailda webhook
+mailda logs
+mailda audit
+mailda doctor
+mailda deploy
+mailda upgrade
+mailda backup
+mailda restore
+```
+
+CLI requirements:
+
+- Deterministic behavior and stable exit codes.
+- Human, JSON and NDJSON output with stable schemas; result to stdout and diagnostics to stderr.
+- `--dry-run`, `--plan`, `--wait`, `--timeout`, `--if-match` and `--idempotency-key` support.
+- `--no-input` CI/cron mode that never prompts and fails explicitly on missing input.
+- Pagination, streaming and filtering.
+- Explicit, always-visible organization/environment context and immutable-ID targeting.
+- Keychain/vault credential use; no secret in command arguments.
+- Shell completion and generated reference docs.
+
+Stable exit categories:
+
+| Code | Meaning |
+|---:|---|
+| 0 | Success or replay of an already successful idempotent command |
+| 2 | Local usage/schema validation error |
+| 3 | Authentication required or expired |
+| 4 | Authorization or policy denial |
+| 5 | Resource not found |
+| 6 | Version, conflict or precondition failure |
+| 7 | Approval required or pending |
+| 8 | Rate, quota or budget limit |
+| 9 | Remote operation failed with known outcome |
+| 10 | `outcome_unknown`; the provider may have accepted the effect—inspect/reconcile the receipt before any retry |
+
+```bash
+mailda mailbox list --json
+mailda message search --mailbox mbx_sales --query 'after:2026-08-01' --ndjson
+mailda send propose --from sales@example.com --draft drf_01J \
+  --idempotency-key crm-lead-728-ack --json
+mailda butler validate sales-enquiries.yaml --json
+mailda butler test sales-enquiries.yaml --fixture fixtures/prompt-injection.eml
+mailda butler publish sales-enquiries.yaml --plan --json
+mailda butler kill but_sales --reason incident-4821 --wait
+```
+
+### SDKs
+
+- TypeScript, Python and Go generated from OpenAPI.
+- Shared error, pagination, receipt and webhook types.
+- Provider/connector SDK for extensions.
+
+### Agent Skill
+
+The skill teaches the agent to:
+
+1. Inspect its identity/scopes.
+2. Query current state and explicit resource IDs.
+3. Plan/dry-run consequential operations.
+4. Create drafts/send intents rather than bypass approval.
+5. Respect classifications, denials and required reviewers.
+6. Use idempotency keys.
+7. Verify command receipts/result state.
+8. Never request, print or paste provider secrets.
+
+The skill grants nothing. OAuth/delegation supplies authority.
+
+### MCP
+
+The remote MCP server maps narrow typed tools such as `search_messages`, `create_draft`, `propose_send`, `get_approval` and `run_butler` onto the same API. It does not expose a general shell/`execute_cli` tool. It uses its own audience/scopes, OAuth protected-resource metadata and normal authorization discovery. There is no upstream token passthrough, content-size bypass or separate authorization semantics.
+
+### Surface-parity contract
+
+Every material mutation maps to a named operation in one generated command catalog. The operation defines organization/environment, authenticated principal, target and expected version, typed input/output, required capability, idempotency behavior, plan mode, policy obligations, approval semantics, audit correlation and whether its result can become ambiguous.
+
+| Behavior | Web/PWA | CLI/API/SDK/agent surface |
+|---|---|---|
+| Discover capability | Available/disabled control with explanation | Capability query with action, resource and constraints |
+| Preview mutation | Effect/blast-radius preview | `--plan` or dry-run result from the same command |
+| Execute mutation | Governed command | Same governed command and schema |
+| Await approval | Status, reviewer context and notification | Stable `approval_required`, approval ID and poll/event route |
+| Explain denial | Plain language plus decision ID | Structured code, obligations and decision ID |
+| Track long operation | Progress/run view | Operation/run ID plus polling or event stream |
+| Retry safely | Contextual retry/reconcile action | Declared idempotency and typed retry/reconcile semantics |
+| Inspect evidence | Linked policy/audit/run records | Query by correlation and immutable IDs |
+
+The Web application may offer a richer composition flow, but it has no private privilege or mutation endpoint. Each consequential confirmation can reveal its command name and a redacted CLI equivalent. Conversely, every CLI command used in production has an authorized Web/Admin location for status, cancellation/revocation where possible, and audit investigation. A contract test enumerates the catalog and fails release qualification if a material UI operation lacks CLI/API coverage or any programmatic operation lacks an administrative visibility path.
+
+---
+
+## 20. Search, contacts, cases and connectors
+
+### Search
+
+- D1 for organization metadata and relational filters.
+- D1/DO SQLite FTS projection in the default Node; optional external SearchAdapter for larger deployments.
+- Optional organization-filtered semantic projection.
+- ACL filters injected server-side before query and rechecked on fetch.
+- Boolean, phrase, field, date, address, attachment, label, delivery and case filters.
+- OCR/extracted attachment text subject to policy.
+- Search is rebuildable and never authoritative.
+
+### Contacts
+
+- Person/company and address books.
+- Known/verified/trusted correspondent status.
+- Relationship owner/team.
+- Consent, suppression and do-not-contact state.
+- Communication history and CRM external IDs.
+- Automation eligibility and risk flags.
+
+### Connectors
+
+- Gmail API incremental history and migration.
+- Microsoft Graph delta sync and migration.
+- Generic IMAP import.
+- CRM, help desk, ERP/accounting, storage, chat and scheduling.
+- Named, organization-owned OAuth/service grants.
+- Field/action/data-class allowlists.
+- Secret rotation, health, rate limits, retries, audit and environment separation.
+- Signed webhooks with replay protection and delivery history.
+
+Each outbound webhook has a fixed verified destination, event allowlist, payload schema, data-class/content scope, owning principal and DLP policy. Payloads default to opaque IDs and minimum metadata; bodies, addresses, attachment material or download URLs require explicit authorization. Destination changes require re-consent and cannot be populated from an email, webhook or LLM value. Redirects and DNS resolution are pinned/validated to prevent SSRF and rebinding.
+
+Provider-backed mailboxes explicitly declare whether Mailda is mirror, migration target, archive or authority. Conflict and source-of-truth status are visible in the UI.
+
+---
+
+## 21. Security, abuse and compliance
+
+### Message security
+
+- SPF/DKIM/DMARC/ARC handling.
+- Spam, phishing, impersonation, BEC, malicious-link and malware detection.
+- HTML sanitization in sandboxed separate-origin iframe.
+- No scripts/forms/storage; remote images blocked or privacy-proxied.
+- Unicode/confusable domain warning.
+- MIME nesting/decompression/parser time limits.
+- Attachment quarantine and safe preview.
+- DLP labels and egress controls.
+- Auto-reply and forwarding loop protection.
+
+Quarantine access is split into metadata read, content read, original download, release and security override. Release/override requires reason, step-up authentication and audit according to policy. A Butler may quarantine an item but can never release its own item, override a scanner verdict or download an original attachment merely because it triggered the quarantine.
+
+### Organization and deployment isolation
+
+- Organization and environment ID on every row/event/object/index key, even though one production Node is claimed by one organization.
+- Per-organization/deployment cache and index namespaces plus encryption hierarchy.
+- No public object access.
+- Separate regulated/dedicated deployment options.
+- Cross-organization authorization/fuzz tests for Control, imports, restore targets and every optional shared service.
+
+### Compliance
+
+- Retention by org, mailbox, label, case, geography and data class.
+- Legal hold overrides deletion.
+- eDiscovery matter with purpose/scope/approval.
+- Read/export audit at message and attachment level.
+- Evidence export with hashes, manifest, reason and chain of custody.
+- Customer-managed keys where required.
+- Data residency and external-processor restrictions.
+- Immutable/tamper-evident audit export and SIEM integration.
+
+### Break glass
+
+- Hardware-backed recovery identities.
+- Time-limited access with reason/ticket and owner/security notifications.
+- No standing platform-support content access.
+- Private/regulatory content requires two distinct recovery principals unless the organization has explicitly adopted and recorded a lawful alternative.
+- Domain ownership proof alone never unlocks historical mail.
+- Break-glass cannot edit/delete its own audit, eligibility or expiry and is revoked automatically at the bound deadline.
+
+---
+
+## 22. Eventing, consistency and reliability
+
+Mailda uses at-least-once events with idempotent consumers.
+
+```text
+domain transaction + outbox row
+→ event publisher
+→ queue/event bus
+→ consumer idempotency record
+→ internal or external effect intent
+→ result/reconciliation
+```
+
+Representative events:
+
+```text
+mail.ingress.accepted
+mail.message.normalized
+mail.security.completed
+mail.delivery.created
+mail.mailbox.changed
+mail.thread.resolved
+mail.butler.triggered
+mail.approval.requested
+mail.submission.queued
+mail.provider.accepted
+mail.delivery.status_changed
+mail.forwarding.status_changed
+mail.retention.action_due
+```
+
+Rules:
+
+- Data and outbox commit in one transaction.
+- Every consumer records `(consumer, event_id)`.
+- Every external effect has a stable effect key.
+- Failed work retries with bounded backoff then enters visible DLQ.
+- Projections rebuild from canonical data/events.
+- Reconciliation compares receipt, blob, message, delivery, send attempt and index state.
+
+Critical failure controls:
+
+- Duplicate/out-of-order events: idempotency and version checks.
+- Partial DB/blob/queue write: durable receipt/outbox plus sweeper.
+- Provider accepted but response lost: `outcome_unknown` and reconciliation, no blind resend.
+- Search lag: visible freshness; message remains available by canonical lookup.
+- Queue backlog: per-organization/Butler/mailbox quotas, circuit breakers, DLQ and health alerts.
+- Model outage: deterministic route/human review.
+- DNS drift: continuous check, staged cutover and rollback.
+
+---
+
+## 23. Observability and audit
+
+Every flow carries:
+
+```text
+trace_id
+receipt_id
+message_id
+delivery_id
+mailbox_change_number
+submission_id
+provider_attempt_id
+butler_run_id
+policy_decision_id
+actor_id
+delegator_id
+```
+
+Operational dashboards cover:
+
+- Inbound accepts/rejects/deferrals and ingress latency where the active adapter exposes them.
+- Parser/security failure and quarantine rates.
+- Queue depth/age/DLQ.
+- Search/index freshness.
+- Outbound acceptance, bounce, complaint and delivery.
+- Domain/IP/stream reputation.
+- Forwarding success and loop suppression.
+- Butler run status, approval waits, spend and circuit breakers.
+- JMAP/IMAP/SMTP sessions and errors when a Full Mail Adapter is installed.
+- Storage, API, integration and LLM cost by organization, deployment, environment and cost center.
+
+Audit records are append-only and hash-linked per organization, with periodic roots in independent immutable storage. Ordinary operational logs contain opaque IDs and redacted metadata, not bodies, addresses or attachment names.
+
+### Service objectives
+
+| Capability | Target |
+|---|---|
+| Accepted inbound becomes visible | 99.9% within 60 seconds |
+| Mailbox command availability | 99.95% |
+| Node mailbox/work command latency | p95 below 500 ms excluding external providers |
+| Search projection freshness | 99% within 60 seconds |
+| Approved outbound handoff | 99.9% within 60 seconds |
+| Protected-command audit persistence | Synchronous with command |
+
+Remote delivery finality remains provider/recipient dependent and is shown per attempt.
+
+---
+
+## 24. Backup and disaster recovery
+
+- A backup manifest covers the D1 catalog and every metadata shard, raw MIME, attachments, policies, relationships, Butler versions, connector metadata, audit roots, event watermark and resource/trigger configuration. Durable Object state is reconstructable and is exported only for diagnostics—not required for canonical restore.
+- Backup establishes a cut event/watermark, records D1 Time Travel bookmarks where supported, snapshots or logically exports every D1 shard and captures the post-cut event range needed for replay. If the selected D1 method cannot provide a compatible online cut, protected mutations enter a visible maintenance window rather than claiming false consistency.
+- D1 FTS/search virtual tables are excluded/recreated when platform export cannot handle them; they are verified as rebuildable projections. Restore orders catalog, shards, R2 evidence and event replay before rebuilding DO/search state.
+- R2 objects are content-addressed in the signed manifest with version/delete-marker information. A same-account R2 bundle is a local checkpoint, not independent disaster recovery. The DR objective requires a customer-selected independent account/provider target with versioning/Object Lock or equivalent immutability.
+- Encrypted, signed bundles carry schema/adapter/release compatibility and can be restored by open tooling without Mailda Control.
+- Raw MIME and attachment objects are reconciled against message/blob rows and content hashes before a backup is marked verified.
+- Search and semantic indexes are disposable projections and rebuild from canonical content.
+- Secrets are not copied into ordinary backups. The recovery package records secret references and requires the administrator to restore or rotate secret values deliberately.
+- The CLI supports `mailda backup create|verify|list|export` and `mailda restore plan|run|verify` with dry-run, integrity checks and explicit target environment.
+- Upgrades take or verify a recoverable checkpoint before destructive migrations.
+- Provider Connected mode backs up Mailda state and optionally approved message evidence; the provider remains responsible for its source mailbox recovery.
+- Full Mail Adapter mode adds adapter-specific mailbox/spool/configuration backups and restoration drills.
+- Message-level, mailbox-level, organization-level and clean-account restoration are tested.
+
+| Failure | RPO | RTO |
+|---|---:|---:|
+| Worker process/deployment | 0 canonical data loss | Under 15 minutes with configured rollback operator/Control; otherwise documented manual Cloudflare/CLI rollback |
+| Queue consumer/backlog | 0 accepted-event loss | Under 30 minutes after recovery |
+| Accidental logical deletion without legal hold | Under 15 minutes | Under 2 hours |
+| Customer Cloudflare account/region incident | Latest verified external backup | Under 4 hours to a clean account target |
+| Search/index | 0 canonical loss | Rebuild asynchronously |
+
+These are target objectives only when the required Time Travel/change journal, external backup destination, credentials, tested capacity and rollback operator are configured. Admin and `mailda doctor` calculate the actual achieved protection window from last verified backup/bookmark/replication/restore drill instead of displaying aspirational numbers.
+
+The most dangerous mail failure is “accepted but absent.” Raw-message persistence, receipt/idempotency state, outbox reconciliation and recurring count/hash accounting are built specifically to detect and prevent it. Mailda must never claim a stronger RPO/RTO than the selected Cloudflare/provider/adapter services can actually support.
+
+---
+
+## 25. Engineering stack and repository
+
+### Selected stack
+
+| Layer | Choice |
+|---|---|
+| Web/PWA | React + TypeScript, TanStack Router/Query and an accessible Mailda component system |
+| Node runtime | One Cloudflare project deploying least-privilege Hono/TypeScript Workers, Static Assets and typed service bindings |
+| API/contracts | OpenAPI 3.1 + JSON Schema, generated clients and runtime validation |
+| Default control data | D1 plus repository layer and transactional outbox |
+| Contention/realtime | Durable Objects with narrow ownership and rebuildable presence/counters/rate/FTS state |
+| Blob/evidence | R2 object storage, encrypted export/backup and optional object-store adapter |
+| Async | Cloudflare Queues + transactional outbox |
+| Durable orchestration | Cloudflare Workflows + Mailda run ledger |
+| Search | D1/DO SQLite FTS projection + optional external/semantic SearchAdapter |
+| Policy conditions | CEL or equivalently pure typed expression engine |
+| CLI/scaffolder | TypeScript npm packages with optional signed standalone binaries; generated against OpenAPI contracts |
+| SDKs | TypeScript, Python and Go |
+| Optional provider adapters | Gmail API, Microsoft Graph and named SMTP/HTTP connectors |
+| Optional mail core | Stalwart-based `MailCoreAdapter` reference deployment and conformance harness |
+| Optional scale store | PostgreSQL through Hyperdrive behind `ControlStoreAdapter` |
+| Observability | OpenTelemetry, metrics/log/traces, SIEM export |
+| Infrastructure | Wrangler + Deploy to Cloudflare metadata; OpenTofu/Pulumi modules for advanced adapters |
+
+### Monorepo
+
+```text
+apps/
+  node/                    # self-contained scaffold, planner and Worker graph
+  control/                 # optional, open-source hosted fleet service
+  docs/
+  developer-portal/
+
+apps/node/workers/
+  bootstrap/
+  gateway/
+  ingress/
+  processor/
+  content/
+  effects/
+  scheduler/
+  operations/
+
+apps/node/shared/
+  identity-authorization/
+  directory-domain-mailbox/
+  mail-work-cases/
+  butlers-approvals/
+  llm-connectors/
+  compliance-operations/
+
+packages/
+  api-contract/
+  domain-model/
+  authz-model/
+  policy-dsl/
+  butler-dsl/
+  event-schemas/
+  ui-system/
+  sdk-typescript/
+  sdk-python/
+  sdk-go/
+  cli/
+  agent-skill/
+  mcp-server/
+  test-fixtures/
+  create-mailda/
+
+adapters/
+  cloudflare-email/
+  gmail/
+  microsoft-graph/
+  smtp-relay/
+  mailcore-stalwart/
+  scanners/
+  search/
+
+infra/
+  cloudflare/
+  mailcore/
+  postgres/
+  enterprise/
+
+packs/
+  reference/
+  certified/
+
+skills/
+  mailda-agent/
+```
+
+`api-contract`, `domain-model`, `authz-model` and `event-schemas` are foundational. They generate or validate UI/API/CLI/SDK/MCP behavior so channel-specific powers cannot drift. `apps/node` is one independently deployable project even though it provisions several least-privilege Workers; the Cloudflare deploy-button path cannot assume installation of the rest of the monorepo.
+
+---
+
+## 26. Engineering workstreams
+
+These are parallel ownership tracks for one complete product, not reduced releases.
+
+| Workstream | Full ownership |
+|---|---|
+| Product foundations | Domain model, contracts, design system, localization and organization/deployment boundaries |
+| Identity/governance | Auth, RBAC/ReBAC/ABAC, policy, approval, audit, lifecycle |
+| Mail connectivity | Cloudflare Native, provider connectors, transport capabilities and optional MailCore/JMAP/IMAP/SMTP certification |
+| Ingress/security | Receipt, MIME, scanning, quarantine, rendering, threading |
+| Outbound/deliverability | Draft/send intents, relays, bounces, complaints, reputation |
+| Web/PWA | Personal mail, shared inboxes, cases, approvals, admin center |
+| Butler runtime | DSL, visual editor, scheduler, execution, replay, extensions |
+| AI control | Providers, profiles, redaction, budgets, evals, model observability |
+| Developer platform | OpenAPI, CLI, SDKs, Agent Skill, MCP, webhooks, sandbox |
+| Connectors | Gmail, Graph, IMAP migration, CRM/ERP/files/chat/calendar |
+| Compliance/reliability | Retention, hold, eDiscovery, DR, SLOs, operations |
+
+### Dependency graph
+
+```mermaid
+flowchart TD
+    contracts["Domain and deployment contracts"]
+    control["Identity, authorization and audit"]
+    mail["Mail core and canonical pipelines"]
+    product["Web, cases and admin"]
+    automation["Butlers, AI and integrations"]
+    surfaces["CLI, SDK, Skill and MCP"]
+    ops["Security, deliverability and DR"]
+
+    contracts --> control
+    contracts --> mail
+    control --> product
+    mail --> product
+    control --> automation
+    mail --> automation
+    control --> surfaces
+    mail --> surfaces
+    product --> ops
+    automation --> ops
+```
+
+Teams can build in parallel after contracts and invariants are ratified. Production traffic is enabled only when the complete acceptance gates for the relevant organization/deployment mode pass.
+
+---
+
+## 27. Test and certification program
+
+- Authorization matrix tests for every action/resource/principal/relation/condition.
+- Cross-organization property and fuzz tests for Control/shared services plus wrong-environment/resource-confusion tests inside a Node.
+- OAuth PKCE, redirect, token-reuse, audience/confused-deputy and revocation tests.
+- Browser CSRF/login-CSRF, malicious Origin/CORS, session-fixation, clickjacking/CSP and cached-content revocation tests.
+- OpenAPI contract tests shared by UI, CLI, SDK and MCP.
+- Butler compiler tests for types, taint, capabilities, cycles, budgets and dependency locks.
+- Adversarial taint tests for recipient/forward redirection, attachment exfiltration, connector/CRM/ERP target mutation and secret/model-profile selection.
+- Extension isolation tests for sandbox escape, SSRF/DNS rebinding, secret/binding probing and CPU/memory exhaustion.
+- Frozen-clock deterministic simulation/replay.
+- MIME corpus: Gmail, Outlook, Apple, Exchange, Unicode, nested MIME, TNEF, signed/encrypted, invites, malformed and large messages.
+- MIME/parser/HTML/attachment fuzzing and archive-bomb tests.
+- Cloudflare Email integration/limit tests and provider connector reconciliation; SMTP/JMAP/IMAP conformance only for the Full Mail Adapter profile.
+- Duplicate queue, provider timeout, retry storm, DB failover and object-store chaos tests.
+- Prompt-injection/data-exfiltration evaluations for every approved LLM profile.
+- Replay-mode tests proving recorded simulations cause no provider/model/effect call and retries cannot duplicate mail or connector writes.
+- DLP quality/exception measurement.
+- Deliverability sink accounts across major mailbox providers.
+- Migration reconciliation by counts, IDs and attachment hashes.
+- SAST, DAST, dependency/secret scanning, SBOM and signed build provenance.
+- Penetration tests and periodic third-party review.
+- Key rotation and full restore drills.
+
+### Release qualification gates
+
+#### Deployment and ownership
+
+- A clean Cloudflare account reaches equivalent healthy Nodes through one-click and CLI paths.
+- `deploy --plan` identifies resources, permissions, costs/prerequisites, DNS/MX conflicts and known limits before mutation.
+- Production binding inspection proves ingress/processor/content/gateway/scheduler/operations/extension Workers cannot reach undeclared secrets, stores or external-effect APIs.
+- The credential store falls back safely when Secrets Store is unavailable/at quota; per-user/provider OAuth credentials remain envelope-encrypted rather than consuming one platform secret each.
+- UI, mail, API, Butlers, CLI/MCP, backup and source-based upgrades work without a Mailda-operated account, licence server or telemetry endpoint.
+- Disconnecting Mailda Control changes no local authority or data availability.
+
+#### Cloudflare Native mail
+
+- A real internet message reaches Email Routing, is stored losslessly in R2, canonically indexed/delivered in D1, coordinated through rebuildable DO state and appears only in authorized views.
+- Unknown, suspended, archived, catch-all, alias, group and Butler recipients follow explicit tested routes.
+- Local storage plus verified forwarding exposes two independent outcomes and labels the external copy nonsynchronized.
+- `transparent_forward` discloses bounded synchronous checks, while `governed_relay` proves deep scan/DLP before reconstructed submission; neither is mislabeled as the other.
+- A permitted human/script/Butler can propose, satisfy policy/approval, send through the selected adapter and see the exact accepted/rejected/`outcome_unknown` state plus Sent evidence.
+- A receive-capable clean account passes in receive-only state when Email Sending is unavailable; `doctor` distinguishes entitlement states and an alternative adapter can be selected without source changes.
+- Bulk/marketing intent is rejected by product/provider policy rather than silently submitted through Cloudflare.
+
+#### Provider and Full Mail modes
+
+- Gmail/Microsoft adapters survive duplicate notifications, cursor gaps, throttling, token rotation and revocation without duplicate visible effects.
+- Source-of-truth and conflict behavior matches the advertised capability manifest.
+- Provider-native actions are marked/reconciled as post-facto and never presented as Mailda-preapproved.
+- MailCore JMAP/IMAP/SMTP appears only after its conformance suite passes; the UI never advertises an absent protocol.
+- Full Mail Adapter certification includes synchronous authorization/submission hooks, outage spool behavior, independent hosting/TLS/monitoring and upgrade/restore; otherwise native actions receive the external/post-facto label.
+
+#### Governance and automation
+
+- Equivalent UI, CLI, REST, MCP, Butler and service-principal actions produce equivalent authorization, policy, approval and audit.
+- Organization/Mailbox Admins without supervised-content grants cannot read messages, search-result snippets or attachments.
+- Case/approval relations cannot reveal unauthorized body, snippet, participant, attachment-name, count, notification or search-result data.
+- A creator cannot self-grant content/supervision/break-glass authority, weaken audit/retention or activate its own high-risk role/policy change.
+- A broader sponsor role/token/mailbox grant cannot expand an existing Butler or agent capability without republish/re-consent.
+- Editing any approval-bound field invalidates approval.
+- Tightened policy, approval revocation or lost approver eligibility after approval but before dispatch prevents execution.
+- Replaying events cannot duplicate deliveries, cases, runs, webhooks or external effects.
+- `inspect`, `simulate-recorded`, `rerun-current` and `retry-effect` have distinct certified side-effect behavior.
+- LLM output cannot directly send, forward, export, delete, grant or invoke a connector.
+- Every run traces Butler/profile/prompt/model/input/source/approval/effect/cost versions.
+- Supervised-session expiry/revocation closes cursors, streams, previews, attachment URLs, exports and API/MCP access; dual reviewers are distinct and notification jobs cannot be suppressed by the investigator.
+- JMAP/IMAP/SMTP suspension or ACL revocation affects an already-connected session before its next protected operation; SMTP cannot bypass the send-intent path.
+- Replayed/expired/out-of-scope Mailda Control commands fail; local Control revocation leaves the Node operable.
+
+#### Experience and accessibility
+
+- All daily/admin operations are keyboard-complete and pass the WCAG 2.2 AA automated plus manual test matrix, including compose, approval, Butler graph/YAML, supervision and error recovery.
+- Core reading, triage, approval, reply, pause and revoke flows work at 320 CSS pixels and across supported mobile/PWA breakpoints without hidden required controls.
+- Loading, empty, permission-hidden, validation, conflict, offline, degraded, retryable, permanent and `outcome_unknown` states match the shared contract and never claim premature success.
+- Draft revisions survive refresh/crash and policy-controlled offline editing without losing recipients, attachments or provenance; reconnect revalidates the whole effect.
+- Supervised access and production/test context remain visibly persistent and are not conveyed by color alone.
+- English, Simplified Chinese and RTL stress fixtures render without clipped controls or logic dependent on translated text length.
+- The command-catalog parity test proves every material UI mutation has CLI/API coverage and every programmatic production operation has Web/Admin status and audit visibility.
+
+#### Operations and recovery
+
+- Admin UI and `mailda doctor --json` expose decomposed Node/provider/queue/storage/Butler health.
+- Poison mail and runaway Butlers are isolated from unrelated receipt/login/queues.
+- Compatible code rollback succeeds; destructive migration cannot begin without a verified restorative backup.
+- Mixed-version tests cover Email Routing, Queues, Cron, Workflows, Durable Object migrations, service bindings and static asset/API affinity—not only HTTP traffic.
+- Backup restores into a clean account, accepts newly supplied secrets, verifies hashes/row counts and reaches readiness before DNS cutover.
+- Actual RPO/RTO shown in Admin derives from verified bookmarks/external backups/restore drills and degrades visibly when prerequisites lapse.
+- Export produces original `.eml`, documented metadata, attachments, Butler definitions, policy/audit and signed manifests appropriate to scope.
+
+---
+
+## 28. Definition of complete
+
+The **Mailda distribution** is complete only when every adapter and surface promised by this document passes its own certification suite. An individual **Mailda Node** is production-ready when the selected connectivity/adapters and enabled capabilities pass their applicable readiness gates; it does not need to enable Gmail, Microsoft and Full Mail Adapter simultaneously.
+
+Mailda is complete when an organization can, without hidden manual platform intervention:
+
+1. Create an organization, choose from placement/residency capabilities actually supported by its plan/adapters, configure SSO/SCIM and establish recoverable admins.
+2. Scaffold/deploy a Node into a customer Cloudflare account, reproduce it from the generated repository and operate it without a Mailda commercial account.
+3. Add a domain/subdomain or provider connector, pass DNS/security/deliverability tests and cut over safely without misrepresenting MX authority.
+4. Create, suspend, archive, restore and offboard employees with full mailbox lifecycle.
+5. Create personal, shared, role, Butler, agent, system, archive and quarantine mailboxes.
+6. Use web/PWA in Cloudflare Native mode and certified JMAP/IMAP/SMTP clients only where a Full Mail Adapter declares them.
+7. Receive, scan, store, search, reply, forward, organize and export email within the selected adapter's declared capabilities.
+8. Configure local delivery plus external mirrors with honest synchronization semantics.
+9. Assign shared work, use internal notes, SLAs, queues and email-native cases.
+10. Create personal/team/org Butlers through visual and YAML editors that round-trip to one AST.
+11. Run deterministic event, cron, wait, webhook and integration workflows safely.
+12. Configure model providers/profiles/budgets/evals and invoke AI only at explicit nodes.
+13. Enforce identical authorization/policy/approval behavior across UI, protocol adapter, CLI, API, Butler, MCP and Agent Skill.
+14. Give admins the chosen level of organizational supervision with attributable, time-bound content access.
+15. Connect any selected Gmail, Microsoft 365 or optional mail-core/migration adapter with visible authority/conflict state; the shipped distribution separately certifies each advertised adapter.
+16. Diagnose delivery, bounce, complaint, suppression, workflow, storage and connector failures without blind retries.
+17. Apply retention, legal hold, eDiscovery and evidence export.
+18. Revoke a user, token, Butler or agent and have authority disappear immediately.
+19. Upgrade, migrate, roll back, back up and restore a message, mailbox and whole Node using open tooling.
+20. Disconnect Mailda Control and continue local mail, administration, Butlers, schedules, API/CLI and recovery.
+
+---
+
+## 29. Architectural decisions to lock
+
+1. **The canonical product is Mailda Open: a complete, single-organization Node deployed into the customer's Cloudflare account.**
+2. **The Node has no mandatory Mailda account, licence server, content export or hosted control-plane dependency.**
+3. **Cloudflare Native is an operational web/API mail system, not falsely advertised as a standards-complete Google Workspace replacement.**
+4. **Existing employee mail stays in Gmail/Microsoft through provider connectors unless the organization deliberately installs a Full Mail Adapter.**
+5. **A mature JMAP/IMAP/SMTP core sits behind `MailCoreAdapter`; Mailda does not reimplement decades of protocol behavior in Workers.**
+6. **D1/R2/DO/Queues/Workflows are the default BYOC data plane; optional store/search/mail-core adapters extend rather than replace the product contract.**
+7. **One authorization and command plane governs every surface.**
+8. **Admin content supervision is explicit, configurable and audited—not an accidental consequence of mailbox administration.**
+9. **Butlers and the CLI are deterministic; AI exists only in explicit nodes or an external agent using deterministic commands.**
+10. **LLMs have data access but no intrinsic authority.**
+11. **Approval binds exact content/effect and any material edit invalidates it.**
+12. **UI, CLI, SDK, Skill and MCP parity is generated from shared contracts.**
+13. **Raw MIME is immutable evidence; indexes and AI outputs are derivatives.**
+14. **Unknown external-send outcomes reconcile instead of blindly retrying.**
+15. **Forwarding is not synchronization; provider connectors implement real sync where selected.**
+16. **Security, deliverability, compliance, backup and recovery remain in the open installation.**
+17. **Paid products sell managed responsibility, maintained outcomes and assurance—not basic safety or permission to use customer-owned data.**
+18. **One Mailda Node is one deployable project composed of least-privilege Workers; deployment simplicity does not justify one principal holding every public parser, data binding and secret.**
+19. **D1 catalog/shards plus R2 are canonical in Cloudflare Native; Durable Objects serialize and cache only rebuildable state.**
+20. **Provider-native actions are post-facto observed unless a certified synchronous adapter proves otherwise.**
+21. **Exact approval binds a canonical semantic effect/composition manifest; byte-exact wire identity is claimed only for a guaranteeing raw-MIME adapter.**
+
+---
+
+## 30. Open-source and commercial specification
+
+### Open product boundary
+
+The default installation contains the dashboard, API/OAuth resource server, authorization and policy system, Cloudflare mail adapters, D1/R2/DO/Queue/Workflow state, Butler runtime, LLM policy gateway, audit, backup/export/restore, CLI, MCP and Agent Skill. It installs and operates without a Mailda account, mandatory telemetry or licence server.
+
+Mailda sells responsibility, assurance, maintained business outcomes and convenience—not permission to use a customer's own mail system.
+
+```mermaid
+flowchart LR
+    node["Customer-owned Mailda Node"]
+    data["Customer mail, keys and Cloudflare bill"]
+    control["Optional Mailda Control"]
+    services["Assurance, AI and supported packs"]
+
+    node <--> data
+    node -. "approved metadata and commands" .-> control
+    control --> services
+```
+
+Disconnecting commercial services leaves local authentication, mail, users, Butlers, schedules, policy, CLI/API, audit, backup and administration running.
+
+### Licence and contribution decision
+
+| Artifact | Licence |
+|---|---|
+| Node runtime, web/admin UI and self-hostable Control code | Apache-2.0 |
+| CLI, SDKs, Agent Skill, Butler schema, connector SDK and examples | Apache-2.0 |
+| Reference Mailda packs | Apache-2.0 |
+| Third-party/certified pack content | Declared OSI-approved or commercial content licence; never a hidden runtime licence |
+| Documentation | CC BY 4.0 |
+| Mailda/迈达 name, logo, “Official” and certification marks | Trademark policy; not granted by the software licence |
+
+Apache-2.0 is selected to maximize enterprise, agency and embedded adoption and provide an express patent grant. It accepts that competitors can host forks; the company competes through the official brand, operating service, security response, interoperability suite, maintained packs, integration expertise and distribution. AGPL is deliberately not selected for the initial product because procurement friction conflicts with customer-owned enterprise deployment. This decision must be reviewed with qualified counsel before outside contributions are accepted.
+
+The contributor model uses a DCO or a simple contribution agreement consistent with the public licence. The trademark policy permits truthful “based on Mailda” descriptions but prevents forks from representing themselves as Mailda Control, an official build or a certified provider.
+
+### The free installation is complete
+
+Mailda Open includes, subject only to the customer's infrastructure:
+
+- Unlimited product users, mailboxes, aliases, policies and Butlers.
+- Complete RBAC/ReBAC/ABAC, admin supervision controls and audit.
+- Security fixes, backup/export/restore and account lifecycle.
+- Deterministic UI/API/CLI/SDK/MCP/Agent Skill operations.
+- Butler visual/YAML editor, tests, schedules, approvals, replay and kill switches.
+- Customer-managed LLM providers/keys and local cost governance.
+- Cloudflare, provider and documented mail-core/relay connectors.
+- Local observability and recovery sufficient to operate the Node.
+- Portable source-level access to all customer-held state.
+
+Basic security, SSO capability, authorization, audit, backup, export, CLI/MCP and the Butler engine are never paid-only. Subscription lapse never disables the Node or withholds the customer's data.
+
+Every public release and security fix is source-published, signed and usable without payment. Local evidence generation remains free. Paid Control/Assurance sells automated rollout, channel policy, canaries, scheduling, LTS coordination, managed exercises, attestation assistance, response commitments and accountable operators—not trusted binaries or fixes withheld from self-hosters.
+
+### Paid Mailda Control/Fleet
+
+Mailda Control is an optional hosted operating layer for one or many customer-owned Nodes:
+
+- Granular, revocable Cloudflare OAuth connection.
+- Guided install and configuration health.
+- Signed release channels, migration planning, maintenance windows, canary, upgrade and rollback.
+- Fleet inventory across customer accounts and environments.
+- DNS, Email Routing, bindings, D1/R2/Queue/Workflow, OAuth and policy drift detection.
+- Queue, schedule, delivery, bounce/complaint, security, budget and Butler health.
+- Synthetic send/receive tests.
+- Backup freshness and restore verification.
+- Security advisories, LTS, incident coordination and time-bound support sessions.
+
+Content-blind operation is the default: bodies, attachments, prompts, address books and provider keys remain in the customer account. A content-processing service is separately opted into by profile, data class, region, provider and retention.
+
+The paid Control SKU is Mailda-operated hosting, infrastructure, fleet operations and support for the same self-hostable Apache-2.0 code. Self-hosters may reproduce its product features; they do not receive Mailda-operated infrastructure, SLA, incident ownership or certification.
+
+Planning prices use organization/deployment rather than seat, mailbox or raw-email volume:
+
+| Offer | Indicative price | Customer buys |
+|---|---:|---|
+| Mailda Open | $0 | Complete self-managed software and community support |
+| Mailda Control | $39/organization/month | One production Node, signed updates, drift/health/cost and backup checks |
+| Mailda Operations | $199/organization/month | Multiple environments, advanced alerts, deliverability/run monitoring and priority support |
+| Mailda Assurance | From $599/organization/month | LTS, restore exercises, security/compliance evidence and response objectives |
+| Agency/MSP Control | From $399/month plus client fee | Multi-client fleet, delegated support and partner operations |
+| Enterprise | From $24,000/year | Contracted SLA, named support, architecture/security review and procurement/compliance support |
+
+These are commercial hypotheses to validate, not constants embedded in source or protocol.
+
+### Certified Butler packs
+
+The pack schema and runtime are Apache-2.0. Every pack declares its content licence before installation. Any acquired pack version remains runnable/exportable after subscription expiry without phone-home or decryption keys; subscription buys registry access, new certified versions, evaluations, connector maintenance and support. Customers pay for a maintained operational product:
+
+- Production connector maintenance.
+- Workflow definitions, schemas, dashboards, policies and templates.
+- Realistic mail fixtures and regression assertions.
+- Prompt-injection, DLP and model evaluation suites.
+- Supported provider/model profiles and cost baselines.
+- Signed updates, migrations and outcome support.
+
+Candidate packs include Sales Enquiries, Support Triage/SLA, Invoice/AP, Claims Intake, Property Management, Membership Administration, Procurement and Compliance Review. General packs may price around $49–$499/organization/month; regulated/high-value packs may start around $999/month plus implementation.
+
+The marketplace supports free/paid packs, declared permissions/data flows, signatures, compatibility, verified publishers, security review and version pinning. Customers may install from Git or an internal registry forever. A planning creator/platform split is 80/20.
+
+### Mailda AI
+
+Customer-owned provider credentials remain first-class and free. Optional Mailda AI offers one governed endpoint/invoice, provider and region routing, failover, zero-retention enforcement, redaction/DLP, prompt/profile registry, evaluations, cost allocation and anomaly alerts.
+
+Pricing is transparent provider pass-through plus a platform minimum or disclosed 15–25% management margin. A customer can return to its own keys without changing Butler semantics. Managed model resale is complementary revenue, not the moat.
+
+### Assurance, services and partner revenue
+
+| Revenue line | What is sold | Indicative shape |
+|---|---|---|
+| Launch/implementation | Domain/mailbox setup, migration, RBAC/policy, first Butlers and integrations | $2,000–$50,000+ project |
+| Ongoing optimization | Evaluation, quality/cost tuning and process expansion | $750–$3,500+ monthly |
+| Enterprise assurance | Security response, LTS, SLA, DPA, reviews, SIEM and restore exercises | $24,000–$100,000+ annually |
+| Deliverability/Postmaster | Authentication, reputation, suppression and incident operations | Monthly per-domain retainer |
+| Partner/MSP program | Training, certification, escalation, fleet and co-selling | Partner fee and reseller margin |
+| Hosted Mailda | Mailda-operated Node for buyers who do not want BYOC | Per organization plus transparent usage |
+
+Implementation should extract reusable, non-confidential connectors, schemas, fixtures and packs. This turns early service work into compounding product assets instead of permanent bespoke consulting.
+
+### Commercial rules and defensibility
+
+Do not monetize through hidden Cloudflare markup, per-seat friction, mandatory mail-content transit, a subscription kill switch, paid-only security fixes, proprietary pack formats or LLM tokens as the primary business.
+
+The defensible hierarchy is:
+
+1. Evaluated vertical workflow/case models and integrations.
+2. Trust, governance, approval provenance and security response.
+3. Official signed releases, migration/recovery assurance and fleet operations.
+4. Deliverability/abuse expertise.
+5. Partner implementation and distribution.
+6. UI, CLI, Skill, MCP and transport—which are important but reproducible.
+
+The commercial test is whether Mailda measurably reduces response time, manual handling, missed commitments, unauthorized sends and recovery risk. “Open-source inbox on Cloudflare” is distribution; governed operational outcomes are the business.
+
+---
+
+## 31. Primary technical references
+
+- [Cloudflare Email Service](https://developers.cloudflare.com/email-service/)
+- [Deploy to Cloudflare buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
+- [Cloudflare self-managed OAuth clients](https://developers.cloudflare.com/changelog/post/2026-06-03-public-oauth-clients/)
+- [Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/)
+- [Cloudflare Email Service pricing](https://developers.cloudflare.com/email-service/platform/pricing/)
+- [Cloudflare Email Service FAQ](https://developers.cloudflare.com/email-service/reference/faq/)
+- [Cloudflare Email Service limits](https://developers.cloudflare.com/email-service/platform/limits/)
+- [Cloudflare Email lifecycle events](https://developers.cloudflare.com/email-service/platform/event-subscriptions/)
+- [Cloudflare Agents email channel](https://developers.cloudflare.com/agents/communication-channels/email/)
+- [Cloudflare Agentic Inbox reference application](https://github.com/cloudflare/agentic-inbox)
+- [Cloudflare Workers gradual deployments](https://developers.cloudflare.com/workers/versions-and-deployments/gradual-deployments/)
+- [Cloudflare Secrets Store](https://developers.cloudflare.com/secrets-store/)
+- [Cloudflare D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
+- [Cloudflare D1 import/export](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
+- [JMAP core — RFC 8620](https://datatracker.ietf.org/doc/html/rfc8620)
+- [JMAP for Mail — RFC 8621](https://datatracker.ietf.org/doc/html/rfc8621)
+- [JMAP Sharing — RFC 9670](https://datatracker.ietf.org/doc/rfc9670/)
+- [JMAP for Sieve Scripts — RFC 9661](https://datatracker.ietf.org/doc/rfc9661/)
+- [OAuth 2.0 Security Best Current Practice — RFC 9700](https://datatracker.ietf.org/doc/rfc9700/)
+- [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+- [Stalwart Mail Server](https://github.com/stalwartlabs/stalwart)
+
+---
+
+## Final product statement
+
+> **Mailda is the customer-owned, governed mail operating system for an organization: every person, team, program, Butler and AI agent can work through email, while every identity, permission, workflow, model call and external effect remains deterministic, bounded, inspectable and auditable.**
