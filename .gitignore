@@ -12,6 +12,7 @@ dist/
 build/
 .output/
 *.tsbuildinfo
+.turbo/
 
 # Cloudflare / Wrangler
 .wrangler/

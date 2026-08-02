@@ -1,0 +1,22 @@
+{
+  "name": "@mailda/worker-state",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "bench": "vitest run --mode bench",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mailda/budgets": "workspace:*",
+    "@mailda/runtime": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.68.0"
+  }
+}

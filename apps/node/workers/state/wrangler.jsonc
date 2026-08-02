@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The single owner of D1 and every Durable Object class (#4). No public route,
+  // no secrets, no external-effect binding.
+  "name": "mailda-state",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "d1_databases": [
+    { "binding": "CATALOG", "database_name": "mailda-catalog", "database_id": "local", "migrations_dir": "migrations" }
+  ]
+}
