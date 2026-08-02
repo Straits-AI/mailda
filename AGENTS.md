@@ -92,22 +92,34 @@ number is worse than a blank, because a blank prompts a question and a wrong num
 
 #### Receipt format
 
-Every measured tripwire and every objective gets a file in `docs/receipts/`:
+Every measured tripwire, platform limit and objective gets a file in `docs/receipts/`. The
+frontmatter is machine-readable, because **the constants are generated from it**:
 
 ```markdown
 ---
 id: butler-fanout-max-effects
-number: butler.fanout.max_effects = 500
-kind: measured-tripwire
+kind: measured-tripwire        # platform-limit | measured-tripwire | slo
+measured_on: 2026-08-03
+stale_when: a certified pack ships a legitimate fan-out above 200
+values:
+  butler.fanout.max_effects: 500
 ---
 
 **Measured:** 12,400 published Butler versions across the reference and certified packs;
 p99.9 fan-out was 61 effects, maximum observed 143 (bulk-invoice-reconcile v3).
 **Sized:** 500 — 3.5× the worst real workflow. Only a loop bug reaches it.
 **Cost if wrong:** a runaway Butler starves inbound receipt for the whole Node.
-**Stale when:** a certified pack ships a legitimate fan-out above 200, or queue
-concurrency changes. Remeasure then.
 ```
+
+`values` is a map because one measurement often establishes several related numbers, and
+splitting them across files scatters a single receipt.
+
+**You cannot write the number — you can only write the receipt.** A build step emits
+`packages/budgets` from `docs/receipts/*.md`; that module is generated and never
+hand-edited. CI regenerates on every commit and fails on any diff. Benchmarks re-run
+nightly and flag drift against the recorded value — not per commit, because timing
+benchmarks in CI are flaky, a flaky check gets muted, and a muted receipt check is worse
+than no check because it still reads as verified.
 
 At review, a literal number in a diff is answered with one question: **where's the receipt?**
 An acceptable answer is a receipt ID, an adapter capability field, or "it's `0`/`1` and

@@ -1,7 +1,27 @@
 ---
 id: d1-platform-limits
-number: d1.max_database_bytes = 10 GB (Workers Paid); d1.max_account_storage_bytes = 1 TB
 kind: platform-limit
+measured_on: 2026-08-02
+stale_when: >
+  automatic resource provisioning or read replication leaves beta; the published D1 limits
+  page changes (last moved 2026-04-21); or D1 gains interactive transactions
+values:
+  d1.paid.max_database_bytes: 10737418240
+  d1.paid.max_account_storage_bytes: 1099511627776
+  d1.paid.max_databases_per_account: 50000
+  d1.paid.max_queries_per_invocation: 1000
+  d1.paid.time_travel_days: 30
+  d1.free.max_database_bytes: 524288000
+  d1.free.max_account_storage_bytes: 5368709120
+  d1.free.max_queries_per_invocation: 50
+  d1.free.time_travel_days: 7
+  d1.max_columns_per_table: 100
+  d1.max_sql_statement_bytes: 100000
+  d1.max_bound_parameters: 100
+  d1.max_sql_function_args: 32
+  d1.max_row_bytes: 2000000
+  d1.max_query_duration_seconds: 30
+  d1.max_time_travel_restores_per_10min: 10
 ---
 
 **Measured:** Read from Cloudflare's published documentation on 2 August 2026. Not
