@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The single Worker (ADR 18). Owns D1, R2 and every Durable Object class.
+  // Credentials that authorize an external effect are Secrets Store bindings, read at the
+  // point of use via `await env.NAME.get()` — never plain `env` properties (ADR 22).
+  // Resource ids are deliberately absent: Cloudflare links them per-account, which is what
+  // lets a customer's fork stay identical to upstream (ADR 24).
+  "name": "mailda",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+  "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
+  "r2_buckets": [{ "binding": "EVIDENCE" }]
+}

@@ -101,7 +101,7 @@ packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      command schemas
 packages/evidence                      framed encryption for stored mail
-apps/node/workers/state                D1, Durable Objects, the authorization path
+apps/node/worker                D1, Durable Objects, the authorization path
                                        (to be folded into the single Worker, ADR 18)
 probes/                                throwaway platform experiments
 ```

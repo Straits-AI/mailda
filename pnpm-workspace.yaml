@@ -1,4 +1,4 @@
 packages:
-  - "apps/node/workers/*"
+  - "apps/node/worker"
   - "packages/*"
   - "adapters/*"

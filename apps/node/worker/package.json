@@ -1,17 +1,20 @@
 {
-  "name": "@mailda/worker-state",
+  "name": "@mailda/worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "vitest run",
     "bench": "vitest run --mode bench",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "types": "wrangler types"
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
     "@mailda/runtime": "workspace:*",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "@mailda/evidence": "workspace:*",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.1",

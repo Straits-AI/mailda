@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
@@ -14,6 +16,7 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "declaration": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "allowImportingTsExtensions": true
   }
 }
