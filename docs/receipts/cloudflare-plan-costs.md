@@ -31,8 +31,13 @@ Sources: [Workers pricing](https://developers.cloudflare.com/workers/platform/pr
 >
 > Sending to arbitrary recipients requires the Workers Paid plan.
 
-Inbound is unlimited and free on both plans. So a free-plan Node **receives** mail and
-cannot **send** it.
+Inbound is unlimited and free on both plans.
+
+**Corrected by live test, same day** (receipt: `free-plan-node-capability.md`): *"Not
+available"* means **arbitrary recipients** are unavailable, not that the send path is dead. A
+free-plan Node sends successfully to addresses already **verified** in the account, and is
+refused only for arbitrary ones. Reading the plan table alone would lead you to conclude
+sending is impossible; it is not.
 
 This corrects an over-correction. §11B was amended earlier the same day to withdraw the
 `unavailable` outbound state and the "mark the Node receive-only" escape hatch, on the
