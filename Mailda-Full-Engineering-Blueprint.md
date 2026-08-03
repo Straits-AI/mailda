@@ -72,13 +72,20 @@ The defining invariants are:
 
 ### Deployment-mode boundary
 
+Mailda has **one** deployment mode.
+
 | Mode | Source of truth | Appropriate use | Deliberate limitation |
 |---|---|---|---|
-| Cloudflare Native | Mailda Node on Workers/D1/R2/DO | Shared, role, operational, Butler, agent and system mail; web/PWA users | No native IMAP/JMAP mailbox service; Cloudflare outbound is currently transactional rather than marketing/bulk |
-| Provider Connected | Gmail or Microsoft 365, synchronized through supported APIs | Existing employee accounts and shared mailboxes without changing root MX | Provider remains protocol/delivery authority; connector lag/conflicts are visible |
-| Full Mail Adapter | A standards mail core such as Stalwart behind `MailCoreAdapter` | Organizations requiring direct MX plus JMAP/IMAP/SMTP hosted employee mail | Adds non-Workers infrastructure and its own operational burden |
+| Cloudflare Native | Mailda Node on Workers/D1/R2/DO | Shared, role, operational, Butler, agent and system mail; web/PWA users | No IMAP/JMAP mailbox service; outbound is transactional rather than marketing/bulk, capped at 5 MiB per message to arbitrary recipients and 50 recipients per message |
 
-Cloudflare Native is the canonical open-source scaffold and must be useful on its own. Provider Connected and Full Mail Adapter are first-class optional modules, not hidden assumptions required for basic operation.
+Amended 3 August 2026. Earlier revisions specified three modes — Cloudflare Native, Provider Connected (Gmail/Microsoft 365) and Full Mail Adapter (a standards mail core behind `MailCoreAdapter`). Both alternatives are withdrawn. The reasoning is recorded at ADR 4 and ADR 5 in §29.
+
+The adapter **seams** remain. `TransportAdapter` and `MailCoreAdapter` stay as interfaces with exactly one shipped implementation each, so an organization can write its own without forking Mailda. Mailda builds, certifies, documents and supports none. An interface is not a promise.
+
+Two consequences are accepted rather than hidden:
+
+- **Adopting Mailda means moving mail to it.** There is no connector that lets an organization keep Gmail and add governance on top, and no import path for existing history. Mailda is for mail that starts in Mailda.
+- **Cloudflare is a hard dependency.** §1's ownership guarantee means the organization owns its data, code, keys and bill — it does not mean the Node is portable to another platform. The `TransportAdapter` seam makes portability possible for someone willing to build it; nothing more is claimed.
 
 ### Mailda integrates with rather than recreates
 
@@ -101,7 +108,7 @@ Calendar and contacts connectors are included because scheduling and operational
 - Hidden administrator or platform-support content access.
 - Autonomous model authority to send, forward, export, grant access, modify policy or invoke arbitrary connectors.
 - Claiming that a Gmail-forwarded copy synchronizes read state, deletion, folders or Sent mail.
-- Reimplementing SMTP/IMAP/JMAP protocol servers inside Workers when a mature standards core is the correct component.
+- Implementing SMTP, IMAP or JMAP protocol servers at all, in Workers or beside them.
 - Making Mailda Control, telemetry, a licence server or any hosted service mandatory for a self-deployed Node.
 
 ---
@@ -155,8 +162,6 @@ A user may own a private mailbox, respond from `sales@`, review `finance@`, and 
 | Mailda Admin | Directory, domains, mailboxes, policy, AI, compliance, delivery and operations |
 | Mailda CLI | Deterministic access for humans, scripts, CI, cron and AI agents |
 | REST API | Stable typed command/query API used by web, CLI and integrations |
-| JMAP | Optional standards mailbox synchronization when a certified Full Mail Adapter is installed |
-| IMAP/SMTP | Optional standards-client compatibility through a certified Full Mail Adapter or connected provider |
 | SDKs | Generated TypeScript, Python and Go clients |
 | Agent Skill | Safe operating instructions for agents invoking the deterministic CLI |
 | MCP server | Typed tools mapped to the same API and OAuth authorization model |
@@ -379,7 +384,7 @@ Both paths read and write `mailda.yaml` plus the same setup-state API. The CLI s
 
 1. **Organization:** name, locale, timezone, requested region/residency, data/retention defaults and environment label; unsupported placement is shown rather than implied.
 2. **Owner security:** passkey/MFA, recovery codes and a second recovery owner.
-3. **Mode:** Cloudflare Native, Provider Connected or Full Mail Adapter, with capability comparison.
+3. *(Withdrawn.)* Earlier revisions asked the administrator to choose a deployment mode here. There is one mode; nothing to choose.
 4. **Domain:** prove control of a domain or delegated subdomain.
 5. **DNS/transport:** compare current and required records, detect conflicts and state inbound authority.
 6. **First mailboxes:** create owner, test shared mailbox and sender identities.
@@ -807,9 +812,11 @@ delegator = sponsoring human or organization
 
 The grant binds organization, mailboxes, actions, sender identities, data classes, recipient constraints, budget, expiry and approval requirements.
 
-### Protocol credentials and sessions
+### Withdrawn: protocol credentials and sessions
 
-When a Full Mail Adapter exposes JMAP, IMAP or SMTP submission, every credential maps to one Mailda principal, organization/environment, current mailbox relationships and sender permissions. OAuth/SASL OAUTHBEARER is preferred. Any compatibility app password is individually named, scoped, expiring, hashed, one-time displayed and revocable. Protocol ACLs are projections of Mailda relationships rather than an independent grant store. Suspension, token revocation and relationship/policy changes close or reauthorize long-lived sessions before their next protected operation; SMTP submission still becomes a normal Mailda send intent and cannot bypass DLP, approval or send policy.
+Amended 3 August 2026. Mailda exposes no JMAP, IMAP or SMTP mailbox service (§2, ADR 5),
+so there are no protocol credentials to map to principals. Browser sessions, CLI tokens,
+service principals and agent grants (above) are the complete set.
 
 ---
 
@@ -824,7 +831,6 @@ Every domain feature is labeled `mailda_configurable`, `observed`, `provider_man
 | Root/delegated subdomain, MX/SPF/DMARC/DNSSEC | Plan/apply where authorized; detect drift/conflict | Observe or configure only through the named provider/adapter |
 | DKIM, ARC, return path and sending IP | Report Cloudflare-managed state and supported choices; do not imply selector/IP control | Provider-managed or MailCore-configurable per manifest |
 | MTA-STS, TLS-RPT and BIMI | Observe and guide/apply DNS/hosting pieces separately | Same, subject to provider support |
-| Autoconfig/autodiscover | Not advertised for Web/PWA-only Native mode | Full Mail Adapter/provider only |
 | Reputation streams | Separate subdomains/sender classes and report available metrics; Cloudflare owns shared IP behavior | Provider/MailCore capability-specific |
 | Synthetic inbound/outbound/bounce tests | Available when the selected receive/send paths are entitled | Adapter conformance required |
 | Emergency quarantine/send pause | Mailda policy/routing effect, with provider limitations visible | Named connector/MailCore action where supported |
@@ -894,35 +900,26 @@ This is the canonical scaffold:
 
 This mode is optimized for `enquiries@`, `sales@`, `support@`, `claims@`, `accounts@`, project addresses, Butler identities and agent identities. It can also provide personal Mailda web mailboxes, but does not pretend to expose a standards IMAP/JMAP mailbox service.
 
-### Provider Connected
+### Withdrawn: Provider Connected and Full Mail Adapter
 
-- Gmail or Microsoft 365 remains the mailbox, MX and protocol source of truth.
-- Mailda uses organization-owned OAuth grants and provider delta/history APIs.
-- Mailda adds cases, shared operations, Butlers, policy, approvals, agent identities and audit.
-- The connector records provider identifiers, delta cursors, lag, conflicts and authority status.
-- A provider write is performed only through a named, policy-governed connector action.
-- Forwarded copies are never substituted for true connector synchronization.
-- Actions initiated in Mailda receive full pre-execution authorization/policy/approval. Actions initiated directly in Gmail, Outlook or another provider client may occur before Mailda sees them; Mailda synchronizes, classifies, audits and can trigger remediation afterward, but labels them `provider_native` and never claims it approved them in advance.
+Amended 3 August 2026. Earlier revisions specified two further modes:
 
-This is the recommended mode for ordinary employee accounts already using Google Workspace or Microsoft 365.
+- **Provider Connected** — Gmail or Microsoft 365 remaining the mailbox, MX and protocol
+  source of truth, synchronized through provider delta/history APIs.
+- **Full Mail Adapter** — a mature standards mail core such as Stalwart behind
+  `MailCoreAdapter`, providing SMTP/ESMTP, JMAP and IMAP.
 
-### Full Mail Adapter
+Both are withdrawn, along with the connector installation contract that supported them
+(provider application registration, administrator consent, Pub/Sub topics and `watch`
+renewal for Gmail, Entra consent and Graph subscription renewal for Microsoft, cursor
+initialization, history-gap recovery, throttling and token rotation).
 
-Organizations requiring direct MX and standards clients may connect a mature mail core behind `MailCoreAdapter`. The supported reference implementation is Stalwart or a replaceable equivalent providing SMTP/ESMTP, JMAP, IMAP and optional calendar/contact protocols.
+See ADR 4 and ADR 5 in §29 for the argument. The short version: those two modes carried
+most of the product's difficulty — post-facto observation, source-of-truth conflict
+semantics, connector lag, dual authority — and all of it existed to tell the truth about
+systems Mailda does not control.
 
-The mail core remains a protocol/storage component. Mailda remains authoritative for organization identity mapping, resource permissions, policy, approvals, Butlers, agent grants and product audit. Protocol sessions are mapped to a Mailda principal and every consequential submission becomes a Mailda send intent. The adapter may claim fully governed JMAP/IMAP/SMTP behavior only after conformance proves synchronous Mailda authorization for protected mailbox mutations and submission; otherwise native-client mutations are labeled external/post-facto exactly like Provider Connected mode.
-
-The reference adapter, infrastructure definitions, hooks and conformance tests are open source, but this mode adds infrastructure outside the Workers-only scaffold.
-
-### Connector installation contract
-
-Provider Connected setup is reproducible infrastructure, not merely an OAuth button. Its plan covers provider application registration or a customer-supplied app, administrator consent, exact scopes, redirect/webhook endpoints, quota prerequisites, secret/key rotation, initial cursor/backfill boundary, revocation and offboarding.
-
-- Gmail certification includes Pub/Sub topic/IAM, `watch` renewal, history cursor initialization, history-gap recovery, backoff/quota and token rotation/revocation.
-- Microsoft certification includes Entra application/tenant consent, Graph webhook validation, subscription renewal, delta cursor recovery, throttling and token rotation/revocation.
-- `mailda integration plan|apply|doctor|disconnect` exposes these resources and their backup/recovery implications. Webhook renewals are durable health-tracked jobs.
-
-Deploy to Cloudflare can **connect and verify** an already deployed Full Mail Adapter; it cannot imply that Workers provision persistent SMTP/IMAP infrastructure. The separate open `infra/mailcore` reference deployment defines supported hosts, network/firewall/TLS, Mailda-to-MailCore workload authentication, synchronous policy hooks, spool behavior during Node outage, storage/scanner dependencies, compatibility matrix, monitoring, backup, upgrade and disaster recovery. `mailda mailcore plan|deploy|connect|doctor` uses that contract on supported targets.
+`mailda integration` and `mailda mailcore` command families are withdrawn with them.
 
 ### Outbound adapter contract
 
@@ -1015,7 +1012,6 @@ The Deploy to Cloudflare entrypoint may initially launch a minimal bootstrap/pla
 ### Optional adapters and scale-out
 
 - `MailboxProviderAdapter`: Gmail and Microsoft mailbox synchronization.
-- `MailCoreAdapter`: standards mail/protocol implementation.
 - `TransportAdapter`: outbound sending and lifecycle events.
 - `ScannerAdapter`: malware, file and URL analysis.
 - `SearchAdapter`: local SQLite/FTS by default; external search where scale requires.
@@ -1070,7 +1066,7 @@ Apply uses revocable Cloudflare OAuth or the user's existing Wrangler session; i
 
 The public repository exposes a Deploy to Cloudflare entrypoint that clones the source into the customer's Git provider, provisions supported bindings, deploys a bootstrap build and opens the same setup wizard. Any resource not safely provisioned by the repository build is created by the open-source planner after granular OAuth consent.
 
-One-click and CLI paths must converge on equivalent `mailda.yaml`, resource inventory, migration state and `doctor` results. The installer explicitly offers subdomain Cloudflare Native, root cutover, Gmail/Microsoft connection and connection to an existing certified Full Mail Adapter; it links to the separate reference MailCore deployment plan where needed and refuses to imply that Workers provision persistent IMAP/SMTP infrastructure or that two independent root MX authorities can coexist deterministically.
+One-click and CLI paths must converge on equivalent `mailda.yaml`, resource inventory, migration state and `doctor` results. The installer offers a delegated operational subdomain (the default) or a root-domain cutover, and refuses to imply that two independent root MX authorities can coexist deterministically.
 
 ### Environments
 
@@ -1114,13 +1110,20 @@ The updater/verifier is open source. Mailda Control may automate it, but is neve
 
 Cloudflare/provider limits are adapter data, not assumptions scattered through application code. The Node snapshots observed quotas and provider capability versions, displays them in Admin and `mailda doctor`, and blocks an effect predicted to exceed a hard limit before approval when possible.
 
-As of this revision, the Cloudflare Email adapter must account for the published 25 MiB inbound limit, 5 MiB normal outbound message limit, 50-recipient limit, verified-forwarding-destination/account limit and conservative reputation-based sending quotas. Sending is currently intended for transactional email rather than marketing/bulk traffic. These values may change; release tests and runtime capability checks remain authoritative.
+These are now **product** limits rather than adapter limits, because there is one transport (§2). Measured 3 August 2026 and recorded in `docs/receipts/cloudflare-email-service-limits.md`: 25 MiB inbound; **5 MiB outbound to arbitrary recipients**, 25 MiB only to pre-verified destination addresses; 50 recipients per message; 998-character subject; 16 KB of custom headers; 200 routing rules per domain; 200 destination addresses per account; 30 domains per zone. Sending is intended for transactional and operational mail, not marketing or bulk.
 
-Cloudflare Email Sending is currently a beta capability whose availability, arbitrary-destination entitlement and required paid account features must be detected—not assumed. A healthy Cloudflare Native Node may therefore be `inbound_ready/receive_only`, `outbound_verified_destinations_only` or `outbound_send_enabled`. Setup and `doctor` state the reason, documented account prerequisite and alternative TransportAdapter; no clean-account acceptance test assumes outbound entitlement.
+The 5 MiB outbound ceiling is the sharpest of these and must be stated plainly to prospects: a Node can *receive* a 25 MiB attachment and be unable to forward or reply with it.
+
+Amended 3 August 2026. Cloudflare Email Service no longer carries a beta designation or availability gating. Sending to arbitrary recipients requires only that the sending domain be onboarded and verified; before that, sends are limited to verified destination addresses. Daily quota starts conservative on a new account and scales with observed deliverability.
+
+Two states therefore remain meaningful and `doctor` must still distinguish them: `outbound_verified_destinations_only` before domain verification, and `outbound_send_enabled` after. The former `unavailable` state and the "mark the Node receive-only" escape hatch are withdrawn — with the adapter modes gone (§2) there is no alternative TransportAdapter to fall back to, and a Node that cannot send is not a product.
+
+Receipt: `docs/receipts/cloudflare-email-service-limits.md`.
 
 Scale and isolation rules:
 
 - One Node begins with a D1 catalog/control database plus one metadata/search shard. The planner treats the current D1 per-database size ceiling as adapter data and forecasts rows/bytes at mailbox, shard and Node level.
+- **Sharding relieves the per-database ceiling only.** D1 also imposes an account-wide storage ceiling (1 TB on Workers Paid) that no amount of sharding relieves. The planner forecasts against both, and a Node approaching the account ceiling must select the PostgreSQL `ControlStoreAdapter` rather than add another shard. Receipts: `d1-platform-limits.md`, `message-metadata-bytes.md`.
 - Immutable message metadata is assigned by stable mailbox hash plus time bucket through a cataloged shard map; control/identity/policy/outbox data stays in the catalog. Shard creation is a planned binding/deployment change, never an implicit runtime Cloudflare-admin call.
 - At 70% forecast/usage the Node warns and plans the next shard or external store; at 85% it stops optional bulky projections/backfills; at 90% it routes future eligible metadata to a new shard and blocks nonessential imports. Inbound raw evidence is never silently discarded because a search/index shard is full.
 - Cross-shard query uses fan-out cursors with stable sort/tie-break keys and live ACL recheck; SearchAdapter may maintain a rebuildable global projection. Rebalancing copies immutable ranges, verifies counts/hashes, atomically flips the catalog generation and retains the old shard through rollback/backup expiry.
@@ -1199,7 +1202,6 @@ operations:
 - Durable Objects serialize narrow high-contention resources and hold only reconstructable presence, counters, rate state and FTS/cache projections. A canonical mutation commits to D1/outbox before the DO acknowledges it; loss of every DO can be recovered from D1/R2/events.
 - R2 keeps original MIME, attachments, safe renders, exports and encrypted backups.
 - Provider-backed mailbox content retains its declared provider authority while Mailda stores governed projections, evidence pointers and optionally an organization-approved archive copy.
-- A Full Mail Adapter owns protocol/mailbox state through a controlled contract, while Mailda remains authoritative for policy and work state.
 - Optional PostgreSQL/search adapters are supported for deployments that exceed the default storage profile or require different residency/operations.
 - Original, parsed and presentation forms are stored separately.
 - Search is a projection and may be rebuilt.
@@ -1286,7 +1288,7 @@ Heuristic relationships remain reversible and visible as such.
 
 ## 14. Outbound pipeline
 
-Every UI, CLI, API, Butler, JMAP, IMAP-client draft and SMTP submission follows:
+Every UI, CLI, API and Butler draft follows:
 
 ```text
 draft revision
@@ -1331,11 +1333,10 @@ Each adapter declares:
 
 Built-in adapters:
 
-- Cloudflare Email binding/API/SMTP.
-- Full Mail Adapter submission through the installed standards mail core.
-- Named enterprise relay provider(s).
-- Customer BYO relay.
-- Gmail API and Microsoft Graph for provider-backed mailboxes.
+- Cloudflare Email Service — Workers binding, REST API and authenticated SMTP submission.
+
+No other adapter ships. `TransportAdapter` remains an interface an organization may
+implement itself (§2); Mailda supplies, certifies and supports exactly one.
 
 The router selects an adapter before sending based on domain, stream, message size, recipient count, region, reputation and policy.
 
@@ -1363,19 +1364,15 @@ Protocol availability is mode-specific and always visible to administrators and 
 - Cloudflare's authenticated outbound SMTP endpoint is an infrastructure adapter and its account token is never distributed as an employee credential.
 - Mailda does not advertise an IMAP/JMAP endpoint in this mode.
 
-### Provider Connected clients
+### Withdrawn: provider and standards clients
 
-Users may continue using Gmail, Outlook and their provider-supported native clients. Mailda's web application provides the governed path for operational work, cases, approvals, shared queues and Butler state. Provider API capabilities and synchronization lag determine which message-state operations are available. A provider-native send/read/delete/folder action is tagged as externally originated and reconciled after the fact; organizations that require pre-send Mailda enforcement must route the action through Mailda or use a certified synchronous Full Mail Adapter.
+Amended 3 August 2026. Mailda advertises no IMAP, JMAP or CalDAV/CardDAV endpoint and
+hosts no standards mailbox service. The web/PWA, CLI, SDKs, MCP and Agent Skill are the
+complete set of clients.
 
-### Full Mail Adapter clients
-
-The reference `MailCoreAdapter` must certify:
-
-- JMAP Core/Mail/Submission identities, blobs, queries, changes and push.
-- IMAP TLS/OAuth, `IDLE`, `UIDPLUS`, `MOVE`, `CONDSTORE`, `QRESYNC`, `ESEARCH` and stable UID/MODSEQ behavior.
-- SMTP submission on 587/STARTTLS and 465/implicit TLS, OAuth2 or restricted app credentials, SMTPUTF8, 8BITMIME and DSN.
-- Mapping of authenticated protocol principals and submissions into live Mailda authorization/policy/audit.
-- Stable projection of Mailda mailbox folders while richer case/assignment features remain in Mailda web/JMAP extensions.
+Cloudflare's authenticated SMTP submission endpoint is an outbound infrastructure adapter,
+not a user-facing mail client: it sends, it does not read, and its account token is never
+distributed as an employee credential.
 
 ### Calendar and contacts
 
@@ -1792,10 +1789,10 @@ The Web application may offer a richer composition flow, but it has no private p
 
 ### Connectors
 
-- Gmail API incremental history and migration.
-- Microsoft Graph delta sync and migration.
-- Generic IMAP import.
 - CRM, help desk, ERP/accounting, storage, chat and scheduling.
+
+Mail connectors are withdrawn (§2). There is no Gmail, Microsoft Graph or IMAP import
+path; mail arrives in Mailda or it does not exist in Mailda.
 - Named, organization-owned OAuth/service grants.
 - Field/action/data-class allowlists.
 - Secret rotation, health, rate limits, retries, audit and environment separation.
@@ -1933,7 +1930,6 @@ Operational dashboards cover:
 - Domain/IP/stream reputation.
 - Forwarding success and loop suppression.
 - Butler run status, approval waits, spend and circuit breakers.
-- JMAP/IMAP/SMTP sessions and errors when a Full Mail Adapter is installed.
 - Storage, API, integration and LLM cost by organization, deployment, environment and cost center.
 
 Audit records are append-only and hash-linked per organization, with periodic roots in independent immutable storage. Ordinary operational logs contain opaque IDs and redacted metadata, not bodies, addresses or attachment names.
@@ -1965,8 +1961,6 @@ Remote delivery finality remains provider/recipient dependent and is shown per a
 - Secrets are not copied into ordinary backups. The recovery package records secret references and requires the administrator to restore or rotate secret values deliberately.
 - The CLI supports `mailda backup create|verify|list|export` and `mailda restore plan|run|verify` with dry-run, integrity checks and explicit target environment.
 - Upgrades take or verify a recoverable checkpoint before destructive migrations.
-- Provider Connected mode backs up Mailda state and optionally approved message evidence; the provider remains responsible for its source mailbox recovery.
-- Full Mail Adapter mode adds adapter-specific mailbox/spool/configuration backups and restoration drills.
 - Message-level, mailbox-level, organization-level and clean-account restoration are tested.
 
 | Failure | RPO | RTO |
@@ -2001,8 +1995,6 @@ The most dangerous mail failure is “accepted but absent.” Raw-message persis
 | Policy conditions | CEL or equivalently pure typed expression engine |
 | CLI/scaffolder | TypeScript npm packages with optional signed standalone binaries; generated against OpenAPI contracts |
 | SDKs | TypeScript, Python and Go |
-| Optional provider adapters | Gmail API, Microsoft Graph and named SMTP/HTTP connectors |
-| Optional mail core | Stalwart-based `MailCoreAdapter` reference deployment and conformance harness |
 | Optional scale store | PostgreSQL through Hyperdrive behind `ControlStoreAdapter` |
 | Observability | OpenTelemetry, metrics/log/traces, SIEM export |
 | Infrastructure | Wrangler + Deploy to Cloudflare metadata; OpenTofu/Pulumi modules for advanced adapters |
@@ -2020,6 +2012,7 @@ apps/node/workers/
   bootstrap/
   gateway/
   ingress/
+  state/                   # sole owner of D1 and every Durable Object class (ADR 22)
   processor/
   content/
   effects/
@@ -2086,14 +2079,14 @@ These are parallel ownership tracks for one complete product, not reduced releas
 |---|---|
 | Product foundations | Domain model, contracts, design system, localization and organization/deployment boundaries |
 | Identity/governance | Auth, RBAC/ReBAC/ABAC, policy, approval, audit, lifecycle |
-| Mail connectivity | Cloudflare Native, provider connectors, transport capabilities and optional MailCore/JMAP/IMAP/SMTP certification |
+| Mail connectivity | Cloudflare Native transport and capability declaration |
 | Ingress/security | Receipt, MIME, scanning, quarantine, rendering, threading |
 | Outbound/deliverability | Draft/send intents, relays, bounces, complaints, reputation |
 | Web/PWA | Personal mail, shared inboxes, cases, approvals, admin center |
 | Butler runtime | DSL, visual editor, scheduler, execution, replay, extensions |
 | AI control | Providers, profiles, redaction, budgets, evals, model observability |
 | Developer platform | OpenAPI, CLI, SDKs, Agent Skill, MCP, webhooks, sandbox |
-| Connectors | Gmail, Graph, IMAP migration, CRM/ERP/files/chat/calendar |
+| Connectors | CRM, ERP, files, chat and calendar business systems |
 | Compliance/reliability | Retention, hold, eDiscovery, DR, SLOs, operations |
 
 ### Dependency graph
@@ -2137,7 +2130,7 @@ Teams can build in parallel after contracts and invariants are ratified. Product
 - Frozen-clock deterministic simulation/replay.
 - MIME corpus: Gmail, Outlook, Apple, Exchange, Unicode, nested MIME, TNEF, signed/encrypted, invites, malformed and large messages.
 - MIME/parser/HTML/attachment fuzzing and archive-bomb tests.
-- Cloudflare Email integration/limit tests and provider connector reconciliation; SMTP/JMAP/IMAP conformance only for the Full Mail Adapter profile.
+- Cloudflare Email Service integration and limit tests.
 - Duplicate queue, provider timeout, retry storm, DB failover and object-store chaos tests.
 - Prompt-injection/data-exfiltration evaluations for every approved LLM profile.
 - Replay-mode tests proving recorded simulations cause no provider/model/effect call and retries cannot duplicate mail or connector writes.
@@ -2168,14 +2161,6 @@ Teams can build in parallel after contracts and invariants are ratified. Product
 - A permitted human/script/Butler can propose, satisfy policy/approval, send through the selected adapter and see the exact accepted/rejected/`outcome_unknown` state plus Sent evidence.
 - A receive-capable clean account passes in receive-only state when Email Sending is unavailable; `doctor` distinguishes entitlement states and an alternative adapter can be selected without source changes.
 - Bulk/marketing intent is rejected by product/provider policy rather than silently submitted through Cloudflare.
-
-#### Provider and Full Mail modes
-
-- Gmail/Microsoft adapters survive duplicate notifications, cursor gaps, throttling, token rotation and revocation without duplicate visible effects.
-- Source-of-truth and conflict behavior matches the advertised capability manifest.
-- Provider-native actions are marked/reconciled as post-facto and never presented as Mailda-preapproved.
-- MailCore JMAP/IMAP/SMTP appears only after its conformance suite passes; the UI never advertises an absent protocol.
-- Full Mail Adapter certification includes synchronous authorization/submission hooks, outage spool behavior, independent hosting/TLS/monitoring and upgrade/restore; otherwise native actions receive the external/post-facto label.
 
 #### Governance and automation
 
@@ -2218,7 +2203,7 @@ Teams can build in parallel after contracts and invariants are ratified. Product
 
 ## 28. Definition of complete
 
-The **Mailda distribution** is complete only when every adapter and surface promised by this document passes its own certification suite. An individual **Mailda Node** is production-ready when the selected connectivity/adapters and enabled capabilities pass their applicable readiness gates; it does not need to enable Gmail, Microsoft and Full Mail Adapter simultaneously.
+The **Mailda distribution** is complete when every surface promised by this document passes its certification suite. There is one connectivity mode (§2), so a Node is production-ready when its enabled capabilities pass their applicable readiness gates.
 
 Mailda is complete when an organization can, without hidden manual platform intervention:
 
@@ -2227,7 +2212,7 @@ Mailda is complete when an organization can, without hidden manual platform inte
 3. Add a domain/subdomain or provider connector, pass DNS/security/deliverability tests and cut over safely without misrepresenting MX authority.
 4. Create, suspend, archive, restore and offboard employees with full mailbox lifecycle.
 5. Create personal, shared, role, Butler, agent, system, archive and quarantine mailboxes.
-6. Use web/PWA in Cloudflare Native mode and certified JMAP/IMAP/SMTP clients only where a Full Mail Adapter declares them.
+6. Use the web/PWA as the complete human client, with no IMAP, JMAP or SMTP mailbox service advertised or implied.
 7. Receive, scan, store, search, reply, forward, organize and export email within the selected adapter's declared capabilities.
 8. Configure local delivery plus external mirrors with honest synchronization semantics.
 9. Assign shared work, use internal notes, SLAs, queues and email-native cases.
@@ -2236,7 +2221,7 @@ Mailda is complete when an organization can, without hidden manual platform inte
 12. Configure model providers/profiles/budgets/evals and invoke AI only at explicit nodes.
 13. Enforce identical authorization/policy/approval behavior across UI, protocol adapter, CLI, API, Butler, MCP and Agent Skill.
 14. Give admins the chosen level of organizational supervision with attributable, time-bound content access.
-15. Connect any selected Gmail, Microsoft 365 or optional mail-core/migration adapter with visible authority/conflict state; the shipped distribution separately certifies each advertised adapter.
+15. *(Withdrawn.)* Earlier revisions required certified Gmail, Microsoft 365 and mail-core adapters. See ADR 4 and ADR 5.
 16. Diagnose delivery, bounce, complaint, suppression, workflow, storage and connector failures without blind retries.
 17. Apply retention, legal hold, eDiscovery and evidence export.
 18. Revoke a user, token, Butler or agent and have authority disappear immediately.
@@ -2250,8 +2235,8 @@ Mailda is complete when an organization can, without hidden manual platform inte
 1. **The canonical product is Mailda Open: a complete, single-organization Node deployed into the customer's Cloudflare account.**
 2. **The Node has no mandatory Mailda account, licence server, content export or hosted control-plane dependency.**
 3. **Cloudflare Native is an operational web/API mail system, not falsely advertised as a standards-complete Google Workspace replacement.**
-4. **Existing employee mail stays in Gmail/Microsoft through provider connectors unless the organization deliberately installs a Full Mail Adapter.**
-5. **A mature JMAP/IMAP/SMTP core sits behind `MailCoreAdapter`; Mailda does not reimplement decades of protocol behavior in Workers.**
+4. **Reopened and reversed, 3 August 2026. Mailda supports no external mail provider. There is no Gmail or Microsoft 365 connector.** The previous decision kept employee mail in Gmail/Microsoft behind connectors. Reversed because the connector modes carried most of the product's difficulty while delivering none of its distinctive value: post-facto observation (ADR 20), source-of-truth conflict semantics, connector lag and cursor recovery, dual authority, and an entire class of honesty problem that exists only because Mailda would not control the other system. Gmail's own access path compounds it — its full-access scopes are *restricted*, requiring per-customer Google Cloud projects, an OAuth client per organization, Pub/Sub for push, and an annually renewed CASA security assessment for anything not internal-only. Accepted cost: adopting Mailda means moving mail to it, there is no import path for history, and the "keep Gmail, add governance" adoption wedge is gone.
+5. **Reopened and reversed, 3 August 2026. Mailda hosts no standards mail core and advertises no IMAP, JMAP or SMTP mailbox service.** The previous decision placed Stalwart or an equivalent behind `MailCoreAdapter`. Reversed for the same reason and one more: it required infrastructure outside the Workers scaffold, with its own hosting, TLS, monitoring, upgrade and disaster-recovery burden, which contradicts the one-deployable-project premise of ADR 1 and ADR 18. Authenticated SMTP *submission* to Cloudflare Email Service remains as an outbound adapter — it sends, it does not serve mailboxes. Accepted cost: no Outlook, Apple Mail or Thunderbird; the web/PWA is the only way to read mail.
 6. **D1/R2/DO/Queues/Workflows are the default BYOC data plane; optional store/search/mail-core adapters extend rather than replace the product contract.**
 7. **One authorization and command plane governs every surface.**
 8. **Admin content supervision is explicit, configurable and audited—not an accidental consequence of mailbox administration.**
@@ -2268,6 +2253,8 @@ Mailda is complete when an organization can, without hidden manual platform inte
 19. **D1 catalog/shards plus R2 are canonical in Cloudflare Native; Durable Objects serialize and cache only rebuildable state.**
 20. **Provider-native actions are post-facto observed unless a certified synchronous adapter proves otherwise.**
 21. **Exact approval binds a canonical semantic effect/composition manifest; byte-exact wire identity is claimed only for a guaranteeing raw-MIME adapter.**
+22. **Every Cloudflare resource is owned by exactly one Worker; all other access is service-binding RPC.** Added 3 August 2026. Cloudflare bindings are not permission-scoped — there is no read-only D1 or R2 binding — so "who holds the binding" is the only least-privilege lever the platform provides, and ownership is the only form of it a test can enforce. A `state` Worker owns D1, the metadata shards and every Durable Object class, because §12 requires a canonical mutation to commit to D1 before a Durable Object acknowledges it. Enforced structurally: the build fails if a resource identifier appears in more than one wrangler configuration, and `mailda doctor` asserts deployed bindings match. Service bindings cost no latency and no money, so the only budget spent is subrequests.
+23. **Mailda supports one transport and hosts no mailbox protocol.** Added 3 August 2026, consolidating the reversals at ADR 4 and ADR 5. One deployment mode, one shipped `TransportAdapter`, no IMAP/JMAP/SMTP mailbox service, no provider connector, no mail-core. The adapter interfaces survive so an organization can build its own; Mailda ships, certifies and supports exactly one implementation.
 
 ---
 

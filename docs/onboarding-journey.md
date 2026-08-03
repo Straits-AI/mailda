@@ -108,11 +108,11 @@ restarting. That is a genuinely good design and rare.
 |---|---|---|
 | 1 | Organization | Fine. Name, locale, timezone. |
 | 2 | Owner security | Passkey plus **a second recovery owner** — at this point the user may be alone, and inventing a second owner is a real stall. |
-| 3 | Mode | Cloudflare Native / Provider Connected / Full Mail Adapter, "with capability comparison." This is an **architecture decision asked of someone who has not used the product yet**. |
+| 3 | ~~Mode~~ | **Resolved 3 Aug 2026.** ADR 23 leaves one mode, so this step is withdrawn. |
 | 4 | Domain | Prove control. Fine if they have one. |
 | 5 | **DNS / MX** | **The cliff.** See below. |
 | 6 | First mailboxes | Fine. |
-| 7 | **Outbound test** | May legitimately end in *"you cannot send"* (§11B). Discovered here, after the DNS work. |
+| 7 | Outbound test | **Largely resolved 3 Aug 2026.** Email Service is no longer gated: verify the sending domain and you can send to anyone. Remaining state is `verified-destinations-only` before verification. |
 | 8 | **Inbound test** | **The first moment anything feels real** — step 8 of 13. |
 | 9 | Policy choices | Content supervision, external sending, AI, forwarding, retention, approval. Six governance decisions, plus #7's mandatory security-profile disclosure. A wall of consequential dialogs for someone who wanted email to work. |
 | 10 | Directory | Fine, and optional. |
@@ -182,3 +182,31 @@ was never the problem.
 
 The part that *is* the problem — no value before commitment — is a product decision that
 neither #13 nor #14 touches.
+
+
+---
+
+## Update, 3 August 2026
+
+Three of the frictions above have been resolved by decisions taken after this was written.
+
+**The mode choice (step 3) is gone.** ADR 23 leaves one deployment mode. Provider
+Connected and Full Mail Adapter are withdrawn — see ADR 4 and ADR 5.
+
+**The entitlement trap (step 7) is largely gone.** Cloudflare Email Service is no longer
+beta or availability-gated. Verify the sending domain and arbitrary recipients work
+immediately. Receipt: `cloudflare-email-service-limits.md`.
+
+**Provider Connected is no longer a candidate evaluation path.** It was briefly considered
+as the zero-commitment trial — connect Gmail, see your own real mail, no DNS change. That
+does not survive contact with Gmail's access model: full-access scopes are *restricted*,
+requiring a per-customer Google Cloud project, an OAuth client per organization, Pub/Sub
+for push, and an annually renewed CASA assessment for anything not internal-only. It is
+**more** setup than delegating a subdomain, not less.
+
+**What remains unfixed, and is now the whole problem:** time to first value is still step 8
+of 13, and there is still no way to evaluate Mailda without a DNS change. With connectors
+withdrawn, the two candidates are the ones already identified here — seed the install with
+fixture mail, and promote the delegated subdomain from a §5A parenthetical to the
+recommended path. §10's domain topology already defaults to `ops.example.com` or
+`mail.example.com`; onboarding does not yet reflect that.
