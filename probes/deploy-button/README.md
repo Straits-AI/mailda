@@ -5,10 +5,14 @@ Cloudflare button installs a two-Worker application, what gets provisioned, by w
 credential, and in what order?**
 
 The shape mirrors a real Mailda Node per ADR 18 and ADR 22 — `effects` holds a value and no
-data binding; `node` holds every data binding — and the deploy command chains them in the
-order #4 requires, since `node` service-binds to `effects`.
+data binding; the root Worker holds every data binding — and the deploy command chains them
+in the order #4 requires, since the root Worker service-binds to `effects`.
 
-Every resource in `node/wrangler.jsonc` is declared **without an id**, which is what asks
+The root Worker's `wrangler.jsonc` sits at the top of this directory deliberately: the button
+reads *"the Wrangler configuration file of your source repo"* to determine what to provision,
+so a config in a subdirectory would likely be invisible to it.
+
+Every resource in `wrangler.jsonc` is declared **without an id**, which is what asks
 Cloudflare to provision it.
 
 ## Deploy
