@@ -63,15 +63,16 @@ queue without a dead-letter queue, no retryable table without a unique constrain
 |---|---|
 | A Cloudflare account | Free to create |
 | A domain you control | Or a delegated subdomain — `mail.example.com` is the recommended start |
-| **Workers Paid, to send mail** | **$5/month minimum**, 3,000 emails included, then $0.35/1,000 |
-| Inbound mail | Unlimited, free on any plan |
+| **Workers Paid — mandatory** | **$5/month minimum**, 3,000 emails included, then $0.35/1,000 |
+| Inbound mail | Unlimited, included |
 
 A 20-person organisation sending 10,000 emails a month costs roughly **$7.45/month**, plus
 storage. ([receipt](./docs/receipts/cloudflare-plan-costs.md))
 
-On the free plan a Node **receives mail but cannot send it** — Cloudflare's Email Sending
-requires a paid plan. That's a real limitation and also a genuine way to try it: point a
-subdomain at a free Node, receive your own real mail, pay nothing until you want to reply.
+**There is no free tier.** Not a pricing choice — Cloudflare's free plan forces 24-hour,
+non-configurable queue retention, so a message stuck in a queue for a day is silently
+deleted. A mail system cannot run there. `mailda deploy` detects the plan and refuses,
+saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
 
 ### Deliberate limitations
 

@@ -200,19 +200,26 @@ requiring a per-customer Google Cloud project, an OAuth client per organization,
 for push, and an annually renewed CASA assessment for anything not internal-only. It is
 **more** setup than delegating a subdomain, not less.
 
-**A candidate for the evaluation problem, found in the pricing table.** A **free-plan Node
-receives real mail and cannot send it** — inbound Email Routing is unlimited and free;
-Email Sending requires Workers Paid. So a prospect can point one DNS record at a delegated
-subdomain that carries nothing, receive their own real mail, explore the whole product, and
-pay nothing until they want to reply.
+**A candidate for the evaluation problem was found, tested, and then rejected.** The free
+plan does receive real mail — verified live, a Gmail message reached a Worker and was
+persisted at zero cost (`free-plan-node-capability.md`). It can even reply to previously
+verified addresses. For a few hours that looked like the zero-cost evaluation path this
+document went looking for.
 
-That is the zero-cost evaluation path this document went looking for and could not find. It
-is *their own mail*, not fixtures to discount, and the only commitment is a subdomain MX
-record. Receipt: `cloudflare-plan-costs.md`. Recorded as an observation, not a decision —
-it wants its own ticket.
+It was withdrawn by ADR 25. Cloudflare's free plan forces **24-hour, non-configurable queue
+retention**, and §22 requires retention to be set explicitly precisely because the default
+silently deletes unread messages. A free-plan Node is therefore not a limited Node, it is one
+that can lose mail — unacceptable for an evaluation that is meant to build trust.
 
-**What remains unfixed:** time to first value is still step 8 of 13, and the free-plan path
-above still requires a DNS change, even if a harmless one. With connectors
+The adoption argument also turned out to be weak: the real commitment a prospect makes is
+**pointing MX at Cloudflare**, not paying $5. Anyone willing to do the first will do the
+second.
+
+**What remains unfixed, and is now the whole of it:** there is still no way to evaluate
+Mailda without pointing MX at Cloudflare, and time to first value is still step 8 of 13. ADR
+25 closed the free-plan route; the fixture-seeded install and the delegated-subdomain default
+are the remaining candidates, and neither removes the DNS step. This document should not
+pretend the problem is solved. With connectors
 withdrawn, the two candidates are the ones already identified here — seed the install with
 fixture mail, and promote the delegated subdomain from a §5A parenthetical to the
 recommended path. §10's domain topology already defaults to `ops.example.com` or

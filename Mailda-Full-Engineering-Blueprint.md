@@ -382,6 +382,20 @@ Both paths use the same setup-state API. The CLI stores Cloudflare/user refresh 
 
 Amended 3 August 2026. `mailda.yaml` is **install-time input, never committed**. The Node's repository is byte-identical to upstream in every installation, because it is also the update channel (ADR 24) — anything customer-specific in it would make every upstream update a potential merge conflict. Bindings are declared in `wrangler.jsonc` without resource ids and linked per-account by Cloudflare. Organization, domains, policy, retention and secrets live in D1 and Cloudflare secrets, set through the UI or CLI, and are restored from the §24 backup manifest rather than from git.
 
+### Prerequisites, stated before installation begins
+
+Checked and reported before the checklist starts, so a prospect can disqualify themselves in
+seconds rather than at step 7:
+
+- A Cloudflare account **on the Workers Paid plan** ($5/month minimum). ADR 25 makes this
+  mandatory; `mailda deploy` refuses to proceed on Workers Free, naming the plan and why.
+- A domain in that account, or a subdomain that can be delegated.
+- Willingness to point MX at Cloudflare for whichever name is used.
+
+Cost, so it is not a surprise: $5/month includes 3,000 outbound emails, then $0.35 per
+1,000. Inbound is unlimited and free. A 20-person organization sending 10,000 emails a month
+is roughly $7.45/month plus storage. Receipt: `docs/receipts/cloudflare-plan-costs.md`.
+
 ### Resumable setup checklist
 
 1. **Organization:** name, locale, timezone, requested region/residency, data/retention defaults and environment label; unsupported placement is shown rather than implied.
@@ -1133,13 +1147,14 @@ Amended 3 August 2026, and corrected the same day. Cloudflare Email Service no l
 
 **But outbound is gated by plan.** Email Sending is *not available at all* on the Workers Free plan; it requires Workers Paid, at a $5/month minimum, which includes 3,000 emails per month. Inbound Email Routing is unlimited and free on both plans. An intermediate correction claimed the `unavailable` state and the receive-only path could be withdrawn because entitlement gating had ended — that was wrong. Gating by beta status ended; gating by plan did not.
 
-Three outbound states are therefore real, and `doctor` must distinguish all three:
+Amended again once ADR 25 made Workers Paid mandatory. Two outbound states remain, and `doctor` must distinguish them:
 
-- `unavailable` — the account is on the Workers Free plan. The Node receives mail and cannot send. This is a legitimate, functional configuration, not a failure.
-- `outbound_verified_destinations_only` — Workers Paid, sending domain not yet verified.
-- `outbound_send_enabled` — Workers Paid, domain verified.
+- `outbound_verified_destinations_only` — the sending domain is not yet onboarded and verified. Sends to previously verified destination addresses succeed; arbitrary recipients are refused. Measured behaviour, not inference: receipt `free-plan-node-capability.md`.
+- `outbound_send_enabled` — domain verified, arbitrary recipients permitted.
 
-A free-plan Node also has a **24-hour, non-configurable queue retention** ceiling. §22 requires retention to be set explicitly on every queue because the default silently deletes unread messages; on the free plan that is not possible, so the 24-hour window is forced and must be disclosed rather than discovered.
+The former plan-gated `unavailable` state is withdrawn, because a Node on Workers Free is no longer a supported configuration (ADR 25). The plan is checked at install and refused there, not surfaced as a runtime state.
+
+**Cloudflare's own refusal must never be surfaced.** Attempting an unverified recipient returns `destination address is not a verified address`, which names neither the plan nor domain verification and leaves the reader with nothing to act on. The send path translates it into the state above together with the actual remedy.
 
 Receipts: `docs/receipts/cloudflare-email-service-limits.md`, `docs/receipts/cloudflare-plan-costs.md`.
 
@@ -2272,6 +2287,7 @@ Mailda is complete when an organization can, without hidden manual platform inte
 22. **Amended 3 August 2026. External credentials live in Secrets Store and are read only at the point of use; content keys are separate from credential keys.** This replaces a rule that gave a second Worker sole custody of the credential-unwrapping key, which ADR 18 has withdrawn. Two things stand in its place. First, every credential that authorizes an external effect — transport tokens, model API keys, webhook signing secrets — is a **Secrets Store** binding, never a plaintext Worker secret and never a plain property of `env`. Access is `await env.NAME.get()` at the moment of use, so serializing `env` discloses nothing and a value has no lifetime beyond the call that needs it. Second, §12's single root KEK is split by purpose: a **content key** wraps per-object DEKs for raw MIME, attachments and exports, which the Worker must be able to unwrap because serving mail is its job; a **credential key** is not used for content at all. Conflating them was an unresolved ambiguity in the earlier design, which promised that only a broker could unwrap credentials while also requiring the mail-serving code to unwrap content with the same key.
 23. **Mailda supports one transport and hosts no mailbox protocol.** Added 3 August 2026, consolidating the reversals at ADR 4 and ADR 5. One deployment mode, one shipped `TransportAdapter`, no IMAP/JMAP/SMTP mailbox service, no provider connector, no mail-core. The adapter interfaces survive so an organization can build its own; Mailda ships, certifies and supports exactly one implementation.
 24. **A Node keeps itself patched through the customer's own repository, and its repository contains nothing customer-specific.** Added 3 August 2026. Mailda is self-hosted and holds an organization's most sensitive data, which means Mailda cannot patch it — and unpatched self-hosted software is the default outcome, not the exception. The update channel is the customer's own fork plus their own Workers Builds CI: upstream is public, their fork pulls from it, their CI builds and deploys. No Mailda-operated service, no licence server, no phone-home, and no durable admin token in the Node — the alternative, a Worker rewriting itself through the Cloudflare API, requires exactly the all-powerful account token §5A forbids retaining. Updates are fast-forward because configuration lives in the Node rather than the repo. **One exception, verified empirically:** the Deploy button writes provisioned resource ids into `wrangler.jsonc` in the customer's fork (receipt: `deploy-button-behaviour.md`), so the fork diverges by one install commit. The resolution is mechanical rather than judgemental — **conflicts in `wrangler.jsonc` resolve to upstream unconditionally**, because the ids are decorative: resources stay linked across deploys without them. Whether discarding both the id and the resource *name* causes re-provisioning rather than relinking is **untested**, and must be verified before this ADR is relied upon; if it re-provisions, a routine update would silently orphan the catalog. Auto-update is **on by default**: patch and minor releases apply themselves when the migration is additive (§10 expand/contract) and `doctor` passes afterwards, rolling back automatically if it does not. Major releases and any destructive migration hold and notify, requiring the Time Travel bookmark gate. Release commits are signed and verified before deploy; this does **not** cover dependencies, and that residual supply-chain exposure is documented rather than implied away. Blast radius is limited without a coordinator — which would itself be the hosted dependency ADR 2 forbids — by a per-Node randomized delay derived from the Node's own identifier, and by a `stable` channel lagging `latest`.
+25. **A Mailda Node requires the Workers Paid plan. There is no free tier.** Added 3 August 2026. Measured, a free-plan Node is not merely limited — it can lose mail. Cloudflare Queues retention on the free plan is **24 hours and non-configurable**, and §22 requires retention to be set explicitly precisely because the default silently deletes unread messages; on free that requirement cannot be met, so any message stuck in a queue for a day is gone. Free also caps a D1 database at 500 MB with 100,000 row writes per day, and restricts outbound to previously verified destination addresses, so an organization cannot reply to a customer. Against that, $5/month is not a barrier: the real commitment a prospect makes is pointing MX at Cloudflare, and anyone willing to do that will pay $5. Supporting a free tier would mean a second capability profile to build, document, gate in §27 and explain in every outbound state — solving a problem we would be choosing to have. `mailda deploy` and `doctor` therefore detect the account plan and refuse to proceed on Workers Free, naming the plan and the reason rather than failing later at the outbound test.
 
 ---
 

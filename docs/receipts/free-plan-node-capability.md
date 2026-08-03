@@ -70,7 +70,20 @@ refusal that names neither the cause the user can act on nor the way to fix it. 
 translate this error into that state and say which of *verify the domain* or *upgrade the
 plan* applies.
 
-## What this means for #19
+## Superseded as a recommendation, 3 August 2026
+
+**ADR 25 makes Workers Paid mandatory; there is no free tier.** The measurements below stand
+— they are facts about the platform and remain useful for understanding what the free plan
+does. The *conclusion* that this makes a good evaluation tier is withdrawn.
+
+The reason is not cost. Cloudflare's free plan forces **24-hour, non-configurable queue
+retention**, while §22 requires retention to be set explicitly precisely because the default
+silently deletes unread messages. A free-plan Node is therefore not a limited Node but one
+that can lose mail, which disqualifies it for an evaluation meant to build trust. And the
+adoption argument was weak: the commitment a prospect actually makes is pointing MX at
+Cloudflare, not paying $5.
+
+## What this was going to mean for #19
 
 The free plan is a **genuinely functional receive-only Node**, not a crippled one:
 

@@ -96,7 +96,7 @@ update channel.
 Free plan allows 1 concurrent build, Paid allows 6; 20-minute timeout and 8 GB memory on
 both.
 
-## An unplanned consequence: the free plan is an evaluation tier
+## Withdrawn: the free plan as an evaluation tier (see ADR 25)
 
 A free-plan Node receives real mail, stores it, indexes it, and shows it in the web UI. It
 can even reply to **verified** addresses, so an evaluator can exercise a round trip to their
@@ -104,10 +104,11 @@ own inbox. It cannot reply to a customer. That is a genuine zero-cost evaluation
 *your own real mail*, no commitment, and no fixtures to discount. Confirmed live:
 `free-plan-node-capability.md`.
 
-`docs/onboarding-journey.md` spent considerable effort looking for an evaluation path that
-did not require betting live mail, and rejected Provider Connected as more setup than a
-subdomain. This appears to be the answer, and it was sitting in the pricing table. It is
-recorded as an observation rather than a decision; it deserves its own ticket.
+This looked like the answer `docs/onboarding-journey.md` was searching for, and was tested
+live (`free-plan-node-capability.md`). **ADR 25 withdrew it.** The free plan's 24-hour
+non-configurable queue retention means a stuck message is silently deleted, and §22 requires
+explicit retention for exactly that reason — so a free Node can lose mail rather than merely
+do less. Workers Paid is mandatory. The evaluation problem is therefore still open.
 
 ## Residual
 
