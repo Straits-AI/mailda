@@ -10,5 +10,7 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
-  "r2_buckets": [{ "binding": "EVIDENCE" }]
+  "r2_buckets": [{ "binding": "EVIDENCE" }],
+  "durable_objects": { "bindings": [{ "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] }]
 }

@@ -1,6 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
 
-import type { Env } from "./env.ts";
 import { putEvidence } from "./evidence-store.ts";
 
 /**

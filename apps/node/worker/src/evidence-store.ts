@@ -1,6 +1,5 @@
 import { DEFAULT_FRAME_BYTES, open as openFrames, openStream, seal } from "@mailda/evidence";
 
-import type { Env } from "./env.ts";
 
 /**
  * Raw MIME storage (§12, #7, #16).

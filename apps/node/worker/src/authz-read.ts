@@ -1,4 +1,3 @@
-import type { Env } from "./env.ts";
 
 /**
  * Read authorization for Layer 1 (§7).

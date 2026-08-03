@@ -5,7 +5,6 @@ import { createFrozenCtx } from "@mailda/runtime";
 
 import { acceptInbound, bucketFor } from "../src/ingress.ts";
 import { getEvidence } from "../src/evidence-store.ts";
-import type { Env } from "../src/env.ts";
 
 const testEnv = env as unknown as Env;
 
