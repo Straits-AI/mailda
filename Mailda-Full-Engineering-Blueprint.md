@@ -972,30 +972,44 @@ flowchart TB
     async <--> adapters
 ```
 
-### One deployable project, least-privilege Worker graph
+### One deployable project, two Workers
 
-Mailda is one scaffolded repository, declarative plan and installer experience—not one all-powerful runtime principal. The planner deploys a small graph of Workers/service bindings as one Mailda Node so a public parser, web bug or third-party connector cannot automatically reach every message, administrator operation and secret.
+Amended 3 August 2026. Earlier revisions specified a graph of eight Workers — `gateway`,
+`ingress`, `processor`, `content`, `effects`, `scheduler`, `operations` and optional
+`extension-*` — each with a listed "deliberately absent authority". The principle was
+right; the number was never derived. See ADR 18 for the argument. A Node is now two
+Workers.
 
-| Worker | Exposure and responsibility | Deliberately absent authority |
+| Worker | Responsibility | Deliberately absent authority |
 |---|---|---|
-| `gateway` | Static Web/PWA, OAuth/session, OpenAPI queries/commands, WebSocket/SSE and authorization/policy entry | No provider/LLM secret values, inbound handler or direct raw-object enumeration |
-| `ingress` | Email Routing handler, recipient lookup, bounded checks, raw receipt persistence and receipt queue | No public HTTP route, connector/LLM secrets, send execution or admin mutations |
-| `processor` | Queue-only MIME parsing, sanitization, security, normalization, indexing and case/Butler event creation | No public route, user sessions, outbound credential or arbitrary egress |
-| `content` | Service-only authorized streaming of message bodies, safe previews, originals, attachments and exports from R2 | No public route, listing without a scoped content capability, write authority, provider secrets or policy mutation |
-| `effects` | Queue/service-only transport, connector, webhook and LLM capability broker | No general mailbox query, policy mutation or public route; receives minimum approved effect/input envelope |
-| `scheduler` | Cron/Workflow/Butler coordination, waits, retries and run ledger | No direct external send/secret path; effects re-enter the broker/command plane |
-| `operations` | Backup, restore, migration, signed upgrade and health jobs behind step-up commands | No public unauthenticated route or routine content browsing |
-| `extension-*` | Optional separately deployed customer extension Worker/Wasm isolate using narrow capability service binding | No direct D1/R2/Secrets bindings or ambient egress |
+| `node` | Everything with a data or user surface: Static Assets and the Web/PWA, OAuth and sessions, the OpenAPI command/query plane, the Email Routing handler and raw receipt persistence, queue-driven MIME parsing and normalization, authorized content streaming from R2, cron and Workflow coordination, the run ledger, backup and restore, health, bootstrap and the claim flow. Owns D1, the metadata shards, R2 and every Durable Object class. | **No credential-unwrapping key.** Cannot read a connector token, model key or any envelope-encrypted credential, and therefore cannot cause an external effect directly. |
+| `effects` | The capability broker. Receives an approved, policy-checked intent by service binding, unwraps the credential it needs, performs the transport, connector, webhook or LLM call, and returns the result. | **No data binding at all** — no D1, no R2, no Durable Object, no queue. It cannot read a mailbox, query state, mutate policy, or serve a public route. |
 
-Every internal call uses a typed envelope with source workload identity, organization/environment, operation/effect ID, expiry and replay protection. Bindings are least-privilege and generated from a checked capability manifest. The `content` broker requires a short-lived action/resource/principal-bound content capability issued after live authorization and validates its current authorization/revocation generation; a signed URL cannot outlive or widen it. Secrets are brokered to named adapter operations inside `effects`; callers receive results, not secret material. The open repository can combine low-risk handlers during local development, but production certification verifies the separated graph and fails if any Worker receives undeclared bindings.
+That division is the one boundary that survives the test *"name what crossing this prevents"*:
+a logic bug in code parsing attacker-supplied MIME cannot reach the organization's OAuth
+refresh tokens or model keys, because those are not in its `env`.
 
-The Deploy to Cloudflare entrypoint may initially launch a minimal bootstrap/planner Worker because one-click deployment cannot safely infer every domain/provider choice. After explicit granular authorization, the open planner provisions the complete graph, runs conformance checks and retires or locks the bootstrap route. The Node remains one product/upgrade unit with shared generated contracts; the split is a security boundary, not user-visible microservice complexity.
+It cannot be achieved inside one Worker. `env` is importable from `cloudflare:workers`
+anywhere in a Worker's code, Secrets Store bindings included, and Secrets Store's access
+control governs API tokens and consuming services rather than code paths. The process
+boundary is the only enforcement the platform offers.
+
+`effects` holding no data binding is deliberate and slightly awkward: `node` claims the
+effect key and writes the intent (#9), calls `effects`, and records what comes back. The
+claim and the provider call are therefore not atomic — which is exactly the case
+`outcome_unknown` exists for (§14, ADR 14), so nothing new is introduced.
+
+Every internal call uses a typed envelope carrying source workload identity,
+organization/environment, operation/effect ID, expiry and replay protection.
+
+Optional customer extension Workers remain possible behind a narrow capability service
+binding, deployed separately by the organization. Mailda ships none.
 
 ### Cloudflare resource map
 
 | Cloudflare service | Mailda use |
 |---|---|
-| Workers + Static Assets + Service Bindings | Least-privilege `gateway`, `ingress`, `processor`, `content`, `effects`, `scheduler`, `operations` and optional extension graph |
+| Workers + Static Assets + Service Bindings | Two Workers: `node` (data and user surfaces) and `effects` (credential broker), per ADR 18 and ADR 22 |
 | Email Routing | Inbound adapter for Cloudflare-managed/customer domains |
 | Email Sending | Transactional/agent/system outbound adapter when capabilities fit |
 | D1 | Single-organization relational catalog/control state, message metadata shards, relationships, policy, audit index and transactional outboxes |
@@ -2009,15 +2023,10 @@ apps/
   developer-portal/
 
 apps/node/workers/
-  bootstrap/
-  gateway/
-  ingress/
-  state/                   # sole owner of D1 and every Durable Object class (ADR 22)
-  processor/
-  content/
-  effects/
-  scheduler/
-  operations/
+  node/                    # everything: HTTP, email handler, D1, R2, Durable Objects,
+                           # queue consumers, cron, bootstrap and claim
+  effects/                 # sole holder of the credential-unwrapping key and the only
+                           # Worker able to cause an external effect (ADR 22)
 
 apps/node/shared/
   identity-authorization/
@@ -2147,7 +2156,7 @@ Teams can build in parallel after contracts and invariants are ratified. Product
 
 - A clean Cloudflare account reaches equivalent healthy Nodes through one-click and CLI paths.
 - `deploy --plan` identifies resources, permissions, costs/prerequisites, DNS/MX conflicts and known limits before mutation.
-- Production binding inspection proves ingress/processor/content/gateway/scheduler/operations/extension Workers cannot reach undeclared secrets, stores or external-effect APIs.
+- Production binding inspection proves `node` holds no credential-unwrapping key and `effects` holds no data binding, and that no resource identifier appears in both wrangler configurations.
 - The credential store falls back safely when Secrets Store is unavailable/at quota; per-user/provider OAuth credentials remain envelope-encrypted rather than consuming one platform secret each.
 - UI, mail, API, Butlers, CLI/MCP, backup and source-based upgrades work without a Mailda-operated account, licence server or telemetry endpoint.
 - Disconnecting Mailda Control changes no local authority or data availability.
@@ -2249,11 +2258,11 @@ Mailda is complete when an organization can, without hidden manual platform inte
 15. **Forwarding is not synchronization; provider connectors implement real sync where selected.**
 16. **Security, deliverability, compliance, backup and recovery remain in the open installation.**
 17. **Paid products sell managed responsibility, maintained outcomes and assurance—not basic safety or permission to use customer-owned data.**
-18. **One Mailda Node is one deployable project composed of least-privilege Workers; deployment simplicity does not justify one principal holding every public parser, data binding and secret.**
+18. **Amended 3 August 2026. One Mailda Node is one deployable project composed of exactly two Workers: `node` and `effects`.** The original decision was right in principle and unjustified in number — §25 listed eight Workers with no derivation, and a ninth was added for D1 ownership before anyone asked what the other eight prevented. Applying the test *"name what crossing this boundary prevents"* leaves exactly one boundary standing. Splitting Workers does **not** defend against isolate escape: JS is memory-safe, so there is no parser overflow to exploit, and escaping an isolate needs a V8 or workerd vulnerability that would not respect a Worker boundary anyway — service bindings run on the same thread of the same machine. What it does buy is that "this code may not touch that credential" becomes structural rather than a review rule. That is worth exactly one boundary: the credential-unwrapping key. Everything else — public HTTP, the email handler, MIME processing, content serving, scheduling, operations, D1 and the Durable Objects — is either all-internal or all-hostile-input, and §11B already provides operational isolation through independent **queues** with their own concurrency and circuit breakers, which is a different mechanism from Worker separation. Nine Workers cost nine configs, nine cold starts, nine bundles, a subrequest per hop, topological deploy ordering, and most of the one-click install difficulty — for eight boundaries that prevent nothing nameable.
 19. **D1 catalog/shards plus R2 are canonical in Cloudflare Native; Durable Objects serialize and cache only rebuildable state.**
 20. **Provider-native actions are post-facto observed unless a certified synchronous adapter proves otherwise.**
 21. **Exact approval binds a canonical semantic effect/composition manifest; byte-exact wire identity is claimed only for a guaranteeing raw-MIME adapter.**
-22. **Every Cloudflare resource is owned by exactly one Worker; all other access is service-binding RPC.** Added 3 August 2026. Cloudflare bindings are not permission-scoped — there is no read-only D1 or R2 binding — so "who holds the binding" is the only least-privilege lever the platform provides, and ownership is the only form of it a test can enforce. A `state` Worker owns D1, the metadata shards and every Durable Object class, because §12 requires a canonical mutation to commit to D1 before a Durable Object acknowledges it. Enforced structurally: the build fails if a resource identifier appears in more than one wrangler configuration, and `mailda doctor` asserts deployed bindings match. Service bindings cost no latency and no money, so the only budget spent is subrequests.
+22. **Every Cloudflare resource is owned by exactly one Worker, and the credential-unwrapping key is owned by `effects` alone.** Added 3 August 2026. Cloudflare bindings are not permission-scoped — there is no read-only D1 or R2 binding — so "who holds the binding" is the only least-privilege lever the platform provides, and ownership is the only form of it a test can enforce. **A single Worker cannot carry this boundary internally:** `env` is importable from `cloudflare:workers` anywhere in a Worker's code, including Secrets Store bindings, and Secrets Store's own access control governs API tokens and consuming *services*, not code paths. `node` owns D1, the shards, R2 and every Durable Object class, because §12 requires a canonical mutation to commit to D1 before a Durable Object acknowledges it. `effects` owns the root KEK and holds **no** data binding — it receives an approved intent by RPC, performs the external call, and returns the result for `node` to record. Enforced structurally: the build fails if a resource identifier appears in both wrangler configurations, and `mailda doctor` asserts deployed bindings match.
 23. **Mailda supports one transport and hosts no mailbox protocol.** Added 3 August 2026, consolidating the reversals at ADR 4 and ADR 5. One deployment mode, one shipped `TransportAdapter`, no IMAP/JMAP/SMTP mailbox service, no provider connector, no mail-core. The adapter interfaces survive so an organization can build its own; Mailda ships, certifies and supports exactly one implementation.
 
 ---
