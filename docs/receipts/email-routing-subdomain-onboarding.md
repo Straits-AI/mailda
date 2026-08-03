@@ -9,6 +9,8 @@ values:
   routing.subdomain_api_available: 0
   routing.subdomain_dashboard_only: 1
   routing.mx_records_visible_in_dns_api: 0
+  routing.subdomain_receives_external_mail: 1
+  routing.cf_sending_reaches_own_routing_domain: 0
 ---
 
 **Measured:** against `whymelabs.com` on a Workers Paid account, 3 August 2026. A probe
@@ -59,11 +61,52 @@ ordinary zone records, which is consistent with the documented "locked records" 
 So the subdomain's MX is not something that was added through the DNS API and cannot be
 inspected or reproduced through it.
 
+## Confirmed after dashboard onboarding: a subdomain behaves exactly like the apex
+
+The subdomain was onboarded through the dashboard, and MX records appeared in public DNS:
+
+```
+dig +short MX mailda-test.whymelabs.com
+  12 route3.mx.cloudflare.net.  25 route1.mx.cloudflare.net.  34 route2.mx.cloudflare.net.
+```
+
+A routing rule created with `--match-value probe@mailda-test.whymelabs.com --action-type worker`
+was accepted with identical syntax to an apex rule, and a real message from Gmail was
+delivered to the Worker:
+
+```json
+{ "f": "wmhy.tech@gmail.com", "t": "probe@mailda-test.whymelabs.com",
+  "s": "Testing", "bytes": 7154, "at": "2026-08-03T15:17:53.827Z" }
+```
+
+So once onboarded, **nothing about a subdomain is special** — same rule syntax, same `worker`
+action, same delivery. The only obstacle is the onboarding step itself, which has no API.
+
+## A separate finding that matters more: Cloudflare cannot test its own inbound
+
+Two sends via `wrangler email sending send` from `weimeng.soh@whymelabs.com` — one to the
+subdomain, one to an **apex** control address — **never arrived**, while the external Gmail
+message arrived within seconds. Both sends reported `Email sent successfully.`
+
+Cloudflare Email Sending therefore does not deliver to a domain whose MX points at Cloudflare
+Email Routing in the same account. Loop protection is the obvious explanation; the mechanism
+was not confirmed.
+
+**This constrains §5A directly.** Step 6's synthetic inbound test is the step that proves a
+Node actually receives mail — and it **cannot generate its own test message using Cloudflare
+Email Sending**, because that message will be accepted, reported as sent, and never delivered.
+The test needs an external sender or it proves nothing while appearing to pass, which is the
+worst kind of test.
+
+Recorded as a requirement rather than a curiosity: whatever performs the synthetic inbound
+check must originate outside the Node's own account.
+
 ## What could not be tested, and why
 
-The interesting question — whether adding *ordinary* MX records for a subdomain is sufficient
-for Email Routing to accept mail there, or whether the service must also register the
-subdomain internally — **was not answered.** Creating the records failed:
+One question remains unanswered: whether adding *ordinary* MX records for a subdomain would
+be sufficient on its own, or whether the dashboard flow also registers the subdomain
+internally. The subdomain used here was onboarded through the dashboard, so both happened
+together. Creating records directly failed:
 
 ```
 POST /zones/{zone}/dns_records  ->  Authentication error
