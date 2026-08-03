@@ -1130,11 +1130,19 @@ These are now **product** limits rather than adapter limits, because there is on
 
 The 5 MiB outbound ceiling is the sharpest of these and must be stated plainly to prospects: a Node can *receive* a 25 MiB attachment and be unable to forward or reply with it.
 
-Amended 3 August 2026. Cloudflare Email Service no longer carries a beta designation or availability gating. Sending to arbitrary recipients requires only that the sending domain be onboarded and verified; before that, sends are limited to verified destination addresses. Daily quota starts conservative on a new account and scales with observed deliverability.
+Amended 3 August 2026, and corrected the same day. Cloudflare Email Service no longer carries a beta designation, and sending to arbitrary recipients requires only that the sending domain be onboarded and verified. Daily quota starts conservative on a new account and scales with observed deliverability.
 
-Two states therefore remain meaningful and `doctor` must still distinguish them: `outbound_verified_destinations_only` before domain verification, and `outbound_send_enabled` after. The former `unavailable` state and the "mark the Node receive-only" escape hatch are withdrawn — with the adapter modes gone (§2) there is no alternative TransportAdapter to fall back to, and a Node that cannot send is not a product.
+**But outbound is gated by plan.** Email Sending is *not available at all* on the Workers Free plan; it requires Workers Paid, at a $5/month minimum, which includes 3,000 emails per month. Inbound Email Routing is unlimited and free on both plans. An intermediate correction claimed the `unavailable` state and the receive-only path could be withdrawn because entitlement gating had ended — that was wrong. Gating by beta status ended; gating by plan did not.
 
-Receipt: `docs/receipts/cloudflare-email-service-limits.md`.
+Three outbound states are therefore real, and `doctor` must distinguish all three:
+
+- `unavailable` — the account is on the Workers Free plan. The Node receives mail and cannot send. This is a legitimate, functional configuration, not a failure.
+- `outbound_verified_destinations_only` — Workers Paid, sending domain not yet verified.
+- `outbound_send_enabled` — Workers Paid, domain verified.
+
+A free-plan Node also has a **24-hour, non-configurable queue retention** ceiling. §22 requires retention to be set explicitly on every queue because the default silently deletes unread messages; on the free plan that is not possible, so the 24-hour window is forced and must be disclosed rather than discovered.
+
+Receipts: `docs/receipts/cloudflare-email-service-limits.md`, `docs/receipts/cloudflare-plan-costs.md`.
 
 Scale and isolation rules:
 

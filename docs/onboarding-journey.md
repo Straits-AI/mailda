@@ -55,8 +55,8 @@ To get value from Mailda a prospect must already have, or be willing to obtain:
 | A Cloudflare account | Low — free to create |
 | **A domain they control** | Hard blocker if they don't |
 | **Willingness to change MX**, or delegate a subdomain | High — this is live mail |
-| A paid Workers plan, for anything beyond toy volume | Real money, unquantified |
-| ~~Email Sending entitlement~~ | **Resolved 3 Aug 2026** — no longer beta or gated; verify the domain and send |
+| Workers Paid, **to send mail at all** | **$5/month minimum**, 3,000 emails included, then $0.35/1,000 |
+| ~~Email Sending entitlement~~ | No longer *beta*-gated, but **plan**-gated: free plan cannot send at all |
 
 None of these is stated as a prerequisite; they surface as failures partway through the
 checklist.
@@ -112,7 +112,7 @@ restarting. That is a genuinely good design and rare.
 | 4 | Domain | Prove control. Fine if they have one. |
 | 5 | **DNS / MX** | **The cliff.** See below. |
 | 6 | First mailboxes | Fine. |
-| 7 | Outbound test | **Largely resolved 3 Aug 2026.** Email Service is no longer gated: verify the sending domain and you can send to anyone. Remaining state is `verified-destinations-only` before verification. |
+| 7 | Outbound test | **Partly resolved 3 Aug 2026.** No longer beta-gated — but Email Sending is unavailable on the free plan, so `unavailable` is still a real state. Three states: free plan, paid-but-unverified-domain, paid-and-verified. |
 | 8 | **Inbound test** | **The first moment anything feels real** — step 8 of 13. |
 | 9 | Policy choices | Content supervision, external sending, AI, forwarding, retention, approval. Six governance decisions, plus #7's mandatory security-profile disclosure. A wall of consequential dialogs for someone who wanted email to work. |
 | 10 | Directory | Fine, and optional. |
@@ -200,8 +200,19 @@ requiring a per-customer Google Cloud project, an OAuth client per organization,
 for push, and an annually renewed CASA assessment for anything not internal-only. It is
 **more** setup than delegating a subdomain, not less.
 
-**What remains unfixed, and is now the whole problem:** time to first value is still step 8
-of 13, and there is still no way to evaluate Mailda without a DNS change. With connectors
+**A candidate for the evaluation problem, found in the pricing table.** A **free-plan Node
+receives real mail and cannot send it** — inbound Email Routing is unlimited and free;
+Email Sending requires Workers Paid. So a prospect can point one DNS record at a delegated
+subdomain that carries nothing, receive their own real mail, explore the whole product, and
+pay nothing until they want to reply.
+
+That is the zero-cost evaluation path this document went looking for and could not find. It
+is *their own mail*, not fixtures to discount, and the only commitment is a subdomain MX
+record. Receipt: `cloudflare-plan-costs.md`. Recorded as an observation, not a decision —
+it wants its own ticket.
+
+**What remains unfixed:** time to first value is still step 8 of 13, and the free-plan path
+above still requires a DNS change, even if a harmless one. With connectors
 withdrawn, the two candidates are the ones already identified here — seed the install with
 fixture mail, and promote the delegated subdomain from a §5A parenthetical to the
 recommended path. §10's domain topology already defaults to `ops.example.com` or
