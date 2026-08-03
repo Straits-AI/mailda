@@ -25,7 +25,7 @@ What exists today:
 |---|---|
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,446 lines specifying the target state, with 24 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 15 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 16 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 8 receipts in [`docs/receipts/`](./docs/receipts/) generating 54 verified constants |
 | **Code** | A measurement harness and one Worker. 34 tests. Not a product. |
 
@@ -101,6 +101,7 @@ packages/runtime                       the clock, id and randomness seam
 packages/contract                      command schemas
 packages/evidence                      framed encryption for stored mail
 apps/node/workers/state                D1, Durable Objects, the authorization path
+                                       (to be folded into the single Worker, ADR 18)
 probes/                                throwaway platform experiments
 ```
 
