@@ -25,7 +25,7 @@ Sources: [Workers pricing](https://developers.cloudflare.com/workers/platform/pr
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) ·
 [Workers Builds limits and pricing](https://developers.cloudflare.com/workers/ci-cd/builds/limits-and-pricing/)
 
-## The headline: a free-plan Node cannot send mail
+## The headline: a free-plan Node cannot send to arbitrary recipients
 
 > **Outbound emails (Email Sending)** — Workers Free: **Not available**. Workers Paid: 3,000 included per month, then $0.35 per 1,000 emails.
 >
@@ -66,7 +66,7 @@ with cost unquantified; this is the quantity.
 
 | | Free |
 |---|---|
-| Email Sending | **not available** |
+| Email Sending | verified destinations only — see `free-plan-node-capability.md` |
 | Email Routing (inbound) | unlimited |
 | Queue operations | 10,000/day |
 | **Queue retention** | **24 hours, non-configurable** |
@@ -89,19 +89,20 @@ own best practices recommend the SQLite backend, and #4's design assumes it.
 ## Workers Builds is not a cost consideration
 
 3,000 build minutes/month free, 6,000 on Paid then $0.005/minute. A Mailda update builds
-two Workers, so at a generous three minutes each that is roughly **500 updates per month
-inside the free allowance**. Build minutes will not be the constraint on ADR 24's update
-channel.
+one Worker (ADR 18), so at a generous three minutes that is roughly **1,000 updates per
+month inside the free allowance**. Build minutes will not be the constraint on ADR 24's
+update channel.
 
 Free plan allows 1 concurrent build, Paid allows 6; 20-minute timeout and 8 GB memory on
 both.
 
 ## An unplanned consequence: the free plan is an evaluation tier
 
-A free-plan Node receives real mail on a delegated subdomain, stores it, indexes it, and
-shows it in the web UI. It simply cannot reply. That is a genuine zero-cost evaluation
-path — *your own real mail*, one DNS record on a subdomain that carries nothing, no
-commitment, and no fixtures to discount.
+A free-plan Node receives real mail, stores it, indexes it, and shows it in the web UI. It
+can even reply to **verified** addresses, so an evaluator can exercise a round trip to their
+own inbox. It cannot reply to a customer. That is a genuine zero-cost evaluation path —
+*your own real mail*, no commitment, and no fixtures to discount. Confirmed live:
+`free-plan-node-capability.md`.
 
 `docs/onboarding-journey.md` spent considerable effort looking for an evaluation path that
 did not require betting live mail, and rejected Provider Connected as more setup than a
