@@ -25,7 +25,7 @@ What exists today:
 |---|---|
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,446 lines specifying the target state, with 24 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 16 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 20 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 8 receipts in [`docs/receipts/`](./docs/receipts/) generating 54 verified constants |
 | **Code** | A measurement harness and one Worker. 34 tests. Not a product. |
 
@@ -62,7 +62,7 @@ queue without a dead-letter queue, no retryable table without a unique constrain
 | | |
 |---|---|
 | A Cloudflare account | Free to create |
-| A domain you control | Or a delegated subdomain — `mail.example.com` is the recommended start |
+| A domain you control | Or a delegated subdomain — `mail.example.com` is the default. **Pointing MX at Cloudflare is required**; nothing avoids it |
 | **Workers Paid — mandatory** | **$5/month minimum**, 3,000 emails included, then $0.35/1,000 |
 | Inbound mail | Unlimited, included |
 

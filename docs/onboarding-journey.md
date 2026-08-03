@@ -224,3 +224,32 @@ withdrawn, the two candidates are the ones already identified here — seed the 
 fixture mail, and promote the delegated subdomain from a §5A parenthetical to the
 recommended path. §10's domain topology already defaults to `ops.example.com` or
 `mail.example.com`; onboarding does not yet reflect that.
+
+
+---
+
+## Resolved, 3 August 2026 — ADR 26
+
+This document's central finding was that there is no way to evaluate Mailda without a DNS
+change. That is **true and now accepted** rather than solved, because the framing was wrong.
+
+Two questions were being conflated. *"Do I want this?"* — answerable with any realistic data,
+and it never needed the prospect's own mail. *"Does it work for my mail?"* — unanswerable
+without pointing MX at Cloudflare, by fixtures or anything else. Two candidate answers were
+burned attacking the second: provider connectors (ADR 4) and a free-plan trial (ADR 25).
+
+**ADR 26 answers the first question outside the product**, on a hosted demo Mailda operates —
+no install, no account, no DNS. Installing still requires DNS, and §5A's prerequisites say so
+up front instead of revealing it at step 4.
+
+The second structural finding — first value at step 8 of 13 — is addressed by reordering:
+the inbound test is now step 6, with the five steps before it taking about a minute each. The
+second-recovery-owner stall at step 2 became a warning at step 13 rather than a blocker.
+
+Fixture mail is still built, but its home is the demo and the test suite, never a customer's
+Node — which removes the lifecycle problem this document worried about: fabricated records
+living in a compliance-scoped system, and a sixth "nothing here" state on every surface.
+
+**What is not claimed.** Nobody can validate their own mail before committing DNS. That is a
+property of running a mail system, not a deficiency engineered away. What changed is that
+nobody has to commit before knowing whether they want it.
