@@ -1,8 +1,0 @@
-{
-  "name": "mailda-probe-effects",
-  "main": "index.js",
-  "compatibility_date": "2026-08-01",
-  // Mirrors the real `effects` Worker (ADR 22): a secret and no data binding at all.
-  // Deployed FIRST because `node` service-binds to it (#4: the target must exist).
-  "vars": { "ROLE": "effects" }
-}
