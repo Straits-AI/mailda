@@ -14,8 +14,14 @@ values:
 ---
 
 **Measured:** against **real remote D1**, not miniflare. A scratch database in a live
-Cloudflare account, seeded through `wrangler d1 execute --remote`, with size read from
-`wrangler d1 info --json`. The database was deleted after measurement.
+Cloudflare account on the **Workers Free** plan, seeded through
+`wrangler d1 execute --remote`, with size read from `wrangler d1 info --json`. The database
+was deleted after measurement.
+
+Plan does not affect the figure: SQLite page accounting for identical rows and indexes is
+the same on either plan, and the free-plan 500 MB per-database ceiling was never approached
+(6 MB used). Plan affects *limits*, not storage efficiency. Recorded because a receipt that
+does not say where it was measured cannot be disputed.
 
 Local measurement was attempted first and is not possible: D1 rejects `PRAGMA page_count`
 with `SQLITE_AUTH`, so page accounting is unavailable from inside a Worker. Remote

@@ -11,8 +11,14 @@ values:
   provisioning.ids_written_back_to_config: 0
 ---
 
-**Measured:** live Cloudflare account, wrangler 4.118.0, 3 August 2026. Two throwaway
-Workers deployed and deleted; the account was verified back to baseline afterwards.
+**Measured:** live Cloudflare account on the **Workers Free** plan, wrangler 4.118.0,
+3 August 2026. Two throwaway Workers deployed and deleted; the account was verified back to
+baseline afterwards.
+
+Worth noting since it was not the intent: D1 auto-provisioning **works on the free plan** —
+both databases were created without a paid subscription. Whether the one-database-per-Worker
+naming behaviour differs on Workers Paid is untested, though there is no reason to expect
+it would.
 
 ## The question
 
