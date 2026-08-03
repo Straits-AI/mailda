@@ -56,10 +56,10 @@ To get value from Mailda a prospect must already have, or be willing to obtain:
 | **A domain they control** | Hard blocker if they don't |
 | **Willingness to change MX**, or delegate a subdomain | High — this is live mail |
 | A paid Workers plan, for anything beyond toy volume | Real money, unquantified |
-| Cloudflare Email Sending entitlement | **May not be obtainable** (§11B: beta) |
+| ~~Email Sending entitlement~~ | **Resolved 3 Aug 2026** — no longer beta or gated; verify the domain and send |
 
-None of these is stated as a prerequisite. They surface as failures partway through the
-checklist — the entitlement one at **step 7 of 13**, after the DNS work is already done.
+None of these is stated as a prerequisite; they surface as failures partway through the
+checklist.
 
 **Gap:** no "can I even use this?" page. A prospect cannot self-qualify before investing
 an hour.
@@ -156,14 +156,10 @@ already requires.
 mail. Promote it from parenthetical to the recommended choice, with apex MX as the
 graduation step once they trust it.
 
-**3. Move the mode choice later.** Step 3 asks for Cloudflare Native vs Provider Connected
-vs Full Mail Adapter before the user has used anything. Cloudflare Native is the canonical
-scaffold (§2) and should simply be the default, with the others offered once they know
-what they need.
+**3. ~~Move the mode choice later.~~** Done differently — ADR 23 removed the choice.
 
-**4. Front-load the entitlement check.** The outbound entitlement state (§11B) is knowable
-at install time from the account, not at step 7. A Node that will be receive-only should
-say so before the user touches DNS.
+**4. Front-load the domain-verification state.** Whether sending is limited to verified
+destinations is knowable at install time from the account, not at step 7.
 
 **5. Write the prerequisites page.** Domain, DNS control, Cloudflare account, expected
 cost, and the honest sentence about Email Sending being beta. Let people disqualify
