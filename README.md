@@ -23,9 +23,9 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,542 lines specifying the target state, with 34 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,544 lines specifying the target state, with 36 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 27 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 28 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
 | **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
 
@@ -51,6 +51,11 @@ That has already earned its place. Measuring the authorization path found a **fu
 scan on every request** — 1,864 rows read where 7 were needed, growing linearly with
 organisation size. It would have shipped invisibly.
 ([receipt](./docs/receipts/authz-check-rows-read.md))
+
+**Structure beats discipline, again.** Approval binds a manifest *id*, and editing a sealed manifest
+produces a new id — so "any material edit invalidates approval" stopped being a rule someone has to
+remember and became a property of the identifiers. Same move as the partial unique index that makes
+two current signing keys unrepresentable.
 
 **Honest semantics are enforced, not aspired to.** A forwarded copy is called a copy, never
 a sync. A provider action Mailda observed after the fact is never described as approved.
