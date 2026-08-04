@@ -23,13 +23,20 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,446 lines specifying the target state, with 24 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,499 lines specifying the target state, with 28 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 20 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 8 receipts in [`docs/receipts/`](./docs/receipts/) generating 54 verified constants |
-| **Code** | A measurement harness and one Worker. 34 tests. Not a product. |
+| **Measurements** | 13 receipts in [`docs/receipts/`](./docs/receipts/) generating 81 verified constants |
+| **Code** | A measurement harness and one Worker. 86 tests. Not a product. |
 
-Nothing here receives mail yet.
+**It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
+genuine Gmail message through Cloudflare Email Routing, stored it encrypted and framed, and served
+it back **byte-identical** to a signed-in human — verified by SHA-256 against the original, with the
+sender's real `Received:` chain and DKIM signature intact. That is the whole of what works: one
+message, one mailbox, one authorized reader.
+
+Sign-in is real too — email and password, ES256 access tokens, rotating refresh tokens, key
+rotation that does not sign anyone out. Everything else in the contract above is still unbuilt.
 
 ---
 
@@ -53,7 +60,15 @@ guessing. Names must mean the same thing in the code, the CLI, the API and the U
 **Structural over disciplined.** Where a rule could be a code-review convention, it's made
 into something a build can check instead: no Cloudflare resource in two Worker configs, no
 queue without a dead-letter queue, no retryable table without a unique constraint, no bare
-`Date.now()` outside one module.
+`Date.now()` outside one module. "At most one current signing key" is a partial unique index, not a
+guard clause — two current keys are unrepresentable rather than merely avoided.
+
+**A green test suite is not evidence about the platform.** Building sign-in, PBKDF2 was set to
+OWASP's recommended 600,000 iterations. Every test passed. The deployed Worker returned HTTP 500 on
+every sign-in, because **Cloudflare rejects any single PBKDF2 call above 100,000 iterations and
+local `workerd` does not enforce that limit**. The work is now chained across six rounds, and the
+receipt says in as many words: measure this against a deployed Node, never against the local
+runtime. ([receipt](./docs/receipts/password-hash-cost.md))
 
 ---
 
@@ -85,6 +100,15 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
 - **Cloudflare is a hard dependency.** You own your data and your bill; the Node is not
   portable to another platform.
 - **Not for bulk or marketing mail.** Transactional and operational only.
+- **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id,
+  so verifiers are PBKDF2 at 600,000 effective iterations — an accepted baseline, not a strong one.
+  Passkeys are specified and not yet built. The reasoning, including what this does and does not
+  protect against, is written down rather than implied.
+  ([receipt](./docs/receipts/password-hash-cost.md))
+- **A signed token cannot be recalled.** Removing someone's access takes effect on the next request
+  for everything authorization-related, because authority is never carried in the token — but a
+  revoked account keeps a working *session* for up to ten minutes. That window is the access
+  token's lifetime, and it is a measured number rather than a comfortable one.
 
 ---
 
@@ -95,14 +119,17 @@ Mailda-Full-Engineering-Blueprint.md   the product contract
 AGENTS.md                              how we work; read before contributing
 docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
+docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      command schemas
 packages/evidence                      framed encryption for stored mail
-apps/node/worker                D1, Durable Objects, the authorization path
-                                       (to be folded into the single Worker, ADR 18)
+apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
+                                       authorization, auth, outbox sweeper, interface
+apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
+apps/node/worker/src/client            browser scripts, served as real .js files
 probes/                                throwaway platform experiments
 ```
 

@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       verbose: true,
-      wrangler: { configPath: "./wrangler.jsonc" },
+      wrangler: { configPath: "./wrangler.jsonc", environment: "test" },
       miniflare: {
         bindings: { TEST_MIGRATIONS: migrations },
         r2Buckets: ["EVIDENCE"],

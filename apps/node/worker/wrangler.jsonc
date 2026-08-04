@@ -12,5 +12,53 @@
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
   "durable_objects": { "bindings": [{ "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] }]
+
+  // ADR 22's credential KEK: wraps token-signing keys, never message content.
+  //
+  // **This binding is a live exception to ADR 24, and it is not resolved.** Every other resource
+  // here omits its id because Cloudflare links D1 and R2 per account, which is what lets a
+  // customer's fork stay byte-identical to upstream. Secrets Store is not auto-linked, so
+  // `store_id` is an account-specific value sitting in committed config — exactly the thing
+  // ADR 24 exists to prevent. The store id below belongs to the development account.
+  //
+  // It needs a decision before this ships: either the install flow writes this binding (and the
+  // Deploy-to-Cloudflare button path cannot), or the KEK moves somewhere per-account linking
+  // reaches. Recorded here rather than quietly committed.
+  "secrets_store_secrets": [
+    {
+      "binding": "CREDENTIAL_KEK",
+      "store_id": "ad17ad5895bd43f8903e4ae528bed321",
+      "secret_name": "MAILDA_CREDENTIAL_KEK"
+    }
+  ],
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] }],
+
+  // Browser-side scripts are served verbatim as text, so they stay real `.js` files that a
+  // linter, a formatter and a person can all read. The alternative — JavaScript inside a
+  // template literal in a `.ts` file — makes every backtick and `${` an escaping hazard, and
+  // silently defeats every tool that would otherwise check it.
+  // fallthrough keeps wrangler's default Text rules (.sql, .html, .txt) in effect; without it
+  // this rule replaces them entirely.
+  "rules": [{ "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true }],
+
+  "env": {
+    // The environment the test suite runs in. Its purpose is to have **no** CREDENTIAL_KEK: a
+    // local Secrets Store binding cannot be given a value from config, and the alternative —
+    // stubbing `.get()` — would mean the tests never exercise either real branch.
+    //
+    // So tests run the documented no-binding path (dev KEK, which `doctor` refuses in production),
+    // and the bound-but-unreadable path gets its own test with a stub env. Bindings are not
+    // inherited by named environments, which is what makes this an omission rather than an
+    // override.
+    //
+    // The other bindings have to be repeated because of that same rule. Wrangler warns when the
+    // top level declares something this environment does not, so the duplication is drift-checked
+    // rather than silently divergent — and the one omission left is the deliberate one.
+    "test": {
+      "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
+      "r2_buckets": [{ "binding": "EVIDENCE" }],
+      "durable_objects": { "bindings": [{ "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" }] }
+    }
+  }
 }

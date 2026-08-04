@@ -10,16 +10,21 @@
 //    provisioned — Secrets Store needs a store id, which the install flow creates. Optional
 //    so its absence is visible in the types; `evidence-store.ts` refuses to treat a missing
 //    KEK as acceptable in production rather than falling back silently.
+//  - CREDENTIAL_KEK: the other half of ADR 22's split. Wraps things that mint authority —
+//    token-signing keys today, transport credentials later — and is never used for message
+//    content, so a content-key compromise cannot escalate into forging sessions.
 //  - TEST_MIGRATIONS: passed as a binding by vitest-pool-workers.
 import type { D1Migration } from "@cloudflare/vitest-pool-workers";
 
 declare global {
   interface Env {
     CONTENT_KEK?: { get(): Promise<string> };
+    CREDENTIAL_KEK?: { get(): Promise<string> };
   }
   namespace Cloudflare {
     interface Env {
       CONTENT_KEK?: { get(): Promise<string> };
+      CREDENTIAL_KEK?: { get(): Promise<string> };
       TEST_MIGRATIONS: D1Migration[];
     }
   }

@@ -1,3 +1,5 @@
+import { verifyAccessToken } from "./auth/jwt.ts";
+import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 
 /**
  * Read authorization for Layer 1 (§7).
@@ -9,34 +11,36 @@
  * check scan the organisation).
  */
 
-const SESSION_COOKIE = "mailda_session";
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 export interface Principal {
   orgId: string;
   userId: string;
 }
 
-/** Resolves a session cookie to a principal, or null. Expiry is checked here, not cached. */
+/**
+ * Resolves a request to a principal, or null.
+ *
+ * The identity comes from the ES256 access token — a bearer header if one is present, otherwise
+ * the HttpOnly cookie, because the same endpoints serve both the browser and a CLI.
+ *
+ * This **replaced** an opaque `sessions` row lookup rather than being added beside it. Two live
+ * authentication mechanisms is the shape where one gets hardened and the other quietly becomes
+ * the way in, and there is no version of that which is not a landmine. The `sessions` table is
+ * consequently unused; #10's expand/contract makes dropping it a separate, later step, and it
+ * is recorded as dead rather than left looking load-bearing.
+ *
+ * §7 is satisfied by what the token does *not* carry: no relations, no mailbox list. Authority
+ * is re-read from `relationship_tuples` below on every single request, so removing a grant takes
+ * effect on the next call regardless of what any outstanding token says.
+ */
 export async function principalFor(env: Env, request: Request): Promise<Principal | null> {
-  const cookie = request.headers.get("cookie") ?? "";
-  const match = new RegExp(`${SESSION_COOKIE}=([A-Za-z0-9_-]+)`).exec(cookie);
-  if (!match) return null;
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : null;
+  const token = bearer ?? cookieValue(request, ACCESS_COOKIE);
+  if (token === null || token === "") return null;
 
-  const row = await env.CATALOG.prepare(
-    "SELECT org_id, user_id, expires_at FROM sessions WHERE token_hash = ? LIMIT 1",
-  )
-    .bind(await sha256Hex(match[1]!))
-    .first<{ org_id: string; user_id: string; expires_at: string }>();
-
-  if (row === null) return null;
-  // §7: revocation must take effect on the next request, so expiry is evaluated live.
-  if (Date.parse(row.expires_at) < Date.now()) return null;
-  return { orgId: row.org_id, userId: row.user_id };
+  const verified = await verifyAccessToken(env, token, Date.now());
+  if (!verified.ok) return null;
+  return { orgId: verified.claims.org, userId: verified.claims.sub };
 }
 
 /**
@@ -87,9 +91,11 @@ export async function authorize(env: Env, request: Request, receiptId: string): 
   if (who === null) {
     return {
       ok: false,
+      // refreshable: the caller may hold a live refresh token. Saying "signed out" here would
+      // sign people out for an expired access token, which is the normal case, not a failure.
       response: Response.json(
-        { error: "unauthenticated", message: "Sign in to read messages." },
-        { status: 401 },
+        { error: "unauthenticated", message: "Sign in to read messages.", refreshable: true },
+        { status: 401, headers: { "x-mailda-refreshable": "true" } },
       ),
     };
   }
@@ -113,8 +119,8 @@ export async function listMessages(env: Env, request: Request): Promise<Response
   const who = await principalFor(env, request);
   if (who === null) {
     return Response.json(
-      { error: "unauthenticated", message: "Sign in to read messages." },
-      { status: 401 },
+      { error: "unauthenticated", message: "Sign in to read messages.", refreshable: true },
+      { status: 401, headers: { "x-mailda-refreshable": "true" } },
     );
   }
 
