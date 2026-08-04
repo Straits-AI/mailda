@@ -17,6 +17,7 @@ import {
   REFRESH_COOKIE,
   type IssuedSession,
 } from "./auth/session.ts";
+import { formatReport, runDoctor } from "./doctor.ts";
 import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
@@ -62,7 +63,7 @@ export default {
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await route(request, env, ctx);
+      return noStore(new URL(request.url), await route(request, env, ctx));
     } catch (error) {
       // Bare `throw` reaches the client as Cloudflare's opaque "error code 1101", which tells an
       // operator nothing. The message goes to the log (observability is on); the response says only
@@ -95,6 +96,30 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         outboxPending: pending?.n ?? 0,
         at: new Date(clock.now()).toISOString(),
       });
+    }
+
+    /**
+     * `doctor`. Open while unclaimed — no organization, no users, no mail, and this is exactly when
+     * an operator needs it. Authenticated once claimed, because the report names tables, bindings,
+     * receipt ids and counts, and a diagnostic is the obvious place to leak what §5C forbids
+     * leaking. `/health` remains the unauthenticated surface and remains deliberately dull.
+     *
+     * `?format=text` for a CLI and for a log line; JSON otherwise.
+     */
+    if (url.pathname === "/api/doctor") {
+      const orgId = await organizationId(env);
+      if (orgId !== null && (await principalFor(env, request)) === null) return unauthenticated();
+
+      const report = await runDoctor(env, clock);
+      // A refusing verdict is a 503: the Node is telling a load balancer and a human the same
+      // thing, rather than answering 200 with bad news in the body.
+      const status = report.verdict === "refuse" ? 503 : 200;
+
+      return url.searchParams.get("format") === "text"
+        ? new Response(formatReport(report) + "\n", {
+            status, headers: { "content-type": "text/plain; charset=utf-8" },
+          })
+        : Response.json(report, { status });
     }
 
     if (url.pathname === "/api/claim" && request.method === "POST") {
@@ -280,6 +305,28 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
     return Response.json({ error: "not_found" }, { status: 404 });
   }
+}
+
+/**
+ * `Cache-Control: no-store` on every API response, which §8 requires for authentication, admin and
+ * content surfaces.
+ *
+ * This was missing, and it was **not** theoretical: a `GET /api/doctor` response was served from an
+ * edge cache during testing, returning a stale verdict and omitting a field the deployed code was
+ * already producing. An authenticated diagnostic naming tables, receipt ids and counts is precisely
+ * what must never sit in a shared cache.
+ *
+ * Applied centrally rather than per-route, because a header that every future handler has to
+ * remember is a header that will be forgotten — the same structural-over-disciplined choice as
+ * #4's binding rule. `/health` and the client scripts are deliberately excluded: one is
+ * non-disclosive by design and the other is meant to be cached briefly.
+ */
+function noStore(url: URL, response: Response): Response {
+  if (!url.pathname.startsWith("/api/")) return response;
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  headers.set("vary", "cookie");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 /**

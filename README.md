@@ -26,8 +26,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,499 lines specifying the target state, with 28 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 20 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 13 receipts in [`docs/receipts/`](./docs/receipts/) generating 81 verified constants |
-| **Code** | A measurement harness and one Worker. 86 tests. Not a product. |
+| **Measurements** | 14 receipts in [`docs/receipts/`](./docs/receipts/) generating 84 verified constants |
+| **Code** | A measurement harness and one Worker. 98 tests. Not a product. |
 
 **It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
 genuine Gmail message through Cloudflare Email Routing, stored it encrypted and framed, and served
@@ -62,6 +62,14 @@ into something a build can check instead: no Cloudflare resource in two Worker c
 queue without a dead-letter queue, no retryable table without a unique constraint, no bare
 `Date.now()` outside one module. "At most one current signing key" is a partial unique index, not a
 guard clause — two current keys are unrepresentable rather than merely avoided.
+
+**Nothing checks itself by default.** `mailda doctor` verifies the runtime claims every other
+decision made, and on its first run against the deployed Node it found that the mail it holds is
+encrypted under a key published in this repository. Two checks deliberately *use* a credential
+rather than test for its presence — a Secrets Store secret is `pending` for a while after creation,
+so the binding exists and reading it throws. Every failure carries a fix, and there is a test per
+failure mode, because a check that cannot be shown to fail reads as verified.
+([receipt](./docs/receipts/doctor-check-cost.md))
 
 **A green test suite is not evidence about the platform.** Building sign-in, PBKDF2 was set to
 OWASP's recommended 600,000 iterations. Every test passed. The deployed Worker returned HTTP 500 on
@@ -130,6 +138,7 @@ apps/node/worker                       the single Worker (ADR 18): inbound mail,
                                        authorization, auth, outbox sweeper, interface
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
 apps/node/worker/src/client            browser scripts, served as real .js files
+apps/node/worker/src/doctor.ts         checks the runtime claims every decision made
 probes/                                throwaway platform experiments
 ```
 

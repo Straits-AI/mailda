@@ -1,0 +1,225 @@
+import { env } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { createSystemCtx } from "@mailda/runtime";
+import { BUDGETS } from "@mailda/budgets";
+
+import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
+import { formatReport, runDoctor, type Finding } from "../src/doctor.ts";
+import { putEvidence } from "../src/evidence-store.ts";
+
+const testEnv = env as unknown as Env;
+
+function find(findings: Finding[], check: string): Finding {
+  const found = findings.find((f) => f.check === check);
+  if (found === undefined) throw new Error(`no finding named ${check}`);
+  return found;
+}
+
+beforeEach(async () => {
+  for (const table of ["node_claim", "signing_keys", "ingress_receipts", "outbox", "users", "refresh_tokens"]) {
+    await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
+  }
+  clearKeyCache();
+});
+
+describe("doctor", () => {
+  it("passes on a healthy unclaimed Node", async () => {
+    const report = await runDoctor(testEnv, createSystemCtx());
+    expect(report.claimed).toBe(false);
+    // The signing key self-heals on first use, so an empty table is degraded rather than fatal.
+    expect(report.verdict).toBe("degraded");
+    expect(find(report.findings, "migrations_applied").ok).toBe(true);
+    expect(find(report.findings, "signing_key").ok).toBe(false);
+  });
+
+  it("tolerates the dev content KEK while unclaimed, and refuses once claimed", async () => {
+    const ctx = createSystemCtx();
+
+    const unclaimed = await runDoctor(testEnv, ctx);
+    const before = find(unclaimed.findings, "content_kek");
+    expect(before.ok).toBe(true);
+    expect(before.severity).toBe("report");
+
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+
+    const claimed = await runDoctor(testEnv, ctx);
+    const after = find(claimed.findings, "content_kek");
+    expect(after.ok).toBe(false);
+    expect(after.severity).toBe("refuse");
+    expect(claimed.verdict).toBe("refuse");
+    // The detail has to say the key is published, not merely "missing binding" — the danger is that
+    // it looks encrypted.
+    expect(after.detail).toContain("published");
+    expect(after.fix).toBeDefined();
+  });
+
+  it("refuses a claimed Node with no credential KEK, because a dump could then mint sessions", async () => {
+    // The test environment deliberately has no CREDENTIAL_KEK binding (see wrangler.jsonc env.test),
+    // so this exercises the real no-binding path rather than a stub.
+    const ctx = createSystemCtx();
+
+    // Unclaimed: nothing to forge yet.
+    expect(find((await runDoctor(testEnv, ctx)).findings, "credential_kek").severity).toBe("report");
+
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+
+    const finding = find((await runDoctor(testEnv, ctx)).findings, "credential_kek");
+    expect(finding.ok).toBe(false);
+    expect(finding.severity).toBe("refuse");
+    expect(finding.detail).toContain("mint sessions");
+    // Binding it later is not enough on its own — the old key was wrapped under the published one.
+    expect(finding.fix).toContain("rotate");
+  });
+
+  it("verifies the signing key by using it, not by counting rows", async () => {
+    const ctx = createSystemCtx();
+    await currentSigningKey(testEnv, ctx);
+
+    const report = await runDoctor(testEnv, ctx);
+    const finding = find(report.findings, "signing_key");
+    expect(finding.ok).toBe(true);
+    expect(finding.detail).toContain("round trip");
+
+    // A row that exists but cannot be used must fail. Corrupt the wrapped private key: presence is
+    // unchanged, usability is gone — exactly the case a presence check would pass.
+    await testEnv.CATALOG.prepare("UPDATE signing_keys SET private_jwk_wrapped = ? WHERE status = 'current'")
+      .bind("bm90LWEtd3JhcHBlZC1rZXk=").run();
+    clearKeyCache();
+
+    const broken = await runDoctor(testEnv, ctx);
+    const brokenFinding = find(broken.findings, "signing_key");
+    expect(brokenFinding.ok).toBe(false);
+    expect(brokenFinding.severity).toBe("refuse");
+  });
+
+  it("notices a stalled outbox, and ignores rows still within the sweeper's window", async () => {
+    const ctx = createSystemCtx();
+
+    // Fresh: the fast path may still be in flight, so this is not a fault.
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
+    ).bind(ctx.id("evt"), "org_1", "t", "{}", new Date(ctx.now()).toISOString()).run();
+    expect(find((await runDoctor(testEnv, ctx)).findings, "outbox_draining").ok).toBe(true);
+
+    // Old and unpublished: the alarm is not firing, and §22's "eventually" has become "never".
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
+    ).bind(ctx.id("evt"), "org_1", "t", "{}", new Date(ctx.now() - 60 * 60 * 1000).toISOString()).run();
+
+    const stalled = find((await runDoctor(testEnv, ctx)).findings, "outbox_draining");
+    expect(stalled.ok).toBe(false);
+    expect(stalled.severity).toBe("degraded");
+  });
+
+  it("finds accepted mail whose evidence is gone — §24's worst failure", async () => {
+    const ctx = createSystemCtx();
+    const present = ctx.id("rcpt");
+    const absent = ctx.id("rcpt");
+    const at = new Date(ctx.now()).toISOString();
+
+    const stored = await putEvidence(testEnv, `org_1/raw/2026-Q3/${present}.eml`, new TextEncoder().encode("hi"));
+    for (const [id, key] of [[present, stored.blobKey], [absent, "org_1/raw/2026-Q3/gone.eml"]] as const) {
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+           raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(id, "org_1", id, "a@b.com", "c@d.com", 2, key, "x", at).run();
+    }
+
+    const finding = find((await runDoctor(testEnv, ctx)).findings, "evidence_present");
+    expect(finding.ok).toBe(false);
+    expect(finding.severity).toBe("degraded");
+    expect(finding.detail).toContain(absent);
+    // Not "missing object" — the report has to say what it means for the organization.
+    expect(finding.detail).toContain("cannot be read");
+    expect(finding.fix).toContain("lost mail");
+  });
+
+  it("says how much it sampled, so a bounded check cannot read as exhaustive", async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/one.eml", new TextEncoder().encode("hi"));
+    for (let i = 0; i < 3; i++) {
+      const id = ctx.id("rcpt");
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+           raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(id, "org_1", id, "a@b.com", "c@d.com", 2, stored.blobKey, "x", at).run();
+    }
+
+    const finding = find((await runDoctor(testEnv, ctx)).findings, "evidence_present");
+    expect(finding.detail).toContain("3 of 3 receipt(s) checked");
+    expect(finding.receipt).toBe("docs/receipts/doctor-check-cost.md");
+  });
+
+  it("reports the plan check as absent rather than passing it silently", async () => {
+    const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "workers_paid_plan");
+    // An omitted check is indistinguishable from a passing one, so the gap is stated.
+    expect(finding.severity).toBe("report");
+    expect(finding.detail).toContain("Not checkable");
+    expect(finding.detail).toContain("mailda deploy");
+  });
+
+  it("gives every failure a fix — a refusal without a remedy is a dead end", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+
+    const report = await runDoctor(testEnv, ctx);
+    const failures = report.findings.filter((f) => !f.ok);
+    expect(failures.length).toBeGreaterThan(0);
+    for (const failure of failures) {
+      expect(failure.fix, `${failure.check} has no fix`).toBeDefined();
+      expect(failure.fix!.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("measures and reports its own cost, and stays inside the tripwire", async () => {
+    const ctx = createSystemCtx();
+    await currentSigningKey(testEnv, ctx);
+    const report = await runDoctor(testEnv, ctx);
+
+    // A diagnostic that cannot say what it cost is one more number without a receipt.
+    expect(report.cost.subrequests).toBe(report.cost.d1Queries + report.cost.r2Reads);
+    expect(report.cost.d1Queries).toBeGreaterThan(0);
+    expect(report.cost.subrequests).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests_per_run"]);
+    expect(find(report.findings, "doctor_cost").ok).toBe(true);
+
+    // The sample bound is why this is bounded at all; asserted structurally so a future check
+    // cannot quietly make doctor proportional to mailbox size.
+    expect(BUDGETS["doctor.evidence_sample_size"]).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests"] / 2);
+  });
+
+  it("counts one subrequest per receipt sampled, which is what bounds the run", async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/x.eml", new TextEncoder().encode("hi"));
+
+    const baseline = (await runDoctor(testEnv, ctx)).cost;
+    for (let i = 0; i < 5; i++) {
+      const id = ctx.id("rcpt");
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+           raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(id, "org_1", id, "a@b.com", "c@d.com", 2, stored.blobKey, "x", at).run();
+    }
+    const withFive = (await runDoctor(testEnv, ctx)).cost;
+
+    // Five more receipts, five more R2 reads, same number of queries. This is the relationship the
+    // sample size exists to cap.
+    expect(withFive.r2Reads - baseline.r2Reads).toBe(5);
+    expect(withFive.d1Queries).toBe(baseline.d1Queries);
+  });
+
+  it("formats a report a human can act on", async () => {
+    const text = formatReport(await runDoctor(testEnv, createSystemCtx()));
+    expect(text).toContain("mailda doctor");
+    expect(text).toMatch(/FAIL|WARN|ok/);
+    expect(text).toContain("fix      ");
+  });
+});
