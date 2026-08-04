@@ -23,10 +23,10 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,532 lines specifying the target state, with 32 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,542 lines specifying the target state, with 34 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 26 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 16 receipts in [`docs/receipts/`](./docs/receipts/) generating 93 verified constants |
+| **Decisions taken** | 27 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
 | **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
 
 **It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
@@ -122,6 +122,14 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
 - **Cloudflare is a hard dependency.** You own your data and your bill; the Node is not
   portable to another platform.
 - **Not for bulk or marketing mail.** Transactional and operational only.
+- **Your daily sending limit is invisible, so Mailda measures it.** Cloudflare starts new accounts on
+  a conservative daily quota that scales with reputation and publishes no number for it. Mailda counts
+  sends per rolling day and records the count at which you were first throttled — a limit you can hit
+  is a limit you must see. ([receipt](./docs/receipts/cloudflare-email-sending.md))
+- **Paying for Workers is not enough to send.** Arbitrary recipients require a *sending domain
+  onboarded* with SPF and DKIM. Until then a Node can only send to addresses already verified in your
+  own account — so it can receive a customer's message and be unable to answer it. `mailda deploy`
+  checks both and says which one is missing.
 - **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id,
   so verifiers are PBKDF2 at 600,000 effective iterations — an accepted baseline, not a strong one.
   Passkeys are specified and not yet built. The reasoning, including what this does and does not
