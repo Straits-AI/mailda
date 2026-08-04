@@ -57,9 +57,11 @@ export async function markPublished(env: Env, ctx: Ctx, ids: string[]): Promise<
 }
 
 /**
- * The sweeper's unit of work, kept separate from any transport so it is testable without
- * one. Layer 1 has no queue consumer yet; the events are drained and marked, which is
- * enough to prove the mechanism and the retry-safety around it.
+ * The sweeper's unit of work, kept separate from any transport so it is testable without one — and
+ * as of #25 there deliberately is no transport. The outbox row *is* the durability: this only marks
+ * an event published after its handler returns, so a failing handler leaves it pending and the alarm
+ * retries. That is at-least-once with retry, which is what Cloudflare Queues would have provided.
+ * Queues arrives when a handler needs to be slow enough that it should not hold this alarm.
  */
 export async function drainOutbox(
   env: Env,
@@ -105,10 +107,11 @@ export class OutboxSweeper extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const { createSystemCtx } = await import("@mailda/runtime");
     const clock = createSystemCtx();
-    const { drained } = await drainOutbox(this.env, clock, async () => {
-      // Layer 1: no consumer yet. Draining proves the mechanism; the consumer arrives with
-      // the async processing pipeline (§13) and its own idempotency record.
-    });
+    // The consumer (#25). An unregistered topic throws, which leaves its event unpublished rather
+    // than silently marked done — so a topic added without deciding what consumes it shows up in
+    // `doctor` as a stalled outbox instead of vanishing.
+    const { dispatch } = await import("./pipeline.ts");
+    const { drained } = await drainOutbox(this.env, clock, (event) => dispatch(this.env, clock, event));
 
     // Re-arm while work remains, so a backlog drains rather than waiting for the next write.
     const remaining = await pendingEvents(this.env, clock, 1);

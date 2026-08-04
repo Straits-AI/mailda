@@ -266,7 +266,11 @@ describe("signing key rotation", () => {
     // `d` is the ECDSA private scalar. Its presence in the row would mean the table *is* the key.
     expect(JSON.parse(row!.public_jwk).d).toBeUndefined();
     expect(row!.private_jwk_wrapped).not.toContain('"d"');
-    expect(atob(row!.private_jwk_wrapped).startsWith("MLDA")).toBe(true);
+    // Wrapped values carry the key generation that sealed them, because a D1 value has no metadata to
+    // hang it on the way an R2 object does (ADR 28).
+    expect(row!.private_jwk_wrapped).toMatch(/^v[1-9]\d*\./);
+    const ciphertext = row!.private_jwk_wrapped.replace(/^v\d+\./, "");
+    expect(atob(ciphertext).startsWith("MLDA")).toBe(true);
   });
 
   it("publishes verification keys, and only verification keys", async () => {

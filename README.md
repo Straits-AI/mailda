@@ -23,11 +23,11 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,530 lines specifying the target state, with 30 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,532 lines specifying the target state, with 32 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 24 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 14 receipts in [`docs/receipts/`](./docs/receipts/) generating 85 verified constants |
-| **Code** | A measurement harness and one Worker. 101 tests. Not a product. |
+| **Decisions taken** | 25 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Measurements** | 15 receipts in [`docs/receipts/`](./docs/receipts/) generating 89 verified constants |
+| **Code** | A measurement harness and one Worker. 127 tests. Not a product. |
 
 **It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
 genuine Gmail message through Cloudflare Email Routing, stored it encrypted and framed, and served
@@ -62,6 +62,13 @@ into something a build can check instead: no Cloudflare resource in two Worker c
 queue without a dead-letter queue, no retryable table without a unique constraint, no bare
 `Date.now()` outside one module. "At most one current signing key" is a partial unique index, not a
 guard clause — two current keys are unrepresentable rather than merely avoided.
+
+**Keys belong to the Node.** Both root keys are generated into a Durable Object on first use — no
+binding to configure and no way to install a Node that is accidentally unprotected. Secrets Store lost
+that argument on measurement: removing its config block doesn't relink the binding the way D1 does, it
+**drops it silently**. Re-sealing then makes rotation real, verified against the plaintext hash each
+receipt already stored for exactly this purpose.
+([receipt](./docs/receipts/evidence-lifecycle.md))
 
 **Nothing checks itself by default.** `mailda doctor` verifies the runtime claims every other
 decision made, and on its first run against the deployed Node it found that the mail it holds is
@@ -128,6 +135,7 @@ AGENTS.md                              how we work; read before contributing
 docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
+docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit

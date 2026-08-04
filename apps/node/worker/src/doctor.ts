@@ -1,9 +1,11 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { isUsingDevCredentialKek, unwrapCredential, wrapCredential } from "./auth/kek.ts";
+import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
-import { isUsingDevKek } from "./evidence-store.ts";
+import { LEGACY_KEY_GENERATION, vault } from "./keyvault.ts";
+import { reconcileEvidence } from "./reconcile.ts";
+import { pendingReseal } from "./reseal.ts";
 
 /**
  * `doctor` — the thing that checks the claims every other decision made.
@@ -90,8 +92,21 @@ export interface DoctorReport {
 function metered(env: Env): { env: Env; cost: DoctorReport["cost"] } {
   const cost = { d1Queries: 0, r2Reads: 0, subrequests: 0 };
 
+  /**
+   * Every passthrough is **bound to the target**, not returned bare.
+   *
+   * `Reflect.get(target, property, receiver)` hands back an unbound method, which then runs with
+   * `this` set to the proxy and fails with "Illegal invocation" — a native binding rejects a `this`
+   * that is not itself. It surfaced on `R2Bucket.list()`, the one method here that was not
+   * special-cased, and it presented as "Reconciliation failed" rather than as a proxy bug.
+   */
+  const passthrough = <T extends object>(target: T, property: string | symbol) => {
+    const value = Reflect.get(target, property) as unknown;
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+  };
+
   const catalog = new Proxy(env.CATALOG, {
-    get(target, property, receiver) {
+    get(target, property) {
       if (property === "prepare") {
         return (query: string) => {
           cost.d1Queries += 1;
@@ -99,20 +114,20 @@ function metered(env: Env): { env: Env; cost: DoctorReport["cost"] } {
           return target.prepare(query);
         };
       }
-      return Reflect.get(target, property, receiver);
+      return passthrough(target, property);
     },
   });
 
   const evidence = new Proxy(env.EVIDENCE, {
-    get(target, property, receiver) {
-      if (property === "head" || property === "get") {
+    get(target, property) {
+      if (property === "head" || property === "get" || property === "list" || property === "delete") {
         return (...args: unknown[]) => {
           cost.r2Reads += 1;
           cost.subrequests += 1;
-          return (Reflect.get(target, property, receiver) as (...a: unknown[]) => unknown).apply(target, args);
+          return (Reflect.get(target, property) as (...a: unknown[]) => unknown).apply(target, args);
         };
       }
-      return Reflect.get(target, property, receiver);
+      return passthrough(target, property);
     },
   });
 
@@ -120,15 +135,10 @@ function metered(env: Env): { env: Env; cost: DoctorReport["cost"] } {
 }
 
 /**
- * How many receipts get their evidence blob verified.
- *
- * Every check costs an R2 `head`, which spends a subrequest against the 1,000-per-invocation cap,
- * so this cannot be "all of them" on a Node holding millions of messages. It is a **sample**, and
- * the report says so in its own detail line — a bounded check that reads as exhaustive is worse
- * than no check.
+ * The evidence scan's bound now lives with the reconciler that performs it
+ * (`reconcile.list_limit`, receipt: `evidence-lifecycle.md`). It was duplicated here while `doctor`
+ * had its own scan; one number with two owners drifts.
  */
-const EVIDENCE_SAMPLE = BUDGETS["doctor.evidence_sample_size"];
-
 const EXPECTED_TABLES = [
   "relationship_tuples", "team_members", "messages", "mailbox_items", "ingress_receipts",
   "outbox", "addresses", "mailboxes", "users", "sessions", "node_claim",
@@ -145,11 +155,11 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
 
   findings.push(
     ...(await checkSchema(env)),
-    ...(await checkContentKek(env, claimed)),
-    ...(await checkCredentialKek(env, claimed)),
+    ...(await checkVault(env)),
+    ...(await checkCredentialKek(env)),
     ...(await checkSigningKeys(env, ctx)),
     ...(await checkOutbox(env, ctx)),
-    ...(await checkEvidence(env)),
+    ...(await checkEvidence(env, ctx, claim?.org_id ?? null)),
     planCheck(),
   );
 
@@ -211,78 +221,98 @@ async function checkSchema(env: Env): Promise<Finding[]> {
 }
 
 /**
- * The content KEK. Unbound means mail is sealed under a constant published in this repository.
+ * The vault (ADR 28).
  *
- * `refuse` only once the Node is **claimed**, because an unclaimed Node holds no mail and local
- * development has no Secrets Store. A claimed Node with a dev KEK is claiming "encrypted at rest"
- * and the claim is false.
+ * There is no binding to be absent any more, which is the point: a Node generates its own keys on
+ * first use, so "encrypted under a constant published in the public repository" stopped being a
+ * representable state rather than one this function has to catch. What is left to check is whether
+ * any evidence is *still* at generation 0 from before the vault existed — which is a migration in
+ * progress, not a misconfiguration, so it is `degraded` and names the remedy.
  */
-async function checkContentKek(env: Env, claimed: boolean): Promise<Finding[]> {
-  const dev = isUsingDevKek(env);
-  if (!dev) {
-    return [{ check: "content_kek", severity: "refuse", ok: true, discloses: "infrastructure", detail: "Bound to a Secrets Store secret." }];
-  }
-  return [{
-    check: "content_kek",
-    severity: claimed ? "refuse" : "report",
-    discloses: "infrastructure",
-    ok: !claimed,
-    detail: claimed
-      ? "Mail on this Node is encrypted under DEV_ONLY_KEK, a constant published in the Mailda repository. It is not protected."
-      : "No CONTENT_KEK binding. Acceptable while unclaimed; this Node holds no mail yet.",
-    ...(claimed ? {
-      fix: "bind CONTENT_KEK to a Secrets Store secret and re-seal existing evidence — a Node that looks encrypted and is not is worse than one that never claimed to be",
-      receipt: "docs/receipts/evidence-frame-size.md",
-    } : {}),
-  }];
-}
-
-/**
- * The credential KEK, checked by **using** it rather than looking at it.
- *
- * Presence is not readability: a Secrets Store secret is `pending` for a period after creation and
- * `.get()` throws until it propagates. That presented as an HTTP 500 on the first sign-in of a
- * correctly configured Node, which is the reason this does a wrap/unwrap round trip.
- */
-async function checkCredentialKek(env: Env, claimed: boolean): Promise<Finding[]> {
-  if (isUsingDevCredentialKek(env)) {
-    // Gated on `claimed` for the same reason as the content KEK, and stated once here because the
-    // two were briefly inconsistent: an unclaimed Node has no users and no signing keys worth
-    // protecting, and local development has no Secrets Store. The moment it is claimed, the
-    // fallback means a database dump plus a copy of this public repository mints sessions.
+async function checkVault(env: Env): Promise<Finding[]> {
+  let inventory: { content: number; credential: number };
+  try {
+    // Deliberately `sealingKey`, not `inventory` — this **initialises** the vault if it is empty.
+    //
+    // A diagnostic that mutates needs a reason, and here it is: generation-0 evidence can only be
+    // *detected* by comparing it against a newer key, so a Node that predates the vault would never
+    // learn it has a backlog until something happened to seal. Generating is idempotent, and
+    // `sealingKey` never returns the legacy constant, so this cannot create an unprotected state.
+    const content = await vault(env).sealingKey("content");
+    const credential = await vault(env).sealingKey("credential");
+    inventory = { content: content.generation, credential: credential.generation };
+  } catch (error) {
     return [{
-      check: "credential_kek",
-      severity: claimed ? "refuse" : "report",
+      check: "key_vault",
+      severity: "refuse",
       discloses: "infrastructure",
-      ok: !claimed,
-      detail: claimed
-        ? "No CREDENTIAL_KEK binding. Token-signing keys are wrapped under a constant published in the Mailda repository, so anyone with a database dump and a copy of that repository could mint sessions."
-        : "No CREDENTIAL_KEK binding. Acceptable while unclaimed; there are no sessions to forge yet.",
-      ...(claimed ? { fix: "bind CREDENTIAL_KEK to a Secrets Store secret and rotate the signing key, since the existing one was wrapped under the published constant (ADR 22)" } : {}),
+      ok: false,
+      detail: `The KeyVault Durable Object did not answer: ${(error as Error).message.split("\n")[0]}`,
+      fix: "check the KEY_VAULT durable_objects binding and the migrations tag declaring the class; " +
+        "without it this Node can neither seal nor open evidence",
     }];
   }
 
-  const probe = "doctor-credential-kek-round-trip";
+  const findings: Finding[] = [{
+    check: "key_vault",
+    severity: "refuse",
+    discloses: "infrastructure",
+    ok: true,
+    detail: `content key generation ${inventory.content}, credential key generation ${inventory.credential}. ` +
+      `Generated by this Node; generation 0 is the published constant and is decrypt-only.`,
+  }];
+
+  const behind = await pendingReseal(env, inventory.content).catch(() => null);
+  if (behind !== null && behind > 0) {
+    findings.push({
+      check: "evidence_key_generation",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `${behind} receipt(s) reference evidence sealed under an older key generation. ` +
+        `Generation 0 is a constant published in the Mailda repository, so that mail is not protected.`,
+      fix: "POST /api/maintenance/reseal repeatedly until `remaining` reaches 0; it is resumable and " +
+        "verifies each message against its recorded plaintext SHA-256",
+      receipt: "docs/receipts/evidence-lifecycle.md",
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * The credential key, checked by **using** it rather than by looking at it.
+ *
+ * There is no binding to be present any more (ADR 28), so the failure this catches has changed shape:
+ * a wrap/unwrap round trip fails when the vault holds a different key than the one that wrapped an
+ * existing value — a restored backup whose Durable Object storage did not come with it, or a rotation
+ * that was interrupted. Presence was never the interesting question; usability is.
+ */
+async function checkCredentialKek(env: Env): Promise<Finding[]> {
+  const probe = "doctor-credential-key-round-trip";
   try {
     const recovered = await unwrapCredential(env, await wrapCredential(env, probe));
     return [{
-      check: "credential_kek",
+      check: "credential_key",
       severity: "refuse",
       discloses: "infrastructure",
       ok: recovered === probe,
       detail: recovered === probe
         ? "Wrap/unwrap round trip succeeded."
         : "Wrap/unwrap round trip returned different bytes.",
-      ...(recovered === probe ? {} : { fix: "the credential KEK changed; existing signing keys cannot be unwrapped and must be rotated" }),
+      ...(recovered === probe ? {} : {
+        fix: "the credential key changed; existing signing keys cannot be unwrapped and must be rotated",
+      }),
     }];
   } catch (error) {
     return [{
-      check: "credential_kek",
+      check: "credential_key",
       severity: "refuse",
       discloses: "infrastructure",
       ok: false,
-      detail: `Binding present but unusable: ${(error as Error).message.split("\n")[0]}`,
-      fix: "a Secrets Store secret is `pending` for a period after creation and cannot be read; wait for it to become active, or check store_id and secret_name against `wrangler secrets-store secret list <store-id> --remote`",
+      detail: `Could not wrap and unwrap with the credential key: ${(error as Error).message.split("\n")[0]}`,
+      fix: "if the vault reports an unknown generation, restore it from the ADR 29 recovery codes — " +
+        "the data is intact but unreadable without its key",
     }];
   }
 }
@@ -369,55 +399,73 @@ async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
 const STALLED_OUTBOX_MS = 10 * 60 * 1000;
 
 /**
- * Evidence integrity — the one check that looks for §24's worst failure: a receipt that says a
- * message was accepted, pointing at a blob that is not there. "Accepted but absent".
+ * Evidence integrity — §24's worst failure: a receipt saying a message was accepted, pointing at a
+ * blob that is not there. "Accepted but absent".
  *
- * Bounded to a sample, and the detail line says how many were checked out of how many exist. A
- * check that silently examines 200 of 8 million rows and reports "ok" is a check that lies.
- *
- * Deliberately **never repaired**. A missing blob is not a bookkeeping error to tidy away; it is
- * lost mail, and the only honest response is to name the receipts and let a human decide.
+ * Delegates to the reconciler rather than reimplementing the scan, so there is exactly one answer to
+ * "is the mail actually there" and it cannot drift between the diagnostic and the repair tool. Called
+ * **read-only** — `collect` is not set — because a diagnostic must never be the thing that deletes
+ * data, however safe the deletion looks.
  */
-async function checkEvidence(env: Env): Promise<Finding[]> {
-  const total = await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM ingress_receipts")
-    .first<{ n: number }>().catch(() => null);
+async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "evidence_present",
+      severity: "degraded",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so there is no evidence to check.",
+    }];
+  }
 
-  const sample = await env.CATALOG.prepare(
-    "SELECT id, blob_key FROM ingress_receipts ORDER BY accepted_at DESC LIMIT ?",
-  ).bind(EVIDENCE_SAMPLE).all<{ id: string; blob_key: string }>().catch(() => null);
-
-  if (total === null || sample === null) {
+  let report;
+  try {
+    report = await reconcileEvidence(env, ctx, orgId);
+  } catch (error) {
     return [{
       check: "evidence_present",
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: "Could not read ingress_receipts.",
-      fix: "check the migrations_applied finding first",
+      detail: `Reconciliation failed: ${(error as Error).message.split("\n")[0]}`,
+      fix: "check the migrations_applied and key_vault findings first",
     }];
   }
 
-  const missing: string[] = [];
-  for (const receipt of sample.results) {
-    if ((await env.EVIDENCE.head(receipt.blob_key)) === null) missing.push(receipt.id);
-  }
+  const scope =
+    `${report.scanned.receipts} of ${report.scanned.receiptsTotal} receipt(s) and ` +
+    `${report.scanned.objects} object(s)${report.scanned.truncated ? ", truncated" : ""} examined`;
 
-  const checked = sample.results.length;
-  const scope = `${checked} of ${total.n} receipt(s) checked`;
-
-  return [{
+  const findings: Finding[] = [{
     check: "evidence_present",
     severity: "degraded",
     discloses: "data",
-    ok: missing.length === 0,
-    detail: missing.length === 0
-      ? `Every sampled receipt's evidence object exists (${scope}${checked < total.n ? `, most recent ${EVIDENCE_SAMPLE}` : ""}).`
-      : `${missing.length} receipt(s) reference an evidence object that is absent — accepted mail that cannot be read (${scope}): ${missing.join(", ")}.`,
-    ...(missing.length === 0 ? {} : {
-      fix: "this is lost mail, not a bookkeeping error. Do not delete the receipts. Check R2 lifecycle rules and §24 Time Travel before anything else",
+    ok: report.missing.length === 0,
+    detail: report.missing.length === 0
+      ? `Every sampled receipt's evidence object exists (${scope}).`
+      : `${report.missing.length} receipt(s) reference an evidence object that is absent — accepted ` +
+        `mail that cannot be read (${scope}): ${report.missing.map((m) => m.receiptId).join(", ")}.`,
+    ...(report.missing.length === 0 ? {} : {
+      fix: "this is lost mail, not a bookkeeping error. Do not delete the receipts. Check R2 lifecycle " +
+        "rules and §24 Time Travel before anything else",
     }),
-    receipt: "docs/receipts/doctor-check-cost.md",
+    receipt: "docs/receipts/evidence-lifecycle.md",
   }];
+
+  if (report.orphans.length > 0) {
+    findings.push({
+      check: "evidence_orphans",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `${report.orphans.length} object(s) have no receipt and are past the grace period — ` +
+        `writes that lost their transaction. They cost storage and reveal nothing.`,
+      fix: "POST /api/maintenance/reconcile?collect=1 to delete them",
+      receipt: "docs/receipts/evidence-lifecycle.md",
+    });
+  }
+
+  return findings;
 }
 
 /**

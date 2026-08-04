@@ -5,6 +5,7 @@ import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
+import { LEGACY_KEY_GENERATION, vault } from "../src/keyvault.ts";
 import {
   authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings, type Finding,
 } from "../src/doctor.ts";
@@ -16,6 +17,14 @@ function find(findings: Finding[], check: string): Finding {
   const found = findings.find((f) => f.check === check);
   if (found === undefined) throw new Error(`no finding named ${check}`);
   return found;
+}
+
+/** Claims the Node, because the evidence checks are scoped to an organization. */
+async function claim(ctx: ReturnType<typeof createSystemCtx>, orgId = "org_1"): Promise<string> {
+  await testEnv.CATALOG.prepare(
+    "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+  ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), orgId).run();
+  return orgId;
 }
 
 beforeEach(async () => {
@@ -33,49 +42,49 @@ describe("doctor", () => {
     expect(report.verdict).toBe("degraded");
     expect(find(report.findings, "migrations_applied").ok).toBe(true);
     expect(find(report.findings, "signing_key").ok).toBe(false);
+    // No binding to be missing any more: the vault generated its own keys (ADR 28).
+    expect(find(report.findings, "key_vault").ok).toBe(true);
+    expect(find(report.findings, "credential_key").ok).toBe(true);
   });
 
-  it("tolerates the dev content KEK while unclaimed, and refuses once claimed", async () => {
+  it("generates its own keys, so a published constant is no longer a representable state", async () => {
     const ctx = createSystemCtx();
+    const report = await runDoctor(testEnv, ctx);
+    const finding = find(report.findings, "key_vault");
 
-    const unclaimed = await runDoctor(testEnv, ctx);
-    const before = find(unclaimed.findings, "content_kek");
-    expect(before.ok).toBe(true);
-    expect(before.severity).toBe("report");
-
-    await testEnv.CATALOG.prepare(
-      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
-    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
-
-    const claimed = await runDoctor(testEnv, ctx);
-    const after = find(claimed.findings, "content_kek");
-    expect(after.ok).toBe(false);
-    expect(after.severity).toBe("refuse");
-    expect(claimed.verdict).toBe("refuse");
-    // The detail has to say the key is published, not merely "missing binding" — the danger is that
-    // it looks encrypted.
-    expect(after.detail).toContain("published");
-    expect(after.fix).toBeDefined();
+    expect(finding.ok).toBe(true);
+    // Both above generation 0. Generation 0 *is* the published constant, kept decrypt-only so mail
+    // written before the vault stays readable — it can never seal anything.
+    const inventory = await vault(testEnv).inventory();
+    expect(inventory.content).toBeGreaterThan(LEGACY_KEY_GENERATION);
+    expect(inventory.credential).toBeGreaterThan(LEGACY_KEY_GENERATION);
+    expect(finding.detail).toContain(`generation ${inventory.content}`);
   });
 
-  it("refuses a claimed Node with no credential KEK, because a dump could then mint sessions", async () => {
-    // The test environment deliberately has no CREDENTIAL_KEK binding (see wrangler.jsonc env.test),
-    // so this exercises the real no-binding path rather than a stub.
+  it("verifies the credential key by using it, not by looking for a binding", async () => {
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const finding = find(report.findings, "credential_key");
+    expect(finding.ok).toBe(true);
+    expect(finding.detail).toContain("round trip");
+  });
+
+  it("reports evidence still sealed under an older key generation", async () => {
     const ctx = createSystemCtx();
+    const orgId = await claim(ctx);
+    const stored = await putEvidence(testEnv, `${orgId}/raw/2026-Q3/legacy.eml`, new TextEncoder().encode("hi"));
 
-    // Unclaimed: nothing to forge yet.
-    expect(find((await runDoctor(testEnv, ctx)).findings, "credential_kek").severity).toBe("report");
-
+    // A receipt from before the vault existed: NULL generation, which the index treats as 0.
     await testEnv.CATALOG.prepare(
-      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
-    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+      `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+         raw_bytes, blob_key, blob_sha256, accepted_at, key_generation) VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
+    ).bind(ctx.id("rcpt"), orgId, "legacy", "a@b.com", "c@d.com", 2, stored.blobKey,
+      stored.plaintextSha256, new Date(ctx.now()).toISOString()).run();
 
-    const finding = find((await runDoctor(testEnv, ctx)).findings, "credential_kek");
+    const finding = find((await runDoctor(testEnv, ctx)).findings, "evidence_key_generation");
     expect(finding.ok).toBe(false);
-    expect(finding.severity).toBe("refuse");
-    expect(finding.detail).toContain("mint sessions");
-    // Binding it later is not enough on its own — the old key was wrapped under the published one.
-    expect(finding.fix).toContain("rotate");
+    expect(finding.severity).toBe("degraded");
+    // A migration in progress, not a misconfiguration — so it names the remedy.
+    expect(finding.fix).toContain("reseal");
   });
 
   it("verifies the signing key by using it, not by counting rows", async () => {
@@ -120,6 +129,7 @@ describe("doctor", () => {
 
   it("finds accepted mail whose evidence is gone — §24's worst failure", async () => {
     const ctx = createSystemCtx();
+    await claim(ctx);
     const present = ctx.id("rcpt");
     const absent = ctx.id("rcpt");
     const at = new Date(ctx.now()).toISOString();
@@ -143,6 +153,7 @@ describe("doctor", () => {
 
   it("says how much it sampled, so a bounded check cannot read as exhaustive", async () => {
     const ctx = createSystemCtx();
+    await claim(ctx);
     const at = new Date(ctx.now()).toISOString();
     const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/one.eml", new TextEncoder().encode("hi"));
     for (let i = 0; i < 3; i++) {
@@ -154,8 +165,9 @@ describe("doctor", () => {
     }
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "evidence_present");
-    expect(finding.detail).toContain("3 of 3 receipt(s) checked");
-    expect(finding.receipt).toBe("docs/receipts/doctor-check-cost.md");
+    expect(finding.detail).toContain("3 of 3 receipt(s)");
+    expect(finding.detail).toContain("object(s) examined");
+    expect(finding.receipt).toBe("docs/receipts/evidence-lifecycle.md");
   });
 
   it("reports the plan check as absent rather than passing it silently", async () => {
@@ -168,9 +180,11 @@ describe("doctor", () => {
 
   it("gives every failure a fix — a refusal without a remedy is a dead end", async () => {
     const ctx = createSystemCtx();
+    await claim(ctx);
+    // Break something, so there is a failure to inspect at all.
     await testEnv.CATALOG.prepare(
-      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
-    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+      "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
+    ).bind(ctx.id("evt"), "org_1", "t", "{}", new Date(ctx.now() - 60 * 60 * 1000).toISOString()).run();
 
     const report = await runDoctor(testEnv, ctx);
     const failures = report.findings.filter((f) => !f.ok);
@@ -197,8 +211,9 @@ describe("doctor", () => {
     expect(BUDGETS["doctor.evidence_sample_size"]).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests"] / 2);
   });
 
-  it("counts one subrequest per receipt sampled, which is what bounds the run", async () => {
+  it("costs more per receipt, which is exactly what the scan bound exists to cap", async () => {
     const ctx = createSystemCtx();
+    await claim(ctx);
     const at = new Date(ctx.now()).toISOString();
     const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/x.eml", new TextEncoder().encode("hi"));
 
@@ -207,31 +222,35 @@ describe("doctor", () => {
       const id = ctx.id("rcpt");
       await testEnv.CATALOG.prepare(
         `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
-           raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-      ).bind(id, "org_1", id, "a@b.com", "c@d.com", 2, stored.blobKey, "x", at).run();
+           raw_bytes, blob_key, blob_sha256, accepted_at, key_generation) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(id, "org_1", id, "a@b.com", "c@d.com", 2, stored.blobKey, "x", at, 1).run();
     }
     const withFive = (await runDoctor(testEnv, ctx)).cost;
 
-    // Five more receipts, five more R2 reads, same number of queries. This is the relationship the
-    // sample size exists to cap.
-    expect(withFive.r2Reads - baseline.r2Reads).toBe(5);
-    expect(withFive.d1Queries).toBe(baseline.d1Queries);
+    // Five more receipts cost five more R2 head calls. Proportional to what is examined, which is
+    // why what is examined is bounded and reported.
+    expect(withFive.r2Reads).toBeGreaterThan(baseline.r2Reads);
+    expect(withFive.subrequests).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests_per_run"]);
   });
 
   it("answers a locked-out operator, because a diagnostic only available when healthy is not one", async () => {
     const ctx = createSystemCtx();
-    await testEnv.CATALOG.prepare(
-      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
-    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+    await claim(ctx);
 
-    // No CREDENTIAL_KEK in the test environment, so a claimed Node genuinely cannot authenticate
-    // anyone — the state that made this endpoint unreachable when it mattered most.
+    // Simulate the state that made this endpoint unreachable when it mattered: a signing key the
+    // vault cannot unwrap, which is what a restored backup without its Durable Object storage looks
+    // like. ADR 28 removed the missing-binding version of this, not the condition itself.
+    await currentSigningKey(testEnv, ctx);
+    await testEnv.CATALOG.prepare("UPDATE signing_keys SET private_jwk_wrapped = ? WHERE status = 'current'")
+      .bind("v1.bm90LWEtd3JhcHBlZC1rZXk=").run();
+    clearKeyCache();
+
     const report = await runDoctor(testEnv, ctx);
     expect(authenticationIsImpossible(report)).toBe(true);
 
     const reduced = withoutDataFindings(report);
     // Infrastructure findings survive: their contents are all published in this repository already.
-    expect(reduced.findings.some((f) => f.check === "credential_kek" && !f.ok)).toBe(true);
+    expect(reduced.findings.some((f) => f.check === "signing_key" && !f.ok)).toBe(true);
     // Anything derived from the organisation's mail does not.
     expect(reduced.findings.every((f) => f.discloses === "infrastructure")).toBe(true);
     expect(reduced.findings.some((f) => f.check === "evidence_present")).toBe(false);
@@ -243,11 +262,12 @@ describe("doctor", () => {
 
   it("does not open up when authentication merely fails for one caller", async () => {
     const ctx = createSystemCtx();
+    await claim(ctx);
     await currentSigningKey(testEnv, ctx);
-    // With a usable signing key, a missing session is an ordinary 401 — not grounds to disclose.
-    // (The credential KEK is absent here, so this asserts the *signing key* half of the condition.)
+    // With a usable signing key and a working vault, a missing session is an ordinary 401 — the Node
+    // can authenticate people, this caller just is not one. Not grounds to disclose anything.
     const report = await runDoctor(testEnv, ctx);
-    expect(report.findings.find((f) => f.check === "signing_key")!.ok).toBe(true);
+    expect(authenticationIsImpossible(report)).toBe(false);
   });
 
   it("tags every finding with what it discloses", async () => {

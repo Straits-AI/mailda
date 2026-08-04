@@ -79,8 +79,8 @@ export async function acceptInbound(
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO ingress_receipts
          (id, org_id, provider_event_id, envelope_from, envelope_to,
-          raw_bytes, blob_key, blob_sha256, accepted_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+          raw_bytes, blob_key, blob_sha256, accepted_at, key_generation)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       receiptId,
       orgId,
@@ -91,6 +91,9 @@ export async function acceptInbound(
       stored.blobKey,
       stored.plaintextSha256,
       at,
+      // The generation that sealed this object. R2's own metadata remains authoritative; this is the
+      // indexed column the re-seal driver scans, so a new message never looks like it needs work.
+      stored.keyGeneration,
     ),
     env.CATALOG.prepare(
       `INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at)

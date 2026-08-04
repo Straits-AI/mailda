@@ -18,9 +18,12 @@ import {
   type IssuedSession,
 } from "./auth/session.ts";
 import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
+import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
+import { resealBatch } from "./reseal.ts";
 import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
+export { KeyVault } from "./keyvault.ts";
 
 /**
  * The Mailda Node. One Worker (ADR 18).
@@ -128,6 +131,33 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
             status, headers: { "content-type": "text/plain; charset=utf-8" },
           })
         : Response.json(report, { status });
+    }
+
+    /**
+     * Maintenance. Authenticated always — these read and delete an organization's evidence, so unlike
+     * `doctor` there is no state in which an anonymous caller should reach them.
+     *
+     * Both are **bounded and resumable** rather than long-running: each call does one batch and
+     * reports what remains, because a Worker invocation cannot re-seal ~8.5M messages and an
+     * operation that pretends otherwise fails silently at scale (receipt: evidence-lifecycle.md).
+     */
+    if (url.pathname === "/api/maintenance/reseal" && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const outcome = await resealBatch(env, clock, who.orgId);
+      // 200 even with failures: the batch itself succeeded, and each failure is a named receipt the
+      // caller has to act on rather than a request to retry.
+      return Response.json(outcome);
+    }
+
+    if (url.pathname === "/api/maintenance/reconcile" && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const collect = url.searchParams.get("collect") === "1";
+      const report = await reconcileEvidence(env, clock, who.orgId, { collect });
+      return url.searchParams.get("format") === "text"
+        ? new Response(formatReconcile(report) + "\n", { headers: { "content-type": "text/plain; charset=utf-8" } })
+        : Response.json(report);
     }
 
     if (url.pathname === "/api/claim" && request.method === "POST") {

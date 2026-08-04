@@ -11,28 +11,22 @@
   "observability": { "enabled": true },
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
-  "durable_objects": { "bindings": [{ "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" }] },
+  // KEY_VAULT holds both root keys, generated per Node (ADR 28). No Secrets Store binding: a
+  // `secrets_store_secrets` block needs an account-specific store_id in committed config, and
+  // measurement showed removing it drops the binding silently rather than relinking the way D1 does.
+  // A DO binding is declared by class name with no id, so this config stays byte-identical.
+  "durable_objects": {
+    "bindings": [
+      { "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" },
+      { "name": "KEY_VAULT", "class_name": "KeyVault" }
+    ]
+  },
 
-  // ADR 22's credential KEK: wraps token-signing keys, never message content.
-  //
-  // **This binding is a live exception to ADR 24, and it is not resolved.** Every other resource
-  // here omits its id because Cloudflare links D1 and R2 per account, which is what lets a
-  // customer's fork stay byte-identical to upstream. Secrets Store is not auto-linked, so
-  // `store_id` is an account-specific value sitting in committed config — exactly the thing
-  // ADR 24 exists to prevent. The store id below belongs to the development account.
-  //
-  // It needs a decision before this ships: either the install flow writes this binding (and the
-  // Deploy-to-Cloudflare button path cannot), or the KEK moves somewhere per-account linking
-  // reaches. Recorded here rather than quietly committed.
-  "secrets_store_secrets": [
-    {
-      "binding": "CREDENTIAL_KEK",
-      "store_id": "ad17ad5895bd43f8903e4ae528bed321",
-      "secret_name": "MAILDA_CREDENTIAL_KEK"
-    }
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] },
+    { "tag": "v2", "new_sqlite_classes": ["KeyVault"] }
   ],
-
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] }],
 
   // Browser-side scripts are served verbatim as text, so they stay real `.js` files that a
   // linter, a formatter and a person can all read. The alternative — JavaScript inside a
@@ -43,22 +37,22 @@
   "rules": [{ "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true }],
 
   "env": {
-    // The environment the test suite runs in. Its purpose is to have **no** CREDENTIAL_KEK: a
-    // local Secrets Store binding cannot be given a value from config, and the alternative —
-    // stubbing `.get()` — would mean the tests never exercise either real branch.
+    // The environment the test suite runs in. It exists only because named environments do not
+    // inherit bindings, and wrangler warns when the top level declares something this environment
+    // does not — so the duplication below is drift-checked rather than silently divergent.
     //
-    // So tests run the documented no-binding path (dev KEK, which `doctor` refuses in production),
-    // and the bound-but-unreadable path gets its own test with a stub env. Bindings are not
-    // inherited by named environments, which is what makes this an omission rather than an
-    // override.
-    //
-    // The other bindings have to be repeated because of that same rule. Wrangler warns when the
-    // top level declares something this environment does not, so the duplication is drift-checked
-    // rather than silently divergent — and the one omission left is the deliberate one.
+    // It used to exist to *omit* CREDENTIAL_KEK, because a local Secrets Store binding cannot be
+    // given a value from config. ADR 28 removed that binding entirely, so there is nothing left to
+    // omit: the vault generates its own keys and works identically in tests and in production.
     "test": {
       "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],
-      "durable_objects": { "bindings": [{ "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" }] }
+      "durable_objects": {
+        "bindings": [
+          { "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" },
+          { "name": "KEY_VAULT", "class_name": "KeyVault" }
+        ]
+      }
     }
   }
 }
