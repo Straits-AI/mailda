@@ -23,9 +23,9 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,546 lines specifying the target state, with 38 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,548 lines specifying the target state, with 40 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 29 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
 | **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
 
@@ -57,8 +57,11 @@ produces a new id — so "any material edit invalidates approval" stopped being 
 remember and became a property of the identifiers. Same move as the partial unique index that makes
 two current signing keys unrepresentable.
 
-**Honest semantics are enforced, not aspired to.** A forwarded copy is called a copy, never
-a sync. A provider action Mailda observed after the fact is never described as approved.
+**Honest semantics are enforced, not aspired to.** The outbox will never say *Sent* — Cloudflare
+tells a Node only that it accepted a message, and neither of its send APIs can report what the
+recipient received. So the strongest claim Mailda makes is `handed_over`, and there are seven outbound
+states because collapsing any two of them would be the first lie a mail client tells. A forwarded copy
+is called a copy, never a sync. A provider action Mailda observed after the fact is never described as approved.
 When a send outcome is genuinely unknown, the product says `outcome unknown` rather than
 guessing. Names must mean the same thing in the code, the CLI, the API and the UI.
 
