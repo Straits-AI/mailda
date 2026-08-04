@@ -23,9 +23,9 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,544 lines specifying the target state, with 36 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,546 lines specifying the target state, with 38 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 28 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 29 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
 | **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
 
@@ -127,6 +127,9 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
 - **Cloudflare is a hard dependency.** You own your data and your bill; the Node is not
   portable to another platform.
 - **Not for bulk or marketing mail.** Transactional and operational only.
+- **Remote images are blocked until you ask for them.** A tracking pixel tells a third party when
+  your colleague opened a message. Mailda will not proxy them either — that would make your Node
+  fetch URLs a stranger chose, from inside your own Cloudflare account.
 - **Your daily sending limit is invisible, so Mailda measures it.** Cloudflare starts new accounts on
   a conservative daily quota that scales with reputation and publishes no number for it. Mailda counts
   sends per rolling day and records the count at which you were first throttled — a limit you can hit
