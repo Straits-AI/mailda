@@ -19,8 +19,13 @@ const MEASURED_SHAPE = {
       "id", "org_id", "time_bucket", "blob_key", "blob_sha256", "blob_bytes",
       "rfc_message_id", "thread_id", "subject", "from_addr", "sent_at", "received_at",
       "ingress_receipt_id", "created_at",
+      // Added by migration 0006 (#27). The byte figure was re-measured against this shape on
+      // 4 August 2026 *before* this constant was updated — 1,253 -> 1,505 bytes per message, which
+      // cost 1.4 million messages of shard headroom. Editing the constant first would have made the
+      // receipt silently stale, which is the whole failure this guard exists to prevent.
+      "in_reply_to", "thread_root_rfc_id", "parse_error",
     ],
-    indexes: ["msg_by_receipt", "msg_by_thread"],
+    indexes: ["msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id"],
   },
   mailbox_items: {
     columns: [

@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
+    "@mailda/evidence": "workspace:*",
     "@mailda/runtime": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "@mailda/evidence": "workspace:*",
     "zod": "^4.1.13"
   },
   "devDependencies": {

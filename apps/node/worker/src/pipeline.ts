@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
+import { materialiseReceipt } from "./materialise.ts";
 import type { OutboxEvent } from "./outbox.ts";
 
 /**
@@ -44,21 +45,33 @@ export type Handler = (env: Env, ctx: Ctx, event: OutboxEvent) => Promise<void>;
 /**
  * Registered and intentionally inert.
  *
- * Named rather than `async () => {}` so the registry reads as a decision. Anything using this is
- * carrying a note about what will replace it.
+ * Named rather than `async () => {}` so the registry reads as a decision. Exported because it is
+ * currently **unused** — every topic now has a real handler — and deleting it would remove the
+ * documented way to say "this topic needs no work at this layer", which is the distinction that keeps
+ * "handled" separable from "forgotten".
  */
-const nothingToDoYet: Handler = async () => {};
+export const nothingToDoYet: Handler = async () => {};
 
 export const HANDLERS: Record<string, Handler> = {
   /**
-   * A message was accepted and its evidence is stored (§13).
+   * A message was accepted and its evidence is stored (§13). Materialises its metadata and its
+   * delivery into a mailbox (#27).
    *
-   * Nothing consumes it yet. What will: parsing MIME into `messages` and `mailbox_items` so the
-   * ledger reads from message metadata rather than from ingress receipts, threading, and the Butler
-   * events at Layer 4. Those are Layer 2 work and each is a separate decision, so this stays
-   * explicitly inert rather than growing a half-implementation nobody chose.
+   * Still deferred to later layers: threading messages into shared conversations across an
+   * organization (#30 needs it, and a reply cannot be threaded before there is something to reply
+   * to), body extraction (#28 owns the parser decision), and Butler events at Layer 4.
    */
-  "mail.ingress.accepted": nothingToDoYet,
+  "mail.ingress.accepted": async (env, ctx, event) => {
+    const payload = JSON.parse(event.payload) as { receiptId?: string };
+    if (typeof payload.receiptId !== "string") {
+      throw new Error(
+        `E_MALFORMED_EVENT  ${event.id} on topic ${event.topic} has no receiptId\n` +
+          "  why      the event stays unpublished, so nothing is lost — `doctor` reports a stalled outbox\n" +
+          "  fix      ingress.ts writes this payload; a change there without a change here is the cause",
+      );
+    }
+    await materialiseReceipt(env, ctx, payload.receiptId);
+  },
 };
 
 export interface DispatchOutcome {

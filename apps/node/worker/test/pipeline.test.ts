@@ -8,12 +8,12 @@ import { dispatch, registeredTopics } from "../src/pipeline.ts";
 
 const testEnv = env as unknown as Env;
 
-async function enqueue(topic: string, ageMs = 60_000): Promise<string> {
+async function enqueue(topic: string, ageMs = 60_000, payload = '{"receiptId":"rcpt_absent"}'): Promise<string> {
   const ctx = createSystemCtx();
   const id = ctx.id("evt");
   await testEnv.CATALOG.prepare(
     "INSERT INTO outbox (id, org_id, topic, payload, published_at, created_at) VALUES (?,?,?,?,NULL,?)",
-  ).bind(id, "org_pipeline", topic, "{}", new Date(ctx.now() - ageMs).toISOString()).run();
+  ).bind(id, "org_pipeline", topic, payload, new Date(ctx.now() - ageMs).toISOString()).run();
   return id;
 }
 
@@ -55,6 +55,15 @@ describe("processing pipeline (#25)", () => {
     ).rejects.toThrow(/register it in HANDLERS/);
   });
 
+  it("refuses an event whose payload does not carry a receipt", async () => {
+    const ctx = createSystemCtx();
+    await enqueue("mail.ingress.accepted", 60_000, "{}");
+    const { drained } = await drainOutbox(testEnv, ctx, (event) => dispatch(testEnv, ctx, event));
+    // ingress.ts writes this payload. A change there without a change here should surface as a
+    // stalled outbox rather than as silently dropped mail.
+    expect(drained).toBe(0);
+  });
+
   it("registers every topic the Node actually emits", async () => {
     // `ingress.ts` emits exactly this topic. A mismatch here means accepted mail would pile up
     // unpublished, which is the failure the registry is designed to make visible rather than silent.
@@ -63,7 +72,10 @@ describe("processing pipeline (#25)", () => {
 
   it("is idempotent, because #9's model delivers at least once", async () => {
     const ctx = createSystemCtx();
-    const event = { id: "evt_dup", orgId: "org_pipeline", topic: "mail.ingress.accepted", payload: "{}" };
+    const event = {
+      id: "evt_dup", orgId: "org_pipeline", topic: "mail.ingress.accepted",
+      payload: '{"receiptId":"rcpt_absent"}',
+    };
     // The enqueue can succeed while the published-flag write fails, so a handler sees the same event
     // twice and must not care.
     await dispatch(testEnv, ctx, event);

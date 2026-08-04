@@ -25,9 +25,9 @@ What exists today:
 |---|---|
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,532 lines specifying the target state, with 32 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 25 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 15 receipts in [`docs/receipts/`](./docs/receipts/) generating 89 verified constants |
-| **Code** | A measurement harness and one Worker. 127 tests. Not a product. |
+| **Decisions taken** | 26 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Measurements** | 16 receipts in [`docs/receipts/`](./docs/receipts/) generating 93 verified constants |
+| **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
 
 **It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
 genuine Gmail message through Cloudflare Email Routing, stored it encrypted and framed, and served
@@ -62,6 +62,13 @@ into something a build can check instead: no Cloudflare resource in two Worker c
 queue without a dead-letter queue, no retryable table without a unique constraint, no bare
 `Date.now()` outside one module. "At most one current signing key" is a partial unique index, not a
 guard clause — two current keys are unrepresentable rather than merely avoided.
+
+**A receipt that outlives its schema is a number that still reads as verified.** Adding two threading
+indexes tripped the guard on the message-size receipt, so it was re-measured against real remote D1
+before the guard's constant was touched: **1,253 → 1,505 bytes per message**, and a 10 GB shard now
+holds 7.1 million messages rather than 8.5. **Two indexes cost 1.4 million messages of headroom** — a
+figure nobody would have noticed without the guard.
+([receipt](./docs/receipts/message-metadata-bytes.md))
 
 **Keys belong to the Node.** Both root keys are generated into a Durable Object on first use — no
 binding to configure and no way to install a Node that is accidentally unprotected. Secrets Store lost
