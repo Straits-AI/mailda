@@ -2,8 +2,13 @@
 
 How a human gets into a Mailda Node, and how they stay in without ever seeing a 401.
 
-Specification: §8 of the blueprint. Decisions: ADR 27 (why two tokens), ADR 28 (the unresolved
-credential-KEK/portability collision). Numbers: [`receipts/password-hash-cost.md`](./receipts/password-hash-cost.md).
+Specification: §8 of the blueprint. Decisions: ADR 27 (why two tokens), ADR 28 (where the KEKs live),
+ADR 29 (passkeys and the per-user password setting).
+Numbers: [`receipts/password-hash-cost.md`](./receipts/password-hash-cost.md).
+
+**Built today: email/password.** ADR 29 makes passkeys the factor Mailda builds and demotes passwords
+to a per-user setting an administrator switches on. This document describes what runs now; the
+"Decided, not built" section at the end describes what supersedes it.
 
 ## The shape
 
@@ -98,9 +103,13 @@ Without `retiring`, rotating a key throws out every signed-in user at the moment
 Rotation is therefore invisible, which is the only kind of rotation anyone actually performs. A key
 is generated on first use, so a fresh install needs no key ceremony.
 
-Private keys are wrapped by the **credential** KEK (ADR 22), never the content KEK. A signing key
-mints authority; message content does not. One KEK for both would mean a single leaked secret that
-reads every message *and* forges a session for any user.
+Private keys are wrapped by the **credential** KEK, never the content KEK. A signing key mints
+authority; message content does not. One KEK for both would mean a single leaked secret that reads
+every message *and* forges a session for any user.
+
+The KEK is a Secrets Store binding today and **ADR 28 moves it into Durable Object storage**,
+generated per Node — Secrets Store bindings are not account-portable, and #7 had already established
+they never protected against the platform anyway.
 
 Verification keys are cached per isolate for 60 seconds. That is a staleness bound on *withdrawing*
 a key, deliberately an order of magnitude below the access-token TTL so this cache is never what
@@ -182,10 +191,29 @@ On `mailda.swmengappdev.workers.dev`, 4 August 2026:
 - **Rotation is invisible:** a token minted before rotation still verified, with two keys published.
 - Sign-out cleared all three cookies.
 
-## Not built
+## Decided, not built (ADR 28, 29 — 4 August 2026)
 
-Additive, not blocked: passkeys (§5A step 2), OIDC/SAML federation and SCIM, step-up authentication
-for privileged operations, DPoP/mTLS sender constraints, CLI device grant.
+- **Passkeys replace passwords as the factor Mailda builds**, with no dependency: verification is an
+  ES256/RS256 signature over `authenticatorData ‖ sha256(clientDataJSON)`, and ES256 already exists
+  above. Attestation `none`.
+- **Password authentication becomes a per-user setting, default off, enabled by an administrator**
+  under step-up authentication and audited. Not removed, because a shared workstation with no
+  enrollable device is a real case. **This adds a third sign-in outcome that must collapse to
+  `invalid_credentials` with matching timing** — "not enabled for this account" would otherwise name
+  exactly the accounts worth attacking.
+- **Ten single-use 128-bit recovery codes, plain SHA-256.** Not human-chosen, so no offline-guessing
+  surface to price. The same codes carry the key escrow below.
+- **Both KEKs move into Durable Object storage, generated per Node.** Secrets Store bindings are not
+  account-portable (measured: removing the config block drops the binding silently rather than
+  relinking as D1 does), and #7 had already established that Secrets Store never protected against
+  the platform. The dev-KEK fallback is deleted rather than refused, so "wrapped under a published
+  constant" stops being representable. The DO's storage then becomes the crown jewels, which is why
+  escrow and recovery are one artifact.
+
+Still additive and not blocked: OIDC/SAML federation and SCIM, DPoP/mTLS sender constraints, the CLI
+device grant.
+
+## Not built
 
 The `sessions` table is **dead**. It was replaced rather than supplemented — two live authentication
 mechanisms is the shape where one gets hardened and the other quietly becomes the way in. Dropping
