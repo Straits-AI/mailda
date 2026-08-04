@@ -5,7 +5,9 @@ import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
-import { formatReport, runDoctor, type Finding } from "../src/doctor.ts";
+import {
+  authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings, type Finding,
+} from "../src/doctor.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 
 const testEnv = env as unknown as Env;
@@ -214,6 +216,49 @@ describe("doctor", () => {
     // sample size exists to cap.
     expect(withFive.r2Reads - baseline.r2Reads).toBe(5);
     expect(withFive.d1Queries).toBe(baseline.d1Queries);
+  });
+
+  it("answers a locked-out operator, because a diagnostic only available when healthy is not one", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
+    ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), "org_1").run();
+
+    // No CREDENTIAL_KEK in the test environment, so a claimed Node genuinely cannot authenticate
+    // anyone — the state that made this endpoint unreachable when it mattered most.
+    const report = await runDoctor(testEnv, ctx);
+    expect(authenticationIsImpossible(report)).toBe(true);
+
+    const reduced = withoutDataFindings(report);
+    // Infrastructure findings survive: their contents are all published in this repository already.
+    expect(reduced.findings.some((f) => f.check === "credential_kek" && !f.ok)).toBe(true);
+    // Anything derived from the organisation's mail does not.
+    expect(reduced.findings.every((f) => f.discloses === "infrastructure")).toBe(true);
+    expect(reduced.findings.some((f) => f.check === "evidence_present")).toBe(false);
+    expect(reduced.findings.some((f) => f.check === "outbox_draining")).toBe(false);
+    // And it says it is reduced, rather than looking like a complete clean report.
+    const note = reduced.findings.find((f) => f.check === "report_reduced")!;
+    expect(note.detail).toContain("withheld");
+  });
+
+  it("does not open up when authentication merely fails for one caller", async () => {
+    const ctx = createSystemCtx();
+    await currentSigningKey(testEnv, ctx);
+    // With a usable signing key, a missing session is an ordinary 401 — not grounds to disclose.
+    // (The credential KEK is absent here, so this asserts the *signing key* half of the condition.)
+    const report = await runDoctor(testEnv, ctx);
+    expect(report.findings.find((f) => f.check === "signing_key")!.ok).toBe(true);
+  });
+
+  it("tags every finding with what it discloses", async () => {
+    const report = await runDoctor(testEnv, createSystemCtx());
+    for (const finding of report.findings) {
+      expect(["infrastructure", "data"], finding.check).toContain(finding.discloses);
+    }
+    // The data findings are the ones naming counts and receipt ids.
+    const data = report.findings.filter((f) => f.discloses === "data").map((f) => f.check);
+    expect(data).toContain("evidence_present");
+    expect(data).toContain("outbox_draining");
   });
 
   it("formats a report a human can act on", async () => {

@@ -17,7 +17,7 @@ import {
   REFRESH_COOKIE,
   type IssuedSession,
 } from "./auth/session.ts";
-import { formatReport, runDoctor } from "./doctor.ts";
+import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
 import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
@@ -108,9 +108,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      */
     if (url.pathname === "/api/doctor") {
       const orgId = await organizationId(env);
-      if (orgId !== null && (await principalFor(env, request)) === null) return unauthenticated();
+      const signedIn = (await principalFor(env, request)) !== null;
+      const full = await runDoctor(env, clock);
 
-      const report = await runDoctor(env, clock);
+      // A claimed Node normally requires authentication here. The exception is the case that made
+      // this endpoint useless when it mattered: if the Node cannot authenticate *anyone*, the gate
+      // is not one a caller can satisfy, so the reduced report is served instead of a 401.
+      let report = full;
+      if (orgId !== null && !signedIn) {
+        if (!authenticationIsImpossible(full)) return unauthenticated();
+        report = withoutDataFindings(full);
+      }
       // A refusing verdict is a 503: the Node is telling a load balancer and a human the same
       // thing, rather than answering 200 with bad news in the body.
       const status = report.verdict === "refuse" ? 503 : 200;

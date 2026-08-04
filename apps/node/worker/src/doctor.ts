@@ -53,6 +53,17 @@ export interface Finding {
   /** What to actually do. Present on every failure, per AGENTS.md's error shape. */
   fix?: string;
   receipt?: string;
+  /**
+   * What this finding's detail reveals.
+   *
+   *   infrastructure — binding names, table names, config shape. All of it is already in a public
+   *                    repository, so disclosing it tells an attacker nothing they cannot read.
+   *   data           — counts, receipt ids, anything derived from an organization's mail. §5C's
+   *                    rule applies: never reveal whether a resource exists.
+   *
+   * This distinction is what lets a locked-out operator still be told why they are locked out.
+   */
+  discloses: "infrastructure" | "data";
 }
 
 export interface DoctorReport {
@@ -146,6 +157,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
   findings.push({
     check: "doctor_cost",
     severity: "report",
+    discloses: "data",
     ok: cost.subrequests <= BUDGETS["doctor.max_subrequests_per_run"],
     detail: `${cost.subrequests} subrequest(s): ${cost.d1Queries} D1 quer${cost.d1Queries === 1 ? "y" : "ies"}, ${cost.r2Reads} R2 read(s). Cap is ${BUDGETS["doctor.max_subrequests"]} per invocation.`,
     ...(cost.subrequests <= BUDGETS["doctor.max_subrequests_per_run"] ? {} : {
@@ -175,6 +187,7 @@ async function checkSchema(env: Env): Promise<Finding[]> {
       check: "catalog_reachable",
       severity: "refuse",
       ok: false,
+      discloses: "infrastructure",
       detail: "The CATALOG D1 binding did not answer a query.",
       fix: "confirm the d1_databases binding is linked to this Worker (`wrangler deploy` reports it as `env.CATALOG`)",
     }];
@@ -186,6 +199,7 @@ async function checkSchema(env: Env): Promise<Finding[]> {
   return [{
     check: "migrations_applied",
     severity: "refuse",
+    discloses: "infrastructure",
     ok: missing.length === 0,
     detail: missing.length === 0
       ? `All ${EXPECTED_TABLES.length} expected tables present.`
@@ -206,11 +220,12 @@ async function checkSchema(env: Env): Promise<Finding[]> {
 async function checkContentKek(env: Env, claimed: boolean): Promise<Finding[]> {
   const dev = isUsingDevKek(env);
   if (!dev) {
-    return [{ check: "content_kek", severity: "refuse", ok: true, detail: "Bound to a Secrets Store secret." }];
+    return [{ check: "content_kek", severity: "refuse", ok: true, discloses: "infrastructure", detail: "Bound to a Secrets Store secret." }];
   }
   return [{
     check: "content_kek",
     severity: claimed ? "refuse" : "report",
+    discloses: "infrastructure",
     ok: !claimed,
     detail: claimed
       ? "Mail on this Node is encrypted under DEV_ONLY_KEK, a constant published in the Mailda repository. It is not protected."
@@ -238,6 +253,7 @@ async function checkCredentialKek(env: Env, claimed: boolean): Promise<Finding[]
     return [{
       check: "credential_kek",
       severity: claimed ? "refuse" : "report",
+      discloses: "infrastructure",
       ok: !claimed,
       detail: claimed
         ? "No CREDENTIAL_KEK binding. Token-signing keys are wrapped under a constant published in the Mailda repository, so anyone with a database dump and a copy of that repository could mint sessions."
@@ -252,6 +268,7 @@ async function checkCredentialKek(env: Env, claimed: boolean): Promise<Finding[]
     return [{
       check: "credential_kek",
       severity: "refuse",
+      discloses: "infrastructure",
       ok: recovered === probe,
       detail: recovered === probe
         ? "Wrap/unwrap round trip succeeded."
@@ -262,6 +279,7 @@ async function checkCredentialKek(env: Env, claimed: boolean): Promise<Finding[]
     return [{
       check: "credential_kek",
       severity: "refuse",
+      discloses: "infrastructure",
       ok: false,
       detail: `Binding present but unusable: ${(error as Error).message.split("\n")[0]}`,
       fix: "a Secrets Store secret is `pending` for a period after creation and cannot be read; wait for it to become active, or check store_id and secret_name against `wrangler secrets-store secret list <store-id> --remote`",
@@ -288,6 +306,7 @@ async function checkSigningKeys(env: Env, ctx: Ctx): Promise<Finding[]> {
     return [{
       check: "signing_key",
       severity: "degraded",
+      discloses: "infrastructure",
       ok: false,
       detail: "No current signing key. One is generated on the next sign-in, so this self-heals — but no existing access token can be verified until then.",
       fix: "sign in once, or POST /api/auth/rotate-signing-key",
@@ -300,6 +319,7 @@ async function checkSigningKeys(env: Env, ctx: Ctx): Promise<Finding[]> {
     return [{
       check: "signing_key",
       severity: "refuse",
+      discloses: "infrastructure",
       ok: verified.ok,
       detail: verified.ok
         ? `Sign and verify round trip succeeded. ${current} current, ${counts?.retiring_keys ?? 0} still verifying.`
@@ -310,6 +330,7 @@ async function checkSigningKeys(env: Env, ctx: Ctx): Promise<Finding[]> {
     return [{
       check: "signing_key",
       severity: "refuse",
+      discloses: "infrastructure",
       ok: false,
       detail: `Could not use the current signing key: ${(error as Error).message.split("\n")[0]}`,
       fix: "the key is unwrappable only with the credential KEK that wrapped it — check the credential_kek finding first",
@@ -333,6 +354,7 @@ async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
   return [{
     check: "outbox_draining",
     severity: "degraded",
+    discloses: "data",
     ok: stalled === 0,
     detail: stalled === 0
       ? "No outbox events older than the sweeper's cutoff."
@@ -368,6 +390,7 @@ async function checkEvidence(env: Env): Promise<Finding[]> {
     return [{
       check: "evidence_present",
       severity: "degraded",
+      discloses: "data",
       ok: false,
       detail: "Could not read ingress_receipts.",
       fix: "check the migrations_applied finding first",
@@ -385,6 +408,7 @@ async function checkEvidence(env: Env): Promise<Finding[]> {
   return [{
     check: "evidence_present",
     severity: "degraded",
+    discloses: "data",
     ok: missing.length === 0,
     detail: missing.length === 0
       ? `Every sampled receipt's evidence object exists (${scope}${checked < total.n ? `, most recent ${EVIDENCE_SAMPLE}` : ""}).`
@@ -405,6 +429,7 @@ function planCheck(): Finding {
   return {
     check: "workers_paid_plan",
     severity: "report",
+    discloses: "infrastructure",
     ok: true,
     detail: "Not checkable from inside a Worker — no account API access. `mailda deploy` verifies the plan at install and refuses on Workers Free (ADR 25).",
     receipt: "docs/receipts/cloudflare-plan-costs.md",
@@ -424,4 +449,44 @@ export function formatReport(report: DoctorReport): string {
     if (finding.receipt !== undefined) lines.push(`        receipt  ${finding.receipt}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Can this Node authenticate anyone at all?
+ *
+ * Found by measurement, not by reasoning: removing the `CREDENTIAL_KEK` binding made every signing
+ * key unwrappable, so sign-in returned 500 — and `doctor`, which requires authentication on a
+ * claimed Node, became unreachable at exactly the moment it was needed. A diagnostic that is only
+ * available while the system is healthy is not a diagnostic.
+ *
+ * When authentication is impossible, the authentication gate is not a gate anyone can satisfy, and
+ * refusing to explain why is worse than disclosing which binding is missing. So the report is served
+ * unauthenticated — reduced to `infrastructure` findings, whose contents are all already published
+ * in this repository. Nothing derived from an organization's mail crosses that line.
+ */
+export function authenticationIsImpossible(report: DoctorReport): boolean {
+  return report.findings.some(
+    (f) => !f.ok && f.severity === "refuse" && (f.check === "credential_kek" || f.check === "signing_key"),
+  );
+}
+
+/** The reduced form. Infrastructure findings only, and it says that it is reduced. */
+export function withoutDataFindings(report: DoctorReport): DoctorReport {
+  const findings = report.findings.filter((f) => f.discloses === "infrastructure");
+  return {
+    ...report,
+    findings: [
+      ...findings,
+      {
+        check: "report_reduced",
+        severity: "report",
+        ok: true,
+        discloses: "infrastructure",
+        detail:
+          `Served without authentication because this Node cannot currently authenticate anyone. ` +
+          `${report.findings.length - findings.length} finding(s) that would describe this ` +
+          `organization's mail are withheld. Sign in once the failure above is fixed to see them.`,
+      },
+    ],
+  };
 }

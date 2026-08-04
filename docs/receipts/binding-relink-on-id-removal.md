@@ -2,12 +2,14 @@
 id: binding-relink-on-id-removal
 kind: platform-limit
 measured_on: 2026-08-03
+measured_again_on: 2026-08-04
 stale_when: >
-  wrangler changes how it resolves a binding declared without an id, or automatic resource
-  provisioning leaves beta
+  wrangler changes how it resolves a binding declared without an id, automatic resource
+  provisioning leaves beta, or Secrets Store bindings gain per-account relinking
 values:
   binding.relinks_when_id_and_name_removed: 1
   binding.reprovisions_when_id_and_name_removed: 0
+  binding.secrets_store_relinks_when_id_removed: 0
 ---
 
 **Measured:** live test on a Workers **Paid** account, 3 August 2026, wrangler 4.118.0.
@@ -64,3 +66,42 @@ guarantee held by the platform rather than by discipline.
 - Tested with the Worker already deployed and bound. Whether a **first** deploy with no id
   and no name behaves the same is a different question, and is what
   `d1-auto-provisioning.md` covers: it provisions a new database named after the Worker.
+
+
+## Secrets Store bindings do **not** relink (measured 4 August 2026)
+
+The relink property above is what makes ADR 24 survivable: the Deploy button writes resource ids into
+the customer's fork, and conflicts resolve to upstream unconditionally because wrangler re-links the
+binding server-side when the id is absent.
+
+**That does not extend to Secrets Store.** Removing the `secrets_store_secrets` block from
+`wrangler.jsonc` and redeploying produced:
+
+```
+env.OUTBOX_SWEEPER (OutboxSweeper)      Durable Object
+env.CATALOG (inherited)                 D1 Database
+env.EVIDENCE (inherited)                R2 Bucket
+```
+
+`CREDENTIAL_KEK` is **silently absent** — no warning, no error, exit code 0. D1 and R2 say
+`(inherited)`; the secret binding is simply gone.
+
+### What that cost, live
+
+The Node kept serving. Sign-in returned HTTP 500, because every signing key was wrapped under the
+real KEK and the code fell back to the published development constant, which cannot unwrap them.
+
+And `doctor` — which requires authentication on a claimed Node — became **unreachable at exactly the
+moment it was needed**. A diagnostic only available while the system is healthy is not a diagnostic.
+Fixed by serving a reduced report unauthenticated when the Node cannot authenticate anyone at all:
+`infrastructure` findings only, since their contents are already published in this repository, while
+anything derived from an organization's mail is withheld and *said* to be withheld.
+
+One further operational note, observed rather than designed: during the redeploy that restored the
+binding, a still-draining old isolate minted a signing key under the development constant, which the
+new build then could not unwrap. A KEK binding change is therefore not atomic with respect to key
+generation.
+
+**Consequence for ADR 28:** the mechanism that dissolves the D1 id problem does not exist for
+Secrets Store, so `store_id` in committed configuration cannot be made decorative the same way. The
+decision on #22 has to come from somewhere else.
