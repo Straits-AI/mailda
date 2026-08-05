@@ -1,0 +1,90 @@
+name: ci
+
+# Every check in this repository already worked from a terminal. None of them ran unless somebody
+# remembered, which is the same failure the ctx-seam lint had: a check that exists and is not invoked
+# reads exactly like a check that passed.
+#
+# Runners are Blacksmith's. `runs-on` is the only thing that selects them; the cache actions are
+# upstream GitHub ones on purpose — Blacksmith archived its `useblacksmith/*` cache forks and now
+# optimises `actions/cache` and `actions/setup-node` transparently, so a fork here would be a
+# dependency on something unmaintained for no gain.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you about code nobody has any more.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          # Pinned via .nvmrc rather than read from `engines: >=22`, so a new major Node release does
+          # not silently change what CI tests against.
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # worker-configuration.d.ts is generated from wrangler.jsonc and deliberately not committed, so
+      # nothing here typechecks until it exists. Needs no Cloudflare credentials — it reads the config
+      # file, not the account.
+      - name: Generate Worker binding types
+        run: pnpm --filter @mailda/worker types
+
+      # First, because it is the cheapest and it guards the rule the whole codebase is built on: a
+      # number in the code comes from a receipt. This regenerates packages/budgets from
+      # docs/receipts/*.md and fails if the committed constants differ — so hand-editing a measured
+      # value, or changing a receipt without regenerating, stops here rather than shipping.
+      - name: Constants match their receipts
+        run: pnpm receipts:check
+
+      # Enforces the ctx seam (#6) — bare Date.now()/Math.random() outside the one place they belong.
+      # The type checker cannot see this; only a syntactic rule can.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # Proves the Worker still bundles and that its bindings resolve against wrangler.jsonc. Catches
+      # the class of breakage where the code is fine and the deployment configuration is not. No
+      # credentials: --dry-run never contacts the account.
+      - name: Worker bundles with its bindings
+        run: pnpm --filter @mailda/worker exec wrangler deploy --dry-run
+
+      # Informational, and deliberately not a gate yet.
+      #
+      # docs/receipts/test-timeout-headroom.md sets the 30s timeout from a worst case of 5,790ms
+      # measured on an 8-core laptop under load, and names "CI hardware with a different core count" as
+      # a condition that makes that measurement stale. This hardware is exactly that condition.
+      #
+      # So it reports rather than gates, because the receipt discipline runs the other way round:
+      # measure first, then set the limit. Picking a threshold now would be inventing the number this
+      # step exists to find. Once a few runs have reported, the worst observed value becomes
+      # `test.slowest_test_ms_under_load` for CI and this turns into a real tripwire.
+      #
+      # No second test run: the Test step above already emitted the report, because vitest.config.ts
+      # adds a json reporter when CI is set.
+      - name: Test headroom on this hardware
+        if: always()
+        run: node .github/scripts/test-headroom.mjs

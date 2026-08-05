@@ -32,5 +32,12 @@ export default defineConfig({
     // cheaper PBKDF2 in tests, which would re-open the platform-ceiling landmine.
     testTimeout: BUDGETS["test.timeout_ms"],
     hookTimeout: BUDGETS["test.hook_timeout_ms"],
+
+    // On CI, also emit a machine-readable report so the workflow can show how close the slowest test
+    // came to the timeout above. Same run, not a second one — re-running the suite to measure it would
+    // double the slowest job for a number the first run already knows.
+    reporters: process.env.CI === undefined
+      ? ["default"]
+      : ["default", ["json", { outputFile: "./.vitest-report.json" }]],
   },
 });

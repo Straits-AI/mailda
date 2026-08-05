@@ -84,6 +84,16 @@ export default tseslint.config(
   },
 
   /**
+   * Repository tooling that runs in Node on CI, not in a Worker. The ctx seam does not apply: there is
+   * no request, no reused isolate, and nothing for §27 to replay.
+   */
+  {
+    files: [".github/scripts/**/*.mjs", "*.config.js"],
+    languageOptions: { globals: { ...globals.node } },
+    rules: { "no-restricted-syntax": "off" },
+  },
+
+  /**
    * Browser code. The ctx seam is a Worker concern — it exists because isolates are reused across
    * requests and because §27 replays server behaviour. A page has one user, one tab and one clock,
    * and `Date.now()` there is the correct call, not a bypass.

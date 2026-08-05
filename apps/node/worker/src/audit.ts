@@ -49,27 +49,52 @@ export type Outcome = "ok" | "refused" | "failed";
  * `test/audit-coverage.test.ts`, which fails when state can change without any of these being emitted.
  */
 export const AUDIT_ACTIONS = {
-  "auth.signed_in": "A person exchanged a password for a session.",
-  "auth.sign_in_failed": "A password was presented and refused.",
-  "auth.locked_out": "Sign-in was refused because the failure count was already spent.",
-  "auth.revoked_all_sessions": "Every session for one person was ended at once (§28).",
-  "key.rotated": "The signing key changed; tokens minted before and after differ in kid.",
-  "send.sealed": "A composition became immutable bytes and entered the hold window.",
-  "send.cancelled": "A held send was stopped by a person before dispatch.",
+  "auth.signed_in": { says: "A person exchanged a password for a session." },
+  "auth.sign_in_failed": { says: "A password was presented and refused." },
+  "auth.revoked_all_sessions": { says: "Every session for one person was ended at once (§28)." },
+  "key.rotated": { says: "The signing key changed; tokens minted before and after differ in kid." },
+  "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },
+  "send.cancelled": { says: "A held send was stopped by a person before dispatch." },
   // The terminal states of dispatch. Each is recorded, including the successful one — see `audit`.
-  "send.held": "A send is waiting out its hold window.",
-  "send.throttled": "The transport declined for rate reasons; the system may retry.",
-  "send.refused": "The transport refused; only a person may retry.",
-  "send.suppressed": "The Node declined to hand over, by its own rule.",
-  "send.handed_over": "The transport accepted the bytes.",
-  "send.outcome_unknown": "Hand-over neither succeeded nor failed observably.",
+  "send.held": { says: "A send is waiting out its hold window." },
+  "send.throttled": { says: "The transport declined for rate reasons; the system may retry." },
+  "send.refused": { says: "The transport refused; only a person may retry." },
+  "send.suppressed": { says: "The Node declined to hand over, by its own rule." },
+  "send.handed_over": { says: "The transport accepted the bytes." },
+  "send.outcome_unknown": { says: "Hand-over neither succeeded nor failed observably." },
+
+  /**
+   * `standalone` means there is no accompanying write, so the bare `audit` append is correct and
+   * `auditedBatch` has nothing to be atomic with. A lockout is a *refusal*: it changes nothing, and by
+   * the time it is recorded the decision is already made.
+   *
+   * Absence is the safe default — omit the flag and the action can only be recorded through
+   * `auditedBatch`, enforced by the compiler rather than by review. Adding `standalone: true` to a new
+   * action is the one way to reintroduce the non-atomic shape, and it also trips the tripwire in
+   * `test/audit-coverage.test.ts`, so it cannot be done quietly.
+   */
+  "auth.locked_out": {
+    says: "Sign-in was refused because the failure count was already spent.",
+    standalone: true,
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
 
-export interface AuditEvent {
+/**
+ * The actions that may be appended on their own.
+ *
+ * This is the type that closes the last hole in the atomicity work. Every other action accompanies a
+ * state change, and passing one to `audit` — the append that is *not* in the caller's transaction —
+ * is a compile error. Nothing rests on remembering which function to reach for.
+ */
+export type StandaloneAction = {
+  [K in AuditAction]: (typeof AUDIT_ACTIONS)[K] extends { standalone: true } ? K : never;
+}[AuditAction];
+
+export interface AuditEvent<A extends AuditAction = AuditAction> {
   /** Constrained to the catalogue above: an undeclared action is a type error, not a silent category. */
-  action: AuditAction;
+  action: A;
   outcome: Outcome;
   actorUserId?: string | null;
   actorKind?: ActorKind;
@@ -274,7 +299,8 @@ export async function audit(
   env: Env,
   ctx: Ctx,
   orgId: string,
-  event: AuditEvent,
+  /** Only a `standalone` action. Anything with an accompanying write must use `auditedBatch`. */
+  event: AuditEvent<StandaloneAction>,
 ): Promise<AppendedEntry | null> {
   try {
     const { entry } = await auditedBatch(env, ctx, orgId, event, (statement) => [statement]);

@@ -95,6 +95,23 @@ describe("audit coverage", () => {
     expect(Object.keys(AUDIT_ACTIONS).filter((action) => !claimed.has(action))).toEqual([]);
   });
 
+  it("keeps the set of non-transactional actions to the ones deliberately chosen", () => {
+    // `standalone: true` is the one remaining way to record an action outside the transaction that
+    // carries out the act, which is the shape the atomicity work exists to remove. The compiler stops
+    // it being reached by accident (`audit` takes only StandaloneAction); this stops it being *added*
+    // without anyone noticing.
+    //
+    // A lockout earns it by changing nothing: it is a refusal, and by the time it is recorded the
+    // decision is already made. If a new action appears below, the question to answer is whether it
+    // really has no accompanying write — and if it has one, it belongs in `auditedBatch` instead.
+    const standalone = Object.entries(AUDIT_ACTIONS)
+      .filter(([, meta]) => "standalone" in meta && meta.standalone)
+      .map(([action]) => action)
+      .sort();
+
+    expect(standalone).toEqual(["auth.locked_out"]);
+  });
+
   it("gives every exemption a reason long enough to have needed thought", () => {
     const thin = Object.entries(CLASSIFIED)
       .filter(([, entry]) => "exempt" in entry && entry.exempt.trim().length < 25)

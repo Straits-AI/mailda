@@ -1,14 +1,25 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { createSystemCtx } from "@mailda/runtime";
+import { type Ctx, createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit, type AuditAction, auditedBatch, log, trimLogs, verifyChain } from "../src/audit.ts";
+import {
+  audit, type AuditAction, type AuditEvent, auditedBatch, log, trimLogs, verifyChain,
+} from "../src/audit.ts";
 
 // Real catalogue actions. The tests used to invent names like "t.0"; the catalogue now rejects those
 // at compile time, which is the point of it — an audit trail whose categories drift is a filter that
 // quietly returns half the truth.
+/**
+ * Appends one entry through a transaction, which is now the only way a non-standalone action can be
+ * recorded — `audit` takes `StandaloneAction` and the compiler refuses the rest.
+ */
+async function append(ctx: Ctx, event: AuditEvent) {
+  const { entry } = await auditedBatch(testEnv, ctx, ORG, event, (statement) => [statement]);
+  return entry;
+}
+
 const SAMPLE: readonly AuditAction[] = [
   "auth.signed_in", "send.sealed", "key.rotated", "send.handed_over", "auth.locked_out",
 ];
@@ -24,8 +35,8 @@ beforeEach(async () => {
 describe("the audit chain", () => {
   it("links each entry to the one before it", async () => {
     const ctx = createSystemCtx();
-    const first = await audit(testEnv, ctx, ORG, { action: "auth.signed_in", outcome: "ok" });
-    const second = await audit(testEnv, ctx, ORG, { action: "send.sealed", outcome: "ok" });
+    const first = await append(ctx, { action: "auth.signed_in", outcome: "ok" });
+    const second = await append(ctx, { action: "send.sealed", outcome: "ok" });
 
     expect(first?.seq).toBe(1);
     expect(second?.seq).toBe(2);
@@ -36,7 +47,7 @@ describe("the audit chain", () => {
   });
 
   it("starts from a stated genesis rather than an implicit one", async () => {
-    await audit(testEnv, createSystemCtx(), ORG, { action: "key.rotated", outcome: "ok" });
+    await append(createSystemCtx(), { action: "key.rotated", outcome: "ok" });
     const row = await testEnv.CATALOG.prepare("SELECT prev_hash FROM audit_entries WHERE seq = 1")
       .first<{ prev_hash: string }>();
     expect(row?.prev_hash).toBe("0".repeat(64));
@@ -44,7 +55,7 @@ describe("the audit chain", () => {
 
   it("verifies an intact chain", async () => {
     const ctx = createSystemCtx();
-    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
+    for (const action of SAMPLE) await append(ctx, { action, outcome: "ok" });
 
     const verdict = await verifyChain(testEnv, ORG);
     expect(verdict.intact).toBe(true);
@@ -54,7 +65,7 @@ describe("the audit chain", () => {
 
   it("names where an entry was altered, not merely that one was", async () => {
     const ctx = createSystemCtx();
-    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
+    for (const action of SAMPLE) await append(ctx, { action, outcome: "ok" });
 
     // Someone edits an action after the fact — the realistic tampering, not a wholesale rewrite.
     await testEnv.CATALOG.prepare("UPDATE audit_entries SET action = 'innocent' WHERE seq = 3").run();
@@ -68,7 +79,7 @@ describe("the audit chain", () => {
 
   it("names a deletion as missing entries", async () => {
     const ctx = createSystemCtx();
-    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
+    for (const action of SAMPLE) await append(ctx, { action, outcome: "ok" });
     await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE seq = 3").run();
 
     const verdict = await verifyChain(testEnv, ORG);
@@ -78,7 +89,7 @@ describe("the audit chain", () => {
 
   it("records successes too, so silence is not ambiguous", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "send.handed_over", outcome: "ok", subject: "snd_1" });
+    await append(ctx, { action: "send.handed_over", outcome: "ok", subject: "snd_1" });
     const row = await testEnv.CATALOG.prepare("SELECT outcome FROM audit_entries WHERE subject = 'snd_1'")
       .first<{ outcome: string }>();
     // If only failures were recorded, an empty trail would mean either "nothing happened" or
@@ -88,8 +99,8 @@ describe("the audit chain", () => {
 
   it("distinguishes the Node acting from a person acting", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "send.handed_over", outcome: "ok" });
-    await audit(testEnv, ctx, ORG, { action: "send.cancelled", outcome: "ok", actorUserId: "usr_1" });
+    await append(ctx, { action: "send.handed_over", outcome: "ok" });
+    await append(ctx, { action: "send.cancelled", outcome: "ok", actorUserId: "usr_1" });
 
     const rows = await testEnv.CATALOG.prepare(
       "SELECT actor_kind, actor_user_id FROM audit_entries ORDER BY seq",
@@ -103,7 +114,7 @@ describe("the audit chain", () => {
 
   it("bounds detail, because this table is read more widely than the mail", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, {
+    await append(ctx, {
       action: "send.sealed", outcome: "ok",
       detail: { blob: "x".repeat(BUDGETS["audit.max_detail_bytes"] + 5000) },
     });
@@ -117,7 +128,8 @@ describe("the audit chain", () => {
   it("never throws, because logging that can fail a request gets removed", async () => {
     const ctx = createSystemCtx();
     const broken = { ...testEnv, CATALOG: { prepare: () => { throw new Error("db gone"); } } } as unknown as Env;
-    await expect(audit(broken, ctx, ORG, { action: "auth.signed_in", outcome: "ok" })).resolves.toBeNull();
+    await expect(audit(broken, ctx, ORG, { action: "auth.locked_out", outcome: "refused" }))
+      .resolves.toBeNull();
   });
 });
 
@@ -142,7 +154,7 @@ describe("the operational log", () => {
 
   it("trims logs but never audit entries", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "key.rotated", outcome: "ok" });
+    await append(ctx, { action: "key.rotated", outcome: "ok" });
 
     // Below the retention bound, so nothing is trimmed and the call is a no-op rather than a scan.
     await log(testEnv, ctx, { level: "info", event: "t", message: "m" });
@@ -170,7 +182,7 @@ describe("an entry and the change it records", () => {
 
   it("commits both or neither, so a change cannot outlive its record", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "auth.signed_in", outcome: "ok" });
+    await append(ctx, { action: "auth.signed_in", outcome: "ok" });
     const before = await entryCount();
 
     const doomed = await collidingInsert("att_collide");
@@ -191,12 +203,15 @@ describe("an entry and the change it records", () => {
     await expect(
       auditedBatch(testEnv, ctx, ORG, { action: "key.rotated", outcome: "ok" }, (entry) => [entry, doomed]),
     ).rejects.toThrow();
-    await expect(audit(testEnv, ctx, ORG, { action: "key.rotated", outcome: "ok" })).resolves.not.toBeNull();
+    // The contrast: the bare append swallows the same class of failure and returns null rather than
+    // throwing. Its action is a lockout because that is the only kind the compiler now lets through.
+    await expect(audit(testEnv, ctx, ORG, { action: "auth.locked_out", outcome: "refused" }))
+      .resolves.not.toBeNull();
   });
 
   it("leaves the chain contiguous when a gated entry does not fire", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "auth.signed_in", outcome: "ok" });
+    await append(ctx, { action: "auth.signed_in", outcome: "ok" });
 
     const { results } = await auditedBatch<never>(
       testEnv, ctx, ORG,
