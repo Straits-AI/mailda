@@ -29,9 +29,33 @@ import { BUDGETS } from "@mailda/budgets";
  */
 
 const MAX_BODY_BYTES = BUDGETS["render.max_body_bytes"];
+const MAX_ATTRIBUTES = BUDGETS["render.max_attributes_per_element"];
+
+/**
+ * Elements whose children are **not parsed as markup** by the tokenizer.
+ *
+ * This set is separate from the one below because getting it wrong has a specific and nasty
+ * consequence, found by adversarial review after this file had already shipped. lol-html — like every
+ * HTML tokenizer — switches text mode by tag name: `xmp`, `noembed`, `noframes` and `listing` become
+ * RAWTEXT, `plaintext` swallows the rest of the document. Everything inside arrives as a **single
+ * verbatim text chunk**, so the per-element handler never sees the `<img>` or `<meta>` in there.
+ *
+ * The original code had none of these in either set, so they fell through to `removeAndKeepContent()`:
+ * the wrapper was deleted and its raw text written out unescaped, and **the browser then reparsed that
+ * text as live markup**. The payload was inert in the message the sender wrote — browsers treat these
+ * contents as raw text too — and *the sanitiser was what made it dangerous*. Measured leak:
+ * `<xmp><img src="https://tracker.example/x.gif"></xmp>` came out as a working tracking pixel with
+ * `blockedRemote` still reporting 0, so the panel affirmatively told the reader nothing was withheld.
+ *
+ * Named as its own concept rather than merged into the list below, because the invariant is
+ * "`removeAndKeepContent` must never be reachable for an element whose children are not parsed in Data
+ * mode" — and an invariant with a name is one a future author can check.
+ */
+const RAW_TEXT = new Set(["xmp", "noembed", "noframes", "plaintext", "listing"]);
 
 /** Elements whose *content* is a payload, not text. Removed with everything inside them. */
 const DROP_WITH_CONTENT = new Set([
+  ...RAW_TEXT,
   "script", "style", "iframe", "object", "embed", "applet", "template", "noscript",
   "svg", "math", "form", "input", "button", "select", "textarea", "option",
   "link", "meta", "base", "title", "head", "frame", "frameset", "audio", "video", "source", "track",
@@ -136,6 +160,20 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
 
       // Allowlist the attributes. Collected first, because removing while iterating is undefined.
       const present = [...element.attributes].map(([name]) => (name ?? "").toLowerCase());
+
+      // `removeAttribute` is a linear scan of the remaining attributes, so removing them one by one is
+      // quadratic. Measured in the Workers runtime: 10,000 attributes took 112 ms, 50,000 took **35
+      // seconds** — past the CPU limit, so the request is killed every time and the message becomes
+      // permanently unopenable. 439 KB of attributes fits inside `render.max_body_bytes` with room to
+      // spare, so the input bound does not contain it. Anyone who can send mail could do this.
+      //
+      // Real mail never approaches 64 attributes on one element. Past that, drop the element and keep
+      // its text in a single operation rather than paying the quadratic cost to reach the same result.
+      if (present.length > MAX_ATTRIBUTES) {
+        element.removeAndKeepContent();
+        return;
+      }
+
       const allowed = ALLOWED_ATTRIBUTES[tag] ?? new Set<string>();
       for (const name of present) {
         if (!allowed.has(name)) element.removeAttribute(name);
@@ -163,6 +201,37 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
       }
     },
 
+    /**
+     * Re-encodes every text chunk on the way out.
+     *
+     * Without this, the sanitiser's safety rested on an assumption it did not enforce: that the
+     * browser would retokenize the output exactly as lol-html tokenized the input. **Removing tags is
+     * precisely what breaks that assumption.** A lone `<` is a character token, so
+     * `<foo><</foo>img src=...>` gives lol-html an unknown element containing the text `<`, then the
+     * text `img src=...>`. Unwrapping `<foo>` makes those adjacent, and the browser reads a working
+     * `<img>` — measured, with `blockedRemote` reporting 0.
+     *
+     * Escaping on output means the two tokenizers can no longer disagree. It fixes that case, the
+     * raw-text case above, and — the reason it is worth more than either fix — **it fails closed for
+     * whatever the next parser differential turns out to be.**
+     *
+     * The existing test for this only used the entity form (`&lt;img`), which was already safe, so it
+     * passed while the real case failed. A test that cannot fail is not evidence.
+     */
+    text(chunk) {
+      // Only `<`, and only ever as `html: true` so nothing else is touched.
+      //
+      // The first attempt used `chunk.replace(chunk.text, { html: false })` and let HTMLRewriter do the
+      // escaping. That double-encoded: `chunk.text` returns the **raw source**, not decoded text, so an
+      // `&lt;` in the message came back as `&amp;lt;` and the reader saw `&lt;img ...` instead of the
+      // `<img ...` the sender wrote. Caught by the test for the entity case — the same test that had
+      // been giving false confidence a moment earlier.
+      //
+      // `&` cannot open a tag, so escaping it buys nothing and costs correctness. `<` is the whole
+      // vector.
+      const raw = chunk.text;
+      if (raw.includes("<")) chunk.replace(raw.replaceAll("<", "&lt;"), { html: true });
+    },
   });
 
   // `onDocument`, not `on("*")`.
@@ -223,15 +292,35 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
   }
 
   if (extracted.html !== null) {
-    const { html, blockedRemote } = await sanitizeHtml(extracted.html);
-    return {
-      state: "html",
-      html,
-      text: extracted.text,
-      blockedRemote,
-      truncated: extracted.truncated,
-      problem: null,
-    };
+    try {
+      const { html, blockedRemote } = await sanitizeHtml(extracted.html);
+      return {
+        state: "html",
+        html,
+        text: extracted.text,
+        blockedRemote,
+        truncated: extracted.truncated,
+        problem: null,
+      };
+    } catch (error) {
+      // The careful error handling above stopped one line short: `extractBody` was wrapped and
+      // `sanitizeHtml` was not, so a rewriter failure escaped as a 500 instead of the state §24
+      // requires. Falling back to the plain alternative where one exists means a body that cannot be
+      // *rendered* is still readable.
+      return {
+        state: extracted.text === null ? "unparsed" : "text-only",
+        html: null,
+        text: extracted.text,
+        blockedRemote: 0,
+        truncated: extracted.truncated,
+        problem:
+          `This message's HTML could not be rendered safely ` +
+          `(${(error as Error).message.split("\n")[0]}). ` +
+          (extracted.text === null
+            ? "The original is unchanged and can still be downloaded."
+            : "Its plain-text alternative is shown instead."),
+      };
+    }
   }
 
   if (extracted.text !== null) {

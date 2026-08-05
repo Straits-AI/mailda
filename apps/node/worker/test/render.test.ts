@@ -146,12 +146,58 @@ describe("sanitizer: structure", () => {
     expect(html).not.toContain("<!--");
   });
 
-  it("does not turn hostile text into markup when unwrapping", async () => {
-    // The differential to worry about: unwrapping promotes children, and if the parser emitted the
-    // inner "<" as text it must stay text after the browser reparses.
+  it("does not double-encode an entity the sender wrote", async () => {
+    // This passed even while the raw form below was broken, which is why it was false confidence
+    // rather than evidence. It then caught the *fix* double-encoding `&lt;` into `&amp;lt;`, which
+    // would have shown the reader `&lt;img ...` instead of what the sender actually wrote.
     const { html } = await sanitizeHtml("<unknown>&lt;img src=x onerror=y&gt;</unknown>");
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;img");
+  });
+
+  it("escapes a lone < so unwrapping cannot splice it into a real tag", async () => {
+    // Found by adversarial review. `<foo><` tokenizes the second `<` as a character token, so lol-html
+    // sees an unknown element containing the text "<" then the text "img src=...>". Unwrapping made
+    // them adjacent and the browser read a working <img> — the sanitizer's removal was what created
+    // the tag. Output escaping means the two tokenizers can no longer disagree.
+    const { html, blockedRemote } = await sanitizeHtml(
+      "<foo><</foo>img src=https://tracker.example/split.gif>",
+    );
+    // The URL survives as *visible text*, which is correct and harmless — it is not fetched. What
+    // must not survive is a tag, and the escaped `<` is what guarantees that.
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+    expect(blockedRemote).toBe(0);
+  });
+
+  it("drops raw-text elements with their content, because unwrapping them makes inert text live", async () => {
+    // The worst of the three: inside xmp/noembed/noframes/plaintext the tokenizer is in RAWTEXT mode,
+    // so the payload arrives as one text chunk the element handler never inspects. Unwrapping wrote it
+    // out and the browser reparsed it as markup — the payload was inert in the sender's message and
+    // *the sanitizer made it dangerous*.
+    for (const tag of ["xmp", "noembed", "noframes", "listing"]) {
+      const { html } = await sanitizeHtml(
+        `<p>hi</p><${tag}><img src="https://tracker.example/x.gif"><link rel="preconnect" href="https://tracker.example"></${tag}>`,
+      );
+      expect(html, tag).toContain("hi");
+      expect(html, tag).not.toContain("tracker.example");
+    }
+    // plaintext swallows the rest of the document, so it is checked without a closing tag.
+    const { html } = await sanitizeHtml('<p>hi</p><plaintext><img src="https://tracker.example/p.gif">');
+    expect(html).not.toContain("tracker.example");
+  });
+
+  it("survives an absurd attribute count without burning the CPU budget", async () => {
+    // Measured by review: 50,000 attributes took 35 seconds, past the Workers CPU limit, so the
+    // message became permanently unopenable — and 439 KB of attributes fits inside the body bound.
+    // Past 64 the element is dropped in one operation instead of paying the quadratic cost.
+    const attrs = Array.from({ length: 20_000 }, (_, i) => `d${i}=v`).join(" ");
+    const started = Date.now();
+    const { html } = await sanitizeHtml(`<div ${attrs}>t</div>`);
+    expect(html).toContain("t");
+    expect(html).not.toContain("d0=");
+    // Generous, because wall-clock in a test runner is noisy; the point is that it is not seconds.
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it("survives deep nesting without throwing", async () => {
@@ -160,10 +206,11 @@ describe("sanitizer: structure", () => {
     expect(html).toContain("text");
   });
 
-  it("survives a pathological attribute count", async () => {
+  it("keeps the content of an over-attributed element rather than losing the message", async () => {
     const attrs = Array.from({ length: 400 }, (_, i) => `data-x${i}="v"`).join(" ");
     const { html } = await sanitizeHtml(`<div ${attrs}>t</div>`);
-    expect(html).toBe("<div>t</div>");
+    // Past the bound the element goes and its text stays — the same trade as an unknown tag.
+    expect(html).toBe("t");
   });
 });
 
