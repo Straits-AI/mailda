@@ -155,6 +155,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
 
   findings.push(
     ...(await checkSchema(env)),
+    ...(await checkEvidenceBucket(env)),
     ...(await checkVault(env)),
     ...(await checkCredentialKek(env)),
     ...(await checkSigningKeys(env, ctx)),
@@ -216,6 +217,49 @@ async function checkSchema(env: Env): Promise<Finding[]> {
       : `Missing ${missing.length} table(s): ${missing.join(", ")}.`,
     ...(missing.length === 0 ? {} : {
       fix: "run `wrangler d1 migrations apply CATALOG --remote`; a Node with a partial schema accepts mail it cannot file",
+    }),
+  }];
+}
+
+/**
+ * Is the evidence bucket actually there?
+ *
+ * The D1 counterpart of this has existed since the beginning; R2 had none, and R2 is the binding a
+ * customer is most likely to be missing. The Deploy to Cloudflare button provisions D1 but **not** R2,
+ * while writing a `bucket_name` for the bucket it did not create (receipt:
+ * `deploy-button-behaviour.md`). So "the binding names a bucket that does not exist" is the single most
+ * likely state of a freshly-deployed Node.
+ *
+ * Without this, that state surfaced as `evidence_present` reporting "Reconciliation failed", whose
+ * `fix` sends the reader to migrations and the key vault — both fine, neither the problem. Being sent
+ * to the wrong place is worse than a bare failure, because it costs the reader the time to eliminate
+ * two healthy subsystems.
+ *
+ * Whether a Worker whose R2 binding points at a missing bucket even deploys is **not known** — the
+ * measurement observed a failed deploy in that state but did not isolate the cause. If the deploy fails
+ * first, this check simply never fires, and it is still worth having: it costs one HEAD and removes a
+ * misleading `fix` from the path a real operator walks.
+ */
+async function checkEvidenceBucket(env: Env): Promise<Finding[]> {
+  // HEAD on a key that will not exist. Cheaper than a list, and it distinguishes "the bucket answered
+  // and has no such object" — which is the healthy answer — from "the bucket did not answer at all".
+  const reachable = await env.EVIDENCE.head("__mailda_doctor_probe__")
+    .then(() => true)
+    .catch(() => false);
+
+  return [{
+    check: "evidence_bucket_reachable",
+    severity: "refuse",
+    discloses: "infrastructure",
+    ok: reachable,
+    detail: reachable
+      ? "The EVIDENCE R2 binding answered."
+      : "The EVIDENCE R2 binding did not answer. Mail cannot be stored, so this Node must not accept any.",
+    ...(reachable ? {} : {
+      fix:
+        "create the R2 bucket and bind it as EVIDENCE. The Deploy to Cloudflare button provisions D1 but " +
+        "not R2 (docs/receipts/deploy-button-behaviour.md), so on a button-installed Node this is the " +
+        "expected first failure and is not a sign anything else is wrong",
     }),
   }];
 }

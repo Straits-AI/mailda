@@ -27,7 +27,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 20 receipts in [`docs/receipts/`](./docs/receipts/) generating 119 verified constants |
-| **Code** | A measurement harness and one Worker. 212 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 217 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -111,6 +111,13 @@ appending the entry leaves a window where the change survives and nothing record
 invisible to verification, which proves only that what *was* written is unaltered. So the entry travels
 inside the caller's batch: either both land or neither does. The corollary is deliberate — if this Node
 cannot record an act, it does not perform the act.
+
+**What a customer's install can actually provision is checked too.** A real Deploy to Cloudflare
+click was measured against a paid account: it provisions D1 but **not** R2, pins one Worker per build
+project, and writes resource ids into the clone. Those findings constrained nothing for two days — so
+the Worker's configuration is now held to them, and a binding the button cannot satisfy fails the suite
+until somebody says how a customer gets it. `doctor` names a missing evidence bucket directly, instead
+of the generic failure that used to send the reader to migrations.
 
 **The checks run without being remembered.** Every check in this repository worked from a terminal
 long before anything invoked one — which reads exactly like a check that passed. CI now runs them on

@@ -1,6 +1,6 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { resolve } from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 import { BUDGETS } from "@mailda/budgets";
 
@@ -21,6 +21,10 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
+
+    // test/node/ holds checks about the repository itself, which need a filesystem. They run under
+    // vitest.node.config.ts; without this they would be picked up here and fail inside workerd.
+    exclude: [...configDefaults.exclude, "test/node/**"],
 
     // Measured, not inherited. Vitest's 5,000 ms default was already breached by a legitimate test
     // on an ordinarily-busy machine (5,790 ms worst case under load), and one breach cascades: the

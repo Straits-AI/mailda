@@ -14,8 +14,16 @@ values:
 ---
 
 **Measured:** a real Deploy to Cloudflare button click against a live Workers **Paid**
-account, 3 August 2026, using the two-Worker probe at `probes/deploy-button`. All resources
-deleted afterwards and the account verified back to baseline.
+account, 3 August 2026, using a two-Worker probe. All resources deleted afterwards and the
+account verified back to baseline.
+
+> **The probe was not kept.** This file originally cited `probes/deploy-button`, which does not
+> exist in the repository — the probe was built ad hoc and removed with the resources it created.
+> Re-measuring therefore means rebuilding it from the description below, and that is a real cost
+> this receipt should not have hidden behind a path that looks checkable. What the probe was: two
+> minimal Workers in one repository, one service-binding the other, a root `deploy` script chaining
+> `wrangler deploy -c effects/wrangler.jsonc && wrangler deploy`, and binding declarations for D1,
+> a Queue and R2 with **no** ids, so the button had to provision each one.
 
 ## The finding that matters: one Workers Builds project deploys exactly one Worker
 
@@ -119,6 +127,26 @@ The remaining options are:
 3. **Revisit the two-Worker split** (#17). The credential boundary is real and cannot be
    enforced inside one Worker, so this would mean accepting a weaker boundary in exchange
    for a one-click install. Recorded as an option, not a recommendation.
+
+## What now holds this receipt to the config
+
+These findings constrained nothing for two days, which is how a measurement becomes decoration.
+`apps/node/worker/test/node/deployability.test.ts` now fails when the Worker's configuration drifts
+from them:
+
+- **one deployable Worker** — a second config would resurrect the chained-deploy shape this
+  measurement killed
+- **every binding block classified** as button-provisioned or carrying a stated alternative route, so
+  adding one is a decision about somebody's first five minutes rather than a discovery
+- **no account-specific resource id committed**, which is ADR 24's premise and the thing the button
+  itself erodes in the customer's clone
+- the `test` environment's bindings match the top level, which the config comments claimed was
+  "drift-checked" while nothing checked it
+
+It does not test the button. Nothing automated can: the button needs a real paid account, provisions
+live resources and has to be torn down afterwards. What it removes is the *cheap* class of breakage —
+the config quietly growing a dependency the customer's install cannot satisfy — and leaves the
+expensive class where it belongs, in a manual probe with this receipt's `stale_when` to say when.
 
 ## Residual
 

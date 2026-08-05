@@ -1,11 +1,12 @@
 ---
 id: doctor-check-cost
 kind: measured-tripwire
-measured_on: 2026-08-04
+measured_on: 2026-08-05
 stale_when: >
   Cloudflare changes the 1,000-subrequest per-invocation cap, R2 head stops counting as a
   subrequest, doctor gains a check that costs a subrequest per row, or the measured cost of a
-  doctor run changes materially
+  doctor run changes materially — including any new fixed-cost check, which is what made the
+  4 August figure stale
 values:
   doctor.evidence_sample_size: 200
   doctor.max_subrequests: 1000
@@ -49,9 +50,24 @@ current signing key:
 
 | | |
 |---:|:---|
-| **7** | D1 queries |
-| **1** | R2 read (one receipt exists) |
-| **8** | subrequests total, against a cap of 1,000 |
+| **13** | D1 queries |
+| **7** | R2 reads — 5 receipts sampled, plus one `head` for `evidence_bucket_reachable` |
+| **20** | subrequests total, against a cap of 1,000 |
+
+Re-measured 5 August 2026 on a catalog holding 5 receipts, 22 tables and 1 current signing key. The
+4 August figure was 7 D1 / 1 R2 / 8 subrequests on a catalog with 1 receipt and 14 tables; the
+difference is the checks added since (outbound state, audit chain) plus one new fixed-cost check
+below, not a regression in any single check. Recorded rather than quietly replaced, because a receipt
+whose number moves without saying why is a receipt nobody trusts the second time.
+
+**`evidence_bucket_reachable` costs one R2 `head` per run, not per row.** That distinction is the one
+`stale_when` cares about: a fixed cost is absorbed by the ~790 subrequests of headroom, while a
+per-row cost is what `doctor.max_subrequests_per_run` exists to catch. It was added because the
+Deploy to Cloudflare button provisions D1 but **not** R2
+(`deploy-button-behaviour.md`), so a binding pointing at a bucket that does not exist is the single
+most likely state of a freshly-installed Node — and it previously surfaced as a generic
+"Reconciliation failed" whose `fix` sent the reader to migrations and the key vault. Being directed
+at two healthy subsystems is worse than a bare failure.
 
 Only **subrequests** are counted, and that is deliberate. `D1PreparedStatement.first()` returns its
 row without `meta`, so a rows-read total would silently omit most of this file's queries — and a

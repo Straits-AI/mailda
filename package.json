@@ -16,7 +16,7 @@
     "bench": "turbo bench"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.39.5",
     "eslint": "^9.39.5",
     "globals": "^17.9.0",
     "turbo": "^2.5.6",
