@@ -2,7 +2,7 @@ import { type Bytes, utf8 } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit } from "../audit.ts";
+import { auditedBatch } from "../audit.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
@@ -223,7 +223,7 @@ export async function sealManifest(
   const senderDomain = address.address.split("@")[1] ?? "invalid";
   const rfcMessageId = `${manifestId}@${senderDomain}`;
 
-  await env.CATALOG.prepare(
+  const manifestRow = env.CATALOG.prepare(
     `INSERT INTO send_manifests
        (id, org_id, mailbox_id, author_user_id, in_reply_to_message_id,
         envelope_from, envelope_to, envelope_cc, envelope_bcc, subject, rfc_message_id,
@@ -247,10 +247,12 @@ export async function sealManifest(
       typedStored.blobKey, typedStored.plaintextSha256,
       normalizedStored.blobKey, normalizedStored.plaintextSha256,
       at, releaseAt, at,
-    )
-    .run();
+    );
 
-  await audit(env, ctx, orgId, {
+  // The manifest row and the entry recording the seal commit together. §12's invariant is that the
+  // approved bytes are what gets sent; a manifest with no record of who sealed it, or a record of a
+  // seal with no manifest, both break the account of that.
+  await auditedBatch(env, ctx, orgId, {
     action: "send.sealed",
     outcome: "ok",
     actorUserId: composition.authorUserId,
@@ -263,7 +265,7 @@ export async function sealManifest(
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
     },
-  });
+  }, (entry) => [manifestRow, entry]);
 
   return {
     id: manifestId,

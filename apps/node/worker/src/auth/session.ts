@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit } from "../audit.ts";
+import { audit, auditedBatch } from "../audit.ts";
 import { mintAccessToken } from "./jwt.ts";
 import { unwrapCredential, wrapCredential } from "./kek.ts";
 import { hashPassword, needsRehash, verifyPassword } from "./password.ts";
@@ -80,39 +80,57 @@ export interface IssuedSession {
   userId: string;
 }
 
-/** Mints a fresh pair and opens a new rotation family. Used by sign-in and by claim. */
+/**
+ * The session and the statement that persists it, without running it.
+ *
+ * Split out so a caller can commit the refresh token in the same transaction as the audit entry that
+ * records the sign-in — see `auditedBatch`. Minting the access token has no database effect, so doing
+ * it here costs nothing if the batch is later rolled back.
+ */
+export async function prepareSession(
+  env: Env,
+  ctx: Ctx,
+  principal: { orgId: string; userId: string },
+): Promise<{ statement: D1PreparedStatement; session: IssuedSession }> {
+  const access = await mintAccessToken(env, ctx, principal);
+  const refresh = opaqueToken(ctx);
+  const familyId = ctx.id("fam");
+
+  const statement = env.CATALOG.prepare(
+    `INSERT INTO refresh_tokens
+       (id, org_id, user_id, family_id, token_hash, used_at, revoked_at, expires_at, created_at, replaced_by_wrapped)
+     VALUES (?,?,?,?,?,NULL,NULL,?,?,NULL)`,
+  ).bind(
+    ctx.id("rft"),
+    principal.orgId,
+    principal.userId,
+    familyId,
+    await sha256Hex(refresh),
+    new Date(ctx.now() + REFRESH_TTL * 1000).toISOString(),
+    new Date(ctx.now()).toISOString(),
+  );
+
+  return {
+    statement,
+    session: {
+      accessToken: access.token,
+      refreshToken: refresh,
+      accessExpiresAt: access.expiresAt,
+      orgId: principal.orgId,
+      userId: principal.userId,
+    },
+  };
+}
+
+/** Issues a session on its own, for paths with nothing to be atomic with (claim, tests). */
 export async function issueSession(
   env: Env,
   ctx: Ctx,
   principal: { orgId: string; userId: string },
 ): Promise<IssuedSession> {
-  const access = await mintAccessToken(env, ctx, principal);
-  const refresh = opaqueToken(ctx);
-  const familyId = ctx.id("fam");
-
-  await env.CATALOG.prepare(
-    `INSERT INTO refresh_tokens
-       (id, org_id, user_id, family_id, token_hash, used_at, revoked_at, expires_at, created_at, replaced_by_wrapped)
-     VALUES (?,?,?,?,?,NULL,NULL,?,?,NULL)`,
-  )
-    .bind(
-      ctx.id("rft"),
-      principal.orgId,
-      principal.userId,
-      familyId,
-      await sha256Hex(refresh),
-      new Date(ctx.now() + REFRESH_TTL * 1000).toISOString(),
-      new Date(ctx.now()).toISOString(),
-    )
-    .run();
-
-  return {
-    accessToken: access.token,
-    refreshToken: refresh,
-    accessExpiresAt: access.expiresAt,
-    orgId: principal.orgId,
-    userId: principal.userId,
-  };
+  const { statement, session } = await prepareSession(env, ctx, principal);
+  await statement.run();
+  return session;
 }
 
 export type LoginOutcome =
@@ -185,11 +203,14 @@ export async function login(
   }
 
   if (!(await verifyPassword(password, verifier))) {
-    await recordFailure(env, ctx, orgId, normalized);
-    await audit(env, ctx, orgId, {
-      action: "auth.sign_in_failed", outcome: "refused", actorKind: "node",
-      detail: { email: normalized },
-    });
+    // The attempt row is what the lockout counts, so it and the record of the refusal are the same
+    // fact. Committing them separately allows a trail that shows nine refusals behind a lockout that
+    // fired on ten, which reads as a bug in the lockout rather than a lost write.
+    await auditedBatch(
+      env, ctx, orgId,
+      { action: "auth.sign_in_failed", outcome: "refused", actorKind: "node", detail: { email: normalized } },
+      (entry) => [entry, failureStatement(env, ctx, orgId, normalized)],
+    );
     return { status: "invalid_credentials" };
   }
 
@@ -210,13 +231,15 @@ export async function login(
       ).bind(upgraded.encoded, upgraded.effectiveIterations, at, user!.id),
     );
   }
-  await env.CATALOG.batch(statements);
-
-  const session = await issueSession(env, ctx, { orgId, userId: user!.id });
-  await audit(env, ctx, orgId, {
-    action: "auth.signed_in", outcome: "ok", actorUserId: user!.id, detail: { method: "password" },
-  });
-  return { status: "signed_in", session };
+  // Everything a successful sign-in changes, plus the entry saying it happened, in one transaction:
+  // the refresh token that *is* the session, the cleared failure count, and any verifier upgrade.
+  const prepared = await prepareSession(env, ctx, { orgId, userId: user!.id });
+  await auditedBatch(
+    env, ctx, orgId,
+    { action: "auth.signed_in", outcome: "ok", actorUserId: user!.id, detail: { method: "password" } },
+    (entry) => [...statements, prepared.statement, entry],
+  );
+  return { status: "signed_in", session: prepared.session };
 }
 
 /**
@@ -229,10 +252,13 @@ const DUMMY_VERIFIER =
   `pbkdf2-sha256$r=${BUDGETS["auth.pbkdf2_rounds"]}$i=${BUDGETS["auth.pbkdf2_platform_max_iterations"]}$` +
   "AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
+function failureStatement(env: Env, ctx: Ctx, orgId: string, email: string): D1PreparedStatement {
+  return env.CATALOG.prepare("INSERT INTO login_attempts (id, org_id, email, at) VALUES (?,?,?,?)")
+    .bind(ctx.id("att"), orgId, email, new Date(ctx.now()).toISOString());
+}
+
 async function recordFailure(env: Env, ctx: Ctx, orgId: string, email: string): Promise<void> {
-  await env.CATALOG.prepare("INSERT INTO login_attempts (id, org_id, email, at) VALUES (?,?,?,?)")
-    .bind(ctx.id("att"), orgId, email, new Date(ctx.now()).toISOString())
-    .run();
+  await failureStatement(env, ctx, orgId, email).run();
 }
 
 export async function setPassword(env: Env, ctx: Ctx, userId: string, password: string): Promise<void> {
@@ -386,15 +412,21 @@ export async function signOut(env: Env, ctx: Ctx, presented: string): Promise<vo
  * effect is bounded by the access token's residual life, not by anything longer.
  */
 export async function revokeAllSessions(env: Env, ctx: Ctx, orgId: string, userId: string): Promise<number> {
-  await audit(env, ctx, orgId, {
-    action: "auth.revoked_all_sessions", outcome: "ok", actorUserId: userId, subject: userId,
-  });
-  const result = await env.CATALOG.prepare(
-    "UPDATE refresh_tokens SET revoked_at = ?, replaced_by_wrapped = NULL WHERE org_id = ? AND user_id = ? AND revoked_at IS NULL",
-  )
-    .bind(new Date(ctx.now()).toISOString(), orgId, userId)
-    .run();
-  return result.meta.changes ?? 0;
+  // The record and the revocation commit together. This used to audit first and revoke second, which
+  // is the worst of the two orderings available without a transaction: a failure after the entry left
+  // an audit trail asserting that a departing employee had been signed out everywhere when they had
+  // not — the one claim §28 needs to be true.
+  const { results } = await auditedBatch<never>(
+    env, ctx, orgId,
+    { action: "auth.revoked_all_sessions", outcome: "ok", actorUserId: userId, subject: userId },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare(
+        "UPDATE refresh_tokens SET revoked_at = ?, replaced_by_wrapped = NULL WHERE org_id = ? AND user_id = ? AND revoked_at IS NULL",
+      ).bind(new Date(ctx.now()).toISOString(), orgId, userId),
+    ],
+  );
+  return results[1]?.meta.changes ?? 0;
 }
 
 /**

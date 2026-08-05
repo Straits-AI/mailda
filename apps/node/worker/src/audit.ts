@@ -118,62 +118,168 @@ export interface AppendedEntry {
   hash: string;
 }
 
+/** How many times to re-read the tip when another writer takes the slot first. */
+const APPEND_ATTEMPTS = 5;
+
+/** Whether a failure is another writer taking this org's next sequence number, rather than a real fault. */
+function isSequenceRace(error: unknown): boolean {
+  const message = (error as Error).message ?? "";
+  // Named to `audit_entries` on purpose. A UNIQUE violation raised by the *caller's* statements is not
+  // a race for the audit slot, and retrying it would silently repeat somebody else's failed write.
+  return /UNIQUE constraint failed:\s*audit_entries/i.test(message);
+}
+
 /**
- * Appends one entry.
+ * A condition the recorded act depends on.
  *
- * Never throws. An audit write that can fail a request would make the log the most dangerous component
- * in the system — every action would gain a new way to fail, and the pressure would be to remove the
- * logging rather than fix it. A failure to record is itself recorded, in the operational log, where a
- * `doctor` check can see it.
+ * Some state changes are conditional — cancelling a send only does anything while it is still held —
+ * and an entry recording an act that did not happen is worse than no entry, because it is a false
+ * statement in the one place that is supposed to be checkable. Given a gate, the insert becomes
+ * `INSERT ... SELECT ... WHERE EXISTS (<gate>)`, so the record and the change share one predicate
+ * inside one transaction: either both happen or neither does.
+ *
+ * **The gated entry must be placed before the statements that change what it tests.** The batch runs
+ * in order, so an update that clears the predicate first would leave the act done and unrecorded —
+ * the exact failure this exists to prevent.
+ *
+ * A skipped insert consumes no sequence number, so the chain stays contiguous and verification is
+ * unaffected. Callers read `meta.changes` to learn whether anything happened.
+ */
+export interface AuditGate {
+  /** The body of an `EXISTS (...)`, e.g. `SELECT 1 FROM send_manifests WHERE id = ? AND state = 'held'`. */
+  sql: string;
+  params: unknown[];
+}
+
+/**
+ * Builds the row and the statement that inserts it, against the chain as it stands right now.
+ *
+ * Separated from execution because the statement has to be handed to a caller's `batch()` — see
+ * `auditedBatch`. The hash is computed here, so it is bound to the tip that was read here; if another
+ * writer wins the slot in between, the insert fails on `UNIQUE(org_id, seq)` rather than producing a
+ * second entry claiming the same position.
+ */
+async function buildEntry(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  event: AuditEvent,
+  gate?: AuditGate,
+): Promise<{ statement: D1PreparedStatement; entry: AppendedEntry }> {
+  const tip = await env.CATALOG.prepare(
+    "SELECT seq, hash FROM audit_entries WHERE org_id = ? ORDER BY seq DESC LIMIT 1",
+  )
+    .bind(orgId)
+    .first<{ seq: number; hash: string }>();
+
+  const seq = (tip?.seq ?? 0) + 1;
+  const prevHash = tip?.hash ?? GENESIS;
+  const at = new Date(ctx.now()).toISOString();
+  const actorKind: ActorKind = event.actorKind ?? (event.actorUserId != null ? "user" : "node");
+  const detail = boundedDetail(event.detail);
+
+  const fields = {
+    seq, at,
+    actorUserId: event.actorUserId ?? null,
+    actorKind,
+    action: event.action,
+    subject: event.subject ?? null,
+    outcome: event.outcome,
+    detail,
+  };
+  const hash = await sha256Hex(prevHash + canonical(fields));
+  const id = ctx.id("aud");
+
+  const columns =
+    "(id, org_id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, prev_hash, hash)";
+  const values = [id, orgId, seq, at, fields.actorUserId, actorKind, event.action, fields.subject,
+    event.outcome, detail, prevHash, hash];
+
+  const statement = gate === undefined
+    ? env.CATALOG.prepare(`INSERT INTO audit_entries ${columns} VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .bind(...values)
+    : env.CATALOG.prepare(
+        `INSERT INTO audit_entries ${columns}
+         SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (${gate.sql})`,
+      ).bind(...values, ...gate.params);
+
+  return { statement, entry: { id, seq, hash } };
+}
+
+/**
+ * Commits a state change and the entry that records it **in one transaction**.
+ *
+ * This is the shape every auditable state change should use, and the reason is that the alternative
+ * has a hole verification cannot see. Writing the change and then appending the entry — which is what
+ * this code did first — leaves a window where the isolate can die with the change committed and
+ * nothing recording it. The hash chain does not help: it proves that what *was* written is unaltered
+ * and says nothing about what was never written at all. Sequence numbers stay contiguous, verification
+ * still reports `intact: true`, and the missing act is undetectable by construction.
+ *
+ * So the entry travels with the change. D1 runs a `batch()` as a single transaction, so either both
+ * land or neither does.
+ *
+ * **This throws, and that inversion is deliberate.** `audit` below never throws, because a record of
+ * something that already happened must not fail the request that happened. Here nothing has happened
+ * yet, so the honest failure is the whole operation: if the Node cannot record the act, it does not
+ * perform the act. Callers should let it propagate rather than catching it to proceed.
+ *
+ * The cost is real and worth stating: appends serialise on one sequence per organisation, so two
+ * concurrent auditable changes contend, and the loser re-reads the tip and retries the whole batch.
+ * That is inherent to hash-linking rather than a defect of this implementation — a chain is an order,
+ * and an order is a serialisation. Mail volumes make it a fair trade.
+ */
+export async function auditedBatch<T = unknown>(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  event: AuditEvent,
+  /** Receives the audit insert; returns the full batch, with that statement placed wherever it belongs. */
+  build: (auditEntry: D1PreparedStatement) => D1PreparedStatement[],
+  /** Makes the entry conditional. See `AuditGate` — the entry must precede what changes the predicate. */
+  gate?: AuditGate,
+): Promise<{ entry: AppendedEntry; results: D1Result<T>[] }> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < APPEND_ATTEMPTS; attempt++) {
+    const { statement, entry } = await buildEntry(env, ctx, orgId, event, gate);
+    try {
+      const results = await env.CATALOG.batch<T>(build(statement));
+      return { entry, results };
+    } catch (error) {
+      lastError = error;
+      // Somebody else took this sequence number. Nothing committed — that is what the transaction is
+      // for — so re-reading the tip and rebuilding is safe rather than a partial repeat.
+      if (!isSequenceRace(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Appends one entry on its own, for acts with no state change of their own to travel with.
+ *
+ * A refused sign-in and a lockout are decisions, not writes — there is nothing to be atomic *with*,
+ * and the thing being recorded has already happened by the time this is called.
+ *
+ * Never throws, and that is the opposite contract from `auditedBatch` for a reason that only matters
+ * under pressure: a record of a completed act that can fail its own request would make the log the most
+ * dangerous component in the system, and the fix everyone reaches for is deleting the call rather than
+ * repairing the cause. A failure to record is itself recorded, in the operational log, one level down,
+ * where a `doctor` check can see it.
+ *
+ * Prefer `auditedBatch` whenever there *is* an accompanying write. This one cannot close the window it
+ * is named for.
  */
 export async function audit(
   env: Env,
   ctx: Ctx,
   orgId: string,
   event: AuditEvent,
-  attempt = 0,
 ): Promise<AppendedEntry | null> {
   try {
-    const tip = await env.CATALOG.prepare(
-      "SELECT seq, hash FROM audit_entries WHERE org_id = ? ORDER BY seq DESC LIMIT 1",
-    )
-      .bind(orgId)
-      .first<{ seq: number; hash: string }>();
-
-    const seq = (tip?.seq ?? 0) + 1;
-    const prevHash = tip?.hash ?? GENESIS;
-    const at = new Date(ctx.now()).toISOString();
-    const actorKind: ActorKind = event.actorKind ?? (event.actorUserId != null ? "user" : "node");
-    const detail = boundedDetail(event.detail);
-
-    const fields = {
-      seq, at,
-      actorUserId: event.actorUserId ?? null,
-      actorKind,
-      action: event.action,
-      subject: event.subject ?? null,
-      outcome: event.outcome,
-      detail,
-    };
-    const hash = await sha256Hex(prevHash + canonical(fields));
-    const id = ctx.id("aud");
-
-    await env.CATALOG.prepare(
-      `INSERT INTO audit_entries
-         (id, org_id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, prev_hash, hash)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    )
-      .bind(id, orgId, seq, at, fields.actorUserId, actorKind, event.action, fields.subject,
-        event.outcome, detail, prevHash, hash)
-      .run();
-
-    return { id, seq, hash };
+    const { entry } = await auditedBatch(env, ctx, orgId, event, (statement) => [statement]);
+    return entry;
   } catch (error) {
-    // A UNIQUE violation means another writer took this slot. Retry against the new tip — bounded,
-    // because an unbounded retry on a contended path is a way to spend a whole invocation.
-    if (attempt < 4 && /UNIQUE constraint failed/i.test((error as Error).message)) {
-      return audit(env, ctx, orgId, event, attempt + 1);
-    }
     await log(env, ctx, {
       level: "error",
       event: "audit.append_failed",

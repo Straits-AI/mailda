@@ -27,7 +27,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 20 receipts in [`docs/receipts/`](./docs/receipts/) generating 119 verified constants |
-| **Code** | A measurement harness and one Worker. 206 tests. Not a product. |
+| **Code** | A measurement harness and one Worker. 211 tests. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -105,6 +105,12 @@ Node: editing one row directly in the database produced *"entry was altered afte
 contents do not produce its hash"*, naming the row. This cannot stop someone with database access from
 rewriting the whole chain — you own the database, which is the point — but it turns a log you have to
 trust into one you can check. ([receipt](./docs/receipts/audit-and-log-retention.md))
+
+**An audit entry commits in the same transaction as the act it records.** Writing the change and then
+appending the entry leaves a window where the change survives and nothing records it — and that hole is
+invisible to verification, which proves only that what *was* written is unaltered. So the entry travels
+inside the caller's batch: either both land or neither does. The corollary is deliberate — if this Node
+cannot record an act, it does not perform the act.
 
 **Audit coverage is enforced by the schema, not by memory.** The trail shipped with eight call sites
 placed by hand, which is correct today and has nothing to notice when it stops being correct — an

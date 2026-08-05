@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit } from "../audit.ts";
+import { auditedBatch } from "../audit.ts";
 import { unwrapCredential, wrapCredential } from "./kek.ts";
 
 /**
@@ -129,7 +129,7 @@ export async function rotateSigningKey(env: Env, ctx: Ctx): Promise<{ kid: strin
   const at = new Date(ctx.now()).toISOString();
   const retiresAt = new Date(ctx.now() + VERIFY_GRACE_MS).toISOString();
 
-  const statements = [];
+  const statements: D1PreparedStatement[] = [];
   if (outgoing !== null) {
     statements.push(
       env.CATALOG.prepare("UPDATE signing_keys SET status = 'retiring', retires_at = ? WHERE kid = ?")
@@ -156,20 +156,27 @@ export async function rotateSigningKey(env: Env, ctx: Ctx): Promise<{ kid: strin
     ).bind(at),
   );
 
-  await env.CATALOG.batch(statements);
-  keyCache = null;
-
   // Key rotation is the kind of thing an investigation asks about months later, and the org is not on
   // hand here — the claimed one is the Node's, and a Node has exactly one.
   const claimed = await env.CATALOG.prepare(
     "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
   ).first<{ org_id: string }>().catch(() => null);
-  if (claimed?.org_id != null) {
-    await audit(env, ctx, claimed.org_id, {
-      action: "key.rotated", outcome: "ok", subject: kid,
-      detail: { retiring: outgoing?.kid ?? null, purpose: "signing" },
-    });
+
+  if (claimed?.org_id == null) {
+    // An unclaimed Node still needs working keys — claim mints them before an org exists — so the
+    // rotation proceeds. There is no organisation to hold the entry, and the chain is per-org.
+    await env.CATALOG.batch(statements);
+  } else {
+    await auditedBatch(
+      env, ctx, claimed.org_id,
+      {
+        action: "key.rotated", outcome: "ok", subject: kid,
+        detail: { retiring: outgoing?.kid ?? null, purpose: "signing" },
+      },
+      (entry) => [...statements, entry],
+    );
   }
+  keyCache = null;
 
   return { kid, retired: outgoing?.kid ?? null };
 }

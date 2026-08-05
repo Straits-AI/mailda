@@ -1,6 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { audit } from "../audit.ts";
+import { auditedBatch } from "../audit.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
@@ -58,20 +58,29 @@ export async function cancelSend(
   orgId: string,
   manifestId: string,
 ): Promise<{ cancelled: boolean; reason?: string }> {
-  const result = await env.CATALOG.prepare(
-    `UPDATE send_manifests SET state = 'cancelled', state_at = ?
-      WHERE id = ? AND org_id = ? AND state = 'held'`,
-  )
-    .bind(new Date(ctx.now()).toISOString(), manifestId, orgId)
-    .run();
-
-  if ((result.meta.changes ?? 0) > 0) {
-    await audit(env, ctx, orgId, {
+  // Conditional, so the record is conditional on the same predicate and in the same transaction.
+  // The entry is placed *first* deliberately: the update clears `state = 'held'`, so an entry gated on
+  // it and running afterwards would never insert, and a cancellation would go unrecorded.
+  const { results } = await auditedBatch<never>(
+    env, ctx, orgId,
+    {
       action: "send.cancelled", outcome: "ok", subject: manifestId,
       detail: { stoppedBeforeDispatch: true },
-    });
-    return { cancelled: true };
-  }
+    },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare(
+        `UPDATE send_manifests SET state = 'cancelled', state_at = ?
+          WHERE id = ? AND org_id = ? AND state = 'held'`,
+      ).bind(new Date(ctx.now()).toISOString(), manifestId, orgId),
+    ],
+    {
+      sql: "SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND state = 'held'",
+      params: [manifestId, orgId],
+    },
+  );
+
+  if ((results[1]?.meta.changes ?? 0) > 0) return { cancelled: true };
 
   const current = await env.CATALOG.prepare(
     "SELECT state FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
@@ -221,7 +230,7 @@ async function applyOutcome(
   const at = new Date(ctx.now()).toISOString();
   const day = at.slice(0, 10);
 
-  const statements = [];
+  const statements: D1PreparedStatement[] = [];
   let state: SendState;
   let detail: string;
 
@@ -292,11 +301,15 @@ async function applyOutcome(
       );
   }
 
-  await env.CATALOG.batch(statements);
-
   // Recorded for every terminal state, not only failures. "Nothing went wrong" is a fact an audit has
   // to be able to show, or its silence is ambiguous.
-  await audit(env, ctx, orgId, {
+  //
+  // In the same transaction as the state it describes. The bytes may already have left by the time
+  // this runs — that cannot be undone by a rollback — but "what this Node believes happened" and
+  // "what this Node recorded happening" must not be able to disagree, which is what a separate write
+  // permits. A rolled-back batch is retried by the next sweep from a state that still describes the
+  // send, rather than leaving a hand-over nothing accounts for.
+  await auditedBatch(env, ctx, orgId, {
     action: `send.${state}`,
     outcome: state === "handed_over" ? "ok" : state === "outcome_unknown" ? "failed" : "refused",
     subject: manifestId,
@@ -304,7 +317,7 @@ async function applyOutcome(
       transportMessageId: outcome.kind === "handed_over" ? outcome.transportMessageId : null,
       reason: "reason" in outcome ? outcome.reason.slice(0, 300) : null,
     },
-  });
+  }, (entry) => [...statements, entry]);
 
   return { manifestId, state, detail };
 }
