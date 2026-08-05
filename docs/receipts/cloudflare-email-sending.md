@@ -16,6 +16,7 @@ values:
   send.hold_window_default_seconds: 15
   send.delivers_to_same_account_routing: 1
   send.preserves_authored_message_id: 0
+  send.delivers_externally: 1
   send.daily_limit_is_published: 0
 ---
 
@@ -119,6 +120,13 @@ a bounce or a timeout, and neither had happened.
 **Consequence for §5A:** the synthetic inbound test at step 6 *can* be same-account, which is
 materially simpler than requiring an external sender. What it must not do is treat "accepted" as
 "delivered" — which is the real lesson, and a different one.
+
+### External delivery, confirmed
+
+Two probes to an external Gmail address were **received** (confirmed by the recipient, 5 August 2026).
+That is the control the same-account correction above needed: without it, "all four paths delivered
+same-account" could have been a same-account-only quirk. Both directions work, from an onboarded
+subdomain.
 
 ## Cloudflare rewrites the Message-ID, even on the raw path
 

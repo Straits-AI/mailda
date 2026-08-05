@@ -203,6 +203,50 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ ...sealed, capability });
     }
 
+    /**
+     * The exact bytes Mailda submitted, streamed frame by frame (#16).
+     *
+     * §12 invariant 2 makes a materialized provider-submission representation immutable evidence, and
+     * storing it while providing no way to read it back is barely better than not storing it — the
+     * point of the record is that an operator can *produce* it. Present only for the `authored` path,
+     * because the structured API gives Mailda nothing to store (ADR 33).
+     */
+    const submitted = /^\/api\/sends\/([^/]+)\/submitted$/.exec(url.pathname);
+    if (submitted && request.method === "GET") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const row = await env.CATALOG.prepare(
+        "SELECT submitted_key, fidelity FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
+      ).bind(who.orgId, submitted[1]!).first<{ submitted_key: string | null; fidelity: string }>();
+
+      // §5C: an absent send and one belonging to another organization answer identically.
+      if (row === null) {
+        return Response.json(
+          { error: "not_found", message: "No such send, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
+      if (row.submitted_key == null) {
+        return Response.json(
+          {
+            error: "no_submitted_bytes",
+            message:
+              row.fidelity === "reconstructed"
+                ? "This message was sent through the structured API, which assembles the MIME itself — " +
+                  "so there are no submitted bytes to produce. Its manifest records what was asked for."
+                : "This message has not been dispatched yet, so nothing has been submitted.",
+          },
+          { status: 409 },
+        );
+      }
+      return new Response(await streamEvidence(env, row.submitted_key), {
+        headers: {
+          "content-type": "message/rfc822",
+          "content-disposition": `attachment; filename="${safeFilename(submitted[1]!, "-submitted.eml")}"`,
+        },
+      });
+    }
+
     const cancel = /^\/api\/sends\/([^/]+)\/cancel$/.exec(url.pathname);
     if (cancel && request.method === "POST") {
       const who = await principalFor(env, request);

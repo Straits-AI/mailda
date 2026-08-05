@@ -119,3 +119,38 @@ ingress receipts, threading, and Butler events at Layer 4 — each its own decis
 One thing observed rather than designed: re-sealing rewrites the object, which resets its R2
 `uploaded` timestamp, so a freshly re-sealed object reads as "too fresh to judge" for the orphan
 check. Harmless — it only delays orphan collection — but worth knowing before reading a report.
+
+
+## Producing what was sent
+
+```
+GET /api/sends/:id/submitted   →  message/rfc822, streamed frame by frame
+```
+
+§12 invariant 2 makes a materialized provider-submission representation immutable evidence. Storing it
+and providing no way to read it back is barely better than not storing it — **the point of the record is
+that an operator can produce it**, in a dispute, an audit, or an eDiscovery export.
+
+Present only for the `authored` path. The structured API assembles the MIME itself, so there are no
+submitted bytes to produce, and the endpoint says exactly that rather than 404-ing as though the send
+did not exist (ADR 33).
+
+An absent send and one belonging to another organization answer identically, per §5C.
+
+### Verified on the deployed Node, 5 August 2026
+
+A reply to the real Gmail message was sealed, dispatched, and its submitted bytes produced back:
+
+```
+From: inbox@mailda-test.whymelabs.com
+To: wmhy.tech@gmail.com
+Subject: Re: Hello world
+Message-ID: <snd_01KZ8G3YTZK16NDK4RPTTZY38J@mailda-test.whymelabs.com>
+In-Reply-To: <CAHdC3ON6OaSRTDaWz=fetrA_gwdOx_Dxy3bS8iS0fY4u3inq7Q@mail.gmail.com>
+References: <CAHdC3ON6OaSRTDaWz=fetrA_gwdOx_Dxy3bS8iS0fY4u3inq7Q@mail.gmail.com>
+```
+
+`sha256` of the produced bytes matched the hash recorded at dispatch exactly, so the record is the
+thing rather than a re-rendering of it. Threading anchors point at **Gmail's** Message-ID, taken from
+the original's stored evidence — which is why a reply threads correctly even though Cloudflare rewrites
+*our* Message-ID on the way out.
