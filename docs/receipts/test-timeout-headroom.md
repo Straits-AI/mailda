@@ -12,6 +12,8 @@ values:
   test.slowest_test_ms_idle: 1417
   test.slowest_test_ms_under_load: 5790
   test.migration_hook_ms_under_load: 77
+  test.slowest_test_ms_ci: 753
+  test.headroom_ceiling_percent: 50
 ---
 
 ## What was actually wrong
@@ -79,6 +81,42 @@ downward is a cascading failure that reads as flakiness and gets muted. Those ar
 
 `test.hook_timeout_ms` is set to the same value for one fewer number, not because hooks need it —
 77 ms worst measured means the hook budget is nowhere near binding.
+
+## CI hardware, which this receipt asked for and now has
+
+`stale_when` named "the suite moves to CI hardware with a different core count", so the CI workflow
+reports the number rather than assuming it. First run on `blacksmith-4vcpu-ubuntu-2404` (6 cores as the
+runtime reports them):
+
+| | Slowest test | % of the 30,000 ms timeout |
+|:--|---:|---:|
+| 8-core laptop, under load | 5,790 ms | 19.3% |
+| 8-core laptop, idle | 1,417 ms | 4.7% |
+| **Blacksmith CI, idle** | **753 ms** | **2.5%** |
+
+CI is roughly **nine times faster** at the thing that dominates this suite. The lockout test spends
+almost all of its time deriving PBKDF2 at 600,000 iterations about ten times over; at ~70 ms a
+derivation that is ~750 ms, against ~500 ms a derivation locally.
+
+The useful conclusion is the direction: **the timeout is sized by local development, not by CI.** A
+laptop running the suite beside a deploy and a browser is the binding case, and CI has 39.8x headroom.
+Anyone tempted to tune this number for CI would be tuning against the wrong machine.
+
+## The ceiling is enforced, because a printed number is a muted check
+
+`test.headroom_ceiling_percent: 50` — CI fails if any single test exceeds half the timeout
+(`.github/scripts/test-headroom.mjs`).
+
+The threshold is derived, not chosen by taste: against 753 ms observed it leaves ~20x margin, which is
+looser than any plausible noisy-neighbour variance on a Firecracker microVM and still tight enough to
+catch a test that has genuinely grown. It was reported without gating for exactly one run — long enough
+to have a measurement to set it from, which is this repository's rule and would have been violated by
+picking a number in advance.
+
+It fails with the reason rather than the number, because the reflex it needs to interrupt is raising the
+timeout: a test near the ceiling starts timing out under ordinary load, and one timeout cascades through
+the rest of its file. Verified by forging a 21,000 ms entry into the report and confirming a non-zero
+exit that names the test.
 
 ## What was deliberately not done
 

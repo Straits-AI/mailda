@@ -72,18 +72,15 @@ jobs:
       - name: Worker bundles with its bindings
         run: pnpm --filter @mailda/worker exec wrangler deploy --dry-run
 
-      # Informational, and deliberately not a gate yet.
+      # Fails when a single test exceeds half the 30s timeout.
       #
-      # docs/receipts/test-timeout-headroom.md sets the 30s timeout from a worst case of 5,790ms
-      # measured on an 8-core laptop under load, and names "CI hardware with a different core count" as
-      # a condition that makes that measurement stale. This hardware is exactly that condition.
+      # The threshold was measured before it was set, which is the order this repository insists on: the
+      # first run of this workflow reported the slowest test at 753ms — CI derives PBKDF2 about nine
+      # times faster than the laptop the timeout was sized on — so failing at 50% leaves ~20x margin
+      # over what was observed. See docs/receipts/test-timeout-headroom.md.
       #
-      # So it reports rather than gates, because the receipt discipline runs the other way round:
-      # measure first, then set the limit. Picking a threshold now would be inventing the number this
-      # step exists to find. Once a few runs have reported, the worst observed value becomes
-      # `test.slowest_test_ms_under_load` for CI and this turns into a real tripwire.
-      #
-      # No second test run: the Test step above already emitted the report, because vitest.config.ts
+      # It gates rather than warns because a printed number nobody fails on is the muted check AGENTS.md
+      # describes. No second test run: the Test step already emitted the report, since vitest.config.ts
       # adds a json reporter when CI is set.
       - name: Test headroom on this hardware
         if: always()
