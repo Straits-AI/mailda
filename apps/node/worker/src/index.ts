@@ -1,6 +1,7 @@
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { audit, log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
@@ -71,8 +72,10 @@ export default {
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const clock = createSystemCtx();
+    const requestId = clock.id("req");
     try {
-      return noStore(new URL(request.url), await route(request, env, ctx));
+      return noStore(new URL(request.url), await route(request, env, ctx, requestId));
     } catch (error) {
       // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
       // The status travels with the throw (see errors.ts) rather than living in a table here that has
@@ -84,19 +87,32 @@ export default {
         );
       }
 
-      // Bare `throw` reaches the client as Cloudflare's opaque "error code 1101", which tells an
-      // operator nothing. The message goes to the log (observability is on); the response says only
-      // that something failed, because an unauthenticated caller is not owed internals.
-      console.error("E_UNHANDLED", (error as Error).stack ?? String(error));
+      // Recorded where the Node itself can read it, not only in Cloudflare's dashboard — an operator
+      // should not have to leave the product to find out why it misbehaved. `waitUntil` so a log write
+      // never delays the response, and the request id is returned so a person can quote it.
+      ctx.waitUntil(
+        log(env, clock, {
+          level: "error",
+          event: "request.unhandled",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          requestId,
+          detail: { path: new URL(request.url).pathname, stack: (error as Error).stack?.slice(0, 1500) },
+        }).then(() => trimLogs(env)).then(() => undefined),
+      );
+      console.error("E_UNHANDLED", requestId, (error as Error).stack ?? String(error));
       return Response.json(
-        { error: "internal", message: "This Node failed to handle the request. Check its logs." },
+        {
+          error: "internal",
+          message: "This Node failed to handle the request. Its operator can find this in the log.",
+          requestId,
+        },
         { status: 500 },
       );
     }
   },
 };
 
-async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function route(request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
   {
     const url = new URL(request.url);
     const clock = createSystemCtx();
@@ -418,6 +434,56 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         retiring: rotated.retired,
         stillVerifiesForSeconds: BUDGETS["auth.signing_key_verify_grace_seconds"],
       });
+    }
+
+    /**
+     * The audit trail, its verification, and the operational log — in the product, because an
+     * administrator should not have to open the Cloudflare dashboard to answer "who did that" or
+     * "why did that fail".
+     *
+     * Authenticated. The audit trail names actors and actions across the whole organization, which is
+     * a wider view than any single mailbox grants, so it is not something an ordinary read token
+     * should imply — §7 evaluates that live, and this is the seam where a narrower audit role slots in
+     * when Layer 5 defines one.
+     */
+    if (url.pathname === "/api/audit" && request.method === "GET") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const action = url.searchParams.get("action");
+      const rows = await env.CATALOG.prepare(
+        `SELECT id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, hash
+           FROM audit_entries
+          WHERE org_id = ?${action === null ? "" : " AND action = ?"}
+          ORDER BY seq DESC LIMIT 200`,
+      )
+        .bind(...(action === null ? [who.orgId] : [who.orgId, action]))
+        .all();
+      return Response.json({ entries: rows.results });
+    }
+
+    // Verification is the point of a hash chain: a log an administrator has to trust is not evidence.
+    if (url.pathname === "/api/audit/verify" && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const from = Number(url.searchParams.get("from") ?? "1");
+      return Response.json(await verifyChain(env, who.orgId, Number.isFinite(from) ? from : 1));
+    }
+
+    if (url.pathname === "/api/logs" && request.method === "GET") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const level = url.searchParams.get("level");
+      const rows = await env.CATALOG.prepare(
+        `SELECT id, at, level, event, message, detail, request_id FROM log_entries
+          ${level === null ? "" : "WHERE level = ?"}
+          ORDER BY at DESC LIMIT 200`,
+      )
+        .bind(...(level === null ? [] : [level]))
+        .all();
+      const counts = await env.CATALOG.prepare(
+        "SELECT level, COUNT(*) AS n FROM log_entries GROUP BY level",
+      ).all<{ level: string; n: number }>();
+      return Response.json({ entries: rows.results, counts: counts.results });
     }
 
     if (url.pathname === "/api/me") {

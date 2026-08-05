@@ -439,6 +439,12 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 .state-refused        { border-color: var(--alarm); color: var(--alarm); }
 .state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
 .state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
+.state-audit-ok       { border-color: var(--live); color: var(--live); }
+.state-audit-refused  { border-color: var(--signal); color: var(--signal); }
+.state-audit-failed   { border-color: var(--alarm); color: var(--alarm); }
+.state-log-info       { color: var(--dim); }
+.state-log-warn       { border-color: var(--signal); color: var(--signal); }
+.state-log-error      { border-color: var(--alarm); color: var(--alarm); }
 
 a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
 a:hover { border-bottom-color: var(--signal); }

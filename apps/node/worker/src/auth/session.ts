@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { audit } from "../audit.ts";
 import { mintAccessToken } from "./jwt.ts";
 import { unwrapCredential, wrapCredential } from "./kek.ts";
 import { hashPassword, needsRehash, verifyPassword } from "./password.ts";
@@ -155,6 +156,12 @@ export async function login(
       .bind(orgId, normalized, windowStart)
       .first<{ at: string }>();
     const freeAt = Date.parse(oldest?.at ?? new Date(ctx.now()).toISOString()) + FAILURE_WINDOW_MS;
+    await audit(env, ctx, orgId, {
+      action: "auth.locked_out", outcome: "refused", actorKind: "node",
+      // The address is the subject of the action here, and an administrator investigating a lockout
+      // needs to know whose account it was.
+      detail: { email: normalized },
+    });
     return { status: "locked_out", retryAfterSeconds: Math.max(1, Math.ceil((freeAt - ctx.now()) / 1000)) };
   }
 
@@ -179,6 +186,10 @@ export async function login(
 
   if (!(await verifyPassword(password, verifier))) {
     await recordFailure(env, ctx, orgId, normalized);
+    await audit(env, ctx, orgId, {
+      action: "auth.sign_in_failed", outcome: "refused", actorKind: "node",
+      detail: { email: normalized },
+    });
     return { status: "invalid_credentials" };
   }
 
@@ -201,7 +212,11 @@ export async function login(
   }
   await env.CATALOG.batch(statements);
 
-  return { status: "signed_in", session: await issueSession(env, ctx, { orgId, userId: user!.id }) };
+  const session = await issueSession(env, ctx, { orgId, userId: user!.id });
+  await audit(env, ctx, orgId, {
+    action: "auth.signed_in", outcome: "ok", actorUserId: user!.id, detail: { method: "password" },
+  });
+  return { status: "signed_in", session };
 }
 
 /**
@@ -371,6 +386,9 @@ export async function signOut(env: Env, ctx: Ctx, presented: string): Promise<vo
  * effect is bounded by the access token's residual life, not by anything longer.
  */
 export async function revokeAllSessions(env: Env, ctx: Ctx, orgId: string, userId: string): Promise<number> {
+  await audit(env, ctx, orgId, {
+    action: "auth.revoked_all_sessions", outcome: "ok", actorUserId: userId, subject: userId,
+  });
   const result = await env.CATALOG.prepare(
     "UPDATE refresh_tokens SET revoked_at = ?, replaced_by_wrapped = NULL WHERE org_id = ? AND user_id = ? AND revoked_at IS NULL",
   )

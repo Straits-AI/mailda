@@ -94,6 +94,8 @@ function renderStatus(sessionText = null) {
     items.push(
       el("button", { class: "linkish", text: "inbox", onclick: () => route() }),
       el("button", { class: "linkish", text: "outbox", onclick: () => renderOutbox() }),
+      el("button", { class: "linkish", text: "audit", onclick: () => renderAudit() }),
+      el("button", { class: "linkish", text: "log", onclick: () => renderLogs() }),
       el("button", { class: "linkish", text: "sign out", onclick: () => logout() }),
     );
   }
@@ -611,6 +613,142 @@ async function renderOutbox(highlightId) {
             el("thead", {}, [el("tr", {}, [
               el("th", { text: "Subject" }), el("th", { text: "To" }), el("th", { text: "State" }),
               el("th", { class: "num", text: "When" }), el("th", { class: "num", text: "Submitted" }),
+            ])]),
+            el("tbody", {}, rows),
+          ]),
+        ]),
+  );
+}
+
+/* ------------------------------------------------------------------ audit and logs -------- */
+
+/**
+ * The audit trail, in the product.
+ *
+ * An administrator should not have to open the Cloudflare dashboard to answer "who did that". And the
+ * verification button is the reason this is a chain rather than a list: a log you have to trust is not
+ * evidence, and this one can be checked in front of you.
+ */
+async function renderAudit() {
+  const response = await apiFetch("/api/audit");
+  if (!response.ok) return show(notice(`The audit trail could not be read (${response.status}).`, "bad"));
+  const { entries } = await response.json();
+
+  const verdict = el("div", { class: "errors" });
+  const verify = el("button", {
+    class: "primary",
+    text: "Verify the chain",
+    onclick: async () => {
+      verdict.replaceChildren(el("p", { class: "hint", text: "Re-hashing…" }));
+      const result = await (await apiFetch("/api/audit/verify", { method: "POST" })).json();
+      verdict.replaceChildren(
+        result.intact
+          ? notice(
+              `Verified: ${result.checked} entr${result.checked === 1 ? "y" : "ies"} re-hashed and each ` +
+              `follows the one before it.` +
+              (result.resumeFrom === null ? "" : ` More remain; verification is batched.`),
+            )
+          // The broken link, not a bare verdict — an investigation needs where, not whether.
+          : notice(
+              `Chain broken at entry ${result.brokenAt.seq} (${result.brokenAt.id}): ` +
+              `${result.brokenAt.reason}`,
+              "bad",
+            ),
+      );
+    },
+  });
+
+  const rows = entries.map((entry) =>
+    el("tr", { class: "entry", "data-reveal": "" }, [
+      el("td", { class: "num mono dim", text: String(entry.seq) }),
+      el("td", { class: "mono", text: entry.action }),
+      el("td", {}, [el("span", { class: `state state-audit-${entry.outcome}`, text: entry.outcome })]),
+      el("td", { class: "dim mono", text: entry.actor_user_id ?? entry.actor_kind }),
+      el("td", { class: "dim mono", text: entry.subject ?? "—" }),
+      el("td", { class: "num mono dim", text: new Date(entry.at).toLocaleString(undefined, { hour12: false }) }),
+    ]),
+  );
+
+  show(
+    el("div", { class: "ledger-head", "data-reveal": "" }, [
+      el("h1", { text: "Audit" }),
+      el("p", { class: "count mono", text: `${entries.length} most recent` }),
+    ]),
+    notice(
+      "Every entry carries the hash of the one before it, so a deletion, a reordering or an edit " +
+      "breaks verification at a nameable point. This cannot stop someone with database access from " +
+      "rewriting the whole chain — you own the database — but it turns trusting this log into " +
+      "checking it.",
+    ),
+    verify,
+    verdict,
+    entries.length === 0
+      ? el("p", { class: "hint", text: "Nothing recorded yet." })
+      : el("div", { class: "scroller" }, [
+          el("table", {}, [
+            el("thead", {}, [el("tr", {}, [
+              el("th", { class: "num", text: "#" }), el("th", { text: "Action" }),
+              el("th", { text: "Outcome" }), el("th", { text: "Actor" }),
+              el("th", { text: "Subject" }), el("th", { class: "num", text: "When" }),
+            ])]),
+            el("tbody", {}, rows),
+          ]),
+        ]),
+  );
+}
+
+/** The operational log — why something behaved oddly, as opposed to who did what. */
+async function renderLogs(level = null) {
+  const response = await apiFetch(`/api/logs${level === null ? "" : `?level=${level}`}`);
+  if (!response.ok) return show(notice(`The log could not be read (${response.status}).`, "bad"));
+  const { entries, counts } = await response.json();
+
+  const rows = entries.flatMap((entry) => {
+    const detail = el("tr", { class: "detail", hidden: "hidden" }, [
+      el("td", { colspan: "4" }, [
+        el("dl", {}, [
+          el("dt", { text: "event" }), el("dd", { class: "mono", text: entry.event }),
+          ...(entry.request_id === null ? [] : [
+            el("dt", { text: "request" }), el("dd", { class: "mono", text: entry.request_id }),
+          ]),
+          ...(entry.detail === null ? [] : [
+            el("dt", { text: "detail" }), el("dd", { class: "mono", text: entry.detail }),
+          ]),
+        ]),
+      ]),
+    ]);
+    const row = el("tr", { class: "entry", "data-reveal": "" }, [
+      el("td", {}, [el("span", { class: `state state-log-${entry.level}`, text: entry.level })]),
+      el("td", { class: "mono", text: entry.event }),
+      el("td", { text: entry.message }),
+      el("td", { class: "num mono dim", text: new Date(entry.at).toLocaleString(undefined, { hour12: false }) }),
+    ]);
+    row.addEventListener("click", () => {
+      detail.hidden = !detail.hidden;
+      row.classList.toggle("open", !detail.hidden);
+    });
+    return [row, detail];
+  });
+
+  const summary = counts.map((c) => `${c.n} ${c.level}`).join(", ") || "nothing recorded";
+
+  show(
+    el("div", { class: "ledger-head", "data-reveal": "" }, [
+      el("h1", { text: "Log" }),
+      el("p", { class: "count mono", text: summary }),
+    ]),
+    el("div", { class: "row-actions" }, [
+      el("button", { class: "linkish", text: "all", onclick: () => renderLogs() }),
+      el("button", { class: "linkish", text: "errors", onclick: () => renderLogs("error") }),
+      el("button", { class: "linkish", text: "warnings", onclick: () => renderLogs("warn") }),
+    ]),
+    entries.length === 0
+      ? el("p", { class: "hint", text: "Nothing recorded at this level." })
+      : el("div", { class: "scroller" }, [
+          el("table", {}, [
+            el("thead", {}, [el("tr", {}, [
+              el("th", { text: "Level" }), el("th", { text: "Event" }),
+              el("th", { text: "Message" }), el("th", { class: "num", text: "When" }),
             ])]),
             el("tbody", {}, rows),
           ]),

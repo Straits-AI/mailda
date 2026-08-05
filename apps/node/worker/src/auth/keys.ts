@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { audit } from "../audit.ts";
 import { unwrapCredential, wrapCredential } from "./kek.ts";
 
 /**
@@ -157,6 +158,19 @@ export async function rotateSigningKey(env: Env, ctx: Ctx): Promise<{ kid: strin
 
   await env.CATALOG.batch(statements);
   keyCache = null;
+
+  // Key rotation is the kind of thing an investigation asks about months later, and the org is not on
+  // hand here — the claimed one is the Node's, and a Node has exactly one.
+  const claimed = await env.CATALOG.prepare(
+    "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
+  ).first<{ org_id: string }>().catch(() => null);
+  if (claimed?.org_id != null) {
+    await audit(env, ctx, claimed.org_id, {
+      action: "key.rotated", outcome: "ok", subject: kid,
+      detail: { retiring: outgoing?.kid ?? null, purpose: "signing" },
+    });
+  }
+
   return { kid, retired: outgoing?.kid ?? null };
 }
 

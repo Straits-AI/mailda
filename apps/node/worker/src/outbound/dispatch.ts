@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
+import { audit } from "../audit.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
@@ -64,7 +65,13 @@ export async function cancelSend(
     .bind(new Date(ctx.now()).toISOString(), manifestId, orgId)
     .run();
 
-  if ((result.meta.changes ?? 0) > 0) return { cancelled: true };
+  if ((result.meta.changes ?? 0) > 0) {
+    await audit(env, ctx, orgId, {
+      action: "send.cancelled", outcome: "ok", subject: manifestId,
+      detail: { stoppedBeforeDispatch: true },
+    });
+    return { cancelled: true };
+  }
 
   const current = await env.CATALOG.prepare(
     "SELECT state FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
@@ -286,6 +293,19 @@ async function applyOutcome(
   }
 
   await env.CATALOG.batch(statements);
+
+  // Recorded for every terminal state, not only failures. "Nothing went wrong" is a fact an audit has
+  // to be able to show, or its silence is ambiguous.
+  await audit(env, ctx, orgId, {
+    action: `send.${state}`,
+    outcome: state === "handed_over" ? "ok" : state === "outcome_unknown" ? "failed" : "refused",
+    subject: manifestId,
+    detail: {
+      transportMessageId: outcome.kind === "handed_over" ? outcome.transportMessageId : null,
+      reason: "reason" in outcome ? outcome.reason.slice(0, 300) : null,
+    },
+  });
+
   return { manifestId, state, detail };
 }
 

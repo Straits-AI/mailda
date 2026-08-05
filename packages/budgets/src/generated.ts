@@ -11,6 +11,11 @@ export interface BudgetOrigin {
 }
 
 export const BUDGETS = {
+  "audit.max_detail_bytes": 2048,
+  "audit.verify_batch": 1000,
+  "log.max_detail_bytes": 2048,
+  "log.retained_entries": 50000,
+  "log.trim_batch": 500,
   "authz.check.max_queries": 2,
   "authz.check.max_rows_read": 200,
   "authz.list.max_rows_read": 1000,
@@ -126,6 +131,11 @@ export type BudgetName = keyof typeof BUDGETS;
 
 /** Where each budget came from, so an error can name its receipt. */
 export const BUDGET_ORIGINS: Record<BudgetName, BudgetOrigin> = {
+  "audit.max_detail_bytes": { receipt: "docs/receipts/audit-and-log-retention.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the audit or log row shape changes, D1's 10 GB per-database ceiling changes, or the measured bytes per entry move materially" },
+  "audit.verify_batch": { receipt: "docs/receipts/audit-and-log-retention.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the audit or log row shape changes, D1's 10 GB per-database ceiling changes, or the measured bytes per entry move materially" },
+  "log.max_detail_bytes": { receipt: "docs/receipts/audit-and-log-retention.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the audit or log row shape changes, D1's 10 GB per-database ceiling changes, or the measured bytes per entry move materially" },
+  "log.retained_entries": { receipt: "docs/receipts/audit-and-log-retention.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the audit or log row shape changes, D1's 10 GB per-database ceiling changes, or the measured bytes per entry move materially" },
+  "log.trim_batch": { receipt: "docs/receipts/audit-and-log-retention.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the audit or log row shape changes, D1's 10 GB per-database ceiling changes, or the measured bytes per entry move materially" },
   "authz.check.max_queries": { receipt: "docs/receipts/authz-check-rows-read.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the relationship_tuples or team_members index definitions change; a team-membership model beyond user->team->object is introduced; or ABAC/policy conditions begin reading additional rows on the request path" },
   "authz.check.max_rows_read": { receipt: "docs/receipts/authz-check-rows-read.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the relationship_tuples or team_members index definitions change; a team-membership model beyond user->team->object is introduced; or ABAC/policy conditions begin reading additional rows on the request path" },
   "authz.list.max_rows_read": { receipt: "docs/receipts/authz-check-rows-read.md", kind: "measured-tripwire", measuredOn: "2026-08-03", staleWhen: "the relationship_tuples or team_members index definitions change; a team-membership model beyond user->team->object is introduced; or ABAC/policy conditions begin reading additional rows on the request path" },

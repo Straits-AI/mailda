@@ -98,6 +98,14 @@ that argument on measurement: removing its config block doesn't relink the bindi
 receipt already stored for exactly this purpose.
 ([receipt](./docs/receipts/evidence-lifecycle.md))
 
+**The audit trail can be checked, not just trusted.** Every entry carries the hash of the one before
+it, so a deletion, a reordering or an edit breaks verification at a nameable entry — and an
+administrator reads it in the product rather than in a cloud dashboard. Demonstrated on the deployed
+Node: editing one row directly in the database produced *"entry was altered after it was written: its
+contents do not produce its hash"*, naming the row. This cannot stop someone with database access from
+rewriting the whole chain — you own the database, which is the point — but it turns a log you have to
+trust into one you can check. ([receipt](./docs/receipts/audit-and-log-retention.md))
+
 **Nothing checks itself by default.** `mailda doctor` verifies the runtime claims every other
 decision made, and on its first run against the deployed Node it found that the mail it holds is
 encrypted under a key published in this repository. Two checks deliberately *use* a credential

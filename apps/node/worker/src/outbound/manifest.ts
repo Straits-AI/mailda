@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { audit } from "../audit.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
@@ -248,6 +249,21 @@ export async function sealManifest(
       at, releaseAt, at,
     )
     .run();
+
+  await audit(env, ctx, orgId, {
+    action: "send.sealed",
+    outcome: "ok",
+    actorUserId: composition.authorUserId,
+    subject: manifestId,
+    // Recipients and subject are the *action*, not the content — but they are still the most
+    // sensitive thing here, so only counts and the mailbox go in. §12 keeps the rest in R2.
+    detail: {
+      mailboxId: composition.mailboxId,
+      recipients: composition.to.length + (composition.cc?.length ?? 0) + (composition.bcc?.length ?? 0),
+      fidelity: composition.fidelity,
+      inReplyTo: composition.inReplyToMessageId ?? null,
+    },
+  });
 
   return {
     id: manifestId,
