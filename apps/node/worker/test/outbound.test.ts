@@ -8,9 +8,9 @@ import { getEvidence, putEvidence } from "../src/evidence-store.ts";
 import {
   cancelSend, dailySendState, dispatchDue, dispatchOne, isAutoRetryable,
 } from "../src/outbound/dispatch.ts";
-import {
-  assertHeaderSafe, encodeHeaderValue, normalizeBody, rebuildReferences, renderRfc822, sealManifest,
-} from "../src/outbound/manifest.ts";
+import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
+import { HeaderBlock, normalizeAddress, safeFilename } from "../src/outbound/headers.ts";
+import { CallerError } from "../src/errors.ts";
 import { classifyError, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
 
 const testEnv = env as unknown as Env;
@@ -189,25 +189,80 @@ describe("header injection", () => {
   it("rejects rather than strips, because sending altered bytes is worse", () => {
     // ADR 35: the bytes sent must be the bytes approved. Silently removing a control character and
     // sending anyway is exactly the quiet alteration that forbids.
-    expect(() => assertHeaderSafe("subject", "clean")).not.toThrow();
-    expect(() => assertHeaderSafe("subject", "dirty\r\n")).toThrow(/refused rather than stripped/);
+    expect(() => new HeaderBlock().add("Subject", "clean")).not.toThrow();
+    expect(() => new HeaderBlock().add("Subject", "dirty\r\n")).toThrow(/refused rather than stripped/);
   });
 
-  it("refuses a non-ASCII address and encodes a non-ASCII subject", async () => {
-    await expect(
-      sealManifest(testEnv, ctx(), ORG, { ...composition, to: ["café@example.net"] }),
-    ).rejects.toThrow(/E_NON_ASCII_ADDRESS/);
+  it("makes injection unrepresentable rather than checked — a NEW header cannot bypass it", () => {
+    // This is the property that matters, and the reason this is a builder rather than a set of
+    // asserts. There is no array to push a pre-formatted line onto, so a future author adding a
+    // header gets the validation whether they thought about it or not.
+    const block = new HeaderBlock();
+    expect(() => block.add("X-Someone-Adds-This-Later", "value\r\nBcc: attacker@example.net")).toThrow(
+      /E_HEADER_INJECTION/,
+    );
+    // And the only exit produces bytes from fields that all went through add().
+    expect(block.fieldCount).toBe(0);
+    const bytes = new HeaderBlock().add("Subject", "hi").bytes("body");
+    expect(new TextDecoder().decode(bytes)).toBe("Subject: hi\r\n\r\nbody");
+  });
 
-    // A subject *is* encodable, and a raw UTF-8 header is non-conformant even when it survives.
+  it("refuses an invalid header name too, not only a hostile value", () => {
+    expect(() => new HeaderBlock().add("Bad: Name", "x")).toThrow(/E_HEADER_NAME_INVALID/);
+    expect(() => new HeaderBlock().add("Has Space", "x")).toThrow(/E_HEADER_NAME_INVALID/);
+  });
+
+  it("carries its own HTTP status, so there is no table to keep in agreement", () => {
+    try {
+      new HeaderBlock().add("Subject", "x\r\ny");
+      expect.unreachable();
+    } catch (error) {
+      // ADR 35 rejected exactly this correspondence for the effect key: two places that must agree.
+      expect(error).toBeInstanceOf(CallerError);
+      expect((error as CallerError).status).toBe(422);
+      expect((error as CallerError).code).toBe("E_HEADER_INJECTION");
+    }
+  });
+
+  it("encodes a non-ASCII subject rather than sending it raw", async () => {
+    // A raw UTF-8 header is non-conformant even when it survives, and mime.ts has decoded these words
+    // since #27 — the encoder's absence was a correctness gap, not only a hardening one.
     const sealed = await sealManifest(testEnv, ctx(), ORG, { ...composition, subject: "Réf: café" });
     const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
     expect(text).toContain("Subject: =?utf-8?B?");
     expect(text).not.toContain("Réf");
   });
 
-  it("encodes only what needs encoding", () => {
-    expect(encodeHeaderValue("plain ascii")).toBe("plain ascii");
-    expect(encodeHeaderValue("café")).toMatch(/^=\?utf-8\?B\?.+\?=$/);
+  it("punycodes an internationalised domain instead of refusing it (ADR 41)", async () => {
+    // The first fix refused every non-ASCII address, which would have made Mailda unable to write to
+    // anyone on an internationalised domain — a product limitation invented inside a security fix.
+    expect(normalizeAddress("to", "sales@café.example")).toBe("sales@xn--caf-dma.example");
+    expect(normalizeAddress("to", "A.User@Example.COM")).toBe("A.User@example.com");
+
+    const sealed = await sealManifest(testEnv, ctx(), ORG, { ...composition, to: ["sales@café.example"] });
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).toContain("To: sales@xn--caf-dma.example");
+  });
+
+  it("refuses a non-ASCII local part, naming SMTPUTF8 as the reason", () => {
+    // Unlike a domain, a mailbox name has no ASCII encoding. Refused with the actual reason rather
+    // than as "invalid address", because the two are different problems with different remedies.
+    expect(() => normalizeAddress("to", "café@example.net")).toThrow(/E_SMTPUTF8_UNSUPPORTED/);
+    expect(() => normalizeAddress("to", "café@example.net")).toThrow(/SMTPUTF8/);
+  });
+
+  it("refuses a malformed address distinctly from a hostile one", () => {
+    expect(() => normalizeAddress("to", "no-at-sign")).toThrow(/E_ADDRESS_MALFORMED/);
+    expect(() => normalizeAddress("to", "@example.net")).toThrow(/E_ADDRESS_MALFORMED/);
+    expect(() => normalizeAddress("to", "a@b\r\nBcc: c@d")).toThrow(/E_HEADER_INJECTION/);
+  });
+
+  it("sanitises a filename for Content-Disposition", () => {
+    // Found by audit rather than review, and not exploitable today — but "not reachable" was a
+    // property of two other functions rather than of this one.
+    expect(safeFilename('rcpt_123"; x="y', ".eml")).toBe("rcpt_123___x__y.eml");
+    expect(safeFilename("", ".eml")).toBe("message.eml");
+    expect(safeFilename("../../etc/passwd", ".eml")).toBe(".._.._etc_passwd.eml");
   });
 });
 

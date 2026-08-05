@@ -1,6 +1,8 @@
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { CallerError } from "./errors.ts";
+
 import { claimNode } from "./claim.ts";
 import { streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
@@ -23,6 +25,7 @@ import { sealManifest } from "./outbound/manifest.ts";
 import { cloudflareTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
 import { resealBatch } from "./reseal.ts";
+import { safeFilename } from "./outbound/headers.ts";
 import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
@@ -72,8 +75,14 @@ export default {
       return noStore(new URL(request.url), await route(request, env, ctx));
     } catch (error) {
       // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
-      const explained = callerError(error);
-      if (explained !== null) return noStore(new URL(request.url), explained);
+      // The status travels with the throw (see errors.ts) rather than living in a table here that has
+      // to be kept in agreement — the correspondence problem ADR 35 rejected for the effect key.
+      if (error instanceof CallerError) {
+        return noStore(
+          new URL(request.url),
+          Response.json({ error: error.code, message: error.message }, { status: error.status }),
+        );
+      }
 
       // Bare `throw` reaches the client as Cloudflare's opaque "error code 1101", which tells an
       // operator nothing. The message goes to the log (observability is on); the response says only
@@ -393,7 +402,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return new Response(await streamEvidence(env, allowed.blobKey), {
         headers: {
           "content-type": "message/rfc822",
-          "content-disposition": `attachment; filename="${raw[1]}.eml"`,
+          // Built rather than interpolated (see headers.ts `safeFilename`). Found by audit rather
+          // than by review, and not exploitable today — `authorize()` proves the id exists in D1 and a
+          // URL pathname cannot carry a raw CR or LF — but "not reachable" was a property of two other
+          // functions rather than of this line.
+          "content-disposition": `attachment; filename="${safeFilename(raw[1]!, ".eml")}"`,
         },
       });
     }
@@ -408,34 +421,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
     return Response.json({ error: "not_found" }, { status: 404 });
   }
-}
-
-/**
- * Caller errors, told apart from faults by their code.
- *
- * These carry the four-part message AGENTS.md requires — what, why, and the fix — and the top-level
- * guard was swallowing all of them into an opaque HTTP 500. That is wrong twice over: the remedy
- * exists and nobody sees it, and a 500 tells a client "our fault, retry" when the truth is "your
- * input, fix it", so a well-behaved client retries forever.
- *
- * The prefix decides, so a new validation error is classified by being named rather than by someone
- * remembering to add it to a list of routes.
- */
-const CALLER_ERRORS: Record<string, number> = {
-  E_HEADER_INJECTION: 422,
-  E_NON_ASCII_ADDRESS: 422,
-  E_PASSWORD_TOO_SHORT: 422,
-  E_NO_SUCH_PARENT: 404,
-  E_NO_SUCH_MAILBOX: 404,
-  E_MAILBOX_HAS_NO_ADDRESS: 409,
-  E_PARENT_NOT_IN_ORG: 409,
-};
-
-function callerError(error: unknown): Response | null {
-  const message = (error as Error)?.message ?? "";
-  const code = /^(E_[A-Z_]+)/.exec(message)?.[1];
-  if (code === undefined || CALLER_ERRORS[code] === undefined) return null;
-  return Response.json({ error: code, message }, { status: CALLER_ERRORS[code] });
 }
 
 /**

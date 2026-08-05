@@ -23,7 +23,7 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,548 lines specifying the target state, with 40 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
@@ -51,6 +51,13 @@ That has already earned its place. Measuring the authorization path found a **fu
 scan on every request** — 1,864 rows read where 7 were needed, growing linearly with
 organisation size. It would have shipped invisibly.
 ([receipt](./docs/receipts/authz-check-rows-read.md))
+
+**Structure beats discipline — including when the first attempt was a check.** An automated review
+found header injection in the outbound path. The first fix was a validator called at each site, which
+closed the hole in the shape this project had already rejected for `innerHTML`: correct only while every
+future author remembers. It is now a builder where the unsafe state is unrepresentable — no array to
+push a raw header line onto, so a field added next year is validated whether anyone thought about it or
+not. A test asserts that property directly rather than asserting the current fields are safe.
 
 **Structure beats discipline, again.** Approval binds a manifest *id*, and editing a sealed manifest
 produces a new id — so "any material edit invalidates approval" stopped being a rule someone has to

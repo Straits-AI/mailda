@@ -1,7 +1,9 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
+import { HeaderBlock, normalizeAddress } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
 
@@ -80,67 +82,6 @@ export function normalizeBody(typed: string): string {
     .join("\r\n");
 }
 
-/**
- * Rejects anything that could break out of a header field.
- *
- * **CRLF injection is the canonical vulnerability in a mail system**, and this product is unusually
- * exposed to it: ADR 36 decided the author never appears in a header and Bcc is deliberately absent
- * from the emitted headers, and a subject containing `\r\nBcc: attacker@example.com` defeats *both*
- * decisions at once. It also lets an authenticated user terminate the header block early and author a
- * body of their choosing.
- *
- * Rejected rather than stripped. Silently removing a control character changes what the author wrote
- * and then sends it anyway, which is exactly the kind of quiet alteration ADR 35 forbids — the bytes
- * sent must be the bytes approved. A refusal the author can see is the honest outcome.
- *
- * NUL is included because it truncates in some downstream parsers even where CR and LF do not.
- *
- * Applied at **seal** time, so a hostile value never reaches the database, and again at **render**
- * time, because rendering reads from D1 and a future write path must not be able to bypass this by
- * existing.
- */
-const HEADER_UNSAFE = /[\r\n\0]/;
-
-export function assertHeaderSafe(field: string, value: string): void {
-  if (HEADER_UNSAFE.test(value)) {
-    throw new Error(
-      `E_HEADER_INJECTION  ${field} contains a carriage return, newline or NUL\n` +
-        `  why      those characters end a header field, so this value could inject headers of its ` +
-        `own — a Bcc that exfiltrates the reply, or an early end to the header block\n` +
-        `  fix      remove the control characters; they are refused rather than stripped, because ` +
-        `silently altering what an author wrote and sending it anyway is worse`,
-    );
-  }
-}
-
-/** An address must be plain ASCII: encoding an addr-spec is not a thing RFC 2047 permits. */
-export function assertAddressSafe(field: string, value: string): void {
-  assertHeaderSafe(field, value);
-  // eslint-disable-next-line no-control-regex
-  if (/[^\x20-\x7e]/.test(value)) {
-    throw new Error(
-      `E_NON_ASCII_ADDRESS  ${field} contains non-ASCII characters\n` +
-        "  why      an address is not encodable as an RFC 2047 word, and internationalised addresses " +
-        "need SMTPUTF8, which this transport does not declare\n" +
-        "  fix      use an ASCII address",
-    );
-  }
-}
-
-/**
- * RFC 2047 encodes a header value when it is not already ASCII.
- *
- * Header fields are ASCII, so a raw UTF-8 subject on the wire is non-conformant even when it happens
- * to survive. `mime.ts` already *decodes* these words on the way in; this is the other direction, and
- * its absence was a correctness bug rather than only a hardening gap.
- */
-export function encodeHeaderValue(value: string): string {
-  // eslint-disable-next-line no-control-regex
-  if (!/[^\x20-\x7e]/.test(value)) return value;
-  const utf8 = new TextEncoder().encode(value);
-  return `=?utf-8?B?${btoa(String.fromCharCode(...utf8))}?=`;
-}
-
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -198,11 +139,11 @@ export async function sealManifest(
     .first<{ id: string; hold_window_seconds: number | null }>();
 
   if (mailbox === null) {
-    throw new Error(
-      `E_NO_SUCH_MAILBOX  ${composition.mailboxId} is not a mailbox in this organization\n` +
-        "  why      From is the mailbox (ADR 36), so a manifest cannot be sealed without one\n" +
-        "  fix      compose from a mailbox the author has access to",
-    );
+    throw notFound("E_NO_SUCH_MAILBOX", {
+      what: `${composition.mailboxId} is not a mailbox in this organization`,
+      why: "From is the mailbox (ADR 36), so a manifest cannot be sealed without one",
+      fix: "compose from a mailbox the author has access to",
+    });
   }
 
   const address = await env.CATALOG.prepare(
@@ -212,19 +153,21 @@ export async function sealManifest(
     .first<{ address: string }>();
 
   if (address === null) {
-    throw new Error(
-      `E_MAILBOX_HAS_NO_ADDRESS  mailbox ${composition.mailboxId} has no address to send from\n` +
-        "  why      ADR 36 makes From the mailbox, and a mailbox with no address cannot be one\n" +
-        "  fix      add a routed address to this mailbox first",
-    );
+    throw conflict("E_MAILBOX_HAS_NO_ADDRESS", {
+      what: `mailbox ${composition.mailboxId} has no address to send from`,
+      why: "ADR 36 makes From the mailbox, and a mailbox with no address cannot be one",
+      fix: "add a routed address to this mailbox first",
+    });
   }
 
-  // Before anything is persisted. A hostile value must never reach the database, because the render
-  // path reads from there and a stored injection would be a stored vulnerability.
-  assertHeaderSafe("subject", composition.subject);
-  for (const address of composition.to) assertAddressSafe("to", address);
-  for (const address of composition.cc ?? []) assertAddressSafe("cc", address);
-  for (const address of composition.bcc ?? []) assertAddressSafe("bcc", address);
+  // Validated *through the builder* before anything is persisted, rather than by a parallel set of
+  // checks that could drift from it. A value that survives sealing is therefore a value the wire form
+  // will accept — and addresses are stored already punycoded, so the domain is encoded once rather
+  // than on every render.
+  new HeaderBlock().add("Subject", composition.subject);
+  const to = composition.to.map((address) => normalizeAddress("to", address));
+  const cc = (composition.cc ?? []).map((address) => normalizeAddress("cc", address));
+  const bcc = (composition.bcc ?? []).map((address) => normalizeAddress("bcc", address));
 
   const manifestId = ctx.id("snd");
   const at = new Date(ctx.now()).toISOString();
@@ -249,12 +192,13 @@ export async function sealManifest(
     // recipient. Storing an id nothing verified is the actual defect; the header is just where it
     // becomes visible.
     if (parent === null) {
-      throw new Error(
-        `E_NO_SUCH_PARENT  ${composition.inReplyToMessageId} is not a message in this organization\n` +
-          "  why      a reply threads onto a message the author can see; an unverified id would be " +
-          "resolved at render time and disclosed to the recipient\n" +
-          "  fix      reply to a message in this organization",
-      );
+      throw notFound("E_NO_SUCH_PARENT", {
+        what: `${composition.inReplyToMessageId} is not a message in this organization`,
+        why:
+          "a reply threads onto a message the author can see; an unverified id would be resolved at " +
+          "render time and disclosed to the recipient",
+        fix: "reply to a message in this organization",
+      });
     }
     // The In-Reply-To header itself is derived in renderRfc822 from the stored parent id, so it is
     // not duplicated here — one place decides what reaches the wire.
@@ -292,9 +236,9 @@ export async function sealManifest(
       manifestId, orgId, composition.mailboxId, composition.authorUserId,
       composition.inReplyToMessageId ?? null,
       address.address,
-      JSON.stringify(composition.to),
-      composition.cc === undefined ? null : JSON.stringify(composition.cc),
-      composition.bcc === undefined ? null : JSON.stringify(composition.bcc),
+      JSON.stringify(to),
+      cc.length === 0 ? null : JSON.stringify(cc),
+      bcc.length === 0 ? null : JSON.stringify(bcc),
       composition.subject,
       rfcMessageId,
       referencesHeader,
@@ -338,11 +282,11 @@ export async function renderRfc822(
     .first<Record<string, string | null>>();
 
   if (m === null) {
-    throw new Error(
-      `E_NO_MANIFEST  ${manifestId} does not exist\n` +
-        "  why      rendering requires a sealed manifest; nothing is composed on the fly\n" +
-        "  fix      seal a manifest first",
-    );
+    throw notFound("E_NO_MANIFEST", {
+      what: `${manifestId} does not exist`,
+      why: "rendering requires a sealed manifest; nothing is composed on the fly",
+      fix: "seal a manifest first",
+    });
   }
 
   const body = new TextDecoder().decode(await getEvidence(env, m.body_normalized_key!));
@@ -358,44 +302,30 @@ export async function renderRfc822(
       .bind(m.org_id, m.in_reply_to_message_id)
       .first<{ rfc_message_id: string }>();
     if (parent === null) {
-      throw new Error(
-        `E_PARENT_NOT_IN_ORG  manifest ${manifestId} references a message outside its organization\n` +
-          "  why      rendering it would disclose another tenant's Message-ID to the recipient\n" +
-          "  fix      this manifest cannot be sent; investigate how the reference was written",
-      );
+      throw conflict("E_PARENT_NOT_IN_ORG", {
+        what: `manifest ${manifestId} references a message outside its organization`,
+        why: "rendering it would disclose another tenant's Message-ID to the recipient",
+        fix: "this manifest cannot be sent; investigate how the reference was written",
+      });
     }
     inReplyToHeader = `<${parent.rfc_message_id}>`;
   }
 
-  // Re-validated at the boundary that actually builds the bytes. Defence in depth: this function
-  // reads from D1, and the seal-time check protects only the path that goes through `sealManifest`.
-  const to = JSON.parse(m.envelope_to ?? "[]") as string[];
-  const cc = m.envelope_cc == null ? [] : (JSON.parse(m.envelope_cc) as string[]);
-  assertAddressSafe("from", m.envelope_from!);
-  for (const address of [...to, ...cc]) assertAddressSafe("recipient", address);
-  assertHeaderSafe("subject", m.subject!);
-  if (m.references_header != null) assertHeaderSafe("references", m.references_header);
-  if (inReplyToHeader !== null) assertHeaderSafe("in-reply-to", inReplyToHeader);
+  // Built, not concatenated. Every field goes through `HeaderBlock.add`, so validation and RFC 2047
+  // encoding cannot be skipped by a future field — there is no array to push a raw line onto, which is
+  // the whole reason this is a builder rather than a set of checks.
+  const raw = new HeaderBlock()
+    .add("From", normalizeAddress("from", m.envelope_from!))
+    .addAddresses("To", JSON.parse(m.envelope_to ?? "[]") as string[])
+    .addAddresses("Cc", m.envelope_cc == null ? [] : (JSON.parse(m.envelope_cc) as string[]))
+    .add("Subject", m.subject!)
+    .add("Message-ID", `<${m.rfc_message_id!}>`)
+    .add("Date", new Date(m.sealed_at!).toUTCString())
+    .add("MIME-Version", "1.0")
+    .add("Content-Type", 'text/plain; charset="utf-8"')
+    .addIfPresent("In-Reply-To", inReplyToHeader)
+    .addIfPresent("References", m.references_header)
+    .bytes(body);
 
-  const headers: [string, string][] = [
-    ["From", m.envelope_from!],
-    ["To", to.join(", ")],
-  ];
-  if (cc.length > 0) headers.push(["Cc", cc.join(", ")]);
-  headers.push(
-    // RFC 2047 for anything non-ASCII. A raw UTF-8 subject in a header is non-conformant even when
-    // it survives, and `mime.ts` decodes these words on the way in — this is the other direction.
-    ["Subject", encodeHeaderValue(m.subject!)],
-    ["Message-ID", `<${m.rfc_message_id}>`],
-    ["Date", new Date(m.sealed_at!).toUTCString()],
-    ["MIME-Version", "1.0"],
-    ["Content-Type", 'text/plain; charset="utf-8"'],
-  );
-  if (inReplyToHeader !== null) headers.push(["In-Reply-To", inReplyToHeader]);
-  if (m.references_header != null) headers.push(["References", m.references_header]);
-
-  const raw = new TextEncoder().encode(
-    headers.map(([name, value]) => `${name}: ${value}`).join("\r\n") + "\r\n\r\n" + body,
-  );
   return { raw, sha256: await sha256Hex(new TextDecoder().decode(raw)) };
 }

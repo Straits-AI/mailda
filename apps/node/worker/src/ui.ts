@@ -29,6 +29,19 @@ import { EXPIRY_COOKIE } from "./auth/session.ts";
  * stacks below are composed from faces already on the machine. It is a real constraint, and the
  * design is built to it rather than around it.
  */
+/**
+ * JSON safe to embed in a `<script>` element.
+ *
+ * `</script>` inside a JSON string ends the element early, whatever the JSON says. Nothing in this
+ * config is attacker-controlled — it is generated budgets and a constant cookie name — so this is not
+ * a live vulnerability. It is here because the *shape* is the one that becomes one the first time
+ * something dynamic is added, and the fix costs a line. `<` is escaped as a unicode sequence, which is
+ * valid JSON and inert in HTML.
+ */
+function safeJson(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 export function page(): string {
   const config = {
     refreshMarginSeconds: BUDGETS["auth.access_token_refresh_margin_seconds"],
@@ -385,7 +398,7 @@ tbody a { font-size: .8rem; }
 </div>
 <main id="app"></main>
 
-<script>window.MAILDA_CONFIG = ${JSON.stringify(config)};</script>
+<script>window.MAILDA_CONFIG = ${safeJson(config)};</script>
 <script type="module" src="/app/app.js"></script>
 </body>
 </html>`;
