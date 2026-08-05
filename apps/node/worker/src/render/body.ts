@@ -58,8 +58,22 @@ const DROP_WITH_CONTENT = new Set([
   ...RAW_TEXT,
   "script", "style", "iframe", "object", "embed", "applet", "template", "noscript",
   "svg", "math", "form", "input", "button", "select", "textarea", "option",
-  "link", "meta", "base", "title", "head", "frame", "frameset", "audio", "video", "source", "track",
+  "link", "meta", "base", "title", "frame", "frameset", "audio", "video", "source", "track",
 ]);
+
+/**
+ * `head` is deliberately **not** in the set above, and removing it from there fixed a total message
+ * loss.
+ *
+ * `<html><head><body><p>the whole message</p>` has no `</head>`, so `element.remove()` on an
+ * unterminated `head` took everything after it — the entire body — and the result was still reported
+ * as `state: "html"`. A reader saw an empty panel for a message that had content, with the product
+ * asserting it had rendered it. That is the §5C lie in its purest form.
+ *
+ * `head` is structural, not a payload: the dangerous things it contains (`title`, `meta`, `link`,
+ * `base`, `style`, `script`) are each dropped on their own, so unwrapping the container loses nothing
+ * and takes nothing with it.
+ */
 
 /**
  * Elements kept, with their attributes allowlisted below. Everything else is **unwrapped** — its text
@@ -115,16 +129,24 @@ export interface ExtractedBody {
  * before it can be reached.
  */
 export async function extractBody(raw: Uint8Array): Promise<ExtractedBody> {
-  const truncated = raw.length > MAX_BODY_BYTES;
-  const source = truncated ? raw.subarray(0, MAX_BODY_BYTES) : raw;
-
+  // The **whole** message is parsed, and the bound is applied to the extracted body afterwards.
+  //
+  // The first version truncated the raw MIME before parsing, which cut off any part that began past
+  // the bound: a message whose first part was a 1.1 MB attachment and whose second part was the actual
+  // text rendered as `state: "no-body"` — asserting the sender wrote nothing, when they had written a
+  // message the reader could not see. The bound belongs where the cost is (a body held in memory and
+  // handed to a client), not where it silently changes what the message *is*.
   const { default: PostalMime } = await import("postal-mime");
-  const parsed = await PostalMime.parse(source);
+  const parsed = await PostalMime.parse(raw);
+
+  const rawHtml = typeof parsed.html === "string" && parsed.html.length > 0 ? parsed.html : null;
+  const rawText = typeof parsed.text === "string" && parsed.text.length > 0 ? parsed.text : null;
+  const overBound = (rawHtml?.length ?? 0) > MAX_BODY_BYTES || (rawText?.length ?? 0) > MAX_BODY_BYTES;
 
   return {
-    html: typeof parsed.html === "string" && parsed.html.length > 0 ? parsed.html : null,
-    text: typeof parsed.text === "string" && parsed.text.length > 0 ? parsed.text : null,
-    truncated,
+    html: rawHtml === null ? null : rawHtml.slice(0, MAX_BODY_BYTES),
+    text: rawText === null ? null : rawText.slice(0, MAX_BODY_BYTES),
+    truncated: overBound,
   };
 }
 
@@ -132,6 +154,7 @@ export interface SanitizedBody {
   html: string;
   /** How many remote resources were withheld. Shown to the reader, never hidden (ADR 37). */
   blockedRemote: number;
+  inputHadContent: boolean;
 }
 
 /**
@@ -252,7 +275,7 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
     .transform(new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }))
     .text();
 
-  return { html: sanitized, blockedRemote };
+  return { html: sanitized, blockedRemote, inputHadContent: html.trim().length > 0 };
 }
 
 /**
@@ -293,7 +316,27 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
 
   if (extracted.html !== null) {
     try {
-      const { html, blockedRemote } = await sanitizeHtml(extracted.html);
+      const { html, blockedRemote, inputHadContent } = await sanitizeHtml(extracted.html);
+
+      // Nothing survived, but there was something to begin with. Reporting `html` here would show an
+      // empty panel while asserting the message had been rendered — a reader cannot tell that from a
+      // message that is genuinely empty, and §5C requires they can. Fall back to the plain alternative
+      // if one exists, and say so otherwise.
+      if (inputHadContent && html.trim().length === 0) {
+        return {
+          state: extracted.text === null ? "unparsed" : "text-only",
+          html: null,
+          text: extracted.text,
+          blockedRemote,
+          truncated: extracted.truncated,
+          problem:
+            "Nothing in this message's HTML survived sanitising. " +
+            (extracted.text === null
+              ? "The original is unchanged and can still be downloaded."
+              : "Its plain-text alternative is shown instead."),
+        };
+      }
+
       return {
         state: "html",
         html,

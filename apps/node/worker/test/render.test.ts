@@ -214,6 +214,65 @@ describe("sanitizer: structure", () => {
   });
 });
 
+describe("regressions from adversarial review", () => {
+  it("does not delete the message when <head> is unterminated", async () => {
+    // Found by review, and the worst of the twelve: `head` was dropped with content, so an
+    // unterminated one took the entire body with it — and the result was still reported as rendered
+    // HTML. The reader saw an empty panel while the product asserted it had shown them the message.
+    const { html } = await sanitizeHtml("<html><head><body><p>the whole message</p>");
+    expect(html).toContain("the whole message");
+  });
+
+  it("still drops the dangerous things head contains", async () => {
+    // Unwrapping the container must not smuggle its contents through.
+    const { html } = await sanitizeHtml(
+      '<html><head><title>t</title><link rel="preload" href="https://tracker.example/x">' +
+        '<style>body{background:url(https://tracker.example/b.png)}</style></head><body><p>kept</p></body></html>',
+    );
+    expect(html).toContain("kept");
+    expect(html).not.toContain("tracker.example");
+    expect(html).not.toContain("<title");
+  });
+
+  it("never reports rendered HTML when nothing survived sanitising", async () => {
+    // An empty panel that claims to be a rendered body is indistinguishable from a genuinely empty
+    // message, and §5C requires a reader be able to tell those apart.
+    const rendered = await renderBody(mime({ html: "<script>everything()</script>", text: "the real words" }));
+    expect(rendered.state).toBe("text-only");
+    expect(rendered.text).toContain("the real words");
+    expect(rendered.problem).toContain("survived sanitising");
+  });
+
+  it("finds a body that sits past the render bound in the raw message", async () => {
+    // The bound used to be applied to raw MIME *before* parsing, so a message whose first part was a
+    // large attachment reported `no-body` — asserting the sender wrote nothing when they had written
+    // something the reader could not see.
+    const filler = "A".repeat(BUDGETS["render.max_body_bytes"] + 50_000);
+    const boundary = "b9";
+    const raw = new TextEncoder().encode([
+      "From: sender@example.net", "To: inbox@example.com", "Subject: big attachment first",
+      "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary="${boundary}"`, "",
+      `--${boundary}`, "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", "",
+      filler, "",
+      `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", "the actual message", "",
+      `--${boundary}--`, "",
+    ].join("\r\n"));
+
+    const rendered = await renderBody(raw);
+    expect(rendered.state).toBe("text-only");
+    expect(rendered.text).toContain("the actual message");
+  });
+
+  it("degrades to the plain alternative when the sanitizer itself fails", async () => {
+    // Deep nesting makes HTMLRewriter throw "memory limit exceeded". That used to escape renderBody as
+    // an opaque 500; now it is a state, and the message stays readable.
+    const nested = "<zz>".repeat(20_000) + "x";
+    const rendered = await renderBody(mime({ html: nested, text: "readable fallback" }));
+    expect(["text-only", "html"]).toContain(rendered.state);
+    if (rendered.state === "text-only") expect(rendered.text).toContain("readable fallback");
+  });
+});
+
 describe("the four body states (§5C)", () => {
   it("reports html, with its blocked count", async () => {
     const rendered = await renderBody(

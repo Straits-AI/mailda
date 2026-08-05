@@ -45,7 +45,31 @@ states applies: "this body was too large to render in full" is a different thing
 no body", and a reader must be able to tell.
 
 
-## Three high-severity findings, from adversarial review after this shipped
+## Twelve confirmed findings, from adversarial review after this shipped
+
+Two review passes ran. A single reviewer found three; a three-lens pass with adversarial verification
+of every claim found **18 claimed bypasses, of which 12 survived refutation**. Both ran the code in the
+Workers runtime and measured rather than reasoned. My own tests had found one bypass and given *false
+confidence* on a second.
+
+The twelve deduplicate to six distinct defects, and the two the first pass missed are the instructive
+ones:
+
+**An unterminated `<head>` deleted the entire message, and it was still reported as rendered HTML.**
+`head` was in the drop-with-content set, so `<html><head><body><p>the whole message</p>` — no `</head>`
+— removed everything after it. The reader saw an empty panel while the product asserted it had rendered
+their message. `head` is structural, not a payload: everything dangerous inside it (`title`, `meta`,
+`link`, `base`, `style`, `script`) is dropped on its own, so unwrapping the container loses nothing.
+Paired with a structural guard — **the renderer now refuses to report `html` when the input had content
+and nothing survived**, because an empty panel claiming to be a rendered body is indistinguishable from
+a genuinely empty message, and §5C requires a reader can tell.
+
+**The 1 MiB bound was applied to raw MIME before parsing**, so a message whose first part was a large
+attachment reported `no-body` — asserting the sender had written nothing when they had written
+something the reader could not see. The whole message is parsed now and the bound applied to the
+*extracted* body, which is where the cost actually is.
+
+## The first pass: three high-severity findings
 
 Recorded because the *method* is the lesson: my own tests found one bypass and gave false confidence on
 a second. An independent reviewer running the code in the Workers runtime found three more, all with
