@@ -1,4 +1,4 @@
-import { HEADER_BYTES, TAG_BYTES, frameCountFor, open, openStream, seal } from "../src/index.ts";
+import { type Bytes, HEADER_BYTES, TAG_BYTES, frameCountFor, open, openStream, seal } from "../src/index.ts";
 
 /**
  * Frame-size sensitivity for #16.
@@ -23,7 +23,7 @@ const FRAMES = [
   ["1 MiB", 1_048_576],
 ] as const;
 
-function payload(n: number): Uint8Array {
+function payload(n: number): Bytes {
   const out = new Uint8Array(n);
   crypto.getRandomValues(out.subarray(0, Math.min(n, 65_536)));
   for (let i = 65_536; i < n; i += 65_536) out.copyWithin(i, 0, Math.min(65_536, n - i));
@@ -32,9 +32,12 @@ function payload(n: number): Uint8Array {
 
 async function time(runs: number, fn: () => Promise<unknown>): Promise<number> {
   await fn();
-  const started = process.hrtime.bigint();
+  // performance.now(), not process.hrtime — it exists in both runtimes, so this file needs no Node
+  // type dependency to say the one thing it needs to say. The clamping caveat in the header applies to
+  // workerd, and this bench deliberately does not run there.
+  const started = performance.now();
   for (let i = 0; i < runs; i++) await fn();
-  return Number(process.hrtime.bigint() - started) / runs / 1e6;
+  return (performance.now() - started) / runs;
 }
 
 for (const [sizeLabel, size] of SIZES) {

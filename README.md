@@ -26,8 +26,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 104 verified constants |
-| **Code** | A measurement harness and one Worker. 176 tests. Not a product. |
+| **Measurements** | 20 receipts in [`docs/receipts/`](./docs/receipts/) generating 119 verified constants |
+| **Code** | A measurement harness and one Worker. 206 tests. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -105,6 +105,14 @@ Node: editing one row directly in the database produced *"entry was altered afte
 contents do not produce its hash"*, naming the row. This cannot stop someone with database access from
 rewriting the whole chain — you own the database, which is the point — but it turns a log you have to
 trust into one you can check. ([receipt](./docs/receipts/audit-and-log-retention.md))
+
+**Audit coverage is enforced by the schema, not by memory.** The trail shipped with eight call sites
+placed by hand, which is correct today and has nothing to notice when it stops being correct — an
+action that records nothing looks exactly like a quiet week, and a hash chain cannot help, because it
+proves what *was* written is unaltered and says nothing about what was never written. So every table
+is classified: either changes to it are auditable and the actions are named, or it is exempt for a
+stated reason. A migration that adds a table fails the suite until somebody decides which
+(`test/audit-coverage.test.ts`), at the moment they still have the context to decide well.
 
 **Nothing checks itself by default.** `mailda doctor` verifies the runtime claims every other
 decision made, and on its first run against the deployed Node it found that the mail it holds is

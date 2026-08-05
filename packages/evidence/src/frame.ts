@@ -32,7 +32,30 @@
  * fail authentication rather than yielding a valid plaintext prefix.
  */
 
-export const MAGIC = new Uint8Array([0x4d, 0x4c, 0x44, 0x41]); // "MLDA"
+/**
+ * Bytes backed by a non-shared buffer.
+ *
+ * Not decoration. WebCrypto refuses a view onto a `SharedArrayBuffer`, and a bare `Uint8Array` means
+ * `Uint8Array<ArrayBufferLike>`, which admits one — so the plain annotation claims this module accepts
+ * input that `crypto.subtle` would reject at runtime. Stating the constraint in the type puts the
+ * failure at the call site instead of inside an encrypt loop.
+ */
+export type Bytes = Uint8Array<ArrayBuffer>;
+
+/**
+ * UTF-8 encode into `Bytes`.
+ *
+ * The assertion is sound rather than convenient: TextEncoder is specified to return a view onto a
+ * freshly allocated, non-shared ArrayBuffer, so the value always satisfies `Bytes` — but
+ * `@cloudflare/workers-types` declares the looser `Uint8Array<ArrayBufferLike>` and cannot express
+ * that. Kept here, once, so the reasoning is written down in the module that owns the constraint
+ * instead of being re-derived at every call site as a bare cast.
+ */
+export function utf8(text: string): Bytes {
+  return new TextEncoder().encode(text) as Bytes;
+}
+
+export const MAGIC: Bytes = new Uint8Array([0x4d, 0x4c, 0x44, 0x41]); // "MLDA"
 export const VERSION = 1;
 export const HEADER_BYTES = 32;
 export const TAG_BYTES = 16;
@@ -44,7 +67,7 @@ export interface Header {
   version: number;
   frameSize: number;
   plainLength: number;
-  baseNonce: Uint8Array;
+  baseNonce: Bytes;
   frameCount: number;
 }
 
@@ -61,7 +84,7 @@ export function frameCountFor(plainLength: number, frameSize: number): number {
   return plainLength === 0 ? 1 : Math.ceil(plainLength / frameSize);
 }
 
-export function encodeHeader(header: Header): Uint8Array {
+export function encodeHeader(header: Header): Bytes {
   const out = new Uint8Array(HEADER_BYTES);
   const view = new DataView(out.buffer);
   out.set(MAGIC, 0);
@@ -109,7 +132,7 @@ export function decodeHeader(bytes: Uint8Array): Header {
 }
 
 /** nonce = baseNonce(8) || frameIndex(4). Unique per frame, per object, by construction. */
-function nonceFor(baseNonce: Uint8Array, frameIndex: number): Uint8Array {
+function nonceFor(baseNonce: Bytes, frameIndex: number): Bytes {
   const nonce = new Uint8Array(12);
   nonce.set(baseNonce, 0);
   new DataView(nonce.buffer).setUint32(8, frameIndex, false);
@@ -117,7 +140,7 @@ function nonceFor(baseNonce: Uint8Array, frameIndex: number): Uint8Array {
 }
 
 /** AAD = header || frameIndex. Binds every frame to its object and its position. */
-function aadFor(header: Uint8Array, frameIndex: number): Uint8Array {
+function aadFor(header: Bytes, frameIndex: number): Bytes {
   const aad = new Uint8Array(header.length + 4);
   aad.set(header, 0);
   new DataView(aad.buffer).setUint32(header.length, frameIndex, false);
@@ -125,15 +148,15 @@ function aadFor(header: Uint8Array, frameIndex: number): Uint8Array {
 }
 
 export interface Sealed {
-  header: Uint8Array;
-  body: Uint8Array;
+  header: Bytes;
+  body: Bytes;
 }
 
 export async function seal(
   key: CryptoKey,
-  plaintext: Uint8Array,
+  plaintext: Bytes,
   frameSize: number = DEFAULT_FRAME_BYTES,
-  baseNonce: Uint8Array = crypto.getRandomValues(new Uint8Array(8)),
+  baseNonce: Bytes = crypto.getRandomValues(new Uint8Array(8)),
 ): Promise<Sealed> {
   const frameCount = frameCountFor(plaintext.length, frameSize);
   const header = encodeHeader({
@@ -161,7 +184,7 @@ export async function seal(
   return { header, body: body.subarray(0, offset) };
 }
 
-export async function open(key: CryptoKey, sealed: Sealed): Promise<Uint8Array> {
+export async function open(key: CryptoKey, sealed: Sealed): Promise<Bytes> {
   const header = decodeHeader(sealed.header);
   const out = new Uint8Array(header.plainLength);
   let read = 0;
@@ -229,13 +252,13 @@ export function framesForRange(
  * This is the reason for framing at all. `open()` above buffers the full plaintext and
  * exists for small objects and for tests; anything on a response path should use this.
  */
-export function openStream(key: CryptoKey, sealed: Sealed): ReadableStream<Uint8Array> {
+export function openStream(key: CryptoKey, sealed: Sealed): ReadableStream<Bytes> {
   const header = decodeHeader(sealed.header);
   let index = 0;
   let read = 0;
   let written = 0;
 
-  return new ReadableStream<Uint8Array>({
+  return new ReadableStream<Bytes>({
     async pull(controller) {
       if (index >= header.frameCount) {
         controller.close();

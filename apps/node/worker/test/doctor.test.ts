@@ -1,3 +1,4 @@
+import { utf8 } from "@mailda/evidence";
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -71,7 +72,7 @@ describe("doctor", () => {
   it("reports evidence still sealed under an older key generation", async () => {
     const ctx = createSystemCtx();
     const orgId = await claim(ctx);
-    const stored = await putEvidence(testEnv, `${orgId}/raw/2026-Q3/legacy.eml`, new TextEncoder().encode("hi"));
+    const stored = await putEvidence(testEnv, `${orgId}/raw/2026-Q3/legacy.eml`, utf8("hi"));
 
     // A receipt from before the vault existed: NULL generation, which the index treats as 0.
     await testEnv.CATALOG.prepare(
@@ -134,7 +135,7 @@ describe("doctor", () => {
     const absent = ctx.id("rcpt");
     const at = new Date(ctx.now()).toISOString();
 
-    const stored = await putEvidence(testEnv, `org_1/raw/2026-Q3/${present}.eml`, new TextEncoder().encode("hi"));
+    const stored = await putEvidence(testEnv, `org_1/raw/2026-Q3/${present}.eml`, utf8("hi"));
     for (const [id, key] of [[present, stored.blobKey], [absent, "org_1/raw/2026-Q3/gone.eml"]] as const) {
       await testEnv.CATALOG.prepare(
         `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
@@ -155,7 +156,7 @@ describe("doctor", () => {
     const ctx = createSystemCtx();
     await claim(ctx);
     const at = new Date(ctx.now()).toISOString();
-    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/one.eml", new TextEncoder().encode("hi"));
+    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/one.eml", utf8("hi"));
     for (let i = 0; i < 3; i++) {
       const id = ctx.id("rcpt");
       await testEnv.CATALOG.prepare(
@@ -215,7 +216,7 @@ describe("doctor", () => {
     const ctx = createSystemCtx();
     await claim(ctx);
     const at = new Date(ctx.now()).toISOString();
-    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/x.eml", new TextEncoder().encode("hi"));
+    const stored = await putEvidence(testEnv, "org_1/raw/2026-Q3/x.eml", utf8("hi"));
 
     const baseline = (await runDoctor(testEnv, ctx)).cost;
     for (let i = 0; i < 5; i++) {

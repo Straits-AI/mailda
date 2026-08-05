@@ -9,8 +9,11 @@
     "bench": "node --experimental-strip-types bench/frame.bench.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@mailda/budgets": "workspace:*" },
+  "dependencies": {
+    "@mailda/budgets": "workspace:*"
+  },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260804.1",
     "@types/node": "^22.10.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"

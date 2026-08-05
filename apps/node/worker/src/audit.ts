@@ -37,8 +37,39 @@ const GENESIS = "0".repeat(64);
 export type ActorKind = "user" | "node" | "installer";
 export type Outcome = "ok" | "refused" | "failed";
 
+/**
+ * Every action this Node may record, declared in one place.
+ *
+ * Declared rather than free-form for a reason that only shows up months later: an audit trail is read
+ * by someone filtering for an action name, and `auth.signed_in` in one file with `auth.sign_in` in
+ * another produces a filter that quietly returns half the truth. A free-form string cannot be
+ * misspelled *detectably* — it just becomes a category of one.
+ *
+ * Adding an entry here is deliberately the easy half. The half that matters is the tripwire in
+ * `test/audit-coverage.test.ts`, which fails when state can change without any of these being emitted.
+ */
+export const AUDIT_ACTIONS = {
+  "auth.signed_in": "A person exchanged a password for a session.",
+  "auth.sign_in_failed": "A password was presented and refused.",
+  "auth.locked_out": "Sign-in was refused because the failure count was already spent.",
+  "auth.revoked_all_sessions": "Every session for one person was ended at once (§28).",
+  "key.rotated": "The signing key changed; tokens minted before and after differ in kid.",
+  "send.sealed": "A composition became immutable bytes and entered the hold window.",
+  "send.cancelled": "A held send was stopped by a person before dispatch.",
+  // The terminal states of dispatch. Each is recorded, including the successful one — see `audit`.
+  "send.held": "A send is waiting out its hold window.",
+  "send.throttled": "The transport declined for rate reasons; the system may retry.",
+  "send.refused": "The transport refused; only a person may retry.",
+  "send.suppressed": "The Node declined to hand over, by its own rule.",
+  "send.handed_over": "The transport accepted the bytes.",
+  "send.outcome_unknown": "Hand-over neither succeeded nor failed observably.",
+} as const;
+
+export type AuditAction = keyof typeof AUDIT_ACTIONS;
+
 export interface AuditEvent {
-  action: string;
+  /** Constrained to the catalogue above: an undeclared action is a type error, not a silent category. */
+  action: AuditAction;
   outcome: Outcome;
   actorUserId?: string | null;
   actorKind?: ActorKind;

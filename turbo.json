@@ -1,19 +1,19 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "tasks": {
-    "receipts#generate": {
+    "@mailda/receipts#generate": {
       "inputs": ["../../docs/receipts/**/*.md", "src/**"],
       "outputs": ["../budgets/src/generated.ts"]
     },
     "build": {
-      "dependsOn": ["^build", "receipts#generate"],
+      "dependsOn": ["^build", "@mailda/receipts#generate"],
       "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build", "receipts#generate"]
+      "dependsOn": ["^build", "@mailda/receipts#generate"]
     },
     "test": {
-      "dependsOn": ["^build", "receipts#generate"],
+      "dependsOn": ["^build", "@mailda/receipts#generate"],
       "outputs": []
     },
     "bench": {

@@ -1,3 +1,4 @@
+import { type Bytes, utf8 } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
@@ -212,10 +213,10 @@ export async function sealManifest(
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
   // state is an orphan blob rather than a manifest pointing at nothing.
   const typedStored = await putEvidence(
-    env, `${orgId}/sent/${manifestId}/typed.txt`, encoder.encode(composition.bodyTyped),
+    env, `${orgId}/sent/${manifestId}/typed.txt`, utf8(composition.bodyTyped),
   );
   const normalizedStored = await putEvidence(
-    env, `${orgId}/sent/${manifestId}/normalized.txt`, encoder.encode(normalized),
+    env, `${orgId}/sent/${manifestId}/normalized.txt`, utf8(normalized),
   );
 
   // The Message-ID this Node authors. Derived from the manifest id, so it is stable, unique, and
@@ -288,7 +289,7 @@ export async function sealManifest(
 export async function renderRfc822(
   env: Env,
   manifestId: string,
-): Promise<{ raw: Uint8Array; sha256: string }> {
+): Promise<{ raw: Bytes; sha256: string }> {
   const m = await env.CATALOG.prepare(
     `SELECT envelope_from, envelope_to, envelope_cc, subject, rfc_message_id, references_header,
             in_reply_to_message_id, body_normalized_key, sealed_at, org_id

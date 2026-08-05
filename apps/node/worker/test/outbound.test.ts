@@ -1,3 +1,4 @@
+import { utf8 } from "@mailda/evidence";
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -301,7 +302,7 @@ describe("cross-tenant references", () => {
 describe("threading reconstruction (#27, ADR 38)", () => {
   it("bounds the References chain rather than reproducing it faithfully", async () => {
     const chain = Array.from({ length: 60 }, (_, i) => `<id${i}@x.com>`).join(" ");
-    const raw = new TextEncoder().encode(`References: ${chain}\r\nSubject: deep\r\n\r\nbody`);
+    const raw = utf8(`References: ${chain}\r\nSubject: deep\r\n\r\nbody`);
     const stored = await putEvidence(testEnv, `${ORG}/raw/2026-Q3/deep.eml`, raw);
 
     const header = await rebuildReferences(testEnv, stored.blobKey, "parent@x.com");

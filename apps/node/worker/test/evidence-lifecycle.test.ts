@@ -9,11 +9,11 @@ import { LEGACY_KEY_GENERATION, aesKeyFrom, vault } from "../src/keyvault.ts";
 import { reconcileEvidence } from "../src/reconcile.ts";
 import { resealBatch } from "../src/reseal.ts";
 import { credentialGenerationOf, unwrapCredential, wrapCredential } from "../src/auth/kek.ts";
-import { DEFAULT_FRAME_BYTES, seal } from "@mailda/evidence";
+import { type Bytes, DEFAULT_FRAME_BYTES, seal, utf8 } from "@mailda/evidence";
 
 const testEnv = env as unknown as Env;
 const ORG = "org_lifecycle";
-const RAW = new TextEncoder().encode("From: a@b.com\r\nSubject: hello\r\n\r\nbody\r\n");
+const RAW = utf8("From: a@b.com\r\nSubject: hello\r\n\r\nbody\r\n");
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -21,7 +21,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 }
 
 /** Writes an object sealed under generation 0 — as a Node deployed before the vault would have. */
-async function writeLegacyObject(blobKey: string, plaintext: Uint8Array): Promise<void> {
+async function writeLegacyObject(blobKey: string, plaintext: Bytes): Promise<void> {
   const legacy = await vault(testEnv).openingKey("content", LEGACY_KEY_GENERATION);
   const sealed = await seal(await aesKeyFrom(legacy.secret), plaintext, DEFAULT_FRAME_BYTES);
   const object = new Uint8Array(sealed.header.length + sealed.body.length);
@@ -155,7 +155,7 @@ describe("re-seal (#25)", () => {
     const blobKey = `${ORG}/raw/2026-Q3/tampered.eml`;
     await writeLegacyObject(blobKey, RAW);
     // A receipt claiming a different message. Re-sealing must not launder this into the new key.
-    await insertReceipt("rcpt_bad", blobKey, new TextEncoder().encode("different"), null,
+    await insertReceipt("rcpt_bad", blobKey, utf8("different"), null,
       new Date(ctx.now()).toISOString());
 
     const outcome = await resealBatch(testEnv, ctx, ORG);

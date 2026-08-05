@@ -2,6 +2,8 @@ import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-worker
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
+import { BUDGETS } from "@mailda/budgets";
+
 // Read at config time in Node, handed to the test worker as a binding so
 // applyD1Migrations() can run them inside the Workers runtime.
 const migrations = await readD1Migrations(resolve(import.meta.dirname, "migrations"));
@@ -19,5 +21,16 @@ export default defineConfig({
   ],
   test: {
     setupFiles: ["./test/setup.ts"],
+
+    // Measured, not inherited. Vitest's 5,000 ms default was already breached by a legitimate test
+    // on an ordinarily-busy machine (5,790 ms worst case under load), and one breach cascades: the
+    // isolated-storage undo stack is left unbalanced, so later tests in the same file fail for
+    // reasons of their own. That is what made this suite look flaky rather than slow.
+    //
+    // See docs/receipts/test-timeout-headroom.md for the measurement and for the two fixes that were
+    // deliberately rejected — `retry`, which would have gone green by muting the problem, and
+    // cheaper PBKDF2 in tests, which would re-open the platform-ceiling landmine.
+    testTimeout: BUDGETS["test.timeout_ms"],
+    hookTimeout: BUDGETS["test.hook_timeout_ms"],
   },
 });

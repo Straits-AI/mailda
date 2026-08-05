@@ -1,3 +1,4 @@
+import type { Bytes } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 
 import { putEvidence } from "./evidence-store.ts";
@@ -31,7 +32,7 @@ export interface InboundMessage {
   providerEventId: string;
   envelopeFrom: string;
   envelopeTo: string;
-  raw: Uint8Array;
+  raw: Bytes;
 }
 
 export async function acceptInbound(

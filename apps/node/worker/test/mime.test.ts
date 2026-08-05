@@ -1,3 +1,4 @@
+import { type Bytes, utf8 } from "@mailda/evidence";
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -13,7 +14,7 @@ const testEnv = env as unknown as Env;
 const ORG = "org_mime";
 const MAILBOX = "mbx_mime";
 const ADDRESS = "inbox@example.com";
-const bytes = (text: string) => new TextEncoder().encode(text);
+const bytes = (text: string) => utf8(text);
 
 beforeEach(async () => {
   for (const table of ["messages", "mailbox_items", "ingress_receipts", "addresses", "mailboxes"]) {
@@ -30,7 +31,7 @@ beforeEach(async () => {
   ]);
 });
 
-async function accept(raw: Uint8Array, id = "rcpt_test"): Promise<string> {
+async function accept(raw: Bytes, id = "rcpt_test"): Promise<string> {
   const ctx = createSystemCtx();
   const stored = await putEvidence(testEnv, `${ORG}/raw/2026-Q3/${id}.eml`, raw);
   await testEnv.CATALOG.prepare(

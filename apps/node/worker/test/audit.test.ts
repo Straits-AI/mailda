@@ -4,7 +4,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit, log, trimLogs, verifyChain } from "../src/audit.ts";
+import { audit, type AuditAction, log, trimLogs, verifyChain } from "../src/audit.ts";
+
+// Real catalogue actions. The tests used to invent names like "t.0"; the catalogue now rejects those
+// at compile time, which is the point of it — an audit trail whose categories drift is a filter that
+// quietly returns half the truth.
+const SAMPLE: readonly AuditAction[] = [
+  "auth.signed_in", "send.sealed", "key.rotated", "send.handed_over", "auth.locked_out",
+];
 
 const testEnv = env as unknown as Env;
 const ORG = "org_audit";
@@ -29,7 +36,7 @@ describe("the audit chain", () => {
   });
 
   it("starts from a stated genesis rather than an implicit one", async () => {
-    await audit(testEnv, createSystemCtx(), ORG, { action: "node.claimed", outcome: "ok" });
+    await audit(testEnv, createSystemCtx(), ORG, { action: "key.rotated", outcome: "ok" });
     const row = await testEnv.CATALOG.prepare("SELECT prev_hash FROM audit_entries WHERE seq = 1")
       .first<{ prev_hash: string }>();
     expect(row?.prev_hash).toBe("0".repeat(64));
@@ -37,7 +44,7 @@ describe("the audit chain", () => {
 
   it("verifies an intact chain", async () => {
     const ctx = createSystemCtx();
-    for (let i = 0; i < 5; i++) await audit(testEnv, ctx, ORG, { action: `t.${i}`, outcome: "ok" });
+    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
 
     const verdict = await verifyChain(testEnv, ORG);
     expect(verdict.intact).toBe(true);
@@ -47,7 +54,7 @@ describe("the audit chain", () => {
 
   it("names where an entry was altered, not merely that one was", async () => {
     const ctx = createSystemCtx();
-    for (let i = 0; i < 5; i++) await audit(testEnv, ctx, ORG, { action: `t.${i}`, outcome: "ok" });
+    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
 
     // Someone edits an action after the fact — the realistic tampering, not a wholesale rewrite.
     await testEnv.CATALOG.prepare("UPDATE audit_entries SET action = 'innocent' WHERE seq = 3").run();
@@ -61,7 +68,7 @@ describe("the audit chain", () => {
 
   it("names a deletion as missing entries", async () => {
     const ctx = createSystemCtx();
-    for (let i = 0; i < 5; i++) await audit(testEnv, ctx, ORG, { action: `t.${i}`, outcome: "ok" });
+    for (const action of SAMPLE) await audit(testEnv, ctx, ORG, { action, outcome: "ok" });
     await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE seq = 3").run();
 
     const verdict = await verifyChain(testEnv, ORG);
@@ -81,7 +88,7 @@ describe("the audit chain", () => {
 
   it("distinguishes the Node acting from a person acting", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "send.dispatched", outcome: "ok" });
+    await audit(testEnv, ctx, ORG, { action: "send.handed_over", outcome: "ok" });
     await audit(testEnv, ctx, ORG, { action: "send.cancelled", outcome: "ok", actorUserId: "usr_1" });
 
     const rows = await testEnv.CATALOG.prepare(
@@ -97,10 +104,10 @@ describe("the audit chain", () => {
   it("bounds detail, because this table is read more widely than the mail", async () => {
     const ctx = createSystemCtx();
     await audit(testEnv, ctx, ORG, {
-      action: "t.big", outcome: "ok",
+      action: "send.sealed", outcome: "ok",
       detail: { blob: "x".repeat(BUDGETS["audit.max_detail_bytes"] + 5000) },
     });
-    const row = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 't.big'")
+    const row = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'send.sealed'")
       .first<{ detail: string }>();
     expect(row!.detail.length).toBeLessThanOrEqual(BUDGETS["audit.max_detail_bytes"]);
     // Truncation is stated, not silent.
@@ -110,7 +117,7 @@ describe("the audit chain", () => {
   it("never throws, because logging that can fail a request gets removed", async () => {
     const ctx = createSystemCtx();
     const broken = { ...testEnv, CATALOG: { prepare: () => { throw new Error("db gone"); } } } as unknown as Env;
-    await expect(audit(broken, ctx, ORG, { action: "t.x", outcome: "ok" })).resolves.toBeNull();
+    await expect(audit(broken, ctx, ORG, { action: "auth.signed_in", outcome: "ok" })).resolves.toBeNull();
   });
 });
 
@@ -135,7 +142,7 @@ describe("the operational log", () => {
 
   it("trims logs but never audit entries", async () => {
     const ctx = createSystemCtx();
-    await audit(testEnv, ctx, ORG, { action: "keep.me", outcome: "ok" });
+    await audit(testEnv, ctx, ORG, { action: "key.rotated", outcome: "ok" });
 
     // Below the retention bound, so nothing is trimmed and the call is a no-op rather than a scan.
     await log(testEnv, ctx, { level: "info", event: "t", message: "m" });

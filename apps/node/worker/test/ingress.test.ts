@@ -1,3 +1,4 @@
+import { utf8 } from "@mailda/evidence";
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -8,7 +9,7 @@ import { getEvidence } from "../src/evidence-store.ts";
 
 const testEnv = env as unknown as Env;
 
-const RAW = new TextEncoder().encode(
+const RAW = utf8(
   [
     "From: customer@example-supplier.com",
     "To: invoices@example.com",

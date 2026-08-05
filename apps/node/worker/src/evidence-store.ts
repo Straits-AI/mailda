@@ -1,4 +1,4 @@
-import { DEFAULT_FRAME_BYTES, open as openFrames, openStream, seal } from "@mailda/evidence";
+import { type Bytes, DEFAULT_FRAME_BYTES, open as openFrames, openStream, seal } from "@mailda/evidence";
 
 import { aesKeyFrom, LEGACY_KEY_GENERATION, vault } from "./keyvault.ts";
 
@@ -49,7 +49,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export async function putEvidence(
   env: Env,
   blobKey: string,
-  plaintext: Uint8Array,
+  plaintext: Bytes,
 ): Promise<StoredEvidence> {
   // Always the highest generation. `sealingKey` never returns the legacy constant, so a Node cannot
   // write a new object under a published key even by mistake.
@@ -83,8 +83,8 @@ export function generationOf(object: { customMetadata?: Record<string, string> }
 }
 
 interface FetchedEvidence {
-  header: Uint8Array;
-  body: Uint8Array;
+  header: Bytes;
+  body: Bytes;
   generation: number;
 }
 
@@ -108,7 +108,7 @@ async function fetchSealed(env: Env, blobKey: string): Promise<FetchedEvidence> 
 }
 
 /** Whole-object read. For small messages and tests; see `streamEvidence` for a response path. */
-export async function getEvidence(env: Env, blobKey: string): Promise<Uint8Array> {
+export async function getEvidence(env: Env, blobKey: string): Promise<Bytes> {
   const fetched = await fetchSealed(env, blobKey);
   return openFrames(await contentKeyFor(env, fetched.generation), fetched);
 }
@@ -126,7 +126,7 @@ export async function streamEvidence(env: Env, blobKey: string): Promise<Readabl
 export async function openForReseal(
   env: Env,
   blobKey: string,
-): Promise<{ plaintext: Uint8Array; generation: number }> {
+): Promise<{ plaintext: Bytes; generation: number }> {
   const fetched = await fetchSealed(env, blobKey);
   return {
     plaintext: await openFrames(await contentKeyFor(env, fetched.generation), fetched),

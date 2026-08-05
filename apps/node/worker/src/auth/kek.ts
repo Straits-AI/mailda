@@ -1,4 +1,4 @@
-import { DEFAULT_FRAME_BYTES, open as openFrames, seal } from "@mailda/evidence";
+import { DEFAULT_FRAME_BYTES, open as openFrames, seal, utf8 } from "@mailda/evidence";
 
 import { aesKeyFrom, vault } from "../keyvault.ts";
 
@@ -39,7 +39,7 @@ export async function wrapCredential(env: Env, plaintext: string): Promise<strin
   const sealing = await vault(env).sealingKey("credential");
   const sealed = await seal(
     await aesKeyFrom(sealing.secret),
-    new TextEncoder().encode(plaintext),
+    utf8(plaintext),
     DEFAULT_FRAME_BYTES,
   );
   const bytes = new Uint8Array(sealed.header.length + sealed.body.length);

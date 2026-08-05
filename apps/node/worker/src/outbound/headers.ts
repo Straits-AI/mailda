@@ -1,3 +1,5 @@
+import { type Bytes, utf8 } from "@mailda/evidence";
+
 import { unprocessable } from "../errors.ts";
 
 /**
@@ -164,8 +166,8 @@ export class HeaderBlock {
    * that is precisely why the blank line separating it from the headers must be produced here rather
    * than by a caller concatenating strings.
    */
-  bytes(body: string): Uint8Array {
-    return new TextEncoder().encode(`${this.#fields.join("\r\n")}\r\n\r\n${body}`);
+  bytes(body: string): Bytes {
+    return utf8(`${this.#fields.join("\r\n")}\r\n\r\n${body}`);
   }
 
   /** For tests and diagnostics. Never used to build the wire form. */

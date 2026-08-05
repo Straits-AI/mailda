@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { EvidenceFrameError, TAG_BYTES, decodeHeader, framesForRange, open, openStream, seal } from "../src/index.ts";
+import { type Bytes, EvidenceFrameError, TAG_BYTES, decodeHeader, framesForRange, open, openStream, seal } from "../src/index.ts";
 
 const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
   "encrypt",
@@ -11,7 +11,7 @@ const other = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, 
   "decrypt",
 ]);
 
-function bytes(n: number): Uint8Array {
+function bytes(n: number): Bytes {
   const out = new Uint8Array(n);
   for (let i = 0; i < n; i++) out[i] = (i * 31 + 7) & 0xff;
   return out;
@@ -29,7 +29,7 @@ describe("framed evidence encryption (#16)", () => {
 
   it("rejects a flipped bit", async () => {
     const sealed = await seal(key, bytes(5000), 1024);
-    sealed.body[100] ^= 0x01;
+    sealed.body[100] = sealed.body[100]! ^ 0x01;
     await expect(open(key, sealed)).rejects.toThrow(/E_EVIDENCE_AUTH_FAILED/);
   });
 
@@ -117,7 +117,7 @@ describe("streaming reader", () => {
 
   it("errors the stream rather than emitting a tampered frame", async () => {
     const sealed = await seal(key, bytes(4096), 1024);
-    sealed.body[2000] ^= 0x01;
+    sealed.body[2000] = sealed.body[2000]! ^ 0x01;
     const reader = openStream(key, sealed).getReader();
     await expect((async () => { for (;;) { const r = await reader.read(); if (r.done) return; } })())
       .rejects.toThrow(/E_EVIDENCE_AUTH_FAILED/);

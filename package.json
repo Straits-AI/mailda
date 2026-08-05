@@ -11,7 +11,7 @@
     "test": "turbo test",
     "typecheck": "turbo typecheck",
     "lint": "turbo lint",
-    "receipts": "turbo receipts#generate",
+    "receipts": "turbo @mailda/receipts#generate",
     "receipts:check": "pnpm receipts && git diff --exit-code packages/budgets/src/generated.ts",
     "bench": "turbo bench"
   },
