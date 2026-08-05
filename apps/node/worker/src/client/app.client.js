@@ -45,7 +45,10 @@ function el(tag, props = {}, children = []) {
 }
 
 function show(...nodes) {
-  app.replaceChildren(...nodes);
+  // Nulls filtered, same rule `el` already applies to children. `replaceChildren(null)` stringifies
+  // to a literal "null" on the page — which is exactly what a conditional section renders as when it
+  // is absent, so the two helpers have to agree.
+  app.replaceChildren(...nodes.filter((node) => node !== null && node !== false && node !== undefined));
   // The staggered reveal is applied here rather than in CSS-per-element so any screen gets it
   // without remembering to opt in.
   [...app.querySelectorAll("[data-reveal]")].forEach((node, index) => {
@@ -285,6 +288,11 @@ function renderLedger(messages) {
   ]);
 
   const rows = messages.flatMap((message) => {
+    // Declared before `detail`, which references it. Putting it next to `row` left it in the temporal
+    // dead zone and threw at render — the kind of error no server-side test can catch, because none of
+    // them execute this file.
+    const bodyHost = el("div", { class: "body-host" });
+
     const detail = el("tr", { class: "detail", hidden: "hidden" }, [
       el("td", { colspan: "5" }, [
         el("dl", {}, [
@@ -312,7 +320,6 @@ function renderLedger(messages) {
       ]),
     ]);
 
-    const bodyHost = el("div", { class: "body-host" });
     // The header `From`, not the envelope sender.
     //
     // For anything Cloudflare sent, the envelope sender is the return path
