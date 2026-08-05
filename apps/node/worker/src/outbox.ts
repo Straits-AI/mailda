@@ -113,6 +113,20 @@ export class OutboxSweeper extends DurableObject<Env> {
     const { dispatch } = await import("./pipeline.ts");
     const { drained } = await drainOutbox(this.env, clock, (event) => dispatch(this.env, clock, event));
 
+    // Outbound too (ADR 39). The hold window closes on a wall clock, so a Node that was asleep when
+    // it expired still sends — the same alarm machinery #9 built for inbound publication, rather than
+    // a second scheduler with its own failure modes.
+    try {
+      const { dispatchDue } = await import("./outbound/dispatch.ts");
+      const claimed = await this.env.CATALOG.prepare(
+        "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
+      ).first<{ org_id: string }>();
+      if (claimed?.org_id != null) await dispatchDue(this.env, clock, claimed.org_id);
+    } catch {
+      // A dispatch failure must not stop the inbound sweep. Every send stays in a state that
+      // describes it, and the next alarm tries again.
+    }
+
     // Re-arm while work remains, so a backlog drains rather than waiting for the next write.
     const remaining = await pendingEvents(this.env, clock, 1);
     if (remaining.length > 0 || drained > 0) {

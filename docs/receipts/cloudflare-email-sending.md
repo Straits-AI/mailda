@@ -12,6 +12,8 @@ values:
   send.max_header_value_bytes: 2048
   send.max_headers_total_bytes: 16384
   send.max_references_entries_for_reply: 100
+  send.references_emitted_max: 20
+  send.hold_window_default_seconds: 15
   send.daily_limit_is_published: 0
 ---
 
@@ -37,6 +39,32 @@ was changed.
 Sends to **verified destination addresses** are free on any plan, do not count toward the monthly quota
 or the daily limit, and work even when only Email Routing is configured. That makes them the only
 zero-cost way to prove the send path works — which matters given the finding below.
+
+## Onboarding is per subdomain, and is not inherited (measured 5 August 2026)
+
+Assumed wrong, then tested against the live API. `whymelabs.com` is onboarded and enabled, and a send
+from `inbox@mailda-test.whymelabs.com` was **refused**:
+
+```
+email sending not authorized for subdomain 'mailda-test.whymelabs.com'
+```
+
+**Onboarding applies to the exact name, not to the zone.** `wrangler email sending list` shows a
+`zone` and a `name` column, and the `name` is the unit — a subdomain of a fully onboarded apex is a
+separate thing that must be enabled separately.
+
+This is not a footnote. **§10 makes a delegated subdomain (`mail.example.com`) the *default* install
+path**, so the default path requires onboarding a subdomain for sending, and #21 already found that
+subdomain *routing* onboarding is dashboard-only with no API. Sending appears better served —
+`wrangler email sending enable <domain>` accepts "a zone or subdomain" — so the two halves of the same
+subdomain may have different automation stories, which `mailda deploy` has to handle rather than
+assume.
+
+The string also has to be classified correctly, and was not at first: it went to `outcome_unknown`
+because nothing matched it. The safe default behaved as designed — an unclassifiable failure gets the
+state that forbids automatic retry — but it is the wrong answer, since the message provably never left
+and this is the most *fixable* failure in the set. It is now `refused`, with a message naming
+per-subdomain onboarding, because Cloudflare's own wording names a subdomain and no remedy.
 
 ## Two APIs, and they record different things
 
@@ -79,6 +107,23 @@ observed number with a date, which is the only form of it that can exist.
 A **suppression list** also exists; sends it blocks are rejected at the API boundary and do not count
 toward quota. A suppressed recipient means the message will never arrive, which is a distinct state
 from a bounce and from an unknown outcome.
+
+## Two derived numbers
+
+`send.references_emitted_max = 20`. Cloudflare rejects a reply whose incoming message carries more
+than **100** `References` entries, and ADR 27 stores only two threading anchors — so a reply's chain is
+*reconstructed* at composition time rather than carried. Reconstruction must therefore be **bounded**,
+not faithful: 20 entries keeps a Node an order of magnitude clear of the ceiling while preserving more
+history than any client displays. Long threads lose their middle, which is what every other client
+does too, and the root and the immediate parent — the two entries that decide threading — are always
+kept.
+
+`send.hold_window_default_seconds = 15`. **This one has no measurement behind it and that is
+deliberate.** It is the undo-send window from ADR 39: a preference about human regret, not a limit or a
+budget, and no measurement could settle it — which is exactly why it is configurable per mailbox,
+including zero. Recorded here so a reader does not conclude the receipt rule was skipped. Fifteen
+seconds is long enough to notice the most common regret (the wrong recipient) and short enough that
+operational mail does not feel broken.
 
 ## Configuration is portable, if one field is avoided
 

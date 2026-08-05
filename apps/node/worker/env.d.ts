@@ -11,6 +11,16 @@
 import type { D1Migration } from "@cloudflare/vitest-pool-workers";
 
 declare global {
+  interface Env {
+    /**
+     * Cloudflare Email Sending. Optional in the type because a Node can exist without it — §14
+     * requires "can this Node send" to be a *capability answer* rather than a crash, and
+     * `transport.ts` reports its absence rather than throwing.
+     */
+    EMAIL?: {
+      send(message: unknown): Promise<{ messageId?: string } | undefined>;
+    };
+  }
   namespace Cloudflare {
     interface Env {
       TEST_MIGRATIONS: D1Migration[];

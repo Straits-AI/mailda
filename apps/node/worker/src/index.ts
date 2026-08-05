@@ -18,6 +18,9 @@ import {
   type IssuedSession,
 } from "./auth/session.ts";
 import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
+import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
+import { sealManifest } from "./outbound/manifest.ts";
+import { cloudflareTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
 import { resealBatch } from "./reseal.ts";
 import { clientScript, page } from "./ui.ts";
@@ -158,6 +161,64 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return url.searchParams.get("format") === "text"
         ? new Response(formatReconcile(report) + "\n", { headers: { "content-type": "text/plain; charset=utf-8" } })
         : Response.json(report);
+    }
+
+    /**
+     * Outbound (Layer 2). Sealing and dispatching are separate endpoints because they are separate
+     * acts (ADR 35) — which is what makes undo-send honest rather than a claim about recall.
+     */
+    if (url.pathname === "/api/sends" && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+
+      // §14: whether this Node can send is answerable *before* composing, not at submit.
+      const capability = await cloudflareTransport.capability(env);
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const sealed = await sealManifest(env, clock, who.orgId, {
+        mailboxId: String(body.mailboxId ?? ""),
+        authorUserId: who.userId,
+        inReplyToMessageId: body.inReplyToMessageId === undefined ? undefined : String(body.inReplyToMessageId),
+        to: Array.isArray(body.to) ? (body.to as string[]) : [],
+        cc: Array.isArray(body.cc) ? (body.cc as string[]) : undefined,
+        bcc: Array.isArray(body.bcc) ? (body.bcc as string[]) : undefined,
+        subject: String(body.subject ?? ""),
+        bodyTyped: String(body.body ?? ""),
+        // ADR 33 requires this stated rather than inferred. Customer-facing mail is authored, because
+        // its record must be able to prove exactly what was sent.
+        fidelity: "authored",
+      });
+      return Response.json({ ...sealed, capability });
+    }
+
+    const cancel = /^\/api\/sends\/([^/]+)\/cancel$/.exec(url.pathname);
+    if (cancel && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!);
+      return Response.json(outcome, { status: outcome.cancelled ? 200 : 409 });
+    }
+
+    if (url.pathname === "/api/sends" && request.method === "GET") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      const rows = await env.CATALOG.prepare(
+        `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
+                transport_message_id, fidelity
+           FROM send_manifests WHERE org_id = ? ORDER BY sealed_at DESC LIMIT 50`,
+      ).bind(who.orgId).all();
+      return Response.json({
+        sends: rows.results,
+        daily: await dailySendState(env, clock, who.orgId),
+        capability: await cloudflareTransport.capability(env),
+      });
+    }
+
+    // Releases anything whose hold window has closed. The sweeper alarm does this too; the endpoint
+    // exists so an operator does not have to wait for an alarm to see the machinery work.
+    if (url.pathname === "/api/sends/dispatch" && request.method === "POST") {
+      const who = await principalFor(env, request);
+      if (who === null) return unauthenticated();
+      return Response.json({ dispatched: await dispatchDue(env, clock, who.orgId) });
     }
 
     if (url.pathname === "/api/claim" && request.method === "POST") {

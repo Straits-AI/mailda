@@ -27,7 +27,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 17 receipts in [`docs/receipts/`](./docs/receipts/) generating 100 verified constants |
-| **Code** | A measurement harness and one Worker. 152 tests. Not a product. |
+| **Code** | A measurement harness and one Worker. 176 tests. Not a product. |
 
 **It does now receive mail.** One Worker, deployed to a real Cloudflare account, accepted a
 genuine Gmail message through Cloudflare Email Routing, stored it encrypted and framed, and served

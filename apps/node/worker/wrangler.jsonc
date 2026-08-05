@@ -11,6 +11,12 @@
   "observability": { "enabled": true },
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
+
+  // Outbound (ADR 23, ADR 33). The unrestricted form carries **no account-specific value**, so unlike
+  // Secrets Store (ADR 28) it does not collide with ADR 24's byte-identical fork. `destination_address`,
+  // `allowed_destination_addresses` and `allowed_sender_addresses` all take customer values and would
+  // reintroduce exactly that problem — restriction belongs in the adapter and in D1, never here.
+  "send_email": [{ "name": "EMAIL" }],
   // KEY_VAULT holds both root keys, generated per Node (ADR 28). No Secrets Store binding: a
   // `secrets_store_secrets` block needs an account-specific store_id in committed config, and
   // measurement showed removing it drops the binding silently rather than relinking the way D1 does.
@@ -47,6 +53,12 @@
     "test": {
       "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],
+
+  // Outbound (ADR 23, ADR 33). The unrestricted form carries **no account-specific value**, so unlike
+  // Secrets Store (ADR 28) it does not collide with ADR 24's byte-identical fork. `destination_address`,
+  // `allowed_destination_addresses` and `allowed_sender_addresses` all take customer values and would
+  // reintroduce exactly that problem — restriction belongs in the adapter and in D1, never here.
+  "send_email": [{ "name": "EMAIL" }],
       "durable_objects": {
         "bindings": [
           { "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" },
