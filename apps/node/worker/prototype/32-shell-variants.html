@@ -1,0 +1,776 @@
+<!--
+  PROTOTYPE — wayfinder #32. Not served by the Worker, not imported by anything, never ships.
+
+  Three structurally different takes on the authenticated shell, switchable via ?variant=a|b|c and the
+  floating bar at the bottom. The question is "what should this look like and how should it behave",
+  so this is the UI branch of /prototype: read-only, seeded data, no network, no persistence.
+
+  It continues Layer 1's instrument-panel language rather than proposing a new one — tokens, grain,
+  corner ticks and the serif/mono pairing are lifted from src/ui.ts on purpose. What is new is the
+  shell around them, which Layer 1 never had.
+
+  Three things it is trying to settle:
+    1. Where the composer lives, and when a draft stops being losable.
+    2. How seven send states become legible without lying about any of them.
+    3. Where the session countdown and doctor verdict live once there is real chrome.
+-->
+<style>
+  :root {
+    /* Lifted verbatim from src/ui.ts. A prototype that drifts on colour is testing the wrong thing. */
+    --ground: #0a0e13;
+    --ground-2: #10161e;
+    --rule: rgba(226, 215, 195, .13);
+    --rule-strong: rgba(226, 215, 195, .30);
+    --text: #e6dfd2;
+    /* src/ui.ts's value, kept: measured at 4.56:1 against the ground, which passes AA for the label
+       sizes this interface is mostly made of — by 0.06. Worth knowing, not worth changing.
+       The light theme's equivalent is a different story; see below. */
+    --dim: rgba(230, 223, 210, .52);
+    --signal: #e9a35c;
+    --alarm: #e8695c;
+    --live: #86c9a4;
+
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  /* The real app has only the media query. An artifact needs the toggle to win in both directions,
+     so the tokens are redefined three times and components only ever read tokens. */
+  /* --dim is .68 here against src/ui.ts's .58, and that is a real fix rather than a preference:
+     .58 measures 4.19:1 on this ground, which fails AA for normal text, and axe flags it. .68 is
+     5.77:1. The product's own token is wrong in light mode — see the note on issue #32. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #f1ece0; --ground-2: #fbf8f1;
+      --rule: rgba(26, 22, 16, .16); --rule-strong: rgba(26, 22, 16, .34);
+      --text: #1b1712; --dim: rgba(27, 23, 18, .68);
+      --signal: #9a5410; --alarm: #a5342a; --live: #2f6f4e;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f1ece0; --ground-2: #fbf8f1;
+    --rule: rgba(26, 22, 16, .16); --rule-strong: rgba(26, 22, 16, .34);
+    --text: #1b1712; --dim: rgba(27, 23, 18, .68);
+    --signal: #9a5410; --alarm: #a5342a; --live: #2f6f4e;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0a0e13; --ground-2: #10161e;
+    --rule: rgba(226, 215, 195, .13); --rule-strong: rgba(226, 215, 195, .30);
+    --text: #e6dfd2; --dim: rgba(230, 223, 210, .52);
+    --signal: #e9a35c; --alarm: #e8695c; --live: #86c9a4;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--ground);
+    color: var(--text);
+    font: 400 16px/1.6 var(--display);
+    background-image: linear-gradient(180deg, color-mix(in oklab, var(--ground-2) 70%, transparent), transparent 38rem);
+  }
+
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 9;
+    opacity: .035; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---- shared vocabulary ---------------------------------------------------------------- */
+
+  .mono { font-family: var(--mono); }
+  .dim { color: var(--dim); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .label {
+    font-family: var(--mono);
+    font-size: .655rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  h1, h2, h3 { font-family: var(--display); font-weight: 400; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(1.5rem, 3vw, 2rem); letter-spacing: -.018em; }
+  h2 { font-size: 1.15rem; }
+
+  a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
+  a:hover { border-bottom-color: var(--signal); }
+
+  :where(button, a, input, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  .panel {
+    border: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 80%, transparent);
+    padding: clamp(1.1rem, 2.4vw, 1.6rem);
+    position: relative;
+  }
+  .panel::after {
+    content: "";
+    position: absolute; top: -1px; right: -1px;
+    width: 13px; height: 13px;
+    border-top: 1px solid var(--signal);
+    border-right: 1px solid var(--signal);
+  }
+
+  button.primary {
+    font: 400 .72rem/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ground); background: var(--signal);
+    border: 1px solid var(--signal);
+    padding: .75rem 1.2rem; cursor: pointer;
+  }
+  button.primary:hover { filter: brightness(1.12); }
+
+  button.ghost {
+    font: 400 .68rem/1 var(--mono);
+    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--dim); background: none;
+    border: 1px solid var(--rule-strong);
+    padding: .55rem .8rem; cursor: pointer;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--signal); }
+
+  input, textarea {
+    font: 400 .9rem/1.6 var(--mono);
+    color: var(--text); background: transparent;
+    border: 0; border-bottom: 1px solid var(--rule-strong);
+    padding: .45rem .1rem; width: 100%;
+  }
+  textarea { border: 1px solid var(--rule-strong); padding: .6rem; resize: vertical; }
+  input:focus, textarea:focus { outline: 0; border-color: var(--signal); border-bottom-color: var(--signal); }
+
+  /* One colour per state, matching src/ui.ts exactly — §16 wants a state to mean the same thing
+     everywhere, and a prototype that recolours them teaches the wrong vocabulary. */
+  .state {
+    font-family: var(--mono);
+    font-size: .655rem; letter-spacing: .1em; text-transform: uppercase;
+    padding: .18rem .45rem;
+    border: 1px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  .state.held, .state.throttled { border-color: var(--signal); color: var(--signal); }
+  .state.handed_over { border-color: var(--live); color: var(--live); }
+  .state.outcome_unknown, .state.refused, .state.suppressed { border-color: var(--alarm); color: var(--alarm); }
+  .state.cancelled { color: var(--dim); }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; display: inline-block; }
+  .dot.ok { background: var(--live); }
+  .dot.warn { background: var(--signal); }
+
+  table { width: 100%; border-collapse: collapse; }
+  .scroller { overflow-x: auto; }
+  thead th {
+    font: 400 .655rem/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+    text-align: left; padding: .8rem .7rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody td { padding: .75rem .7rem; border-bottom: 1px solid var(--rule); font-size: .92rem; vertical-align: baseline; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* The taxonomy this prototype is proposing: four states that are still moving, three that are done.
+     Rendered as a caption above the ledger so the grouping is arguable rather than implied. */
+  .taxonomy {
+    display: flex; flex-wrap: wrap; gap: .4rem 1.1rem;
+    font-family: var(--mono); font-size: .655rem;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+    padding-bottom: .8rem;
+  }
+  .taxonomy b { font-weight: 400; color: var(--text); }
+
+  /* Draft durability, the thing the ticket says a user would be angry to lose. Three phases, and the
+     wording is deliberately about where the bytes are, not about a spinner. */
+  .draft-state {
+    display: flex; align-items: center; gap: .5rem;
+    font-family: var(--mono); font-size: .68rem;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .draft-state[data-phase="local"] { color: var(--alarm); }
+  .draft-state[data-phase="saved"] { color: var(--dim); }
+  .draft-state[data-phase="sealed"] { color: var(--signal); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  /* ---- variant A: ledger routes -------------------------------------------------------- */
+
+  .rack {
+    border-bottom: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 60%, transparent);
+    position: sticky; top: 0; z-index: 8;
+  }
+  .rack-inner {
+    max-width: 74rem; margin-inline: auto;
+    padding: .7rem clamp(1rem, 4vw, 2.5rem);
+    display: flex; align-items: center; gap: clamp(.9rem, 3vw, 2rem); flex-wrap: wrap;
+  }
+  .wordmark {
+    font-family: var(--display); font-size: 1.15rem;
+    letter-spacing: .22em; text-transform: uppercase; margin: 0;
+    padding-right: clamp(.9rem, 3vw, 2rem); border-right: 1px solid var(--rule); white-space: nowrap;
+  }
+  .wordmark span { color: var(--signal); }
+  .readouts {
+    display: flex; align-items: center; gap: clamp(.8rem, 2.5vw, 1.6rem); flex-wrap: wrap;
+    font-family: var(--mono); font-size: .715rem;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--dim); margin-left: auto;
+  }
+  .readouts .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
+  .readouts .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .readouts .session { color: var(--signal); font-variant-numeric: tabular-nums; }
+
+  .routes {
+    max-width: 74rem; margin-inline: auto;
+    padding: 0 clamp(1rem, 4vw, 2.5rem);
+    display: flex; gap: 1.6rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .routes button {
+    font: 400 .68rem/1 var(--mono);
+    letter-spacing: .14em; text-transform: uppercase;
+    background: none; border: 0; border-bottom: 2px solid transparent;
+    color: var(--dim); padding: .9rem 0; cursor: pointer;
+  }
+  .routes button[aria-current="page"] { color: var(--text); border-bottom-color: var(--signal); }
+
+  .stage-a { max-width: 74rem; margin-inline: auto; padding: clamp(1.8rem, 4vw, 3rem) clamp(1rem, 4vw, 2.5rem) 7rem; }
+  .ledger-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    border-bottom: 1px solid var(--rule-strong); padding-bottom: .8rem; margin-bottom: .9rem;
+  }
+
+  /* ---- variant B: split rail + docked composer ----------------------------------------- */
+
+  .shell-b { display: grid; grid-template-columns: 15rem minmax(0, 1fr); min-height: 100vh; }
+  .rail {
+    border-right: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 45%, transparent);
+    padding: 1.1rem 1rem 7rem;
+    display: flex; flex-direction: column; gap: 1.4rem;
+  }
+  .rail nav { display: flex; flex-direction: column; gap: .1rem; }
+  .rail nav button {
+    font: 400 .78rem/1 var(--mono);
+    background: none; border: 0; border-left: 2px solid transparent;
+    color: var(--dim); text-align: left; padding: .5rem .6rem; cursor: pointer;
+    display: flex; justify-content: space-between; gap: .5rem;
+  }
+  .rail nav button[aria-current="true"] { color: var(--text); border-left-color: var(--signal); background: color-mix(in oklab, var(--signal) 7%, transparent); }
+  .rail nav button .n { font-variant-numeric: tabular-nums; color: var(--dim); }
+
+  .panes { display: grid; grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); min-height: 0; }
+  .list-pane { border-right: 1px solid var(--rule); overflow: auto; }
+  .list-pane article {
+    padding: .8rem 1rem; border-bottom: 1px solid var(--rule); cursor: pointer;
+    display: grid; gap: .2rem;
+  }
+  .list-pane article[aria-selected="true"] { background: color-mix(in oklab, var(--signal) 8%, transparent); box-shadow: inset 2px 0 0 var(--signal); }
+  .list-pane .from { font-family: var(--mono); font-size: .72rem; color: var(--dim); display: flex; justify-content: space-between; gap: .6rem; }
+  .list-pane .subj { font-size: .95rem; }
+  .read-pane { padding: clamp(1.2rem, 3vw, 2rem) clamp(1.2rem, 3vw, 2.2rem) 14rem; overflow: auto; }
+
+  /* Docked, because the ticket's question is whether you can keep reading while composing a reply.
+     A modal answers "no" by construction, so the prototype has to offer the version that answers "yes". */
+  .dock {
+    position: fixed; right: clamp(1rem, 3vw, 2rem); bottom: 3.4rem;
+    width: min(34rem, calc(100vw - 2rem));
+    border: 1px solid var(--rule-strong);
+    background: var(--ground-2);
+    z-index: 7;
+    box-shadow: 0 -1px 0 var(--signal);
+  }
+  .dock-head {
+    display: flex; align-items: center; justify-content: space-between; gap: .8rem;
+    padding: .55rem .8rem; border-bottom: 1px solid var(--rule);
+  }
+  .dock-body { padding: .9rem .8rem; display: grid; gap: .8rem; }
+  .dock[data-collapsed="true"] .dock-body { display: none; }
+
+  .instrument-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+    border-top: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 92%, transparent);
+    padding: .45rem clamp(1rem, 3vw, 2rem);
+    display: flex; align-items: center; gap: clamp(.8rem, 2.5vw, 1.6rem); flex-wrap: wrap;
+    font-family: var(--mono); font-size: .68rem;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--dim);
+  }
+  .instrument-bar .v { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* ---- variant C: console -------------------------------------------------------------- */
+
+  .shell-c { display: grid; grid-template-columns: minmax(0, 1fr) 15rem; min-height: 100vh; font-family: var(--mono); }
+  .console { padding: clamp(1.2rem, 3vw, 2rem) clamp(1rem, 3vw, 2rem) 5rem; }
+  .prompt {
+    display: flex; align-items: center; gap: .6rem;
+    border-bottom: 1px solid var(--rule-strong); padding-bottom: .6rem; margin-bottom: 1.6rem;
+  }
+  .prompt .sigil { color: var(--signal); }
+  .prompt input { border: 0; font-size: .95rem; }
+  .palette {
+    border: 1px solid var(--rule); background: var(--ground-2);
+    margin-top: -1.2rem; margin-bottom: 1.6rem;
+  }
+  .palette div { padding: .45rem .7rem; border-bottom: 1px solid var(--rule); font-size: .78rem; display: flex; gap: .8rem; }
+  .palette div:last-child { border-bottom: 0; }
+  .palette kbd {
+    font-family: var(--mono); font-size: .68rem;
+    border: 1px solid var(--rule-strong); padding: .05rem .3rem; color: var(--dim);
+  }
+
+  /* A tail, not a table: the console's claim is that outbound state is a stream of events you watch. */
+  .tail { display: grid; gap: 0; }
+  .tail-row {
+    display: grid; grid-template-columns: 5.5rem 1fr auto;
+    gap: .9rem; align-items: baseline;
+    padding: .5rem 0; border-bottom: 1px solid var(--rule);
+    font-size: .8rem;
+  }
+  .tail-row .t { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .gutter {
+    border-left: 1px solid var(--rule);
+    padding: clamp(1.2rem, 3vw, 2rem) 1rem 5rem;
+    display: flex; flex-direction: column; gap: 1.3rem;
+    background: color-mix(in oklab, var(--ground-2) 45%, transparent);
+  }
+  .gutter section { display: grid; gap: .35rem; }
+  .gutter .big { font-size: 1.5rem; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+
+  /* ---- the switcher (prototype furniture, deliberately not part of the design) ---------- */
+
+  .switcher {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 1rem; z-index: 20;
+    display: flex; align-items: stretch;
+    background: #101010; color: #fafafa;
+    border: 1px solid #3a3a3a; border-radius: 999px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    font-family: var(--mono); font-size: .72rem;
+  }
+  .switcher button {
+    background: none; border: 0; color: inherit; cursor: pointer;
+    padding: .5rem .85rem; font: inherit;
+  }
+  .switcher button:hover { color: #e9a35c; }
+  .switcher .now { padding: .5rem .4rem; display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
+  .switcher .now b { font-weight: 400; color: #e9a35c; }
+  .switcher .sep { width: 1px; background: #3a3a3a; }
+</style>
+
+<div id="root"></div>
+
+<div class="switcher" role="group" aria-label="Prototype variant switcher">
+  <button type="button" id="prev" aria-label="Previous variant">&#8592;</button>
+  <div class="sep"></div>
+  <div class="now"><span id="vkey">A</span> &mdash; <b id="vname">Ledger routes</b></div>
+  <div class="sep"></div>
+  <button type="button" id="next" aria-label="Next variant">&#8594;</button>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ seeded data ------------- */
+
+/* Real-shaped mail, because a prototype judged against "Lorem ipsum" flatters every layout. */
+const MESSAGES = [
+  { id: "m1", from: "accounts@northgate-supply.co.uk", name: "Northgate Supply", at: "14:02",
+    subject: "Invoice INV-2291 — March retainer", unread: true,
+    body: "Please find attached our invoice for the March retainer, due 30 days from today.\n\nThe purchase order number you gave us last month (PO-4417) is quoted on the invoice. Let me know if that has changed." },
+  { id: "m2", from: "ops@meridian-freight.com", name: "Meridian Freight", at: "11:47",
+    subject: "Re: shipment 4471 delayed at customs", unread: true,
+    body: "Customs are holding 4471 pending the commercial invoice. We have the packing list but not the invoice.\n\nIf you can send it today the container should clear on Thursday." },
+  { id: "m3", from: "lily.chan@chanpartners.my", name: "Lily Chan", at: "09:14",
+    subject: "Signed lease — 14 Jalan Bukit", unread: false,
+    body: "Attaching the countersigned lease. Commencement is 1 September as discussed." },
+  { id: "m4", from: "billing@cloudflare.com", name: "Cloudflare", at: "Aug 4",
+    subject: "Your Cloudflare invoice is ready", unread: false,
+    body: "Your invoice for July is available in the dashboard." },
+];
+
+/* All seven states of ADR 39. The prototype's proposal is the grouping, not a reduction: nothing is
+   collapsed away, because §5C forbids claiming an outcome nobody observed. */
+const SENDS = [
+  { id: "snd_01KZ8", subject: "Re: Invoice INV-2291 — March retainer", to: ["accounts@northgate-supply.co.uk"],
+    state: "held", at: "14:09:41", note: "Not sent yet. You can still stop this.", holdLeft: 18 },
+  { id: "snd_01KZ7", subject: "Re: shipment 4471 delayed at customs", to: ["ops@meridian-freight.com"],
+    state: "throttled", at: "13:58:02", note: "Rate-limited by the mail service. It has not left, and will be retried." },
+  { id: "snd_01KZ6", subject: "Signed and returned — 14 Jalan Bukit", to: ["lily.chan@chanpartners.my"],
+    state: "handed_over", at: "11:20:15", note: "Accepted by the mail service. Whether it arrived is not knowable from here." },
+  { id: "snd_01KZ5", subject: "Statement of account — February", to: ["finance@harborline.sg"],
+    state: "outcome_unknown", at: "09:44:58", note: "We do not know whether it left. It will not be retried automatically." },
+  { id: "snd_01KZ4", subject: "Re: duplicate charge on 12 July", to: ["support@vendor.example"],
+    state: "refused", at: "Aug 4 17:02", note: "The mail service would not accept it. It never left." },
+  { id: "snd_01KZ3", subject: "Welcome pack", to: ["old-address@bounced.example"],
+    state: "suppressed", at: "Aug 4 16:31", note: "The mail service will never deliver to this recipient." },
+  { id: "snd_01KZ2", subject: "Draft reply to Northgate", to: ["accounts@northgate-supply.co.uk"],
+    state: "cancelled", at: "Aug 4 15:12", note: "Stopped before it left." },
+];
+
+const MOVING = ["held", "throttled", "handed_over", "outcome_unknown"];
+const LABEL = {
+  held: "held", throttled: "in flight", handed_over: "handed over",
+  outcome_unknown: "outcome unknown", refused: "refused", suppressed: "suppressed", cancelled: "cancelled",
+};
+
+/* ------------------------------------------------------------------ helpers ----------------- */
+
+function el(tag, attrs, kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined) continue;
+    if (k === "text") node.textContent = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const kid of (kids || []).flat()) if (kid) node.append(kid);
+  return node;
+}
+
+const stateChip = (s) => el("span", { class: "state " + s, text: LABEL[s] });
+
+function taxonomy() {
+  return el("div", { class: "taxonomy" }, [
+    el("span", {}, [el("b", { text: "still moving" }), document.createTextNode(" · held · in flight · handed over · outcome unknown")]),
+    el("span", {}, [el("b", { text: "done" }), document.createTextNode(" · cancelled · refused · suppressed")]),
+  ]);
+}
+
+/* The draft phases. This is the prototype's substantive proposal about durability: a draft is losable
+   until it is on the Node, and it stops being editable once it is sealed into a manifest. */
+const DRAFT_PHASES = {
+  local: { text: "draft · this browser only · a reload loses it", dot: "warn" },
+  saved: { text: "draft · saved on your node · 14:08:12", dot: "ok" },
+  sealed: { text: "sealed · immutable · stoppable for 18s", dot: "warn" },
+};
+
+function draftState(phase) {
+  const p = DRAFT_PHASES[phase];
+  return el("p", { class: "draft-state", "data-phase": phase, role: "status" }, [
+    el("span", { class: "dot " + p.dot }), el("span", { text: p.text }),
+  ]);
+}
+
+function composerFields(opts) {
+  const o = opts || {};
+  return [
+    el("div", {}, [
+      el("p", { class: "label", text: "to" }),
+      el("input", { type: "text", value: o.to || "accounts@northgate-supply.co.uk", "aria-label": "To" }),
+    ]),
+    el("div", {}, [
+      el("p", { class: "label", text: "subject" }),
+      el("input", { type: "text", value: o.subject || "Re: Invoice INV-2291 — March retainer", "aria-label": "Subject" }),
+    ]),
+    el("div", {}, [
+      el("p", { class: "label", text: "message" }),
+      el("textarea", { rows: o.rows || "7", "aria-label": "Message", text:
+        "PO-4417 is still correct — thank you for quoting it.\n\nI have asked our bookkeeper to schedule this for the 30th.\n\n— Wei Meng\n\n> Please find attached our invoice for the March retainer, due 30\n> days from today." }),
+    ]),
+    el("div", { style: "display:flex;gap:.6rem;flex-wrap:wrap;align-items:center" }, [
+      el("button", { class: "ghost", type: "button", text: "reply all" }),
+      el("button", { class: "ghost", type: "button", text: "attach" }),
+      el("button", { class: "ghost", type: "button", text: "signature" }),
+      el("span", { class: "label", text: "quoting 1 message" }),
+    ]),
+  ];
+}
+
+/* ------------------------------------------------------------------ variant A -------------- */
+
+function variantA() {
+  let route = "outbox";
+
+  const wrap = el("div", {});
+  const stage = el("main", { class: "stage-a", id: "stage-a" });
+
+  const routeBar = el("nav", { class: "routes", "aria-label": "Sections" });
+  const buttons = {};
+  for (const [key, text] of [["inbox", "inbox"], ["outbox", "outbox"], ["compose", "compose"]]) {
+    buttons[key] = el("button", { type: "button", text, onclick: () => go(key) });
+    routeBar.append(buttons[key]);
+  }
+
+  function go(next) {
+    route = next;
+    for (const [key, b] of Object.entries(buttons)) {
+      if (key === next) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+    }
+    stage.replaceChildren(...render());
+  }
+
+  function render() {
+    if (route === "inbox") {
+      return [
+        el("div", { class: "ledger-head" }, [
+          el("h1", { text: "Inbox" }),
+          el("p", { class: "label", text: MESSAGES.length + " messages · 2 unread" }),
+        ]),
+        el("div", { class: "scroller" }, [
+          el("table", {}, [
+            el("thead", {}, [el("tr", {}, [
+              el("th", { text: "from" }), el("th", { text: "subject" }), el("th", { class: "num", text: "at" }),
+            ])]),
+            el("tbody", {}, MESSAGES.map((m) => el("tr", {}, [
+              el("td", { class: "mono", style: m.unread ? "color:var(--text)" : "color:var(--dim)", text: m.name }),
+              el("td", { text: m.subject }),
+              el("td", { class: "num dim mono", text: m.at }),
+            ]))),
+          ]),
+        ]),
+      ];
+    }
+    if (route === "compose") {
+      return [
+        el("div", { class: "ledger-head" }, [el("h1", { text: "Reply" }), draftState("local")]),
+        el("form", { class: "panel", style: "display:grid;gap:.9rem;max-width:46rem", onsubmit: (e) => e.preventDefault() }, [
+          el("h2", { class: "label", text: "composition" }),
+          ...composerFields({}),
+          el("div", { style: "display:flex;gap:.8rem;align-items:center;flex-wrap:wrap" }, [
+            el("button", { class: "primary", type: "submit", text: "send" }),
+            el("span", { class: "label", text: "held 20s before it leaves — you can stop it" }),
+          ]),
+        ]),
+      ];
+    }
+    const moving = SENDS.filter((s) => MOVING.includes(s.state));
+    const done = SENDS.filter((s) => !MOVING.includes(s.state));
+    return [
+      el("div", { class: "ledger-head" }, [
+        el("h1", { text: "Outbox" }),
+        el("p", { class: "label", text: moving.length + " still moving · " + done.length + " done" }),
+      ]),
+      taxonomy(),
+      el("div", { class: "scroller" }, [
+        el("table", {}, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { text: "subject" }), el("th", { text: "to" }),
+            el("th", { text: "state" }), el("th", { class: "num", text: "since" }), el("th", { class: "num", text: "" }),
+          ])]),
+          el("tbody", {}, SENDS.map((s) => el("tr", {}, [
+            el("td", {}, [el("div", { text: s.subject }), el("p", { class: "label", style: "margin:.25rem 0 0", text: s.note })]),
+            el("td", { class: "mono dim", style: "font-size:.78rem", text: s.to.join(", ") }),
+            el("td", {}, [stateChip(s.state)]),
+            el("td", { class: "num dim mono", style: "font-size:.78rem", text: s.at }),
+            el("td", { class: "num" }, [
+              s.state === "held"
+                ? el("button", { class: "ghost", type: "button", text: "stop" })
+                : el("span", { class: "dim mono", text: "—" }),
+            ]),
+          ]))),
+        ]),
+      ]),
+    ];
+  }
+
+  wrap.append(
+    el("div", { class: "rack" }, [el("div", { class: "rack-inner" }, [
+      el("p", { class: "wordmark" }, [document.createTextNode("Mail"), el("span", { text: "da" })]),
+      el("div", { class: "readouts" }, [
+        el("span", { class: "field" }, [el("span", { class: "dot ok" }), el("span", { text: "listening" })]),
+        el("span", { class: "field" }, [el("span", { text: "doctor" }), el("span", { class: "v", text: "ok" })]),
+        el("span", { class: "field" }, [el("span", { text: "session" }), el("span", { class: "session", text: "9:12" })]),
+      ]),
+    ])]),
+    routeBar,
+    stage,
+  );
+  go("outbox");
+  return wrap;
+}
+
+/* ------------------------------------------------------------------ variant B -------------- */
+
+function variantB() {
+  let selected = MESSAGES[0];
+  let collapsed = false;
+
+  const list = el("div", { class: "list-pane", role: "listbox", "aria-label": "Messages" });
+  const read = el("article", { class: "read-pane" });
+
+  function paint() {
+    list.replaceChildren(...MESSAGES.map((m) => el("article", {
+      role: "option", tabindex: "0", "aria-selected": String(m.id === selected.id),
+      onclick: () => { selected = m; paint(); },
+      onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selected = m; paint(); } },
+    }, [
+      el("div", { class: "from" }, [
+        el("span", { text: m.name }), el("span", { class: "num", text: m.at }),
+      ]),
+      el("div", { class: "subj", style: m.unread ? "" : "color:var(--dim)", text: m.subject }),
+    ])));
+
+    read.replaceChildren(
+      el("p", { class: "label", text: selected.from + " · " + selected.at }),
+      el("h1", { style: "margin:.4rem 0 1.2rem", text: selected.subject }),
+      el("div", { style: "white-space:pre-wrap;max-width:62ch", text: selected.body }),
+    );
+  }
+
+  const dock = el("aside", { class: "dock", "data-collapsed": "false", "aria-label": "Composer" });
+  function paintDock() {
+    dock.setAttribute("data-collapsed", String(collapsed));
+    dock.replaceChildren(
+      el("div", { class: "dock-head" }, [
+        el("p", { class: "label", style: "margin:0", text: "reply · northgate supply" }),
+        el("div", { style: "display:flex;gap:.6rem;align-items:center" }, [
+          draftState("saved"),
+          el("button", {
+            class: "ghost", type: "button", text: collapsed ? "open" : "hide",
+            "aria-expanded": String(!collapsed),
+            onclick: () => { collapsed = !collapsed; paintDock(); },
+          }),
+        ]),
+      ]),
+      el("form", { class: "dock-body", onsubmit: (e) => e.preventDefault() }, [
+        ...composerFields({ rows: "5" }),
+        el("div", { style: "display:flex;gap:.8rem;align-items:center;flex-wrap:wrap" }, [
+          el("button", { class: "primary", type: "submit", text: "send" }),
+          el("span", { class: "label", text: "20s to stop it" }),
+        ]),
+      ]),
+    );
+  }
+
+  const moving = SENDS.filter((s) => MOVING.includes(s.state));
+
+  paint();
+  paintDock();
+
+  return el("div", {}, [
+    el("div", { class: "shell-b" }, [
+      el("div", { class: "rail" }, [
+        el("p", { class: "wordmark", style: "border:0;padding:0" }, [document.createTextNode("Mail"), el("span", { text: "da" })]),
+        el("nav", { "aria-label": "Mailboxes" }, [
+          ["Inbox", "2", true], ["Outbox", String(moving.length), false],
+          ["Sent", "41", false], ["Everything", "312", false],
+        ].map(([name, n, cur]) => el("button", { type: "button", "aria-current": cur ? "true" : null }, [
+          el("span", { text: name }), el("span", { class: "n", text: n }),
+        ]))),
+        el("div", { style: "margin-top:auto" }, [
+          el("p", { class: "label", text: "outbound" }),
+          el("div", { style: "display:grid;gap:.4rem;margin-top:.5rem" },
+            moving.map((s) => el("div", { style: "display:flex;justify-content:space-between;gap:.5rem;align-items:center" }, [
+              el("span", { class: "mono", style: "font-size:.68rem;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:7rem", text: s.subject }),
+              stateChip(s.state),
+            ]))),
+        ]),
+      ]),
+      el("div", { class: "panes" }, [list, read]),
+    ]),
+    dock,
+    el("div", { class: "instrument-bar" }, [
+      el("span", { class: "field", style: "display:inline-flex;gap:.45rem;align-items:center" }, [
+        el("span", { class: "dot ok" }), el("span", { text: "listening" }),
+      ]),
+      el("span", {}, [document.createTextNode("doctor "), el("span", { class: "v", text: "ok" })]),
+      el("span", {}, [document.createTextNode("held "), el("span", { class: "v", text: "1" })]),
+      el("span", {}, [document.createTextNode("in flight "), el("span", { class: "v", text: "1" })]),
+      el("span", {}, [document.createTextNode("unknown "), el("span", { class: "v", text: "1" })]),
+      el("span", { style: "margin-left:auto" }, [
+        document.createTextNode("session "), el("span", { class: "v", style: "color:var(--signal)", text: "9:12" }),
+      ]),
+    ]),
+  ]);
+}
+
+/* ------------------------------------------------------------------ variant C -------------- */
+
+function variantC() {
+  const rows = SENDS.map((s) => el("div", { class: "tail-row" }, [
+    el("span", { class: "t", text: s.at }),
+    el("span", {}, [
+      el("span", { text: s.subject }),
+      el("span", { class: "dim", style: "display:block;font-size:.7rem", text: "→ " + s.to.join(", ") }),
+    ]),
+    stateChip(s.state),
+  ]));
+
+  return el("div", { class: "shell-c" }, [
+    el("main", { class: "console" }, [
+      el("div", { class: "prompt" }, [
+        el("span", { class: "sigil", text: ":" }),
+        el("input", { type: "text", value: "outbox", "aria-label": "Command" }),
+      ]),
+      el("div", { class: "palette" }, [
+        el("div", {}, [el("kbd", { text: "r" }), el("span", { text: "reply to the selected message" })]),
+        el("div", {}, [el("kbd", { text: "R" }), el("span", { text: "reply to all recipients" })]),
+        el("div", {}, [el("kbd", { text: "x" }), el("span", { text: "stop a held send" })]),
+        el("div", {}, [el("kbd", { text: "?" }), el("span", { text: "every command" })]),
+      ]),
+
+      el("p", { class: "label", text: "compose" }),
+      el("form", { style: "display:grid;gap:.7rem;margin:.6rem 0 2rem;max-width:60rem", onsubmit: (e) => e.preventDefault() }, [
+        ...composerFields({ rows: "6" }),
+        el("div", { style: "display:flex;gap:.9rem;align-items:center;flex-wrap:wrap" }, [
+          el("button", { class: "primary", type: "submit", text: "send" }),
+          draftState("local"),
+        ]),
+      ]),
+
+      el("p", { class: "label", text: "outbound · live tail" }),
+      taxonomy(),
+      el("div", { class: "tail" }, rows),
+    ]),
+    el("aside", { class: "gutter", "aria-label": "Readouts" }, [
+      el("section", {}, [el("p", { class: "label", text: "session" }), el("p", { class: "big", style: "color:var(--signal)", text: "9:12" })]),
+      el("section", {}, [el("p", { class: "label", text: "doctor" }),
+        el("p", { class: "big", style: "color:var(--live)", text: "ok" }),
+        el("p", { class: "dim", style: "font-size:.7rem", text: "14 checks · 20 subrequests" })]),
+      el("section", {}, [el("p", { class: "label", text: "still moving" }),
+        el("p", { class: "big", text: String(SENDS.filter((s) => MOVING.includes(s.state)).length) })]),
+      el("section", {}, [el("p", { class: "label", text: "audit chain" }),
+        el("p", { class: "big", style: "color:var(--live)", text: "intact" }),
+        el("p", { class: "dim", style: "font-size:.7rem", text: "5 entries verified" })]),
+    ]),
+  ]);
+}
+
+/* ------------------------------------------------------------------ switcher ---------------- */
+
+const VARIANTS = [
+  { key: "a", name: "Ledger routes", build: variantA },
+  { key: "b", name: "Split rail + docked composer", build: variantB },
+  { key: "c", name: "Console", build: variantC },
+];
+
+function currentKey() {
+  const asked = (new URLSearchParams(location.search).get("variant") || "a").toLowerCase();
+  return VARIANTS.some((v) => v.key === asked) ? asked : "a";
+}
+
+function paintVariant(key) {
+  const variant = VARIANTS.find((v) => v.key === key) || VARIANTS[0];
+  document.getElementById("root").replaceChildren(variant.build());
+  document.getElementById("vkey").textContent = variant.key.toUpperCase();
+  document.getElementById("vname").textContent = variant.name;
+  document.title = "Mailda shell · " + variant.key.toUpperCase() + " — " + variant.name;
+  const url = new URL(location.href);
+  url.searchParams.set("variant", variant.key);
+  history.replaceState(null, "", url);
+}
+
+function step(by) {
+  const index = VARIANTS.findIndex((v) => v.key === currentKey());
+  paintVariant(VARIANTS[(index + by + VARIANTS.length) % VARIANTS.length].key);
+}
+
+document.getElementById("prev").addEventListener("click", () => step(-1));
+document.getElementById("next").addEventListener("click", () => step(1));
+
+document.addEventListener("keydown", (event) => {
+  // Never steal arrows from a field — the composer is the thing being evaluated.
+  const tag = (event.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || event.target.isContentEditable) return;
+  if (event.key === "ArrowLeft") step(-1);
+  if (event.key === "ArrowRight") step(1);
+});
+
+paintVariant(currentKey());
+</script>
