@@ -14,6 +14,8 @@ values:
   send.max_references_entries_for_reply: 100
   send.references_emitted_max: 20
   send.hold_window_default_seconds: 15
+  send.delivers_to_same_account_routing: 1
+  send.preserves_authored_message_id: 0
   send.daily_limit_is_published: 0
 ---
 
@@ -86,6 +88,59 @@ The DMARC record is listed for a **subdomain** and was *not* listed for the apex
 Verified after enabling: the apex's own `cf-bounce` records and its MX were unchanged, so onboarding a
 subdomain is additive rather than a modification of the parent. Reversible with
 `wrangler email sending disable <subdomain>`.
+
+## Same-account delivery **works** — correcting #21 (measured 5 August 2026)
+
+#21 recorded that "Cloudflare Email Sending does not deliver to same-account Email Routing", from two
+sends that reported success and never arrived. **That finding is wrong, or at least wrongly
+generalised.** Four sends from `inbox@mailda-test.whymelabs.com` to `inbox2@mailda-test.whymelabs.com`
+— same zone, same account — all arrived and were parsed:
+
+| Path | MIME form | Arrived |
+|---|---|---|
+| Workers binding | raw (`EmailMessage`) | yes |
+| Workers binding | structured (`send()`) | yes |
+| `wrangler email sending send` (REST) | structured | yes |
+| `wrangler email sending send-raw` (REST) | raw | yes |
+
+The most likely explanation for the original observation is the one this session stumbled into
+independently: **sending from a subdomain that is not onboarded is accepted and silently dropped.**
+Before 5 August, `mailda-test.whymelabs.com` had no SPF, DKIM or DMARC records — and this session
+separately confirmed Cloudflare *accepts* mail it cannot deliver (see below). Once the subdomain was
+onboarded, same-account delivery worked on every path.
+
+**Two wrong conclusions were reached along the way and are recorded because the method matters more
+than the result.** First, "the message did not arrive after 2.5 minutes" was treated as evidence of
+non-delivery; it is not — mail is asynchronous and one of these messages arrived later than that.
+Second, a single negative observation was generalised into "the Workers binding cannot deliver
+same-account while REST can", which the retest contradicted. Absence of arrival is only evidence after
+a bounce or a timeout, and neither had happened.
+
+**Consequence for §5A:** the synthetic inbound test at step 6 *can* be same-account, which is
+materially simpler than requiring an external sender. What it must not do is treat "accepted" as
+"delivered" — which is the real lesson, and a different one.
+
+## Cloudflare rewrites the Message-ID, even on the raw path
+
+Measured, and it matters more than it looks:
+
+```
+authored by Mailda : snd_01KZ8FDVNGKDGFHHCJ3B8P3XSQ@mailda-test.whymelabs.com
+returned by CF     : <yKx5fgOqPsRcMxkZvII4348Xnd2w5n3oJZ0s@mailda-test.whymelabs.com>
+actually delivered : yKx5fgOqPsRcMxkZvII4348Xnd2w5n3oJZ0s@mailda-test.whymelabs.com
+```
+
+The `Message-ID` a Node authors is **replaced**, on both the structured and the raw-MIME paths, and the
+id the recipient sees is the one `send()` returns. `send.preserves_authored_message_id: 0`.
+
+This is a concrete instance of ADR 33's claim that neither API can record what the recipient received,
+and it has a consequence ADR 33 did not draw: **a reply cannot be threaded onto the Message-ID Mailda
+authored.** A recipient's client will set `In-Reply-To` to Cloudflare's id, so threading must key on
+`send_manifests.transport_message_id` — verified above to be exactly the delivered id — and the
+authored id is useful only as an internal trace back to its manifest.
+
+Recorded as a correction to the design rather than a footnote: it changes which column the inbound
+threading path has to match against.
 
 ## `handed_over` means less than it sounds, and this is the proof
 

@@ -1,6 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { putEvidence } from "../evidence-store.ts";
+import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
 
@@ -190,9 +190,13 @@ export async function dispatchOne(
       "authored",
     );
   } else {
+    // The normalized body, not an empty string. The first version passed `text: ""`, which would have
+    // sent a blank message — it never fired because ADR 33 routes all customer mail through
+    // `authored`, so the bug sat behind a path nothing used. Found by exercising it deliberately.
+    const body = new TextDecoder().decode(await getEvidence(env, manifest.body_normalized_key!));
     outcome = await transport.submit(
       env,
-      { from: manifest.envelope_from!, to, cc, bcc, subject: manifest.subject!, text: "" },
+      { from: manifest.envelope_from!, to, cc, bcc, subject: manifest.subject!, text: body },
       "reconstructed",
     );
   }
