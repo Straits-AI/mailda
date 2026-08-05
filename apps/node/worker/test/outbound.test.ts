@@ -8,7 +8,9 @@ import { getEvidence, putEvidence } from "../src/evidence-store.ts";
 import {
   cancelSend, dailySendState, dispatchDue, dispatchOne, isAutoRetryable,
 } from "../src/outbound/dispatch.ts";
-import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
+import {
+  assertHeaderSafe, encodeHeaderValue, normalizeBody, rebuildReferences, renderRfc822, sealManifest,
+} from "../src/outbound/manifest.ts";
 import { classifyError, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
 
 const testEnv = env as unknown as Env;
@@ -156,6 +158,88 @@ describe("rendering (ADR 36)", () => {
     const row = await testEnv.CATALOG.prepare("SELECT envelope_bcc FROM send_manifests WHERE id = ?")
       .bind(sealed.id).first<{ envelope_bcc: string }>();
     expect(JSON.parse(row!.envelope_bcc)).toEqual(["archive@acme.example"]);
+  });
+});
+
+describe("header injection", () => {
+  const ctx = () => createSystemCtx();
+
+  it("refuses CR, LF or NUL in a subject — the canonical mail vulnerability", async () => {
+    // ADR 36 keeps the author out of headers and Bcc out of the emitted headers. A subject carrying
+    // `\r\nBcc:` defeats *both* decisions at once, and lets an author end the header block early.
+    for (const hostile of ["ok\r\nBcc: attacker@example.net", "ok\nX-Evil: 1", "ok\u0000trunc"]) {
+      await expect(
+        sealManifest(testEnv, ctx(), ORG, { ...composition, subject: hostile }),
+      ).rejects.toThrow(/E_HEADER_INJECTION/);
+    }
+    // Nothing hostile reached the database.
+    const count = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("refuses it in recipients too, not only the subject", async () => {
+    await expect(
+      sealManifest(testEnv, ctx(), ORG, { ...composition, to: ["a@b.com\r\nBcc: c@d.com"] }),
+    ).rejects.toThrow(/E_HEADER_INJECTION/);
+    await expect(
+      sealManifest(testEnv, ctx(), ORG, { ...composition, bcc: ["x@y.com\nX-Evil: 1"] }),
+    ).rejects.toThrow(/E_HEADER_INJECTION/);
+  });
+
+  it("rejects rather than strips, because sending altered bytes is worse", () => {
+    // ADR 35: the bytes sent must be the bytes approved. Silently removing a control character and
+    // sending anyway is exactly the quiet alteration that forbids.
+    expect(() => assertHeaderSafe("subject", "clean")).not.toThrow();
+    expect(() => assertHeaderSafe("subject", "dirty\r\n")).toThrow(/refused rather than stripped/);
+  });
+
+  it("refuses a non-ASCII address and encodes a non-ASCII subject", async () => {
+    await expect(
+      sealManifest(testEnv, ctx(), ORG, { ...composition, to: ["café@example.net"] }),
+    ).rejects.toThrow(/E_NON_ASCII_ADDRESS/);
+
+    // A subject *is* encodable, and a raw UTF-8 header is non-conformant even when it survives.
+    const sealed = await sealManifest(testEnv, ctx(), ORG, { ...composition, subject: "Réf: café" });
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).toContain("Subject: =?utf-8?B?");
+    expect(text).not.toContain("Réf");
+  });
+
+  it("encodes only what needs encoding", () => {
+    expect(encodeHeaderValue("plain ascii")).toBe("plain ascii");
+    expect(encodeHeaderValue("café")).toMatch(/^=\?utf-8\?B\?.+\?=$/);
+  });
+});
+
+describe("cross-tenant references", () => {
+  it("refuses to seal a reply to another organization's message", async () => {
+    const ctx = createSystemCtx();
+    const foreign = ctx.id("msg");
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes,
+         rfc_message_id, thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id,
+         created_at) VALUES (?,'org_someone_else','2026-Q3','k','h',1,'secret@theirs.com',?,'s','f@x',?,?,?,?)`,
+    ).bind(foreign, ctx.id("thr"), at, at, ctx.id("rcpt"), at).run();
+
+    // Storing an id nothing verified is the defect; the header is only where it becomes visible.
+    await expect(
+      sealManifest(testEnv, ctx, ORG, { ...composition, inReplyToMessageId: foreign }),
+    ).rejects.toThrow(/E_NO_SUCH_PARENT/);
+
+    const count = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("refuses to render a manifest whose parent is out of org, even if one was written directly", async () => {
+    const ctx = createSystemCtx();
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    // Simulate a future write path that skipped the seal-time check. Rendering reads from D1, so it
+    // must not trust whatever wrote the row.
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET in_reply_to_message_id = ? WHERE id = ?")
+      .bind("msg_not_ours", sealed.id).run();
+
+    await expect(renderRfc822(testEnv, sealed.id)).rejects.toThrow(/E_PARENT_NOT_IN_ORG/);
   });
 });
 

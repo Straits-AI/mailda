@@ -71,6 +71,10 @@ export default {
     try {
       return noStore(new URL(request.url), await route(request, env, ctx));
     } catch (error) {
+      // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
+      const explained = callerError(error);
+      if (explained !== null) return noStore(new URL(request.url), explained);
+
       // Bare `throw` reaches the client as Cloudflare's opaque "error code 1101", which tells an
       // operator nothing. The message goes to the log (observability is on); the response says only
       // that something failed, because an unauthenticated caller is not owed internals.
@@ -404,6 +408,34 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
     return Response.json({ error: "not_found" }, { status: 404 });
   }
+}
+
+/**
+ * Caller errors, told apart from faults by their code.
+ *
+ * These carry the four-part message AGENTS.md requires — what, why, and the fix — and the top-level
+ * guard was swallowing all of them into an opaque HTTP 500. That is wrong twice over: the remedy
+ * exists and nobody sees it, and a 500 tells a client "our fault, retry" when the truth is "your
+ * input, fix it", so a well-behaved client retries forever.
+ *
+ * The prefix decides, so a new validation error is classified by being named rather than by someone
+ * remembering to add it to a list of routes.
+ */
+const CALLER_ERRORS: Record<string, number> = {
+  E_HEADER_INJECTION: 422,
+  E_NON_ASCII_ADDRESS: 422,
+  E_PASSWORD_TOO_SHORT: 422,
+  E_NO_SUCH_PARENT: 404,
+  E_NO_SUCH_MAILBOX: 404,
+  E_MAILBOX_HAS_NO_ADDRESS: 409,
+  E_PARENT_NOT_IN_ORG: 409,
+};
+
+function callerError(error: unknown): Response | null {
+  const message = (error as Error)?.message ?? "";
+  const code = /^(E_[A-Z_]+)/.exec(message)?.[1];
+  if (code === undefined || CALLER_ERRORS[code] === undefined) return null;
+  return Response.json({ error: code, message }, { status: CALLER_ERRORS[code] });
 }
 
 /**

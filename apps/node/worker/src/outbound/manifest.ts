@@ -80,6 +80,67 @@ export function normalizeBody(typed: string): string {
     .join("\r\n");
 }
 
+/**
+ * Rejects anything that could break out of a header field.
+ *
+ * **CRLF injection is the canonical vulnerability in a mail system**, and this product is unusually
+ * exposed to it: ADR 36 decided the author never appears in a header and Bcc is deliberately absent
+ * from the emitted headers, and a subject containing `\r\nBcc: attacker@example.com` defeats *both*
+ * decisions at once. It also lets an authenticated user terminate the header block early and author a
+ * body of their choosing.
+ *
+ * Rejected rather than stripped. Silently removing a control character changes what the author wrote
+ * and then sends it anyway, which is exactly the kind of quiet alteration ADR 35 forbids — the bytes
+ * sent must be the bytes approved. A refusal the author can see is the honest outcome.
+ *
+ * NUL is included because it truncates in some downstream parsers even where CR and LF do not.
+ *
+ * Applied at **seal** time, so a hostile value never reaches the database, and again at **render**
+ * time, because rendering reads from D1 and a future write path must not be able to bypass this by
+ * existing.
+ */
+const HEADER_UNSAFE = /[\r\n\0]/;
+
+export function assertHeaderSafe(field: string, value: string): void {
+  if (HEADER_UNSAFE.test(value)) {
+    throw new Error(
+      `E_HEADER_INJECTION  ${field} contains a carriage return, newline or NUL\n` +
+        `  why      those characters end a header field, so this value could inject headers of its ` +
+        `own — a Bcc that exfiltrates the reply, or an early end to the header block\n` +
+        `  fix      remove the control characters; they are refused rather than stripped, because ` +
+        `silently altering what an author wrote and sending it anyway is worse`,
+    );
+  }
+}
+
+/** An address must be plain ASCII: encoding an addr-spec is not a thing RFC 2047 permits. */
+export function assertAddressSafe(field: string, value: string): void {
+  assertHeaderSafe(field, value);
+  // eslint-disable-next-line no-control-regex
+  if (/[^\x20-\x7e]/.test(value)) {
+    throw new Error(
+      `E_NON_ASCII_ADDRESS  ${field} contains non-ASCII characters\n` +
+        "  why      an address is not encodable as an RFC 2047 word, and internationalised addresses " +
+        "need SMTPUTF8, which this transport does not declare\n" +
+        "  fix      use an ASCII address",
+    );
+  }
+}
+
+/**
+ * RFC 2047 encodes a header value when it is not already ASCII.
+ *
+ * Header fields are ASCII, so a raw UTF-8 subject on the wire is non-conformant even when it happens
+ * to survive. `mime.ts` already *decodes* these words on the way in; this is the other direction, and
+ * its absence was a correctness bug rather than only a hardening gap.
+ */
+export function encodeHeaderValue(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\x20-\x7e]/.test(value)) return value;
+  const utf8 = new TextEncoder().encode(value);
+  return `=?utf-8?B?${btoa(String.fromCharCode(...utf8))}?=`;
+}
+
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -158,6 +219,13 @@ export async function sealManifest(
     );
   }
 
+  // Before anything is persisted. A hostile value must never reach the database, because the render
+  // path reads from there and a stored injection would be a stored vulnerability.
+  assertHeaderSafe("subject", composition.subject);
+  for (const address of composition.to) assertAddressSafe("to", address);
+  for (const address of composition.cc ?? []) assertAddressSafe("cc", address);
+  for (const address of composition.bcc ?? []) assertAddressSafe("bcc", address);
+
   const manifestId = ctx.id("snd");
   const at = new Date(ctx.now()).toISOString();
 
@@ -174,11 +242,23 @@ export async function sealManifest(
     )
       .bind(orgId, composition.inReplyToMessageId)
       .first<{ rfc_message_id: string; blob_key: string }>();
+    // Refused rather than silently ignored. The lookup above is org-scoped, so a null result means
+    // the caller named a message that is not theirs — another organization's, or one that does not
+    // exist. Persisting the id anyway would leave `renderRfc822` to resolve it later and put another
+    // tenant's Message-ID into an outgoing header, which is a cross-tenant disclosure to an external
+    // recipient. Storing an id nothing verified is the actual defect; the header is just where it
+    // becomes visible.
+    if (parent === null) {
+      throw new Error(
+        `E_NO_SUCH_PARENT  ${composition.inReplyToMessageId} is not a message in this organization\n` +
+          "  why      a reply threads onto a message the author can see; an unverified id would be " +
+          "resolved at render time and disclosed to the recipient\n" +
+          "  fix      reply to a message in this organization",
+      );
+    }
     // The In-Reply-To header itself is derived in renderRfc822 from the stored parent id, so it is
     // not duplicated here — one place decides what reaches the wire.
-    if (parent !== null) {
-      referencesHeader = await rebuildReferences(env, parent.blob_key, parent.rfc_message_id);
-    }
+    referencesHeader = await rebuildReferences(env, parent.blob_key, parent.rfc_message_id);
   }
 
   const normalized = normalizeBody(composition.bodyTyped);
@@ -269,21 +349,43 @@ export async function renderRfc822(
 
   let inReplyToHeader: string | null = null;
   if (m.in_reply_to_message_id != null) {
+    // Org-scoped. `sealManifest` already refuses an out-of-org parent, and this is the second lock on
+    // the same door: rendering reads from D1, so it must not trust that whatever wrote the row did
+    // the check.
     const parent = await env.CATALOG.prepare(
-      "SELECT rfc_message_id FROM messages WHERE id = ? LIMIT 1",
+      "SELECT rfc_message_id FROM messages WHERE org_id = ? AND id = ? LIMIT 1",
     )
-      .bind(m.in_reply_to_message_id)
+      .bind(m.org_id, m.in_reply_to_message_id)
       .first<{ rfc_message_id: string }>();
-    if (parent !== null) inReplyToHeader = `<${parent.rfc_message_id}>`;
+    if (parent === null) {
+      throw new Error(
+        `E_PARENT_NOT_IN_ORG  manifest ${manifestId} references a message outside its organization\n` +
+          "  why      rendering it would disclose another tenant's Message-ID to the recipient\n" +
+          "  fix      this manifest cannot be sent; investigate how the reference was written",
+      );
+    }
+    inReplyToHeader = `<${parent.rfc_message_id}>`;
   }
+
+  // Re-validated at the boundary that actually builds the bytes. Defence in depth: this function
+  // reads from D1, and the seal-time check protects only the path that goes through `sealManifest`.
+  const to = JSON.parse(m.envelope_to ?? "[]") as string[];
+  const cc = m.envelope_cc == null ? [] : (JSON.parse(m.envelope_cc) as string[]);
+  assertAddressSafe("from", m.envelope_from!);
+  for (const address of [...to, ...cc]) assertAddressSafe("recipient", address);
+  assertHeaderSafe("subject", m.subject!);
+  if (m.references_header != null) assertHeaderSafe("references", m.references_header);
+  if (inReplyToHeader !== null) assertHeaderSafe("in-reply-to", inReplyToHeader);
 
   const headers: [string, string][] = [
     ["From", m.envelope_from!],
-    ["To", (JSON.parse(m.envelope_to ?? "[]") as string[]).join(", ")],
+    ["To", to.join(", ")],
   ];
-  if (m.envelope_cc != null) headers.push(["Cc", (JSON.parse(m.envelope_cc) as string[]).join(", ")]);
+  if (cc.length > 0) headers.push(["Cc", cc.join(", ")]);
   headers.push(
-    ["Subject", m.subject!],
+    // RFC 2047 for anything non-ASCII. A raw UTF-8 subject in a header is non-conformant even when
+    // it survives, and `mime.ts` decodes these words on the way in — this is the other direction.
+    ["Subject", encodeHeaderValue(m.subject!)],
     ["Message-ID", `<${m.rfc_message_id}>`],
     ["Date", new Date(m.sealed_at!).toUTCString()],
     ["MIME-Version", "1.0"],
