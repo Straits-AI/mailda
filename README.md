@@ -64,9 +64,11 @@ produces a new id — so "any material edit invalidates approval" stopped being 
 remember and became a property of the identifiers. Same move as the partial unique index that makes
 two current signing keys unrepresentable.
 
-**Honest semantics are enforced, not aspired to.** The outbox will never say *Sent* — Cloudflare
-tells a Node only that it accepted a message, and neither of its send APIs can report what the
-recipient received. So the strongest claim Mailda makes is `handed_over`, and there are seven outbound
+**Honest semantics are enforced, not aspired to.** The outbox will never say *Sent*, and there is a
+measurement behind that rather than a principle: Cloudflare **accepted** a message addressed to
+`nobody@example.invalid` — a TLD that provably cannot exist — and returned a message id for it. The most
+optimistic thing a transport can tell a Node is compatible with the mail being undeliverable by
+construction, so `handed_over` is the literal ceiling of what is knowable. So the strongest claim Mailda makes is `handed_over`, and there are seven outbound
 states because collapsing any two of them would be the first lie a mail client tells. A forwarded copy
 is called a copy, never a sync. A provider action Mailda observed after the fact is never described as approved.
 When a send outcome is genuinely unknown, the product says `outcome unknown` rather than

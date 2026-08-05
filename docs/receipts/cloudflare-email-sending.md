@@ -66,6 +66,49 @@ state that forbids automatic retry — but it is the wrong answer, since the mes
 and this is the most *fixable* failure in the set. It is now `refused`, with a message naming
 per-subdomain onboarding, because Cloudflare's own wording names a subdomain and no remedy.
 
+### Enabling a subdomain: what it actually does (5 August 2026)
+
+`wrangler email sending enable mailda-test.whymelabs.com` succeeded, and **Cloudflare published the DNS
+itself** because the zone is on Cloudflare DNS — no manual record entry, unlike the dashboard flow's
+wording. The records land on **new names only**, so they cannot collide with an apex that is already
+onboarded:
+
+| Name | Type |
+|---|---|
+| `cf-bounce.<subdomain>` | 3 × MX (`route{1,2,3}.mx.cloudflare.net`) |
+| `cf-bounce.<subdomain>` | TXT `v=spf1 include:_spf.mx.cloudflare.net ~all` |
+| `cf-bounce._domainkey.<subdomain>` | TXT DKIM |
+| `_dmarc.<subdomain>` | TXT `v=DMARC1; p=reject;` |
+
+The DMARC record is listed for a **subdomain** and was *not* listed for the apex, which matters because
+`p=reject` on a subdomain is a policy an operator should know they now have.
+
+Verified after enabling: the apex's own `cf-bounce` records and its MX were unchanged, so onboarding a
+subdomain is additive rather than a modification of the parent. Reversible with
+`wrangler email sending disable <subdomain>`.
+
+## `handed_over` means less than it sounds, and this is the proof
+
+Immediately after enabling, a send to **`nobody@example.invalid`** — a TLD reserved by RFC 2606 that
+provably cannot exist — was **accepted**, with a `messageId` returned:
+
+```
+state: handed_over
+transport messageId: <5BLzoF3tTBQdixkRz9uMRDBpBVh3wKGgOvU9@mailda-test.whymelabs.com>
+```
+
+**Cloudflare does not validate the recipient domain at submission time.** It accepted mail for a domain
+that cannot resolve, counted it against the daily quota, and returned an id.
+
+This is the strongest available evidence for ADR 39's refusal to ever display *Sent*: the most
+optimistic thing the transport can tell a Node is compatible with the message being undeliverable by
+construction. `handed_over` is not a euphemism, it is the literal truth and the ceiling of what is
+knowable at that moment.
+
+It also sharpens the bounce-handling fog on the map. A rejection for this message can only arrive later,
+asynchronously, as inbound mail to `cf-bounce.<subdomain>` — which means outbound state is partly
+*inbound* mail, and nothing consumes that yet.
+
 ## Two APIs, and they record different things
 
 | | `env.EMAIL.send({from, to, subject, html, text})` | `new EmailMessage(from, to, rawMime)` |
