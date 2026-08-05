@@ -59,7 +59,7 @@ function notice(text, kind = "") {
 
 /* ------------------------------------------------------------------ status strip ---------- */
 
-let nodeState = { claimed: false, outboxPending: 0 };
+let nodeState = { claimed: false, outboxPending: 0, mailboxId: null };
 
 /**
  * The front panel. Live node state, and the session's own clock.
@@ -88,7 +88,11 @@ function renderStatus(sessionText = null) {
     items.push(el("span", { class: "field session mono", text: sessionText }));
   }
   if (isSignedIn()) {
-    items.push(el("button", { class: "linkish", text: "sign out", onclick: () => logout() }));
+    items.push(
+      el("button", { class: "linkish", text: "inbox", onclick: () => route() }),
+      el("button", { class: "linkish", text: "outbox", onclick: () => renderOutbox() }),
+      el("button", { class: "linkish", text: "sign out", onclick: () => logout() }),
+    );
   }
 
   statusStrip.replaceChildren(...items);
@@ -285,15 +289,39 @@ function renderLedger(messages) {
       el("td", { colspan: "5" }, [
         el("dl", {}, [
           el("dt", { text: "receipt" }), el("dd", { class: "mono", text: message.id }),
+          el("dt", { text: "envelope from" }), el("dd", { class: "mono", text: message.envelope_from }),
           el("dt", { text: "accepted" }), el("dd", { class: "mono", text: message.accepted_at }),
           el("dt", { text: "stored" }),
           el("dd", { class: "mono", text: `${bytes(message.raw_bytes)} — framed, encrypted at rest` }),
         ]),
+        el("div", { class: "row-actions" }, [
+          el("button", {
+            class: "linkish",
+            text: "reply",
+            onclick: () =>
+              composer({
+                mailboxId: nodeState.mailboxId,
+                inReplyToMessageId: message.message_id ?? undefined,
+                to: message.envelope_from,
+                subject: /^re:/i.test(message.subject ?? "") ? message.subject : `Re: ${message.subject ?? ""}`,
+                body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.envelope_from} wrote:\n> …`,
+              }),
+          }),
+        ]),
+        bodyHost,
       ]),
     ]);
 
+    const bodyHost = el("div", { class: "body-host" });
+    // The header `From`, not the envelope sender.
+    //
+    // For anything Cloudflare sent, the envelope sender is the return path
+    // (`bounces@cf-bounce.<domain>`), which is not who wrote the message — a column labelled "From"
+    // showing that is a quiet lie of exactly the kind §5C exists to stop. #27 parses the real header
+    // into `messages.from_addr`; the envelope is still shown, in the detail, where it is labelled as
+    // what it is.
     const row = el("tr", { class: "entry", tabindex: "0", "data-reveal": "" }, [
-      el("td", { text: message.envelope_from }),
+      el("td", { text: message.from_addr ?? message.envelope_from }),
       el("td", { class: "dim", text: message.envelope_to }),
       el("td", { class: "mono dim", text: received(message.accepted_at) }),
       el("td", { class: "num mono", text: bytes(message.raw_bytes) }),
@@ -306,9 +334,14 @@ function renderLedger(messages) {
       ]),
     ]);
 
-    const toggle = () => { detail.hidden = !detail.hidden; row.classList.toggle("open", !detail.hidden); };
+    const toggle = () => {
+      detail.hidden = !detail.hidden;
+      row.classList.toggle("open", !detail.hidden);
+      // Fetched on first open rather than for every row: a body costs a decrypt and a sanitise pass.
+      if (!detail.hidden && bodyHost.childElementCount === 0) openBody(message.id, bodyHost);
+    };
     row.addEventListener("click", (event) => {
-      if (event.target.tagName !== "A") toggle();
+      if (event.target.tagName !== "A" && event.target.tagName !== "BUTTON") toggle();
     });
     row.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
@@ -334,11 +367,259 @@ function renderLedger(messages) {
   );
 }
 
+/* ------------------------------------------------------------------ reading a body -------- */
+
+/**
+ * The body panel.
+ *
+ * **The iframe is the trust boundary, not the sanitiser** (ADR 37). `sandbox` with neither
+ * `allow-scripts` nor `allow-same-origin` gives the body an opaque origin and executes nothing, so
+ * whatever the server-side sanitiser misses still cannot run. Sanitising reduces what the browser's
+ * parser is handed and withholds remote content; it is not a claim the output is inert.
+ *
+ * `srcdoc` rather than a `src` URL, so the HTML never becomes a fetchable resource on this origin.
+ */
+function bodyPanel(body) {
+  if (body.state === "unparsed") {
+    return el("div", {}, [
+      notice(body.problem, "bad"),
+      el("p", { class: "hint", text: "The original is unchanged. Download the .eml to read it elsewhere." }),
+    ]);
+  }
+  if (body.state === "no-body") {
+    // §5C: distinct from a body that was refused, and from one this reader may not see.
+    return notice("This message has no body. That is what the sender sent.");
+  }
+
+  const parts = [];
+
+  if (body.truncated) {
+    parts.push(notice(
+      "This body was too large to render in full, so it is shown truncated. The complete original is " +
+      "unchanged and downloadable.",
+    ));
+  }
+
+  if (body.blockedRemote > 0) {
+    // Never silent. A reader has to know something was withheld, and why.
+    parts.push(notice(
+      `${body.blockedRemote} remote image${body.blockedRemote === 1 ? "" : "s"} withheld. Loading them ` +
+      `would tell the sender you opened this message.`,
+    ));
+  }
+
+  if (body.state === "text-only") {
+    parts.push(el("pre", { class: "body-text", text: body.text }));
+    return el("div", {}, parts);
+  }
+
+  const frame = el("iframe", {
+    class: "body-frame",
+    // No allow-scripts and no allow-same-origin. This is the boundary.
+    sandbox: "",
+    referrerpolicy: "no-referrer",
+    loading: "lazy",
+    title: "Message body",
+  });
+  // A second, independent block on remote fetching: even if a URL survived sanitising, the frame's own
+  // policy refuses to load it.
+  frame.setAttribute(
+    "srcdoc",
+    `<!doctype html><meta charset="utf-8">` +
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">` +
+      `<style>body{font:14px/1.55 system-ui,sans-serif;margin:0;color-scheme:light dark}` +
+      `img[data-mailda-blocked]{outline:1px dashed currentColor;outline-offset:2px;opacity:.5;min-width:12px;min-height:12px}` +
+      `</style>${body.html}`,
+  );
+  parts.push(frame);
+  return el("div", {}, parts);
+}
+
+async function openBody(receiptId, host) {
+  host.replaceChildren(el("p", { class: "hint", text: "Reading…" }));
+  const response = await apiFetch(`/api/messages/${encodeURIComponent(receiptId)}/body`);
+  if (!response.ok) {
+    host.replaceChildren(notice(`The body could not be read (${response.status}).`, "bad"));
+    return;
+  }
+  host.replaceChildren(bodyPanel(await response.json()));
+}
+
+/* ------------------------------------------------------------------ composing ------------- */
+
+/**
+ * The composer.
+ *
+ * Sealing and dispatching are separate steps (ADR 35), and this surface makes that visible rather than
+ * hiding it behind a Send button: a sealed message sits `held` for its mailbox's window, and the undo is
+ * a real cancellation of something that never left — not a recall, which would be a lie.
+ */
+function composer(context) {
+  const to = field("to", "To", { value: context.to ?? "", required: "required", class: "mono" });
+  const subject = field("subject", "Subject", { value: context.subject ?? "", required: "required" });
+  const bodyInput = el("textarea", { id: "body", rows: "10", required: "required" });
+  bodyInput.value = context.body ?? "";
+  const errors = el("div", { class: "errors", role: "alert" });
+  const submit = el("button", { class: "primary", type: "submit", text: "Seal and send" });
+
+  const form = el("form", { novalidate: "novalidate" }, [
+    to.node,
+    subject.node,
+    el("label", { class: "field-row", for: "body" }, [el("span", { text: "Message" }), bodyInput]),
+    el("p", {
+      class: "hint",
+      text:
+        "Sealing records exactly what will be sent before anything leaves. It then waits, so you can " +
+        "still stop it — nothing is recalled, because a recall would not be honest.",
+    }),
+    submit, errors,
+  ]);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errors.replaceChildren();
+    submit.disabled = true;
+    submit.textContent = "Sealing…";
+    try {
+      const response = await apiFetch("/api/sends", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          mailboxId: context.mailboxId,
+          inReplyToMessageId: context.inReplyToMessageId,
+          to: to.input.value.split(/[,;]+/).map((s) => s.trim()).filter(Boolean),
+          subject: subject.input.value,
+          body: bodyInput.value,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        // The server's four-part message, verbatim — it names the remedy.
+        errors.replaceChildren(notice(result.message ?? "This message could not be sealed.", "bad"));
+        return;
+      }
+      return renderOutbox(result.id);
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Seal and send";
+    }
+  });
+
+  show(
+    el("div", { class: "split" }, [
+      el("div", { class: "split-lede", "data-reveal": "" }, [
+        el("h1", { text: context.inReplyToMessageId ? "Reply" : "New message" }),
+        el("p", {
+          text:
+            "This will be sent from the mailbox, not from you. Who wrote it is recorded here and does " +
+            "not travel with the message — a name in the From line would tell every correspondent who " +
+            "works here.",
+        }),
+      ]),
+      panel(context.inReplyToMessageId ? "Reply" : "Compose", null, [form]),
+    ]),
+  );
+}
+
+/* ------------------------------------------------------------------ the outbox ------------- */
+
+/**
+ * The seven states of ADR 39, named as they are named everywhere else (§16).
+ *
+ * `sent` and `delivered` are absent because they would be claims nobody observed. The wording here is
+ * the product's argument, not an apology for it.
+ */
+const SEND_STATES = {
+  held: { label: "held", note: "Not sent yet. You can still stop this." },
+  cancelled: { label: "cancelled", note: "Stopped before it left." },
+  throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
+  refused: { label: "refused", note: "The mail service would not accept it. It never left." },
+  suppressed: { label: "suppressed", note: "The mail service will never deliver to this recipient." },
+  handed_over: { label: "handed over", note: "Accepted by the mail service. Whether it arrived is not knowable from here." },
+  outcome_unknown: { label: "outcome unknown", note: "We do not know whether it left. It will not be retried automatically." },
+};
+
+async function renderOutbox(highlightId) {
+  const response = await apiFetch("/api/sends");
+  if (!response.ok) return show(notice(`The outbox could not be read (${response.status}).`, "bad"));
+  const { sends, daily, capability } = await response.json();
+
+  const rows = sends.flatMap((send) => {
+    const state = SEND_STATES[send.state] ?? { label: send.state, note: "" };
+    const row = el("tr", { class: send.id === highlightId ? "entry open" : "entry", "data-reveal": "" }, [
+      el("td", { text: send.subject }),
+      el("td", { class: "dim mono", text: (JSON.parse(send.envelope_to) || []).join(", ") }),
+      el("td", {}, [el("span", { class: `state state-${send.state}`, text: state.label })]),
+      el("td", { class: "num mono dim", text: new Date(send.state_at).toLocaleTimeString(undefined, { hour12: false }) }),
+      el("td", { class: "num" }, [
+        send.state === "held"
+          ? el("button", {
+              class: "linkish",
+              text: "stop",
+              onclick: async () => {
+                const result = await apiFetch(`/api/sends/${encodeURIComponent(send.id)}/cancel`, { method: "POST" });
+                const outcome = await result.json();
+                if (!outcome.cancelled) window.alert(outcome.reason ?? "It could not be stopped.");
+                renderOutbox(send.id);
+              },
+            })
+          : send.fidelity === "authored" && send.state !== "cancelled"
+            ? el("a", { class: "mono", href: `/api/sends/${encodeURIComponent(send.id)}/submitted`, text: ".eml" })
+            : el("span", { class: "dim mono", text: "—" }),
+      ]),
+    ]);
+
+    const detail = el("tr", { class: "detail", hidden: send.id === highlightId ? null : "hidden" }, [
+      el("td", { colspan: "5" }, [
+        el("dl", {}, [
+          el("dt", { text: "what this means" }), el("dd", { text: state.note }),
+          el("dt", { text: "manifest" }), el("dd", { class: "mono", text: send.id }),
+          ...(send.last_error === null ? [] : [el("dt", { text: "reported" }), el("dd", { text: send.last_error })]),
+        ]),
+      ]),
+    ]);
+
+    const toggle = () => { detail.hidden = !detail.hidden; row.classList.toggle("open", !detail.hidden); };
+    row.addEventListener("click", (event) => {
+      if (event.target.tagName !== "A" && event.target.tagName !== "BUTTON") toggle();
+    });
+    return [row, detail];
+  });
+
+  const limit = daily.throttledAtCount === null
+    ? `${daily.handedOver} handed over today. Your daily limit is not published by Cloudflare; it will be recorded here the first time you hit it.`
+    : `${daily.handedOver} handed over today. You were first throttled at ${daily.throttledAtCount} — that is your observed daily limit.`;
+
+  show(
+    el("div", { class: "ledger-head", "data-reveal": "" }, [
+      el("h1", { text: "Outbox" }),
+      el("p", { class: "count mono", text: `${sends.length} message${sends.length === 1 ? "" : "s"}` }),
+    ]),
+    capability.canSend ? null : notice(capability.detail, "bad"),
+    notice(limit),
+    sends.length === 0
+      ? el("p", { class: "hint", text: "Nothing has been sealed yet." })
+      : el("div", { class: "scroller" }, [
+          el("table", {}, [
+            el("thead", {}, [el("tr", {}, [
+              el("th", { text: "Subject" }), el("th", { text: "To" }), el("th", { text: "State" }),
+              el("th", { class: "num", text: "When" }), el("th", { class: "num", text: "Submitted" }),
+            ])]),
+            el("tbody", {}, rows),
+          ]),
+        ]),
+  );
+}
+
 /* ------------------------------------------------------------------ routing -------------- */
 
 async function route() {
   const health = await fetch("/health").then((r) => r.json());
-  nodeState = { claimed: health.claimed === true, outboxPending: health.outboxPending ?? 0 };
+  nodeState = {
+    claimed: health.claimed === true,
+    outboxPending: health.outboxPending ?? 0,
+    mailboxId: nodeState.mailboxId,
+  };
   renderStatus(sessionReadout());
 
   if (!nodeState.claimed) return renderClaim();
@@ -361,6 +642,9 @@ async function route() {
   }
 
   const { messages } = await response.json();
+  // Needed by the composer: From is the mailbox (ADR 36), so composing requires knowing which one.
+  nodeState.mailboxId = messages[0]?.mailbox_id ?? nodeState.mailboxId;
+  renderStatus(sessionReadout());
   return messages.length === 0 ? renderEmpty() : renderLedger(messages);
 }
 

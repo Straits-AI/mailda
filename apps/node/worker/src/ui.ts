@@ -384,6 +384,62 @@ tr.detail dl {
 tr.detail dt { color: var(--dim); letter-spacing: .1em; text-transform: uppercase; font-size: .655rem; padding-top: .12rem; }
 tr.detail dd { margin: 0; word-break: break-all; }
 
+/* ---- body, composer, outbox ------------------------------------------------------------- */
+
+/* The trust boundary is the sandbox attribute, not this styling. Sized generously because an email
+   body has no reliable height and clipping it would hide content. */
+.body-frame {
+  width: 100%;
+  min-height: 18rem;
+  border: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--ground-2) 90%, transparent);
+  margin-top: .8rem;
+}
+.body-text {
+  font-family: var(--mono);
+  font-size: .8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: .8rem 0 0;
+  padding: .8rem;
+  border: 1px solid var(--rule);
+  max-height: 26rem;
+  overflow: auto;
+}
+.body-host:empty { display: none; }
+.row-actions { margin: .6rem 0 .2rem; display: flex; gap: 1rem; }
+
+textarea {
+  font: 400 .9rem/1.6 var(--mono);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  padding: .6rem;
+  width: 100%;
+  resize: vertical;
+}
+textarea:focus { outline: 0; border-color: var(--signal); }
+
+/* One colour per state, because §16 requires a state to mean the same thing everywhere and a reader
+   should not have to remember which grey means which. */
+.state {
+  font-family: var(--mono);
+  font-size: .655rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: .18rem .45rem;
+  border: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+.state-held           { border-color: var(--signal); color: var(--signal); }
+.state-handed_over    { border-color: var(--live); color: var(--live); }
+.state-cancelled      { color: var(--dim); }
+.state-throttled      { border-color: var(--signal); color: var(--signal); }
+.state-refused        { border-color: var(--alarm); color: var(--alarm); }
+.state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
+.state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
+
 a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
 a:hover { border-bottom-color: var(--signal); }
 tbody a { font-size: .8rem; }

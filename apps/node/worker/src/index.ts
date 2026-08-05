@@ -4,7 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { CallerError } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
-import { streamEvidence } from "./evidence-store.ts";
+import { getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
@@ -436,6 +436,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
     if (url.pathname === "/api/messages" && request.method === "GET") {
       return listMessages(env, request);
+    }
+
+    /**
+     * A message body, extracted and sanitised (ADR 37).
+     *
+     * The HTML returned here is for a **sandboxed iframe** and nothing else. The client must render it
+     * with no `allow-scripts` and no `allow-same-origin`, because that — not this sanitiser — is the
+     * trust boundary. Sanitising reduces what the browser's parser is handed and withholds remote
+     * content; it is not a claim that the output is inert.
+     */
+    const body = /^\/api\/messages\/([^/]+)\/body$/.exec(url.pathname);
+    if (body && request.method === "GET") {
+      const allowed = await authorize(env, request, body[1]!);
+      if (!allowed.ok) return allowed.response;
+      const { renderBody } = await import("./render/body.ts");
+      return Response.json(await renderBody(await getEvidence(env, allowed.blobKey)));
     }
 
     // Original .eml, streamed frame by frame so a 25 MiB message is never buffered (#16).

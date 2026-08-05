@@ -92,11 +92,17 @@ describe("key vault (ADR 28)", () => {
   });
 
   it("names an unknown generation instead of failing vaguely", async () => {
-    await expect(vault(testEnv).openingKey("content", 9999)).rejects.toThrow(
-      /E_VAULT_UNKNOWN_GENERATION/,
+    // One call, both assertions. Two separate `.rejects` on Durable Object RPC left the rejections
+    // unhandled in the pool, which Vitest warns can produce false positives — a test that reports
+    // green while something escaped is worse than one that fails.
+    const error = await vault(testEnv).openingKey("content", 9999).then(
+      () => null,
+      (reason: Error) => reason,
     );
+    expect(error).not.toBeNull();
+    expect(error!.message).toMatch(/E_VAULT_UNKNOWN_GENERATION/);
     // The message has to say the data is intact and what would restore it.
-    await expect(vault(testEnv).openingKey("content", 9999)).rejects.toThrow(/recovery codes/);
+    expect(error!.message).toMatch(/recovery codes/);
   });
 });
 

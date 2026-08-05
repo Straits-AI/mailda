@@ -136,9 +136,11 @@ export async function listMessages(env: Env, request: Request): Promise<Response
   // Authorization is inside the query, not a filter applied afterwards — §5 forbids
   // returning counts or snippets for anything the caller cannot see.
   const rows = await env.CATALOG.prepare(
-    `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at
+    `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
+            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+       LEFT JOIN messages m ON m.ingress_receipt_id = r.id
       WHERE r.org_id = ?
         AND a.mailbox_id IN (
           SELECT object_id FROM relationship_tuples

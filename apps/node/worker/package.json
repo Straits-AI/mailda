@@ -14,6 +14,7 @@
     "@mailda/evidence": "workspace:*",
     "@mailda/runtime": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "postal-mime": "^2.7.5",
     "zod": "^4.1.13"
   },
   "devDependencies": {
