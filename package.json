@@ -10,14 +10,18 @@
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
-    "lint": "turbo lint",
+    "lint": "eslint .",
     "receipts": "turbo @mailda/receipts#generate",
     "receipts:check": "pnpm receipts && git diff --exit-code packages/budgets/src/generated.ts",
     "bench": "turbo bench"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^9.39.5",
+    "globals": "^17.9.0",
     "turbo": "^2.5.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

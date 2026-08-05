@@ -7,7 +7,7 @@ import { createSystemCtx } from "@mailda/runtime";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
 import {
-  addressOf, decodeEncodedWords, headerBlock, headerFields, messageIds, parseHeaders, sentAt,
+  addressOf, decodeEncodedWords, headerBlock, headerFields, messageIds, sentAt,
 } from "../src/mime.ts";
 
 const testEnv = env as unknown as Env;
@@ -32,7 +32,6 @@ beforeEach(async () => {
 });
 
 async function accept(raw: Bytes, id = "rcpt_test"): Promise<string> {
-  const ctx = createSystemCtx();
   const stored = await putEvidence(testEnv, `${ORG}/raw/2026-Q3/${id}.eml`, raw);
   await testEnv.CATALOG.prepare(
     `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,

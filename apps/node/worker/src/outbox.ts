@@ -98,9 +98,10 @@ export class OutboxSweeper extends DurableObject<Env> {
    * costs nothing.
    */
   async schedule(delayMs = CLAIM_STALE_MS): Promise<void> {
+    const { createSystemCtx } = await import("@mailda/runtime");
     const existing = await this.ctx.storage.getAlarm();
     if (existing === null) {
-      await this.ctx.storage.setAlarm(Date.now() + delayMs);
+      await this.ctx.storage.setAlarm(createSystemCtx().now() + delayMs);
     }
   }
 
@@ -130,7 +131,7 @@ export class OutboxSweeper extends DurableObject<Env> {
     // Re-arm while work remains, so a backlog drains rather than waiting for the next write.
     const remaining = await pendingEvents(this.env, clock, 1);
     if (remaining.length > 0 || drained > 0) {
-      await this.ctx.storage.setAlarm(Date.now() + CLAIM_STALE_MS);
+      await this.ctx.storage.setAlarm(clock.now() + CLAIM_STALE_MS);
     }
   }
 }

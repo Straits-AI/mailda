@@ -106,7 +106,7 @@ export async function rebuildReferences(
   parentBlobKey: string,
   parentRfcMessageId: string,
 ): Promise<string | null> {
-  let chain: string[] = [];
+  let chain: string[];
   try {
     const raw = await getEvidence(env, parentBlobKey);
     const fields = headerFields(headerBlock(raw));
@@ -208,7 +208,6 @@ export async function sealManifest(
   }
 
   const normalized = normalizeBody(composition.bodyTyped);
-  const encoder = new TextEncoder();
 
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
   // state is an orphan blob rather than a manifest pointing at nothing.

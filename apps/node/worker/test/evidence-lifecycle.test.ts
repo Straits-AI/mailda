@@ -220,7 +220,6 @@ describe("re-seal (#25)", () => {
 
 describe("reconcile (#25, §24)", () => {
   it("finds an orphan blob but will not delete it unless asked", async () => {
-    const ctx = createSystemCtx();
     const blobKey = `${ORG}/raw/2026-Q3/orphan.eml`;
     await writeLegacyObject(blobKey, RAW);
 

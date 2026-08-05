@@ -1,7 +1,7 @@
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { audit, log, trimLogs, verifyChain } from "./audit.ts";
+import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
@@ -75,7 +75,7 @@ export default {
     const clock = createSystemCtx();
     const requestId = clock.id("req");
     try {
-      return noStore(new URL(request.url), await route(request, env, ctx, requestId));
+      return noStore(new URL(request.url), await route(request, env, ctx));
     } catch (error) {
       // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
       // The status travels with the throw (see errors.ts) rather than living in a table here that has
@@ -112,7 +112,7 @@ export default {
   },
 };
 
-async function route(request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
+async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   {
     const url = new URL(request.url);
     const clock = createSystemCtx();
@@ -143,7 +143,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      */
     if (url.pathname === "/api/doctor") {
       const orgId = await organizationId(env);
-      const signedIn = (await principalFor(env, request)) !== null;
+      const signedIn = (await principalFor(env, clock, request)) !== null;
       const full = await runDoctor(env, clock);
 
       // A claimed Node normally requires authentication here. The exception is the case that made
@@ -174,7 +174,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      * operation that pretends otherwise fails silently at scale (receipt: evidence-lifecycle.md).
      */
     if (url.pathname === "/api/maintenance/reseal" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const outcome = await resealBatch(env, clock, who.orgId);
       // 200 even with failures: the batch itself succeeded, and each failure is a named receipt the
@@ -183,7 +183,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     }
 
     if (url.pathname === "/api/maintenance/reconcile" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const collect = url.searchParams.get("collect") === "1";
       const report = await reconcileEvidence(env, clock, who.orgId, { collect });
@@ -197,7 +197,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      * acts (ADR 35) — which is what makes undo-send honest rather than a claim about recall.
      */
     if (url.pathname === "/api/sends" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
 
       // §14: whether this Node can send is answerable *before* composing, not at submit.
@@ -229,7 +229,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      */
     const submitted = /^\/api\/sends\/([^/]+)\/submitted$/.exec(url.pathname);
     if (submitted && request.method === "GET") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const row = await env.CATALOG.prepare(
         "SELECT submitted_key, fidelity FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
@@ -265,14 +265,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
 
     const cancel = /^\/api\/sends\/([^/]+)\/cancel$/.exec(url.pathname);
     if (cancel && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!);
       return Response.json(outcome, { status: outcome.cancelled ? 200 : 409 });
     }
 
     if (url.pathname === "/api/sends" && request.method === "GET") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const rows = await env.CATALOG.prepare(
         `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
@@ -289,7 +289,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     // Releases anything whose hold window has closed. The sweeper alarm does this too; the endpoint
     // exists so an operator does not have to wait for an alarm to see the machinery work.
     if (url.pathname === "/api/sends/dispatch" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       return Response.json({ dispatched: await dispatchDue(env, clock, who.orgId) });
     }
@@ -407,7 +407,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     }
 
     if (url.pathname === "/api/auth/logout-everywhere" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const revoked = await revokeAllSessions(env, clock, who.orgId, who.userId);
       return signedOutResponse("signed_out", `Signed out of ${revoked} session(s).`);
@@ -424,7 +424,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     // Rotation. Owner-authenticated, because it is an ordinary operation that should be easy to
     // perform — a rotation procedure nobody can run is a key that never rotates.
     if (url.pathname === "/api/auth/rotate-signing-key" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const rotated = await rotateSigningKey(env, clock);
       return Response.json({
@@ -447,7 +447,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      * when Layer 5 defines one.
      */
     if (url.pathname === "/api/audit" && request.method === "GET") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const action = url.searchParams.get("action");
       const rows = await env.CATALOG.prepare(
@@ -463,14 +463,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
 
     // Verification is the point of a hash chain: a log an administrator has to trust is not evidence.
     if (url.pathname === "/api/audit/verify" && request.method === "POST") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const from = Number(url.searchParams.get("from") ?? "1");
       return Response.json(await verifyChain(env, who.orgId, Number.isFinite(from) ? from : 1));
     }
 
     if (url.pathname === "/api/logs" && request.method === "GET") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const level = url.searchParams.get("level");
       const rows = await env.CATALOG.prepare(
@@ -487,7 +487,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     }
 
     if (url.pathname === "/api/me") {
-      const who = await principalFor(env, request);
+      const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const user = await env.CATALOG.prepare("SELECT email FROM users WHERE id = ? LIMIT 1")
         .bind(who.userId)
@@ -501,7 +501,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     }
 
     if (url.pathname === "/api/messages" && request.method === "GET") {
-      return listMessages(env, request);
+      return listMessages(env, clock, request);
     }
 
     /**
@@ -514,7 +514,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
      */
     const body = /^\/api\/messages\/([^/]+)\/body$/.exec(url.pathname);
     if (body && request.method === "GET") {
-      const allowed = await authorize(env, request, body[1]!);
+      const allowed = await authorize(env, clock, request, body[1]!);
       if (!allowed.ok) return allowed.response;
       const { renderBody } = await import("./render/body.ts");
       return Response.json(await renderBody(await getEvidence(env, allowed.blobKey)));
@@ -523,7 +523,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, requestI
     // Original .eml, streamed frame by frame so a 25 MiB message is never buffered (#16).
     const raw = /^\/api\/messages\/([^/]+)\/raw$/.exec(url.pathname);
     if (raw && request.method === "GET") {
-      const allowed = await authorize(env, request, raw[1]!);
+      const allowed = await authorize(env, clock, request, raw[1]!);
       if (!allowed.ok) return allowed.response;
       return new Response(await streamEvidence(env, allowed.blobKey), {
         headers: {

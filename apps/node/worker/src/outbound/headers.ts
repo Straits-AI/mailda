@@ -33,9 +33,7 @@ import { unprocessable } from "../errors.ts";
  * bytes approved. A refusal the author can see is the honest outcome.
  */
 
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\r\n\0]/;
-// eslint-disable-next-line no-control-regex
 const NON_ASCII = /[^\x20-\x7e]/;
 /** RFC 5322 field names: printable ASCII, no colon, no space. */
 const VALID_NAME = /^[\x21-\x39\x3b-\x7e]+$/;

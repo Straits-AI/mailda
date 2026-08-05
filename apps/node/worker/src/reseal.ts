@@ -1,4 +1,3 @@
-import { utf8 } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 

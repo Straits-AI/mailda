@@ -3,7 +3,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
-import { LEGACY_KEY_GENERATION, vault } from "./keyvault.ts";
+import { vault } from "./keyvault.ts";
 import { reconcileEvidence } from "./reconcile.ts";
 import { pendingReseal } from "./reseal.ts";
 

@@ -1,3 +1,4 @@
+import type { Ctx } from "@mailda/runtime";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 
@@ -32,13 +33,13 @@ export interface Principal {
  * is re-read from `relationship_tuples` below on every single request, so removing a grant takes
  * effect on the next call regardless of what any outstanding token says.
  */
-export async function principalFor(env: Env, request: Request): Promise<Principal | null> {
+export async function principalFor(env: Env, ctx: Ctx, request: Request): Promise<Principal | null> {
   const authorization = request.headers.get("authorization");
   const bearer = authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : null;
   const token = bearer ?? cookieValue(request, ACCESS_COOKIE);
   if (token === null || token === "") return null;
 
-  const verified = await verifyAccessToken(env, token, Date.now());
+  const verified = await verifyAccessToken(env, token, ctx.now());
   if (!verified.ok) return null;
   return { orgId: verified.claims.org, userId: verified.claims.sub };
 }
@@ -78,7 +79,7 @@ type Authorized = { ok: true; blobKey: string } | { ok: false; response: Respons
  * message and an absent one both return 404 with the same body, deliberately — the
  * distinction is visible in audit, never to the caller.
  */
-export async function authorize(env: Env, request: Request, receiptId: string): Promise<Authorized> {
+export async function authorize(env: Env, ctx: Ctx, request: Request, receiptId: string): Promise<Authorized> {
   const notFound = {
     ok: false as const,
     response: Response.json(
@@ -87,7 +88,7 @@ export async function authorize(env: Env, request: Request, receiptId: string): 
     ),
   };
 
-  const who = await principalFor(env, request);
+  const who = await principalFor(env, ctx, request);
   if (who === null) {
     return {
       ok: false,
@@ -115,8 +116,8 @@ export async function authorize(env: Env, request: Request, receiptId: string): 
 }
 
 /** Messages the caller may actually see. §5 requires authorization before any listing. */
-export async function listMessages(env: Env, request: Request): Promise<Response> {
-  const who = await principalFor(env, request);
+export async function listMessages(env: Env, ctx: Ctx, request: Request): Promise<Response> {
+  const who = await principalFor(env, ctx, request);
   if (who === null) {
     return Response.json(
       { error: "unauthenticated", message: "Sign in to read messages.", refreshable: true },
