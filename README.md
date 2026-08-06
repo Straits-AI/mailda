@@ -26,8 +26,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 21 receipts in [`docs/receipts/`](./docs/receipts/) generating 125 verified constants |
-| **Code** | A measurement harness and one Worker. 221 tests, checked on every push. Not a product. |
+| **Measurements** | 22 receipts in [`docs/receipts/`](./docs/receipts/) generating 128 verified constants |
+| **Code** | A measurement harness and one Worker. 222 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -120,6 +120,14 @@ therefore computed from the tokens against both ends of the gradient, which boun
 them. That found a real failure: small dim text in light mode was at 4.15:1 against AA's 4.5. Fixed and
 deployed, with the dark theme's 0.01 margin now visible rather than latent.
 ([receipt](./docs/receipts/contrast-tokens.md))
+
+**A measured number was deleted rather than corrected.** A receipt recorded that the Deploy to
+Cloudflare button does not provision the R2 bucket Mailda stores mail in — the last thing standing
+between this and an installable product. Re-examined, that observation came from a probe whose deploy
+died before reaching R2, so it never measured what it claimed to. Direct measurement shows `wrangler
+deploy` creates the bucket in every shape tested, with an explicit name or without one, interactive or
+not. The constant is gone rather than flipped, because a number that reads as a platform limit when it
+was a broken probe is worse than no number. ([receipt](./docs/receipts/r2-auto-provisioning.md))
 
 **What a customer's install can actually provision is checked too.** A real Deploy to Cloudflare
 click was measured against a paid account: it provisions D1 but **not** R2, pins one Worker per build

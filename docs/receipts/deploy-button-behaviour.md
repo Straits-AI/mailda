@@ -9,7 +9,6 @@ values:
   builds.workers_deployable_per_project: 1
   builds.provisions_d1: 1
   builds.provisions_queues: 1
-  builds.provisions_r2: 0
   builds.writes_resource_ids_to_repo: 1
 ---
 
@@ -60,7 +59,7 @@ This kills the shape #13 had settled on.
 |---|---|---|
 | D1 database | yes | **yes** — named `mailda-probe-node` |
 | Queue | yes, with explicit `queue` name | **yes** — named `mailda-probe-inbound` |
-| R2 bucket | yes | **no** |
+| R2 bucket | yes | **not by the time the deploy died** — see the correction below |
 | Durable Object namespace | via `new_sqlite_classes` migration | not reached (deploy failed) |
 
 **D1 provisioning works.** That answers the question this ticket existed for: the
@@ -73,6 +72,17 @@ repository contains `"bucket_name": "mailda-probe-node"` for a bucket that does 
 The button produced a configuration that does not match reality, which is a likely cause of
 the second deploy's failure. Whether this is a bug or ordering artifact is unknown; it is
 recorded as observed.
+
+> **Corrected 6 August 2026 — it was the ordering artifact.** This section originally carried a
+> `builds.provisions_r2: 0` constant, and that constant has been **removed rather than corrected**,
+> because it claimed to measure something this probe could not see: the deploy that would have created
+> the bucket never finished. Direct measurement
+> ([`r2-auto-provisioning.md`](./r2-auto-provisioning.md)) shows `wrangler deploy` creates the bucket in
+> every shape tested — with an explicit `bucket_name` or without one, interactive or not — and
+> Cloudflare now documents R2 among the resources the button provisions. The chained multi-Worker
+> deploy that failed here does not exist any more; ADR 18 collapsed Mailda to one Worker. A number that
+> reads as a platform limit when it was an artifact of a broken probe is worse than no number, which is
+> why it is gone rather than flipped to 1.
 
 Naming differs from `wrangler deploy`'s own auto-provisioning, which names resources
 `<worker>-<binding>` (receipt: `d1-auto-provisioning.md`). The button names them after the

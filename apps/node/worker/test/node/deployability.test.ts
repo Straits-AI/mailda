@@ -48,15 +48,15 @@ const BINDING_KINDS = {
     how: "The button provisions D1 before the build, independently of the build token (measured).",
   },
   r2_buckets: {
-    provisionedByButton: Boolean(BUDGETS["builds.provisions_r2"]),
+    // Measured directly rather than inferred from the button probe, which could not see this: the
+    // deploy that would have created the bucket died first. r2-auto-provisioning.md tested both shapes.
+    provisionedByButton: Boolean(BUDGETS["provisioning.r2_created_without_bucket_name"]),
     how:
-      "The button does NOT create the bucket, yet writes a bucket_name into the cloned config anyway " +
-      "(measured). Evidence storage therefore needs a step the button cannot perform — the planner, the " +
-      "CLI, or an instruction the operator follows; which one is still an open decision. What exists " +
-      "today is that the absence is *named*: doctor's evidence_bucket_reachable refuses with a fix " +
-      "pointing at bucket creation, rather than the generic reconciliation failure that used to send " +
-      "the reader to migrations. Whether a Worker in this state deploys at all is not known — the " +
-      "measurement saw a failed deploy but did not isolate the cause.",
+      "Created by the deploy itself. wrangler provisions R2 in every shape tested — with an explicit " +
+      "bucket_name or without one, interactive or not — so no install path leaves it missing " +
+      "(measured). The 3 August button probe recorded it absent; that was an artifact of a chained " +
+      "multi-Worker deploy failing first, which ADR 18 removed. doctor's evidence_bucket_reachable " +
+      "stays regardless, because one HEAD is cheap and a bucket can be deleted after install.",
   },
   send_email: {
     provisionedByButton: true,
@@ -128,10 +128,18 @@ describe("what a customer's deploy can provision", () => {
       .filter((kind) => !BINDING_KINDS[kind].provisionedByButton)
       .map((kind) => ({ kind, how: BINDING_KINDS[kind].how }));
 
-    // R2 is expected to be here — the measurement says so. What matters is that it carries a stated
-    // route, not that the list is empty.
-    expect(gaps.map((gap) => gap.kind)).toEqual(["r2_buckets"]);
-    for (const gap of gaps) expect(gap.how.length).toBeGreaterThan(60);
+    // Empty as of 6 August 2026: R2 was the last entry and direct measurement removed it. The
+    // assertion stays because a *new* binding the customer's install cannot satisfy is the thing worth
+    // failing on, and an empty list is the claim being made — not the absence of a claim.
+    expect(gaps.map((gap) => gap.kind)).toEqual([]);
+  });
+
+  it("gives every binding a route to existing, whether or not it is a gap", () => {
+    // Every kind still has to say how a customer comes to have it. Dropping R2 from the gap list must
+    // not mean dropping the explanation, which is the part a reader needs.
+    for (const kind of bindingKindsIn(config)) {
+      expect(BINDING_KINDS[kind].how.length).toBeGreaterThan(60);
+    }
   });
 
   it("commits no account-specific resource id", () => {
