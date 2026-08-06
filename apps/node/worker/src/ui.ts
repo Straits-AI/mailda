@@ -82,7 +82,12 @@ export function page(): string {
     --rule: rgba(26, 22, 16, .16);
     --rule-strong: rgba(26, 22, 16, .34);
     --text: #1b1712;
-    --dim: rgba(27, 23, 18, .58);
+    /* .68, not the dark theme's .52. Measured: .58 gave 4.15:1 against --ground and 4.29:1 against
+       --ground-2, both under AA's 4.5 for normal text — and every label on this interface is normal
+       text at .655rem. .68 gives 5.71:1 / 5.98:1. See docs/receipts/contrast-tokens.md; the two
+       themes need different alphas because dark text on a light ground is not the mirror of the
+       reverse. axe cannot catch this, which is the other half of that receipt. */
+    --dim: rgba(27, 23, 18, .68);
     --signal: #9a5410;
     --alarm: #a5342a;
     --live: #2f6f4e;

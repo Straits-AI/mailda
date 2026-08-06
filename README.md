@@ -26,8 +26,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 20 receipts in [`docs/receipts/`](./docs/receipts/) generating 119 verified constants |
-| **Code** | A measurement harness and one Worker. 217 tests, checked on every push. Not a product. |
+| **Measurements** | 21 receipts in [`docs/receipts/`](./docs/receipts/) generating 125 verified constants |
+| **Code** | A measurement harness and one Worker. 221 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -111,6 +111,15 @@ appending the entry leaves a window where the change survives and nothing record
 invisible to verification, which proves only that what *was* written is unaltered. So the entry travels
 inside the caller's batch: either both land or neither does. The corollary is deliberate — if this Node
 cannot record an act, it does not perform the act.
+
+**The accessibility check had to be built to catch what the standard tool cannot.** axe-core returns
+zero contrast violations on this interface — and proves AA for exactly one of its fourteen text nodes.
+The body's gradient means axe cannot resolve a background, so it files almost everything as *unproven*
+rather than failing it, and a harness reading only violations reports green forever. Contrast is
+therefore computed from the tokens against both ends of the gradient, which bounds every point between
+them. That found a real failure: small dim text in light mode was at 4.15:1 against AA's 4.5. Fixed and
+deployed, with the dark theme's 0.01 margin now visible rather than latent.
+([receipt](./docs/receipts/contrast-tokens.md))
 
 **What a customer's install can actually provision is checked too.** A real Deploy to Cloudflare
 click was measured against a paid account: it provisions D1 but **not** R2, pins one Worker per build
