@@ -139,10 +139,23 @@ function metered(env: Env): { env: Env; cost: DoctorReport["cost"] } {
  * (`reconcile.list_limit`, receipt: `evidence-lifecycle.md`). It was duplicated here while `doctor`
  * had its own scan; one number with two owners drifts.
  */
+/**
+ * Every table the migrations create.
+ *
+ * Kept explicit rather than read from the migration files, because a Worker has no filesystem — and
+ * drift-checked by `test/node/schema-tables.test.ts`, which parses `migrations/*.sql` and fails when
+ * this list and those files disagree. That guard exists because this list *was* wrong: it stopped at
+ * migration 0006 and omitted the five tables that 0007 and 0008 added, so a Node holding a partial
+ * schema passed the one check whose whole job is to notice a partial schema. Found on a real button
+ * install, which reported "Missing 14 table(s)" when 19 were absent.
+ */
 const EXPECTED_TABLES = [
   "relationship_tuples", "team_members", "messages", "mailbox_items", "ingress_receipts",
   "outbox", "addresses", "mailboxes", "users", "sessions", "node_claim",
   "signing_keys", "refresh_tokens", "login_attempts",
+  // Migration 0007 (outbound) and 0008 (audit). Absent here until 6 August 2026.
+  "send_manifests", "send_counters", "node_capabilities",
+  "audit_entries", "log_entries",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

@@ -456,8 +456,15 @@ export async function log(env: Env, ctx: Ctx, entry: LogEvent): Promise<void> {
  * the thing it trims. Audit entries are **never** trimmed — a chain with a hole is not a chain.
  */
 export async function trimLogs(env: Env): Promise<number> {
-  const total = await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM log_entries").first<{ n: number }>();
-  if ((total?.n ?? 0) <= LOG_RETAINED) return 0;
+  // Never throws, for the same reason `log` does not — and found the hard way. On a Node with no
+  // schema this table does not exist, so the trim rejected; it runs inside the unhandled-error
+  // handler's own `waitUntil`, which turned "the request failed" into "the request failed and so did
+  // the thing reporting it". A trim is housekeeping and must never be the loudest failure in the stack.
+  const total = await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM log_entries")
+    .first<{ n: number }>()
+    .catch(() => null);
+  if (total === null) return 0;
+  if ((total.n ?? 0) <= LOG_RETAINED) return 0;
 
   const result = await env.CATALOG.prepare(
     `DELETE FROM log_entries WHERE id IN (
@@ -465,6 +472,7 @@ export async function trimLogs(env: Env): Promise<number> {
      )`,
   )
     .bind(LOG_TRIM_BATCH)
-    .run();
-  return result.meta.changes ?? 0;
+    .run()
+    .catch(() => null);
+  return result?.meta.changes ?? 0;
 }

@@ -18,24 +18,28 @@ no licence server, and no telemetry. Disconnect us and nothing stops working.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
 
-**This button is under measurement and is expected to need one manual step.** It is here because the
+**Measured on 6 August 2026: the build succeeds and the Node is dead.** Cloudflare runs
+`npx wrangler deploy` rather than this repository's `deploy` script, so the schema is never applied — a
+green build, an empty catalog, and every request answering 500. Until that is resolved a button install
+needs one command afterwards: `wrangler d1 migrations apply CATALOG --remote`. The full log, and the four
+defects it exposed in Mailda itself, are in the
+[receipt](./docs/receipts/deploy-button-install.md). It is here because the
 only way to find out what a customer's first five minutes actually look like is to put the real button
 on the real repository and click it — and because a button that appears once it already works teaches
 nobody anything about why it took so long.
 
-What is known:
+What the measurement settled:
 
-- **The URL points at the repository root, deliberately.** Cloudflare
-  [does not fully support monorepos](https://developers.cloudflare.com/workers/platform/deploy-buttons/):
-  a URL containing a subdirectory is cloned *as* the new repository, and the Worker at
-  `apps/node/worker` depends on three `workspace:*` packages that live outside it. A subdirectory URL
-  therefore cannot work. A root URL clones everything, which is what the build needs.
-- **Workers Builds will need its root directory set to `apps/node/worker`**, where the Wrangler
-  configuration lives. Whether the button's setup page exposes that field, or whether it has to be
-  fixed afterwards in the project settings, is the measurement in progress.
-- **`pnpm run deploy` deploys and then applies migrations.** Deploy first, then migrate — Cloudflare's
-  example does the reverse, which works only because the button provisions D1 before the build; on a
-  CLI install the database does not exist until the deploy creates it.
+- **The monorepo works.** The URL points at the repository root deliberately — Cloudflare
+  [does not fully support monorepos](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
+  and clones a *subdirectory* URL as the whole new repository, which would leave behind the three
+  `workspace:*` packages the Worker depends on. Pointed at the root, `pnpm install` resolved all 7
+  workspace projects and the build bundled.
+- **Resources are provisioned, and no ids are written into your clone.** D1 and R2 are both created by
+  the build, and `wrangler.jsonc` comes out byte-identical to upstream.
+- **Your clone is not a fork.** It arrives as a single squashed commit with no shared history, so a
+  `git pull` from upstream is not a fast-forward, and `.github/workflows/` is stripped — an installed
+  Node has no CI.
 
 The CLI path has no such caveat: clone, `pnpm install`, `pnpm run deploy`. It provisions D1 and R2 on
 first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md)) and applies the schema.
@@ -54,8 +58,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 22 receipts in [`docs/receipts/`](./docs/receipts/) generating 128 verified constants |
-| **Code** | A measurement harness and one Worker. 222 tests, checked on every push. Not a product. |
+| **Measurements** | 23 receipts in [`docs/receipts/`](./docs/receipts/) generating 135 verified constants |
+| **Code** | A measurement harness and one Worker. 228 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both

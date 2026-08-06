@@ -42,9 +42,13 @@ export default {
   /** Cloudflare Email Routing invokes this with a real message (§13). */
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     const clock = createSystemCtx();
+    // `.catch` because an unmigrated Node has no `node_claim` table at all, and that is the state a
+    // fresh install is in until migrations run. Throwing here fails the transport with an opaque error;
+    // rejecting tells the sending server the message was not taken, which is the honest answer and the
+    // one §13 requires. Unclaimed and unmigrated are both "nowhere to put it".
     const claimed = await env.CATALOG.prepare(
       "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-    ).first<{ org_id: string }>();
+    ).first<{ org_id: string }>().catch(() => null);
 
     if (claimed?.org_id == null) {
       // Reject rather than accept mail we cannot attribute. §13 forbids losing an accepted
@@ -118,12 +122,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const clock = createSystemCtx();
 
     if (url.pathname === "/health") {
+      // A health endpoint that throws when the Node is unhealthy is a health endpoint that reports
+      // nothing. On a fresh install these tables do not exist yet, and 500 with an opaque body is the
+      // least useful answer available — so the state is named, with the command that resolves it.
       const claimed = await env.CATALOG.prepare(
         "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-      ).first<{ org_id: string }>();
+      ).first<{ org_id: string }>().catch(() => undefined);
+      if (claimed === undefined) {
+        return Response.json({
+          node: "mailda",
+          healthy: false,
+          reason: "This Node has no schema, so it cannot accept mail.",
+          fix: "run `wrangler d1 migrations apply CATALOG --remote`, then check /api/doctor",
+        }, { status: 503 });
+      }
       const pending = await env.CATALOG.prepare(
         "SELECT COUNT(*) AS n FROM outbox WHERE published_at IS NULL",
-      ).first<{ n: number }>();
+      ).first<{ n: number }>().catch(() => null);
       return Response.json({
         node: "mailda",
         layer: 1,
@@ -609,10 +624,23 @@ function unauthenticated(): Response {
 }
 
 /** The claimed organization, or null on an unclaimed Node. */
+/**
+ * The claimed organisation, or null.
+ *
+ * Tolerates an unreadable catalog, and that is not the same as pretending the Node is unclaimed. A
+ * fresh install has no schema at all — `wrangler deploy` provisions the database but does not migrate
+ * it — so this query throws, and it used to take `/api/doctor` down with it: the one endpoint whose job
+ * is to say what is wrong returned 500 on the most likely way for a Node to be wrong. Measured on a
+ * real button install (receipt: `deploy-button-install.md`).
+ *
+ * Returning null here lets `runDoctor` reach `checkSchema`, which reports the missing tables and the
+ * command that fixes them. Nothing is disclosed by doing so: a Node with no tables has no data to
+ * protect, and the authentication gate below only applies once an organisation exists.
+ */
 async function organizationId(env: Env): Promise<string | null> {
   const row = await env.CATALOG.prepare(
     "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-  ).first<{ org_id: string }>();
+  ).first<{ org_id: string }>().catch(() => null);
   return row?.org_id ?? null;
 }
 
