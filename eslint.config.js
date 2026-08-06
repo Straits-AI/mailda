@@ -88,7 +88,7 @@ export default tseslint.config(
    * no request, no reused isolate, and nothing for §27 to replay.
    */
   {
-    files: [".github/scripts/**/*.mjs", "*.config.js"],
+    files: [".github/scripts/**/*.mjs", "apps/node/worker/scripts/**/*.mjs", "*.config.js"],
     languageOptions: { globals: { ...globals.node } },
     rules: { "no-restricted-syntax": "off" },
   },

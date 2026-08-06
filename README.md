@@ -41,6 +41,14 @@ What the measurement settled:
   `git pull` from upstream is not a fast-forward, and `.github/workflows/` is stripped — an installed
   Node has no CI.
 
+**Resetting a password.** There is no password-change flow in the product yet, which for a self-hosted
+system is a gap rather than a simplification — a lockout has to be recoverable from outside the thing
+that locked you out. `pnpm run set-password <email>` reads the new password from a terminal with echo
+off, so it never reaches shell history or a process listing, derives the verifier with the *same*
+chained PBKDF2 the Worker uses rather than a second copy of it, and revokes every existing session in
+the same breath. It cannot appear in the audit trail: it runs outside the Worker, and an operator with
+database access is outside what a hash chain can attest to.
+
 The CLI path has no such caveat: clone, `pnpm install`, `pnpm run deploy`. It provisions D1 and R2 on
 first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md)) and applies the schema.
 

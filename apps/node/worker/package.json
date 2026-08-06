@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "types": "wrangler types",
     "deploy": "wrangler deploy && pnpm run migrations:apply",
-    "migrations:apply": "wrangler d1 migrations apply CATALOG --remote"
+    "migrations:apply": "wrangler d1 migrations apply CATALOG --remote",
+    "set-password": "node --experimental-strip-types scripts/set-password.mjs"
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
