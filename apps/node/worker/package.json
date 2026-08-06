@@ -7,7 +7,9 @@
     "test": "vitest run && vitest run -c vitest.node.config.ts",
     "bench": "vitest run --mode bench",
     "typecheck": "tsc --noEmit",
-    "types": "wrangler types"
+    "types": "wrangler types",
+    "deploy": "wrangler deploy && pnpm run migrations:apply",
+    "migrations:apply": "wrangler d1 migrations apply CATALOG --remote"
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",

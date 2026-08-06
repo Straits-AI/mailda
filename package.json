@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "receipts": "turbo @mailda/receipts#generate",
     "receipts:check": "pnpm receipts && git diff --exit-code packages/budgets/src/generated.ts",
-    "bench": "turbo bench"
+    "bench": "turbo bench",
+    "deploy": "pnpm --filter @mailda/worker run deploy"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

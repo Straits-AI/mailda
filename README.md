@@ -14,6 +14,34 @@ no licence server, and no telemetry. Disconnect us and nothing stops working.
 
 ---
 
+## Installing it, and the honest state of that
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
+
+**This button is under measurement and is expected to need one manual step.** It is here because the
+only way to find out what a customer's first five minutes actually look like is to put the real button
+on the real repository and click it — and because a button that appears once it already works teaches
+nobody anything about why it took so long.
+
+What is known:
+
+- **The URL points at the repository root, deliberately.** Cloudflare
+  [does not fully support monorepos](https://developers.cloudflare.com/workers/platform/deploy-buttons/):
+  a URL containing a subdirectory is cloned *as* the new repository, and the Worker at
+  `apps/node/worker` depends on three `workspace:*` packages that live outside it. A subdirectory URL
+  therefore cannot work. A root URL clones everything, which is what the build needs.
+- **Workers Builds will need its root directory set to `apps/node/worker`**, where the Wrangler
+  configuration lives. Whether the button's setup page exposes that field, or whether it has to be
+  fixed afterwards in the project settings, is the measurement in progress.
+- **`pnpm run deploy` deploys and then applies migrations.** Deploy first, then migrate — Cloudflare's
+  example does the reverse, which works only because the button provisions D1 before the build; on a
+  CLI install the database does not exist until the deploy creates it.
+
+The CLI path has no such caveat: clone, `pnpm install`, `pnpm run deploy`. It provisions D1 and R2 on
+first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md)) and applies the schema.
+
+---
+
 ## Status: designed, not built
 
 **This is not deployable software yet.** Saying otherwise would be the kind of overclaim
