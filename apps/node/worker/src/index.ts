@@ -5,6 +5,7 @@ import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
+import { migrate } from "./migrate.ts";
 import { getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
@@ -121,6 +122,25 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const url = new URL(request.url);
     const clock = createSystemCtx();
 
+    /**
+     * Applies any missing schema. Idempotent, and the only route that works on a Node with none.
+     *
+     * Unauthenticated on purpose, and the reasoning is the same one `/api/doctor` already uses: on a
+     * freshly installed Node authentication is *impossible* — the tables it needs do not exist — so a
+     * gate here would be one no caller could satisfy. What it can do is bounded to applying this
+     * Node's own bundled migrations, which is idempotent and grants a caller nothing: an attacker who
+     * migrates somebody's Node has done them a favour. Once the schema is current it is a no-op.
+     */
+    if (url.pathname === "/api/prepare" && request.method === "POST") {
+      const outcome = await migrate(env);
+      return Response.json({
+        ...outcome,
+        message: outcome.alreadyCurrent
+          ? "The schema was already current. Nothing changed."
+          : `Applied ${outcome.applied.length} migration(s). This Node can now accept mail once claimed.`,
+      });
+    }
+
     if (url.pathname === "/health") {
       // A health endpoint that throws when the Node is unhealthy is a health endpoint that reports
       // nothing. On a fresh install these tables do not exist yet, and 500 with an opaque body is the
@@ -133,7 +153,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           node: "mailda",
           healthy: false,
           reason: "This Node has no schema, so it cannot accept mail.",
-          fix: "run `wrangler d1 migrations apply CATALOG --remote`, then check /api/doctor",
+          fix: "POST /api/prepare to apply the schema, or run `wrangler d1 migrations apply CATALOG --remote`",
         }, { status: 503 });
       }
       const pending = await env.CATALOG.prepare(

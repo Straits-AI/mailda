@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { runDoctor, type Finding } from "../src/doctor.ts";
+import { migrate } from "../src/migrate.ts";
 import worker from "../src/index.ts";
 
 /**
@@ -25,8 +26,16 @@ import worker from "../src/index.ts";
 
 const testEnv = env as unknown as Env;
 
-/** Everything migrations created, removed. Leaves `sqlite_master` readable and empty, as a fresh D1 is. */
-async function dropTheSchema(): Promise<number> {
+/**
+ * Puts the catalog back to what `wrangler deploy` leaves: readable, and empty of anything migrations
+ * made — including `d1_migrations` itself, or the ledger would claim a schema that is not there.
+ *
+ * Every test calls this rather than relying on the one before it. Dropping a table is DDL and isolated
+ * storage does not undo it, so state leaks forward inside a file; the first version of these tests
+ * asserted "something was dropped" and failed on every test after the first, because by then there was
+ * nothing left to drop. A precondition each test establishes for itself is the only kind that holds.
+ */
+async function withNoSchema(): Promise<void> {
   const rows = await testEnv.CATALOG.prepare(
     `SELECT name FROM sqlite_master
       WHERE type = 'table' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%'`,
@@ -34,12 +43,11 @@ async function dropTheSchema(): Promise<number> {
   for (const row of rows.results) {
     await testEnv.CATALOG.prepare(`DROP TABLE IF EXISTS ${row.name}`).run();
   }
-  return rows.results.length;
 }
 
 describe("a Node with no schema, which is what a fresh install is", () => {
   it("still produces a doctor report, naming the missing tables and the fix", async () => {
-    expect(await dropTheSchema()).toBeGreaterThan(0);
+    await withNoSchema();
 
     const report = await runDoctor(testEnv, createSystemCtx());
 
@@ -51,7 +59,7 @@ describe("a Node with no schema, which is what a fresh install is", () => {
   });
 
   it("answers /health with the reason and the fix, not an opaque 500", async () => {
-    await dropTheSchema();
+    await withNoSchema();
 
     const ctx = createExecutionContext();
     const response = await worker.fetch(new Request("https://node.example/health"), testEnv, ctx);
@@ -66,7 +74,7 @@ describe("a Node with no schema, which is what a fresh install is", () => {
   });
 
   it("serves /api/doctor rather than failing the request that would explain the failure", async () => {
-    await dropTheSchema();
+    await withNoSchema();
 
     const ctx = createExecutionContext();
     const response = await worker.fetch(new Request("https://node.example/api/doctor"), testEnv, ctx);
@@ -81,7 +89,7 @@ describe("a Node with no schema, which is what a fresh install is", () => {
   });
 
   it("rejects inbound mail cleanly instead of throwing at the transport", async () => {
-    await dropTheSchema();
+    await withNoSchema();
 
     let rejected: string | null = null;
     const message = {
@@ -100,5 +108,79 @@ describe("a Node with no schema, which is what a fresh install is", () => {
     // one, so it must refuse at the transport rather than throw — a throw is an opaque failure that
     // tells the sending server nothing about whether the mail was taken.
     expect(rejected).not.toBeNull();
+  });
+
+  it("migrates itself back to a working schema", async () => {
+    await withNoSchema();
+
+    const outcome = await migrate(testEnv);
+    expect(outcome.alreadyCurrent).toBe(false);
+    expect(outcome.applied.length).toBe(8);
+
+    // The proof is not the count, it is that doctor — which knows what every migration creates — now
+    // agrees the schema is complete.
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const schema = report.findings.find((f) => f.check === "migrations_applied");
+    expect(schema?.ok).toBe(true);
+  });
+
+  it("is a no-op the second time, so it is safe on any path", async () => {
+    await withNoSchema();
+    await migrate(testEnv);
+
+    const again = await migrate(testEnv);
+    expect(again.alreadyCurrent).toBe(true);
+    expect(again.applied).toEqual([]);
+  });
+
+  it("writes wrangler's own ledger, so the CLI and the Node agree", async () => {
+    await withNoSchema();
+    await migrate(testEnv);
+
+    const rows = await testEnv.CATALOG.prepare("SELECT name FROM d1_migrations ORDER BY id")
+      .all<{ name: string }>();
+    // Same table, same column, same names wrangler records. A private ledger would have made
+    // `wrangler d1 migrations apply` re-run everything on a self-migrated Node.
+    expect(rows.results.map((r) => r.name)).toEqual([
+      "0001_init.sql", "0002_message_metadata.sql", "0003_ingress.sql", "0004_auth.sql",
+      "0005_key_generation.sql", "0006_threading.sql", "0007_outbound.sql", "0008_audit.sql",
+    ]);
+  });
+
+  it("survives two callers racing, applying each migration exactly once", async () => {
+    await withNoSchema();
+
+    // No lease and no Durable Object on this path: `name TEXT UNIQUE` settles it, and the loser reads
+    // its own constraint violation as "already applied" — which it is. #9's shape.
+    const [first, second] = await Promise.all([migrate(testEnv), migrate(testEnv)]);
+    const applied = [...first.applied, ...second.applied];
+    const raced = [...first.raced, ...second.raced];
+
+    expect(new Set(applied).size).toBe(applied.length);
+    expect(applied.length + raced.length).toBeGreaterThanOrEqual(8);
+
+    const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM d1_migrations")
+      .first<{ n: number }>();
+    expect(rows?.n).toBe(8);
+  });
+
+  it("serves POST /api/prepare on a Node where nothing else works", async () => {
+    await withNoSchema();
+
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request("https://node.example/api/prepare", { method: "POST" }), testEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(200);
+    const body = await response.json<{ applied: string[]; alreadyCurrent: boolean }>();
+    expect(body.alreadyCurrent).toBe(false);
+    expect(body.applied.length).toBe(8);
+
+    // And the Node is genuinely usable afterwards, not merely reporting success.
+    const health = createExecutionContext();
+    const after = await worker.fetch(new Request("https://node.example/health"), testEnv, health);
+    await waitOnExecutionContext(health);
+    expect(after.status).toBe(200);
   });
 });

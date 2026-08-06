@@ -229,7 +229,7 @@ async function checkSchema(env: Env): Promise<Finding[]> {
       ? `All ${EXPECTED_TABLES.length} expected tables present.`
       : `Missing ${missing.length} table(s): ${missing.join(", ")}.`,
     ...(missing.length === 0 ? {} : {
-      fix: "run `wrangler d1 migrations apply CATALOG --remote`; a Node with a partial schema accepts mail it cannot file",
+      fix: "POST /api/prepare — the Node applies its own migrations, idempotently. Or run `wrangler d1 migrations apply CATALOG --remote`. A Node with a partial schema accepts mail it cannot file",
     }),
   }];
 }

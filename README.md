@@ -18,11 +18,12 @@ no licence server, and no telemetry. Disconnect us and nothing stops working.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
 
-**Measured on 6 August 2026: the build succeeds and the Node is dead.** Cloudflare runs
-`npx wrangler deploy` rather than this repository's `deploy` script, so the schema is never applied — a
-green build, an empty catalog, and every request answering 500. Until that is resolved a button install
-needs one command afterwards: `wrangler d1 migrations apply CATALOG --remote`. The full log, and the four
-defects it exposed in Mailda itself, are in the
+**Measured on 6 August 2026, and then fixed.** The install produced a green build and a dead Node:
+Cloudflare runs `npx wrangler deploy` rather than this repository's `deploy` script, so the schema was
+never applied — an empty catalog and every request answering 500. Depending on somebody else's script
+detection to produce a working mail server is a hope with a 500 attached, so **the Node applies its own
+schema now** (`POST /api/prepare`, or automatically as part of being claimed). The full log, and the four
+defects the install exposed in Mailda itself, are in the
 [receipt](./docs/receipts/deploy-button-install.md). It is here because the
 only way to find out what a customer's first five minutes actually look like is to put the real button
 on the real repository and click it — and because a button that appears once it already works teaches
@@ -67,7 +68,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 23 receipts in [`docs/receipts/`](./docs/receipts/) generating 135 verified constants |
-| **Code** | A measurement harness and one Worker. 228 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 242 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
