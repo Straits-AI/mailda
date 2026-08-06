@@ -40,7 +40,22 @@ What the measurement settled:
   the build, and `wrangler.jsonc` comes out byte-identical to upstream.
 - **Your clone is not a fork.** It arrives as a single squashed commit with no shared history, so a
   `git pull` from upstream is not a fast-forward, and `.github/workflows/` is stripped — an installed
-  Node has no CI.
+  Node has no CI until its first update restores it.
+
+**Updating an installed Node.** Once, because the install left no shared history to build on:
+
+```sh
+git remote add upstream https://github.com/Straits-AI/mailda.git
+git fetch upstream main
+git merge upstream/main --allow-unrelated-histories
+# One conflict, in package.json. Keep your own `name`, take upstream's everything else.
+```
+
+That merge creates the ancestor the install did not leave, so **every later update is an ordinary
+`git pull upstream main`** with no conflict — and this first one also restores the CI the install
+stripped. `package.json` is the only file that can conflict, and
+`test/node/update-path.test.ts` fails if a second one ever joins it, because at that point these four
+lines stop being true.
 
 **Resetting a password.** There is no password-change flow in the product yet, which for a self-hosted
 system is a gap rather than a simplification — a lockout has to be recoverable from outside the thing
@@ -68,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 23 receipts in [`docs/receipts/`](./docs/receipts/) generating 135 verified constants |
-| **Code** | A measurement harness and one Worker. 242 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 247 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
