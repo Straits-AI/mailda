@@ -156,6 +156,8 @@ const EXPECTED_TABLES = [
   // Migration 0007 (outbound) and 0008 (audit). Absent here until 6 August 2026.
   "send_manifests", "send_counters", "node_capabilities",
   "audit_entries", "log_entries",
+  // Migration 0010 (per-recipient outcome).
+  "send_recipients", "send_recipient_events",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

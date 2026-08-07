@@ -267,6 +267,38 @@ export async function sealManifest(
       at, releaseAt, at,
     );
 
+  // One row per recipient, in the same transaction as the manifest.
+  //
+  // Not derived later from the JSON arrays, and not written on first dispatch: a manifest whose recipients
+  // are unknown until something else runs is a manifest whose per-recipient state cannot be shown, and the
+  // window between the two is exactly where a bounce would arrive with nowhere to land.
+  //
+  // `submission_state` starts as `held` and mirrors the manifest at hand-over — it is a fact about the
+  // envelope, so it is the same for every row. `delivery_state` is left NULL, and that NULL is load
+  // bearing: it means *not yet observed*, which is a different claim from any outcome.
+  //
+  // Duplicates are collapsed rather than rejected. The same address in To and Cc is one recipient in SMTP
+  // terms, and two rows would count one bounce twice; `sr_unique` enforces it, and the first mention wins
+  // so a To recipient is never demoted to Cc.
+  const recipientRows = (() => {
+    const seen = new Set<string>();
+    const rows: D1PreparedStatement[] = [];
+    for (const [kind, list] of [["to", to], ["cc", cc], ["bcc", bcc]] as const) {
+      for (const address of list) {
+        const key = address.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(env.CATALOG.prepare(
+          `INSERT INTO send_recipients
+             (id, org_id, manifest_id, kind, address, submission_state, submission_state_at,
+              delivery_state, delivery_state_at, bounce_type, last_error, last_event_id, created_at)
+           VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,?)`,
+        ).bind(ctx.id("srp"), orgId, manifestId, kind, address, "held", at, at));
+      }
+    }
+    return rows;
+  })();
+
   // The manifest row and the entry recording the seal commit together. §12's invariant is that the
   // approved bytes are what gets sent; a manifest with no record of who sealed it, or a record of a
   // seal with no manifest, both break the account of that.
@@ -283,7 +315,7 @@ export async function sealManifest(
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
     },
-  }, (entry) => [manifestRow, entry]);
+  }, (entry) => [manifestRow, ...recipientRows, entry]);
 
   return {
     id: manifestId,

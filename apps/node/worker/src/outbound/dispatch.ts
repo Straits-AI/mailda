@@ -76,6 +76,12 @@ export async function cancelSend(
         `UPDATE send_manifests SET state = 'cancelled', state_at = ?
           WHERE id = ? AND org_id = ? AND state = 'held'`,
       ).bind(new Date(ctx.now()).toISOString(), manifestId, orgId),
+      // Recipients follow the manifest. Unconditional here because the batch only commits when the gate
+      // above found the manifest still held, so this cannot cancel recipients of a send that went out.
+      env.CATALOG.prepare(
+        `UPDATE send_recipients SET submission_state = 'cancelled', submission_state_at = ?
+          WHERE org_id = ? AND manifest_id = ?`,
+      ).bind(new Date(ctx.now()).toISOString(), orgId, manifestId),
     ],
     {
       sql: "SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND state = 'held'",
@@ -178,6 +184,12 @@ export async function dispatchOne(
             WHERE id = ? AND org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
         ).bind(at, "The author's authority to send as this mailbox was withdrawn before hand-over.",
           manifestId, orgId, at),
+        // The recipients follow, in the same transaction. A withheld send whose recipients still read
+        // `held` would show a person a message that is simultaneously stopped and pending.
+        env.CATALOG.prepare(
+          `UPDATE send_recipients SET submission_state = 'withheld', submission_state_at = ?
+            WHERE org_id = ? AND manifest_id = ?`,
+        ).bind(at, orgId, manifestId),
       ],
       {
         sql: `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ?
@@ -369,7 +381,24 @@ async function applyOutcome(
       transportMessageId: outcome.kind === "handed_over" ? outcome.transportMessageId : null,
       reason: "reason" in outcome ? outcome.reason.slice(0, 300) : null,
     },
-  }, (entry) => [...statements, entry]);
+  }, (entry) => [
+    ...statements,
+    // Submission is one act on one envelope, so its outcome is true of every recipient in it. Mirrored
+    // rather than joined at read time because the manifest's own state is redefined as *the last
+    // submission's* state, and a reader comparing the two must not see them disagree for a moment.
+    //
+    // In the same transaction as the manifest update, so "the send says handed_over but its recipients
+    // say held" is not a reachable state — which is the shape a reader would rightly call a bug.
+    //
+    // `delivery_state` is untouched. Hand-over says nothing about what a receiving server did, and
+    // overwriting an already-observed delivery outcome with a resubmission's would destroy the only
+    // record of it.
+    env.CATALOG.prepare(
+      `UPDATE send_recipients SET submission_state = ?, submission_state_at = ?
+        WHERE org_id = ? AND manifest_id = ?`,
+    ).bind(state, at, orgId, manifestId),
+    entry,
+  ]);
 
   return { manifestId, state, detail };
 }

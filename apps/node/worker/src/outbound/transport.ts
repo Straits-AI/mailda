@@ -193,9 +193,37 @@ export const cloudflareTransport: TransportAdapter = {
         // The legacy raw-MIME form. Chosen for anything whose record must be exact (ADR 33): it is
         // the only path where the bytes stored and the bytes submitted are the same object.
         const { EmailMessage } = await import("cloudflare:email");
+
+        // `EmailMessage`'s second argument is **one** address, not a list.
+        //
+        // This used to join every recipient with commas, which produced a single malformed address and a
+        // refusal from Cloudflare reading `invalid mail from email address (a@x,b@y,c@z): Invalid input`.
+        // Measured on the deployed Node: a single recipient is handed over, and adding one `cc` refuses
+        // the whole send. No test caught it because none sent to more than one recipient.
+        //
+        // Refused here rather than passed on, and refused *before* the submit rather than after, because
+        // the alternative is asking the transport a question guaranteed to fail and then reporting its
+        // answer as though the recipient list were at fault. The structured `send()` API does take arrays
+        // — but Cloudflare builds the MIME there, so it cannot carry `authored` fidelity, whose whole
+        // point is that the bytes stored and the bytes submitted are the same object (ADR 33, §12).
+        // Which way that collision resolves is a real decision, recorded on the tracker rather than
+        // guessed at here.
+        const recipients = [...request.to, ...(request.cc ?? []), ...(request.bcc ?? [])];
+        if (recipients.length > 1) {
+          return {
+            kind: "refused",
+            retryable: false,
+            reason:
+              `An authored send carries exactly one recipient on this transport, and this one has ` +
+              `${recipients.length}. The raw-MIME submission API accepts a single address, and the ` +
+              `multi-recipient API builds its own MIME — which would mean the bytes sent are not the ` +
+              `bytes recorded. Nothing was submitted.`,
+          };
+        }
+
         const message = new EmailMessage(
           request.from,
-          [...request.to, ...(request.cc ?? []), ...(request.bcc ?? [])].join(","),
+          recipients[0]!,
           new TextDecoder().decode(request.raw),
         );
         const result = (await env.EMAIL.send(message)) as { messageId?: string } | undefined;

@@ -85,6 +85,13 @@ What exists today:
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
 | **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
+**Every recipient of a send has its own state.** A send to three people used to have one state column and
+a JSON array of addresses, so "one bounced and two were accepted" was not representable — and that is the
+distinction Layer 2 is judged on. There is now a row per recipient, written in the same transaction as the
+manifest, with submission mirrored from the envelope and delivery left **NULL** until something is
+actually observed. That NULL is load-bearing: any default would make "we have heard nothing" look like an
+outcome.
+
 **Sending is authorized, and the authority is re-checked before the message leaves.** Layer 2's first
 named requirement was absent: any authenticated member could seal a send as any mailbox in the
 organisation, including one they cannot read. Sealing now requires `send.propose` on that mailbox — a

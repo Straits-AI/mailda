@@ -44,7 +44,8 @@ function atTime(millis: number): Ctx {
 
 beforeEach(async () => {
   for (const table of ["send_manifests", "send_counters", "messages", "addresses", "mailboxes",
-                       "node_capabilities", "relationship_tuples"]) {
+                       "node_capabilities", "relationship_tuples",
+                       "send_recipients", "send_recipient_events"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -614,5 +615,142 @@ describe("sender authorization (Layer 2's first requirement)", () => {
 
     expect(results.find((r) => r.manifestId === sealed.id)?.state).toBe("handed_over");
     expect(transport.submitted).toHaveLength(1);
+  });
+});
+
+describe("per-recipient state (Layer 2's proof line)", () => {
+  async function recipientsOf(manifestId: string) {
+    const rows = await testEnv.CATALOG.prepare(
+      `SELECT kind, address, submission_state, delivery_state, bounce_type
+         FROM send_recipients WHERE manifest_id = ? ORDER BY address`,
+    ).bind(manifestId).all<{
+      kind: string; address: string; submission_state: string;
+      delivery_state: string | null; bounce_type: string | null;
+    }>();
+    return rows.results;
+  }
+
+  it("writes one row per recipient at seal, keeping to/cc/bcc apart", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition,
+      to: ["a@example.com"], cc: ["b@example.com"], bcc: ["c@example.com"],
+    });
+
+    const rows = await recipientsOf(sealed.id);
+    expect(rows.map((r) => [r.address, r.kind])).toEqual([
+      ["a@example.com", "to"], ["b@example.com", "cc"], ["c@example.com", "bcc"],
+    ]);
+    // Kind is kept because a Bcc recipient must never be rendered beside a To recipient, and the
+    // envelope alone cannot tell them apart once submitted.
+  });
+
+  it("leaves delivery_state NULL, because nothing has been observed yet", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, composition);
+    const rows = await recipientsOf(sealed.id);
+
+    // The load-bearing NULL. Any default here — 'pending', 'unknown', 'ok' — would make "we have heard
+    // nothing" indistinguishable from an outcome, which is the ambiguity this table exists to remove.
+    expect(rows.every((r) => r.delivery_state === null)).toBe(true);
+    expect(rows.every((r) => r.submission_state === "held")).toBe(true);
+  });
+
+  it("collapses an address that appears twice, so one bounce is not counted twice", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition,
+      to: ["dup@example.com"], cc: ["DUP@example.com"],
+    });
+
+    const rows = await recipientsOf(sealed.id);
+    expect(rows).toHaveLength(1);
+    // First mention wins, so a To recipient is never demoted to Cc.
+    expect(rows[0]?.kind).toBe("to");
+  });
+
+  it("mirrors hand-over onto every recipient, in the same transaction as the manifest", async () => {
+    const ctx = atTime(1_900_000_000_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["x@example.com", "y@example.com"],
+    });
+    await dispatchDue(testEnv, atTime(1_900_000_060_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<t@acme.example>" }));
+
+    const manifest = await testEnv.CATALOG.prepare("SELECT state FROM send_manifests WHERE id = ?")
+      .bind(sealed.id).first<{ state: string }>();
+    const rows = await recipientsOf(sealed.id);
+
+    // Submission is one act on one envelope, so its outcome is true of every recipient in it. What must
+    // never be reachable is the manifest saying handed_over while its recipients still say held.
+    expect(manifest?.state).toBe("handed_over");
+    expect(rows.map((r) => r.submission_state)).toEqual(["handed_over", "handed_over"]);
+    // And hand-over still says nothing about delivery.
+    expect(rows.every((r) => r.delivery_state === null)).toBe(true);
+  });
+
+  it("mirrors a refusal too, so a failed send has no recipients claiming otherwise", async () => {
+    const ctx = atTime(1_900_000_100_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, { ...composition, to: ["r@example.com"] });
+    await dispatchDue(testEnv, atTime(1_900_000_160_000), ORG,
+      fakeTransport({ kind: "refused", reason: "550 nope", retryable: false }));
+
+    const rows = await recipientsOf(sealed.id);
+    expect(rows[0]?.submission_state).toBe("refused");
+  });
+
+  it("mirrors cancellation, so a stopped send is not simultaneously pending", async () => {
+    const ctx = atTime(1_900_000_200_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, { ...composition, to: ["c1@example.com"] });
+    const outcome = await cancelSend(testEnv, ctx, ORG, sealed.id);
+    expect(outcome.cancelled).toBe(true);
+
+    const rows = await recipientsOf(sealed.id);
+    expect(rows[0]?.submission_state).toBe("cancelled");
+  });
+
+  it("mirrors withholding, so a revoked send does not read as pending", async () => {
+    const ctx = atTime(1_900_000_300_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, { ...composition, to: ["w1@example.com"] });
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+    await dispatchDue(testEnv, atTime(1_900_000_360_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<w@acme.example>" }));
+
+    const rows = await recipientsOf(sealed.id);
+    expect(rows[0]?.submission_state).toBe("withheld");
+  });
+});
+
+describe("the authored path carries one recipient (a platform constraint, not a choice)", () => {
+  /** The real adapter's guard, exercised without touching Cloudflare. */
+  async function submitAuthored(to: string[], cc?: string[]) {
+    const { cloudflareTransport } = await import("../src/outbound/transport.ts");
+    return cloudflareTransport.submit(
+      { EMAIL: { async send() { throw new Error("must not be reached"); } } } as unknown as Env,
+      {
+        from: ADDRESS, to, cc, subject: "s",
+        raw: new TextEncoder().encode("From: a\r\n\r\nbody\r\n") as Uint8Array<ArrayBuffer>,
+      },
+      "authored",
+    );
+  }
+
+  it("refuses more than one recipient instead of submitting a malformed address", async () => {
+    const outcome = await submitAuthored(["a@example.com"], ["b@example.com"]);
+
+    // Previously this joined the addresses with a comma and let Cloudflare reject the result, which
+    // reported the recipient list as invalid when the request was. Measured on the deployed Node.
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind === "refused") {
+      expect(outcome.retryable).toBe(false);
+      // The reason has to say nothing was sent, because "refused" alone leaves a reader guessing.
+      expect(outcome.reason).toContain("Nothing was submitted");
+      expect(outcome.reason).toContain("2");
+    }
+  });
+
+  it("does not reach the transport at all when it refuses", async () => {
+    // The stub throws if called. A refusal that still submitted would be the worse bug: a message
+    // delivered to one recipient while the Node reports the send as refused.
+    await expect(submitAuthored(["a@example.com"], ["b@example.com"])).resolves.toMatchObject({
+      kind: "refused",
+    });
   });
 });

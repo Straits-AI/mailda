@@ -52,6 +52,20 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   ingress_receipts: { exempt: "The receipt *is* the audit record for arrival, and is hashed (§13)." },
   outbox: { exempt: "Internal work queue. Its effects are audited where they land, not on enqueue." },
   send_counters: { exempt: "Aggregate counters derived from send_manifests, which is audited." },
+  send_recipients: {
+    exempt:
+      "Derived from the manifest and from provider events, not from anything a person did. The acts are " +
+      "already audited on send_manifests (send.sealed through send.handed_over), and one audit entry per " +
+      "recipient would put up to email.max_recipients_per_message entries behind one human action — " +
+      "falsifying audit-and-log-retention.md's 'a handful per message' sizing as a side effect of a UI " +
+      "improvement.",
+  },
+  send_recipient_events: {
+    exempt:
+      "A verbatim log of what the provider told this Node. Auditing an observation would be recording " +
+      "that we heard something, which the row already is; and the events arrive from a queue with no " +
+      "actor to attribute them to.",
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },
