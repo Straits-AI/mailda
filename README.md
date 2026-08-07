@@ -82,7 +82,7 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 23 receipts in [`docs/receipts/`](./docs/receipts/) generating 135 verified constants |
+| **Measurements** | 24 receipts in [`docs/receipts/`](./docs/receipts/) generating 144 verified constants |
 | **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —

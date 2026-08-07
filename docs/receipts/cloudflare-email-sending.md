@@ -4,7 +4,9 @@ kind: platform-limit
 measured_on: 2026-08-04
 stale_when: >
   Email Sending leaves public beta, the legacy EmailMessage API is withdrawn, the structured send()
-  header limits change, or Cloudflare publishes the daily sending quota
+  header limits change, Cloudflare publishes the daily sending quota, or the cf-bounce subdomain's
+  records become unlockable — which would make a Node able to receive its own bounces for the first
+  time and reopen the mechanism corrected below
 values:
   send.included_per_month: 3000
   send.cost_per_thousand_cents: 35
@@ -18,6 +20,7 @@ values:
   send.preserves_authored_message_id: 0
   send.delivers_externally: 1
   send.daily_limit_is_published: 0
+  send.bounce_dsn_reaches_node: 0
 ---
 
 Read from Cloudflare's documentation and checked against the live account on 4 August 2026. Email
@@ -168,9 +171,34 @@ optimistic thing the transport can tell a Node is compatible with the message be
 construction. `handed_over` is not a euphemism, it is the literal truth and the ceiling of what is
 knowable at that moment.
 
-It also sharpens the bounce-handling fog on the map. A rejection for this message can only arrive later,
-asynchronously, as inbound mail to `cf-bounce.<subdomain>` — which means outbound state is partly
-*inbound* mail, and nothing consumes that yet.
+> ### Corrected 7 August 2026. This paragraph was wrong, and it was wrong in the direction that costs most.
+>
+> It read: *"A rejection for this message can only arrive later, asynchronously, as inbound mail to
+> `cf-bounce.<subdomain>` — which means outbound state is partly inbound mail, and nothing consumes that
+> yet."*
+>
+> **A Node cannot receive its own bounces at all.** From
+> [Domains](https://developers.cloudflare.com/email-service/configuration/domains/), read 7 August 2026:
+> the `cf-bounce` MX records exist to *"Route bounce emails back to Cloudflare for processing"*, and
+> *"Only Email Routing records on the root domain (MX, SPF, and DKIM) support unlocking. Email Sending
+> records on the `cf-bounce` subdomain stay managed by Email Service for the lifetime of the domain
+> configuration."* The MX points at Cloudflare, and the record cannot be taken over. There is no DSN
+> arriving anywhere a Worker can read it.
+>
+> The cost of leaving this wrong was not a wasted afternoon. It named a mechanism — parse inbound
+> DSNs — that reads as the obvious implementation of Layer 2's `bounced` state, and a receipt is this
+> repository's trusted corpus, so the next person to build bounce handling would have written an
+> RFC 3464 parser that could never fire once. It survived three days and one whole layer of planning
+> because nobody tried to consume the thing it described.
+>
+> **The real channel is Queues event subscriptions**, and it is strictly better than a DSN parser: see
+> [`email-sending-events.md`](./email-sending-events.md). Cloudflare emits **one event per recipient**,
+> which means per-recipient outcome is observable *without* splitting submission per recipient — so the
+> manifest id stays the effect key, `submitted_key` stays one evidence pair, and the Bcc
+> header/envelope asymmetry stays intact.
+
+This paragraph originally reasoned about bounce handling from a mechanism that does not exist; the
+corrected mechanism is above.
 
 ## Two APIs, and they record different things
 
