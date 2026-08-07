@@ -13,11 +13,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  # So a run can be re-triggered without inventing a commit. GitHub's action-download service was
+  # unavailable on 6 August and took a run down in `Set up job` before a single step ran; without this,
+  # recovering from someone else's outage meant pushing something.
+  workflow_dispatch:
 
-# A superseded run tells you about code nobody has any more.
+# Cancel superseded *pull request* runs, never a push to main.
+#
+# This was `group: ci-<ref>` with `cancel-in-progress: true`, which is right for a branch someone is
+# iterating on and wrong for main: two pushes in quick succession cancelled the first, and a cancelled
+# run does not read as a failure anywhere — not in the run list, not on a badge, not to a person
+# glancing at the tab. Commit 14522c1 was cancelled that way and never verified at all, which is the
+# same landmine as a check that never ran: it looks like nothing is wrong.
+#
+# So each push to main gets its own group, keyed by sha, and is never superseded. Pull requests still
+# collapse to the latest commit, because there a superseded run genuinely tells you about code nobody
+# has any more.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
