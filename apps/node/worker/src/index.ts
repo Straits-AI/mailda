@@ -6,6 +6,7 @@ import { CallerError } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
+import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
@@ -40,6 +41,41 @@ export { KeyVault } from "./keyvault.ts";
  * losslessly, and show it to one authorized human.
  */
 export default {
+  /**
+   * Cloudflare Queues invokes this with `email.sending` events — the only channel by which a Node learns
+   * what happened to a message after hand-over (receipt: `email-sending-events.md`).
+   *
+   * Each message is acked or retried **individually**. A batch-level failure would put one malformed
+   * event in front of every good one behind it, and Queues retries the whole batch — so a single bad
+   * message would block delivery outcomes indefinitely.
+   */
+  async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const clock = createSystemCtx();
+    const orgId = await claimedOrg(env);
+
+    for (const message of batch.messages) {
+      if (orgId === null) {
+        // An unclaimed Node has nowhere to file an outcome. Retried rather than acked: the events are
+        // about real mail, and discarding them because setup is incomplete loses the only record.
+        message.retry();
+        continue;
+      }
+      try {
+        await applySendingEvent(env, clock, orgId, message.body as SendingEvent);
+        message.ack();
+      } catch (error) {
+        await log(env, clock, {
+          level: "error",
+          event: "sending_event.failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          orgId,
+          detail: { type: (message.body as SendingEvent)?.type ?? null },
+        });
+        message.retry();
+      }
+    }
+  },
+
   /** Cloudflare Email Routing invokes this with a real message (§13). */
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     const clock = createSystemCtx();

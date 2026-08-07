@@ -85,6 +85,14 @@ What exists today:
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
 | **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
+**A bounce reaches the right recipient of the right send, by key.** A Node cannot receive its own
+bounces — `cf-bounce` belongs to Cloudflare for the lifetime of the domain — so delivery outcomes arrive
+on a queue instead, one event per recipient. Proven end to end on the deployed Node: a send handed over,
+and about a minute later that recipient read `bounced / hard` with the provider's own words
+(*"Permanent: no available upstream: unknown public suffix"*), while a recipient nobody reported on stayed
+**unobserved**. `accepted` comes the same way, from a 250 the receiving server actually returned — which is
+an observation, not a claim. ([receipt](./docs/receipts/email-sending-events.md))
+
 **Every recipient of a send has its own state.** A send to three people used to have one state column and
 a JSON array of addresses, so "one bounced and two were accepted" was not representable — and that is the
 distinction Layer 2 is judged on. There is now a row per recipient, written in the same transaction as the

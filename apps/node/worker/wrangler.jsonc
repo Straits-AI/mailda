@@ -34,6 +34,23 @@
     { "tag": "v2", "new_sqlite_classes": ["KeyVault"] }
   ],
 
+  // Delivery outcomes arrive here (receipt: email-sending-events.md). A Node cannot receive its own
+  // bounces — cf-bounce belongs to Cloudflare for the lifetime of the domain — so this queue is the only
+  // channel by which "accepted" and "bounced" become observable per recipient.
+  //
+  // The **producer** binding is a provisioning lever, not something this Worker publishes to. Measured
+  // (queue-provisioning.md): `wrangler deploy` provisions a queue named by a producer binding but fails
+  // hard on one named only by a consumer, so a bare consumers block would break every one-click install.
+  // Declaring both makes a single deploy create the queue and attach the consumer.
+  //
+  // The subscription that feeds it is separate and is *not* in this file — it is an account-level object
+  // created through the API, which `mailda deploy` does. A Node without it receives no events, which is
+  // why doctor reports the capability rather than letting silence read as "nothing bounced".
+  "queues": {
+    "producers": [{ "queue": "mailda-sending-events", "binding": "SENDING_EVENTS" }],
+    "consumers": [{ "queue": "mailda-sending-events", "max_batch_size": 25, "max_batch_timeout": 10 }]
+  },
+
   // Browser-side scripts are served verbatim as text, so they stay real `.js` files that a
   // linter, a formatter and a person can all read. The alternative — JavaScript inside a
   // template literal in a `.ts` file — makes every backtick and `${` an escaping hazard, and
@@ -64,6 +81,10 @@
           { "name": "OUTBOX_SWEEPER", "class_name": "OutboxSweeper" },
           { "name": "KEY_VAULT", "class_name": "KeyVault" }
         ]
+      },
+      "queues": {
+        "producers": [{ "queue": "mailda-sending-events", "binding": "SENDING_EVENTS" }],
+        "consumers": [{ "queue": "mailda-sending-events", "max_batch_size": 25, "max_batch_timeout": 10 }]
       }
     }
   }

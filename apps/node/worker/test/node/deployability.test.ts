@@ -66,6 +66,17 @@ const BINDING_KINDS = {
     provisionedByButton: true,
     how: "Created by the migrations block on first deploy. No account-level resource to provision.",
   },
+  queues: {
+    // Measured, and the asymmetry is why the config carries a producer binding it never publishes to:
+    // a producer binding provisions the queue, a bare consumer block fails the deploy outright.
+    provisionedByButton: Boolean(BUDGETS["queues.producer_binding_provisions"]),
+    how:
+      "Provisioned by the deploy itself, but only because a producer binding names it — a consumer block " +
+      "alone fails with 'Queue does not exist' and would break every one-click install (measured: " +
+      "queue-provisioning.md). The event *subscription* that feeds the queue is an account-level object " +
+      "outside this config, created through the API by `mailda deploy`; doctor reports its absence, " +
+      "because a Node receiving no events is indistinguishable from one where nothing bounced.",
+  },
 } as const;
 
 type BindingKind = keyof typeof BINDING_KINDS;
