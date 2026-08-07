@@ -15,7 +15,8 @@ values:
   events.carries_bounce_type: 1
   events.subscription_scope_is_one_domain: 1
   events.routing_events_published: 0
-  events.submit_id_matches_event_id: -1
+  events.submit_id_matches_event_id: 1
+  events.bounce_event_seconds_observed: 60
 ---
 
 **Read from Cloudflare's documentation on 7 August 2026**, not measured against a running Node. These are
@@ -96,25 +97,61 @@ saw the message, and the UI wording has to keep that line: *the receiving server
 Cloudflare is still trying, so the outcome genuinely is not known yet, and the Node can say so with a
 reason instead of silence.
 
-## The join key is unmeasured, and everything rests on it
+## The join key is real, and it is byte-identical
 
-`payload.messageId` is documented as an opaque handle in every example — `0101018f7d0c4d9a-msg-bounced`.
-`apps/node/worker/src/outbound/transport.ts` stores what `env.EMAIL.send()` returns as
-`transport_message_id`, and [`cloudflare-email-sending.md`](./cloudflare-email-sending.md) measured that
-value as RFC-5322-shaped: `<…@mailda-test.whymelabs.com>`.
+Measured 7 August 2026 on the deployed Node with a live subscription, by sending to
+`nobody@example.invalid` (RFC 2606 reserves the TLD, so it hard-bounces without involving anyone) and
+comparing what `env.EMAIL.send()` returned against what arrived:
 
-**Those two shapes are not obviously the same value**, and if they are not, an event cannot be attributed
-to a manifest by key. Hence `events.submit_id_matches_event_id: -1`, meaning *not yet measured* rather
-than 0 or 1 — a receipt that guessed here would be the same failure as the one it was written to correct.
+```
+submit  transport_message_id : '<pIlEAeNiwq8Yqda1hdkDyqtTdfdzfrhVHHKb@mailda-test.whymelabs.com>'
+event   payload.messageId    : '<pIlEAeNiwq8Yqda1hdkDyqtTdfdzfrhVHHKb@mailda-test.whymelabs.com>'
+                    identical: yes, angle brackets included
+```
 
-Measuring it requires a live event subscription and one real send to a `.invalid` address (RFC 2606
-reserves the TLD, so it hard-bounces without involving a third party), then comparing the stored
-`transport_message_id` against the arriving `payload.messageId`.
+**Not** the opaque `0101018f7d0c4d9a-msg-bounced` shape every documented example shows — that appears to
+be illustrative rather than the format in use. Compare with and without the angle brackets: the match is
+exact *with* them, so a join must not strip them.
 
-**If they do not match**, the only remaining correlation is `sender` + `recipient` + `subject` within a
-time window. That is genuinely weaker — two sends to the same person with the same subject are
-indistinguishable — and it must be recorded as a heuristic in the UI, not presented as a key. Deciding
-that in advance is what stops a weak join from being quietly described as a strong one.
+So bounce attribution is a **key**, and the weaker fallback — `sender` + `recipient` + `subject` within a
+time window, which cannot tell two identical-subject sends apart — is not needed. Recorded because the
+design was prepared to accept the weak version, and the strong one is what shipped.
+
+The full bounce event, verbatim:
+
+```json
+{
+  "type": "cf.email.sending.message.bounced",
+  "payload": {
+    "eventId": "019fdc6a-d796-7e20-aba0-629ecb45f100",
+    "messageId": "<pIlEAeNiwq8Yqda1hdkDyqtTdfdzfrhVHHKb@mailda-test.whymelabs.com>",
+    "sender": "inbox@mailda-test.whymelabs.com",
+    "recipient": "nobody@example.invalid",
+    "subject": "Mailda bounce probe 3",
+    "terminal": true,
+    "delivery": { "status": "bounced",
+      "smtpResponse": "Permanent: no available upstream: unknown public suffix: example.invalid" },
+    "bounce": { "type": "hard", "classification": "permanent_failure",
+      "reason": "Permanent: no available upstream: unknown public suffix: example.invalid" }
+  }
+}
+```
+
+Two details worth keeping. `delivery` carried **no** `smtpStatusCode` or `smtpEnhancedStatusCode` — the
+failure never reached SMTP, so a consumer must treat those as optional rather than assume the documented
+shape. And the event arrived **about 60 seconds** after hand-over, so a UI cannot expect a synchronous
+answer; `outcome_unknown` is the true state in between, which is exactly why it exists.
+
+## A first subscription that observed nothing, and why
+
+The first attempt subscribed to `message.bounced` and `message.delivered` only, and saw nothing at all —
+which momentarily looked like the channel not working. It was the subscription being too narrow: a
+non-resolving domain is not an SMTP rejection, so `message.failed` looked like the likely type. Widening
+to all six produced a `message.bounced` after all.
+
+The lesson is for the product, not just the probe: **subscribe to all six events, always.** A narrow
+subscription is indistinguishable from a broken one, and a Node that silently observes nothing is the
+ambiguity Layer 2 exists to remove.
 
 ## What a Node needs before any of this works
 

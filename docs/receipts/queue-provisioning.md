@@ -11,7 +11,8 @@ values:
   queues.consumer_block_provisions: 0
   queues.consumer_attaches_when_producer_provisions: 1
   queues.subscription_creatable_by_cli: 0
-  queues.email_sending_subscription_is_dashboard_only: 1
+  queues.email_sending_subscription_is_dashboard_only: 0
+  queues.subscription_creatable_by_api: 1
 ---
 
 **Measured:** live Cloudflare account, Workers Paid, wrangler 4.118.0 (and 4.119.0 and `latest` for the
@@ -73,8 +74,37 @@ Cloudflare's own guide for this exact use case
 gives dashboard steps and no CLI equivalent: *"In the Cloudflare dashboard, go to the Queues page… select
 Subscriptions > Subscribe to events… select Email Sending as the source."*
 
-So linking Email Sending events to a queue is a **dashboard-only action today**. Neither
-`mailda deploy` nor the Deploy button can perform it.
+That is where this receipt originally stopped, concluding the subscription was **dashboard-only**. That
+conclusion was wrong, and the correction matters more than the original finding.
+
+**The REST API accepts `email.sending`.** wrangler's `--source` list is stale *client-side* validation,
+not a platform limit. Discovered by asking wrangler to create a supported subscription under
+`WRANGLER_LOG=debug`, reading the endpoint out of its own request log, then reading back the stored
+object to learn the schema:
+
+```
+POST /accounts/{account_id}/event_subscriptions/subscriptions
+{
+  "name": "…", "enabled": true,
+  "source":      { "type": "email.sending", "zone_id": "…", "domain": "send.example.com" },
+  "destination": { "type": "queues.queue", "queue_id": "…" },
+  "events":      ["message.delivered", "message.deferred", "message.bounced",
+                  "message.failed", "message.rejected", "message.complained"]
+}
+```
+
+`source.zone_id` is snake_case — `zoneId`, the spelling the *event payload* uses, is rejected with
+`Validation error: Required at "source.zone_id"`. Editing an existing subscription is `PATCH`; `PUT`
+returns `7001 PUT not supported for requested URI`.
+
+This was worth chasing rather than accepting, because the dashboard route is **also broken**: clicking
+*Subscribe to events* on 7 August 2026 produced `Refresh the page to try again` with
+`useModalContext must be used within a ModalContext` in the console — a React error, so the modal cannot
+mount at all. Had the CLI gap been taken at face value, the conclusion would have been that bounce
+visibility is unobtainable, when in fact it is fully automatable.
+
+**So `mailda deploy` can provision it end to end**, and one-click install needs no manual step for
+bounces. What it cannot use is wrangler's subcommand.
 
 ## What that means for the product, stated rather than implied
 
