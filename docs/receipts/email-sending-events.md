@@ -19,10 +19,14 @@ values:
   events.bounce_event_seconds_observed: 60
 ---
 
-**Read from Cloudflare's documentation on 7 August 2026**, not measured against a running Node. These are
-the platform's stated behaviours and are **adapter data** per §11B. One number —
-`events.submit_id_matches_event_id: -1` — is deliberately *unmeasured*, and the sign is the point: it is
-the single fact Layer 2's bounce attribution rests on, and this receipt refuses to guess it.
+**Read from Cloudflare's documentation on 7 August 2026, and the load-bearing part then measured against
+the deployed Node the same day.** Platform behaviours here are **adapter data** per §11B.
+
+The one fact Layer 2's bounce attribution rests on — whether an event can be joined to a manifest by key —
+was carried as `events.submit_id_matches_event_id: -1`, meaning *not yet measured*, rather than guessed at
+0 or 1. It is now **1**, established by a real bounce; see "The join key is real" below. The negative
+sentinel is kept in this history deliberately: it is what stopped the schema being designed around an
+assumption.
 
 Sources, each read directly:
 
@@ -41,7 +45,9 @@ This is the channel that does exist, and it is better than the one that does not
 
 ## One event per recipient, which changes the design rather than merely enabling it
 
-The decisive property. A `message.bounced` event names **one** recipient:
+The decisive property. A `message.bounced` event names **one** recipient — this is Cloudflare's own
+documented example, kept as published; note that its `messageId` is *not* the shape a real event carries
+(measured below) and its `source` uses `zoneId` where the creation API requires `zone_id`:
 
 ```json
 {

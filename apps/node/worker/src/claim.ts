@@ -96,12 +96,23 @@ export async function claimNode(
     ),
     env.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
       .bind(mailboxId, orgId, organizationName, at),
-    // The owner's live relationship. §7 evaluates this per request; it is never in a token.
+    // The owner's live relationships. §7 evaluates these per request; they are never in a token.
+    //
+    // Reading and sending are granted separately even though the owner gets both here, because they are
+    // different authorities: a shared mailbox several people read is exactly the kind whose outbound
+    // identity should be held by fewer of them. Granting `send.propose` in the *same batch* as the check
+    // that requires it is not tidiness — a check shipped without its grant denies the Node's own owner
+    // and leaves a freshly claimed Node unable to send at all.
     env.CATALOG.prepare(
       `INSERT INTO relationship_tuples
          (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,?,?,?,?)`,
     ).bind(ctx.id("rt"), orgId, userId, "mailbox.content.read", "mailbox", mailboxId, at),
+    env.CATALOG.prepare(
+      `INSERT INTO relationship_tuples
+         (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), orgId, userId, "send.propose", "mailbox", mailboxId, at),
   ]);
 
   // If the conditional update changed nothing, someone else claimed it between our read and

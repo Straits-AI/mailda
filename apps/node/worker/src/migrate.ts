@@ -6,6 +6,7 @@ import m0005 from "../migrations/0005_key_generation.sql";
 import m0006 from "../migrations/0006_threading.sql";
 import m0007 from "../migrations/0007_outbound.sql";
 import m0008 from "../migrations/0008_audit.sql";
+import m0009 from "../migrations/0009_send_authorization.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -68,6 +69,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0006_threading.sql", sql: m0006 },
   { name: "0007_outbound.sql", sql: m0007 },
   { name: "0008_audit.sql", sql: m0008 },
+  { name: "0009_send_authorization.sql", sql: m0009 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

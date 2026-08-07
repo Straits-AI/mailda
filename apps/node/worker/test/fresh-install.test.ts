@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { runDoctor, type Finding } from "../src/doctor.ts";
-import { migrate } from "../src/migrate.ts";
+import { migrate, migrationNames } from "../src/migrate.ts";
 import worker from "../src/index.ts";
 
 /**
@@ -115,7 +115,7 @@ describe("a Node with no schema, which is what a fresh install is", () => {
 
     const outcome = await migrate(testEnv);
     expect(outcome.alreadyCurrent).toBe(false);
-    expect(outcome.applied.length).toBe(8);
+    expect(outcome.applied.length).toBe(migrationNames().length);
 
     // The proof is not the count, it is that doctor — which knows what every migration creates — now
     // agrees the schema is complete.
@@ -141,10 +141,9 @@ describe("a Node with no schema, which is what a fresh install is", () => {
       .all<{ name: string }>();
     // Same table, same column, same names wrangler records. A private ledger would have made
     // `wrangler d1 migrations apply` re-run everything on a self-migrated Node.
-    expect(rows.results.map((r) => r.name)).toEqual([
-      "0001_init.sql", "0002_message_metadata.sql", "0003_ingress.sql", "0004_auth.sql",
-      "0005_key_generation.sql", "0006_threading.sql", "0007_outbound.sql", "0008_audit.sql",
-    ]);
+    // Compared against the bundled list rather than a copy of it. A literal here is a second place for
+    // the migration set to be recorded, and it went stale the moment 0009 landed.
+    expect(rows.results.map((r) => r.name)).toEqual(migrationNames());
   });
 
   it("survives two callers racing, applying each migration exactly once", async () => {
@@ -157,11 +156,11 @@ describe("a Node with no schema, which is what a fresh install is", () => {
     const raced = [...first.raced, ...second.raced];
 
     expect(new Set(applied).size).toBe(applied.length);
-    expect(applied.length + raced.length).toBeGreaterThanOrEqual(8);
+    expect(applied.length + raced.length).toBeGreaterThanOrEqual(migrationNames().length);
 
     const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM d1_migrations")
       .first<{ n: number }>();
-    expect(rows?.n).toBe(8);
+    expect(rows?.n).toBe(migrationNames().length);
   });
 
   it("serves POST /api/prepare on a Node where nothing else works", async () => {
@@ -175,7 +174,7 @@ describe("a Node with no schema, which is what a fresh install is", () => {
     expect(response.status).toBe(200);
     const body = await response.json<{ applied: string[]; alreadyCurrent: boolean }>();
     expect(body.alreadyCurrent).toBe(false);
-    expect(body.applied.length).toBe(8);
+    expect(body.applied.length).toBe(migrationNames().length);
 
     // And the Node is genuinely usable afterwards, not merely reporting success.
     const health = createExecutionContext();

@@ -62,7 +62,7 @@ will read as unexplained clutter to the next person unless the config says so. T
 the consumer out of committed config and having `mailda deploy` add it — costs a divergence between the
 CLI and button paths, which is exactly what ADR 18 collapsed to one Worker to avoid.
 
-## What is genuinely NOT automatable: the subscription
+## The subscription: not in the CLI, but not out of reach either
 
 `email.sending` is **absent from `wrangler queues subscription create --source`** in every version
 checked — 4.118.0, 4.119.0 and `latest`. The available sources are `artifacts`, `artifacts.repo`,
@@ -116,14 +116,16 @@ which, because they are easy to conflate:
 2. **Mail setup** — DNS and MX, Email Routing onboarding, sending-domain verification, destination
    address confirmation. **Always** an operator step, and not a Mailda limitation: these change DNS and
    require somebody's consent. No installer can or should do them silently.
-3. **Bounce visibility** — the event subscription. An operator step *today*, because of the CLI gap
-   above, not because it needs consent.
+3. **Bounce visibility** — the event subscription. **Automatable**, via the API above, so `mailda deploy`
+   can do it without an operator. Not via wrangler's subcommand, and not via the dashboard while that
+   modal is broken.
 
-Item 3 is the new one, and the only honest way to carry it is to make its absence **visible**: a Node
-with no subscription receives no events, and no events is indistinguishable from nothing having bounced.
-That ambiguity is precisely what Layer 2 exists to remove, so the capability has to be recorded (§14's
-"can this Node send" is a capability answer rather than a crash — the same shape applies here) and
-`doctor` has to say it is missing rather than let a Node look complete.
+Item 3 still needs its absence to be **visible**, and that is not a hedge about provisioning — it is
+because a subscription can be deleted, disabled, or scoped to the wrong domain long after install. A Node
+receiving no events is indistinguishable from one where nothing bounced, which is precisely the ambiguity
+Layer 2 exists to remove. So the capability is recorded (§14's "can this Node send" is a capability answer
+rather than a crash — the same shape applies) and `doctor` says it is missing rather than letting a Node
+look complete.
 
 ## Third documentation-versus-reality gap in two days
 

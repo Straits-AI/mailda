@@ -3,6 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { auditedBatch } from "../audit.ts";
+import { maySend } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
@@ -134,6 +135,23 @@ export async function sealManifest(
   orgId: string,
   composition: Composition,
 ): Promise<SealedManifest> {
+  // Authorization first, before the mailbox is even looked up.
+  //
+  // The order is the point. Below, a mailbox that does not exist and a mailbox with no address raise
+  // *different* errors — useful when it is your own mailbox, and an organisation-wide oracle when it is
+  // not: a caller could enumerate which mailbox ids exist by reading which refusal came back. Checking
+  // authority first collapses every unauthorized case to one answer.
+  //
+  // §7 evaluates this per request against live tuples, so revoking the relation takes effect on the next
+  // seal with nothing to invalidate.
+  if (!(await maySend(env, { orgId, userId: composition.authorUserId }, composition.mailboxId))) {
+    throw notFound("E_MAY_NOT_SEND_AS_MAILBOX", {
+      what: "no mailbox you may send as matches this request",
+      why: "sending as a mailbox is a distinct authority from reading it (§7), and it was not held",
+      fix: "ask an administrator for send.propose on this mailbox",
+    });
+  }
+
   const mailbox = await env.CATALOG.prepare(
     "SELECT id, hold_window_seconds FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
   )

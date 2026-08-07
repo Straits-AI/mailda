@@ -442,6 +442,10 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 .state-cancelled      { color: var(--dim); }
 .state-throttled      { border-color: var(--signal); color: var(--signal); }
 .state-refused        { border-color: var(--alarm); color: var(--alarm); }
+/* Reuses --alarm rather than introducing a token: a new colour would need its own contrast
+   measurement (docs/receipts/contrast-tokens.md) for no gain — "did not leave, needs a person" is the
+   same signal as refused. */
+.state-withheld       { border-color: var(--alarm); color: var(--alarm); }
 .state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
 .state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
 .state-audit-ok       { border-color: var(--live); color: var(--live); }

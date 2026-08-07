@@ -85,6 +85,15 @@ What exists today:
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
 | **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
+**Sending is authorized, and the authority is re-checked before the message leaves.** Layer 2's first
+named requirement was absent: any authenticated member could seal a send as any mailbox in the
+organisation, including one they cannot read. Sealing now requires `send.propose` on that mailbox — a
+distinct relation from reading it, because a shared mailbox several people read is exactly the kind whose
+outbound identity should be held by fewer of them. The check runs *again* before hand-over, because a
+send waits out a hold window and the sweeper that releases it has no principal in scope: revoking
+authority mid-window now produces `withheld`, a state that says the Node declined rather than blaming a
+mail service that was never asked.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.

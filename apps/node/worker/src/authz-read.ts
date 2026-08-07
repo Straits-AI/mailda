@@ -48,7 +48,23 @@ export async function principalFor(env: Env, ctx: Ctx, request: Request): Promis
  * May this principal read this mailbox? Direct grant or via a team, in two queries — the
  * shape #11 measured at 7 rows read and flat under 4x organisation growth.
  */
-export async function mayRead(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
+/**
+ * Does this principal hold `relation` on this mailbox, directly or through a team?
+ *
+ * The one query shape for every relation, rather than a copy per verb. #11 measured *this* shape — two
+ * queries, 7 rows read, flat under 4x organisation growth (`authz-check-rows-read.md`) — and a second
+ * hand-written variant would be a second thing for that receipt to stop describing.
+ *
+ * Authority is re-read on every call and nothing is cached, which is what makes revocation take effect
+ * immediately (§7, §28). That matters most on the send path, where the gap between deciding and acting
+ * is a hold window rather than a request.
+ */
+async function hasRelation(
+  env: Env,
+  who: Principal,
+  relation: string,
+  mailboxId: string,
+): Promise<boolean> {
   const teams = await env.CATALOG.prepare(
     "SELECT team_id FROM team_members WHERE org_id = ? AND user_id = ?",
   )
@@ -61,13 +77,35 @@ export async function mayRead(env: Env, who: Principal, mailboxId: string): Prom
   const tuple = await env.CATALOG.prepare(
     `SELECT 1 FROM relationship_tuples
       WHERE org_id = ? AND subject_id IN (${placeholders})
-        AND object_type = 'mailbox' AND relation = 'mailbox.content.read' AND object_id = ?
+        AND object_type = 'mailbox' AND relation = ? AND object_id = ?
       LIMIT 1`,
   )
-    .bind(who.orgId, ...subjects, mailboxId)
+    .bind(who.orgId, ...subjects, relation, mailboxId)
     .first();
 
   return tuple !== null;
+}
+
+export async function mayRead(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
+  return hasRelation(env, who, "mailbox.content.read", mailboxId);
+}
+
+/**
+ * May this principal send *as* this mailbox?
+ *
+ * Layer 2's first named requirement, and it was absent: `sealManifest` verified only that the mailbox
+ * belonged to the organisation, so any authenticated member could send as any mailbox — including one
+ * they cannot read. Reading and sending are different authorities and this is a distinct relation, not
+ * a synonym for `mailbox.content.read`: a shared invoices mailbox that several people read is exactly
+ * the kind whose outbound identity should be held by fewer of them.
+ *
+ * Bound to the mailbox rather than to a sender address, because ADR 36 already makes `From` the mailbox
+ * and `send_manifests.mailbox_id` is what a check has in hand. The blueprint's §29 sketch scopes it as
+ * `sender:enquiries@example.com`; that finer grain is deferred knowingly rather than diverged from
+ * silently — recorded here so the next reader finds the discrepancy explained.
+ */
+export async function maySend(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
+  return hasRelation(env, who, "send.propose", mailboxId);
 }
 
 type Authorized = { ok: true; blobKey: string } | { ok: false; response: Response };

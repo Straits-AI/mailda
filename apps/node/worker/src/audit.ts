@@ -55,6 +55,9 @@ export const AUDIT_ACTIONS = {
   "key.rotated": { says: "The signing key changed; tokens minted before and after differ in kid." },
   "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },
   "send.cancelled": { says: "A held send was stopped by a person before dispatch." },
+  "send.withheld": {
+    says: "A held send was stopped by the Node because the author's send authority was withdrawn.",
+  },
   // The terminal states of dispatch. Each is recorded, including the successful one — see `audit`.
   "send.held": { says: "A send is waiting out its hold window." },
   "send.throttled": { says: "The transport declined for rate reasons; the system may retry." },

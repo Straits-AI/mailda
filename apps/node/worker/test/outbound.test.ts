@@ -43,7 +43,8 @@ function atTime(millis: number): Ctx {
 }
 
 beforeEach(async () => {
-  for (const table of ["send_manifests", "send_counters", "messages", "addresses", "mailboxes", "node_capabilities"]) {
+  for (const table of ["send_manifests", "send_counters", "messages", "addresses", "mailboxes",
+                       "node_capabilities", "relationship_tuples"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -54,8 +55,20 @@ beforeEach(async () => {
     testEnv.CATALOG.prepare(
       "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
     ).bind(ctx.id("addr"), ORG, ADDRESS, MAILBOX, at),
+    // Sending is authorized explicitly. Before Layer 2 this fixture needed no grant, because sealing
+    // checked only that the mailbox was in the organisation — which is the hole the grant closes.
+    grantSend(ctx, AUTHOR, MAILBOX),
   ]);
 });
+
+/** The tuple that lets a principal send as a mailbox. §7 reads it live on every seal and dispatch. */
+function grantSend(ctx: Ctx, userId: string, mailboxId: string) {
+  return testEnv.CATALOG.prepare(
+    `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+     VALUES (?,?,?,?,?,?,?)`,
+  ).bind(ctx.id("rt"), ORG, userId, "send.propose", "mailbox", mailboxId,
+    new Date(ctx.now()).toISOString());
+}
 
 const composition = {
   mailboxId: MAILBOX,
@@ -496,5 +509,110 @@ describe("error classification", () => {
     // That string names neither the plan nor domain verification, so it teaches an operator nothing.
     expect("reason" in outcome && outcome.reason).not.toContain("not a verified address");
     expect("reason" in outcome && outcome.reason).toContain("onboarded");
+  });
+});
+
+describe("sender authorization (Layer 2's first requirement)", () => {
+  it("refuses to seal for a principal with no send relation", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, composition))
+      .rejects.toThrow(/E_MAY_NOT_SEND_AS_MAILBOX/);
+
+    // Nothing persisted. A refusal that still wrote a manifest would leave a send somebody could
+    // dispatch by other means.
+    const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests")
+      .first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+  });
+
+  it("does not distinguish an unauthorized mailbox from one that does not exist", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+
+    const unauthorized = await sealManifest(testEnv, createSystemCtx(), ORG, composition)
+      .then(() => null, (e: Error) => e.message);
+    const absent = await sealManifest(testEnv, createSystemCtx(), ORG,
+      { ...composition, mailboxId: "mbx_does_not_exist" })
+      .then(() => null, (e: Error) => e.message);
+
+    // Identical refusals. Different ones let a caller enumerate mailbox ids by reading which error came
+    // back — an organisation-wide oracle out of two individually reasonable messages.
+    expect(unauthorized).toBe(absent);
+  });
+
+  it("reading a mailbox does not confer sending as it", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), ORG, AUTHOR, "mailbox.content.read", "mailbox", MAILBOX,
+      new Date(ctx.now()).toISOString()).run();
+
+    // A shared mailbox several people read is exactly the kind whose outbound identity should be held by
+    // fewer of them. Collapsing the two relations would be the easy shape and the wrong one.
+    await expect(sealManifest(testEnv, ctx, ORG, composition))
+      .rejects.toThrow(/E_MAY_NOT_SEND_AS_MAILBOX/);
+  });
+
+  it("withholds a held send when authority is revoked inside the hold window", async () => {
+    const ctx = atTime(1_800_000_000_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    expect(sealed.state).toBe("held");
+
+    // The revocation. §7 and §28 require withdrawn authority to stop working immediately, and the hold
+    // window is inside "immediately" — the sweeper dispatches seconds later with no principal in scope.
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+
+    const transport = fakeTransport({ kind: "handed_over", transportMessageId: "<x@acme.example>" });
+    const after = atTime(1_800_000_000_000 + 60_000);
+    const results = await dispatchDue(testEnv, after, ORG, transport);
+
+    expect(results[0]?.state).toBe("withheld");
+    // Never offered to the transport. "Refused" would blame the mail service for a decision this Node
+    // made, and it was never asked.
+    expect(transport.submitted).toHaveLength(0);
+  });
+
+  it("does not spend an attempt or claim the manifest when withholding", async () => {
+    const ctx = atTime(1_800_000_100_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+
+    await dispatchDue(testEnv, atTime(1_800_000_160_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<y@acme.example>" }));
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT state, attempts, transport_message_id FROM send_manifests WHERE id = ?",
+    ).bind(sealed.id).first<{ state: string; attempts: number; transport_message_id: string | null }>();
+
+    // The check runs *before* the claim on purpose. Afterwards it would have burned an attempt and left
+    // the manifest in outcome_unknown — "we do not know whether it left" — when it demonstrably did not.
+    expect(row?.state).toBe("withheld");
+    expect(row?.attempts).toBe(0);
+    expect(row?.transport_message_id).toBeNull();
+  });
+
+  it("records the withholding in the same transaction as the state", async () => {
+    const ctx = atTime(1_800_000_200_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+    await dispatchDue(testEnv, atTime(1_800_000_260_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<z@acme.example>" }));
+
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT action, outcome FROM audit_entries WHERE subject = ? AND action = 'send.withheld'",
+    ).bind(sealed.id).first<{ action: string; outcome: string }>();
+    expect(entry?.outcome).toBe("refused");
+  });
+
+  it("still sends when authority is intact, so the gate is not simply a wall", async () => {
+    const ctx = atTime(1_800_000_300_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    const transport = fakeTransport({ kind: "handed_over", transportMessageId: "<ok@acme.example>" });
+    const results = await dispatchDue(testEnv, atTime(1_800_000_360_000), ORG, transport);
+
+    expect(results.find((r) => r.manifestId === sealed.id)?.state).toBe("handed_over");
+    expect(transport.submitted).toHaveLength(1);
   });
 });

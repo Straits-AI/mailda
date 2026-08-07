@@ -541,6 +541,11 @@ function composer(context) {
 const SEND_STATES = {
   held: { label: "held", note: "Not sent yet. You can still stop this." },
   cancelled: { label: "cancelled", note: "Stopped before it left." },
+  withheld: {
+    label: "withheld",
+    note: "Not sent. The author's authority to send as this mailbox was withdrawn during the hold window, " +
+      "so this Node refused to hand it over. Nobody cancelled it and the mail service was never asked.",
+  },
   throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
   refused: { label: "refused", note: "The mail service would not accept it. It never left." },
   suppressed: { label: "suppressed", note: "The mail service will never deliver to this recipient." },

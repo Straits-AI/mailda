@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
+import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
@@ -11,7 +12,8 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  * ## Seven states, and two of them are forbidden
  *
  *   held             sealed, undispatched, still cancellable
- *   cancelled        stopped during the hold window
+ *   cancelled        stopped during the hold window by a person
+ *   withheld         the author's authority to send as this mailbox was withdrawn before hand-over
  *   throttled        rate-limited — provably never left
  *   refused          rejected at the API boundary — provably never left
  *   suppressed       on the suppression list — will never arrive, and that is knowable now
@@ -34,7 +36,8 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  */
 
 export type SendState =
-  | "held" | "cancelled" | "throttled" | "refused" | "suppressed" | "handed_over" | "outcome_unknown";
+  | "held" | "cancelled" | "withheld" | "throttled" | "refused" | "suppressed"
+  | "handed_over" | "outcome_unknown";
 
 /** Which states the system may retry on its own. Everything absent here needs a human, or nothing. */
 const AUTO_RETRYABLE: ReadonlySet<SendState> = new Set<SendState>(["throttled"]);
@@ -142,6 +145,55 @@ export async function dispatchOne(
   transport: TransportAdapter = cloudflareTransport,
 ): Promise<DispatchResult> {
   const at = new Date(ctx.now()).toISOString();
+
+  // Authority is re-read here, *before* the claim, and this is the window Layer 2 would otherwise leave
+  // open. Sealing checks that the author may send as the mailbox; hand-over happens up to
+  // `send.hold_window_default_seconds` later, from a sweeper alarm with no principal in scope. §7 and §28
+  // require withdrawn authority to stop working immediately, and "immediately" has to include those
+  // seconds — otherwise revoking someone mid-hold still sends their message.
+  //
+  // Before the claim rather than after, deliberately: the claim increments `attempts` and moves the
+  // manifest to `outcome_unknown`, so checking afterwards would spend an attempt and park a
+  // never-submitted message in the one state that means "we do not know whether it left". It did not
+  // leave, and we do know. Blurring those is precisely what this layer must not do.
+  const author = await env.CATALOG.prepare(
+    "SELECT author_user_id, mailbox_id FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
+  )
+    .bind(manifestId, orgId)
+    .first<{ author_user_id: string; mailbox_id: string }>();
+
+  if (author !== null && !(await maySend(env, { orgId, userId: author.author_user_id }, author.mailbox_id))) {
+    // Conditional on still being held, for the same reason cancellation is: a dispatcher that already
+    // claimed this must not have its work overwritten.
+    const { results } = await auditedBatch<never>(
+      env, ctx, orgId,
+      {
+        action: "send.withheld", outcome: "refused", subject: manifestId,
+        detail: { authorUserId: author.author_user_id, mailboxId: author.mailbox_id },
+      },
+      (entry) => [
+        entry,
+        env.CATALOG.prepare(
+          `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?
+            WHERE id = ? AND org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
+        ).bind(at, "The author's authority to send as this mailbox was withdrawn before hand-over.",
+          manifestId, orgId, at),
+      ],
+      {
+        sql: `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ?
+                AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
+        params: [manifestId, orgId, at],
+      },
+    );
+    if ((results[1]?.meta.changes ?? 0) > 0) {
+      return {
+        manifestId,
+        state: "withheld",
+        detail: "This message was not sent: the author's authority to send as this mailbox was withdrawn.",
+      };
+    }
+    // Somebody else moved it first; fall through and report what it actually is.
+  }
 
   // Claim: only a held-and-due or auto-retryable manifest may move. A concurrent cancel wins here.
   const claimed = await env.CATALOG.prepare(

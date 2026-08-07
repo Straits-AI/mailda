@@ -29,7 +29,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   send_manifests: {
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",
-      "send.suppressed", "send.handed_over", "send.outcome_unknown",
+      "send.suppressed", "send.handed_over", "send.outcome_unknown", "send.withheld",
     ],
   },
 
@@ -39,7 +39,13 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   team_members: { exempt: "No mutation path exists yet. Auditable when membership admin lands (§28)." },
-  relationship_tuples: { exempt: "No mutation path exists yet. Permission changes are audit-critical when they land." },
+  relationship_tuples: {
+    exempt:
+      "Written by claim and by migration 0009's backfill, neither of which a person performs at a moment " +
+      "an audit entry could describe — claim is already evidenced by node_claim, and a migration runs " +
+      "before any org exists to own a chain. Becomes auditable the moment a person can grant or revoke a " +
+      "relation, which is when send.propose stops being claim-only and is the thing to watch for.",
+  },
   mailboxes: { exempt: "No mutation path exists yet." },
   messages: { exempt: "Written by ingress from mail that arrived; the mail is its own evidence (§13)." },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
