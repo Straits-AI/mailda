@@ -171,6 +171,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
   findings.push(
     ...(await checkSchema(env)),
     ...(await checkEvidenceBucket(env)),
+    ...(await checkDeliveryVisibility(env, ctx, claim?.org_id ?? null)),
     ...(await checkVault(env)),
     ...(await checkCredentialKek(env)),
     ...(await checkSigningKeys(env, ctx)),
@@ -276,6 +277,92 @@ async function checkEvidenceBucket(env: Env): Promise<Finding[]> {
         "not R2 (docs/receipts/deploy-button-behaviour.md), so on a button-installed Node this is the " +
         "expected first failure and is not a sign anything else is wrong",
     }),
+  }];
+}
+
+/**
+ * Can this Node see what happened to the mail it sent?
+ *
+ * A Node cannot receive its own bounces (`cloudflare-email-sending.md`, corrected), so delivery outcomes
+ * arrive only on a Queues event subscription. That subscription is an **account-level** object: it is not
+ * in `wrangler.jsonc`, wrangler's CLI cannot create it, and the dashboard's own modal currently throws —
+ * so it is created through the API by `mailda deploy` (`queue-provisioning.md`).
+ *
+ * Which means it can be absent, deleted, disabled, or pointed at the wrong sending domain, and **nothing
+ * about a Node in that state looks wrong**: sends still hand over, the outbox still fills, and every
+ * recipient sits at `unobserved` forever. No events is indistinguishable from nothing having bounced,
+ * which is the exact ambiguity Layer 2 exists to remove — so the silence has to be named.
+ *
+ * `degraded`, not `refuse`. A Node without it still sends honest mail and still reports `handed_over`
+ * truthfully; what it cannot do is tell you what happened next. Refusing to run would trade a working
+ * product for a missing observation, which is precisely the trade AGENTS.md forbids.
+ *
+ * Inferred from evidence rather than asked of the platform, deliberately: reading the subscription would
+ * need an account credential §5A forbids a Node retaining. Instead it compares what this Node has handed
+ * over against what it has heard back — which is the thing a person actually wants to know, and is true
+ * even if a subscription exists but is misrouted.
+ */
+async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "delivery_visibility",
+      severity: "degraded",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so nothing has been sent.",
+    }];
+  }
+
+  const window = new Date(ctx.now() - DELIVERY_SILENCE_MS).toISOString();
+  const counted = await env.CATALOG.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM send_recipients r
+          JOIN send_manifests m ON m.id = r.manifest_id
+         WHERE r.org_id = ? AND r.submission_state = 'handed_over' AND m.state_at < ?) AS awaiting,
+       (SELECT COUNT(*) FROM send_recipients r
+          JOIN send_manifests m ON m.id = r.manifest_id
+         WHERE r.org_id = ? AND r.submission_state = 'handed_over' AND m.state_at < ?
+           AND r.delivery_state IS NULL) AS unobserved,
+       (SELECT COUNT(*) FROM send_recipient_events WHERE org_id = ?) AS events`,
+  )
+    .bind(orgId, window, orgId, window, orgId)
+    .first<{ awaiting: number; unobserved: number; events: number }>()
+    .catch(() => null);
+
+  if (counted === null) {
+    return [{
+      check: "delivery_visibility",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "Could not read the delivery tables.",
+      fix: "check the migrations_applied finding first",
+    }];
+  }
+
+  // Every hand-over old enough to have been answered, and not one answer among them. One unobserved
+  // recipient means nothing; all of them, with zero events ever received, means the channel is not there.
+  const blind = counted.awaiting > 0 && counted.unobserved === counted.awaiting && counted.events === 0;
+
+  return [{
+    check: "delivery_visibility",
+    severity: "degraded",
+    discloses: "data",
+    ok: !blind,
+    detail: blind
+      ? `${counted.awaiting} recipient(s) were handed over more than ` +
+        `${Math.round(DELIVERY_SILENCE_MS / 60000)} minutes ago and this Node has received no delivery ` +
+        `events at all. It cannot tell you whether any of them arrived, and "no bounces" here means ` +
+        `"nothing heard" rather than "nothing failed".`
+      : counted.awaiting === 0
+        ? "Nothing has been handed over long enough to expect an answer yet."
+        : `${counted.awaiting - counted.unobserved} of ${counted.awaiting} handed-over recipient(s) have ` +
+          `an observed outcome, from ${counted.events} event(s).`,
+    ...(blind ? {
+      fix: "create an Email Sending event subscription for this sending domain, delivering to the " +
+        "mailda-sending-events queue (docs/receipts/email-sending-events.md). Without it every recipient " +
+        "stays unobserved forever",
+    } : {}),
   }];
 }
 
@@ -456,6 +543,15 @@ async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
 
 /** Ten minutes: long enough that fast-path publication and one alarm retry have both had a turn. */
 const STALLED_OUTBOX_MS = 10 * 60 * 1000;
+
+/**
+ * How long a hand-over may go unanswered before silence is worth reporting.
+ *
+ * Derived from a measured arrival, not chosen: `email-sending-events.md` observed a bounce landing about
+ * 60 seconds after hand-over, and this is 15x that. Deliberately generous, because the errors are not
+ * symmetric — a false alarm gets a check muted, and a muted check guards nothing.
+ */
+const DELIVERY_SILENCE_MS = BUDGETS["events.delivery_silence_minutes"] * 60 * 1000;
 
 /**
  * Evidence integrity — §24's worst failure: a receipt saying a message was accepted, pointing at a

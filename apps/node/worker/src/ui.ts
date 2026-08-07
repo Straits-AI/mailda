@@ -446,6 +446,37 @@ textarea:focus { outline: 0; border-color: var(--signal); }
    measurement (docs/receipts/contrast-tokens.md) for no gain — "did not leave, needs a person" is the
    same signal as refused. */
 .state-withheld       { border-color: var(--alarm); color: var(--alarm); }
+
+/* Delivery is a different scale from submission — what the receiving world did, not what this Node did —
+   so it reuses the same three signal colours rather than inventing a fourth. Every one of these is an
+   existing token, which is what keeps contrast-tokens.md's measurement valid without re-measuring. */
+.delivery-accepted    { border-color: var(--live); color: var(--live); }
+.delivery-bounced     { border-color: var(--alarm); color: var(--alarm); }
+.delivery-failed      { border-color: var(--alarm); color: var(--alarm); }
+.delivery-rejected    { border-color: var(--alarm); color: var(--alarm); }
+.delivery-deferred    { border-color: var(--signal); color: var(--signal); }
+/* Unobserved is deliberately the quietest thing on the row. It is not a warning and not a success; it is
+   the absence of news, and styling it loudly would make silence look like a finding. */
+.delivery-unobserved  { color: var(--dim); }
+.delivery-mixed       { border-color: var(--signal); color: var(--signal); margin-left: .35rem; }
+
+.recipients { display: grid; gap: .3rem; }
+.recipient {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+  gap: .5rem;
+  align-items: baseline;
+}
+.recipient .label { font-size: .6rem; }
+.recipient .mono { font-size: .73rem; word-break: break-all; }
+/* The provider's own words, on their own line so a long SMTP response does not shove the state chip out
+   of the row. Shown verbatim: a paraphrase of somebody else's mail server is a guess. */
+.recipient-error {
+  grid-column: 1 / -1;
+  font-size: .66rem;
+  line-height: 1.5;
+  padding-left: 3.1rem;
+}
 .state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
 .state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
 .state-audit-ok       { border-color: var(--live); color: var(--live); }

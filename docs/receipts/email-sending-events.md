@@ -17,6 +17,7 @@ values:
   events.routing_events_published: 0
   events.submit_id_matches_event_id: 1
   events.bounce_event_seconds_observed: 60
+  events.delivery_silence_minutes: 15
 ---
 
 **Read from Cloudflare's documentation on 7 August 2026, and the load-bearing part then measured against
@@ -147,6 +148,21 @@ Two details worth keeping. `delivery` carried **no** `smtpStatusCode` or `smtpEn
 failure never reached SMTP, so a consumer must treat those as optional rather than assume the documented
 shape. And the event arrived **about 60 seconds** after hand-over, so a UI cannot expect a synchronous
 answer; `outcome_unknown` is the true state in between, which is exactly why it exists.
+
+## How long silence has to last before it means something
+
+`events.delivery_silence_minutes: 15`, used by `doctor`'s `delivery_visibility` check.
+
+Derived from the 60 seconds measured above, not chosen: **15x** the one observed arrival. The asymmetry
+justifies the generosity. Being wrong short means telling an operator their delivery channel is broken
+while an answer is still in flight — a false alarm, and a check that cries wolf gets muted, after which it
+guards nothing. Being wrong long means a genuinely blind Node goes unreported for a quarter of an hour,
+which costs an operator fifteen minutes of not knowing something they were not looking at anyway.
+
+One measurement is thin evidence for a distribution, and this number should tighten once there are more.
+A `deferred` event in particular can precede a terminal one by much longer than a minute — Cloudflare
+retries temporary failures — so the window bounds *"heard nothing at all"* rather than *"reached a final
+answer"*, which is why the check tests for zero events rather than for unresolved ones.
 
 ## A first subscription that observed nothing, and why
 

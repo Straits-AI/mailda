@@ -3,6 +3,8 @@ import type { Ctx } from "@mailda/runtime";
 import { getEvidence } from "./evidence-store.ts";
 import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
+import { log } from "./audit.ts";
+import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
 
 /**
  * Turning an accepted receipt into message metadata and a mailbox delivery (#27).
@@ -142,5 +144,45 @@ export async function materialiseReceipt(
     ),
   ]);
 
+  // A delivery report that arrived as ordinary inbound mail is recorded where the queue's own events go,
+  // so the outbox stays the single account of delivery. Without this a reader sees a bounce notice in the
+  // inbox while the outbox says the send was accepted — two views contradicting each other with neither
+  // being wrong, because they are about different sends.
+  //
+  // After the message batch, not inside it. The message belongs in the mailbox whatever the report says,
+  // and a failure to interpret somebody else's report must never cost a person their mail.
+  try {
+    const text = new TextDecoder().decode(raw);
+    if (isDeliveryReport(headerBlockContentType(text), text)) {
+      const outcome = await recordDeliveryReport(env, ctx, receipt.org_id, receipt.id, text);
+      if (!outcome.recorded) {
+        // Logged rather than guessed at. "A report arrived that this Node could not read" is a fact an
+        // operator can act on; a fabricated bounce shown to a user is not.
+        await log(env, ctx, {
+          level: "warn",
+          event: "delivery_report.unreadable",
+          message: `A delivery report could not be attributed: ${outcome.unreadable}`,
+          orgId: receipt.org_id,
+          detail: { ingressReceiptId: receipt.id },
+        });
+      }
+    }
+  } catch (error) {
+    await log(env, ctx, {
+      level: "warn",
+      event: "delivery_report.failed",
+      message: (error as Error).message.split("\n")[0] ?? "unknown",
+      orgId: receipt.org_id,
+      detail: { ingressReceiptId: receipt.id },
+    });
+  }
+
   return { status: "created", messageId, threadRoot, parseError };
+}
+
+/** The top-level Content-Type, read off the header block without parsing the whole message. */
+function headerBlockContentType(text: string): string | null {
+  const block = text.split(/\r?\n\r?\n/, 1)[0] ?? "";
+  const found = /^content-type:\s*(.+)$/im.exec(block);
+  return found === null ? null : found[1]!.trim();
 }

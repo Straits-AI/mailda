@@ -553,6 +553,94 @@ const SEND_STATES = {
   outcome_unknown: { label: "outcome unknown", note: "We do not know whether it left. It will not be retried automatically." },
 };
 
+/**
+ * What was observed about one recipient, after hand-over.
+ *
+ * A different scale from SEND_STATES: those describe what *this Node* did with the envelope, these
+ * describe what the receiving world did with one address. Showing them in one column would blur exactly
+ * the distinction Layer 2 is judged on, so they are separate and labelled differently.
+ *
+ * `null` is a state, not a gap. "Unobserved" is what a Node honestly knows between hand-over and an event
+ * arriving, and it must not be dressed up as pending, in-progress, or fine.
+ */
+const DELIVERY_STATES = {
+  accepted: {
+    label: "accepted",
+    note: "The receiving mail server accepted this message and returned a 250. That is not the same as a " +
+      "person having read it — nothing here can know that.",
+  },
+  bounced: {
+    label: "bounced",
+    note: "The receiving server refused it. A hard bounce means the address is wrong; a soft one means " +
+      "temporary failures ran out of retries.",
+  },
+  deferred: {
+    label: "deferred",
+    note: "A temporary failure, and the mail service is still retrying. The outcome is genuinely not " +
+      "known yet.",
+  },
+  failed: {
+    label: "failed",
+    note: "The mail service hit an internal error rather than a refusal from the recipient. This is not a " +
+      "bounce and says nothing about the address.",
+  },
+  rejected: {
+    label: "rejected",
+    note: "Refused before delivery was attempted.",
+  },
+};
+
+const UNOBSERVED = {
+  label: "unobserved",
+  note: "Nothing has been reported about this recipient yet. This Node will not guess: no news is not " +
+    "good news, and it is not bad news either.",
+};
+
+/**
+ * A short summary, but only when the recipients disagree.
+ *
+ * Returns null for a unanimous outcome, because repeating it beside the send state is noise. Returns
+ * something like "1 bounced / 2 accepted" when they differ — which is the case a single chip would have
+ * silently flattened, and the reason this table exists.
+ */
+function deliverySummary(recipients) {
+  if (!recipients || recipients.length < 2) return null;
+  const counts = new Map();
+  for (const r of recipients) {
+    const key = r.delivery_state ?? "unobserved";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (counts.size < 2) return null;
+  return [...counts.entries()].map(([state, n]) => `${n} ${state}`).join(" / ");
+}
+
+/** One line per recipient, so a mixed outcome cannot be flattened into a single chip. */
+function recipientBreakdown(recipients) {
+  if (!recipients || recipients.length === 0) return [];
+  return [
+    el("dt", { text: "recipients" }),
+    el("dd", {}, [
+      el("div", { class: "recipients" }, recipients.map((r) => {
+        const observed = r.delivery_state === null || r.delivery_state === undefined
+          ? UNOBSERVED
+          : (DELIVERY_STATES[r.delivery_state] ?? { label: r.delivery_state, note: "" });
+        return el("div", { class: "recipient" }, [
+          el("span", { class: "label", text: r.kind }),
+          el("span", { class: "mono", text: r.address }),
+          el("span", {
+            class: `state delivery-${r.delivery_state ?? "unobserved"}`,
+            text: observed.label,
+            title: observed.note + (r.bounce_type ? ` (${r.bounce_type})` : ""),
+          }),
+          r.last_error
+            ? el("span", { class: "dim mono recipient-error", text: r.last_error })
+            : null,
+        ]);
+      })),
+    ]),
+  ];
+}
+
 async function renderOutbox(highlightId) {
   const response = await apiFetch("/api/sends");
   if (!response.ok) return show(notice(`The outbox could not be read (${response.status}).`, "bad"));
@@ -563,7 +651,14 @@ async function renderOutbox(highlightId) {
     const row = el("tr", { class: send.id === highlightId ? "entry open" : "entry", "data-reveal": "" }, [
       el("td", { text: send.subject }),
       el("td", { class: "dim mono", text: (JSON.parse(send.envelope_to) || []).join(", ") }),
-      el("td", {}, [el("span", { class: `state state-${send.state}`, text: state.label })]),
+      el("td", {}, [
+        el("span", { class: `state state-${send.state}`, text: state.label }),
+        // A second chip only when the recipients actually disagree with each other. Summarising a
+        // unanimous outcome twice is noise; hiding a mixed one is the dishonesty this exists to prevent.
+        ...(deliverySummary(send.recipients) === null ? [] : [
+          el("span", { class: "state delivery-mixed", text: deliverySummary(send.recipients) }),
+        ]),
+      ]),
       el("td", { class: "num mono dim", text: new Date(send.state_at).toLocaleTimeString(undefined, { hour12: false }) }),
       el("td", { class: "num" }, [
         send.state === "held"
@@ -587,6 +682,7 @@ async function renderOutbox(highlightId) {
       el("td", { colspan: "5" }, [
         el("dl", {}, [
           el("dt", { text: "what this means" }), el("dd", { text: state.note }),
+          ...recipientBreakdown(send.recipients),
           el("dt", { text: "manifest" }), el("dd", { class: "mono", text: send.id }),
           ...(send.last_error === null ? [] : [el("dt", { text: "reported" }), el("dd", { text: send.last_error })]),
         ]),

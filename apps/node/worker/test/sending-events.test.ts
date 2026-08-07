@@ -204,3 +204,95 @@ describe("the properties a queue forces on us", () => {
     expect(stored?.n).toBe(1);
   });
 });
+
+describe("a stray delivery report cannot contradict the outbox", () => {
+  const DSN = [
+    "From: MAILER-DAEMON@relay.example",
+    "To: inbox@mailda-test.example",
+    "Subject: Delivery Status Notification (Failure)",
+    'Content-Type: multipart/report; report-type=delivery-status; boundary="b"',
+    "",
+    "--b",
+    "Content-Type: message/delivery-status",
+    "",
+    "Reporting-MTA: dns; relay.example",
+    "",
+    "Final-Recipient: rfc822; gone@example.net",
+    "Action: failed",
+    "Status: 5.1.1",
+    "Diagnostic-Code: smtp; 550 5.1.1 No such user",
+    `Original-Message-ID: ${TRANSPORT_ID}`,
+    "--b--",
+    "",
+  ].join("\r\n");
+
+  it("recognises a report, and reads who failed", async () => {
+    const { isDeliveryReport, readReportedFailure } = await import("../src/outbound/delivery-report.ts");
+
+    expect(isDeliveryReport("multipart/report; report-type=delivery-status", DSN)).toBe(true);
+    const failure = readReportedFailure(DSN);
+    expect(failure?.recipient).toBe("gone@example.net");
+    // Brackets kept: that is the form transport_message_id stores, and normalising breaks the only join.
+    expect(failure?.originalMessageId).toBe(TRANSPORT_ID);
+    expect(failure?.diagnostic).toContain("550 5.1.1");
+  });
+
+  it("does not mistake an ordinary message that mentions bouncing", async () => {
+    const { isDeliveryReport } = await import("../src/outbound/delivery-report.ts");
+    const ordinary = [
+      "From: a@example.com", "Subject: your email bounced", "Content-Type: text/plain", "",
+      "I think your message to Final-Recipient: rfc822; someone@example.net bounced. Diagnostic-Code: 550?",
+      "",
+    ].join("\r\n");
+
+    // Prose quoting the field names must not be read as a machine report — the match is on a part header,
+    // not on the words appearing anywhere.
+    expect(isDeliveryReport("text/plain", ordinary)).toBe(false);
+  });
+
+  it("attributes a report to the send it names, alongside the queue's own events", async () => {
+    const { recordDeliveryReport } = await import("../src/outbound/delivery-report.ts");
+    const outcome = await recordDeliveryReport(testEnv, createSystemCtx(), ORG, "rcpt_probe_1", DSN);
+
+    expect(outcome.recorded).toBe(true);
+    // Same table as the queue's events, so the outbox is one account of delivery rather than two.
+    expect(outcome.manifestId).toBe(MANIFEST);
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT event_type, recipient, manifest_id FROM send_recipient_events WHERE event_id = 'inbound_rcpt_probe_1'",
+    ).first<{ event_type: string; recipient: string; manifest_id: string | null }>();
+    expect(row?.event_type).toBe("inbound.delivery_report");
+    expect(row?.recipient).toBe("gone@example.net");
+  });
+
+  it("records nothing when it cannot tell who failed", async () => {
+    const { recordDeliveryReport } = await import("../src/outbound/delivery-report.ts");
+    const vague = [
+      'Content-Type: multipart/report; report-type=delivery-status; boundary="b"', "", "--b",
+      "Content-Type: message/delivery-status", "", "Reporting-MTA: dns; relay.example", "--b--", "",
+    ].join("\r\n");
+
+    const outcome = await recordDeliveryReport(testEnv, createSystemCtx(), ORG, "rcpt_probe_2", vague);
+
+    // Null is a real answer: this Node could not tell who failed, which differs from nobody failing.
+    // Inventing a recipient would put a fabricated bounce in front of a person — worse than the silence.
+    expect(outcome.recorded).toBe(false);
+    expect(outcome.unreadable).toContain("Final-Recipient");
+    const count = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM send_recipient_events WHERE event_id = 'inbound_rcpt_probe_2'",
+    ).first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("never overwrites what the queue already established", async () => {
+    const ctx = createSystemCtx();
+    const { recordDeliveryReport } = await import("../src/outbound/delivery-report.ts");
+
+    await applySendingEvent(testEnv, ctx, ORG, event("delivered"));
+    await recordDeliveryReport(testEnv, ctx, ORG, "rcpt_probe_3", DSN);
+
+    // The queue is Cloudflare's first-party account of a message it sent; a forwarded report is somebody
+    // else's account of something that may not even be the same message. Where they disagree the
+    // first-party record wins, and the report stays visible as an event.
+    expect((await stateOf("one@example.net"))?.delivery_state).toBe("accepted");
+  });
+});

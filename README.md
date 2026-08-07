@@ -85,6 +85,12 @@ What exists today:
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
 | **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
+**A Node that cannot see delivery outcomes says so.** The event subscription that carries them is an
+account-level object outside the Worker's config, so it can be absent, deleted, or pointed at the wrong
+domain — and nothing about a Node in that state looks wrong: sends hand over, the outbox fills, and every
+recipient sits unobserved forever. `doctor` compares what was handed over against what came back and names
+the silence, because "no bounces" must not be able to mean "nothing heard".
+
 **A bounce reaches the right recipient of the right send, by key.** A Node cannot receive its own
 bounces — `cf-bounce` belongs to Cloudflare for the lifetime of the domain — so delivery outcomes arrive
 on a queue instead, one event per recipient. Proven end to end on the deployed Node: a send handed over,

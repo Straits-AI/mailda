@@ -349,9 +349,34 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
                 transport_message_id, fidelity
            FROM send_manifests WHERE org_id = ? ORDER BY sealed_at DESC LIMIT 50`,
-      ).bind(who.orgId).all();
+      ).bind(who.orgId).all<Record<string, unknown>>();
+
+      // Recipients travel with the sends rather than behind a second request per row.
+      //
+      // The manifest's own `state` is the *last submission's* state, and on its own it cannot express
+      // "one bounced and two were accepted" — which is the distinction Layer 2 is judged on. A UI that
+      // rendered only the manifest state would show one chip for a mixed outcome, so the data it needs
+      // arrives together with it. One query for up to 50 sends, not fifty.
+      const recipients = rows.results.length === 0
+        ? { results: [] as Array<Record<string, unknown>> }
+        : await env.CATALOG.prepare(
+            `SELECT manifest_id, kind, address, submission_state, delivery_state, bounce_type, last_error
+               FROM send_recipients
+              WHERE org_id = ? AND manifest_id IN (${rows.results.map(() => "?").join(", ")})
+              ORDER BY manifest_id, kind, address`,
+          ).bind(who.orgId, ...rows.results.map((r) => r.id)).all<Record<string, unknown>>();
+
+      const byManifest = new Map<string, Array<Record<string, unknown>>>();
+      for (const row of recipients.results) {
+        const key = String(row.manifest_id);
+        byManifest.set(key, [...(byManifest.get(key) ?? []), row]);
+      }
+
       return Response.json({
-        sends: rows.results,
+        sends: rows.results.map((send) => ({
+          ...send,
+          recipients: byManifest.get(String(send.id)) ?? [],
+        })),
         daily: await dailySendState(env, clock, who.orgId),
         capability: await cloudflareTransport.capability(env),
       });
