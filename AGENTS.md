@@ -199,11 +199,24 @@ Every layer is a Node someone could actually deploy and use:
 |---|---|---|
 | 0 | Be deployed to a clean Cloudflare account and pass `doctor` | one-click and CLI reach equivalent healthy Nodes |
 | 1 | Receive one real internet message, store it losslessly, show it to one authorized human | a real message from outside, visible in the web UI, original `.eml` exportable |
-| 2 | Reply — sender authorization, policy, send intent, provider attempt, honest per-recipient state | `accepted` / `bounced` / `outcome_unknown` distinguished, never blurred |
+| 2 | Reply — sender authorization, policy, send intent, provider attempt, honest per-recipient state | `accepted` / `bounced` / `outcome_unknown` distinguished, never blurred — see the note below on which scale each word lives at |
 | 3 | Share work — mailboxes, membership, assignment, collision, cases | two people work one queue without colliding |
 | 4 | Automate — Butlers compiled, simulated against fixtures, published as immutable versions | replay causes zero provider calls |
 | 5 | Govern — approvals bound to exact revisions, supervised access, audit, retention | editing an approval-bound field invalidates the approval |
 | 6 | Extend — provider connectors, mail core, LLM profiles, external adapters | each certified independently; none required by the layers below |
+
+**Layer 2's three words live at two different scales, and conflating them is the failure the layer
+exists to prevent.** Submission is what *this Node* did with an envelope: it hands over, or it is
+throttled, refused, suppressed, cancelled, withheld, or its outcome is unknown. `handed_over` is the
+ceiling of what is knowable at that moment — the transport took the bytes — and it is deliberately not
+called *sent*. Delivery is what the *receiving world* did with one address, and it arrives later, per
+recipient, on a queue: `accepted` when the receiving server returned a 250, `bounced` when it refused,
+`deferred` while retries continue, and **unobserved** when nothing has been reported at all.
+
+So the ladder's `accepted` is a delivery word, not a submission one, and `outcome_unknown` appears at both
+scales for different reasons. The fourth state — unobserved — is not in the row above and should be: it is
+the one people collapse into the other three, and the whole point is that "we have heard nothing" is a
+distinct and honest answer.
 
 The rule that makes the ladder real: **every layer stays green.** A change that breaks layer
 1 to build layer 4 is not progress, it is a regression with a roadmap attached.
