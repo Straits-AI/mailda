@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 23 receipts in [`docs/receipts/`](./docs/receipts/) generating 135 verified constants |
-| **Code** | A measurement harness and one Worker. 247 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -191,6 +191,11 @@ project, and writes resource ids into the clone. Those findings constrained noth
 the Worker's configuration is now held to them, and a binding the button cannot satisfy fails the suite
 until somebody says how a customer gets it. `doctor` names a missing evidence bucket directly, instead
 of the generic failure that used to send the reader to migrations.
+
+**And CI is checked by CI.** A cancelled run reads as neither pass nor fail, so a commit whose run was
+superseded looked verified when nothing had checked it — that happened here, to a commit on `main`. Two
+guards now: a test asserts the workflow's own concurrency policy cannot cancel a push to `main`, and a
+step fails the build when any earlier push lost its verdict to a manual cancel or an outage.
 
 **The checks run without being remembered.** Every check in this repository worked from a terminal
 long before anything invoked one — which reads exactly like a check that passed. CI now runs them on

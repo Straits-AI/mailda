@@ -35,6 +35,9 @@ concurrency:
 
 permissions:
   contents: read
+  # To list this workflow's own runs. `contents: read` cannot, and the gap check below would report
+  # "no gaps" for the wrong reason — it would see nothing at all.
+  actions: read
 
 jobs:
   check:
@@ -99,3 +102,17 @@ jobs:
       - name: Test headroom on this hardware
         if: always()
         run: node .github/scripts/test-headroom.mjs
+
+      # Fails when a previous push to main lost its verdict.
+      #
+      # A cancelled run reads as neither pass nor fail, which is how commit 14522c1 went unverified and
+      # looked fine. The concurrency policy that caused it is fixed and `test/node/ci-policy.test.ts`
+      # stops that regressing — but a run can still be cancelled by a person, or lost to an outage the
+      # way 51f283e was, and neither of those is a policy problem. This is the part that notices.
+      #
+      # `if: always()` so a failing suite does not hide a missing verdict behind itself.
+      - name: Every push to main got a verdict
+        if: always() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/verdict-gaps.mjs ${{ github.run_id }}
