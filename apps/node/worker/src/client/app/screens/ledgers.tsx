@@ -186,7 +186,9 @@ export function Outbox() {
                         <button type="button" className="linkish" onClick={() => void stop(send.id)}>
                           stop
                         </button>
-                      ) : send.fidelity === "authored" && send.state !== "cancelled" ? (
+                      ) : send.fidelity === "authored" && send.has_submitted === 1 ? (
+                        // §12's point is that the submitted bytes are *producible*, so this is a link
+                        // rather than a feature request — but only when they exist.
                         <a className="mono" href={`/api/sends/${encodeURIComponent(send.id)}/submitted`}>
                           .eml
                         </a>

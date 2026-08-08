@@ -1017,3 +1017,51 @@ describe("a dispatch that fails before an outcome (#37)", () => {
     expect(row?.last_error).toContain("the adapter itself came apart");
   });
 });
+
+/**
+ * The outbox offered a link to bytes that do not exist (#found by rendering it).
+ *
+ * `.eml` was shown for every `authored` send that was not cancelled — but the submitted bytes are written
+ * during dispatch, so a `held` send has none, and so does one the claim parked in `outcome_unknown` before
+ * it ever submitted. The endpoint answers 409 with a perfectly clear explanation, which is the right answer
+ * to a request nobody should have been invited to make.
+ */
+describe("whether the submitted bytes are producible", () => {
+  async function hasSubmitted(id: string): Promise<number> {
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT submitted_key IS NOT NULL AS has_submitted FROM send_manifests WHERE id = ?",
+    ).bind(id).first<{ has_submitted: number }>();
+    return row!.has_submitted;
+  }
+
+  it("is false for a send still held", async () => {
+    const sealed = await sealManifest(testEnv, atTime(4_000_000_000_000), ORG, composition);
+    // Sealing records what *will* be sent; it does not submit, so there is nothing to produce yet.
+    expect(await hasSubmitted(sealed.id)).toBe(0);
+  });
+
+  it("becomes true once the bytes have been stored for submission", async () => {
+    const sealed = await sealManifest(testEnv, atTime(4_000_000_100_000), ORG, composition);
+    await dispatchDue(testEnv, atTime(4_000_000_700_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<producible@acme.example>" }));
+    expect(await hasSubmitted(sealed.id)).toBe(1);
+  });
+
+  it("is false for a send that failed before submitting, even though it is terminal", async () => {
+    // The case that made this visible: `outcome_unknown` reads as a finished send, so a UI keying off
+    // `state` alone offers the link — and the manifest never got as far as storing anything.
+    const sealed = await sealManifest(testEnv, atTime(4_000_000_800_000), ORG, composition);
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET body_normalized_key = ? WHERE id = ?")
+      .bind(`${ORG}/sent/absent/never-written.txt`, sealed.id)
+      .run();
+    await expect(
+      dispatchOne(testEnv, atTime(4_000_001_400_000), ORG, sealed.id,
+        fakeTransport({ kind: "handed_over", transportMessageId: "<never@acme.example>" })),
+    ).rejects.toThrow();
+
+    const state = await testEnv.CATALOG.prepare("SELECT state FROM send_manifests WHERE id = ?")
+      .bind(sealed.id).first<{ state: string }>();
+    expect(state?.state).toBe("outcome_unknown");
+    expect(await hasSubmitted(sealed.id)).toBe(0);
+  });
+});

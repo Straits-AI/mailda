@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 354 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 359 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.

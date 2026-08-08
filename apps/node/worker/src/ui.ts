@@ -62,6 +62,15 @@ export function page(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
+<!--
+  Inline, as a data: URI, for the same reason there is no webfont: a page whose premise is custody must not
+  fetch anything from anywhere. It is also the cheapest fix for a real defect — with no icon declared, every
+  browser asked for /favicon.ico and every load logged a 404, so the console of a working Node had an error
+  in it permanently and anybody debugging had one false lead before they started.
+
+  An instrument lamp: the amber signal dot, on nothing.
+-->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23e9a35c'/%3E%3C/svg%3E">
 <title>Mailda</title>
 <style>
 :root {

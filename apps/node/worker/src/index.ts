@@ -7,7 +7,7 @@ import { CallerError } from "./errors.ts";
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
-import { getEvidence, streamEvidence } from "./evidence-store.ts";
+import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
@@ -123,6 +123,30 @@ export default {
       // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
       // The status travels with the throw (see errors.ts) rather than living in a table here that has
       // to be kept in agreement — the correspondence problem ADR 35 rejected for the effect key.
+      // Lost mail is not a bug in the request path, and reporting it as one hides the only fact that
+      // matters. The message carries §24's four-part shape — what, why, and the reconciler to run — and
+      // until now the generic handler replaced all of it with "this Node failed to handle the request".
+      // Still logged, because data loss must be visible to `doctor` and not only to whoever was looking
+      // at the screen.
+      if (error instanceof EvidenceMissing) {
+        ctx.waitUntil(
+          log(env, clock, {
+            level: "error",
+            event: "evidence.missing",
+            message: error.message.split("\n")[0] ?? "evidence missing",
+            requestId,
+            detail: { blobKey: error.blobKey, path: new URL(request.url).pathname },
+          }).then(() => trimLogs(env)).then(() => undefined),
+        );
+        return noStore(
+          new URL(request.url),
+          Response.json(
+            { error: "evidence_missing", message: error.message, requestId },
+            { status: 500 },
+          ),
+        );
+      }
+
       if (error instanceof CallerError) {
         return noStore(
           new URL(request.url),
@@ -423,8 +447,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const rows = await env.CATALOG.prepare(
+        // `has_submitted` rather than the key itself: the interface needs to know whether the bytes are
+        // producible, and an R2 key is not something a client has any business holding. Without it the
+        // outbox offered a `.eml` link on every authored send, including ones never dispatched — which
+        // answered 409 with a perfectly clear explanation nobody should have had to read.
         `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
-                transport_message_id, fidelity
+                transport_message_id, fidelity,
+                submitted_key IS NOT NULL AS has_submitted
            FROM send_manifests WHERE org_id = ? ORDER BY sealed_at DESC LIMIT 50`,
       ).bind(who.orgId).all<Record<string, unknown>>();
 

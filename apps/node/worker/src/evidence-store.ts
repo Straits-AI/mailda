@@ -89,10 +89,26 @@ interface FetchedEvidence {
   generation: number;
 }
 
+/**
+ * A receipt points at bytes that are not there.
+ *
+ * Its own class rather than a plain `Error` because the two answers are not alike: this is **lost mail**
+ * (§24), and the generic handler reported it as "this Node failed to handle the request" — a fault, opaque,
+ * indistinguishable from a bug in the request path. The message below has always said exactly what happened
+ * and what to do about it; nothing was reading it.
+ */
+export class EvidenceMissing extends Error {
+  constructor(readonly blobKey: string, message: string) {
+    super(message);
+    this.name = "E_EVIDENCE_MISSING";
+  }
+}
+
 async function fetchSealed(env: Env, blobKey: string): Promise<FetchedEvidence> {
   const object = await env.EVIDENCE.get(blobKey);
   if (object === null) {
-    throw new Error(
+    throw new EvidenceMissing(
+      blobKey,
       `E_EVIDENCE_MISSING  no R2 object at ${blobKey}\n` +
         `  why      a receipt records this message as accepted, so this is lost mail rather than a ` +
         `bookkeeping error (§24)\n` +

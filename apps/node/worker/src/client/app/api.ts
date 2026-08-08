@@ -83,6 +83,14 @@ export interface SendRow {
   last_error: string | null;
   transport_message_id: string | null;
   fidelity: string;
+  /**
+   * Whether the submitted bytes exist, as 1 or 0 — SQLite's boolean.
+   *
+   * Not inferable from `state`: an authored send that was claimed and then failed before submitting sits in
+   * `outcome_unknown` with nothing stored, and one still `held` has nothing either. Offering the link
+   * anyway produced a 409 with a clear explanation that a person should never have been shown.
+   */
+  has_submitted: number;
   recipients: RecipientRow[];
 }
 
