@@ -58,6 +58,38 @@ every recipient bounced rendered as green `handed over`. `test/node/delivery-sum
 `session.client.js` is external for a different reason: it holds the token lifecycle in module scope, so a
 bundled copy would put two refresh timers on a page that also loads the framework-free script.
 
+## Drafts
+
+A draft survives a reload, which is what earns the composer's middle phase — *saved on your node* — after
+shipping deliberately without it.
+
+- **The body is in R2, encrypted, not in a D1 column.** Every other piece of customer content on this Node
+  is; a draft body is content, so a column would be an exception to the product's one promise for the
+  convenience of the feature that needed it least. D1 holds the pointer and the metadata.
+- **One object per draft**, under a stable key, so an autosave overwrites rather than accumulating an object
+  per pause in typing.
+- **`send.propose` authorizes it, re-checked on every save and every read.** A draft is addressed from a
+  mailbox (ADR 36), so holding one is proposing a send as that mailbox — and a long-lived draft is exactly
+  where "withdrawn authority stops working immediately" quietly becomes "next time you sign in".
+- **Nobody reads anybody else's**, including other members of the same mailbox. Not because that is settled
+  — Layer 3 decides what sharing unfinished work means — but because a guess here is a guess about who reads
+  a half-written sentence about a customer.
+- **One draft per reply**, enforced by a partial unique index, so replying twice resumes instead of forking
+  and leaving the first to rot. The index is partial because SQLite treats every NULL as distinct: as many
+  unrelated new messages as somebody likes.
+- **A save that changes nothing writes nothing.** `updated_at` is shown as "saved on your node · HH:MM:SS",
+  so it has to mean when the draft last *changed*, not when somebody last opened it. Guarded in
+  `saveDraft` — the layer that owns the column — as well as in the composer.
+- **Deleted when the message is sealed**, by the Node rather than the browser, and *after* the seal: the
+  residual is a draft for a message already sent, which is visible and takes one click, rather than losing
+  somebody's writing to a seal that then failed. The R2 object is left for the reconciler, because ADR 32
+  makes an orphan blob collectable and a dangling reference reportable-only.
+
+Nothing here is audited. A draft is the only write path a person triggers by *typing* rather than by
+deciding, and an entry per autosave would put dozens behind one human action —
+`audit-and-log-retention.md`'s sizing, falsified as a side effect of a convenience. The act that *is*
+audited is `send.sealed`.
+
 ## The build
 
 React needs a build step, and it hangs off `wrangler.jsonc`'s `build.command` rather than our `deploy`
@@ -103,3 +135,9 @@ Inbox had no level-one heading at all, and that `/log` and `/doctor` lost theirs
 
 Current state: **10 screens, 0 AA violations, 0 advisories, 10 unproven** — the unproven being the gradient
 contrast that the computed check covers instead.
+
+**One caveat worth keeping in view:** the harness measures whatever state the fixture happens to be in. The
+first clean run had an empty inbox, so the message list did not exist to be checked; the moment a message
+was seeded it found two serious violations in it — `nested-interactive` from a `role="option"` wrapping a
+button, and a target-size failure on the list itself. A screen is only checked in the states somebody
+thought to put it in.

@@ -11,6 +11,7 @@ import { getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
+import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
 import {
   clearedCookies,
@@ -268,6 +269,71 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * Outbound (Layer 2). Sealing and dispatching are separate endpoints because they are separate
      * acts (ADR 35) — which is what makes undo-send honest rather than a claim about recall.
      */
+    /**
+     * Drafts. The composer autosaves here, so this is the one write path a person triggers by *typing*
+     * rather than by deciding — which is why nothing about it is audited (see `0012_drafts.sql`) and why
+     * the body goes to R2 encrypted rather than into a D1 column.
+     */
+    if (url.pathname === "/api/drafts" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // `?inReplyTo=` answers the composer's real question — "is there already a draft for this reply?" —
+      // in one round trip. Without it the client would list every draft and filter, which is a decision
+      // about somebody's unfinished work made in a browser.
+      const inReplyTo = url.searchParams.get("inReplyTo");
+      if (inReplyTo !== null) {
+        return Response.json({ draft: await draftForReply(env, who.orgId, who.userId, inReplyTo) });
+      }
+      return Response.json({ drafts: await listDrafts(env, who.orgId, who.userId) });
+    }
+
+    if (url.pathname === "/api/drafts" && request.method === "PUT") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // PUT with an optional id rather than POST-then-PUT: the composer does not know whether this is the
+      // first save, and making it decide is how a draft ends up saved twice under two ids.
+      const draft = await saveDraft(
+        env, clock, who.orgId, who.userId,
+        body.id === undefined || body.id === null ? null : String(body.id),
+        {
+          mailboxId: String(body.mailboxId ?? ""),
+          inReplyToMessageId:
+            body.inReplyToMessageId === undefined || body.inReplyToMessageId === null
+              ? null
+              : String(body.inReplyToMessageId),
+          to: Array.isArray(body.to) ? (body.to as string[]) : [],
+          cc: Array.isArray(body.cc) ? (body.cc as string[]) : undefined,
+          bcc: Array.isArray(body.bcc) ? (body.bcc as string[]) : undefined,
+          subject: String(body.subject ?? ""),
+          body: String(body.body ?? ""),
+        },
+      );
+      return Response.json({ draft });
+    }
+
+    const draft = /^\/api\/drafts\/([^/]+)$/.exec(url.pathname);
+    if (draft && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const record = await readDraft(env, who.orgId, who.userId, draft[1]!);
+      // §5C: a draft that never existed and one belonging to somebody else answer identically.
+      if (record === null) {
+        return Response.json(
+          { error: "not_found", message: "No such draft, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
+      return Response.json({ draft: record });
+    }
+
+    if (draft && request.method === "DELETE") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const deleted = await deleteDraft(env, who.orgId, who.userId, draft[1]!);
+      return Response.json({ deleted }, { status: deleted ? 200 : 404 });
+    }
+
     if (url.pathname === "/api/sends" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
@@ -288,6 +354,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         // its record must be able to prove exactly what was sent.
         fidelity: "authored",
       });
+
+      // The draft is retired **after** the seal, and the order is the decision. Deleting first would lose
+      // somebody's writing if sealing then failed; this way a failure between the two leaves a draft for a
+      // message already sent, which is visible on the screen they are looking at and takes one click to
+      // resolve. Not in the same transaction, because `sealManifest` owns its own batch — the residual is a
+      // duplicate a person can see rather than a loss they cannot recover.
+      if (typeof body.draftId === "string" && body.draftId !== "") {
+        await deleteDraft(env, who.orgId, who.userId, body.draftId);
+      }
+
       return Response.json({ ...sealed, capability });
     }
 

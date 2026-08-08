@@ -606,7 +606,7 @@ tbody a { font-size: .8rem; }
 }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
-.message-list:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.message-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .message-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -682,7 +682,7 @@ tbody a { font-size: .8rem; }
 }
 .dock-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: .5rem; }
 .dock-head h2 { font-size: 1.05rem; margin: 0; font-weight: 400; }
-.dock-close { margin-left: auto; }
+
 
 /* Where the bytes are. Amber because it is a caution, not a failure: the draft is real and it is not
    anywhere durable yet. */
@@ -694,6 +694,10 @@ tbody a { font-size: .8rem; }
 }
 
 .row-actions { margin: .2rem 0 1rem 0; }
+.dock-actions { margin-left: auto; display: inline-flex; gap: .9rem; }
+/* A failed save has to outweigh the reassurance it replaces: a draft that silently stopped saving is worse
+   than one that never saved, because the earlier success taught the person to trust it. */
+.draft-phase.failed { color: var(--alarm); }
 /* ---- the handover ------------------------------------------------------------------------- */
 
 /* body.shell is set by app.client.js the moment the React application mounts, and it is what retires

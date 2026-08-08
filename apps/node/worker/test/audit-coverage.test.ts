@@ -66,6 +66,17 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "that we heard something, which the row already is; and the events arrive from a queue with no " +
       "actor to attribute them to.",
   },
+  drafts: {
+    exempt:
+      "Unfinished work, and the only write path in this Node a person triggers by *typing* rather than by " +
+      "deciding. The composer autosaves on a pause, so auditing it would put dozens of entries behind one " +
+      "human action and falsify audit-and-log-retention.md's 'a handful per message' sizing — the same " +
+      "reasoning that exempts send_recipients, reached from the opposite direction. A draft also has no " +
+      "effect anybody outside this Node can observe: the act that does is send.sealed, which is audited, " +
+      "and the draft is deleted at that moment precisely so it cannot become a second account of the same " +
+      "message. What would change this is a draft becoming shareable — Layer 3's question — because then " +
+      "reading somebody else's unfinished writing is an act a person could be asked about.",
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },

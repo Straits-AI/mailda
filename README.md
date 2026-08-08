@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 337 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 354 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -109,8 +109,11 @@ fails if the page ever references the bundle up front.
 The shape is a rail, a list and reading pane, full-width ledgers, and a **docked** composer — docked
 because replying must not move the original off screen, which for invoice and shipment mail is a defect
 rather than a preference. The rail carries one mailbox today and exists so Layer 3 adds rows instead of a
-new chrome. Its draft label says where the bytes actually are: *this browser only · a reload loses it*,
-because nothing saves a draft on the Node yet and a friendlier label would be a false claim.
+new chrome. Its draft label says where the bytes actually are, and now it can say the true thing: a draft is
+**saved on your node**, body encrypted in R2 like any other content rather than sitting in a database
+column, one object per draft, and replying twice resumes the draft you already started instead of forking
+it. Until that existed the label read *this browser only · a reload loses it*, which was the honest version
+and the argument for building this.
 
 Building it found what the old shape was hiding. Accessibility is checked two ways that neither replaces —
 contrast **computed** from the tokens in CI, because axe cannot resolve a gradient background and reports

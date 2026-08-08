@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 /**
@@ -108,6 +109,24 @@ export default tseslint.config(
     files: ["apps/node/worker/src/client/**/*.js", "apps/node/worker/src/client/**/*.ts", "apps/node/worker/src/client/**/*.tsx"],
     languageOptions: { globals: { ...globals.browser } },
     rules: { "no-restricted-syntax": "off" },
+  },
+
+  /**
+   * React's own invariants, which the compiler cannot see either.
+   *
+   * `exhaustive-deps` is the reason this plugin is here: a stale closure in an effect is a bug that reads
+   * correctly and behaves wrongly, and the composer's autosave is exactly that shape — a debounced write
+   * whose captured values are one keystroke behind produces an autosave that loses the last thing typed.
+   * The rule is also the thing that makes a deliberate omission legible, since suppressing it requires
+   * saying so in a comment rather than simply not writing a dependency.
+   */
+  {
+    files: ["apps/node/worker/src/client/app/**/*.tsx", "apps/node/worker/src/client/app/**/*.ts"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "error",
+    },
   },
 
   /**

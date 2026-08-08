@@ -9,6 +9,7 @@ import m0008 from "../migrations/0008_audit.sql";
 import m0009 from "../migrations/0009_send_authorization.sql";
 import m0010 from "../migrations/0010_send_recipients.sql";
 import m0011 from "../migrations/0011_per_recipient_submission.sql";
+import m0012 from "../migrations/0012_drafts.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -74,6 +75,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0009_send_authorization.sql", sql: m0009 },
   { name: "0010_send_recipients.sql", sql: m0010 },
   { name: "0011_per_recipient_submission.sql", sql: m0011 },
+  { name: "0012_drafts.sql", sql: m0012 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

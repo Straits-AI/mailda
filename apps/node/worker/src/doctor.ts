@@ -158,6 +158,8 @@ const EXPECTED_TABLES = [
   "audit_entries", "log_entries",
   // Migration 0010 (per-recipient outcome).
   "send_recipients", "send_recipient_events",
+  // Migration 0012 (durable drafts).
+  "drafts",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

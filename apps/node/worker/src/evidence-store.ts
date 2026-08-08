@@ -41,7 +41,8 @@ export interface StoredEvidence {
 }
 
 /** Hex SHA-256 of the plaintext, so integrity survives a re-seal under a new key. */
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+/** Exported so a caller can ask "is this the same content?" without writing an object to find out. */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

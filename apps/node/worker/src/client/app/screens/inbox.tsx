@@ -184,15 +184,27 @@ export function Inbox() {
     <>
     {heading}
     <div className="split">
-      {/* A listbox rather than a list of links: selection changes the pane beside it and does not
-          navigate. The prototype's axe run caught `aria-selected` on a plain `listitem`, which is why
-          the roles are explicit here rather than implied. */}
-      <ul className="message-list" role="listbox" aria-label="Messages" tabIndex={0}>
+      {/*
+        A plain list of buttons, with `aria-current` marking the one being read.
+
+        This was a `role="listbox"` of `role="option"`s wrapping buttons, and axe was right to reject it:
+        `nested-interactive` — an option must not contain an interactive control, because a screen reader
+        user then has two things to operate for one row and the listbox's own keyboard model never applies.
+        A real listbox would mean owning arrow keys, Home/End and typeahead; a list of buttons is the
+        pattern that is already correct, and `aria-current` says which one is open without claiming a
+        selection model this list does not implement.
+
+        It surfaced only once the inbox had a message in it. The earlier clean run rendered an empty
+        inbox, so the list did not exist to be checked — worth remembering about any harness that
+        measures whatever state the fixture happens to be in.
+      */}
+      <ul className="message-list" aria-label="Messages">
         {rows.map((row) => (
-          <li key={row.id} role="option" aria-selected={row.id === selected}>
+          <li key={row.id}>
             <button
               type="button"
               className={row.id === selected ? "message-row current" : "message-row"}
+              aria-current={row.id === selected ? "true" : undefined}
               onClick={() => setSelected(row.id)}
             >
               <span className="message-from mono">{row.from_addr ?? row.envelope_from}</span>
