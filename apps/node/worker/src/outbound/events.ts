@@ -10,19 +10,22 @@ import type { Ctx } from "@mailda/runtime";
  * arriving anywhere a Worker can read (receipt: `cloudflare-email-sending.md`, corrected — it previously
  * asserted the opposite, and that sentence would have produced an RFC 3464 parser that could never fire).
  *
- * The channel that exists is Queues event subscriptions on source `email.sending`, and it is better:
- * Cloudflare emits **one event per recipient**, so per-recipient outcome is observable without splitting
- * submission per recipient (receipt: `email-sending-events.md`).
+ * The channel that exists is Queues event subscriptions on source `email.sending`: Cloudflare emits **one
+ * event per recipient** (receipt: `email-sending-events.md`).
  *
  * ## Attribution is a key, and that was measured rather than assumed
  *
  * `payload.messageId` is byte-identical to what `env.EMAIL.send()` returned — angle brackets included.
  * Every documented example shows an opaque `0101018f7d0c4d9a-msg-bounced`, which is evidently
- * illustrative; the real value is the RFC-5322-shaped id this Node already stores as
- * `send_manifests.transport_message_id`. So events join to manifests by key, and the weaker fallback the
+ * illustrative; the real value is RFC-5322-shaped. So events join by key, and the weaker fallback the
  * design was prepared for — sender + recipient + subject inside a time window, which cannot tell two
  * identical-subject sends apart — is not needed. **The brackets are part of the value; stripping them
  * breaks the join.**
+ *
+ * Since migration 0011 the id lives on `send_recipients`, because each recipient is submitted separately
+ * and gets its own. That makes attribution exact rather than a send-plus-guess: an event names one
+ * recipient, and one row answers to it. `send_manifests.transport_message_id` remains as the fallback for
+ * sends made before 0011, whose only attribution is whichever submission happened to be last.
  *
  * ## Nothing is discarded, including what cannot be attributed
  *
@@ -123,15 +126,40 @@ export async function applySendingEvent(
   const at = new Date(ctx.now()).toISOString();
   const deliveryState = event.type in DELIVERY_STATE ? DELIVERY_STATE[event.type]! : null;
 
-  // The join. `transport_message_id` is stored with its angle brackets and the event carries them too, so
-  // this is an equality match on a value neither side reformats.
-  const manifest = transportMessageId === null
+  // The join, and it goes to the **recipient row** first.
+  //
+  // Since migration 0011 each recipient is submitted separately and Cloudflare returns a distinct id per
+  // submission, so a message id identifies one recipient of one manifest — which is exactly what an event
+  // is about. Matching the manifest instead would find the right send and still have to guess which
+  // recipient, and for two recipients whose outcomes differ that guess is the whole question.
+  //
+  // Stored and quoted with angle brackets on both sides, so this is an equality match on a value neither
+  // side reformats. Stripping them would break it silently.
+  //
+  // The manifest-level fallback exists for sends made before 0011, whose only attribution is the last
+  // submission's id on the manifest. Dropping it would strand the delivery outcomes of already-sent mail.
+  let recipientRow = transportMessageId === null
     ? null
     : await env.CATALOG.prepare(
-        "SELECT id FROM send_manifests WHERE org_id = ? AND transport_message_id = ? LIMIT 1",
-      ).bind(orgId, transportMessageId).first<{ id: string }>();
+        `SELECT id, manifest_id FROM send_recipients
+          WHERE org_id = ? AND transport_message_id = ? LIMIT 1`,
+      ).bind(orgId, transportMessageId).first<{ id: string; manifest_id: string }>();
 
-  const manifestId = manifest?.id ?? null;
+  if (recipientRow === null && transportMessageId !== null) {
+    const manifest = await env.CATALOG.prepare(
+      "SELECT id FROM send_manifests WHERE org_id = ? AND transport_message_id = ? LIMIT 1",
+    ).bind(orgId, transportMessageId).first<{ id: string }>();
+    if (manifest !== null) {
+      // Fall back to matching by address within that send, which is what a pre-0011 row allows.
+      recipientRow = await env.CATALOG.prepare(
+        `SELECT id, manifest_id FROM send_recipients
+          WHERE org_id = ? AND manifest_id = ? AND lower(address) = lower(?) LIMIT 1`,
+      ).bind(orgId, manifest.id, recipient).first<{ id: string; manifest_id: string }>();
+      recipientRow ??= { id: "", manifest_id: manifest.id };
+    }
+  }
+
+  const manifestId = recipientRow?.manifest_id ?? null;
 
   // The event row is the idempotency gate: `event_id` is the primary key, so a redelivery loses here.
   // Same shape as the audit chain and the inbound receipt — the conflict *is* the signal (#9).
@@ -153,11 +181,15 @@ export async function applySendingEvent(
     // Expressed in SQL rather than read-then-write, because two events for the same recipient can be in
     // flight at once and a check in JavaScript would be a race.
     const overwritable = [...OVERWRITABLE].filter((s): s is string => s !== null);
+    const guard = `(delivery_state IS NULL OR delivery_state IN (${overwritable.map(() => "?").join(", ")}))`;
+    // Targeted by row id when the message id identified one, which is unambiguous even if the same address
+    // appears on two sends. Only the address-matched fallback needs the wider predicate.
+    const byId = recipientRow !== null && recipientRow.id !== "";
     await env.CATALOG.prepare(
       `UPDATE send_recipients
           SET delivery_state = ?, delivery_state_at = ?, bounce_type = ?, last_error = ?, last_event_id = ?
-        WHERE org_id = ? AND manifest_id = ? AND lower(address) = lower(?)
-          AND (delivery_state IS NULL OR delivery_state IN (${overwritable.map(() => "?").join(", ")}))`,
+        WHERE ${byId ? "id = ?" : "org_id = ? AND manifest_id = ? AND lower(address) = lower(?)"}
+          AND ${guard}`,
     )
       .bind(
         deliveryState, at,
@@ -166,7 +198,8 @@ export async function applySendingEvent(
         // about somebody else's mail server.
         payload.bounce?.reason ?? payload.delivery?.smtpResponse ?? null,
         eventId,
-        orgId, manifestId, recipient, ...overwritable,
+        ...(byId ? [recipientRow!.id] : [orgId, manifestId, recipient]),
+        ...overwritable,
       )
       .run();
   }

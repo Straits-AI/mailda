@@ -201,13 +201,11 @@ export const cloudflareTransport: TransportAdapter = {
         // Measured on the deployed Node: a single recipient is handed over, and adding one `cc` refuses
         // the whole send. No test caught it because none sent to more than one recipient.
         //
-        // Refused here rather than passed on, and refused *before* the submit rather than after, because
-        // the alternative is asking the transport a question guaranteed to fail and then reporting its
-        // answer as though the recipient list were at fault. The structured `send()` API does take arrays
-        // — but Cloudflare builds the MIME there, so it cannot carry `authored` fidelity, whose whole
-        // point is that the bytes stored and the bytes submitted are the same object (ADR 33, §12).
-        // Which way that collision resolves is a real decision, recorded on the tracker rather than
-        // guessed at here.
+        // Since migration 0011 `dispatchOne` submits once per recipient, so this guard no longer fires in
+        // normal operation — and it stays precisely for that reason. It is now the thing that stops a
+        // future caller quietly reintroducing a multi-recipient submission, which would send to exactly
+        // one of them and report success. A guard that has stopped firing because the code above it got
+        // correct is worth keeping; deleting it removes the only statement of why the loop exists.
         const recipients = [...request.to, ...(request.cc ?? []), ...(request.bcc ?? [])];
         if (recipients.length > 1) {
           return {

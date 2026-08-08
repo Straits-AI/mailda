@@ -253,10 +253,25 @@ export async function dispatchOne(
   const bcc = manifest.envelope_bcc == null ? undefined : (JSON.parse(manifest.envelope_bcc) as string[]);
 
   let outcome: SubmitOutcome;
+  /**
+   * How many recipients *this pass* handed over, which is what `send_counters` must add.
+   *
+   * Returned by the submission loop rather than recovered from the database afterwards. The first version
+   * matched `submission_state_at` against the dispatch's timestamp, which is exactly the kind of coupling
+   * that works in a test with a frozen clock and fails on a Worker whose clock advances across I/O — and it
+   * did, silently counting a three-recipient send as one. A number the code already has needs no join.
+   *
+   * 1 for a manifest with no recipient rows, which is every send sealed before migration 0010 and is
+   * exactly one message.
+   */
+  let handedOverCount = 1;
   if (fidelity === "authored") {
     const rendered = await renderRfc822(env, manifestId);
     // §12 invariant 2: a materialized provider-submission representation *is* immutable evidence.
     // Stored before submitting, so the record exists even if the submission's outcome never does.
+    //
+    // **One object, however many recipients.** The same bytes go to each, so this stays one evidence pair
+    // per manifest and §12's invariant is untouched by the loop below.
     const stored = await putEvidence(env, `${orgId}/sent/${manifestId}/submitted.eml`, rendered.raw);
     await env.CATALOG.prepare(
       "UPDATE send_manifests SET submitted_key = ?, submitted_sha256 = ? WHERE id = ?",
@@ -264,11 +279,11 @@ export async function dispatchOne(
       .bind(stored.blobKey, stored.plaintextSha256, manifestId)
       .run();
 
-    outcome = await transport.submit(
-      env,
-      { from: manifest.envelope_from!, to, cc, bcc, subject: manifest.subject!, raw: rendered.raw },
-      "authored",
-    );
+    const perRecipient = await submitPerRecipient(env, orgId, manifestId, transport, at, {
+      from: manifest.envelope_from!, subject: manifest.subject!, raw: rendered.raw,
+    });
+    outcome = perRecipient.outcome;
+    handedOverCount = perRecipient.handedOverNow;
   } else {
     // The normalized body, not an empty string. The first version passed `text: ""`, which would have
     // sent a blank message — it never fired because ADR 33 routes all customer mail through
@@ -281,15 +296,23 @@ export async function dispatchOne(
     );
   }
 
-  return applyOutcome(env, ctx, orgId, manifestId, outcome);
+  return applyOutcome(env, ctx, orgId, manifestId, outcome, handedOverCount);
 }
 
+/**
+ * Writes the terminal state, mirrors it, counts it and records it — in one transaction.
+ *
+ * `handedOverCount` is passed in rather than recovered, because it is the number of recipients *this pass*
+ * handed over and only the caller knows it. Recovering it from the database meant matching a timestamp,
+ * which worked under a frozen test clock and failed on a Worker whose clock advances across I/O.
+ */
 async function applyOutcome(
   env: Env,
   ctx: Ctx,
   orgId: string,
   manifestId: string,
   outcome: SubmitOutcome,
+  handedOverCount: number,
 ): Promise<DispatchResult> {
   const at = new Date(ctx.now()).toISOString();
   const day = at.slice(0, 10);
@@ -308,9 +331,19 @@ async function applyOutcome(
         ).bind(at, outcome.transportMessageId, manifestId),
         // ADR 34: the daily count is how an unpublished limit becomes an observed one.
         env.CATALOG.prepare(
-          `INSERT INTO send_counters (org_id, day, handed_over) VALUES (?,?,1)
-           ON CONFLICT (org_id, day) DO UPDATE SET handed_over = handed_over + 1`,
-        ).bind(orgId, day),
+          // Counts **recipients**, not sends, because that is the unit Cloudflare bills and throttles:
+          // measured, one structured send to three recipients moved its count from 0 to 3
+          // (`cloudflare-email-sending.md`). This column is shown to a user as their observed daily limit,
+          // so counting manifests against a per-recipient allowance would understate it by exactly the
+          // average recipient count — invisibly, because every send this Node made before today had one
+          // recipient and the two agreed.
+          //
+          // Scoped to `submission_state_at = ?` so a retry counts only what it newly handed over. Falls
+          // back to 1 for a manifest with no recipient rows, which is every send sealed before migration
+          // 0010 and is exactly one message.
+          `INSERT INTO send_counters (org_id, day, handed_over) VALUES (?,?,?)
+           ON CONFLICT (org_id, day) DO UPDATE SET handed_over = handed_over + ?`,
+        ).bind(orgId, day, handedOverCount, handedOverCount),
       );
       break;
 
@@ -383,19 +416,22 @@ async function applyOutcome(
     },
   }, (entry) => [
     ...statements,
-    // Submission is one act on one envelope, so its outcome is true of every recipient in it. Mirrored
-    // rather than joined at read time because the manifest's own state is redefined as *the last
-    // submission's* state, and a reader comparing the two must not see them disagree for a moment.
+    // Mirrors the aggregate onto any recipient still undecided — and **only** those.
     //
-    // In the same transaction as the manifest update, so "the send says handed_over but its recipients
-    // say held" is not a reachable state — which is the shape a reader would rightly call a bug.
+    // `submission_state = 'held'` is load-bearing now that submission is per recipient: the loop above
+    // has already written each recipient's own outcome, and a blanket update would overwrite three
+    // different truths with one summary. This clause is what leaves them alone.
     //
-    // `delivery_state` is untouched. Hand-over says nothing about what a receiving server did, and
-    // overwriting an already-observed delivery outcome with a resubmission's would destroy the only
-    // record of it.
+    // It still matters for the paths that have no loop: a reconstructed send, a cancellation, a
+    // withholding, and a manifest sealed before recipient rows existed. There the aggregate *is* each
+    // recipient's outcome, and without this they would sit at `held` forever while the send was long gone.
+    //
+    // In the same transaction as the manifest update, so "the send says handed_over but its recipients say
+    // held" is not a reachable state. `delivery_state` is untouched: hand-over says nothing about what a
+    // receiving server did, and overwriting an observed outcome would destroy the only record of it.
     env.CATALOG.prepare(
       `UPDATE send_recipients SET submission_state = ?, submission_state_at = ?
-        WHERE org_id = ? AND manifest_id = ?`,
+        WHERE org_id = ? AND manifest_id = ? AND submission_state = 'held'`,
     ).bind(state, at, orgId, manifestId),
     entry,
   ]);
@@ -433,4 +469,120 @@ export async function dailySendState(
     throttledAtCount: row?.throttled_at_count ?? null,
     firstThrottledAt: row?.first_throttled_at ?? null,
   };
+}
+
+/**
+ * Submits the same bytes once per recipient, and records each outcome on its own row.
+ *
+ * ## Why a loop rather than one call
+ *
+ * `new EmailMessage(from, to, raw)` takes **one** address, so a single call can only ever reach one
+ * recipient — joining them produced a malformed address and had never worked. The alternative, the
+ * structured API, builds its own MIME and therefore cannot carry `authored` fidelity, which ADR 33
+ * requires for customer mail because its record must prove exactly what was sent.
+ *
+ * Measured before choosing: one structured send to three recipients moved Cloudflare's own count from 0 to
+ * 3, so submitting N times costs nothing extra. The usage was already per recipient; only Mailda's counter
+ * disagreed.
+ *
+ * ## What this makes correct rather than merely possible
+ *
+ * **Bcc.** `Bcc` is absent from the emitted headers while present in the manifest, and a correct Bcc needs
+ * a separate envelope per recipient. The previous single-envelope shape could not have delivered one
+ * properly even if the API had accepted it.
+ *
+ * **Retry.** ADR 40 forbids making a duplicate *delivery* reachable. Recipients already `handed_over` are
+ * skipped, so a retry after a partial failure reaches only the ones that never left — which is the thing
+ * per-recipient state exists to permit and a per-manifest state could not express.
+ *
+ * ## The manifest's own state, once recipients can disagree
+ *
+ * Returned as an aggregate, and the rule is deliberate: if **any** recipient was handed over, the message
+ * has left this Node and `handed_over` is true of the envelope. If none did, the manifest takes the first
+ * failure, because that is the reason a person needs. The per-recipient rows carry the detail and the
+ * outbox shows a second chip whenever they disagree, so the aggregate never has to stand in for them.
+ */
+async function submitPerRecipient(
+  env: Env,
+  orgId: string,
+  manifestId: string,
+  transport: TransportAdapter,
+  /**
+   * The dispatching pass's own timestamp, handed down rather than read again.
+   *
+   * Not a tidiness: `send_counters` identifies what *this* pass handed over by matching
+   * `submission_state_at`, and a Worker's clock advances across I/O — so calling `ctx.now()` again here
+   * produced a different instant, the subquery matched nothing, and a three-recipient send counted as one.
+   * Measured on the deployed Node, which is the only place the two timestamps could diverge.
+   */
+  at: string,
+  message: { from: string; subject: string; raw: Uint8Array<ArrayBuffer> },
+): Promise<{ outcome: SubmitOutcome; handedOverNow: number }> {
+  const rows = await env.CATALOG.prepare(
+    `SELECT id, address, submission_state FROM send_recipients
+      WHERE org_id = ? AND manifest_id = ? ORDER BY kind, address`,
+  )
+    .bind(orgId, manifestId)
+    .all<{ id: string; address: string; submission_state: string }>();
+
+  // A manifest sealed before migration 0010 has no recipient rows. Falling back to one submission keeps
+  // those sends dispatchable rather than stranding them, which matters because they are real mail.
+  if (rows.results.length === 0) {
+    const only = await transport.submit(env, { ...message, to: [] }, "authored");
+    return { outcome: only, handedOverNow: only.kind === "handed_over" ? 1 : 0 };
+  }
+
+  const outcomes: SubmitOutcome[] = [];
+  let handedOverNow = 0;
+
+  for (const row of rows.results) {
+    // Already gone. Re-submitting is the one thing ADR 40 forbids, because the transport cannot
+    // deduplicate and the recipient keeps both copies forever.
+    if (row.submission_state === "handed_over") {
+      outcomes.push({ kind: "handed_over", transportMessageId: "(already submitted)" });
+      continue;
+    }
+
+    const outcome = await transport.submit(env, { ...message, to: [row.address] }, "authored");
+    outcomes.push(outcome);
+    if (outcome.kind === "handed_over") handedOverNow += 1;
+
+    await env.CATALOG.prepare(
+      `UPDATE send_recipients
+          SET submission_state = ?, submission_state_at = ?, transport_message_id = ?,
+              attempts = attempts + 1, last_error = COALESCE(?, last_error)
+        WHERE id = ?`,
+    )
+      .bind(
+        outcome.kind === "handed_over" ? "handed_over"
+          : outcome.kind === "throttled" ? "throttled"
+          : outcome.kind === "suppressed" ? "suppressed"
+          : outcome.kind === "refused" ? "refused" : "outcome_unknown",
+        at,
+        outcome.kind === "handed_over" ? outcome.transportMessageId : null,
+        "reason" in outcome ? outcome.reason.slice(0, 300) : null,
+        row.id,
+      )
+      .run();
+  }
+
+  // The aggregate, and the order of these three clauses is load-bearing.
+  //
+  // **Retryable first.** If any recipient is still throttled, the manifest must report throttled so
+  // `dispatchDue` picks it up again — the sweeper selects on the manifest, not on recipients. Reporting a
+  // hand-over here because *some other* recipient succeeded would leave the throttled one unsent forever,
+  // with the send looking complete. Found by a partial-failure test rather than by reading the code.
+  //
+  // Then hand-over: the bytes left this Node for somebody, which is what an envelope-level state is about.
+  // Then the first failure, because that is the reason a person needs.
+  //
+  // The per-recipient rows carry the truth in every case, and the outbox shows a second chip whenever they
+  // disagree, so this aggregate never has to stand in for them.
+  const retryable = outcomes.find((o) => o.kind === "throttled");
+  const handedOver = outcomes.find((o) => o.kind === "handed_over");
+  const outcome = retryable
+    ?? handedOver
+    ?? outcomes[0]
+    ?? { kind: "outcome_unknown" as const, reason: "no recipients to submit to" };
+  return { outcome, handedOverNow };
 }

@@ -754,3 +754,147 @@ describe("the authored path carries one recipient (a platform constraint, not a 
     });
   });
 });
+
+describe("one submission per recipient (the only way authored multi-recipient works)", () => {
+  it("submits once per recipient, each with a single address", async () => {
+    const ctx = atTime(2_000_000_000_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["a@example.com", "b@example.com"], cc: ["c@example.com"],
+    });
+    const transport = fakeTransport({ kind: "handed_over", transportMessageId: "<m@acme.example>" });
+    await dispatchDue(testEnv, atTime(2_000_000_060_000), ORG, transport);
+
+    // Three submissions, each carrying exactly one address. `new EmailMessage(from, to, raw)` takes one,
+    // so this is not a preference — it is the only shape the raw-MIME API accepts.
+    expect(transport.submitted).toHaveLength(3);
+    for (const s of transport.submitted as Array<{ request: { to: string[] } }>) {
+      expect(s.request.to).toHaveLength(1);
+    }
+    const addressed = (transport.submitted as Array<{ request: { to: string[] } }>)
+      .map((s) => s.request.to[0]).sort();
+    expect(addressed).toEqual(["a@example.com", "b@example.com", "c@example.com"]);
+    void sealed;
+  });
+
+  it("stores each recipient's own message id, which is what an event joins on", async () => {
+    const ctx = atTime(2_000_000_100_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["one@example.com", "two@example.com"],
+    });
+    // A transport that returns a distinct id per call, as Cloudflare does.
+    let n = 0;
+    const transport: TransportAdapter = {
+      name: "counting",
+      async capability() {
+        return { canSend: true, arbitraryRecipients: true, verifiedAt: "2026-08-08T00:00:00.000Z", detail: "x" };
+      },
+      async submit() {
+        n += 1;
+        return { kind: "handed_over", transportMessageId: `<id${n}@acme.example>` };
+      },
+    };
+    await dispatchDue(testEnv, atTime(2_000_000_160_000), ORG, transport);
+
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT address, transport_message_id FROM send_recipients WHERE manifest_id = ? ORDER BY address",
+    ).bind(sealed.id).all<{ address: string; transport_message_id: string | null }>();
+
+    // Distinct ids per recipient. Attribution is exact: an event names one recipient and one row answers.
+    const ids = rows.results.map((r) => r.transport_message_id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((i) => i !== null)).toBe(true);
+  });
+
+  it("does not resubmit a recipient already handed over", async () => {
+    const ctx = atTime(2_000_000_200_000);
+    const sealed = await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["keep@example.com", "retry@example.com"],
+    });
+
+    // First pass: one succeeds, one is throttled — the partial failure ADR 40 has to survive.
+    let call = 0;
+    const flaky: TransportAdapter = {
+      name: "flaky",
+      async capability() {
+        return { canSend: true, arbitraryRecipients: true, verifiedAt: "2026-08-08T00:00:00.000Z", detail: "x" };
+      },
+      async submit(_e, request) {
+        call += 1;
+        return request.to[0] === "keep@example.com"
+          ? { kind: "handed_over", transportMessageId: "<kept@acme.example>" }
+          : { kind: "throttled", reason: "rate limited" };
+      },
+    };
+    await dispatchDue(testEnv, atTime(2_000_000_260_000), ORG, flaky);
+    const afterFirst = call;
+
+    const seen: string[] = [];
+    const second: TransportAdapter = {
+      name: "second",
+      async capability() {
+        return { canSend: true, arbitraryRecipients: true, verifiedAt: "2026-08-08T00:00:00.000Z", detail: "x" };
+      },
+      async submit(_e, request) {
+        seen.push(request.to[0]!);
+        return { kind: "handed_over", transportMessageId: "<second@acme.example>" };
+      },
+    };
+    await dispatchDue(testEnv, atTime(2_000_000_320_000), ORG, second);
+
+    expect(afterFirst).toBe(2);
+    // The retry reaches only the recipient that never left. Re-sending to `keep@` would put a second copy
+    // in front of somebody, which is the one thing ADR 40 forbids because the transport cannot deduplicate.
+    expect(seen).toEqual(["retry@example.com"]);
+    void sealed;
+  });
+
+  it("counts recipients, not sends, because that is what Cloudflare counts", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM send_counters").run();
+    const ctx = atTime(2_000_000_400_000);
+    await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["x1@example.com", "x2@example.com", "x3@example.com"],
+    });
+    await dispatchDue(testEnv, atTime(2_000_000_460_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<c@acme.example>" }));
+
+    const row = await testEnv.CATALOG.prepare("SELECT handed_over FROM send_counters")
+      .first<{ handed_over: number }>();
+    // Measured: one structured send to three recipients moved Cloudflare's own count from 0 to 3. A
+    // per-manifest count would show a user a daily limit three times higher than the one they actually have.
+    expect(row?.handed_over).toBe(3);
+  });
+});
+
+describe("the counter survives a clock that moves, which is the only kind there is", () => {
+  /**
+   * A ctx whose clock advances on every read, as a Worker's does across I/O.
+   *
+   * `atTime` returns a fixed instant, so every test above agreed with itself by construction — and the
+   * per-recipient counter bug passed all of them. It only appeared on the deployed Node, where
+   * `submitPerRecipient` read a later instant than `dispatchOne` had, the counter's subquery matched
+   * nothing, and a three-recipient send counted as one. A frozen clock cannot express that, which is why
+   * this exists.
+   */
+  function advancingCtx(start: number): Ctx {
+    const system = createSystemCtx();
+    let now = start;
+    return { now: () => (now += 250), id: (p) => system.id(p), random: (n) => system.random(n) };
+  }
+
+  it("counts every recipient even though the clock advances mid-dispatch", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM send_counters").run();
+    const ctx = advancingCtx(2_100_000_000_000);
+    await sealManifest(testEnv, ctx, ORG, {
+      ...composition, to: ["m1@example.com", "m2@example.com", "m3@example.com"],
+    });
+
+    await dispatchDue(testEnv, advancingCtx(2_100_000_600_000), ORG,
+      fakeTransport({ kind: "handed_over", transportMessageId: "<adv@acme.example>" }));
+
+    const row = await testEnv.CATALOG.prepare("SELECT handed_over FROM send_counters")
+      .first<{ handed_over: number }>();
+    // Three, not one. The dispatching pass's timestamp is handed down rather than read again, so the
+    // counter can still tell which recipients this pass handed over.
+    expect(row?.handed_over).toBe(3);
+  });
+});
