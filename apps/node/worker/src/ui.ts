@@ -1,6 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
 import appScript from "./client/app.client.js";
+import shellBundle from "../generated/app.bundle.client.js";
 import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
@@ -48,6 +49,11 @@ export function page(): string {
     refreshMarginSeconds: BUDGETS["auth.access_token_refresh_margin_seconds"],
     accessTtlSeconds: BUDGETS["auth.access_token_ttl_seconds"],
     expiryCookie: EXPIRY_COOKIE,
+    // The composer tells a person how long they have to stop a send. That number is the hold window, and
+    // it comes from the receipt-generated budget rather than being written into the interface — a figure
+    // typed into a UI is exactly the drift `pnpm receipts` exists to prevent, and the prototype already
+    // showed it happening: its mock said 18 seconds against a measured 15.
+    holdWindowSeconds: BUDGETS["send.hold_window_default_seconds"],
   };
 
   return `<!doctype html>
@@ -498,6 +504,223 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
 a:hover { border-bottom-color: var(--signal); }
 tbody a { font-size: .8rem; }
+/* ---- variant B: the application shell (ADR 30) ------------------------------------------- */
+
+/* A rail, a stage, and an instrument bar. Grid rather than flex so the bar is pinned to the bottom
+   without position:fixed — a fixed bar overlaps the last row of a ledger, which on a table of send
+   outcomes is the row somebody scrolled down to read. */
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas: "rail stage" "bar bar";
+  min-height: 100vh;
+}
+
+.rail {
+  grid-area: rail;
+  border-right: 1px solid var(--rule);
+  padding: 1rem 0 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  background: color-mix(in oklab, var(--ground-2) 45%, transparent);
+}
+.rail .wordmark { border-right: 0; padding: 0 1rem .75rem 1rem; font-size: 1rem; }
+.rail-heading {
+  font-family: var(--mono);
+  font-size: .62rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: .9rem 1rem .2rem 1rem;
+}
+.rail-list { list-style: none; margin: 0; padding: 0; }
+.rail-foot { margin-top: auto; }
+.rail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .34rem 1rem;
+  color: var(--text);
+  text-decoration: none;
+  /* A 2px transparent marker rather than a border that appears on selection: a border that only exists
+     when current shifts every other row by two pixels as you navigate. */
+  border-left: 2px solid transparent;
+}
+.rail-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
+.rail-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+.rail-row .num { font-family: var(--mono); font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--dim); }
+.rail-name { font-size: .95rem; }
+.rail-note { padding: .2rem 1rem .4rem 1rem; }
+
+.app-main { grid-area: stage; min-width: 0; padding: clamp(1rem, 2.5vw, 2rem); }
+
+.instrument-bar {
+  grid-area: bar;
+  border-top: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--ground-2) 60%, transparent);
+  display: flex;
+  align-items: center;
+  gap: clamp(.8rem, 2.2vw, 1.6rem);
+  flex-wrap: wrap;
+  padding: .5rem clamp(1rem, 2.5vw, 2rem);
+  font-family: var(--mono);
+  font-size: .69rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.instrument-bar .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
+.instrument-bar .key { opacity: .6; }
+.instrument-bar .num { color: var(--text); font-variant-numeric: tabular-nums; }
+.instrument-bar .session { color: var(--signal); font-variant-numeric: tabular-nums; }
+.instrument-bar a.linkish { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.bar-spacer { margin-left: auto; }
+
+/* doctor's three verdicts, reusing the existing signal tokens so contrast-tokens.md stays valid
+   without re-measuring. */
+.verdict-ok       { border-color: var(--live);   color: var(--live); }
+.verdict-degraded { border-color: var(--signal); color: var(--signal); }
+.verdict-refuse   { border-color: var(--alarm);  color: var(--alarm); }
+.severity-refuse   { border-color: var(--alarm);  color: var(--alarm); }
+.severity-degraded { border-color: var(--signal); color: var(--signal); }
+.severity-report   { color: var(--dim); }
+
+/* ---- list and reading pane --------------------------------------------------------------- */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  /* The reading pane goes under the list rather than beside it. The rail collapses to a row of its own
+     at the top, which keeps the mailbox counts visible — they are the thing Layer 3 adds to. */
+  .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "rail" "stage" "bar"; }
+  .rail { border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+  .rail-foot { margin-top: 0; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+}
+
+.message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
+.message-list:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.message-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .1rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-left: 2px solid transparent;
+  padding: .6rem .9rem;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.message-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
+.message-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+.message-from { font-size: .74rem; color: var(--dim); }
+.message-subject { font-size: .98rem; }
+.message-when { font-size: .68rem; }
+
+.reading-pane { padding: 0 0 0 clamp(1rem, 2.5vw, 2rem); min-width: 0; }
+.reading-pane .message-title { font-size: clamp(1.15rem, 2.2vw, 1.5rem); margin: 0 0 .8rem 0; font-weight: 400; }
+.headers { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .2rem .8rem; margin: 0 0 1.2rem 0; }
+.headers dt {
+  font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--dim);
+}
+.headers dd { margin: 0; font-size: .85rem; word-break: break-word; }
+
+/* An opaque-origin frame with no scripts and no same-origin access. The sandbox is the boundary, not
+   the sanitiser (ADR 37) — so this element carries the security property and the height is the only
+   cosmetic decision in it. */
+.message-body {
+  width: 100%;
+  min-height: 24rem;
+  border: 1px solid var(--rule);
+  background: var(--ground-2);
+}
+.message-text { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: .82rem; }
+
+/* ---- ledgers ----------------------------------------------------------------------------- */
+
+.ledger { min-width: 0; }
+.ledger-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: .6rem; }
+.ledger-head h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); margin: 0; font-weight: 400; }
+.ledger-head p { margin: 0; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+/* Tables scroll inside their own container. A ledger of send outcomes is the last thing that should
+   make the whole page scroll sideways. */
+.ledger table { width: 100%; }
+.ledger { overflow-x: auto; }
+
+.row-toggle {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; width: 100%;
+}
+.row-toggle:hover { color: var(--signal); }
+/* ---- the docked composer ----------------------------------------------------------------- */
+
+/* Docked rather than a route, so replying does not move the original off screen. For invoice and
+   shipment mail a reply exists to quote a reference from the message being replied to, and taking that
+   away is a defect rather than a layout preference. */
+.composer-dock {
+  position: sticky;
+  bottom: 0;
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--rule-strong);
+  background: var(--ground-2);
+  padding: .9rem clamp(1rem, 2.5vw, 1.6rem) 1.1rem;
+  /* Bounded, so a long reply scrolls inside the dock and the message behind it stays visible. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.dock-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: .5rem; }
+.dock-head h2 { font-size: 1.05rem; margin: 0; font-weight: 400; }
+.dock-close { margin-left: auto; }
+
+/* Where the bytes are. Amber because it is a caution, not a failure: the draft is real and it is not
+   anywhere durable yet. */
+.draft-phase {
+  font-size: .63rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+.row-actions { margin: .2rem 0 1rem 0; }
+/* ---- the handover ------------------------------------------------------------------------- */
+
+/* body.shell is set by app.client.js the moment the React application mounts, and it is what retires
+   Layer 1's chrome rather than leaving two of everything on the page. Without it the top rack kept its
+   wordmark above the rail's, and main's 74rem measure boxed a shell meant to be full-bleed — both
+   visible only by looking at the rendered page.
+
+   No backticks anywhere in this stylesheet: it lives inside a TypeScript template literal, so one in a
+   comment ends the string. That is the same hazard this file's header describes for JavaScript, and it
+   cost a parse error here before it was spotted. */
+body.shell .rack { display: none; }
+body.shell main#app {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  /* The shell owns the viewport: its grid pins the instrument bar to the bottom, which only works if the
+     element it lives in is as tall as the window. */
+  min-height: 100vh;
+}
+
+/* Addresses are not prose and must not break mid-word: "billing@exam / ple.com" is unreadable and, on a
+   ledger of who a message went to, actively misleading. The table gets a floor and its container
+   scrolls instead. */
+.ledger table { min-width: 52rem; }
+/* nowrap, not a smarter wrap. overflow-wrap: anywhere still split "billing@example.com" across lines,
+   which reads as two addresses. The table has a floor and the ledger scrolls. */
+.ledger td.mono { word-break: normal; overflow-wrap: normal; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -529,6 +752,9 @@ const CLIENT_SCRIPTS: Record<string, string> = {
   // test can evaluate it — `app.client.js` touches `document` at load, so nothing could reach it there,
   // and the one rule that decides whether a bounce is visible was the one rule with no coverage.
   "/app/delivery.js": deliveryScript,
+  // The React application (ADR 30). Imported dynamically by `app.client.js` once somebody is signed in,
+  // so the screens an operator needs when the Node is broken never wait on a hundred kilobytes of it.
+  "/app/shell.js": shellBundle,
 };
 
 export function clientScript(pathname: string): Response | null {

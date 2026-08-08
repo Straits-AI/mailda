@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 330 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 337 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -97,6 +97,26 @@ account-level object outside the Worker's config, so it can be absent, deleted, 
 domain — and nothing about a Node in that state looks wrong: sends hand over, the outbox fills, and every
 recipient sits unobserved forever. `doctor` compares what was handed over against what came back and names
 the silence, because "no bounces" must not be able to mean "nothing heard".
+
+**The authenticated application is React now, and the screens you need when it is broken are not.**
+ADR 30 put React at this layer with the composer, where client state first outlives a request. The split is
+the interesting half: sign-in, first-run claim and a locked-out `doctor` stay server-rendered with no
+framework and load **zero bytes** of the bundle, because they are the screens an operator sees when the
+Node has stopped working — once, literally, when a dropped binding made sign-in return 500 and left the
+diagnostic the only reachable surface. That is a measured property rather than an intention, and a test
+fails if the page ever references the bundle up front.
+
+The shape is a rail, a list and reading pane, full-width ledgers, and a **docked** composer — docked
+because replying must not move the original off screen, which for invoice and shipment mail is a defect
+rather than a preference. The rail carries one mailbox today and exists so Layer 3 adds rows instead of a
+new chrome. Its draft label says where the bytes actually are: *this browser only · a reload loses it*,
+because nothing saves a draft on the Node yet and a friendlier label would be a false claim.
+
+Building it found what the old shape was hiding. Accessibility is checked two ways that neither replaces —
+contrast **computed** from the tokens in CI, because axe cannot resolve a gradient background and reports
+that as a pass; structure and ARIA by axe, run per screen in both themes, with best-practice rules as
+advisories because the AA gate provably misses things. The first advisory run found the Inbox had no
+level-one heading at all.
 
 **And the outbox cannot summarise that silence away.** The row a person actually reads showed the
 submission state — `handed over`, in green — and added the delivery outcome only when the recipients

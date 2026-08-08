@@ -10,6 +10,7 @@ import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/eve
 import { getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import { listMessages, authorize, principalFor } from "./authz-read.ts";
+import { isAppRoute } from "./app-routes.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
 import {
   clearedCookies,
@@ -641,7 +642,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     const script = clientScript(url.pathname);
     if (script !== null) return script;
 
-    if (url.pathname === "/" || url.pathname === "/index.html") {
+    // Every route the application owns returns the page, because the shell routes on the client and a
+    // bookmarked `/outbox` must not 404. The list is shared with `main.tsx` rather than duplicated
+    // (`app-routes.ts`), and it is a list rather than a catch-all so a mistyped URL still gets a real 404.
+    if (isAppRoute(url.pathname) || url.pathname === "/index.html") {
       ctx.waitUntil(armSweeper(env));
       return new Response(page(), { headers: { "content-type": "text/html; charset=utf-8" } });
     }

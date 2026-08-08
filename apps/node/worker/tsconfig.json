@@ -8,5 +8,8 @@
     "test/**/*",
     "env.d.ts",
     "worker-configuration.d.ts"
+  ],
+  "exclude": [
+    "src/client/app/**"
   ]
 }

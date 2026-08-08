@@ -1,0 +1,24 @@
+{
+  // The browser half, checked as its own program.
+  //
+  // It cannot share the Worker's: this code needs `lib: DOM` and JSX, and the Worker must **not** have
+  // them. `document` resolving inside `src/index.ts` would make a whole class of mistake compile — a
+  // Worker has no DOM, and the error should arrive from the type checker rather than at runtime in
+  // somebody's mailbox. So the seam is two programs, and `pnpm typecheck` runs both.
+  "extends": "../../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // esbuild resolves these; tsc only needs to agree about the types.
+    "types": ["react", "react-dom"],
+    // `/app/session.js` and `/app/delivery.js` are resolved by the browser at runtime and left alone by
+    // esbuild. TypeScript reads a leading slash as a path on disk, so an ambient `declare module` for
+    // them never matches — these map the specifier onto its hand-written types instead.
+    "paths": {
+      "/app/session.js": ["./app/types/session.d.ts"],
+      "/app/delivery.js": ["./app/types/delivery.d.ts"]
+    }
+  },
+  "include": ["app/**/*"]
+}

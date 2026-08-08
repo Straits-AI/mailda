@@ -48,3 +48,8 @@ worker-configuration.d.ts
 # Browser-automation scratch: snapshots and screenshots from visual verification.
 # The findings belong in a commit message or a receipt; the PNGs are not evidence of anything reproducible.
 .playwright-mcp/
+
+# esbuild's output for the React application (ADR 30). Built by wrangler's own `build.command`, so every
+# deploy path produces it; not committed, because it would put a hundred kilobytes of minified diff on
+# every interface commit and a reviewer cannot notice anything wrong inside it.
+apps/node/worker/generated/

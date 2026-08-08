@@ -23,11 +23,8 @@
  */
 
 import {
-  accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, logout, onSessionChange, refresh, start,
+  accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, onSessionChange, refresh, start,
 } from "./session.js";
-// The delivery vocabulary and the decision about which outcomes a reader is shown. Its own module
-// because this file cannot be tested — see delivery.client.js.
-import { DELIVERY_STATES, UNOBSERVED, orderRecipients, summariseDelivery } from "./delivery.js";
 
 const app = document.getElementById("app");
 const statusStrip = document.getElementById("status");
@@ -81,26 +78,11 @@ function renderStatus(sessionText = null) {
     el("span", { class: "field mono", text: location.host }),
   ];
 
-  if (nodeState.claimed) {
-    items.push(
-      el("span", { class: "field" }, [
-        el("span", { class: "key", text: "outbox" }),
-        el("span", { class: "mono num", text: String(nodeState.outboxPending) }),
-      ]),
-    );
-  }
-
+  // No navigation and no counts. This strip now belongs to the *pre-authentication* screens only — once
+  // somebody is signed in the shell takes the page over and carries its own instrument bar, and two
+  // readouts of one session on one page would eventually disagree about it.
   if (sessionText !== null) {
     items.push(el("span", { class: "field session mono", text: sessionText }));
-  }
-  if (isSignedIn()) {
-    items.push(
-      el("button", { class: "linkish", text: "inbox", onclick: () => route() }),
-      el("button", { class: "linkish", text: "outbox", onclick: () => renderOutbox() }),
-      el("button", { class: "linkish", text: "audit", onclick: () => renderAudit() }),
-      el("button", { class: "linkish", text: "log", onclick: () => renderLogs() }),
-      el("button", { class: "linkish", text: "sign out", onclick: () => logout() }),
-    );
   }
 
   statusStrip.replaceChildren(...items);
@@ -258,573 +240,21 @@ function renderSignIn(message = null) {
   );
 }
 
-function renderEmpty() {
-  show(
-    el("div", { class: "stage", "data-reveal": "" }, [
-      el("h1", { text: "Listening." }),
-      el("p", {
-        class: "lede",
-        text:
-          "This Node is claimed and routing is live. No messages have arrived yet — send one to " +
-          "an address routed here and it will appear in this ledger.",
-      }),
-      el("p", { class: "hint", text: "An empty ledger. Not a filtered one: nothing has been hidden from you." }),
-    ]),
-  );
-}
-
-const bytes = (n) => `${Number(n).toLocaleString()} B`;
-
-function received(iso) {
-  const at = new Date(iso);
-  const day = at.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
-  const time = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${day} ${time}`;
-}
-
-/** The ledger. Reads as a record of receipts, because that is what it is. */
-function renderLedger(messages) {
-  const head = el("tr", {}, [
-    el("th", { text: "From" }),
-    el("th", { text: "To" }),
-    el("th", { text: "Received" }),
-    el("th", { class: "num", text: "Size" }),
-    el("th", { class: "num", text: "Evidence" }),
-  ]);
-
-  const rows = messages.flatMap((message) => {
-    // Declared before `detail`, which references it. Putting it next to `row` left it in the temporal
-    // dead zone and threw at render — the kind of error no server-side test can catch, because none of
-    // them execute this file.
-    const bodyHost = el("div", { class: "body-host" });
-
-    const detail = el("tr", { class: "detail", hidden: "hidden" }, [
-      el("td", { colspan: "5" }, [
-        el("dl", {}, [
-          el("dt", { text: "receipt" }), el("dd", { class: "mono", text: message.id }),
-          el("dt", { text: "envelope from" }), el("dd", { class: "mono", text: message.envelope_from }),
-          el("dt", { text: "accepted" }), el("dd", { class: "mono", text: message.accepted_at }),
-          el("dt", { text: "stored" }),
-          el("dd", { class: "mono", text: `${bytes(message.raw_bytes)} — framed, encrypted at rest` }),
-        ]),
-        el("div", { class: "row-actions" }, [
-          el("button", {
-            class: "linkish",
-            text: "reply",
-            onclick: () =>
-              composer({
-                mailboxId: nodeState.mailboxId,
-                inReplyToMessageId: message.message_id ?? undefined,
-                to: message.envelope_from,
-                subject: /^re:/i.test(message.subject ?? "") ? message.subject : `Re: ${message.subject ?? ""}`,
-                body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.envelope_from} wrote:\n> …`,
-              }),
-          }),
-        ]),
-        bodyHost,
-      ]),
-    ]);
-
-    // The header `From`, not the envelope sender.
-    //
-    // For anything Cloudflare sent, the envelope sender is the return path
-    // (`bounces@cf-bounce.<domain>`), which is not who wrote the message — a column labelled "From"
-    // showing that is a quiet lie of exactly the kind §5C exists to stop. #27 parses the real header
-    // into `messages.from_addr`; the envelope is still shown, in the detail, where it is labelled as
-    // what it is.
-    const row = el("tr", { class: "entry", tabindex: "0", "data-reveal": "" }, [
-      el("td", { text: message.from_addr ?? message.envelope_from }),
-      el("td", { class: "dim", text: message.envelope_to }),
-      el("td", { class: "mono dim", text: received(message.accepted_at) }),
-      el("td", { class: "num mono", text: bytes(message.raw_bytes) }),
-      el("td", { class: "num" }, [
-        el("a", {
-          class: "mono",
-          href: `/api/messages/${encodeURIComponent(message.id)}/raw`,
-          text: ".eml",
-        }),
-      ]),
-    ]);
-
-    const toggle = () => {
-      detail.hidden = !detail.hidden;
-      row.classList.toggle("open", !detail.hidden);
-      // Fetched on first open rather than for every row: a body costs a decrypt and a sanitise pass.
-      if (!detail.hidden && bodyHost.childElementCount === 0) openBody(message.id, bodyHost);
-    };
-    row.addEventListener("click", (event) => {
-      if (event.target.tagName !== "A" && event.target.tagName !== "BUTTON") toggle();
-    });
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
-    });
-
-    return [row, detail];
-  });
-
-  show(
-    el("div", { class: "ledger-head", "data-reveal": "" }, [
-      el("h1", { text: "Ledger" }),
-      el("p", {
-        class: "count mono",
-        text: `${messages.length} message${messages.length === 1 ? "" : "s"}`,
-      }),
-    ]),
-    // The ledger is dense and its columns cannot all shrink. Wrapped so *it* scrolls sideways on a
-    // narrow viewport rather than the page body, which is the difference between a usable table and
-    // a broken layout.
-    el("div", { class: "scroller" }, [
-      el("table", {}, [el("thead", {}, [head]), el("tbody", {}, rows)]),
-    ]),
-  );
-}
-
-/* ------------------------------------------------------------------ reading a body -------- */
-
 /**
- * The body panel.
+ * The authenticated screens are gone from this file, and that is the point of ADR 30.
  *
- * **The iframe is the trust boundary, not the sanitiser** (ADR 37). `sandbox` with neither
- * `allow-scripts` nor `allow-same-origin` gives the body an opaque origin and executes nothing, so
- * whatever the server-side sanitiser misses still cannot run. Sanitising reduces what the browser's
- * parser is handed and withholds remote content; it is not a claim the output is inert.
+ * They lived here: the ledger, the reading pane, the composer, the outbox, the audit trail and the log —
+ * about six hundred lines of DOM construction. They are now React, in `src/client/app/`, because the
+ * composer is where client state first outlives a request and because this file cannot be tested: it
+ * touches `document` at module scope, so nothing could import it, and the outbox's honesty rules sat in
+ * the one file with no coverage. That cost something real — a send whose every recipient bounced rendered
+ * as green `handed over` — and the fix was to move the rule somewhere a test could reach it.
  *
- * `srcdoc` rather than a `src` URL, so the HTML never becomes a fetchable resource on this origin.
+ * What stays is what has to work when nothing else does: the first-run claim, sign-in, and the session
+ * machinery underneath both. #23 was exactly that case — a dropped binding made sign-in return 500 and
+ * left the diagnostic the only reachable surface — which is why these screens load no bundle and never
+ * will.
  */
-function bodyPanel(body) {
-  if (body.state === "unparsed") {
-    return el("div", {}, [
-      notice(body.problem, "bad"),
-      el("p", { class: "hint", text: "The original is unchanged. Download the .eml to read it elsewhere." }),
-    ]);
-  }
-  if (body.state === "no-body") {
-    // §5C: distinct from a body that was refused, and from one this reader may not see.
-    return notice("This message has no body. That is what the sender sent.");
-  }
-
-  const parts = [];
-
-  if (body.truncated) {
-    parts.push(notice(
-      "This body was too large to render in full, so it is shown truncated. The complete original is " +
-      "unchanged and downloadable.",
-    ));
-  }
-
-  if (body.blockedRemote > 0) {
-    // Never silent. A reader has to know something was withheld, and why.
-    parts.push(notice(
-      `${body.blockedRemote} remote image${body.blockedRemote === 1 ? "" : "s"} withheld. Loading them ` +
-      `would tell the sender you opened this message.`,
-    ));
-  }
-
-  if (body.state === "text-only") {
-    parts.push(el("pre", { class: "body-text", text: body.text }));
-    return el("div", {}, parts);
-  }
-
-  const frame = el("iframe", {
-    class: "body-frame",
-    // No allow-scripts and no allow-same-origin. This is the boundary.
-    sandbox: "",
-    referrerpolicy: "no-referrer",
-    loading: "lazy",
-    title: "Message body",
-  });
-  // A second, independent block on remote fetching: even if a URL survived sanitising, the frame's own
-  // policy refuses to load it.
-  frame.setAttribute(
-    "srcdoc",
-    `<!doctype html><meta charset="utf-8">` +
-      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">` +
-      `<style>body{font:14px/1.55 system-ui,sans-serif;margin:0;color-scheme:light dark}` +
-      `img[data-mailda-blocked]{outline:1px dashed currentColor;outline-offset:2px;opacity:.5;min-width:12px;min-height:12px}` +
-      `</style>${body.html}`,
-  );
-  parts.push(frame);
-  return el("div", {}, parts);
-}
-
-async function openBody(receiptId, host) {
-  host.replaceChildren(el("p", { class: "hint", text: "Reading…" }));
-  const response = await apiFetch(`/api/messages/${encodeURIComponent(receiptId)}/body`);
-  if (!response.ok) {
-    host.replaceChildren(notice(`The body could not be read (${response.status}).`, "bad"));
-    return;
-  }
-  host.replaceChildren(bodyPanel(await response.json()));
-}
-
-/* ------------------------------------------------------------------ composing ------------- */
-
-/**
- * The composer.
- *
- * Sealing and dispatching are separate steps (ADR 35), and this surface makes that visible rather than
- * hiding it behind a Send button: a sealed message sits `held` for its mailbox's window, and the undo is
- * a real cancellation of something that never left — not a recall, which would be a lie.
- */
-function composer(context) {
-  const to = field("to", "To", { value: context.to ?? "", required: "required", class: "mono" });
-  const subject = field("subject", "Subject", { value: context.subject ?? "", required: "required" });
-  const bodyInput = el("textarea", { id: "body", rows: "10", required: "required" });
-  bodyInput.value = context.body ?? "";
-  const errors = el("div", { class: "errors", role: "alert" });
-  const submit = el("button", { class: "primary", type: "submit", text: "Seal and send" });
-
-  const form = el("form", { novalidate: "novalidate" }, [
-    to.node,
-    subject.node,
-    el("label", { class: "field-row", for: "body" }, [el("span", { text: "Message" }), bodyInput]),
-    el("p", {
-      class: "hint",
-      text:
-        "Sealing records exactly what will be sent before anything leaves. It then waits, so you can " +
-        "still stop it — nothing is recalled, because a recall would not be honest.",
-    }),
-    submit, errors,
-  ]);
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    errors.replaceChildren();
-    submit.disabled = true;
-    submit.textContent = "Sealing…";
-    try {
-      const response = await apiFetch("/api/sends", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mailboxId: context.mailboxId,
-          inReplyToMessageId: context.inReplyToMessageId,
-          to: to.input.value.split(/[,;]+/).map((s) => s.trim()).filter(Boolean),
-          subject: subject.input.value,
-          body: bodyInput.value,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        // The server's four-part message, verbatim — it names the remedy.
-        errors.replaceChildren(notice(result.message ?? "This message could not be sealed.", "bad"));
-        return;
-      }
-      return renderOutbox(result.id);
-    } finally {
-      submit.disabled = false;
-      submit.textContent = "Seal and send";
-    }
-  });
-
-  show(
-    el("div", { class: "split" }, [
-      el("div", { class: "split-lede", "data-reveal": "" }, [
-        el("h1", { text: context.inReplyToMessageId ? "Reply" : "New message" }),
-        el("p", {
-          text:
-            "This will be sent from the mailbox, not from you. Who wrote it is recorded here and does " +
-            "not travel with the message — a name in the From line would tell every correspondent who " +
-            "works here.",
-        }),
-      ]),
-      panel(context.inReplyToMessageId ? "Reply" : "Compose", null, [form]),
-    ]),
-  );
-}
-
-/* ------------------------------------------------------------------ the outbox ------------- */
-
-/**
- * The seven states of ADR 39, named as they are named everywhere else (§16).
- *
- * `sent` and `delivered` are absent because they would be claims nobody observed. The wording here is
- * the product's argument, not an apology for it.
- */
-const SEND_STATES = {
-  held: { label: "held", note: "Not sent yet. You can still stop this." },
-  cancelled: { label: "cancelled", note: "Stopped before it left." },
-  withheld: {
-    label: "withheld",
-    note: "Not sent. The author's authority to send as this mailbox was withdrawn during the hold window, " +
-      "so this Node refused to hand it over. Nobody cancelled it and the mail service was never asked.",
-  },
-  throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
-  refused: { label: "refused", note: "The mail service would not accept it. It never left." },
-  suppressed: { label: "suppressed", note: "The mail service will never deliver to this recipient." },
-  handed_over: { label: "handed over", note: "Accepted by the mail service. Whether it arrived is not knowable from here." },
-  outcome_unknown: { label: "outcome unknown", note: "We do not know whether it left. It will not be retried automatically." },
-};
-
-/**
- * `DELIVERY_STATES` and `UNOBSERVED` are imported rather than declared here.
- *
- * They describe a different scale from SEND_STATES — what the receiving world did with one address, not
- * what this Node did with the envelope — and they live in `delivery.client.js` alongside the rule about
- * which of them a reader is shown, because that rule needed to be testable and this file is not.
- */
-
-/**
- * Draws what `summariseDelivery` decided. The decision lives in `delivery.client.js` because it is the
- * outbox's load-bearing honesty rule and this file cannot be tested; this function is only the pen.
- */
-function deliveryChips(recipients) {
-  const summary = summariseDelivery(recipients);
-  return summary.map((entry) =>
-    el("span", {
-      class: `state delivery-${entry.state} delivery-chip`,
-      // The count is dropped only when there is one recipient in total, where "1 bounced" reads as
-      // though it were one of several.
-      text: recipients.length === 1 ? entry.label : `${entry.count} ${entry.label}`,
-      title: entry.note,
-    }));
-}
-
-/** One line per recipient, so a mixed outcome cannot be flattened into a single chip. */
-function recipientBreakdown(recipients) {
-  if (!recipients || recipients.length === 0) return [];
-  return [
-    el("dt", { text: "recipients" }),
-    el("dd", {}, [
-      // Ordered here rather than trusted from the API: to, cc, bcc is what a person expects, and a
-      // display that depends on a server's ORDER BY for its meaning is one query change from being wrong.
-      el("div", { class: "recipients" }, orderRecipients(recipients).map((r) => {
-        const observed = r.delivery_state === null || r.delivery_state === undefined
-          ? UNOBSERVED
-          : (DELIVERY_STATES[r.delivery_state] ?? { label: r.delivery_state, note: "" });
-        return el("div", { class: "recipient" }, [
-          el("span", { class: "label", text: r.kind }),
-          el("span", { class: "mono", text: r.address }),
-          el("span", {
-            class: `state delivery-${r.delivery_state ?? "unobserved"}`,
-            text: observed.label,
-            title: observed.note + (r.bounce_type ? ` (${r.bounce_type})` : ""),
-          }),
-          r.last_error
-            ? el("span", { class: "dim mono recipient-error", text: r.last_error })
-            : null,
-        ]);
-      })),
-    ]),
-  ];
-}
-
-async function renderOutbox(highlightId) {
-  const response = await apiFetch("/api/sends");
-  if (!response.ok) return show(notice(`The outbox could not be read (${response.status}).`, "bad"));
-  const { sends, daily, capability } = await response.json();
-
-  const rows = sends.flatMap((send) => {
-    const state = SEND_STATES[send.state] ?? { label: send.state, note: "" };
-    const row = el("tr", { class: send.id === highlightId ? "entry open" : "entry", "data-reveal": "" }, [
-      el("td", { text: send.subject }),
-      el("td", { class: "dim mono", text: (JSON.parse(send.envelope_to) || []).join(", ") }),
-      el("td", {}, [
-        el("span", { class: `state state-${send.state}`, text: state.label }),
-        // What this Node did, then what the receiving world did — two different scales, side by side.
-        // One chip per distinct outcome, worst first, and never suppressed just because the recipients
-        // happen to agree: they agree when everything bounced too.
-        ...deliveryChips(send.recipients),
-      ]),
-      el("td", { class: "num mono dim", text: new Date(send.state_at).toLocaleTimeString(undefined, { hour12: false }) }),
-      el("td", { class: "num" }, [
-        send.state === "held"
-          ? el("button", {
-              class: "linkish",
-              text: "stop",
-              onclick: async () => {
-                const result = await apiFetch(`/api/sends/${encodeURIComponent(send.id)}/cancel`, { method: "POST" });
-                const outcome = await result.json();
-                if (!outcome.cancelled) window.alert(outcome.reason ?? "It could not be stopped.");
-                renderOutbox(send.id);
-              },
-            })
-          : send.fidelity === "authored" && send.state !== "cancelled"
-            ? el("a", { class: "mono", href: `/api/sends/${encodeURIComponent(send.id)}/submitted`, text: ".eml" })
-            : el("span", { class: "dim mono", text: "—" }),
-      ]),
-    ]);
-
-    const detail = el("tr", { class: "detail", hidden: send.id === highlightId ? null : "hidden" }, [
-      el("td", { colspan: "5" }, [
-        el("dl", {}, [
-          el("dt", { text: "what this means" }), el("dd", { text: state.note }),
-          ...recipientBreakdown(send.recipients),
-          el("dt", { text: "manifest" }), el("dd", { class: "mono", text: send.id }),
-          ...(send.last_error === null ? [] : [el("dt", { text: "reported" }), el("dd", { text: send.last_error })]),
-        ]),
-      ]),
-    ]);
-
-    const toggle = () => { detail.hidden = !detail.hidden; row.classList.toggle("open", !detail.hidden); };
-    row.addEventListener("click", (event) => {
-      if (event.target.tagName !== "A" && event.target.tagName !== "BUTTON") toggle();
-    });
-    return [row, detail];
-  });
-
-  const limit = daily.throttledAtCount === null
-    ? `${daily.handedOver} handed over today. Your daily limit is not published by Cloudflare; it will be recorded here the first time you hit it.`
-    : `${daily.handedOver} handed over today. You were first throttled at ${daily.throttledAtCount} — that is your observed daily limit.`;
-
-  show(
-    el("div", { class: "ledger-head", "data-reveal": "" }, [
-      el("h1", { text: "Outbox" }),
-      el("p", { class: "count mono", text: `${sends.length} message${sends.length === 1 ? "" : "s"}` }),
-    ]),
-    capability.canSend ? null : notice(capability.detail, "bad"),
-    notice(limit),
-    sends.length === 0
-      ? el("p", { class: "hint", text: "Nothing has been sealed yet." })
-      : el("div", { class: "scroller" }, [
-          el("table", {}, [
-            el("thead", {}, [el("tr", {}, [
-              el("th", { text: "Subject" }), el("th", { text: "To" }), el("th", { text: "State" }),
-              el("th", { class: "num", text: "When" }), el("th", { class: "num", text: "Submitted" }),
-            ])]),
-            el("tbody", {}, rows),
-          ]),
-        ]),
-  );
-}
-
-/* ------------------------------------------------------------------ audit and logs -------- */
-
-/**
- * The audit trail, in the product.
- *
- * An administrator should not have to open the Cloudflare dashboard to answer "who did that". And the
- * verification button is the reason this is a chain rather than a list: a log you have to trust is not
- * evidence, and this one can be checked in front of you.
- */
-async function renderAudit() {
-  const response = await apiFetch("/api/audit");
-  if (!response.ok) return show(notice(`The audit trail could not be read (${response.status}).`, "bad"));
-  const { entries } = await response.json();
-
-  const verdict = el("div", { class: "errors" });
-  const verify = el("button", {
-    class: "primary",
-    text: "Verify the chain",
-    onclick: async () => {
-      verdict.replaceChildren(el("p", { class: "hint", text: "Re-hashing…" }));
-      const result = await (await apiFetch("/api/audit/verify", { method: "POST" })).json();
-      verdict.replaceChildren(
-        result.intact
-          ? notice(
-              `Verified: ${result.checked} entr${result.checked === 1 ? "y" : "ies"} re-hashed and each ` +
-              `follows the one before it.` +
-              (result.resumeFrom === null ? "" : ` More remain; verification is batched.`),
-            )
-          // The broken link, not a bare verdict — an investigation needs where, not whether.
-          : notice(
-              `Chain broken at entry ${result.brokenAt.seq} (${result.brokenAt.id}): ` +
-              `${result.brokenAt.reason}`,
-              "bad",
-            ),
-      );
-    },
-  });
-
-  const rows = entries.map((entry) =>
-    el("tr", { class: "entry", "data-reveal": "" }, [
-      el("td", { class: "num mono dim", text: String(entry.seq) }),
-      el("td", { class: "mono", text: entry.action }),
-      el("td", {}, [el("span", { class: `state state-audit-${entry.outcome}`, text: entry.outcome })]),
-      el("td", { class: "dim mono", text: entry.actor_user_id ?? entry.actor_kind }),
-      el("td", { class: "dim mono", text: entry.subject ?? "—" }),
-      el("td", { class: "num mono dim", text: new Date(entry.at).toLocaleString(undefined, { hour12: false }) }),
-    ]),
-  );
-
-  show(
-    el("div", { class: "ledger-head", "data-reveal": "" }, [
-      el("h1", { text: "Audit" }),
-      el("p", { class: "count mono", text: `${entries.length} most recent` }),
-    ]),
-    notice(
-      "Every entry carries the hash of the one before it, so a deletion, a reordering or an edit " +
-      "breaks verification at a nameable point. This cannot stop someone with database access from " +
-      "rewriting the whole chain — you own the database — but it turns trusting this log into " +
-      "checking it.",
-    ),
-    verify,
-    verdict,
-    entries.length === 0
-      ? el("p", { class: "hint", text: "Nothing recorded yet." })
-      : el("div", { class: "scroller" }, [
-          el("table", {}, [
-            el("thead", {}, [el("tr", {}, [
-              el("th", { class: "num", text: "#" }), el("th", { text: "Action" }),
-              el("th", { text: "Outcome" }), el("th", { text: "Actor" }),
-              el("th", { text: "Subject" }), el("th", { class: "num", text: "When" }),
-            ])]),
-            el("tbody", {}, rows),
-          ]),
-        ]),
-  );
-}
-
-/** The operational log — why something behaved oddly, as opposed to who did what. */
-async function renderLogs(level = null) {
-  const response = await apiFetch(`/api/logs${level === null ? "" : `?level=${level}`}`);
-  if (!response.ok) return show(notice(`The log could not be read (${response.status}).`, "bad"));
-  const { entries, counts } = await response.json();
-
-  const rows = entries.flatMap((entry) => {
-    const detail = el("tr", { class: "detail", hidden: "hidden" }, [
-      el("td", { colspan: "4" }, [
-        el("dl", {}, [
-          el("dt", { text: "event" }), el("dd", { class: "mono", text: entry.event }),
-          ...(entry.request_id === null ? [] : [
-            el("dt", { text: "request" }), el("dd", { class: "mono", text: entry.request_id }),
-          ]),
-          ...(entry.detail === null ? [] : [
-            el("dt", { text: "detail" }), el("dd", { class: "mono", text: entry.detail }),
-          ]),
-        ]),
-      ]),
-    ]);
-    const row = el("tr", { class: "entry", "data-reveal": "" }, [
-      el("td", {}, [el("span", { class: `state state-log-${entry.level}`, text: entry.level })]),
-      el("td", { class: "mono", text: entry.event }),
-      el("td", { text: entry.message }),
-      el("td", { class: "num mono dim", text: new Date(entry.at).toLocaleString(undefined, { hour12: false }) }),
-    ]);
-    row.addEventListener("click", () => {
-      detail.hidden = !detail.hidden;
-      row.classList.toggle("open", !detail.hidden);
-    });
-    return [row, detail];
-  });
-
-  const summary = counts.map((c) => `${c.n} ${c.level}`).join(", ") || "nothing recorded";
-
-  show(
-    el("div", { class: "ledger-head", "data-reveal": "" }, [
-      el("h1", { text: "Log" }),
-      el("p", { class: "count mono", text: summary }),
-    ]),
-    el("div", { class: "row-actions" }, [
-      el("button", { class: "linkish", text: "all", onclick: () => renderLogs() }),
-      el("button", { class: "linkish", text: "errors", onclick: () => renderLogs("error") }),
-      el("button", { class: "linkish", text: "warnings", onclick: () => renderLogs("warn") }),
-    ]),
-    entries.length === 0
-      ? el("p", { class: "hint", text: "Nothing recorded at this level." })
-      : el("div", { class: "scroller" }, [
-          el("table", {}, [
-            el("thead", {}, [el("tr", {}, [
-              el("th", { text: "Level" }), el("th", { text: "Event" }),
-              el("th", { text: "Message" }), el("th", { class: "num", text: "When" }),
-            ])]),
-            el("tbody", {}, rows),
-          ]),
-        ]),
-  );
-}
-
-/* ------------------------------------------------------------------ routing -------------- */
 
 async function route() {
   const health = await fetch("/health").then((r) => r.json());
@@ -838,42 +268,71 @@ async function route() {
   if (!nodeState.claimed) return renderClaim();
   if (!isSignedIn()) return renderSignIn();
 
-  const response = await apiFetch("/api/messages");
-  if (response.status === 401) {
-    // We believed we held a session and we do not. Both halves of the screen have to agree about
-    // that: stop the countdown, then say what happened. §5C's distinction is carried in the
-    // message — an unreadable ledger is not an empty one.
-    clearInterval(sessionTicker);
-    renderStatus(null);
-    return renderSignIn(
-      "Nothing is shown because this session could not be renewed. That is not the same as an " +
-        "empty mailbox — sign in again to see what is here.",
-    );
-  }
-  if (!response.ok) {
-    return show(notice(`This Node answered ${response.status}. The ledger could not be read.`, "bad"));
-  }
-
-  const { messages } = await response.json();
-  // Needed by the composer: From is the mailbox (ADR 36), so composing requires knowing which one.
-  nodeState.mailboxId = messages[0]?.mailbox_id ?? nodeState.mailboxId;
-  renderStatus(sessionReadout());
-  return messages.length === 0 ? renderEmpty() : renderLedger(messages);
+  // Signed in: the authenticated application is React (ADR 30), and it is fetched only now. An operator
+  // looking at a broken Node never waits on it — that is the whole reason the split exists.
+  return handOverToShell();
 }
 
+/**
+ * Hands the page to the React application.
+ *
+ * Dynamic `import()` rather than a second `<script>` tag, so the bundle is requested at the moment
+ * somebody is actually signed in. The pre-authentication screens — sign-in, first-run claim, and the
+ * `doctor` an operator reaches when nothing else works — must render before any of it loads.
+ *
+ * Layer 1's top status strip does not survive the handover: the shell has its own instrument bar along
+ * the bottom, and two readouts of the same session on one page would eventually disagree.
+ */
+let shell = null;
+
+async function handOverToShell() {
+  clearInterval(sessionTicker);
+  statusStrip.replaceChildren();
+  // Retires Layer 1's chrome. Clearing the strip's contents was not enough: the rack and its wordmark
+  // stayed, so the page carried two wordmarks and the shell sat inside `main`'s 74rem measure.
+  document.body.classList.add("shell");
+  try {
+    shell ??= await import("/app/shell.js");
+  } catch (error) {
+    // A shell that cannot load must say so rather than leave an empty page. The pre-authentication
+    // surface is still here and still works, which is why this is recoverable at all.
+    return show(notice(
+      `The application could not be loaded (${error.message}). This Node is running — /api/doctor and ` +
+      `the original of every message are still reachable.`,
+      "bad",
+    ));
+  }
+  app.replaceChildren();
+  return shell.mount(app);
+}
+
+/** Kept for the framework-free ledger below, which now serves only as the signed-out fallback. */
 onSessionChange((event) => {
   if (event.type === "refreshed") {
     // Visible on purpose. A refresh that happens silently is indistinguishable from one that
     // never happened, and this readout is how an operator confirms the machinery works.
+    //
+    // Suppressed once the shell owns the page, which is not a detail: without the guard this repopulated
+    // the top strip on every refresh, so the page carried two session readouts on different clocks. The
+    // comment above `handOverToShell` predicted that and the code did it anyway — caught by reading the
+    // rendered tree.
+    if (shell !== null) return;
     renewingUntil = Date.now() + 1200;
     renderStatus("session · renewed");
   }
   if (event.type === "signed-out") {
     clearInterval(sessionTicker);
     renderStatus(null);
+    // Unmounted first. A React root left alive over the sign-in form keeps issuing requests that now
+    // 401, and would eventually render itself back on top of it.
+    shell?.unmount();
+    document.body.classList.remove("shell");
     renderSignIn(event.message ?? null);
   }
-  if (event.type === "signed-in") startSessionTicker();
+  if (event.type === "signed-in") {
+    // No ticker: the shell's instrument bar carries the countdown from here on.
+    void handOverToShell();
+  }
 });
 
 /**

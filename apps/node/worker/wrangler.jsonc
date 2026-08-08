@@ -59,6 +59,17 @@
   // this rule replaces them entirely.
   "rules": [{ "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true }],
 
+  // The authenticated application is React and therefore needs a build (ADR 30). This belongs to
+  // wrangler rather than to `pnpm run deploy`, because a one-click install runs `npx wrangler deploy`
+  // directly and never sees our scripts — measured in `deploy-button-install.md`. Declared here, every
+  // route to a running Node builds it: the button, the CLI, and `wrangler dev`.
+  //
+  // Carries no account-specific value, so ADR 24's byte-identical fork is untouched.
+  // `watch_dir` is the source tree only. The build writes to `generated/`, outside it — an artifact inside
+  // the watched directory makes each build trigger the next, which is not theoretical: it looped
+  // `wrangler dev` into unresponsiveness before this was pinned down.
+  "build": { "command": "node scripts/build-client.mjs", "watch_dir": "src" },
+
   "env": {
     // The environment the test suite runs in. It exists only because named environments do not
     // inherit bindings, and wrangler warns when the top level declares something this environment
