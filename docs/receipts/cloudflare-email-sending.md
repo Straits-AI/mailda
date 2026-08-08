@@ -21,6 +21,7 @@ values:
   send.delivers_externally: 1
   send.daily_limit_is_published: 0
   send.bounce_dsn_reaches_node: 0
+  send.counts_per_recipient: 1
 ---
 
 Read from Cloudflare's documentation and checked against the live account on 4 August 2026. Email
@@ -199,6 +200,28 @@ knowable at that moment.
 
 This paragraph originally reasoned about bounce handling from a mechanism that does not exist; the
 corrected mechanism is above.
+
+## One send to three recipients counts as three
+
+Measured 8 August 2026 on the live account. A throwaway Worker sent **one** structured
+`env.EMAIL.send({ to: [three addresses] })`, and the zone's `emailSendingAdaptiveGroups` count went from
+**0 to 3**.
+
+So the unit Cloudflare bills and counts is the **recipient**, not the send. Which settles the question
+that was blocking [#36](https://github.com/Straits-AI/mailda/issues/36): submitting once per recipient
+costs nothing extra, because a multi-recipient submission is already three messages by Cloudflare's own
+accounting. The objection that per-recipient submission would triple a customer's usage was wrong — the
+usage is already tripled, and only Mailda's `send_counters` disagreed.
+
+That means `send_counters.handed_over`, which this Node shows a user as their observed daily limit, has
+been counting the *wrong unit* all along: one row per manifest, against an allowance consumed per
+recipient. On single-recipient sends — every send this Node has made until now — the two agree, which is
+why nothing noticed.
+
+Incidentally confirmed: 2 of the 3 recipients came back `deliveryFailed`, both on
+`mailda-test.whymelabs.com`. That is not a sending fault — the Email Routing rules for those addresses
+were deleted during a cleanup on 7 August, so mail to them has nowhere to land. A useful reminder that
+`deliveryFailed` in this data can mean *the recipient's own routing is gone*, not that the address is bad.
 
 ## Two APIs, and they record different things
 
