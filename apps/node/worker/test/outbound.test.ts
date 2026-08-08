@@ -898,3 +898,122 @@ describe("the counter survives a clock that moves, which is the only kind there 
     expect(row?.handed_over).toBe(3);
   });
 });
+
+/**
+ * A dispatch that throws must still say why (#37).
+ *
+ * The claim moves the manifest to `outcome_unknown` before submitting, which is the right pessimism: if
+ * the invocation dies mid-dispatch, the send lands in the one state nothing retries. But the claim writes
+ * only `state` and `attempts` — every *other* route to a terminal state goes through `applyOutcome`, which
+ * records `last_error` and an audit entry together. So a throw in between produced the only terminal state
+ * reachable with no reason at all: no `last_error`, no audit entry, no log line, and never retried.
+ *
+ * Found on a real Node, not here: a manifest whose evidence object was missing went to `outcome_unknown`
+ * and the Node could not tell me why. These are the tests that were absent.
+ */
+describe("a dispatch that fails before an outcome (#37)", () => {
+  /** Breaks the evidence read that `renderRfc822` performs — the original incident's shape. */
+  async function sealWithMissingEvidence(ctx: Ctx): Promise<string> {
+    const sealed = await sealManifest(testEnv, ctx, ORG, composition);
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET body_normalized_key = ? WHERE id = ?")
+      .bind(`${ORG}/sent/absent/never-written.txt`, sealed.id)
+      .run();
+    return sealed.id;
+  }
+
+  it("records the reason on the send instead of leaving it unexplained", async () => {
+    const id = await sealWithMissingEvidence(atTime(2_200_000_000_000));
+
+    await expect(
+      dispatchOne(testEnv, atTime(2_200_000_600_000), ORG, id,
+        fakeTransport({ kind: "handed_over", transportMessageId: "<never@acme.example>" })),
+    ).rejects.toThrow();
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT state, last_error, attempts FROM send_manifests WHERE id = ?",
+    ).bind(id).first<{ state: string; last_error: string | null; attempts: number }>();
+
+    expect(row?.state).toBe("outcome_unknown");
+    // The point of the ticket: this was NULL.
+    expect(row?.last_error).not.toBeNull();
+    expect(row?.last_error).toContain("does not know whether the message left");
+    // The attempt stands. It genuinely happened and may have reached the transport; winding it back to
+    // give the send another go is the duplicate ADR 40 exists to prevent.
+    expect(row?.attempts).toBe(1);
+  });
+
+  it("appends an audit entry naming the cause as an exception", async () => {
+    const id = await sealWithMissingEvidence(atTime(2_300_000_000_000));
+    // Counted after sealing, because sealing appends `send.sealed` — a delta taken before it would
+    // measure two acts and call the second one a duplicate.
+    const before = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ?",
+    ).bind(ORG).first<{ n: number }>();
+
+    await expect(
+      dispatchOne(testEnv, atTime(2_300_000_600_000), ORG, id, fakeTransport({ kind: "throttled", reason: "x" })),
+    ).rejects.toThrow();
+
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT action, outcome, detail FROM audit_entries
+        WHERE org_id = ? AND subject = ? ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG, id).first<{ action: string; outcome: string; detail: string }>();
+
+    // The state vocabulary is unchanged (§16) — the manifest really is `outcome_unknown`. What
+    // distinguishes a throw from a transport that returned an unclassifiable answer is the detail.
+    expect(entry?.action).toBe("send.outcome_unknown");
+    expect(entry?.outcome).toBe("failed");
+    expect(JSON.parse(entry!.detail).cause).toBe("exception");
+
+    const after = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ?",
+    ).bind(ORG).first<{ n: number }>();
+    // Exactly one entry, not zero and not one per retry of the recording.
+    expect((after?.n ?? 0) - (before?.n ?? 0)).toBe(1);
+  });
+
+  it("does not overwrite a reason that is already recorded", async () => {
+    const id = await sealWithMissingEvidence(atTime(2_400_000_000_000));
+    const transport = fakeTransport({ kind: "handed_over", transportMessageId: "<x@acme.example>" });
+
+    await expect(dispatchOne(testEnv, atTime(2_400_000_600_000), ORG, id, transport)).rejects.toThrow();
+    const first = await testEnv.CATALOG.prepare("SELECT last_error FROM send_manifests WHERE id = ?")
+      .bind(id).first<{ last_error: string }>();
+
+    // A second dispatch cannot claim it — it is no longer held — but the recorder is idempotent on its
+    // own terms, and `last_error IS NULL` is what makes it so.
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET last_error = ? WHERE id = ?")
+      .bind("A better answer somebody else recorded.", id)
+      .run();
+    await expect(dispatchOne(testEnv, atTime(2_400_001_200_000), ORG, id, transport)).resolves.toBeTruthy();
+
+    const second = await testEnv.CATALOG.prepare("SELECT last_error FROM send_manifests WHERE id = ?")
+      .bind(id).first<{ last_error: string }>();
+    expect(second?.last_error).toBe("A better answer somebody else recorded.");
+    expect(second?.last_error).not.toBe(first?.last_error);
+  });
+
+  it("records the reason when the transport itself throws rather than classifying", async () => {
+    // A transport is supposed to catch and classify. One that throws anyway must not produce a silent
+    // send — that is the whole class of failure, not just the missing-evidence instance of it.
+    const throwing: TransportAdapter = {
+      name: "throwing",
+      async capability() {
+        return { canSend: true, arbitraryRecipients: true, verifiedAt: null, detail: "throwing" };
+      },
+      async submit() {
+        throw new Error("the adapter itself came apart");
+      },
+    };
+    const sealed = await sealManifest(testEnv, atTime(2_500_000_000_000), ORG, composition);
+
+    await expect(
+      dispatchOne(testEnv, atTime(2_500_000_600_000), ORG, sealed.id, throwing),
+    ).rejects.toThrow("the adapter itself came apart");
+
+    const row = await testEnv.CATALOG.prepare("SELECT state, last_error FROM send_manifests WHERE id = ?")
+      .bind(sealed.id).first<{ state: string; last_error: string | null }>();
+    expect(row?.state).toBe("outcome_unknown");
+    expect(row?.last_error).toContain("the adapter itself came apart");
+  });
+});

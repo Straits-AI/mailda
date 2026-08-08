@@ -1,6 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { auditedBatch } from "../audit.ts";
+import { auditedBatch, log } from "../audit.ts";
 import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
@@ -234,7 +234,34 @@ export async function dispatchOne(
   // the submit and the state write, the manifest is left in the one state that forbids automatic
   // retry — which is exactly right, because that is precisely the case where we do not know whether
   // it left. Claiming it as anything more optimistic would invite the duplicate ADR 40 cannot prevent.
+  //
+  // From here on the manifest is *already* in a terminal state that nothing will retry, so anything that
+  // throws before `applyOutcome` writes a real one leaves a send nobody will look at again. That is what
+  // this try exists for — not to recover, but to make sure the send carries a reason.
+  try {
+    return await submitClaimed(env, ctx, orgId, manifestId, transport, at);
+  } catch (error) {
+    await recordUnexplainedDispatch(env, ctx, orgId, manifestId, error);
+    // Rethrown, always. The caller decides — a queue or an alarm should still see the failure, and
+    // swallowing it here would turn a broken Node into a quiet one.
+    throw error;
+  }
+}
 
+/**
+ * Everything between the claim and the terminal state, which is the part that can throw.
+ *
+ * Split out so `dispatchOne` can guarantee a reason is recorded whatever happens in here, without a
+ * sixty-line `try` whose extent a reader has to measure by eye.
+ */
+async function submitClaimed(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  manifestId: string,
+  transport: TransportAdapter,
+  at: string,
+): Promise<DispatchResult> {
   const manifest = await env.CATALOG.prepare(
     `SELECT envelope_from, envelope_to, envelope_cc, envelope_bcc, subject, fidelity,
             body_normalized_key
@@ -297,6 +324,99 @@ export async function dispatchOne(
   }
 
   return applyOutcome(env, ctx, orgId, manifestId, outcome, handedOverCount);
+}
+
+/**
+ * Records *why* a dispatch has no outcome, for a send the claim already parked in `outcome_unknown`.
+ *
+ * ## The gap this closes
+ *
+ * The claim writes `state` and bumps `attempts` and nothing else, on purpose. Every other route to a
+ * terminal state goes through `applyOutcome`, which writes `last_error` **and** an audit entry in one
+ * transaction. So a throw anywhere in between produced the only terminal state reachable with no reason
+ * attached: `outcome_unknown`, `last_error` NULL, no audit entry, no log line — and never retried, by
+ * design. An operator saw "we do not know whether it left" and could not find out why not.
+ *
+ * It is the state that most needs a reason, because it is the one a person has to decide about.
+ *
+ * ## What this deliberately does not claim
+ *
+ * It does not decide whether the message left, and must not: the throw may have happened after the bytes
+ * were handed over — `applyOutcome` itself can fail, and `auditedBatch` throws by contract — in which case
+ * the send really did go and only the record of it failed. `outcome_unknown` is already the honest state
+ * for that. This adds the cause of the ignorance, not a verdict about the mail.
+ *
+ * It also leaves `attempts` alone. An attempt genuinely occurred and may have reached the transport;
+ * decrementing it to "give the send another go" is exactly the duplicate ADR 40 exists to prevent.
+ *
+ * ## What it cannot cover, stated so nobody reads more into it
+ *
+ * A killed isolate runs no `catch`. If the runtime drops the invocation mid-dispatch there is still no
+ * reason recorded, and there cannot be — the pre-claim is the design for *that* case and remains the
+ * reason the state is pessimistic. This covers the thrown exception, which is the common case and the
+ * one that was silently losing information.
+ */
+async function recordUnexplainedDispatch(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  manifestId: string,
+  cause: unknown,
+): Promise<void> {
+  // No `state_at` here, deliberately: the state did not change, only the account of why it is what it is.
+  // Restamping it would move the send's clock to the moment somebody explained it rather than the moment
+  // it entered the state, which is the timestamp an operator is reading it for.
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const reason =
+    `This Node does not know whether the message left: the dispatch failed before an outcome was ` +
+    `recorded. ${message}`.slice(0, 500);
+
+  try {
+    await auditedBatch(
+      env, ctx, orgId,
+      {
+        action: "send.outcome_unknown",
+        outcome: "failed",
+        subject: manifestId,
+        // The state vocabulary stays as it is (§16) — the manifest really is in `outcome_unknown` — and
+        // the fact that a throw put it there lives here, where a reader can tell this apart from a
+        // transport that returned an unclassifiable answer.
+        detail: { cause: "exception", error: message.slice(0, 300) },
+      },
+      (entry) => [
+        entry,
+        env.CATALOG.prepare(
+          // Conditional on the send still being unexplained. Another dispatcher may have written a real
+          // outcome in the meantime, and overwriting a recorded fact with "something went wrong" would
+          // lose the better answer. `last_error IS NULL` also makes this idempotent across retries.
+          `UPDATE send_manifests SET last_error = ?
+            WHERE id = ? AND org_id = ? AND state = 'outcome_unknown' AND last_error IS NULL`,
+        ).bind(reason, manifestId, orgId),
+      ],
+      {
+        // Gate and statement share the predicate, so the entry is appended only when there is something
+        // to explain. It precedes the UPDATE, because the UPDATE is what makes the predicate false.
+        sql: `SELECT 1 FROM send_manifests
+                WHERE id = ? AND org_id = ? AND state = 'outcome_unknown' AND last_error IS NULL`,
+        params: [manifestId, orgId],
+      },
+    );
+  } catch (recordingFailure) {
+    // The original cause is the more useful one, so it is never replaced by a failure to write about it.
+    // Dropped to the operational log instead, which is the one level down that `audit` itself falls back
+    // to and that `doctor` can see.
+    await log(env, ctx, {
+      level: "error",
+      event: "send.unexplained_dispatch_unrecorded",
+      message: "A dispatch failed and the reason could not be recorded against the send.",
+      orgId,
+      detail: {
+        manifestId,
+        dispatchError: message.slice(0, 300),
+        recordingError: recordingFailure instanceof Error ? recordingFailure.message : String(recordingFailure),
+      },
+    });
+  }
 }
 
 /**
