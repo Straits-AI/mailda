@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 252 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 326 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -97,6 +97,15 @@ account-level object outside the Worker's config, so it can be absent, deleted, 
 domain — and nothing about a Node in that state looks wrong: sends hand over, the outbox fills, and every
 recipient sits unobserved forever. `doctor` compares what was handed over against what came back and names
 the silence, because "no bounces" must not be able to mean "nothing heard".
+
+**And the outbox cannot summarise that silence away.** The row a person actually reads showed the
+submission state — `handed over`, in green — and added the delivery outcome only when the recipients
+*disagreed*. Reasonable for the case anyone pictures, and wrong for the two that matter: a send whose
+every recipient bounced is unanimous, and a single-recipient send has nobody to disagree with. So a send
+that reached nobody rendered identically to one that arrived, with the correct per-recipient table one
+click underneath. It was found by rendering the page and looking at it. The suite had nothing to say,
+because the rule lived in the one file that touches `document` and therefore cannot be imported. That
+rule now lives in a module a test can evaluate, and the test fails by name when either guard returns.
 
 **A bounce reaches the right recipient of the right send, by key.** A Node cannot receive its own
 bounces — `cf-bounce` belongs to Cloudflare for the lifetime of the domain — so delivery outcomes arrive

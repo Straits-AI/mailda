@@ -86,12 +86,18 @@ hour of R2 storage for a few kilobytes, being fast destroys mail that was about 
 §13 accepts synchronously and defers everything else to an outbox event. The outbox and its sweeper
 shipped with Layer 1; the **consumer** did not, so events were marked published and nothing happened.
 
-**There is no Cloudflare Queues yet, deliberately.** The outbox row *is* the durability — the sweeper
-marks an event published only after its handler returns, so a failing handler leaves it pending and
-the alarm retries. That is at-least-once with retry, which is the property that mattered. Queues adds
-*decoupling*, so the trigger is explicit: **it arrives when a handler needs to be slow** — scanning,
-an LLM call, an outbound webhook. Sooner would mean provisioning, a dead-letter queue nobody reads,
-and a retention setting, for one event type with no slow work in it.
+**The outbox is not Cloudflare Queues, and still isn't.** The outbox row *is* the durability — the
+sweeper marks an event published only after its handler returns, so a failing handler leaves it pending
+and the alarm retries. That is at-least-once with retry, which is the property that mattered. Queues
+adds *decoupling*, and for this pipeline the trigger is still ahead: **it arrives when a handler needs
+to be slow** — scanning, an LLM call, an outbound webhook.
+
+There *is* now a queue on this Worker, and it is worth being precise about why it does not contradict
+the above. `mailda-sending-events` carries **delivery outcomes inbound from Cloudflare**, which are not
+this Node's own work items: a Node cannot receive its own bounces, and Queues event subscriptions are
+the only channel by which `accepted` and `bounced` become observable at all (receipt:
+`email-sending-events.md`). It was not adopted to decouple anything — it was adopted because there was
+no alternative source for the fact. The outbox's own events remain in D1.
 
 What ships instead is the structural part — **every topic must be registered:**
 

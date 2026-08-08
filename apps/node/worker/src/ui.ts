@@ -1,6 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
 import appScript from "./client/app.client.js";
+import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
 
@@ -458,9 +459,16 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 /* Unobserved is deliberately the quietest thing on the row. It is not a warning and not a success; it is
    the absence of news, and styling it loudly would make silence look like a finding. */
 .delivery-unobserved  { color: var(--dim); }
-.delivery-mixed       { border-color: var(--signal); color: var(--signal); margin-left: .35rem; }
+/* Spacing only. The colour comes from the delivery-<state> class beside it, so a bounce summarised on a
+   collapsed row is the same red as the bounce in the expanded one — there is no separate "mixed" amber
+   to make a total failure look like a caution. */
+.delivery-chip        { margin-left: .35rem; }
 
-.recipients { display: grid; gap: .3rem; }
+/* Gap larger than the .1rem that separates an address from its own error below it, so a long SMTP
+   response reads as belonging to the recipient above it rather than the one below. With both gaps equal
+   the error sat visually equidistant between two addresses, which in a bounce report is the one
+   ambiguity that matters. */
+.recipients { display: grid; gap: .65rem; }
 .recipient {
   display: grid;
   grid-template-columns: 2.6rem minmax(0, 1fr) auto;
@@ -476,6 +484,7 @@ textarea:focus { outline: 0; border-color: var(--signal); }
   font-size: .66rem;
   line-height: 1.5;
   padding-left: 3.1rem;
+  margin-top: .1rem;
 }
 .state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
 .state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
@@ -513,9 +522,17 @@ tbody a { font-size: .8rem; }
  * resolves it against the same directory), and the sources stay lintable `.js` on disk instead of
  * becoming strings inside a template literal.
  */
+const CLIENT_SCRIPTS: Record<string, string> = {
+  "/app/app.js": appScript,
+  "/app/session.js": sessionScript,
+  // The delivery vocabulary and the rule about which outcomes a reader is shown. A separate module so a
+  // test can evaluate it — `app.client.js` touches `document` at load, so nothing could reach it there,
+  // and the one rule that decides whether a bounce is visible was the one rule with no coverage.
+  "/app/delivery.js": deliveryScript,
+};
+
 export function clientScript(pathname: string): Response | null {
-  const source =
-    pathname === "/app/app.js" ? appScript : pathname === "/app/session.js" ? sessionScript : null;
+  const source = CLIENT_SCRIPTS[pathname] ?? null;
   if (source === null) return null;
 
   return new Response(source, {

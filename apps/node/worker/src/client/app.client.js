@@ -25,6 +25,9 @@
 import {
   accessExpiresAt, adopt, apiFetch, ensureFresh, isSignedIn, logout, onSessionChange, refresh, start,
 } from "./session.js";
+// The delivery vocabulary and the decision about which outcomes a reader is shown. Its own module
+// because this file cannot be tested — see delivery.client.js.
+import { DELIVERY_STATES, UNOBSERVED, orderRecipients, summariseDelivery } from "./delivery.js";
 
 const app = document.getElementById("app");
 const statusStrip = document.getElementById("status");
@@ -554,64 +557,27 @@ const SEND_STATES = {
 };
 
 /**
- * What was observed about one recipient, after hand-over.
+ * `DELIVERY_STATES` and `UNOBSERVED` are imported rather than declared here.
  *
- * A different scale from SEND_STATES: those describe what *this Node* did with the envelope, these
- * describe what the receiving world did with one address. Showing them in one column would blur exactly
- * the distinction Layer 2 is judged on, so they are separate and labelled differently.
- *
- * `null` is a state, not a gap. "Unobserved" is what a Node honestly knows between hand-over and an event
- * arriving, and it must not be dressed up as pending, in-progress, or fine.
+ * They describe a different scale from SEND_STATES — what the receiving world did with one address, not
+ * what this Node did with the envelope — and they live in `delivery.client.js` alongside the rule about
+ * which of them a reader is shown, because that rule needed to be testable and this file is not.
  */
-const DELIVERY_STATES = {
-  accepted: {
-    label: "accepted",
-    note: "The receiving mail server accepted this message and returned a 250. That is not the same as a " +
-      "person having read it — nothing here can know that.",
-  },
-  bounced: {
-    label: "bounced",
-    note: "The receiving server refused it. A hard bounce means the address is wrong; a soft one means " +
-      "temporary failures ran out of retries.",
-  },
-  deferred: {
-    label: "deferred",
-    note: "A temporary failure, and the mail service is still retrying. The outcome is genuinely not " +
-      "known yet.",
-  },
-  failed: {
-    label: "failed",
-    note: "The mail service hit an internal error rather than a refusal from the recipient. This is not a " +
-      "bounce and says nothing about the address.",
-  },
-  rejected: {
-    label: "rejected",
-    note: "Refused before delivery was attempted.",
-  },
-};
-
-const UNOBSERVED = {
-  label: "unobserved",
-  note: "Nothing has been reported about this recipient yet. This Node will not guess: no news is not " +
-    "good news, and it is not bad news either.",
-};
 
 /**
- * A short summary, but only when the recipients disagree.
- *
- * Returns null for a unanimous outcome, because repeating it beside the send state is noise. Returns
- * something like "1 bounced / 2 accepted" when they differ — which is the case a single chip would have
- * silently flattened, and the reason this table exists.
+ * Draws what `summariseDelivery` decided. The decision lives in `delivery.client.js` because it is the
+ * outbox's load-bearing honesty rule and this file cannot be tested; this function is only the pen.
  */
-function deliverySummary(recipients) {
-  if (!recipients || recipients.length < 2) return null;
-  const counts = new Map();
-  for (const r of recipients) {
-    const key = r.delivery_state ?? "unobserved";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  if (counts.size < 2) return null;
-  return [...counts.entries()].map(([state, n]) => `${n} ${state}`).join(" / ");
+function deliveryChips(recipients) {
+  const summary = summariseDelivery(recipients);
+  return summary.map((entry) =>
+    el("span", {
+      class: `state delivery-${entry.state} delivery-chip`,
+      // The count is dropped only when there is one recipient in total, where "1 bounced" reads as
+      // though it were one of several.
+      text: recipients.length === 1 ? entry.label : `${entry.count} ${entry.label}`,
+      title: entry.note,
+    }));
 }
 
 /** One line per recipient, so a mixed outcome cannot be flattened into a single chip. */
@@ -620,7 +586,9 @@ function recipientBreakdown(recipients) {
   return [
     el("dt", { text: "recipients" }),
     el("dd", {}, [
-      el("div", { class: "recipients" }, recipients.map((r) => {
+      // Ordered here rather than trusted from the API: to, cc, bcc is what a person expects, and a
+      // display that depends on a server's ORDER BY for its meaning is one query change from being wrong.
+      el("div", { class: "recipients" }, orderRecipients(recipients).map((r) => {
         const observed = r.delivery_state === null || r.delivery_state === undefined
           ? UNOBSERVED
           : (DELIVERY_STATES[r.delivery_state] ?? { label: r.delivery_state, note: "" });
@@ -653,11 +621,10 @@ async function renderOutbox(highlightId) {
       el("td", { class: "dim mono", text: (JSON.parse(send.envelope_to) || []).join(", ") }),
       el("td", {}, [
         el("span", { class: `state state-${send.state}`, text: state.label }),
-        // A second chip only when the recipients actually disagree with each other. Summarising a
-        // unanimous outcome twice is noise; hiding a mixed one is the dishonesty this exists to prevent.
-        ...(deliverySummary(send.recipients) === null ? [] : [
-          el("span", { class: "state delivery-mixed", text: deliverySummary(send.recipients) }),
-        ]),
+        // What this Node did, then what the receiving world did — two different scales, side by side.
+        // One chip per distinct outcome, worst first, and never suppressed just because the recipients
+        // happen to agree: they agree when everything bounced too.
+        ...deliveryChips(send.recipients),
       ]),
       el("td", { class: "num mono dim", text: new Date(send.state_at).toLocaleTimeString(undefined, { hour12: false }) }),
       el("td", { class: "num" }, [

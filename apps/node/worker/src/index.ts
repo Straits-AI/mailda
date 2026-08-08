@@ -360,10 +360,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const recipients = rows.results.length === 0
         ? { results: [] as Array<Record<string, unknown>> }
         : await env.CATALOG.prepare(
+            // Ordered the way a person writes an envelope, not the way SQLite sorts strings. `ORDER BY
+            // kind` is alphabetical, which put **bcc first and to last** — so a reader met the blind-copy
+            // before the actual addressee, and the summary chips inherited that order too.
             `SELECT manifest_id, kind, address, submission_state, delivery_state, bounce_type, last_error
                FROM send_recipients
               WHERE org_id = ? AND manifest_id IN (${rows.results.map(() => "?").join(", ")})
-              ORDER BY manifest_id, kind, address`,
+              ORDER BY manifest_id,
+                       CASE kind WHEN 'to' THEN 0 WHEN 'cc' THEN 1 WHEN 'bcc' THEN 2 ELSE 3 END,
+                       address`,
           ).bind(who.orgId, ...rows.results.map((r) => r.id)).all<Record<string, unknown>>();
 
       const byManifest = new Map<string, Array<Record<string, unknown>>>();
