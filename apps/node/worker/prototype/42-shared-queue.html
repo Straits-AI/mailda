@@ -1,0 +1,1265 @@
+<meta charset="utf-8">
+<!--
+  The charset above is the one tag here that is not body content, and it earns its place: opened from
+  disk as a file: URL there is no server header to declare an encoding, and without it Chrome parsed
+  this page as windows-1252 and every em dash and middot in it came out as mojibake — the page title
+  read "Mailda shared queue Â· ...". Verified by serving the file and reading the rendered title back.
+  An Artifact wraps body content in its own <head> which already declares utf-8, so a second
+  declaration there is inert. A duplicate is harmless; an unreadable page is not.
+-->
+<!--
+  PROTOTYPE — wayfinder #42, the shared mailbox queue. THROWAWAY.
+
+  Nothing here is imported by the Worker, nothing here is served by it, and this file does not exist
+  on `main`. It is a single self-contained page: no build step, no network request of any kind, no
+  webfont, no CDN, no remote image. Open it directly in a browser.
+
+  It continues Layer 1's instrument-panel language rather than proposing a new one. Every token,
+  every `.state` chip rule, the `.app-shell` grid, the `.rail*` family, `.message-row`,
+  `.instrument-bar`, `.notice` / `.notice.bad`, `.composer-dock` and the grain are lifted VERBATIM
+  from apps/node/worker/src/ui.ts. A prototype that drifts on colour is testing the wrong thing.
+
+  ## What it is trying to settle
+
+    1. Three claim states legible at a glance and NOT by colour alone: unclaimed, claimed by me,
+       claimed by someone else.
+    2. Claim age displayed and never enforced. There is no timeout in this design, so the age is the
+       whole signal a person judges staleness from. One claim is deliberately 2d old.
+    3. The claim-to-compose seam. A case you do not hold shows "claim to reply", never a disabled
+       composer. A case you hold shows the docked composer.
+    4. Losing the race: the compare-and-swap matched 0 rows. What the loser sees, and it names who won.
+    5. A steal, from the loser's side: mid-sentence, draft still private to them, case now somebody else's.
+    6. The rail with real per-mailbox counts of unclaimed work.
+
+  ## What building it surfaced, for the human to decide
+
+    - `.composer-dock` spans the shell and sticks to the bottom. That was settled when the tall thing
+      on screen was a message; on a queue the tall thing is the LIST, so replying covers the rows you
+      were watching. Visible in ?state=held. Not patched here — it is a decision, not a defect.
+    - A "claim" control cannot live on a queue row while the row is a `<button>`: a button inside a
+      button is invalid and breaks tab order. Claiming therefore happens in the opened case. Either
+      the row stops being a button or claiming stays one click in.
+    - Nothing tells the person whose case is taken that anybody wanted it, and nothing tells the taker
+      that a draft existed. Both are deliberate here and both are arguable; ?state=stolen says so on
+      the page.
+
+  ## How to switch states
+
+    ?state=queue    the shared queue, 12 rows, three claim states           (default)
+    ?state=unheld   a case you do NOT hold — "claim to reply", no composer
+    ?state=held     a case you DO hold — docked composer
+    ?state=lost     you pressed claim and lost; changes=0; Ana J. won
+    ?state=stolen   the case was taken while you were typing
+
+    Also: the pill at the bottom (prototype furniture), and ArrowLeft / ArrowRight — which are never
+    stolen from an input, textarea or contenteditable, because the composer is part of what is being
+    evaluated.
+
+    Theme: ?theme=dark or ?theme=light, or the THEME button in the pill. With neither, the page
+    follows the operating system. Tokens are declared three times — media query plus
+    :root[data-theme="light"] plus :root[data-theme="dark"] — so a viewer's toggle wins in both
+    directions and components only ever read tokens.
+
+    The queue is also live within a state: clicking a row opens it, claiming and releasing mutate
+    local state, and every figure in the rail and the instrument bar recomputes from it. The RESET
+    button in the pill restores the seeded data.
+
+  ## Numbers on this page
+
+  Every figure in the mail itself — container numbers, PO references, amounts, ages — is SEEDED MOCK
+  DATA and is labelled as such in the instrument bar. Real-shaped freight and invoice mail, because a
+  prototype judged against "Test message 1" flatters every layout.
+
+  Exactly one figure here is a real product number: the 15-second hold window, from
+  `send.hold_window_default_seconds: 15` in docs/receipts/cloudflare-email-sending.md:18. That
+  receipt says at :278 that the number has no measurement behind it and that this is deliberate — it
+  is a preference about human regret, configurable per mailbox including zero (ADR 39), not a limit.
+  It is written here as 15 because #32's prototype typed 18 against a measured 15 and ui.ts:52-56
+  names that drift as the reason the shipped composer now reads the budget instead. In the real
+  client this comes from `window.MAILDA_CONFIG`, not from a literal.
+
+  ## Accessibility, stated honestly
+
+  The three claim states carry FOUR channels and colour is only the fourth: (a) the chip's text IS
+  the state, and for a held case it names the holder; (b) the `.state` base class gives every chip a
+  border and an uppercase monospace box, and the quietest state — claimed by someone else — sets only
+  `color`, keeping the neutral `--rule-strong` border rather than losing the box, exactly as
+  `.delivery-unobserved` and `.state-cancelled` do; (c) a claim age is present on a held row and
+  absent on an unclaimed one; (d) then colour.
+
+  The rule is Blueprint §5C ("non-color-only states", line 576) reinforced by §5D ("always paired
+  with text", line 584) — NOT §16, which is the Butler automation system. ui.ts:445,
+  docs/receipts/contrast-tokens.md:77 and ADR 39 all cite "§16" for this and adjacent rules and that
+  cross-reference does not resolve; this file cites §5C so the dangling reference is not propagated
+  into a fourth place. Worth its own ticket.
+
+  Contrast: docs/receipts/contrast-tokens.md proves exactly ONE token. `--dim` worst case 4.51 dark
+  and 5.71 light, both against AA's 4.5 for normal text. `--signal`, `--alarm` and `--live` have
+  NEVER been measured in either theme, which is the hard bound on what colour may carry alone here —
+  hence the four channels above. This page adds no colour token of its own, so it adds nothing to
+  measure. It also inherits the body gradient, which is the direct cause of axe's contrast blindness
+  (contrast-tokens.md:36-39): an axe pass on this page would mean zero AA-tagged violations with
+  contrast UNPROVEN, and must not be written up as "WCAG AA proven".
+
+  No `innerHTML`. Everything reaches the DOM as a node or a `textContent` assignment, via the `el()`
+  helper, because in a mail client the most dangerous strings — sender address, subject — are written
+  by whoever sent the message. Nothing in eslint enforces this; the builder chooses it.
+
+  The only `http://` string in the code on this page is `xmlns='http://www.w3.org/2000/svg'` inside a
+  `data:` URI — an XML namespace NAME, never dereferenced, copied verbatim from ui.ts:129-138 along
+  with the grain it belongs to. A browser does not fetch it. There is no fetch, no src, no href to any
+  host, no @import and no favicon link anywhere in this file, and nothing outside `data:`.
+-->
+<style>
+  :root {
+    /* Lifted verbatim from src/ui.ts:76-92. */
+    --ground: #0a0e13;
+    --ground-2: #10161e;
+    --rule: rgba(226, 215, 195, .13);
+    --rule-strong: rgba(226, 215, 195, .30);
+    --text: #e6dfd2;
+    /* Measured. Worst case 4.51:1, at the --ground-2 end of the gradient, against AA's 4.5 for
+       normal text — a margin of 0.01, which test/node/contrast.test.ts asserts is both >= 0 and
+       < 0.1 so the thinness cannot silently disappear. See docs/receipts/contrast-tokens.md:52-56.
+       Do not nudge --ground-2. */
+    --dim: rgba(230, 223, 210, .52);
+    --signal: #e9a35c;
+    --alarm: #e8695c;
+    --live: #86c9a4;
+
+    --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  /* The real app defines light mode ONLY through the media query. A page a viewer can toggle needs
+     the toggle to win in both directions, so the tokens are declared three times and every component
+     reads tokens and nothing else. Values verbatim from src/ui.ts:94-111. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #f1ece0; --ground-2: #fbf8f1;
+      --rule: rgba(26, 22, 16, .16); --rule-strong: rgba(26, 22, 16, .34);
+      --text: #1b1712;
+      /* .68, not the dark theme's .52, and that is not a preference: .58 measured 4.15 / 4.29 and
+         FAILED AA; .68 gives 5.71 / 5.98. Dark text on a light ground is not the mirror of the
+         reverse. contrast-tokens.md:52-56. */
+      --dim: rgba(27, 23, 18, .68);
+      --signal: #9a5410; --alarm: #a5342a; --live: #2f6f4e;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f1ece0; --ground-2: #fbf8f1;
+    --rule: rgba(26, 22, 16, .16); --rule-strong: rgba(26, 22, 16, .34);
+    --text: #1b1712; --dim: rgba(27, 23, 18, .68);
+    --signal: #9a5410; --alarm: #a5342a; --live: #2f6f4e;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0a0e13; --ground-2: #10161e;
+    --rule: rgba(226, 215, 195, .13); --rule-strong: rgba(226, 215, 195, .30);
+    --text: #e6dfd2; --dim: rgba(230, 223, 210, .52);
+    --signal: #e9a35c; --alarm: #e8695c; --live: #86c9a4;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--ground);
+    color: var(--text);
+    font: 400 16px/1.6 var(--display);
+    background-image: linear-gradient(180deg, color-mix(in oklab, var(--ground-2) 70%, transparent), transparent 38rem);
+  }
+
+  /* Grain, generated inline — a texture that needed a network request would break the local-only
+     rule the same way a webfont would. ui.ts:129-138. */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 9;
+    opacity: .035; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---- shared vocabulary, defined once ---------------------------------------------------- */
+
+  .mono { font-family: var(--mono); }
+  .dim { color: var(--dim); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .label {
+    font-family: var(--mono);
+    font-size: .655rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  h1, h2, h3 { font-family: var(--display); font-weight: 400; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); letter-spacing: -.018em; }
+  h2 { font-size: 1.05rem; }
+  h3 { font-size: .95rem; }
+
+  a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
+  a:hover { border-bottom-color: var(--signal); }
+
+  :where(button, a, input, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  [data-reveal] {
+    animation: rise .5s cubic-bezier(.2, .7, .3, 1) both;
+    animation-delay: var(--reveal-delay, 0ms);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+
+  .wordmark {
+    font-family: var(--display);
+    font-size: 1.15rem;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .wordmark span { color: var(--signal); }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .dot.live { background: var(--live); animation: pulse 2.8s ease-out infinite; }
+  .dot.idle { background: var(--dim); }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--live) 55%, transparent); }
+    70%  { box-shadow: 0 0 0 7px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] { animation: none; }
+    .dot.live { animation: none; }
+  }
+
+  .panel {
+    border: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 80%, transparent);
+    padding: clamp(1.1rem, 2.4vw, 1.6rem);
+    position: relative;
+  }
+  /* Corner tick — a schematic's registration mark, ui.ts:262-271. */
+  .panel::after {
+    content: "";
+    position: absolute;
+    top: -1px; right: -1px;
+    width: 13px; height: 13px;
+    border-top: 1px solid var(--signal);
+    border-right: 1px solid var(--signal);
+  }
+  .panel h2 {
+    font-family: var(--mono);
+    font-size: .715rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 400;
+    margin: 0 0 1rem;
+  }
+
+  .notice {
+    font-family: var(--mono);
+    font-size: .74rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    border-left: 2px solid var(--rule-strong);
+    padding: .55rem .8rem;
+    margin: 0;
+    color: var(--dim);
+  }
+  .notice.bad { border-left-color: var(--alarm); color: var(--text); }
+
+  .hint {
+    font-family: var(--mono);
+    font-size: .7rem;
+    line-height: 1.55;
+    color: var(--dim);
+    margin: 0;
+  }
+
+  button.primary {
+    font: 400 .72rem/1 var(--mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ground);
+    background: var(--signal);
+    border: 1px solid var(--signal);
+    padding: .8rem 1.3rem;
+    cursor: pointer;
+    justify-self: start;
+    transition: filter .18s, transform .12s;
+  }
+  button.primary:hover:not(:disabled) { filter: brightness(1.12); }
+  button.primary:active:not(:disabled) { transform: translateY(1px); }
+
+  button.linkish {
+    font: 400 .69rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    background: none; border: 0; padding: 0; color: var(--dim); cursor: pointer;
+    border-bottom: 1px solid var(--rule);
+  }
+  button.linkish:hover { color: var(--text); border-bottom-color: var(--rule-strong); }
+
+  textarea {
+    font: 400 .9rem/1.6 var(--mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--rule-strong);
+    padding: .6rem;
+    width: 100%;
+    resize: vertical;
+  }
+  textarea:focus { outline: 0; border-color: var(--signal); }
+
+  .field-row { display: grid; gap: .35rem; }
+  .field-row > span {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  /* ---- state chips, verbatim base (ui.ts:447-455) ----------------------------------------- */
+
+  /* One colour per state, because §5C requires a state to be legible without colour and §5D that a
+     token is always paired with text. The base class is what carries the border, the uppercase
+     transform and the monospace figure — a chip is a bordered box whatever its modifier. */
+  .state {
+    font-family: var(--mono);
+    font-size: .655rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: .18rem .45rem;
+    border: 1px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+
+  /* Existing modifiers, used unchanged where a send state is shown. */
+  .state-held           { border-color: var(--signal); color: var(--signal); }
+  .state-handed_over    { border-color: var(--live); color: var(--live); }
+  .state-cancelled      { color: var(--dim); }
+
+  /* Claim is a NEW scale — who is working a case — and it reuses the existing three signal tokens
+     rather than inventing a fourth, exactly as delivery reuses submission's (ui.ts:466-468). That is
+     what keeps contrast-tokens.md's measurement valid without re-measuring, and there is no
+     assignment hue anywhere in this file.
+
+     unclaimed = --signal: work that needs a person, the same signal as `held` and `throttled`.
+     yours     = --live: in hand.
+     somebody else's = the quietest thing on the row. It sets only `color`, keeping the neutral
+       --rule-strong border, exactly as `.delivery-unobserved` and `.state-cancelled` do — because
+       another person's case is not a finding for me, it is the absence of my work, and styling it
+       loudly would make somebody else doing their job look like a problem. */
+  .claim-unclaimed { border-color: var(--signal); color: var(--signal); }
+  .claim-mine      { border-color: var(--live);   color: var(--live); }
+  .claim-other     { color: var(--dim); }
+
+  /* ---- the shell, verbatim (ui.ts:518-527) ------------------------------------------------ */
+
+  /* Grid rather than flex so the bar is pinned to the bottom without position:fixed — a fixed bar
+     overlaps the last row of a ledger, which on a queue is the row somebody scrolled down to read. */
+  .app-shell {
+    display: grid;
+    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "rail stage" "bar bar";
+    min-height: 100vh;
+  }
+
+  .rail {
+    grid-area: rail;
+    border-right: 1px solid var(--rule);
+    padding: 1rem 0 1rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+    background: color-mix(in oklab, var(--ground-2) 45%, transparent);
+  }
+  .rail .wordmark { border-right: 0; padding: 0 1rem .75rem 1rem; font-size: 1rem; }
+  .rail-heading {
+    font-family: var(--mono);
+    font-size: .62rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin: .9rem 1rem .2rem 1rem;
+  }
+  .rail-list { list-style: none; margin: 0; padding: 0; }
+  .rail-foot { margin-top: auto; }
+  .rail-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .5rem;
+    padding: .34rem 1rem;
+    color: var(--text);
+    text-decoration: none;
+    /* A 2px transparent marker rather than a border that appears on selection: a border that only
+       exists when current shifts every other row by two pixels as you navigate. */
+    border-left: 2px solid transparent;
+  }
+  .rail-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
+  .rail-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+  /* --dim, verbatim. It is the one token with a measured ratio, so a count is legible here; the one
+     place a figure must never go is `.instrument-bar .key`, which puts opacity .6 ON TOP of --dim
+     and is the only place this interface goes below its own measurement. */
+  .rail-row .num { font-family: var(--mono); font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--dim); }
+  .rail-name { font-size: .95rem; }
+  .rail-note { padding: .2rem 1rem .4rem 1rem; }
+
+  /* The rail is a nav of links in the shipped app. Here they are buttons, because nothing routes. */
+  button.rail-row { width: 100%; background: none; border-top: 0; border-right: 0; border-bottom: 0; font: inherit; cursor: pointer; text-align: left; }
+
+  .app-main { grid-area: stage; min-width: 0; padding: clamp(1rem, 2.5vw, 2rem); }
+
+  .instrument-bar {
+    grid-area: bar;
+    border-top: 1px solid var(--rule);
+    background: color-mix(in oklab, var(--ground-2) 60%, transparent);
+    display: flex;
+    align-items: center;
+    gap: clamp(.8rem, 2.2vw, 1.6rem);
+    flex-wrap: wrap;
+    padding: .5rem clamp(1rem, 2.5vw, 2rem);
+    font-family: var(--mono);
+    font-size: .69rem;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .instrument-bar .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
+  .instrument-bar .key { opacity: .6; }
+  .instrument-bar .num { color: var(--text); font-variant-numeric: tabular-nums; }
+  .instrument-bar .session { color: var(--signal); font-variant-numeric: tabular-nums; }
+  .bar-spacer { margin-left: auto; }
+
+  /* ---- list and reading pane, verbatim (ui.ts:602-638) ------------------------------------ */
+
+  /* The SHELL .split, not the sign-in one. ui.ts defines .split twice and the later rule wins. */
+  .split {
+    display: grid;
+    grid-template-columns: minmax(14rem, 22rem) minmax(0, 1fr);
+    gap: 0;
+    align-items: start;
+  }
+  @media (max-width: 60rem) {
+    /* The rail collapses to a row of its own at the top, which keeps the per-mailbox unclaimed
+       counts visible — they are the thing this layer adds. */
+    .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "rail" "stage" "bar"; }
+    .rail { border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+    .rail-foot { margin-top: 0; }
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .message-list { border-right: 0; border-bottom: 1px solid var(--rule); }
+    .reading-pane { padding: 1.2rem 0 0 0; }
+  }
+
+  .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
+  .message-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+  .message-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .1rem;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    border-left: 2px solid transparent;
+    padding: .6rem .9rem;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .message-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
+  .message-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+  .message-from { font-size: .74rem; color: var(--dim); }
+  .message-subject { font-size: .98rem; }
+  .message-when { font-size: .68rem; }
+
+  .reading-pane { padding: 0 0 0 clamp(1rem, 2.5vw, 2rem); min-width: 0; }
+  .reading-pane .message-title { font-size: clamp(1.15rem, 2.2vw, 1.5rem); margin: 0 0 .8rem 0; font-weight: 400; }
+  .headers { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .2rem .8rem; margin: 0 0 1.2rem 0; }
+  .headers dt {
+    font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .headers dd { margin: 0; font-size: .85rem; }
+  /* nowrap, not a smarter wrap: overflow-wrap:anywhere split "billing@example.com" across lines and
+     that reads as two addresses. A shared queue showing four colleagues' addresses hits exactly this
+     — ui.ts:730-736. The container scrolls instead. */
+  .headers dd.mono { white-space: nowrap; overflow-x: auto; word-break: normal; overflow-wrap: normal; }
+  .message-text { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: .82rem; }
+
+  /* ---- what the queue adds, built only from the tokens above ------------------------------ */
+
+  /* The claim line on a row. Chip left, age right, so the age column's right edges line up down
+     twelve rows and "2d" stands out from "12m" by unit rather than by colour. */
+  .claim-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .5rem;
+    margin-top: .22rem;
+  }
+  /* --text, not --dim. Nothing expires in this design, so the age is the WHOLE signal a person
+     judges staleness from, and a figure somebody has to act on does not belong in the quiet
+     colour — same rule as `.instrument-bar .num`. */
+  .claim-age {
+    font-family: var(--mono);
+    font-size: .74rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  /* The unit word stays dim so the digits carry the reading. */
+  .claim-age .k { color: var(--dim); }
+
+  .seam { display: grid; gap: .9rem; justify-items: start; margin: 1.4rem 0 0; }
+  .seam-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+
+  /* ---- the docked composer, verbatim (ui.ts:681-712) -------------------------------------- */
+
+  .composer-dock {
+    position: sticky;
+    bottom: 0;
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule-strong);
+    background: var(--ground-2);
+    padding: .9rem clamp(1rem, 2.5vw, 1.6rem) 1.1rem;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .dock-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: .5rem; flex-wrap: wrap; }
+  .dock-head h2 { font-size: 1.05rem; margin: 0; font-weight: 400; }
+  .dock-actions { margin-left: auto; display: inline-flex; gap: .9rem; align-items: center; }
+  /* Amber because it is a caution, not a failure: the draft is real and it is not anywhere durable
+     yet. */
+  .draft-phase {
+    font-size: .63rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--signal);
+    font-family: var(--mono);
+  }
+  .draft-phase.failed { color: var(--alarm); }
+  .row-actions { margin: .6rem 0 .2rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+
+  /* ---- the switcher (prototype furniture, deliberately not part of the design) ------------ */
+
+  .switcher {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 1rem; z-index: 20;
+    display: flex; align-items: stretch;
+    background: #101010; color: #fafafa;
+    border: 1px solid #3a3a3a; border-radius: 999px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    font-family: var(--mono); font-size: .72rem;
+    max-width: calc(100vw - 2rem);
+  }
+  .switcher button {
+    background: none; border: 0; color: inherit; cursor: pointer;
+    padding: .5rem .8rem; font: inherit; white-space: nowrap;
+  }
+  .switcher button:hover { color: #e9a35c; }
+  .switcher .now { padding: .5rem .4rem; display: flex; align-items: center; gap: .5rem; white-space: nowrap; }
+  .switcher .now b { font-weight: 400; color: #e9a35c; }
+  .switcher .sep { width: 1px; background: #3a3a3a; flex: none; }
+
+  /* Clearance for that pill, and nothing more. Both of these exist ONLY because the pill is fixed at
+     the bottom centre and this layout has two things pinned down there — the instrument bar and the
+     sticky composer dock — so without them the pill sits on top of the SEND button. They are furniture
+     too, and they leave with the switcher. Kept out of the rules above so those stay verbatim. */
+  .instrument-bar { padding-bottom: 3.4rem; }
+  .composer-dock { padding-bottom: 3.4rem; }
+</style>
+
+<div id="root"></div>
+
+<div class="switcher" role="group" aria-label="Prototype state switcher">
+  <button type="button" id="prev" aria-label="Previous state">&#8592;</button>
+  <div class="sep"></div>
+  <div class="now"><span id="vkey">queue</span> &mdash; <b id="vname">The shared queue</b></div>
+  <div class="sep"></div>
+  <button type="button" id="next" aria-label="Next state">&#8594;</button>
+  <div class="sep"></div>
+  <button type="button" id="theme" aria-label="Switch colour theme">theme</button>
+  <div class="sep"></div>
+  <button type="button" id="reset" aria-label="Restore the seeded queue">reset</button>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ helpers ------------------ */
+
+/* No innerHTML. Everything reaches the DOM as a node or a textContent assignment: in a mail client
+   the most dangerous strings are the subject and the sender address, and constructing nodes makes
+   injection impossible rather than merely handled. */
+function el(tag, attrs, kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined) continue;
+    if (k === "text") node.textContent = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const kid of (kids || []).flat()) if (kid) node.append(kid);
+  return node;
+}
+const t = (s) => document.createTextNode(s);
+
+/* Writing the current state into the URL is a convenience; failing to write it must not be fatal.
+   Some browsers refuse a history write on a file: URL, and this page is opened from disk on purpose
+   — an uncaught SecurityError here would leave a blank page, which is a far worse failure than a
+   query string that does not update. */
+function remember(mutate) {
+  try {
+    const url = new URL(location.href);
+    mutate(url);
+    history.replaceState(null, "", url);
+  } catch (error) {
+    /* Deliberately swallowed, and deliberately noted rather than silent. */
+    if (window.console) console.info("state not written to the URL:", String(error));
+  }
+}
+
+/* ------------------------------------------------------------------ seeded data -------------- */
+
+/* SEEDED. Freight and invoice mail, real-shaped — container numbers, PO references, demurrage,
+   customs holds — because a prototype judged against "Test message 1" flatters every layout. None
+   of these figures is a product number and the instrument bar says so on every screen. */
+
+const ME = { id: "u_me", name: "You", address: "wei.soh@ferrymoor-logistics.example" };
+
+/* Four people working one mailbox. The whole point of the layer. */
+const TEAM = {
+  ana:  { name: "Ana J.",  address: "ana.jarosz@ferrymoor-logistics.example" },
+  ravi: { name: "Ravi P.", address: "ravi.pillai@ferrymoor-logistics.example" },
+  tom:  { name: "Tom O.",  address: "tom.okafor@ferrymoor-logistics.example" },
+};
+
+/* claim: null = unclaimed; { who: "me" | key of TEAM, ageMinutes } = held.
+   ageMinutes is the seed; every age string on the page is FORMATTED from it, so the digits in the
+   list, the pane and the instrument bar cannot drift apart. */
+const SEED = [
+  { id: "case_4471", name: "Port Klang Terminal", address: "demurrage@pkt-gateway.example", at: "14:02",
+    subject: "Demurrage accruing — MSCU 704 118 2, day 6 at Port Klang",
+    claim: null, riggedRace: "ana",
+    body: "MSCU 704 118 2 discharged 03 Aug. Free time expired 09 Aug.\n\nDemurrage is accruing at USD 145/day and stands at 6 days. Please advise whether you are collecting or whether we should apply for an extension." },
+
+  { id: "case_4470", name: "Sinar Customs Brokerage", address: "queries@sinar-brokerage.example", at: "13:48",
+    subject: "Customs hold: HS code mismatch on PO-88410 (2 pallets)",
+    claim: { who: "ana", ageMinutes: 192 },
+    body: "Customs have flagged lines 3 and 4 of PO-88410. The invoice declares 8544.42 and the packing list describes assembled harnesses, which they read as 8544.49.\n\nWe need either a corrected commercial invoice or a written explanation before they will release the two pallets." },
+
+  { id: "case_4469", name: "Northgate Supply", address: "accounts@northgate-supply.example", at: "13:31",
+    subject: "Invoice INV-2291 disputed — duplicate line 4, PO-4417",
+    claim: { who: "me", ageMinutes: 12 },
+    body: "Line 4 of INV-2291 appears twice: handling, GBP 340.00, once against PO-4417 and once with no PO at all.\n\nWe have put the whole invoice on hold rather than part-paying it. Can you reissue?" },
+
+  { id: "case_4468", name: "Meridian Freight", address: "ops@meridian-freight.example", at: "12:55",
+    subject: "Re: TCLU 998 447 1 — short-shipped 3 cartons against packing list",
+    claim: null,
+    body: "Tally at destination is 117 cartons. The packing list says 120.\n\nThe seal was intact on arrival, so this is a loading discrepancy rather than pilferage. Do you want us to raise it with the shipper or will you?" },
+
+  { id: "case_4467", name: "Harborline Haulage", address: "billing@harborline-haulage.example", at: "Aug 7 09:12",
+    subject: "Detention invoice DET-5512 — 4 days, chassis 88-104",
+    /* The deliberately stale one. Two days in somebody's name and nothing in this design will take
+       it away from them. */
+    claim: { who: "tom", ageMinutes: 3124 },
+    body: "Chassis 88-104 was held at your yard from 03 to 07 Aug. Detention is invoiced at 4 days.\n\nDET-5512 is now 30 days overdue. This is the third reminder." },
+
+  { id: "case_4466", name: "Westrow Group AP", address: "remittance@westrow-group.example", at: "13:02",
+    subject: "Remittance advice 08-07 — 14 invoices, GBP 41,208.66",
+    claim: { who: "ravi", ageMinutes: 41 },
+    body: "Payment sent today covering 14 invoices. Two are short-paid against agreed rebates; the breakdown is in the attached advice." },
+
+  { id: "case_4465", name: "Kota Line Documentation", address: "docs@kotaline.example", at: "12:19",
+    subject: "Bill of lading correction — consignee name, MAEU 512 003 8",
+    claim: null,
+    body: "The consignee on the draft B/L reads \"Ferrymoor Logistic\" and should read \"Ferrymoor Logistics Sdn Bhd\".\n\nA corrected B/L after vessel departure attracts an amendment fee. Confirm before we submit." },
+
+  { id: "case_4464", name: "PTP Yard Billing", address: "yard@ptp-billing.example", at: "11:44",
+    subject: "Storage charges from 12 Aug — CY Tanjung Pelepas",
+    claim: { who: "me", ageMinutes: 125 },
+    body: "Two units remain uncollected at CY. Storage begins 12 Aug at MYR 90 per unit per day.\n\nLet us know the collection date and we will hold the release order." },
+
+  { id: "case_4463", name: "Meridian Freight", address: "ops@meridian-freight.example", at: "11:20",
+    subject: "Re: Re: still missing commercial invoice, container FSCU 730 992 4",
+    claim: null,
+    body: "Third time asking. Customs have the packing list and not the invoice, and FSCU 730 992 4 does not move until they have both.\n\nIf it does not clear Thursday the next slot is Monday." },
+
+  { id: "case_4462", name: "Northgate Supply", address: "accounts@northgate-supply.example", at: "11:02",
+    subject: "Credit note CN-1180 against INV-2277 (freight rebate)",
+    claim: { who: "ana", ageMinutes: 108 },
+    body: "CN-1180 issued for the Q2 freight rebate. Applied against INV-2277, not the March retainer." },
+
+  { id: "case_4461", name: "Sinar Customs Brokerage", address: "queries@sinar-brokerage.example", at: "10:31",
+    subject: "Customs query — country of origin, PO-88633 / INV-2304",
+    claim: null,
+    body: "Origin is declared as MY on the invoice and CN on the certificate. One of the two is wrong and we cannot guess which." },
+
+  { id: "case_4460", name: "Kota Line Ops", address: "ops@kotaline.example", at: "09:47",
+    subject: "Late arrival notice — MV Kota Lestari, ETA slips 3 days",
+    claim: null,
+    body: "MV Kota Lestari now ETA 16 Aug. Onward trucking booked for the 13th will need moving." },
+];
+
+/* Other mailboxes on this Node, with their own unclaimed counts. Seeded — the CURRENT mailbox's
+   count is computed from the queue below rather than typed, so the rail cannot disagree with the
+   list it is describing, and the total is a sum rather than a fourth number to keep in step. */
+const MAILBOXES = [
+  { id: "ops",        name: "Ops mail",             unclaimed: null, current: true },
+  { id: "demurrage",  name: "Demurrage",            unclaimed: 3 },
+  { id: "customs",    name: "Customs holds",        unclaimed: 4 },
+  { id: "bl",         name: "Bookings & B/L",  unclaimed: 0 },
+  { id: "remittance", name: "Remittances",          unclaimed: 1 },
+  { id: "disputes",   name: "Claims & disputes", unclaimed: 2 },
+];
+
+/* The one real product number on this page. docs/receipts/cloudflare-email-sending.md:18 —
+   send.hold_window_default_seconds: 15. That receipt says at :278 that the figure has no measurement
+   behind it and that this is deliberate: a preference about human regret, configurable per mailbox
+   including zero (ADR 39), not a platform limit. In the shipped client it arrives through
+   window.MAILDA_CONFIG rather than being typed into the interface, because #32's prototype typed 18
+   against a measured 15 and that drift is what ui.ts:52-56 now guards against. */
+const HOLD_WINDOW_SECONDS = 15;
+
+/* ------------------------------------------------------------------ state -------------------- */
+
+const STATES = [
+  { key: "queue",  name: "The shared queue" },
+  { key: "unheld", name: "A case you do not hold" },
+  { key: "held",   name: "A case you hold" },
+  { key: "lost",   name: "Claim lost — changes=0" },
+  { key: "stolen", name: "Taken while you were typing" },
+];
+
+/* ?state=unheld opens an UNCLAIMED case, so the affordance on screen is the literal "claim to reply".
+   The other half of that state — a case a colleague holds, where the same button reads "take over to
+   reply" — is one click away on any row with a name on it, and the pane says so. */
+const DEFAULT_SELECTED = { queue: "case_4471", unheld: "case_4468", held: "case_4469", lost: "case_4471", stolen: "case_4464" };
+
+let view = "queue";
+let cases = [];
+let selectedId = "case_4471";
+let raceLoss = null;   /* { caseId, winner, at } — set when a compare-and-swap returned 0 rows. */
+let seizure = null;    /* { caseId, taker, at } — set when a case was taken out from under you. */
+let draft = "";
+let draftSaved = true;
+
+function reseed() {
+  cases = SEED.map((c) => ({ ...c, claim: c.claim ? { ...c.claim } : null }));
+  raceLoss = null;
+  seizure = null;
+  draft = "";
+  draftSaved = true;
+}
+
+/* The two scripted states are set up rather than waited for, so a human can open the page straight
+   into either of them. */
+function scripted(key) {
+  if (key === "lost") {
+    const c = byId("case_4471");
+    /* The race: Ana's claim landed first, so the row already carries her name by the time the
+       refusal is rendered. Making the loser's own row still say "unclaimed" would be a lie. */
+    c.claim = { who: "ana", ageMinutes: 0 };
+    raceLoss = { caseId: c.id, winner: "ana" };
+  }
+  if (key === "stolen") {
+    const c = byId("case_4464");
+    /* How long it was yours is read off the seed before the claim is overwritten, so the figure in
+       the pane cannot disagree with the figure the row was showing a moment ago. */
+    const wasMine = c.claim ? c.claim.ageMinutes : 0;
+    c.claim = { who: "ravi", ageMinutes: 0 };
+    seizure = { caseId: c.id, taker: "ravi", heldForMinutes: wasMine };
+    draft = "Thanks — we are collecting both units on the 13th, so storage should stop at two days. Before you issue anything, can you confirm the release order still has";
+    draftSaved = true;
+  }
+}
+
+const byId = (id) => cases.find((c) => c.id === id);
+const holder = (claim) => (claim.who === "me" ? ME : TEAM[claim.who]);
+
+/* ------------------------------------------------------------------ formatting --------------- */
+
+/* Formatted from the seeded minutes, never typed. Days show as "2d 04h" so a stale claim differs
+   from a fresh one by UNIT, in a right-aligned tabular column — which is a channel that survives
+   greyscale, a screen reader and somebody who does not know what amber means here. */
+function fmtAge(minutes) {
+  if (minutes < 1) return { figure: "0", unit: "m" };
+  if (minutes < 60) return { figure: String(minutes), unit: "m" };
+  if (minutes < 1440) {
+    const h = Math.floor(minutes / 60);
+    return { figure: h + "h " + String(minutes % 60).padStart(2, "0"), unit: "m" };
+  }
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  return { figure: d + "d " + String(h).padStart(2, "0"), unit: "h" };
+}
+function ageText(minutes) {
+  const a = fmtAge(minutes);
+  return a.figure + a.unit;
+}
+
+/* The chip's TEXT is the state, and for a held case it names the holder. Colour is the last channel
+   on the row, not the first. */
+function claimChip(claim) {
+  if (!claim) return el("span", { class: "state claim-unclaimed", text: "unclaimed" });
+  if (claim.who === "me") return el("span", { class: "state claim-mine", text: "yours" });
+  return el("span", { class: "state claim-other", text: holder(claim).name });
+}
+
+function ageNode(claim) {
+  if (!claim) return null;
+  const a = fmtAge(claim.ageMinutes);
+  return el("span", { class: "claim-age" }, [
+    el("span", { class: "k", text: "held " }),
+    t(a.figure),
+    el("span", { class: "k", text: a.unit }),
+  ]);
+}
+
+const counts = () => ({
+  unclaimed: cases.filter((c) => !c.claim).length,
+  mine: cases.filter((c) => c.claim && c.claim.who === "me").length,
+  others: cases.filter((c) => c.claim && c.claim.who !== "me").length,
+  oldest: cases.reduce((m, c) => (c.claim && c.claim.ageMinutes > m ? c.claim.ageMinutes : m), 0),
+});
+
+/* ------------------------------------------------------------------ the rail ----------------- */
+
+function rail() {
+  const n = counts();
+  const boxes = MAILBOXES.map((b) => ({ ...b, unclaimed: b.unclaimed === null ? n.unclaimed : b.unclaimed }));
+  const total = boxes.reduce((sum, b) => sum + b.unclaimed, 0);
+
+  /* Who is holding what, computed from the queue. Four people working one mailbox is the situation
+     this layer exists for, and until now there has been nowhere to see it. */
+  const held = [
+    { name: ME.name, key: "me" },
+    { name: TEAM.ana.name, key: "ana" },
+    { name: TEAM.ravi.name, key: "ravi" },
+    { name: TEAM.tom.name, key: "tom" },
+  ].map((p) => ({
+    name: p.name,
+    n: cases.filter((c) => c.claim && c.claim.who === p.key).length,
+    oldest: cases.reduce((m, c) => (c.claim && c.claim.who === p.key && c.claim.ageMinutes > m ? c.claim.ageMinutes : m), 0),
+  }));
+
+  return el("div", { class: "rail" }, [
+    el("p", { class: "wordmark" }, [t("Mail"), el("span", { text: "da" })]),
+
+    el("nav", { "aria-label": "Mailboxes" }, [
+      el("p", { class: "rail-heading", text: "unclaimed" }),
+      el("ul", { class: "rail-list" }, boxes.map((b) => el("li", {}, [
+        el("button", {
+          type: "button",
+          class: "rail-row" + (b.current ? " current" : ""),
+          "aria-current": b.current ? "true" : null,
+        }, [
+          el("span", { class: "rail-name", text: b.name }),
+          /* The figure is what the rail is for: how much work in this box has nobody's name on it. */
+          el("span", { class: "num", text: String(b.unclaimed) }),
+        ]),
+      ]))),
+    ]),
+
+    el("p", { class: "rail-heading", text: "holding" }),
+    el("ul", { class: "rail-list" }, held.map((p) => el("li", {}, [
+      el("div", { class: "rail-row" }, [
+        el("span", { class: "rail-name", text: p.name }),
+        el("span", { class: "num", text: p.n === 0 ? "–" : String(p.n) + " · " + ageText(p.oldest) }),
+      ]),
+    ]))),
+
+    el("div", { class: "rail-foot" }, [
+      el("p", { class: "rail-heading", text: "all mailboxes" }),
+      el("div", { class: "rail-row" }, [
+        el("span", { class: "rail-name", text: "unclaimed" }),
+        el("span", { class: "num", text: String(total) }),
+      ]),
+      el("p", { class: "rail-note label", text: "seeded · no network" }),
+    ]),
+  ]);
+}
+
+/* ------------------------------------------------------------------ the list ----------------- */
+
+/* A real <button> per row, not a div with a role: it is why keyboard operation and :focus-visible
+   work at all, and #32's one genuine AA defect was aria-selected on a plain listitem.
+
+   Nothing interactive goes INSIDE the row. A "claim" button nested in a button is invalid HTML and
+   breaks tab order, so claiming happens in the reading pane once the case is open. That is a real
+   constraint on the design rather than a preference, and worth a decision: claiming from the list
+   would need the row to stop being a button. */
+function messageList() {
+  return el("ul", { class: "message-list" }, cases.map((c) => el("li", {}, [
+    el("button", {
+      type: "button",
+      class: "message-row" + (c.id === selectedId ? " current" : ""),
+      "aria-current": c.id === selectedId ? "true" : null,
+      onclick: () => open(c.id),
+    }, [
+      el("span", { class: "message-from" }, [
+        t(c.name), t(" · "), el("span", { class: "mono num message-when", text: c.at }),
+      ]),
+      el("span", { class: "message-subject", text: c.subject }),
+      el("span", { class: "claim-line" }, [claimChip(c.claim), ageNode(c.claim)]),
+    ]),
+  ])));
+}
+
+function open(id) {
+  selectedId = id;
+  const c = byId(id);
+  raceLoss = null;
+  /* Opening a different case does not clear the seizure notice on the one that was taken — the
+     draft is still there and still yours. */
+  paint(c.claim && c.claim.who === "me" ? "held" : "unheld", { keepSelection: true });
+}
+
+/* ------------------------------------------------------------------ the pane ----------------- */
+
+function caseHeaders(c) {
+  const rows = [["from", c.name], ["address", c.address], ["received", c.at], ["case", c.id]];
+  if (c.claim) {
+    const h = holder(c.claim);
+    rows.push(["claimed by", h.name]);
+    rows.push(["claimant", h.address]);
+    /* Its own row rather than a phrase after the name, so the figure sits in a column somebody can
+       compare down the page instead of being buried in a sentence. */
+    rows.push(["held for", ageText(c.claim.ageMinutes)]);
+  } else {
+    rows.push(["claimed by", "nobody"]);
+  }
+  const MONO = ["address", "claimant", "case", "held for"];
+  return el("dl", { class: "headers" }, rows.map(([k, v]) => [
+    el("dt", { text: k }),
+    el("dd", { class: MONO.includes(k) ? "mono num" : null, text: v }),
+  ]).flat());
+}
+
+/* The seam. A case you do not hold shows "claim to reply" as the PRIMARY action. It does not show a
+   composer greyed out: a disabled composer teaches a person to try, fail, and then look for why,
+   which on a queue four people are working is the moment two of them start typing the same reply. */
+function claimToReply(c) {
+  const mine = c.claim && c.claim.who === "me";
+  if (mine) return null;
+  const heldBy = c.claim ? holder(c.claim) : null;
+  return el("div", { class: "seam" }, [
+    el("div", { class: "seam-row" }, [
+      el("button", {
+        class: "primary", type: "button",
+        text: heldBy ? "take over to reply" : "claim to reply",
+        onclick: () => attemptClaim(c.id),
+      }),
+      /* No sentence ends immediately after a person's name here: "tells Ana J.." is what the first
+         draft printed, because the seeded names end in an initial and a full stop. */
+      el("p", { class: "hint", text: heldBy
+        ? "Taking over reassigns the case to you, and " + heldBy.name + " is told. Nothing stops you, and nothing stopped them."
+        : "Claiming puts your name on it so nobody else starts the same reply.\nA case a colleague already holds shows TAKE OVER TO REPLY instead — click any row with a name on it." }),
+    ]),
+    heldBy
+      ? el("p", { class: "notice", text: heldBy.name + " has held this for " + ageText(c.claim.ageMinutes) + ".\nNothing expires. If that looks too long, that is a judgement for you to make and not a rule this system applies." })
+      : null,
+  ]);
+}
+
+function composer(c, opts) {
+  const options = opts || {};
+  return el("div", { class: "composer-dock" }, [
+    el("div", { class: "dock-head" }, [
+      el("h2", { text: "Reply — " + c.name }),
+      el("div", { class: "dock-actions" }, [
+        el("span", {
+          class: "draft-phase" + (options.private ? " failed" : ""),
+          text: options.private
+            ? "draft · private to you · you no longer hold this case"
+            : (draftSaved ? "draft · saved on your node" : "draft · this browser only"),
+        }),
+      ]),
+    ]),
+    el("form", { onsubmit: (e) => e.preventDefault() }, [
+      el("div", { class: "field-row" }, [
+        el("span", { text: "to" }),
+        el("p", { class: "mono", style: "margin:0;font-size:.82rem;white-space:nowrap;overflow-x:auto", text: c.address }),
+      ]),
+      el("div", { class: "field-row" }, [
+        el("span", { text: "body" }),
+        el("textarea", {
+          rows: "5",
+          "aria-label": "Reply body",
+          oninput: (e) => { draft = e.target.value; draftSaved = false; },
+        }, [t(draft)]),
+      ]),
+      el("div", { class: "row-actions" }, options.private
+        ? [
+            el("button", { class: "primary", type: "button", text: "claim to send", onclick: () => attemptClaim(c.id) }),
+            el("p", { class: "hint", text: "Your draft stays where it is either way. Sending is what needs the case." }),
+          ]
+        : [
+            el("button", { class: "primary", type: "submit", text: "send" }),
+            /* The one real number on the page, and it is written next to its receipt. */
+            el("p", { class: "hint", text: "Held for " + HOLD_WINDOW_SECONDS + "s after you press send — you can still stop it.\nsend.hold_window_default_seconds · docs/receipts/cloudflare-email-sending.md" }),
+          ]),
+      /* Only when the case is actually yours. Offering "release" on a case somebody else now holds
+         was in the first draft of this file and is exactly the kind of action that reads as available
+         and then either does nothing or, worse, releases their claim for them. */
+      options.private ? null : el("div", { class: "row-actions" }, [
+        el("button", {
+          class: "linkish", type: "button", text: "release this case",
+          onclick: () => { const target = byId(c.id); target.claim = null; paint("unheld", { keepSelection: true }); },
+        }),
+        el("p", { class: "hint", text: "Puts it back in the queue with nobody's name on it. Your draft stays." }),
+      ]),
+    ]),
+  ]);
+}
+
+function brief() {
+  const n = counts();
+  return el("div", { class: "panel", "data-reveal": "" }, [
+    el("h2", { text: "prototype · wayfinder #42" }),
+    el("h1", { text: "One mailbox, four people, no timeout." }),
+    el("p", { class: "dim", style: "max-width:52ch", text:
+      "Twelve cases. " + n.unclaimed + " with nobody's name on them, " + n.mine + " with yours, " + n.others +
+      " with somebody else's. The oldest claim is " + ageText(n.oldest) + " old and nothing in this design will take it away from whoever holds it." }),
+
+    el("p", { class: "label", style: "margin-top:1.4rem", text: "the three states" }),
+    el("dl", { class: "headers", style: "grid-template-columns:8rem minmax(0,1fr);margin-top:.5rem" }, [
+      el("dt", {}, [claimChip(null)]),
+      el("dd", { text: "Work nobody has taken. Amber, because it is the same signal as a send that is held: it needs a person." }),
+      el("dt", {}, [claimChip({ who: "me", ageMinutes: 12 })]),
+      el("dd", { text: "Yours. The chip says so in a word, and the age says how long you have had it." }),
+      el("dt", {}, [claimChip({ who: "ana", ageMinutes: 192 })]),
+      el("dd", { text: "Somebody else's, and the chip is their name rather than a colour. The quietest state on the row: it keeps the neutral border rather than losing the box, because a colleague doing their job is not a finding." }),
+    ]),
+
+    el("p", { class: "notice", style: "margin-top:1.2rem", text:
+      "Colour is the fourth channel here, never the first: the word, the border, the presence of an age, then the hue. " +
+      "docs/receipts/contrast-tokens.md proves one token — --dim — and has never measured --signal, --alarm or --live in either theme. " +
+      "Blueprint §5C, not §16." }),
+
+    el("p", { class: "hint", style: "margin-top:1.2rem", text:
+      "Click any row to open it. A case you hold opens the composer; a case you do not shows claim to reply. " +
+      "case_4471 is rigged to lose its race." }),
+
+    /* Surfaced by building it, and stated on the page rather than in a comment, because it is a
+       decision for a person and not a defect to quietly patch. */
+    el("p", { class: "hint", style: "margin-top:.9rem", text:
+      "Something building this turned up: the composer dock spans the shell and sticks to the bottom, which was settled when the tall thing on screen was a message. On a queue the tall thing is the LIST, so replying covers the rows you were watching. Open a case you hold and see whether that is acceptable." }),
+  ]);
+}
+
+/* Returns [pane, dock]. The dock is a SIBLING of the pane, not a child of it, because
+   `.composer-dock` carries `grid-column: 1 / -1` and only means anything as a grid item of `.split` —
+   nested inside the pane the grid-column is inert, and `position: sticky; bottom: 0` then shifts the
+   dock UP over the paragraphs above it and hides them behind its opaque background. That is not a
+   hypothetical: it ate the "you held it / your draft" rows of the steal state, in both themes, and it
+   was invisible in the accessibility tree because the nodes were all present and correct. Found by
+   rendering the page and comparing the screenshot against the snapshot. */
+function pane() {
+  const c = byId(selectedId);
+
+  if (view === "queue") return [el("div", { class: "reading-pane" }, [brief()])];
+
+  const head = [
+    el("h1", { class: "message-title", text: c.subject }),
+    caseHeaders(c),
+  ];
+
+  if (view === "lost" && raceLoss && raceLoss.caseId === c.id) {
+    const winner = TEAM[raceLoss.winner];
+    return [el("div", { class: "reading-pane", "data-reveal": "" }, [
+      ...head,
+      /* Names who won, in the first line, because "could not claim" without a name sends the person
+         to ask the room who has it. */
+      el("p", { class: "notice bad", text:
+        winner.name + " claimed this case. Your claim did not apply.\n\n" +
+        "Their claim landed first, so yours changed nothing — the update matched 0 rows (changes=0) and no second claim was written. " +
+        "Nothing was lost except the claim: you have not sent anything and neither has " + winner.name + " yet." }),
+      /* Who holds it and for how long is already in the headers above. The only thing this adds is
+         what happened to YOUR write, which is the question the person actually has. */
+      el("dl", { class: "headers", style: "margin-top:1.1rem" }, [
+        el("dt", { text: "your claim" }), el("dd", { class: "mono", text: "refused · changes=0" }),
+      ]),
+      el("div", { class: "seam" }, [
+        el("div", { class: "seam-row" }, [
+          el("button", { class: "primary", type: "button", text: "take over to reply", onclick: () => attemptClaim(c.id) }),
+          el("button", { class: "linkish", type: "button", text: "back to the queue", onclick: () => paint("queue") }),
+        ]),
+        el("p", { class: "hint", text:
+          "Taking over is allowed and it is not a retry: it reassigns the case away from " + winner.name +
+          " and tells them. The refusal above is a fact about one write, not a lock." }),
+      ]),
+      el("div", { style: "margin-top:1.6rem" }, [
+        el("p", { class: "label", text: "the message" }),
+        el("p", { class: "message-text", text: c.body }),
+      ]),
+    ])];
+  }
+
+  if (view === "stolen" && seizure && seizure.caseId === c.id) {
+    const taker = TEAM[seizure.taker];
+    return [el("div", { class: "reading-pane", "data-reveal": "" }, [
+      ...head,
+      el("p", { class: "notice bad", text:
+        taker.name + " took this case while you were writing. It is theirs now.\n\n" +
+        "Your draft is below, unchanged, mid-sentence, and it is still private to you — " + taker.name +
+        " cannot see it and will not be sent it. What you have lost is the case, not the words." }),
+      el("dl", { class: "headers", style: "margin-top:1.1rem" }, [
+        el("dt", { text: "you held it" }), el("dd", { class: "mono num", text: ageText(seizure.heldForMinutes) + ", until just now" }),
+        el("dt", { text: "your draft" }), el("dd", { text: "kept, private, not sendable from here" }),
+      ]),
+      el("p", { class: "hint", style: "margin-top:1rem", text:
+        "Open question for the human reading this: should " + taker.name +
+        " have been told a draft existed before taking it? This page deliberately does not tell them, because a draft nobody sent is not the queue's business — but that means a steal can waste real work silently." }),
+      el("div", { style: "margin-top:1.6rem" }, [
+        el("p", { class: "label", text: "the message" }),
+        el("p", { class: "message-text", text: c.body }),
+      ]),
+    ]),
+    /* NOT a disabled composer. The field stays live because the draft is the person's own property
+       and they may well want to finish the sentence, save it, or send it to whoever now holds the
+       case. What moves is the SEND action: it becomes "claim to send". That is the seam. */
+    composer(c, { private: true })];
+  }
+
+  const mine = c.claim && c.claim.who === "me";
+  return [
+    el("div", { class: "reading-pane", "data-reveal": "" }, [
+      ...head,
+      el("p", { class: "message-text", text: c.body }),
+      mine ? null : claimToReply(c),
+    ]),
+    mine ? composer(c, {}) : null,
+  ];
+}
+
+function attemptClaim(id) {
+  const c = byId(id);
+  if (c.riggedRace && !c.claim) {
+    /* The compare-and-swap: UPDATE ... WHERE claimed_by IS NULL. Somebody else's claim was already
+       committed, so this one matched no rows. There is no error to report and nothing to retry —
+       the truth is simply that the case has a name on it and the name is not yours. */
+    c.claim = { who: c.riggedRace, ageMinutes: 0 };
+    raceLoss = { caseId: c.id, winner: c.riggedRace };
+    selectedId = c.id;
+    paint("lost", { keepSelection: true });
+    return;
+  }
+  c.claim = { who: "me", ageMinutes: 0 };
+  raceLoss = null;
+  seizure = null;
+  selectedId = c.id;
+  paint("held", { keepSelection: true });
+}
+
+/* ------------------------------------------------------------------ the bar ------------------ */
+
+function instrumentBar() {
+  const n = counts();
+  const field = (key, value, cls) => el("span", { class: "field" }, [
+    el("span", { class: "key", text: key }),
+    /* Label in .key, FIGURE in .num. .key puts opacity .6 on top of --dim, which is the one place
+       this interface goes below its own measured token, so a number never goes there. */
+    el("span", { class: cls || "num", text: value }),
+  ]);
+  return el("div", { class: "instrument-bar" }, [
+    el("span", { class: "field" }, [el("span", { class: "dot live" }), el("span", { text: "shared" })]),
+    field("unclaimed", String(n.unclaimed)),
+    field("yours", String(n.mine)),
+    field("others", String(n.others)),
+    field("oldest claim", ageText(n.oldest)),
+    field("hold", HOLD_WINDOW_SECONDS + "s"),
+    el("span", { class: "field bar-spacer" }, [
+      el("span", { class: "key", text: "prototype" }),
+      el("span", { class: "session", text: "seeded data" }),
+    ]),
+  ]);
+}
+
+/* ------------------------------------------------------------------ paint -------------------- */
+
+function paint(key, opts) {
+  const options = opts || {};
+  view = STATES.some((s) => s.key === key) ? key : "queue";
+  if (!options.keepSelection) {
+    reseed();
+    scripted(view);
+    selectedId = DEFAULT_SELECTED[view];
+  }
+  if (!byId(selectedId)) selectedId = cases[0].id;
+
+  document.getElementById("root").replaceChildren(el("div", { class: "app-shell" }, [
+    rail(),
+    el("main", { class: "app-main" }, [
+      el("div", { class: "split" }, [messageList(), ...pane()]),
+    ]),
+    instrumentBar(),
+  ]));
+
+  const state = STATES.find((s) => s.key === view);
+  document.getElementById("vkey").textContent = state.key;
+  document.getElementById("vname").textContent = state.name;
+  document.title = "Mailda shared queue · " + state.name;
+
+  remember((url) => url.searchParams.set("state", state.key));
+}
+
+/* ------------------------------------------------------------------ furniture ---------------- */
+
+function askedState() {
+  const asked = (new URLSearchParams(location.search).get("state") || "queue").toLowerCase();
+  return STATES.some((s) => s.key === asked) ? asked : "queue";
+}
+
+function step(by) {
+  const index = STATES.findIndex((s) => s.key === view);
+  paint(STATES[(index + by + STATES.length) % STATES.length].key);
+}
+
+function applyTheme(name) {
+  if (name === "light" || name === "dark") document.documentElement.setAttribute("data-theme", name);
+  else document.documentElement.removeAttribute("data-theme");
+  remember((url) => { if (name) url.searchParams.set("theme", name); else url.searchParams.delete("theme"); });
+}
+
+/* dark -> light -> follow the system -> dark. Three positions, because "no preference" is a real
+   answer and a two-way toggle cannot express it. */
+const THEME_CYCLE = ["dark", "light", ""];
+let themeIndex = 0;
+
+document.getElementById("prev").addEventListener("click", () => step(-1));
+document.getElementById("next").addEventListener("click", () => step(1));
+document.getElementById("theme").addEventListener("click", () => {
+  themeIndex = (themeIndex + 1) % THEME_CYCLE.length;
+  applyTheme(THEME_CYCLE[themeIndex]);
+});
+document.getElementById("reset").addEventListener("click", () => paint(view));
+
+document.addEventListener("keydown", (event) => {
+  /* Never steal arrows from a field — the composer is part of what is being evaluated. */
+  const tag = (event.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || event.target.isContentEditable) return;
+  if (event.key === "ArrowLeft") step(-1);
+  if (event.key === "ArrowRight") step(1);
+});
+
+/* The real shell sets lang on the document element. Supplying it here removes a false positive
+   rather than hiding a defect: this file is body content, because that is what an Artifact wraps. */
+document.documentElement.lang = "en";
+
+const askedTheme = (new URLSearchParams(location.search).get("theme") || "").toLowerCase();
+themeIndex = THEME_CYCLE.indexOf(askedTheme === "light" || askedTheme === "dark" ? askedTheme : "");
+applyTheme(THEME_CYCLE[themeIndex]);
+
+paint(askedState());
+</script>
