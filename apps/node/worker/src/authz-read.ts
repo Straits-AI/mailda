@@ -86,6 +86,23 @@ async function hasRelation(
   return tuple !== null;
 }
 
+/**
+ * The subjects a principal authorizes as: themselves, plus every team they belong to.
+ *
+ * Extracted because it was written out by hand in two places — `hasRelation` and `listMessages` — and #45
+ * happened in a third place that did not write it out at all. A read bounded by mailbox has to agree with
+ * `hasRelation` about who the caller *is*, and the surest way to agree is to share the function rather
+ * than the shape.
+ */
+export async function readableSubjects(env: Env, who: Principal): Promise<string[]> {
+  const teams = await env.CATALOG.prepare(
+    "SELECT team_id FROM team_members WHERE org_id = ? AND user_id = ?",
+  )
+    .bind(who.orgId, who.userId)
+    .all<{ team_id: string }>();
+  return [who.userId, ...teams.results.map((row) => row.team_id)];
+}
+
 export async function mayRead(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
   return hasRelation(env, who, "mailbox.content.read", mailboxId);
 }

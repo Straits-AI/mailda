@@ -9,7 +9,7 @@ import { migrate } from "./migrate.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
-import { listMessages, authorize, principalFor } from "./authz-read.ts";
+import { listMessages, authorize, mayRead, maySend, principalFor, readableSubjects } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
@@ -404,10 +404,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const row = await env.CATALOG.prepare(
-        "SELECT submitted_key, fidelity FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
-      ).bind(who.orgId, submitted[1]!).first<{ submitted_key: string | null; fidelity: string }>();
+        "SELECT submitted_key, fidelity, mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
+      ).bind(who.orgId, submitted[1]!)
+        .first<{ submitted_key: string | null; fidelity: string; mailbox_id: string }>();
 
-      // §5C: an absent send and one belonging to another organization answer identically.
+      // §5C: an absent send, one belonging to another organization, and one in a mailbox this caller may
+      // not read all answer identically. The third case is #45 — this endpoint streams the **submitted
+      // bytes**, so it disclosed the whole message rather than a row about it, and it was bounded by
+      // organization alone.
+      if (row !== null && !(await mayRead(env, { orgId: who.orgId, userId: who.userId }, row.mailbox_id))) {
+        return Response.json(
+          { error: "not_found", message: "No such send, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
       if (row === null) {
         return Response.json(
           { error: "not_found", message: "No such send, or you do not have access to it." },
@@ -439,6 +449,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (cancel && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      // Gated on `send.propose`, not `mailbox.content.read`, and the difference is deliberate: stopping a
+      // send is an outbound act on that mailbox, so it takes the outbound authority. Whoever sealed it
+      // holds this by definition, because sealing requires it.
+      //
+      // Unauthorized answers exactly as unknown does — the same body and status `cancelSend` returns for
+      // an id that does not exist — so this cannot be used to probe which mailboxes have held sends.
+      // Today the two relations are granted together at claim, so this choice is unobservable; it becomes
+      // observable the moment Layer 3 grants them apart.
+      const target = await env.CATALOG.prepare(
+        "SELECT mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
+      ).bind(who.orgId, cancel[1]!).first<{ mailbox_id: string }>();
+      const mayCancel = target !== null
+        && await maySend(env, { orgId: who.orgId, userId: who.userId }, target.mailbox_id);
+      if (!mayCancel) {
+        return Response.json({ cancelled: false, reason: "no such send" }, { status: 409 });
+      }
+
       const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!);
       return Response.json(outcome, { status: outcome.cancelled ? 200 : 409 });
     }
@@ -446,16 +473,37 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/sends" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      // Subjects are the user plus every team they belong to, which is what `hasRelation` and
+      // `listMessages` both do. A relation held through a team is held.
+      const subjects = await readableSubjects(env, who);
+      const subjectPlaceholders = subjects.map(() => "?").join(", ");
       const rows = await env.CATALOG.prepare(
         // `has_submitted` rather than the key itself: the interface needs to know whether the bytes are
         // producible, and an R2 key is not something a client has any business holding. Without it the
         // outbox offered a `.eml` link on every authored send, including ones never dispatched — which
         // answered 409 with a perfectly clear explanation nobody should have had to read.
+        //
+        // The mailbox bound is the fix for #45. This read was `WHERE org_id = ?` and nothing else, so any
+        // authenticated member received every send from every mailbox — subjects, recipients, and the
+        // receiving server's own words about a customer's address. `listMessages` has always bounded the
+        // inbound equivalent this way; the outbound list simply never did, and with one user per Node the
+        // two returned identical rows so nothing looked wrong.
+        //
+        // Authorization is **inside the query**, not a filter applied after (§5, ADR 11): a row the caller
+        // may not see must never be counted, sliced or paginated, and a post-filter gets that wrong the
+        // first time somebody adds a LIMIT above it.
         `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
                 transport_message_id, fidelity,
                 submitted_key IS NOT NULL AS has_submitted
-           FROM send_manifests WHERE org_id = ? ORDER BY sealed_at DESC LIMIT 50`,
-      ).bind(who.orgId).all<Record<string, unknown>>();
+           FROM send_manifests
+          WHERE org_id = ?
+            AND mailbox_id IN (
+              SELECT object_id FROM relationship_tuples
+               WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
+                 AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+            )
+          ORDER BY sealed_at DESC LIMIT 50`,
+      ).bind(who.orgId, who.orgId, ...subjects).all<Record<string, unknown>>();
 
       // Recipients travel with the sends rather than behind a second request per row.
       //
