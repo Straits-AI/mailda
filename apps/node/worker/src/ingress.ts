@@ -55,10 +55,18 @@ export async function acceptInbound(
 
   // Cheap idempotency check. Not the guarantee — the UNIQUE index below is (#9). This only
   // avoids writing a blob we would then discard.
+  // `envelope_to` is part of the identity, not just part of the row. Migration 0013 widened the unique
+  // index to match, and this read is the half that actually decides: leave it on the two-column key and
+  // the index change accomplishes nothing, because the second delivery still returns `already_accepted`
+  // before it ever reaches an INSERT.
+  //
+  // ADR 9 is intact. A genuine redelivery carries the same Message-ID *and* the same recipient, so it still
+  // matches here and still files once. Only two different deliveries stop colliding.
   const seen = await env.CATALOG.prepare(
-    "SELECT id FROM ingress_receipts WHERE org_id = ? AND provider_event_id = ? LIMIT 1",
+    `SELECT id FROM ingress_receipts
+      WHERE org_id = ? AND provider_event_id = ? AND envelope_to = ? LIMIT 1`,
   )
-    .bind(orgId, message.providerEventId)
+    .bind(orgId, message.providerEventId, message.envelopeTo)
     .first<{ id: string }>();
 
   if (seen !== null) {

@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 374 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 377 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -91,6 +91,14 @@ Mailda now submits the same stored bytes once per recipient, which costs nothing
 already counts one three-recipient send as three) and makes `Bcc` correct rather than merely possible, since
 a real Bcc needs its own envelope. Proven live: one send, three recipients, three submissions, three
 outcomes — **accepted, bounced, bounced** — each with its own message id.
+
+**A delivery is what gets filed, not a message.** §12 says a message may have many deliveries and access
+is evaluated per delivery — and that was *assumed* rather than implemented. The ingress derived key was the
+Message-ID alone, and Email Routing calls the handler once per recipient, so a customer who Cc'd two of
+your addresses had the first filed and the second discarded as a duplicate. The mailbox that was addressed
+received nothing, and nothing recorded that it hadn't. It looked exactly like deduplication working, which
+is why it survived. Now the key is the Message-ID **and** the recipient: two deliveries file twice, the same
+delivery twice still files once, and the retry-safety the key existed for is untouched.
 
 **A Node that cannot see delivery outcomes says so.** The event subscription that carries them is an
 account-level object outside the Worker's config, so it can be absent, deleted, or pointed at the wrong

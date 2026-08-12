@@ -155,3 +155,89 @@ describe("time bucket (#12)", () => {
     expect(bucketFor(Date.parse("2026-12-31T23:59:59Z"))).toBe("2026-Q4");
   });
 });
+
+/**
+ * A delivery is the unit, not a message (#46, migration 0013).
+ *
+ * The derived key was the Message-ID alone. Email Routing invokes `email()` **once per recipient**, so a
+ * customer who Cc'd two of your addresses produced two invocations with the same Message-ID: the first was
+ * filed, the second returned `already_accepted`, and the second mailbox never received it. It looked
+ * exactly like successful deduplication, which is why nothing caught it — and why nothing can be
+ * backfilled, since the drop left no receipt, no object and no log line.
+ *
+ * §12 invariant 3 — *a message may have many deliveries; access is evaluated per delivery/mailbox* — was
+ * therefore assumed rather than implemented.
+ */
+describe("one message delivered to two mailboxes (#46)", () => {
+  const MESSAGE_ID = "<shared-CAJ999.xyz@mail.example-supplier.com>";
+  let secondMailbox: string;
+
+  beforeAll(async () => {
+    const ctx = createFrozenCtx();
+    secondMailbox = ctx.id("mbx");
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(secondMailbox, orgId, "Billing", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("addr"), orgId, "billing@example.com", secondMailbox, at),
+    ]);
+  });
+
+  it("files both deliveries, each with its own receipt", async () => {
+    const ctx = createFrozenCtx();
+    const first = await acceptInbound(testEnv, ctx, orgId, {
+      providerEventId: MESSAGE_ID,
+      envelopeFrom: "customer@example-supplier.com",
+      envelopeTo: "invoices@example.com",
+      raw: RAW,
+    });
+    const second = await acceptInbound(testEnv, ctx, orgId, {
+      providerEventId: MESSAGE_ID,
+      envelopeFrom: "customer@example-supplier.com",
+      envelopeTo: "billing@example.com",
+      raw: RAW,
+    });
+
+    expect(first.status).toBe("accepted");
+    // This was `already_accepted`, and billing@ received nothing.
+    expect(second.status).toBe("accepted");
+    expect(second.receiptId).not.toBe(first.receiptId);
+  });
+
+  it("gives each delivery its own evidence object, so neither reference can be orphaned by the other", async () => {
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT envelope_to, blob_key FROM ingress_receipts WHERE org_id = ? AND provider_event_id = ? ORDER BY envelope_to",
+    ).bind(orgId, MESSAGE_ID).all<{ envelope_to: string; blob_key: string }>();
+
+    expect(rows.results.map((r) => r.envelope_to)).toEqual(["billing@example.com", "invoices@example.com"]);
+    // Keyed by receipt id, so two receipts cannot share an object — which matters because ADR 32 only
+    // permits collecting an *unreferenced* blob, and a shared key would make one delete strand the other.
+    expect(rows.results[0]!.blob_key).not.toBe(rows.results[1]!.blob_key);
+    // Both readable, and both the original bytes.
+    for (const row of rows.results) {
+      expect(new TextDecoder().decode(await getEvidence(testEnv, row.blob_key)))
+        .toBe(new TextDecoder().decode(RAW));
+    }
+  });
+
+  it("still files a genuine redelivery exactly once, so ADR 9's retry-safety is intact", async () => {
+    const ctx = createFrozenCtx();
+    const again = await acceptInbound(testEnv, ctx, orgId, {
+      providerEventId: MESSAGE_ID,
+      envelopeFrom: "customer@example-supplier.com",
+      // Same Message-ID *and* same recipient — the case the derived key exists for.
+      envelopeTo: "invoices@example.com",
+      raw: RAW,
+    });
+    expect(again.status).toBe("already_accepted");
+
+    const count = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM ingress_receipts WHERE org_id = ? AND provider_event_id = ?",
+    ).bind(orgId, MESSAGE_ID).first<{ n: number }>();
+    // Two deliveries, not three: widening the key stopped different deliveries colliding without letting
+    // the same one file twice.
+    expect(count?.n).toBe(2);
+  });
+});
