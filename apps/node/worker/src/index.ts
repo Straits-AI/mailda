@@ -225,9 +225,27 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const pending = await env.CATALOG.prepare(
         "SELECT COUNT(*) AS n FROM outbox WHERE published_at IS NULL",
       ).first<{ n: number }>().catch(() => null);
+
+      /**
+       * `schema` replaced `layer: 1`, and the reason is the point rather than tidiness.
+       *
+       * `layer` was a hardcoded literal describing how far up the AGENTS.md ladder the *codebase* had got.
+       * It went stale the day Layer 2 shipped and stayed wrong through Layer 3, because nothing anywhere
+       * could notice: it was a claim about a repository, asserted by a Node that has no way to check it.
+       * Exactly the landmine shape — correct once, silently wrong afterwards, with no mechanism to fire.
+       *
+       * This is a **fact this Node can verify about itself**: the newest migration its own database has
+       * applied. It cannot go stale, because it is read rather than declared, and it answers the question an
+       * operator actually asks when something is wrong — "is this Node's schema current?" — which the layer
+       * number never did.
+       */
+      const schema = await env.CATALOG.prepare(
+        "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1",
+      ).first<{ name: string }>().catch(() => null);
+
       return Response.json({
         node: "mailda",
-        layer: 1,
+        schema: schema?.name ?? null,
         claimed: claimed?.org_id != null,
         outboxPending: pending?.n ?? 0,
         at: new Date(clock.now()).toISOString(),

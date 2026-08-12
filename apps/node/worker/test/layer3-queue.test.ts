@@ -7,6 +7,10 @@ import { claim, close, queueFor, release, steal } from "../src/cases.ts";
 import { grant, isAdmin, revoke } from "../src/access.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { CallerError } from "../src/errors.ts";
+import { statementsOf } from "../src/sql-statements.ts";
+// Imported as text, the way migrate.ts does — workerd has no filesystem, and this also means the test
+// exercises the same bytes the migration runner will.
+import BACKFILL from "../migrations/0016_backfill_conversations_and_cases.sql";
 
 /**
  * Layer 3's proof line: **two people work one queue without colliding.**
@@ -306,5 +310,117 @@ describe("access administration (#39)", () => {
         subjectId: OUTSIDER, relation: "org.admin", objectId: ORG,
       }),
     ).rejects.toThrow(CallerError);
+  });
+});
+
+/**
+ * The backfill (migration 0016), tested by exercising the SQL rather than trusting it.
+ *
+ * 0014 wired conversations and cases into *ingress*, so mail that had already arrived was in no queue —
+ * an inbox with messages and a queue with none, which reads as a broken feature rather than a new one.
+ *
+ * The interesting property is grouping: a per-message backfill would give two messages of one thread two
+ * conversations each, which is the thing conversations exist to prevent. So the id derives from the
+ * earliest message sharing the root, not from any one message.
+ */
+describe("backfilling mail that arrived before Layer 3", () => {
+  /** Runs the migration the way `migrate.ts` does — statement by statement. */
+  async function runBackfill() {
+    for (const sql of statementsOf(BACKFILL)) await testEnv.CATALOG.prepare(sql).run();
+  }
+
+  async function anOldMessage(id: string, root: string | null, mailboxes: string[], receivedAt: string) {
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id,
+         thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
+         in_reply_to, thread_root_rfc_id, parse_error, conversation_id)
+       VALUES (?,?, '2026-Q3', ?, 'deadbeef', 4211, ?, ?, ?, 'customer@example.net', ?, ?, ?, ?,
+               NULL, ?, NULL, NULL)`,
+    ).bind(id, ORG, `${ORG}/raw/${id}.eml`, `<${id}@example.net>`, `thr_${id}`,
+      "Container MSKU4471203 held at customs", receivedAt, receivedAt, `rcp_${id}`, receivedAt, root).run();
+    for (const mailboxId of mailboxes) {
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO mailbox_items (id, org_id, mailbox_id, time_bucket, message_id, change_number, flags,
+           sent_at, created_at) VALUES (?,?,?, '2026-Q3', ?, 0, 0, ?, ?)`,
+      ).bind(`mbi_${id}_${mailboxId}`, ORG, mailboxId, id, receivedAt, receivedAt).run();
+    }
+  }
+
+  it("groups two messages of one thread into one conversation, not one each", async () => {
+    const root = "<original@example.net>";
+    await anOldMessage("msg_old_a", root, [MAILBOX], "2026-08-01T09:00:00.000Z");
+    await anOldMessage("msg_old_b", root, [MAILBOX], "2026-08-01T11:00:00.000Z");
+    await runBackfill();
+
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT DISTINCT conversation_id FROM messages WHERE id IN ('msg_old_a','msg_old_b')",
+    ).all<{ conversation_id: string }>();
+    // One conversation. A per-message backfill would produce two, which is exactly what grouping exists
+    // to prevent and what the deterministic-id-from-MIN(id) trick avoids.
+    expect(rows.results).toHaveLength(1);
+    expect(rows.results[0]!.conversation_id).not.toBeNull();
+  });
+
+  it("opens one case per mailbox the message was delivered to, unclaimed", async () => {
+    await anOldMessage("msg_old_c", "<two@example.net>", [MAILBOX, OTHER_MAILBOX], "2026-08-02T09:00:00.000Z");
+    await runBackfill();
+
+    const cases = await testEnv.CATALOG.prepare(
+      `SELECT c.mailbox_id, c.state, c.assignee, c.created_at FROM cases c
+        JOIN messages m ON m.conversation_id = c.conversation_id
+       WHERE m.id = 'msg_old_c' ORDER BY c.mailbox_id`,
+    ).all<{ mailbox_id: string; state: string; assignee: string | null; created_at: string }>();
+
+    expect(cases.results.map((c) => c.mailbox_id)).toEqual([OTHER_MAILBOX, MAILBOX]);
+    for (const row of cases.results) {
+      // `open` and unclaimed is the only honest state: `claimed` invents a holder and `closed` declares
+      // work finished on the strength of it being old.
+      expect(row.state).toBe("open");
+      expect(row.assignee).toBeNull();
+      // Dated from the mail, not from the migration — the queue orders by this, and stamping everything
+      // with the migration's timestamp would present all history as arriving at once.
+      expect(row.created_at).toBe("2026-08-02T09:00:00.000Z");
+    }
+  });
+
+  it("gives a message with no readable root its own conversation", async () => {
+    await anOldMessage("msg_old_d", null, [MAILBOX], "2026-08-03T09:00:00.000Z");
+    await anOldMessage("msg_old_e", null, [MAILBOX], "2026-08-03T10:00:00.000Z");
+    await runBackfill();
+
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT conversation_id FROM messages WHERE id IN ('msg_old_d','msg_old_e')",
+    ).all<{ conversation_id: string }>();
+    // Two, not one: a NULL root joins nothing, and the backfill inherits the live rule rather than being
+    // allowed a looser one. Grouping them because they happen to share a subject is the guess this refuses.
+    expect(new Set(rows.results.map((r) => r.conversation_id)).size).toBe(2);
+  });
+
+  it("is a no-op when run twice", async () => {
+    await anOldMessage("msg_old_f", "<three@example.net>", [MAILBOX], "2026-08-04T09:00:00.000Z");
+    await runBackfill();
+    const first = await testEnv.CATALOG.prepare(
+      "SELECT (SELECT COUNT(*) FROM conversations) AS c, (SELECT COUNT(*) FROM cases) AS k",
+    ).first<{ c: number; k: number }>();
+    await runBackfill();
+    const second = await testEnv.CATALOG.prepare(
+      "SELECT (SELECT COUNT(*) FROM conversations) AS c, (SELECT COUNT(*) FROM cases) AS k",
+    ).first<{ c: number; k: number }>();
+    // A migration must be idempotent under retry, and this one may also run after some cases exist.
+    expect(second).toEqual(first);
+  });
+
+  it("leaves mail that already has a conversation alone", async () => {
+    const ctx = createSystemCtx();
+    const existing = await conversationForDelivery(testEnv, ctx, ORG, "<already@example.net>");
+    await anOldMessage("msg_old_g", "<already@example.net>", [MAILBOX], "2026-08-05T09:00:00.000Z");
+    await testEnv.CATALOG.prepare("UPDATE messages SET conversation_id = ? WHERE id = 'msg_old_g'")
+      .bind(existing).run();
+    await runBackfill();
+
+    const row = await testEnv.CATALOG.prepare("SELECT conversation_id FROM messages WHERE id = 'msg_old_g'")
+      .first<{ conversation_id: string }>();
+    // Guarded by `conversation_id IS NULL`, so the backfill cannot repoint mail the live path already filed.
+    expect(row?.conversation_id).toBe(existing);
   });
 });
