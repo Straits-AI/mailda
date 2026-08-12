@@ -9,7 +9,9 @@ import { migrate } from "./migrate.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
-import { listMessages, authorize, mayRead, maySend, principalFor, readableSubjects } from "./authz-read.ts";
+import {
+  listMessages, authorize, mailboxesWithRelation, mayRead, maySend, principalFor, readableSubjects,
+} from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
@@ -546,7 +548,19 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/sends/dispatch" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
-      return Response.json({ dispatched: await dispatchDue(env, clock, who.orgId) });
+      // Bounded to the mailboxes this caller may send as. Org-wide was wrong on two counts: the result
+      // names every manifest it touched, and a held send past its release_at is still cancellable — so
+      // forcing the sweep ended other people's chance to stop their own mail. `send.propose` rather than
+      // `mailbox.content.read`, matching cancel: releasing a send is an outbound act.
+      //
+      // The sweeper alarm still sweeps everything, because it is the Node acting for itself with no
+      // principal to bound it. This endpoint exists only so an operator need not wait for that alarm.
+      const dispatchable = await mailboxesWithRelation(
+        env, { orgId: who.orgId, userId: who.userId }, "send.propose",
+      );
+      return Response.json({
+        dispatched: await dispatchDue(env, clock, who.orgId, cloudflareTransport, 20, dispatchable),
+      });
     }
 
     if (url.pathname === "/api/claim" && request.method === "POST") {

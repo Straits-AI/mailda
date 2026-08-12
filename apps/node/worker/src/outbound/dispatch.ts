@@ -121,15 +121,34 @@ export async function dispatchDue(
   orgId: string,
   transport: TransportAdapter = cloudflareTransport,
   limit = 20,
+  /**
+   * Restricts the sweep to these mailboxes. **Undefined means every mailbox in the organization**, which
+   * is what the sweeper needs and what a request must never get by default.
+   *
+   * The distinction exists because there are two callers with different standing. `OutboxSweeper`'s alarm
+   * has no principal — it is the Node acting on its own behalf, and a send it skipped would simply never
+   * leave. `POST /api/sends/dispatch` has a principal, and org-wide was wrong there for a reason sharper
+   * than disclosure: a held send past its `release_at` is *still* `held`, so it is still cancellable, and
+   * forcing it out ends somebody else's window to stop their own mail.
+   *
+   * An empty array is not the same as undefined and is honoured as "nothing" — a caller who holds no
+   * mailbox dispatches nothing, and that must not silently widen to everything.
+   */
+  mailboxIds?: readonly string[],
 ): Promise<DispatchResult[]> {
   const now = new Date(ctx.now()).toISOString();
 
+  if (mailboxIds !== undefined && mailboxIds.length === 0) return [];
+  const restriction = mailboxIds === undefined
+    ? ""
+    : ` AND mailbox_id IN (${mailboxIds.map(() => "?").join(", ")})`;
+
   const due = await env.CATALOG.prepare(
     `SELECT id FROM send_manifests
-      WHERE org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')
+      WHERE org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')${restriction}
       ORDER BY release_at LIMIT ?`,
   )
-    .bind(orgId, now, limit)
+    .bind(orgId, now, ...(mailboxIds ?? []), limit)
     .all<{ id: string }>();
 
   const results: DispatchResult[] = [];

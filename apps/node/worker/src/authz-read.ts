@@ -103,6 +103,30 @@ export async function readableSubjects(env: Env, who: Principal): Promise<string
   return [who.userId, ...teams.results.map((row) => row.team_id)];
 }
 
+/**
+ * Every mailbox on which this principal holds `relation`.
+ *
+ * The set form of `hasRelation`, for the paths that act on many mailboxes at once rather than checking one.
+ * Same subjects, same tuple shape, so a sweep bounded by this and a check made by `hasRelation` cannot
+ * disagree about what somebody holds.
+ */
+export async function mailboxesWithRelation(
+  env: Env,
+  who: Principal,
+  relation: string,
+): Promise<string[]> {
+  const subjects = await readableSubjects(env, who);
+  const placeholders = subjects.map(() => "?").join(", ");
+  const { results } = await env.CATALOG.prepare(
+    `SELECT DISTINCT object_id FROM relationship_tuples
+      WHERE org_id = ? AND subject_id IN (${placeholders})
+        AND object_type = 'mailbox' AND relation = ?`,
+  )
+    .bind(who.orgId, ...subjects, relation)
+    .all<{ object_id: string }>();
+  return results.map((row) => row.object_id);
+}
+
 export async function mayRead(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
   return hasRelation(env, who, "mailbox.content.read", mailboxId);
 }

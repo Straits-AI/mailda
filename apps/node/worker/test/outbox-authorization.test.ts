@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { sealManifest } from "../src/outbound/manifest.ts";
+import { dispatchDue } from "../src/outbound/dispatch.ts";
 import { login } from "../src/auth/session.ts";
 import { hashPassword } from "../src/auth/password.ts";
 
@@ -156,5 +157,58 @@ describe("cancelling is bounded by send.propose (#45)", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ cancelled: true });
+  });
+});
+
+describe("dispatching is bounded by send.propose (#45)", () => {
+  /** Past its hold window, so it is due — and still `held`, so still cancellable. */
+  async function makeDue() {
+    await testEnv.CATALOG.prepare("UPDATE send_manifests SET release_at = ? WHERE id = ?")
+      .bind("2020-01-01T00:00:00.000Z", manifestId)
+      .run();
+  }
+
+  it("dispatches nothing for a member who holds no mailbox, and says nothing about what exists", async () => {
+    await makeDue();
+    const response = await SELF.fetch(
+      "https://node/api/sends/dispatch",
+      { method: "POST", ...as(await sessionFor(STRANGER)) },
+    );
+    expect(response.status).toBe(200);
+    // Empty, and indistinguishable from "nothing was due" — the result named every manifest it touched,
+    // so org-wide leaked ids and states across mailboxes as well as acting on them.
+    expect(await response.json()).toEqual({ dispatched: [] });
+  });
+
+  it("leaves the send held, so its owner keeps the chance to stop it", async () => {
+    await makeDue();
+    await SELF.fetch("https://node/api/sends/dispatch", { method: "POST", ...as(await sessionFor(STRANGER)) });
+
+    // The assertion that matters. A held send past its release_at is still cancellable; forcing the sweep
+    // would have ended that window on behalf of somebody with no relation to the mailbox.
+    const row = await testEnv.CATALOG.prepare("SELECT state FROM send_manifests WHERE id = ?")
+      .bind(manifestId).first<{ state: string }>();
+    expect(row?.state).toBe("held");
+  });
+
+  it("still sweeps everything for the sweeper, which has no principal to bound it", async () => {
+    await makeDue();
+    // `mailboxIds` undefined — the OutboxSweeper alarm's call. A send it skipped would never leave at all,
+    // so the unbounded form has to keep working.
+    const swept = await dispatchDue(
+      testEnv, createSystemCtx(), ORG,
+      { name: "fake", async capability() {
+          return { canSend: true, arbitraryRecipients: true, verifiedAt: null, detail: "fake" };
+        }, async submit() { return { kind: "handed_over", transportMessageId: "<swept@acme.example>" }; } },
+    );
+    expect(swept.map((r) => r.manifestId)).toContain(manifestId);
+  });
+
+  it("treats an empty mailbox list as nothing, never as everything", async () => {
+    await makeDue();
+    // The dangerous default: if [] widened to "no restriction", a caller holding nothing would sweep the
+    // whole organization — the exact bug, reintroduced by a falsy check.
+    const swept = await dispatchDue(testEnv, createSystemCtx(), ORG, undefined, 20, []);
+    expect(swept).toEqual([]);
   });
 });
