@@ -70,6 +70,22 @@
   // `wrangler dev` into unresponsiveness before this was pinned down.
   "build": { "command": "node scripts/build-client.mjs", "watch_dir": "src" },
 
+  // The first-response clock's sweep (#41). One minute is cron's documented floor — the Minute field accepts
+  // 0-59 and there is no sub-minute expression — so a breach is noticed within a minute plus an unmeasured
+  // dispatch skew, which is nothing for a clock whose targets are stated in minutes or hours.
+  //
+  // Chosen over a Durable Object alarm because a DO clock's continued existence depends on its last run
+  // having re-armed: stop re-arming and nothing external notices, ever. A cron schedule is not derived from
+  // its last run. The cost is that cron documents no retry at all, which is only acceptable because the
+  // sweep is a scan over due rows — see `response-clock.ts`.
+  //
+  // Carries no account-specific value, and needs no provisioning: `triggers.crons` lives entirely here, so
+  // unlike Queues there is no producer-binding workaround for a customer's install to trip over.
+  //
+  // Changes take up to 15 minutes to propagate, so a freshly installed Node notices no breaches for that
+  // long. `doctor` should report the capability rather than let silence read as "nothing is late".
+  "triggers": { "crons": ["*/1 * * * *"] },
+
   "env": {
     // The environment the test suite runs in. It exists only because named environments do not
     // inherit bindings, and wrangler warns when the top level declares something this environment

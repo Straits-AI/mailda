@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch, log } from "../audit.ts";
+import { stopClockForConversation } from "../response-clock.ts";
 import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
@@ -535,6 +536,27 @@ async function applyOutcome(
           "UPDATE send_manifests SET state = 'outcome_unknown', state_at = ?, last_error = ? WHERE id = ?",
         ).bind(at, outcome.reason, manifestId),
       );
+  }
+
+  // Hand-over stops the first-response clock, and only hand-over: a sealed send sits in the hold window and
+  // can still be cancelled, so treating sealing as the answer would record a response that never left. Same
+  // distinction ADR 39 draws between `handed_over` and anything more optimistic, applied to a clock.
+  //
+  // Outside the batch deliberately. A failure to stop a clock must not roll back a hand-over that has already
+  // happened — the bytes are gone, and the state that records them leaving is the more important write. The
+  // consequence is a clock that may be recorded as breached despite an answer having left, which the next
+  // reply or a person can correct; the reverse — an unrecorded hand-over — cannot be corrected at all.
+  if (state === "handed_over") {
+    const conversation = await env.CATALOG.prepare(
+      `SELECT m.conversation_id FROM send_manifests s
+        LEFT JOIN messages m ON m.rfc_message_id = s.in_reply_to_message_id AND m.org_id = s.org_id
+       WHERE s.id = ? AND s.org_id = ? LIMIT 1`,
+    ).bind(manifestId, orgId).first<{ conversation_id: string | null }>();
+    if (conversation?.conversation_id != null) {
+      await stopClockForConversation(env, orgId, conversation.conversation_id, at)
+        // Logged, not thrown: see above. A clock is worth less than the record of the send.
+        .catch(() => 0);
+    }
   }
 
   // Recorded for every terminal state, not only failures. "Nothing went wrong" is a fact an audit has

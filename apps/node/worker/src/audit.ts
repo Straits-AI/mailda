@@ -63,6 +63,9 @@ export const AUDIT_ACTIONS = {
    * somebody could be asked about. Frequency and answerability, not importance.
    */
   "case.claim_taken": { says: "One person took a claimed case from another; both are named." },
+  "conversation.merged": {
+    says: "A person decided two conversations were one thing; both ids and every mailbox are named.",
+  },
   "access.granted": { says: "A relation was granted to somebody, by an administrator." },
   "access.revoked": { says: "A relation was withdrawn; §7 makes it effective on the next request." },
   "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },

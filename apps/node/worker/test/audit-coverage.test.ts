@@ -68,12 +68,11 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     actions: ["case.claim_taken"],
   },
   conversations: {
-    exempt:
-      "Grouping, derived from the sender's root by a rule with no discretion in it — the same root produces " +
-      "the same conversation whoever is looking, and nobody performs it. The acts that *are* discretionary " +
-      "are merging (a person deciding two threads are one, which will be audited as conversation.merged " +
-      "when #43 is built) and everything done to the case, which has its own entry. An audit of automatic " +
-      "grouping would record that arithmetic happened.",
+    // The exemption anticipated exactly this and named it: automatic grouping is arithmetic and stays
+    // unaudited, while **merging** is a person deciding two threads are one thing. That act now exists, so
+    // the table moves from exempt to audited — and the boundary is unchanged, which is the point. A row
+    // created by the root-match rule produces no entry; a row a person merged away produces one.
+    actions: ["conversation.merged"],
   },
   relationship_tuples: {
     // Was exempt for "no mutation path exists yet". This is that path (#39).

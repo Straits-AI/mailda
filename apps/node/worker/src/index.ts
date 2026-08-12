@@ -15,6 +15,8 @@ import {
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
+import { mergeConversations } from "./merge.ts";
+import { sweepResponseClocks } from "./response-clock.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
 import {
@@ -80,6 +82,45 @@ export default {
         message.retry();
       }
     }
+  },
+
+  /**
+   * The cron sweep (#41). One job today: recording first-response breaches.
+   *
+   * Deliberately thin, and deliberately a *scan*. Cron documents no retry, so anything here has to be
+   * repaired by the next minute's run rather than depending on this one — which a query over due rows is and
+   * a cursor would not be.
+   *
+   * Errors are logged rather than thrown. A throw here reaches Cloudflare's scheduled-event machinery, which
+   * has no retry to offer and no operator watching it; the log is inside the product where `doctor` can see
+   * it, and the next minute tries again regardless.
+   */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const clock = createSystemCtx();
+    ctx.waitUntil((async () => {
+      try {
+        const orgId = await claimedOrg(env);
+        // An unclaimed Node has no cases and nothing to sweep. Not an error, and not worth a log line every
+        // minute for the lifetime of an uninstalled Node.
+        if (orgId === null) return;
+        const outcome = await sweepResponseClocks(env, clock, orgId);
+        if (outcome.breached.length > 0) {
+          await log(env, clock, {
+            level: "warn",
+            event: "sla.first_response_breached",
+            message: `${outcome.breached.length} case(s) passed their first-response time unanswered.`,
+            orgId,
+            detail: { cases: outcome.breached.slice(0, 20) },
+          });
+        }
+      } catch (error) {
+        await log(env, clock, {
+          level: "error",
+          event: "sla.sweep_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+        }).catch(() => undefined);
+      }
+    })());
   },
 
   /** Cloudflare Email Routing invokes this with a real message (§13). */
@@ -451,6 +492,19 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         : await close(env, clock, who.orgId, who.userId, caseId);
       const ok = "released" in outcome ? outcome.released : outcome.closed;
       return Response.json(outcome, { status: ok ? 200 : 409 });
+    }
+
+    if (url.pathname === "/api/conversations/merge" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const outcome = await mergeConversations(
+        env, clock, who.orgId, who.userId,
+        String(body.from ?? ""), String(body.into ?? ""),
+      );
+      // A refusal is 409, not 400: the request was well-formed and the *state* did not permit it, which is
+      // the distinction `errors.ts` already draws. The reason names what to resolve.
+      return Response.json(outcome, { status: outcome.merged ? 200 : 409 });
     }
 
     if (url.pathname === "/api/access" && request.method === "POST") {

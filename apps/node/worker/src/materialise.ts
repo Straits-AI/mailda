@@ -3,6 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { getEvidence } from "./evidence-store.ts";
 import { conversationForDelivery } from "./conversations.ts";
 import { caseForDelivery } from "./cases.ts";
+import { clockOnInbound } from "./response-clock.ts";
 import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
 import { log } from "./audit.ts";
@@ -154,6 +155,21 @@ export async function materialiseReceipt(
     // deliveries racing file one case — the constraint is the concurrency control (#9's shape).
     caseForDelivery(env, ctx, receipt.org_id, conversationId, receipt.mailbox_id, at),
   ]);
+
+  // The clock starts *after* the case exists, because it updates it. Not in the batch above: the case is
+  // created with `INSERT OR IGNORE`, so its row id is not knowable here, and the clock is keyed on
+  // (conversation, mailbox) instead.
+  //
+  // A mailbox with no `first_response_minutes` leaves the clock NULL and the case never enters the sweep —
+  // which is the shipped state, because a default would be this Node inventing a promise nobody made.
+  const caseRow = await env.CATALOG.prepare(
+    "SELECT id FROM cases WHERE org_id = ? AND conversation_id = ? AND mailbox_id = ? LIMIT 1",
+  ).bind(receipt.org_id, conversationId, receipt.mailbox_id).first<{ id: string }>();
+  if (caseRow !== null) {
+    // `received_at`, not now: the clock measures how long the *customer* has waited, and that started when
+    // their message arrived rather than when this Node got round to parsing it.
+    await clockOnInbound(env, receipt.org_id, caseRow.id, receipt.accepted_at).run();
+  }
 
   // A delivery report that arrived as ordinary inbound mail is recorded where the queue's own events go,
   // so the outbox stays the single account of delivery. Without this a reader sees a bounce notice in the
