@@ -2,7 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
 
-import { useDoctor, useMessages, useSends } from "./api.ts";
+import { useDoctor, useMailboxes, useMessages, useSends } from "./api.ts";
 
 /**
  * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
@@ -122,6 +122,7 @@ export function InstrumentBar() {
  */
 export function Rail() {
   const messages = useMessages();
+  const mailboxes = useMailboxes();
   const sends = useSends();
   const state = useRouterState();
   const path = state.location.pathname;
@@ -148,6 +149,35 @@ export function Rail() {
             {messages.isSuccess ? <span className="mono num">{messages.data.messages.length}</span> : null}
           </Link>
         </li>
+        {/*
+          The queues, one row per mailbox, with the count of **unclaimed** work.
+
+          This is what the rail was chosen over route tabs for, and it carried one hardcoded row from the day
+          it shipped until now, because nothing could tell it which mailboxes existed. The number is
+          unclaimed rather than total on purpose: a queue's depth is the work nobody has taken, and counting
+          claimed cases alongside it would make a busy queue look like a backlog.
+        */}
+        {mailboxes.isSuccess && mailboxes.data.mailboxes.length > 0 ? (
+          <li className="rail-queues">
+            <Link to="/queue" className="rail-row" activeProps={{ className: "rail-row current" }}>
+              <span className="rail-name">Queue</span>
+              <span className="mono num">
+                {mailboxes.data.mailboxes.reduce((total, box) => total + box.unclaimed, 0)}
+              </span>
+            </Link>
+            <ul className="rail-sublist">
+              {mailboxes.data.mailboxes.map((box) => (
+                <li key={box.id} className="rail-subrow">
+                  <span className="rail-name dim">{box.name}</span>
+                  <span className="mono num dim" title={`${box.unclaimed} unclaimed, ${box.claimed} in progress, ${box.mine} yours`}>
+                    {box.unclaimed}
+                    {box.mine > 0 ? <span className="rail-mine"> · {box.mine} yours</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ) : null}
         {unparsed > 0 ? (
           <li className="rail-note">
             <span className="state state-outcome_unknown">{unparsed} unparsed</span>

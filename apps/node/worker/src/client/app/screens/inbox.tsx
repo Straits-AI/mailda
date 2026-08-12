@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch } from "/app/session.js";
 
 import { Nothing } from "../chrome.tsx";
-import { type MessageRow, useMessages } from "../api.ts";
+import { type MessageRow, claimCase, stealCase, useMessages } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
 /**
@@ -148,6 +148,37 @@ export function Inbox() {
   const messages = useMessages();
   const [selected, setSelected] = useState<string | null>(null);
   const [composing, setComposing] = useState<ComposerContext | null>(null);
+  /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
+  const [blocked, setBlocked] = useState<{ message: string; caseId: string } | null>(null);
+  const queryClient = useQueryClient();
+
+  /**
+   * Reply claims the case and opens the composer **in one act** (#42).
+   *
+   * The guarantee lives in the compare-and-swap, not in a separate gesture, so this is what the reply button
+   * does rather than a step before it. Losing the race means the composer does not open and the reader is
+   * told who holds the case — with the option to take it, which is audited.
+   */
+  async function reply(message: MessageRow, steal = false) {
+    setBlocked(null);
+    if (message.case_id === null) {
+      // Honest rather than silent: mail with no case cannot be claimed, so composing would produce a reply
+      // nobody holds and the collision mechanism would not apply to it.
+      setBlocked({
+        message: "This message has no case yet, so it cannot be claimed. It predates the queue.",
+        caseId: "",
+      });
+      return;
+    }
+    const outcome = steal ? await stealCase(message.case_id) : await claimCase(message.case_id);
+    await queryClient.invalidateQueries({ queryKey: ["messages"] });
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    if (outcome.ok) {
+      setComposing(replyContext(message, message.mailbox_id));
+      return;
+    }
+    setBlocked({ message: outcome.message, caseId: message.case_id });
+  }
 
   // The heading is rendered before any of the states below, and that ordering is the fix rather than a
   // style: with it inside the branches, a loading or empty inbox was a screen with no level-one heading —
@@ -223,8 +254,22 @@ export function Inbox() {
           message={current}
           // From is the mailbox (ADR 36), so composing needs to know which one. It is read off the message
           // being replied to rather than guessed: that address is routed to exactly one mailbox.
-          onReply={() => setComposing(replyContext(current, current.mailbox_id))}
+          onReply={() => void reply(current)}
         />
+      )}
+      {blocked === null ? null : (
+        <p className="notice bad" role="alert">
+          {blocked.message}
+          {blocked.caseId === "" || current === null ? null : (
+            <>
+              {" "}
+              {/* Available to any colleague and audited — the escape hatch the absent timeout depends on. */}
+              <button type="button" className="linkish" onClick={() => void reply(current, true)}>
+                take it anyway
+              </button>
+            </>
+          )}
+        </p>
       )}
       {composing === null ? null : (
         <Composer context={composing} onClose={() => setComposing(null)} />

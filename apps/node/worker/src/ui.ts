@@ -734,6 +734,50 @@ body.shell main#app {
 /* nowrap, not a smarter wrap. overflow-wrap: anywhere still split "billing@example.com" across lines,
    which reads as two addresses. The table has a floor and the ledger scrolls. */
 .ledger td.mono { word-break: normal; overflow-wrap: normal; white-space: nowrap; }
+/* ---- the shared queue (Layer 3) ----------------------------------------------------------- */
+
+/* Three claim states, and colour is NOT what distinguishes them.
+
+   contrast-tokens.md proves exactly one token, --dim. --signal, --alarm and --live have never been
+   measured, so Blueprint 5C/5D's rule that colour must not be the only channel is doing real work here
+   rather than being satisfied incidentally: every row states its state in a word, and the two claimed
+   states differ in weight and in a left marker as well as in hue. */
+.case-unclaimed { border-color: var(--rule-strong); color: var(--text); }
+.case-yours     { border-color: var(--live);   color: var(--live); }
+.case-held      { border-color: var(--signal); color: var(--signal); }
+
+.case-row td { vertical-align: baseline; }
+/* A marker, not a fill: a tinted row would put the state in colour alone. */
+.case-row.mine td:first-child   { box-shadow: inset 2px 0 0 var(--live); }
+.case-row.theirs td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
+.case-subject { font-size: .95rem; }
+.case-count { font-size: .68rem; }
+.case-actions { white-space: nowrap; }
+.case-actions button + button { margin-left: .75rem; }
+
+.queue-picker { display: inline-flex; align-items: baseline; gap: .5rem; margin-left: auto; }
+.queue-picker span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
+.queue-picker select {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: .78rem;
+  background: var(--ground-2);
+  color: var(--text);
+  border: 1px solid var(--rule-strong);
+  padding: .2rem .4rem;
+}
+
+/* Per-mailbox depths under the Queue row. Indented rather than bulleted, so the rail stays a rail. */
+.rail-sublist { list-style: none; margin: 0; padding: 0 0 .3rem 0; }
+.rail-subrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .16rem 1rem .16rem 1.9rem;
+  font-size: .8rem;
+}
+.rail-mine { color: var(--live); }
 </style>
 </head>
 <body>

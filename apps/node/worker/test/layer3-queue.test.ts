@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
-import { claim, close, queueFor, release, steal } from "../src/cases.ts";
+import { claim, close, mailboxQueues, queueFor, release, steal } from "../src/cases.ts";
 import { grant, isAdmin, revoke } from "../src/access.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { CallerError } from "../src/errors.ts";
@@ -422,5 +422,57 @@ describe("backfilling mail that arrived before Layer 3", () => {
       .first<{ conversation_id: string }>();
     // Guarded by `conversation_id IS NULL`, so the backfill cannot repoint mail the live path already filed.
     expect(row?.conversation_id).toBe(existing);
+  });
+});
+
+describe("the rail's per-mailbox depths (#42)", () => {
+  it("lists only mailboxes this person may work, with unclaimed, in-progress and mine split", async () => {
+    const a = await aCase(MAILBOX, "<rail-a@example.net>");
+    await aCase(MAILBOX, "<rail-b@example.net>");
+    await aCase(OTHER_MAILBOX, "<rail-c@example.net>");
+    await claim(testEnv, atTime(7_000_000_000_000), ORG, ANA, a);
+
+    const queues = await mailboxQueues(testEnv, ORG, ANA);
+    // Billing is absent, not shown at zero: Ana holds no send.propose on it, and a count is a disclosure
+    // Blueprint:358 gates before returning.
+    expect(queues.map((q) => q.id)).toEqual([MAILBOX]);
+    // Unclaimed is the queue's depth — the work nobody has taken. Counting claimed cases alongside it would
+    // make a busy queue look like a backlog.
+    expect(queues[0]).toMatchObject({ unclaimed: 1, claimed: 1, mine: 1 });
+  });
+
+  it("counts `mine` per person, so two people see different numbers for one queue", async () => {
+    const a = await aCase(MAILBOX, "<rail-d@example.net>");
+    await claim(testEnv, atTime(7_100_000_000_000), ORG, ANA, a);
+
+    const forAna = await mailboxQueues(testEnv, ORG, ANA);
+    const forBo = await mailboxQueues(testEnv, ORG, BO);
+    expect(forAna[0]!.mine).toBe(1);
+    // Same case, same queue: in progress for both, held by only one of them.
+    expect(forBo[0]!.mine).toBe(0);
+    expect(forBo[0]!.claimed).toBe(1);
+  });
+
+  it("shows nothing at all to somebody who may work no mailbox", async () => {
+    await aCase(MAILBOX, "<rail-e@example.net>");
+    expect(await mailboxQueues(testEnv, ORG, OUTSIDER)).toEqual([]);
+  });
+
+  it("names the holder as a person, not an identifier", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO users (id, org_id, email, created_at, password_hash, password_iterations,
+         password_updated_at) VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ANA, ORG, "ana@acme.example", new Date(ctx.now()).toISOString(), "x", 1,
+      new Date(ctx.now()).toISOString()).run();
+
+    const caseId = await aCase(MAILBOX, "<rail-f@example.net>");
+    await claim(testEnv, atTime(7_200_000_000_000), ORG, ANA, caseId);
+
+    const queue = await queueFor(testEnv, ORG, BO, MAILBOX);
+    const row = queue.find((c) => c.id === caseId);
+    // The first version returned the assignee alone and the queue rendered `usr_01KZ…` in the "held by"
+    // column. Somebody deciding whether to take a case cannot weigh that — caught by looking at it.
+    expect(row?.assignee_email).toBe("ana@acme.example");
   });
 });

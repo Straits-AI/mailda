@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
-import { maySend } from "./authz-read.ts";
+import { maySend, readableSubjects } from "./authz-read.ts";
 
 /**
  * The case: the unit of work somebody claims, and the claim protocol around it.
@@ -249,6 +249,15 @@ export interface QueueEntry extends CaseRow {
   subject: string | null;
   from_addr: string | null;
   message_count: number;
+  /**
+   * Who holds it, as a person rather than an identifier.
+   *
+   * The first version returned `assignee` alone and the queue rendered `usr_01KZ…` in the "held by" column.
+   * Somebody deciding whether to take a case cannot weigh that. Disclosing a colleague's address to another
+   * member of the same queue is not a §5C question — they already share the mailbox — but it *is* a
+   * disclosure, which is why it is bounded to the queue's own members by the check above.
+   */
+  assignee_email: string | null;
 }
 
 /**
@@ -281,12 +290,68 @@ export async function queueFor(
               WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id
               ORDER BY m.sent_at DESC LIMIT 1) AS from_addr,
             (SELECT COUNT(*) FROM messages m
-              WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id) AS message_count
+              WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id) AS message_count,
+            (SELECT u.email FROM users u WHERE u.id = c.assignee) AS assignee_email
        FROM cases c
       WHERE c.org_id = ? AND c.mailbox_id = ? AND c.state != 'closed'
       ORDER BY CASE WHEN c.assignee IS NULL THEN 0 ELSE 1 END, c.created_at`,
   )
     .bind(orgId, mailboxId)
     .all<QueueEntry>();
+  return results;
+}
+
+export interface MailboxQueue {
+  id: string;
+  name: string;
+  /** Unclaimed, open cases — the number the rail exists to carry. */
+  unclaimed: number;
+  /** Claimed by anybody, including the caller. Distinguished because "in progress" is not "waiting". */
+  claimed: number;
+  /** Claimed by the caller. What "am I holding anything here" needs, without a second request. */
+  mine: number;
+}
+
+/**
+ * The mailboxes this person may work, with their queue depths.
+ *
+ * The rail was chosen over route tabs on exactly this: a persistent list of mailboxes carrying per-item
+ * counts. It has carried one hardcoded row since it was built, because nothing could tell it what mailboxes
+ * exist — this is that.
+ *
+ * Bounded by `send.propose`, matching `queueFor`: the rail lists queues you can *work*, and a count of
+ * unclaimed work in a mailbox you cannot claim from would be an invitation to nothing. A mailbox somebody
+ * can only read is absent rather than shown at zero, because §5C makes "no such queue" and "a queue you may
+ * not work" answer alike, and a zero is a count — which Blueprint:358 gates before returning.
+ *
+ * One query, not one per mailbox. The counts are correlated subqueries over `cas_queue`, so the rail costs a
+ * single round trip however many mailboxes a person holds.
+ */
+export async function mailboxQueues(env: Env, orgId: string, userId: string): Promise<MailboxQueue[]> {
+  const subjects = await readableSubjects(env, { orgId, userId });
+  const placeholders = subjects.map(() => "?").join(", ");
+
+  const { results } = await env.CATALOG.prepare(
+    `SELECT m.id, m.name,
+            (SELECT COUNT(*) FROM cases c
+              WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
+                AND c.state = 'open' AND c.assignee IS NULL) AS unclaimed,
+            (SELECT COUNT(*) FROM cases c
+              WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
+                AND c.state = 'claimed') AS claimed,
+            (SELECT COUNT(*) FROM cases c
+              WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
+                AND c.assignee = ?) AS mine
+       FROM mailboxes m
+      WHERE m.org_id = ?
+        AND m.id IN (
+          SELECT object_id FROM relationship_tuples
+           WHERE org_id = ? AND subject_id IN (${placeholders})
+             AND object_type = 'mailbox' AND relation = 'send.propose'
+        )
+      ORDER BY m.name`,
+  )
+    .bind(userId, orgId, orgId, ...subjects)
+    .all<MailboxQueue>();
   return results;
 }

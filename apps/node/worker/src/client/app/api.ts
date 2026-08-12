@@ -60,6 +60,14 @@ export interface MessageRow {
   raw_bytes: number;
   accepted_at: string;
   parse_error: string | null;
+  conversation_id: string | null;
+  /**
+   * The case for this delivery's own mailbox, so replying can claim in one act.
+   *
+   * Null for mail that predates a conversation, or if the backfill has not run — in which case the reply
+   * button has nothing to claim and says so rather than composing a reply nobody holds.
+   */
+  case_id: string | null;
 }
 
 export interface RecipientRow {
@@ -208,3 +216,86 @@ export function useDoctor(): UseQueryResult<DoctorReport, Error> {
     refetchInterval: 120_000,
   });
 }
+
+/* ------------------------------------------------------------------ Layer 3: queues and cases ------ */
+
+export interface MailboxQueue {
+  id: string;
+  name: string;
+  unclaimed: number;
+  claimed: number;
+  mine: number;
+}
+
+export interface CaseRow {
+  id: string;
+  conversation_id: string;
+  mailbox_id: string;
+  state: "open" | "claimed" | "closed";
+  state_at: string;
+  assignee: string | null;
+  claimed_at: string | null;
+  created_at: string;
+  subject: string | null;
+  from_addr: string | null;
+  message_count: number;
+  assignee_email: string | null;
+}
+
+/** The rail's rows. Only mailboxes this person may work, with their depths. */
+export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Error> {
+  return useQuery({
+    queryKey: ["mailboxes"],
+    queryFn: () => read<{ mailboxes: MailboxQueue[] }>("/api/mailboxes"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useCases(mailboxId: string | null): UseQueryResult<{ cases: CaseRow[] }, Error> {
+  return useQuery({
+    queryKey: ["cases", mailboxId],
+    queryFn: () => read<{ cases: CaseRow[] }>(`/api/cases?mailbox=${encodeURIComponent(mailboxId!)}`),
+    enabled: mailboxId !== null,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * What happened when somebody tried to take a case.
+ *
+ * `held` is not a failure to report generically — it carries **who** holds it and since when, because a
+ * person who lost a compare-and-swap is owed the name of whoever won it rather than a spinner that stops.
+ * The server reads the row back for exactly this.
+ */
+export type ClaimResult =
+  | { ok: true; case: CaseRow }
+  | { ok: false; kind: "held"; heldBy: string; heldSince: string; message: string }
+  | { ok: false; kind: "closed" | "not_found" | "failed"; message: string };
+
+async function act(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
+  const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/${action}`, { method: "POST" });
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) {
+    return { ok: true, case: (body?.case ?? null) as CaseRow };
+  }
+  if (body?.error === "held") {
+    return {
+      ok: false,
+      kind: "held",
+      heldBy: String(body.heldBy ?? "somebody"),
+      heldSince: String(body.heldSince ?? ""),
+      message: String(body.message ?? "Somebody else is holding this."),
+    };
+  }
+  const kind = body?.error === "closed" ? "closed" : body?.error === "not_found" ? "not_found" : "failed";
+  return {
+    ok: false,
+    kind,
+    message: String(body?.message ?? body?.reason ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const claimCase = (id: string) => act(id, "claim");
+export const stealCase = (id: string) => act(id, "steal");
+export const releaseCase = (id: string) => act(id, "release");
+export const closeCase = (id: string) => act(id, "close");

@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 401 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 405 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -91,6 +91,14 @@ Mailda now submits the same stored bytes once per recipient, which costs nothing
 already counts one three-recipient send as three) and makes `Bcc` correct rather than merely possible, since
 a real Bcc needs its own envelope. Proven live: one send, three recipients, three submissions, three
 outcomes — **accepted, bounced, bounced** — each with its own message id.
+
+**Two people can work one queue without colliding, and the mechanism is one line of SQL.**
+`UPDATE cases SET assignee = ? WHERE assignee IS NULL` — no lock, no Durable Object, no timeout. Reply
+performs that swap and opens the composer in one act, so a collision is unrepresentable rather than
+detected. Lose the race and you are told **who** holds it and for how long, because the Node re-reads the
+row instead of reporting a bare failure. There is no expiry: an expiry is a policy guess, a claim's age is a
+fact, so the queue shows the age and a colleague decides. Taking a case from somebody is allowed and
+audited — the design prevents accidents, not takeover, and says so.
 
 **A delivery is what gets filed, not a message.** §12 says a message may have many deliveries and access
 is evaluated per delivery — and that was *assumed* rather than implemented. The ingress derived key was the

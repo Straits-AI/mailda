@@ -49,7 +49,7 @@ const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 const origin = process.argv[2] ?? "http://127.0.0.1:8787";
 /** Kept in step with `src/app-routes.ts` by hand — five paths, and a missing one shows up as a screen
  *  nobody checked rather than as a wrong answer. */
-const ROUTES = ["/", "/outbox", "/audit", "/log", "/doctor"];
+const ROUTES = ["/", "/queue", "/outbox", "/audit", "/log", "/doctor"];
 const THEMES = /** @type {const} */ (["dark", "light"]);
 /** The gate. ADR 30 names WCAG 2.2 AA, and only these can fail the run. */
 const AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];

@@ -216,8 +216,19 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // Authorization is inside the query, not a filter applied afterwards — §5 forbids
   // returning counts or snippets for anything the caller cannot see.
   const rows = await env.CATALOG.prepare(
+    // `case_id` travels with the message so the reply button can claim in one act (#42). Without it the
+    // interface would have to fetch a queue to find the case for the message it is already showing, and
+    // "claim then compose" would be two round trips wearing one gesture.
+    //
+    // Correlated on the delivery's own mailbox, so it is the case in *this* queue — a conversation reaching
+    // two mailboxes has a case in each, and the one that matters is the one belonging to the mailbox this
+    // reader is looking at.
     `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
-            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error
+            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
+            m.conversation_id,
+            (SELECT c.id FROM cases c
+              WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
+                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
        LEFT JOIN messages m ON m.ingress_receipt_id = r.id

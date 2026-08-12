@@ -13,7 +13,7 @@ import {
   listMessages, authorize, mailboxesWithRelation, mayRead, maySend, principalFor, readableSubjects,
 } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
-import { claim, close, queueFor, release, steal } from "./cases.ts";
+import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
@@ -386,6 +386,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * `claim` is what the reply button calls (#42) — claiming and opening the composer are one act, because
      * the guarantee lives in the compare-and-swap rather than in a separate gesture.
      */
+    if (url.pathname === "/api/mailboxes" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({ mailboxes: await mailboxQueues(env, who.orgId, who.userId) });
+    }
+
     if (url.pathname === "/api/cases" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
