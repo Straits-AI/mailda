@@ -39,13 +39,6 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   team_members: { exempt: "No mutation path exists yet. Auditable when membership admin lands (§28)." },
-  relationship_tuples: {
-    exempt:
-      "Written by claim and by migration 0009's backfill, neither of which a person performs at a moment " +
-      "an audit entry could describe — claim is already evidenced by node_claim, and a migration runs " +
-      "before any org exists to own a chain. Becomes auditable the moment a person can grant or revoke a " +
-      "relation, which is when send.propose stops being claim-only and is the thing to watch for.",
-  },
   mailboxes: { exempt: "No mutation path exists yet." },
   messages: { exempt: "Written by ingress from mail that arrived; the mail is its own evidence (§13)." },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
@@ -65,6 +58,26 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "A verbatim log of what the provider told this Node. Auditing an observation would be recording " +
       "that we heard something, which the row already is; and the events arrive from a queue with no " +
       "actor to attribute them to.",
+  },
+  /* ---- Layer 3 ---- */
+  cases: {
+    // The only audited case act is having one taken from you. Claiming and releasing are deliberately
+    // absent: people do them all day, audit entries are never trimmed, and this receipt sizes the table at
+    // a handful per message — so an entry per claim grows it without bound. Claim history lives on the row.
+    // The boundary is frequency and answerability, not importance.
+    actions: ["case.claim_taken"],
+  },
+  conversations: {
+    exempt:
+      "Grouping, derived from the sender's root by a rule with no discretion in it — the same root produces " +
+      "the same conversation whoever is looking, and nobody performs it. The acts that *are* discretionary " +
+      "are merging (a person deciding two threads are one, which will be audited as conversation.merged " +
+      "when #43 is built) and everything done to the case, which has its own entry. An audit of automatic " +
+      "grouping would record that arithmetic happened.",
+  },
+  relationship_tuples: {
+    // Was exempt for "no mutation path exists yet". This is that path (#39).
+    actions: ["access.granted", "access.revoked"],
   },
   drafts: {
     exempt:

@@ -2,16 +2,17 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-08-04
+re_measured_on: 2026-08-12
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
-  identifier scheme changes width (#6), or D1's per-database ceiling moves from 10 GB
+  identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
+  measurement in this file, or D1's per-database ceiling moves from 10 GB
 values:
-  message.metadata.bytes_per_message: 1505
-  message.metadata.bytes_per_extra_delivery: 457
-  shard.plan_warn_messages: 5996643
-  shard.plan_stop_messages: 7281638
-  shard.plan_route_messages: 7709970
+  message.metadata.bytes_per_message: 1632
+  message.metadata.bytes_per_extra_delivery: 410
+  shard.plan_warn_messages: 4605510
+  shard.plan_stop_messages: 5592405
+  shard.plan_route_messages: 5921370
 ---
 
 **Measured:** against **real remote D1**, not miniflare. A scratch database in a live
@@ -33,6 +34,50 @@ with `SQLITE_AUTH`, so page accounting is unavailable from inside a Worker. Remo
 Marginal cost, not total — two identical batches of 2,000 messages, measuring the delta
 between them, so schema and index overhead cancel out rather than being amortised into
 the per-message figure.
+
+### Re-measured 12 August 2026, after Layer 3 added conversations
+
+The guard fired again: migration 0014 added `conversation_id` and the `msg_by_conversation` index, because
+a case is created per conversation and the grouping needed somewhere to live.
+
+| Stage | `database_size` |
+|---|---:|
+| Empty database | 12,288 |
+| Schema only (2 tables, **8** indexes) | 57,344 |
+| + 2,000 messages, 1 delivery each | 3,325,952 |
+| + 2,000 more messages | 6,590,464 |
+| + 2,000 extra deliveries only | 7,409,664 |
+
+- **Marginal per message (with one delivery): (6,590,464 − 3,325,952) / 2,000 = 1,632.3 bytes**
+- **Marginal per extra delivery: (7,409,664 − 6,590,464) / 2,000 = 409.6 bytes**
+
+**+127 bytes per message, an 8% increase**, for one nullable column and one index. Cheaper than threading's
++252 because `msg_by_conversation` keys on a 30-character ULID rather than a full RFC message-id — the same
+reason the receipt has always given for not storing the `References` chain, visible from the other side.
+
+Extra deliveries drifted 457 → 410. `mailbox_items` was not modified, so that is page packing rather than a
+real change, and the direction is worth noting only because it is *down*.
+
+**Now measured by a script**, `scripts/measure-message-bytes.mjs`, rather than by hand. Three measurements
+in nine days made the manual procedure the weak part: field widths dominate the figure, so a corpus rebuilt
+by hand each time produces numbers that are not comparable to each other. Four mechanical failures on the
+way are recorded in the script, since each cost a round trip to remote D1: statement-size limit at 200 rows,
+account selection with several accounts available, `--yes` not being the delete flag, and an "extra delivery"
+needing a *different mailbox* because `mbi_unique` is on `(mailbox_id, message_id)` — the last being the
+schema correctly refusing a row the corpus should never have generated.
+
+### A stale value block, found while doing this
+
+**The `values:` block was still deriving its shard thresholds from the original 1,253-byte figure**, not
+from 4 August's 1,505. The re-measurement updated the table and the prose above it and left the machine-
+readable half behind, so `packages/budgets/src/generated.ts` has carried
+`shard.plan_warn_messages: 5996643` since 4 August — a threshold roughly **30% too optimistic** against the
+schema that actually shipped, and nothing was wrong with the prose a reader would have checked it against.
+
+That is this receipt's own `stale_when` clause failing in the one way the drift guard cannot see: the guard
+watches the *schema*, so it fires when the shape changes, and it has nothing to say about a number inside the
+receipt disagreeing with the paragraph beneath it. Both halves are now derived from the same measurement,
+and the arithmetic below states the divisor it used so the next reader can check it in one line.
 
 ### Re-measured 4 August 2026, after #27 added threading
 
@@ -94,23 +139,26 @@ ULIDs at their true 30-character width (#6). 20 mailboxes, quarterly time bucket
 elsewhere at 90% — three numbers that until now had no measurement behind them. Against
 D1's 10 GB per-database ceiling (receipt: `d1-platform-limits`):
 
+Divisor: **1,632 bytes per message**, from the 12 August measurement above. Every figure in this table is
+that ceiling divided by that number, so it can be checked in one line.
+
 | Threshold | Bytes | Messages |
 |---|---:|---:|
-| Shard capacity | 10,737,418,240 | 7,133,171 |
-| 70% — warn and plan the next shard | 7,516,192,768 | **4,993,219** |
-| 85% — stop optional bulky projections | 9,126,805,504 | **6,063,194** |
-| 90% — route new metadata to a new shard | 9,663,676,416 | **6,419,853** |
+| Shard capacity | 10,737,418,240 | 6,579,300 |
+| 70% — warn and plan the next shard | 7,516,192,768 | **4,605,510** |
+| 85% — stop optional bulky projections | 9,126,805,504 | **5,592,405** |
+| 90% — route new metadata to a new shard | 9,663,676,416 | **5,921,370** |
 
-**A single shard holds roughly 7.1 million messages** — down from 8.5 million before
-threading. For most organisations that is still years of mail, which remains the useful
+**A single shard holds roughly 6.6 million messages** — down from 7.1 million after threading, and from 8.5
+million before it. For most organisations that is still years of mail, which remains the useful
 thing to know: sharding is not a day-one problem, and the planner should say so rather than
 implying it is imminent. But the direction matters. **Two indexes cost 1.4 million messages
 of headroom**, so the next projection added to this table is not free either, and §11B's
 "stop optional bulky projections at 85%" now has a concrete meaning.
 
 Against the **1 TB account-level ceiling** that #5 found missing from §11B — the one
-sharding cannot relieve — a Node tops out near **730 million messages** across all shards
-combined, down from 877 million. That is the boundary where §11B's advice to select the
+sharding cannot relieve — a Node tops out near **674 million messages** across all shards
+combined, down from 730 million after threading and 877 million before it. That is the boundary where §11B's advice to select the
 PostgreSQL `ControlStoreAdapter` actually applies.
 
 ## Note on fan-out

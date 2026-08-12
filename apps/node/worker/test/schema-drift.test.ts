@@ -24,8 +24,20 @@ const MEASURED_SHAPE = {
       // cost 1.4 million messages of shard headroom. Editing the constant first would have made the
       // receipt silently stale, which is the whole failure this guard exists to prevent.
       "in_reply_to", "thread_root_rfc_id", "parse_error",
+      // Added by migration 0014 (Layer 3). Re-measured against real remote D1 on 12 August 2026 *before*
+      // this constant was touched — 1,505 -> 1,632 bytes per message, which costs a further 0.5 million
+      // messages of shard headroom. The measurement is a script now (`scripts/measure-message-bytes.mjs`)
+      // because it has been needed three times and a hand-built corpus is not comparable to itself.
+      //
+      // That measurement also turned up the receipt's `values:` block still deriving its shard thresholds
+      // from the *original* 1,253-byte figure, so the generated budgets had been ~30% optimistic since
+      // 4 August. This guard cannot catch that: it watches the schema, not whether the receipt agrees with
+      // itself. Its `stale_when` now names that case.
+      "conversation_id",
     ],
-    indexes: ["msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id"],
+    indexes: [
+      "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",
+    ],
   },
   mailbox_items: {
     columns: [

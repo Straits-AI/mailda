@@ -1,6 +1,8 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { getEvidence } from "./evidence-store.ts";
+import { conversationForDelivery } from "./conversations.ts";
+import { caseForDelivery } from "./cases.ts";
 import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
 import { log } from "./audit.ts";
@@ -110,6 +112,11 @@ export async function materialiseReceipt(
 
   const timeBucket = bucketFor(Date.parse(sentAtValue));
 
+  // Committed *before* the batch below, and re-read, so the id bound into the message and the case is the
+  // one that won. See `conversationForDelivery` — returning statements to include here looked more atomic
+  // and silently orphaned the loser of a race.
+  const conversationId = await conversationForDelivery(env, ctx, receipt.org_id, threadRoot);
+
   // One batch: the message and its delivery commit together, or neither does (#5, §22). A message row
   // without a mailbox item would be mail that exists and is in no inbox.
   await env.CATALOG.batch([
@@ -117,8 +124,8 @@ export async function materialiseReceipt(
       `INSERT OR IGNORE INTO messages
          (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id, thread_id,
           subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
-          in_reply_to, thread_root_rfc_id, parse_error)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          in_reply_to, thread_root_rfc_id, parse_error, conversation_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       messageId, receipt.org_id, timeBucket, receipt.blob_key, receipt.blob_sha256, receipt.raw_bytes,
       rfcMessageId,
@@ -128,7 +135,7 @@ export async function materialiseReceipt(
       // problem — a reply cannot be threaded before there is anything to reply to.
       ctx.id("thr"),
       headers.subject, headers.from, sentAtValue, receipt.accepted_at, receipt.id, at,
-      headers.inReplyTo, threadRoot, parseError ?? null,
+      headers.inReplyTo, threadRoot, parseError ?? null, conversationId,
     ),
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO mailbox_items
@@ -142,6 +149,10 @@ export async function materialiseReceipt(
       0,
       0, sentAtValue, at,
     ),
+    // The case, in the same batch. A message filed with no case is mail in nobody's queue; a case with no
+    // message is work about nothing. `INSERT OR IGNORE` against `cas_unique`, so a redelivery or two
+    // deliveries racing file one case — the constraint is the concurrency control (#9's shape).
+    caseForDelivery(env, ctx, receipt.org_id, conversationId, receipt.mailbox_id, at),
   ]);
 
   // A delivery report that arrived as ordinary inbound mail is recorded where the queue's own events go,

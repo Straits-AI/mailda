@@ -160,6 +160,8 @@ const EXPECTED_TABLES = [
   "send_recipients", "send_recipient_events",
   // Migration 0012 (durable drafts).
   "drafts",
+  // Migration 0014 (Layer 3: conversations and cases).
+  "conversations", "cases",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

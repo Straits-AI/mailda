@@ -53,6 +53,18 @@ export const AUDIT_ACTIONS = {
   "auth.sign_in_failed": { says: "A password was presented and refused." },
   "auth.revoked_all_sessions": { says: "Every session for one person was ended at once (§28)." },
   "key.rotated": { says: "The signing key changed; tokens minted before and after differ in kid." },
+
+  /*
+   * Layer 3. Note what is *absent*: there is no `case.claimed` or `case.released`.
+   *
+   * People claim all day, audit entries are never trimmed, and `audit-and-log-retention.md` sizes the table
+   * at a handful per message — so one entry per claim grows an untrimmable table without bound. Claim
+   * history lives on the case. What earns an entry is taking work off a *named colleague*, which is an act
+   * somebody could be asked about. Frequency and answerability, not importance.
+   */
+  "case.claim_taken": { says: "One person took a claimed case from another; both are named." },
+  "access.granted": { says: "A relation was granted to somebody, by an administrator." },
+  "access.revoked": { says: "A relation was withdrawn; §7 makes it effective on the next request." },
   "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },
   "send.cancelled": { says: "A held send was stopped by a person before dispatch." },
   "send.withheld": {

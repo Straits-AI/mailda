@@ -13,6 +13,8 @@ import {
   listMessages, authorize, mailboxesWithRelation, mayRead, maySend, principalFor, readableSubjects,
 } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
+import { claim, close, queueFor, release, steal } from "./cases.ts";
+import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
 import {
@@ -358,6 +360,127 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       if (who === null) return unauthenticated();
       const deleted = await deleteDraft(env, who.orgId, who.userId, draft[1]!);
       return Response.json({ deleted }, { status: deleted ? 200 : 404 });
+    }
+
+    /**
+     * Layer 3: the queue, the claim, and access administration.
+     *
+     * `claim` is what the reply button calls (#42) — claiming and opening the composer are one act, because
+     * the guarantee lives in the compare-and-swap rather than in a separate gesture.
+     */
+    if (url.pathname === "/api/cases" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const mailboxId = url.searchParams.get("mailbox");
+      if (mailboxId === null) {
+        return Response.json(
+          { error: "mailbox_required", message: "A queue belongs to one mailbox; name it with ?mailbox=." },
+          { status: 400 },
+        );
+      }
+      // Empty rather than forbidden for a mailbox this caller cannot see: §5C keeps an absent thing and an
+      // invisible one alike, and a queue is a list, which Blueprint:358 gates before returning counts.
+      return Response.json({ cases: await queueFor(env, who.orgId, who.userId, mailboxId) });
+    }
+
+    const caseAction = /^\/api\/cases\/([^/]+)\/(claim|steal|release|close)$/.exec(url.pathname);
+    if (caseAction && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const [, caseId, action] = caseAction as unknown as [string, string, string];
+
+      if (action === "claim" || action === "steal") {
+        const outcome = action === "claim"
+          ? await claim(env, clock, who.orgId, who.userId, caseId)
+          : await steal(env, clock, who.orgId, who.userId, caseId);
+
+        // Each refusal is a different answer and the interface shows a different thing. `held` carries who
+        // and since when, because a person who lost a race is owed the name of whoever won it rather than a
+        // bare failure — the same read-back `cancelSend` established.
+        if (outcome.kind === "claimed") return Response.json({ claimed: true, case: outcome.case });
+        if (outcome.kind === "not_found") {
+          return Response.json(
+            { claimed: false, error: "not_found", message: "No such case, or you do not have access to it." },
+            { status: 404 },
+          );
+        }
+        if (outcome.kind === "closed") {
+          return Response.json(
+            { claimed: false, error: "closed", message: "This case is closed." },
+            { status: 409 },
+          );
+        }
+        return Response.json(
+          {
+            claimed: false,
+            error: "held",
+            heldBy: outcome.by,
+            heldSince: outcome.since,
+            message: `Held by ${outcome.by} since ${outcome.since}. You can take it, and they will be told.`,
+          },
+          { status: 409 },
+        );
+      }
+
+      const outcome = action === "release"
+        ? await release(env, clock, who.orgId, who.userId, caseId)
+        : await close(env, clock, who.orgId, who.userId, caseId);
+      const ok = "released" in outcome ? outcome.released : outcome.closed;
+      return Response.json(outcome, { status: ok ? 200 : 409 });
+    }
+
+    if (url.pathname === "/api/access" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const relation = String(body.relation ?? "");
+      if (!isGrantable(relation)) {
+        return Response.json(
+          {
+            error: "not_grantable",
+            message: `${relation || "(none)"} is not a grantable relation.`,
+          },
+          { status: 422 },
+        );
+      }
+      const outcome = await grant(env, clock, who.orgId, who.userId, {
+        subjectId: String(body.subjectId ?? ""),
+        relation,
+        objectId: String(body.objectId ?? ""),
+      });
+      return Response.json(outcome);
+    }
+
+    if (url.pathname === "/api/access" && request.method === "DELETE") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const relation = String(body.relation ?? "");
+      if (!isGrantable(relation)) {
+        return Response.json(
+          { error: "not_grantable", message: `${relation || "(none)"} is not a grantable relation.` },
+          { status: 422 },
+        );
+      }
+      return Response.json(await revoke(env, clock, who.orgId, who.userId, {
+        subjectId: String(body.subjectId ?? ""),
+        relation,
+        objectId: String(body.objectId ?? ""),
+      }));
+    }
+
+    if (url.pathname === "/api/access" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // Own relations need no admin — knowing what you hold is not privileged. Somebody else's does.
+      const subjectId = url.searchParams.get("subject") ?? who.userId;
+      if (subjectId !== who.userId && !(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json(
+          { error: "not_found", message: "No such subject, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
+      return Response.json({ subjectId, relations: await relationsOf(env, who.orgId, subjectId) });
     }
 
     if (url.pathname === "/api/sends" && request.method === "POST") {
