@@ -9,11 +9,11 @@ values:
   d1.paid.max_database_bytes: 10737418240
   d1.paid.max_account_storage_bytes: 1099511627776
   d1.paid.max_databases_per_account: 50000
-  d1.paid.max_queries_per_invocation: 1000
+  d1.paid.max_queries_per_invocation: 10000
   d1.paid.time_travel_days: 30
   d1.free.max_database_bytes: 524288000
   d1.free.max_account_storage_bytes: 5368709120
-  d1.free.max_queries_per_invocation: 50
+  d1.free.max_queries_per_invocation: 1000
   d1.free.time_travel_days: 7
   d1.max_columns_per_table: 100
   d1.max_sql_statement_bytes: 100000
@@ -23,6 +23,27 @@ values:
   d1.max_query_duration_seconds: 30
   d1.max_time_travel_restores_per_10min: 10
 ---
+
+## Correction, 13 August 2026: these two figures were never D1 limits
+
+`d1.paid.max_queries_per_invocation` read **1000** and `d1.free.max_queries_per_invocation` read **50**. Both
+were wrong, and the reason is worth more than the numbers.
+
+They are the **subrequest** limit restated under a D1-flavoured name. 1,000 was the old paid per-invocation
+subrequest ceiling — withdrawn on 11 February 2026, now 10,000 — and 50 is the free plan's *external*
+subrequest allowance, which does not apply to D1 at all: D1 is an internal Cloudflare service and free plans
+get 1,000 of those. So one figure was stale and the other was attributed to the wrong category.
+
+**Measured, in `butler-step-budget.md`:** a single Worker invocation performed **10,000 D1 queries** and then
+failed with `Too many API requests by single Worker invocation` — the subrequest error, not a D1 error. Had a
+1,000-query D1 ceiling existed, the run would have stopped at 1,000. D1 imposes **no query ceiling of its
+own**; it spends from the subrequest budget like any other binding.
+
+**Why nothing caught it:** the name put the limit on the wrong subsystem. The changelog that invalidated it
+was about Workers subrequests, and nobody re-reads a D1 receipt when a Workers limit changes. `stale_when`
+below names the D1 conditions it should — and could not name a condition in a subsystem the figure was
+mislabelled out of.
+
 
 **Measured:** Read from Cloudflare's published documentation on 2 August 2026. Not
 measured against a running Node — these are the platform's stated ceilings, and per
