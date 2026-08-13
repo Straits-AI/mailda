@@ -83,7 +83,7 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 26 receipts in [`docs/receipts/`](./docs/receipts/) generating 156 verified constants |
-| **Code** | A measurement harness and one Worker. 439 tests, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 448 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -198,6 +198,16 @@ outbound identity should be held by fewer of them. The check runs *again* before
 send waits out a hold window and the sweeper that releases it has no principal in scope: revoking
 authority mid-window now produces `withheld`, a state that says the Node declined rather than blaming a
 mail service that was never asked.
+
+**Being able to reply is not permission to read.** The queue was gated on `send.propose` alone and its rows
+carry the subject line and the sender address, so anybody who could reply read the metadata of every message
+in the mailbox — with no relation permitting it and nothing recording it. Found by asking what a *single*
+relation discloses: every existing queue test granted `send.propose` because claiming needs it, and none
+asked what somebody holding only that could see. `mailbox.metadata.read` — named in the blueprint's own
+permission catalogue and implemented nowhere, one mention in a test seed — now gates those two columns,
+either it or `mailbox.content.read` satisfies them, and a responder holding neither is shown the
+restricted-content placeholder the contract already specified. The withheld columns are `NULL` in the SQL
+rather than read and discarded, because a value in the result set is one line of code from being returned.
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both

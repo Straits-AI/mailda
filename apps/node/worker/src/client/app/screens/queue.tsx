@@ -99,6 +99,24 @@ function ClockCell({ row }: { row: CaseRow }) {
   return <span className="dim mono">in {untilOf(row.response_due_at)}</span>;
 }
 
+/**
+ * §7's restricted-content placeholder, rendered rather than paraphrased.
+ *
+ * It says *why*, because "restricted" on its own reads as a fault. The person holding this view can still
+ * claim and reply — `send.propose` is what put the case in front of them — so the message names the relation
+ * an administrator would grant, in the same idiom as the empty-queue notice.
+ */
+function Restricted({ what }: { what: "subject" | "sender" }) {
+  return (
+    <span
+      className="restricted"
+      title={`You hold send.propose on this mailbox but neither read relation, so the ${what} is withheld. An administrator grants mailbox.metadata.read.`}
+    >
+      restricted
+    </span>
+  );
+}
+
 function CaseRowView({
   row, mine, picked, onPick, onAct,
 }: {
@@ -128,12 +146,22 @@ function CaseRowView({
         </label>
       </td>
       <td>
-        <span className="case-subject">{row.subject ?? <span className="dim">(no subject)</span>}</span>
+        {/*
+          Three states, not two. "(no subject)" is a message that had none; "restricted" is one this person
+          may not see — §5C's rule that absent and forbidden must not render alike, which is exactly what a
+          bare null here would have done.
+        */}
+        <span className="case-subject">
+          {row.content_restricted ? <Restricted what="subject" />
+            : row.subject ?? <span className="dim">(no subject)</span>}
+        </span>
         {row.message_count > 1 ? (
           <span className="dim mono case-count"> · {row.message_count} messages</span>
         ) : null}
       </td>
-      <td className="dim mono">{row.from_addr ?? "—"}</td>
+      <td className="dim mono">
+        {row.content_restricted ? <Restricted what="sender" /> : row.from_addr ?? "—"}
+      </td>
       <td className="mono dim case-holder">
         {/* Who and how long, in the same cell, because they are one fact a person acts on — but in two spans,
             so the cell may wrap between them. One nowrap string made this the widest column in the table and

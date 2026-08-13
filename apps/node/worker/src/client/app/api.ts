@@ -241,6 +241,12 @@ export interface CaseRow {
   created_at: string;
   subject: string | null;
   from_addr: string | null;
+  /**
+   * True when `subject` and `from_addr` were **withheld** rather than absent — the caller holds
+   * `send.propose` but neither read relation on the mailbox. Rendered as §7's restricted-content
+   * placeholder, which is not the same thing as "(no subject)" and must not look like it.
+   */
+  content_restricted: boolean;
   message_count: number;
   assignee_email: string | null;
   response_due_at: string | null;

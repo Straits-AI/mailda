@@ -32,8 +32,18 @@ import { CallerError, notFound, unprocessable } from "./errors.ts";
  * is not.
  */
 
-/** Everything grantable, and the object type each belongs to. A relation not named here cannot be granted. */
+/**
+ * Everything grantable, and the object type each belongs to. A relation not named here cannot be granted.
+ *
+ * Three of the blueprint's eleven mailbox relations (`:697`), which is layering rather than divergence — but
+ * `mailbox.metadata.read` was **not** a deferral, it was a hole. The queue is gated on `send.propose` and
+ * returns subject lines and sender addresses, so until it existed a responder read the metadata of every
+ * message in the mailbox with no relation permitting it. See `mayReadMetadata`.
+ */
 const GRANTABLE = {
+  // Subject lines and sender addresses. Weaker than content.read on purpose: somebody triaging or working a
+  // queue needs to know what arrived and from whom, which is not the same as reading it.
+  "mailbox.metadata.read": "mailbox",
   "mailbox.content.read": "mailbox",
   "send.propose": "mailbox",
   "org.admin": "organization",

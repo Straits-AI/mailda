@@ -38,6 +38,17 @@ describe("query plans", () => {
       [corpus.orgId, corpus.typicalUser, corpus.mailboxes[1]!, "mailbox.content.read"],
     );
     await explain(
+      // The two-relation form from `hasAnyRelation`. The receipt claims the prefix up to `object_type` stays
+      // usable when the *relation* column is widened, and this is where that claim can be read rather than
+      // trusted — #11's whole lesson being that a plan looked fine right up until it was printed.
+      "tuple check (relation IN list of 2)",
+      `SELECT 1 FROM relationship_tuples
+       WHERE org_id = ? AND subject_id IN (?, ?, ?)
+         AND object_type = 'mailbox' AND relation IN (?, ?) AND object_id = ? LIMIT 1`,
+      [corpus.orgId, corpus.typicalUser, "a", "b",
+        "mailbox.metadata.read", "mailbox.content.read", corpus.mailboxes[1]!],
+    );
+    await explain(
       "list visible (IN list of 3)",
       `SELECT DISTINCT object_id FROM relationship_tuples
        WHERE org_id = ? AND subject_id IN (?, ?, ?)

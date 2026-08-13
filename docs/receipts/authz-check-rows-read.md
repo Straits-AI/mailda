@@ -4,8 +4,10 @@ kind: measured-tripwire
 measured_on: 2026-08-03
 stale_when: >
   the relationship_tuples or team_members index definitions change; a team-membership
-  model beyond user->team->object is introduced; or ABAC/policy conditions begin reading
-  additional rows on the request path
+  model beyond user->team->object is introduced; a check names more than two relations at
+  once, since the two-relation figure below is one extra index seek and not a general
+  claim about widening; or ABAC/policy conditions begin reading additional rows on the
+  request path
 values:
   authz.check.max_rows_read: 200
   authz.list.max_rows_read: 1000
@@ -44,6 +46,8 @@ That is not possible locally and belongs with #14.
 | Single-object check, typical user (2 teams) | 7 | 2 |
 | Single-object check, heavy user (12 teams) | 15 | 2 |
 | Single-object check, deny | 6 | 2 |
+| Two-relation check (`relation IN (?, ?)`), typical user | 12 | 2 |
+| Two-relation check, deny | 12 | 2 |
 | List visible mailboxes, typical user | 26 | 2 |
 | List visible mailboxes, heavy user (96 visible) | 136 | 2 |
 | Single-object check at 4× corpus | 11 | 2 |
@@ -59,6 +63,25 @@ the timing claim waits for a deployed Node.
   had 96 visible mailboxes against a 200-row limit.
 - `authz.check.max_queries = 2` — team resolution, then the tuple lookup. A third query
   means an N+1 has appeared.
+
+**The two-relation form shares the check budget rather than getting its own** (added
+13 August 2026, with `mailbox.metadata.read`). Widening the *fourth* index column to
+`relation IN (?, ?)` costs one extra seek — 12 rows against 7 — because the prefix up to
+`object_type` is still fully usable — printed rather than argued, in `test/explain.test.ts`:
+
+```
+SEARCH relationship_tuples USING COVERING INDEX rt_unique
+  (org_id=? AND subject_id=? AND object_type=? AND relation=? AND object_id=?)
+```
+
+all five columns, with `relation=?` applied once per `IN` element. Two relations is what the queue needs: its
+message-derived columns are satisfied by `mailbox.metadata.read` **or**
+`mailbox.content.read`, and the alternative implementation is two sequential single-relation
+queries, which would cost the same seeks plus a round trip and break
+`authz.check.max_queries = 2`. If a caller ever named enough relations to approach 200 rows,
+the honest answer would be a different shape, not a larger budget — so the figure is here to
+be checked rather than assumed. Notably the deny case costs the *same* 12: a miss seeks both
+relations, where a hit can stop at the first.
 
 These are tripwires in the AGENTS.md sense: good checks never approach them. If routine
 work starts hitting one, the tripwire is wrong and should be re-measured — but a *scan*

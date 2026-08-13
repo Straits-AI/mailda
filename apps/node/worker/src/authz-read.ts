@@ -45,24 +45,30 @@ export async function principalFor(env: Env, ctx: Ctx, request: Request): Promis
 }
 
 /**
- * May this principal read this mailbox? Direct grant or via a team, in two queries — the
- * shape #11 measured at 7 rows read and flat under 4x organisation growth.
- */
-/**
- * Does this principal hold `relation` on this mailbox, directly or through a team?
+ * Does this principal hold **any** of these relations on this mailbox, directly or through a team?
  *
  * The one query shape for every relation, rather than a copy per verb. #11 measured *this* shape — two
  * queries, 7 rows read, flat under 4x organisation growth (`authz-check-rows-read.md`) — and a second
  * hand-written variant would be a second thing for that receipt to stop describing.
  *
+ * The set form exists because one surface genuinely satisfies on either of two relations: the queue's
+ * message-derived columns need `mailbox.metadata.read` **or** `mailbox.content.read`, and a caller holding
+ * the stronger one being told they lack the weaker would be a rule nobody could defend. It is a widened
+ * `relation IN (…)` rather than two calls, so a two-relation check still costs the same two round trips —
+ * measured as `check.two_relations` in `authz.measure.test.ts` and inside the same budget.
+ *
+ * This is **not** relation implication. Nothing here says content.read *confers* metadata.read; one call site
+ * names both relations it accepts. A general implication graph is the delegation that `access.ts` refused, and
+ * for the same reason: it turns "who can reach this mailbox" from a list into a traversal.
+ *
  * Authority is re-read on every call and nothing is cached, which is what makes revocation take effect
  * immediately (§7, §28). That matters most on the send path, where the gap between deciding and acting
  * is a hold window rather than a request.
  */
-async function hasRelation(
+async function hasAnyRelation(
   env: Env,
   who: Principal,
-  relation: string,
+  relations: readonly string[],
   mailboxId: string,
 ): Promise<boolean> {
   const teams = await env.CATALOG.prepare(
@@ -73,14 +79,15 @@ async function hasRelation(
 
   const subjects = [who.userId, ...teams.results.map((r) => r.team_id)];
   const placeholders = subjects.map(() => "?").join(", ");
+  const relationPlaceholders = relations.map(() => "?").join(", ");
 
   const tuple = await env.CATALOG.prepare(
     `SELECT 1 FROM relationship_tuples
       WHERE org_id = ? AND subject_id IN (${placeholders})
-        AND object_type = 'mailbox' AND relation = ? AND object_id = ?
+        AND object_type = 'mailbox' AND relation IN (${relationPlaceholders}) AND object_id = ?
       LIMIT 1`,
   )
-    .bind(who.orgId, ...subjects, relation, mailboxId)
+    .bind(who.orgId, ...subjects, ...relations, mailboxId)
     .first();
 
   return tuple !== null;
@@ -89,9 +96,9 @@ async function hasRelation(
 /**
  * The subjects a principal authorizes as: themselves, plus every team they belong to.
  *
- * Extracted because it was written out by hand in two places — `hasRelation` and `listMessages` — and #45
+ * Extracted because it was written out by hand in two places — `hasAnyRelation` and `listMessages` — and #45
  * happened in a third place that did not write it out at all. A read bounded by mailbox has to agree with
- * `hasRelation` about who the caller *is*, and the surest way to agree is to share the function rather
+ * `hasAnyRelation` about who the caller *is*, and the surest way to agree is to share the function rather
  * than the shape.
  */
 export async function readableSubjects(env: Env, who: Principal): Promise<string[]> {
@@ -106,8 +113,8 @@ export async function readableSubjects(env: Env, who: Principal): Promise<string
 /**
  * Every mailbox on which this principal holds `relation`.
  *
- * The set form of `hasRelation`, for the paths that act on many mailboxes at once rather than checking one.
- * Same subjects, same tuple shape, so a sweep bounded by this and a check made by `hasRelation` cannot
+ * The many-objects form, for the paths that act on every mailbox at once rather than checking one. Same
+ * subjects, same tuple shape, so a sweep bounded by this and a check made by `hasAnyRelation` cannot
  * disagree about what somebody holds.
  */
 export async function mailboxesWithRelation(
@@ -128,7 +135,29 @@ export async function mailboxesWithRelation(
 }
 
 export async function mayRead(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
-  return hasRelation(env, who, "mailbox.content.read", mailboxId);
+  return hasAnyRelation(env, who, ["mailbox.content.read"], mailboxId);
+}
+
+/**
+ * May this principal see the **metadata** of mail in this mailbox — subject lines, sender addresses?
+ *
+ * The relation this implements is `mailbox.metadata.read`, from the blueprint's own permission catalogue
+ * (`:697`), and it existed nowhere in this codebase until now: one mention, in a test seed, granted by
+ * nothing. Its absence was not harmless. The queue is gated on `send.propose` and returns
+ * `messages.subject` and `messages.from_addr`, so **anybody who could reply read every subject line and
+ * sender address in the mailbox**, with no relation saying so and nothing recording it. Reproduced before
+ * it was fixed: `send.propose` alone returned `"Redundancy list, confidential"` from `hr@customer.example`.
+ *
+ * §7 is explicit that this is not allowed — a case relation "never implies `message.read`", and
+ * participants and snippets "are individually authorized from their source delivery". The fix implements
+ * the contract rather than amending it.
+ *
+ * Satisfied by either relation. `mailbox.content.read` is strictly the stronger authority — you cannot read
+ * a body without seeing its subject — so requiring the weaker one *as well* would be a rule with no
+ * defence, and the pair is named here rather than expressed as an implication (see `hasAnyRelation`).
+ */
+export async function mayReadMetadata(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
+  return hasAnyRelation(env, who, ["mailbox.metadata.read", "mailbox.content.read"], mailboxId);
 }
 
 /**
@@ -146,7 +175,7 @@ export async function mayRead(env: Env, who: Principal, mailboxId: string): Prom
  * silently — recorded here so the next reader finds the discrepancy explained.
  */
 export async function maySend(env: Env, who: Principal, mailboxId: string): Promise<boolean> {
-  return hasRelation(env, who, "send.propose", mailboxId);
+  return hasAnyRelation(env, who, ["send.propose"], mailboxId);
 }
 
 type Authorized = { ok: true; blobKey: string } | { ok: false; response: Response };

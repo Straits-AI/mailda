@@ -786,6 +786,17 @@ body.shell main#app {
 .case-row.theirs td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
 .case-subject { font-size: .95rem; }
 .case-count { font-size: .68rem; }
+/* The withheld-content placeholder. A word in mono, so it cannot be mistaken for a subject line that happens
+   to say "restricted" — and the word is the whole channel, since none of the tinted tokens are measured. No
+   strikethrough and no lock glyph: both read as an error state, and this is a correct, ordinary answer. */
+.restricted {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .06em;
+  color: var(--dim);
+  border-bottom: 1px dotted var(--rule-strong);
+  cursor: help;
+}
 /* The side-by-side spacing these two rules provided is gone with the stacking above, and they were still
    winning on source order: .75rem beat margin-left: auto, so the second button sat a few pixels in from the
    first instead of aligning with it. Kept as a note rather than deleted silently, because a stray rule that

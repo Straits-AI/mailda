@@ -785,6 +785,35 @@ Messages, attachments and threads inherit their base visibility from deliveries/
 
 Cases have `owner`, `member`, `reviewer`, `contributor` and `auditor` relations plus field-level classification. A case relation may reveal case metadata that policy permits—such as status, due date, owner and a restricted-content placeholder—but it never implies `message.read`, `mailbox.content.read` or `attachment.read`. Linked message bodies, snippets, participants, attachment names and extracted sensitive fields are individually authorized from their source delivery and classification. Search, notifications, counters, exports and AI retrieval enforce the same rule, so they cannot leak that restricted content exists.
 
+#### Built (13 August 2026): the rule, not the relations
+
+**Zero of the five case relations exist, and that is sequencing rather than divergence.** Layer 3's
+sharing is mailbox-scoped: a case is reached through `send.propose` on the mailbox it sits in, and
+`cases.assignee` is a single nullable column whose compare-and-swap is what makes two people able to work
+one queue. Per-case granting is a *different capability* — putting one colleague on one shipment issue
+without handing them the queue — and nothing built has needed it. Three of the eleven mailbox relations
+above exist for the same reason; nobody has called that a conflict either.
+
+Two consequences worth stating rather than discovering:
+
+- `owner` cannot simply be added as a relation while `assignee` remains a column. That would be two
+  representations of one truth, which is precisely what §7's relations-not-roles decision refused, so
+  whoever builds case relations either migrates the claim into tuples — losing the plain
+  `WHERE assignee IS NULL` swap — or excludes `owner` from the five. This is a decision owed, not a
+  detail.
+- `contributor` and `reviewer` land with approval flows (`approval.decide`), which is Layer 5 governance.
+  Building them earlier would mean guessing what an approval is.
+
+**The paragraph's actual rule was being broken, and now is not.** `queueFor` was gated on `send.propose`
+alone and selected `messages.subject` and `messages.from_addr`, so anybody who could reply read every
+subject line and sender address in the mailbox — case metadata carrying content that nothing separately
+authorized, which is what this paragraph forbids. `mailbox.metadata.read` from the catalogue in §7's
+permission list is now implemented and grantable, either it or `mailbox.content.read` gates those two
+columns, and a responder holding neither is shown the **restricted-content placeholder this paragraph
+already specifies** rather than an empty or a fabricated value. The withheld columns are `NULL` in the SQL
+rather than read and dropped. `message_count` is deliberately *not* withheld: the caller already knows the
+case exists, so a count of items inside it leaks nothing about content.
+
 Approval assignment likewise does not grant whole-mailbox access. Creation materializes an immutable, minimum-necessary **approval evidence snapshot** containing the exact proposed effect, policy explanation and only those source excerpts/attachments the requester is allowed to disclose to that reviewer. The snapshot has its own classification, relation, expiry and revocation state. If policy cannot lawfully disclose enough evidence to decide, Mailda must select a different approver or reject the request; it never grants ambient mailbox access as a shortcut. `approval.decide` is the sole decision permission—draft permissions do not imply approval authority.
 
 ---

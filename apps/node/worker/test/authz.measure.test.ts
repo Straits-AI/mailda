@@ -77,6 +77,39 @@ async function checkCost(userId: string, objectId: string): Promise<Cost> {
   });
 }
 
+/**
+ * The two-relation form, from `hasAnyRelation` — a widened `relation IN (?, ?)`.
+ *
+ * Measured rather than assumed. The index #11 settled is
+ * `(org_id, subject_id, object_type, relation, object_id)`, so widening the *fourth* column turns one seek
+ * into one per relation named. That is a small multiple by construction, but "by construction" is what the
+ * full-table scan #11 found also looked like: the column order was wrong and every check read 1,864 rows of a
+ * 3,060-row corpus. So this is a number rather than an argument, and it shares the same budget — if the
+ * two-relation form ever needed a larger one, the honest answer would be two single-relation queries.
+ */
+async function twoRelationCost(userId: string, objectId: string): Promise<Cost> {
+  return costOf(async () => {
+    const teams = await env.CATALOG.prepare(
+      "SELECT team_id FROM team_members WHERE org_id = ? AND user_id = ?",
+    )
+      .bind(corpus.orgId, userId)
+      .all<{ team_id: string }>();
+
+    const subjects = [userId, ...teams.results.map((row) => row.team_id)];
+    const placeholders = subjects.map(() => "?").join(", ");
+    const tuple = await env.CATALOG.prepare(
+      `SELECT 1 FROM relationship_tuples
+       WHERE org_id = ? AND subject_id IN (${placeholders})
+         AND object_type = 'mailbox' AND relation IN (?, ?) AND object_id = ?
+       LIMIT 1`,
+    )
+      .bind(corpus.orgId, ...subjects, "mailbox.metadata.read", "mailbox.content.read", objectId)
+      .all();
+
+    return [teams, tuple];
+  });
+}
+
 async function listCost(userId: string): Promise<Cost> {
   return costOf(async () => {
     const teams = await env.CATALOG.prepare(
@@ -133,6 +166,24 @@ describe("authz evaluation cost (#11)", () => {
       assertWithinBudget("authz.check.max_rows_read", cost.rowsRead, { scenario: label });
       assertWithinBudget("authz.check.max_queries", cost.queries, { scenario: label });
     }
+  });
+
+  it("a two-relation check stays inside the same budget", async () => {
+    const one = await checkCost(corpus.typicalUser, corpus.mailboxes[1]!);
+    const two = await twoRelationCost(corpus.typicalUser, corpus.mailboxes[1]!);
+    const denied = await twoRelationCost(corpus.typicalUser, "mbx_DOES_NOT_EXIST");
+    report("check.two_relations", two);
+    report("check.two_relations.deny", denied);
+    console.log(
+      `MEASURE relation_widening  rows_read_one=${one.rowsRead}  rows_read_two=${two.rowsRead}`,
+    );
+
+    for (const [label, cost] of [["two_relations", two], ["two_relations_deny", denied]] as const) {
+      assertWithinBudget("authz.check.max_rows_read", cost.rowsRead, { scenario: label });
+      assertWithinBudget("authz.check.max_queries", cost.queries, { scenario: label });
+    }
+    // Still a seek per relation, not a scan. Two relations must not cost more than a small multiple of one.
+    expect(two.rowsRead).toBeLessThan(one.rowsRead * 2 + 10);
   });
 
   it("list case scans a bounded number of rows", async () => {

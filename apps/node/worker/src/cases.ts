@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
-import { maySend, readableSubjects } from "./authz-read.ts";
+import { mayReadMetadata, maySend, readableSubjects } from "./authz-read.ts";
 
 /**
  * The case: the unit of work somebody claims, and the claim protocol around it.
@@ -246,9 +246,29 @@ export async function close(
 }
 
 export interface QueueEntry extends CaseRow {
+  /**
+   * NULL when there is no message, **or** when the caller may not see it — and those are different answers,
+   * which is why `content_restricted` exists rather than leaving a reader to infer one from a null. §5C's
+   * whole point: absent and forbidden must not render identically, and a subject can legitimately be empty.
+   */
   subject: string | null;
   from_addr: string | null;
+  /**
+   * How many messages are on the case. Not restricted, deliberately: the caller already knows this case
+   * exists — they hold `send.propose` and can claim it — and a count of items within it discloses nothing
+   * about their content. §7's rule is that counters must not leak *that restricted content exists*, and the
+   * existence of the case is not what is being withheld here; its subject line is.
+   */
   message_count: number;
+  /**
+   * True when this row's message-derived columns were withheld rather than absent.
+   *
+   * Sent to the client so the queue can render §7's "restricted-content placeholder" instead of guessing.
+   * A flag on the row rather than one on the response, because it is per case in principle — nothing today
+   * varies it within a mailbox, and a per-response flag would have to be widened by whoever adds per-case
+   * relations rather than merely used.
+   */
+  content_restricted: boolean;
   /**
    * Who holds it, as a person rather than an identifier.
    *
@@ -280,6 +300,16 @@ export interface QueueEntry extends CaseRow {
  * content, not the assignee, not that they exist. §5C names existence and counts as gated, and the one place
  * this codebase deliberately breaks the identical-answer rule rests on prior knowledge of the object, which
  * a reader of another mailbox does not have.
+ *
+ * ## Two relations, two different things
+ *
+ * `send.propose` decides whether there is a queue here at all, because the queue exists to be worked. It does
+ * **not** decide whether the subject line and the sender address are shown: those come from `messages`, and
+ * §7 forbids case metadata from carrying content that was not separately authorized. That rule was being
+ * broken — this function selected both columns behind the send gate alone, so anybody who could reply read
+ * every subject line in the mailbox. `mailbox.metadata.read` (or `mailbox.content.read`) now gates them, and
+ * the columns are **replaced with NULL in the SQL** rather than read and discarded: a row the caller may not
+ * see should not be in the result set for a later change to start returning.
  */
 export async function queueFor(
   env: Env,
@@ -287,17 +317,25 @@ export async function queueFor(
   userId: string,
   mailboxId: string,
 ): Promise<QueueEntry[]> {
-  if (!(await maySend(env, { orgId, userId }, mailboxId))) return [];
+  const who = { orgId, userId };
+  if (!(await maySend(env, who, mailboxId))) return [];
+  const maySeeContent = await mayReadMetadata(env, who, mailboxId);
+
+  // One template with one substitution, so the two variants cannot drift into selecting different case
+  // columns. The literal NULLs keep the result shape identical, which is what lets the row type stay one type.
+  const messageColumns = maySeeContent
+    ? `(SELECT m.subject FROM messages m
+         WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id
+         ORDER BY m.sent_at DESC LIMIT 1) AS subject,
+       (SELECT m.from_addr FROM messages m
+         WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id
+         ORDER BY m.sent_at DESC LIMIT 1) AS from_addr`
+    : `NULL AS subject, NULL AS from_addr`;
 
   const { results } = await env.CATALOG.prepare(
     `SELECT c.id, c.conversation_id, c.mailbox_id, c.state, c.state_at, c.assignee, c.claimed_at,
             c.created_at,
-            (SELECT m.subject FROM messages m
-              WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id
-              ORDER BY m.sent_at DESC LIMIT 1) AS subject,
-            (SELECT m.from_addr FROM messages m
-              WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id
-              ORDER BY m.sent_at DESC LIMIT 1) AS from_addr,
+            ${messageColumns},
             (SELECT COUNT(*) FROM messages m
               WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id) AS message_count,
             (SELECT u.email FROM users u WHERE u.id = c.assignee) AS assignee_email,
@@ -307,8 +345,11 @@ export async function queueFor(
       ORDER BY CASE WHEN c.assignee IS NULL THEN 0 ELSE 1 END, c.created_at`,
   )
     .bind(orgId, mailboxId)
-    .all<QueueEntry>();
-  return results;
+    .all<Omit<QueueEntry, "content_restricted">>();
+
+  // Set here rather than selected as a SQL literal, because it is a fact about the caller and not about the
+  // row, and putting it in the query would make it look like something the database decided.
+  return results.map((row) => ({ ...row, content_restricted: !maySeeContent }));
 }
 
 export interface MailboxQueue {
