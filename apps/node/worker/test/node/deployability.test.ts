@@ -36,6 +36,8 @@ interface WranglerConfig {
   kv_namespaces?: Record<string, unknown>[];
   durable_objects?: { bindings?: Record<string, unknown>[] };
   secrets_store_secrets?: Record<string, unknown>[];
+  /** Not declared yet. Typed so the schedules guard below reads the real shape rather than `any`. */
+  workflows?: Record<string, unknown>[];
   env?: Record<string, WranglerConfig>;
 }
 
@@ -170,5 +172,42 @@ describe("what a customer's deploy can provision", () => {
     const testEnv = config.env?.test;
     expect(testEnv).toBeDefined();
     expect(bindingKindsIn(testEnv!)).toEqual(bindingKindsIn(config));
+  });
+
+  /**
+   * A workflow schedule needs a wrangler floor this repo does not currently declare.
+   *
+   * `workflow-provisioning.md` measured it: `schedules` shipped in **4.97.0**, and wrangler **4.68.0** —
+   * the bottom of this repo's `^4.68.0` range — discards the field with a warning and **exit code 0**.
+   * The deploy succeeds, the binding table still reports the workflow, and the schedule does not exist.
+   * A customer resolving the bottom of the range would install a Butler that never fires.
+   *
+   * Conditional on purpose. Nothing declares `schedules` today, so raising the dependency now would be
+   * a change with no reason attached — and a comment saying "remember to raise the floor" is exactly the
+   * kind of thing this file exists instead of. The moment somebody adds the field, this fails and says
+   * why. There is no `doctor` check that could substitute: the Worker cannot see whether a schedule it
+   * declared was registered, because Workflows exposes no schedule-inspection API.
+   */
+  it("requires a wrangler floor that understands schedules, if it declares any", () => {
+    const withSchedules = (config.workflows ?? []).filter((entry) => "schedules" in entry);
+    if (withSchedules.length === 0) return;  // nothing declares one yet; the guard is for when it does
+
+    const workerPackage = JSON.parse(
+      readFileSync(join(workerDir, "package.json"), "utf8"),
+    ) as { devDependencies?: Record<string, string> };
+    const range = workerPackage.devDependencies?.wrangler ?? "";
+    const floor = /(\d+)\.(\d+)\./.exec(range);
+    expect(floor, `could not read a wrangler floor from ${range}`).not.toBeNull();
+
+    // The floor comes from the receipt rather than being written here twice.
+    const required = BUDGETS["workflow.schedules_min_wrangler"];
+    const requiredMajor = Math.floor(required);
+    const requiredMinor = Math.round((required - requiredMajor) * 100);
+    const [major, minor] = [Number(floor![1]), Number(floor![2])];
+    const ok = major > requiredMajor || (major === requiredMajor && minor >= requiredMinor);
+    expect(
+      ok ? null : `wrangler ${range} permits ${major}.${minor}, which is below ${required} and `
+        + "drops workflows[].schedules silently with exit code 0 — see docs/receipts/workflow-provisioning.md",
+    ).toBeNull();
   });
 });

@@ -167,6 +167,10 @@ export const BUDGETS = {
   "test.slowest_test_ms_idle": 1417,
   "test.slowest_test_ms_under_load": 5790,
   "test.timeout_ms": 30000,
+  "workflow.instance_id_max_chars": 100,
+  "workflow.provisioned_by_deploy": 1,
+  "workflow.schedule_cron_ceiling_per_account": 100,
+  "workflow.schedules_min_wrangler": 4.97,
 } as const satisfies Record<string, number>;
 
 export type BudgetName = keyof typeof BUDGETS;
@@ -329,4 +333,8 @@ export const BUDGET_ORIGINS: Record<BudgetName, BudgetOrigin> = {
   "test.slowest_test_ms_idle": { receipt: "docs/receipts/test-timeout-headroom.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the PBKDF2 round count changes (see password-hash-cost), a new test exceeds the recorded slowest-under-load figure, the number of packages running under `turbo test` changes materially, or the suite moves to CI hardware with a different core count" },
   "test.slowest_test_ms_under_load": { receipt: "docs/receipts/test-timeout-headroom.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the PBKDF2 round count changes (see password-hash-cost), a new test exceeds the recorded slowest-under-load figure, the number of packages running under `turbo test` changes materially, or the suite moves to CI hardware with a different core count" },
   "test.timeout_ms": { receipt: "docs/receipts/test-timeout-headroom.md", kind: "measured-tripwire", measuredOn: "2026-08-05", staleWhen: "the PBKDF2 round count changes (see password-hash-cost), a new test exceeds the recorded slowest-under-load figure, the number of packages running under `turbo test` changes materially, or the suite moves to CI hardware with a different core count" },
+  "workflow.instance_id_max_chars": { receipt: "docs/receipts/workflow-provisioning.md", kind: "platform-limit", measuredOn: "2026-08-13", staleWhen: "wrangler changes how it resolves a workflow binding declared without an id; Workflows gains automatic-provisioning semantics different from the observed create-on-deploy; the schedules field becomes recognised by older wrangler releases; the scheduled-instance id format changes; or event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time" },
+  "workflow.provisioned_by_deploy": { receipt: "docs/receipts/workflow-provisioning.md", kind: "platform-limit", measuredOn: "2026-08-13", staleWhen: "wrangler changes how it resolves a workflow binding declared without an id; Workflows gains automatic-provisioning semantics different from the observed create-on-deploy; the schedules field becomes recognised by older wrangler releases; the scheduled-instance id format changes; or event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time" },
+  "workflow.schedule_cron_ceiling_per_account": { receipt: "docs/receipts/workflow-provisioning.md", kind: "platform-limit", measuredOn: "2026-08-13", staleWhen: "wrangler changes how it resolves a workflow binding declared without an id; Workflows gains automatic-provisioning semantics different from the observed create-on-deploy; the schedules field becomes recognised by older wrangler releases; the scheduled-instance id format changes; or event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time" },
+  "workflow.schedules_min_wrangler": { receipt: "docs/receipts/workflow-provisioning.md", kind: "platform-limit", measuredOn: "2026-08-13", staleWhen: "wrangler changes how it resolves a workflow binding declared without an id; Workflows gains automatic-provisioning semantics different from the observed create-on-deploy; the schedules field becomes recognised by older wrangler releases; the scheduled-instance id format changes; or event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time" },
 };
