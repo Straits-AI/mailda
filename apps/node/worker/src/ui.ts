@@ -786,8 +786,11 @@ body.shell main#app {
 .case-row.theirs td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
 .case-subject { font-size: .95rem; }
 .case-count { font-size: .68rem; }
+/* The side-by-side spacing these two rules provided is gone with the stacking above, and they were still
+   winning on source order: .75rem beat margin-left: auto, so the second button sat a few pixels in from the
+   first instead of aligning with it. Kept as a note rather than deleted silently, because a stray rule that
+   quietly overrides a later intention is the same class of thing as the swallowed one. */
 .case-actions { white-space: nowrap; }
-.case-actions button + button { margin-left: .75rem; }
 
 .queue-picker { display: inline-flex; align-items: baseline; gap: .5rem; margin-left: auto; }
 .queue-picker span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
