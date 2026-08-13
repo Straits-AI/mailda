@@ -3,7 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { auditedBatch } from "../audit.ts";
-import { maySend } from "../authz-read.ts";
+import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
@@ -200,24 +200,53 @@ export async function sealManifest(
   // Threading. A reply's chain is rebuilt from the original's evidence, bounded.
   let referencesHeader: string | null = null;
   if (composition.inReplyToMessageId !== undefined) {
+    // Bounded by **read authority on the parent**, not merely by organization.
+    //
+    // This check used to be `WHERE org_id = ? AND id = ?`, while the refusal below claimed "a reply threads
+    // onto a message the author can see". Organization membership is not seeing it. `messages` carries no
+    // mailbox column, so nothing consulted where the parent was actually delivered — and a principal holding
+    // `send.propose` on one mailbox and nothing at all on another could name a message delivered only into
+    // the second and receive its `References` chain and its Message-ID, persisted here and emitted on the
+    // wire. Reproduced before fixing, in `test/reply-parent-authority.test.ts`.
+    //
+    // Two consequences worse than the disclosure itself, which is why this is bounded in the SQL rather than
+    // filtered afterwards: the emitted `In-Reply-To` and `References` **inject the reply into the foreign
+    // thread** in every external participant's client, and the difference between a refusal and a success is
+    // an org-wide existence oracle for message ids.
+    //
+    // The authority is the one `listMessages` already uses — `mailbox.content.read` on the mailbox the
+    // parent was delivered into, reached through `ingress_receipts.envelope_to` → `addresses`. Same subjects
+    // (the user plus every team they belong to), same tuple shape, so a reply cannot thread onto something
+    // the inbox would not have shown them.
+    const subjects = await readableSubjects(env, { orgId, userId: composition.authorUserId });
+    const placeholders = subjects.map(() => "?").join(", ");
     const parent = await env.CATALOG.prepare(
-      "SELECT rfc_message_id, blob_key FROM messages WHERE org_id = ? AND id = ? LIMIT 1",
+      `SELECT m.rfc_message_id, m.blob_key
+         FROM messages m
+         JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
+         JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+        WHERE m.org_id = ? AND m.id = ?
+          AND a.mailbox_id IN (
+            SELECT object_id FROM relationship_tuples
+             WHERE org_id = ? AND subject_id IN (${placeholders})
+               AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+          )
+        LIMIT 1`,
     )
-      .bind(orgId, composition.inReplyToMessageId)
+      .bind(orgId, composition.inReplyToMessageId, orgId, ...subjects)
       .first<{ rfc_message_id: string; blob_key: string }>();
-    // Refused rather than silently ignored. The lookup above is org-scoped, so a null result means
-    // the caller named a message that is not theirs — another organization's, or one that does not
-    // exist. Persisting the id anyway would leave `renderRfc822` to resolve it later and put another
-    // tenant's Message-ID into an outgoing header, which is a cross-tenant disclosure to an external
-    // recipient. Storing an id nothing verified is the actual defect; the header is just where it
-    // becomes visible.
+    // Refused rather than silently ignored, and **not-found rather than forbidden**: §5C requires an
+    // invisible thing and an absent one to answer alike, which is what stops this being the oracle described
+    // above. Persisting an unverified id would leave `renderRfc822` to resolve it later and put a Message-ID
+    // the author never had access to into an outgoing header. Storing an id nothing verified is the actual
+    // defect; the header is just where it becomes visible.
     if (parent === null) {
       throw notFound("E_NO_SUCH_PARENT", {
-        what: `${composition.inReplyToMessageId} is not a message in this organization`,
+        what: `${composition.inReplyToMessageId} is not a message you can reply to`,
         why:
-          "a reply threads onto a message the author can see; an unverified id would be resolved at " +
+          "a reply threads onto a message the author can read; an unverified id would be resolved at " +
           "render time and disclosed to the recipient",
-        fix: "reply to a message in this organization",
+        fix: "reply to a message in a mailbox you may read",
       });
     }
     // The In-Reply-To header itself is derived in renderRfc822 from the stored parent id, so it is

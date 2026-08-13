@@ -547,9 +547,20 @@ async function applyOutcome(
   // consequence is a clock that may be recorded as breached despite an answer having left, which the next
   // reply or a person can correct; the reverse — an unrecorded hand-over — cannot be corrected at all.
   if (state === "handed_over") {
+    // `m.id`, not `m.rfc_message_id`. Those columns hold different kinds of value and their own schema
+    // comments say so: `send_manifests.in_reply_to_message_id` is "our own msg_ id, NULL for a new thread"
+    // (0007_outbound.sql:20), while `messages.rfc_message_id` is "the provider/sender Message-ID header"
+    // (0002_message_metadata.sql:12). The first version compared `msg_01J…` against `<…@domain>`, so it
+    // could never match: the clock never stopped, and every case in a mailbox with a response target was
+    // swept to breached an hour later however fast the reply left. `renderRfc822` resolves the same column
+    // correctly, by id, twenty lines below — the two readings of one column sat in one file.
+    //
+    // Eighteen tests passed over it, because every one called `stopClockForConversation` directly with a
+    // conversation id it already knew. This is the only caller, and it is the only code that has to *find*
+    // the conversation. `test/clock-stops-on-reply.test.ts` now drives the whole path instead.
     const conversation = await env.CATALOG.prepare(
       `SELECT m.conversation_id FROM send_manifests s
-        LEFT JOIN messages m ON m.rfc_message_id = s.in_reply_to_message_id AND m.org_id = s.org_id
+        LEFT JOIN messages m ON m.id = s.in_reply_to_message_id AND m.org_id = s.org_id
        WHERE s.id = ? AND s.org_id = ? LIMIT 1`,
     ).bind(manifestId, orgId).first<{ conversation_id: string | null }>();
     if (conversation?.conversation_id != null) {

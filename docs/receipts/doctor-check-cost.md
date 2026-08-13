@@ -3,15 +3,43 @@ id: doctor-check-cost
 kind: measured-tripwire
 measured_on: 2026-08-05
 stale_when: >
-  Cloudflare changes the 1,000-subrequest per-invocation cap, R2 head stops counting as a
+  Cloudflare changes the per-invocation subrequest ceiling again, the Worker starts declaring a
+  limits.subrequests block (which would override the platform default), R2 head stops counting as a
   subrequest, doctor gains a check that costs a subrequest per row, or the measured cost of a
   doctor run changes materially — including any new fixed-cost check, which is what made the
   4 August figure stale
 values:
   doctor.evidence_sample_size: 200
-  doctor.max_subrequests: 1000
+  doctor.max_subrequests: 10000
   doctor.max_subrequests_per_run: 220
 ---
+
+## Correction, 13 August 2026: this receipt shipped stale
+
+`doctor.max_subrequests` was **1000**, and the `stale_when` above named the exact condition that
+invalidated it — *"Cloudflare changes the 1,000-subrequest per-invocation cap"*. Cloudflare changed it on
+**11 February 2026**, roughly six months **before** this receipt's own `measured_on` of 5 August. So the
+figure was wrong on the day it was written, and the staleness condition was already true when it was
+recorded.
+
+The Paid default is now **10,000 subrequests per invocation**, configurable up to 10 million via a
+`limits.subrequests` block. `apps/node/worker/wrangler.jsonc` declares no `limits` block, and ADR 25 refuses
+Workers Free at install, so **10,000 is the live ceiling for every supported Node**.
+
+Two things this had already broken:
+
+1. **`doctor` printed the false number to the operator.** `doctor.ts` renders *"Cap is ${…} per
+   invocation"* straight from this value, so every diagnostic run told a human the ceiling was 1,000. It
+   reads the budget rather than a literal, so correcting the value here corrects the message.
+2. **`reseal.batch_size = 100` was derived from the withdrawn cap** in `evidence-lifecycle.md`. Corrected
+   there; the batch size itself is unchanged, deliberately, because a bound that is now generous is not
+   thereby wrong and raising it needs its own measurement.
+
+**The transferable finding is about `stale_when` itself.** It is prose describing a condition in the world,
+nothing checks it, and this receipt proves that a `stale_when` naming precisely the right trigger provides no
+protection on its own. `doctor.max_subrequests_per_run = 220` — the tripwire that actually fires — was never
+affected, which is the argument for tripwires over documented conditions and is worth carrying into any
+receipt that leans on a platform figure.
 
 `doctor` verifies the runtime claims other decisions made. Most of its checks cost one query; one
 of them — evidence integrity — costs **one R2 `head` per receipt examined**, which is why it has a

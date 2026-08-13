@@ -30,10 +30,18 @@ to generation 1:
 | 2 | vault RPC — sealing key, opening key |
 | **6** | **subrequests per message** |
 
-Plus 2 fixed (candidate query, remaining count). At 100 per batch that is **602 subrequests**, inside
-the 1,000 cap with room for the retry a failing message costs. 200 would be 1,202 and would fail on a
-full batch — the kind of limit that only appears under load, which is what `AGENTS.md` calls a
-landmine.
+Plus 2 fixed (candidate query, remaining count). At 100 per batch that is **602 subrequests**.
+
+**Corrected 13 August 2026.** This originally read "inside the 1,000 cap", and 1,000 has not been the
+per-invocation ceiling since **11 February 2026** — the Paid default is now **10,000**, configurable to 10
+million. See the correction in `doctor-check-cost.md`, which carried the same withdrawn figure as a value.
+
+So the subrequest ceiling **no longer binds this choice**: 602 sits at 6% of it, and even 200 per batch
+(1,202) would fit ten times over. `reseal.batch_size` stays **100** anyway, and the reason is now explicit
+rather than inherited — the original derivation's *other* half still holds, which is that a failing message
+costs a retry, and nothing has measured the CPU or wall-clock cost of a 200-message batch against the
+5-minute CPU limit. **A bound that has become generous is not thereby wrong.** Raising it is a fresh
+measurement, not an arithmetic consequence of somebody else's cap changing.
 
 A shard holds ~8.5M messages (`message-metadata-bytes.md`), so a full re-seal is **~85,000
 invocations**. That is why the operation is resumable rather than a script, and why progress lives in
