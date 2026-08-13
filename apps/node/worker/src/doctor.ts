@@ -75,7 +75,7 @@ export interface DoctorReport {
   findings: Finding[];
   /**
    * What this run cost. Reported rather than assumed, because the receipt for this file needs a
-   * measured number and because the 1,000-subrequest cap is the reason the evidence check is
+   * measured number and because the per-invocation subrequest cap is the reason the evidence check is
    * bounded at all. A diagnostic that cannot say what it cost is one more number without a receipt.
    */
   cost: { d1Queries: number; r2Reads: number; subrequests: number };
@@ -84,8 +84,9 @@ export interface DoctorReport {
 /**
  * Counts what a doctor run spends, by standing in front of the two bindings it uses.
  *
- * Subrequests are the cap that matters (1,000 per invocation), and both D1 queries and R2 reads
- * spend one. Rows read is deliberately *not* counted: `D1PreparedStatement.first()` returns the row
+ * Subrequests are the cap that matters — 10,000 per invocation on Paid since 11 February 2026, when the
+ * 1,000 this comment used to quote was withdrawn (`doctor-check-cost.md` carried the stale figure as a
+ * *value* for six months) — and both D1 queries and R2 reads spend one. Rows read is deliberately *not* counted: `D1PreparedStatement.first()` returns the row
  * without `meta`, so a rows-read total would silently omit most of this file's queries — and a
  * partial figure presented as a total is exactly the kind of number this project refuses to write.
  */
@@ -104,9 +105,10 @@ export interface DoctorReport {
  * execution-count on this path. Nothing enforces that, nothing would notice it changing, and the meter would
  * keep reporting a plausible figure.
  *
- * **So this meter must not be reused to price anything else.** Butler step costing was going to use it, and
- * would have measured `mail.send.propose` at 6 subrequests when the real figure is 10 — the four missing ones
- * being vault RPCs it cannot see. `test/node/doctor-meter-honesty.test.ts` pins the property that makes the
+ * **So this meter must not be reused to price anything else — use `src/cost-meter.ts`**, which counts
+ * executions, prices a `batch()` as the one round trip it is, and proxies the vault. Butler step costing was
+ * going to use *this* meter and would have measured `mail.send.propose` at 6 subrequests against a measured
+ * 10 (`butler-step-cost.md`), the missing ones being vault RPCs it cannot see. `test/node/doctor-meter-honesty.test.ts` pins the property that makes the
  * current figure true, so that if a reused statement or a `batch` ever appears on the doctor path, the
  * assumption fails loudly instead of the number drifting quietly.
  */
