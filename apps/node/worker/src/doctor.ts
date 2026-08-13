@@ -89,6 +89,27 @@ export interface DoctorReport {
  * without `meta`, so a rows-read total would silently omit most of this file's queries — and a
  * partial figure presented as a total is exactly the kind of number this project refuses to write.
  */
+/**
+ * The cost meter, and **what it cannot measure** — recorded because the figure it produces is correct today
+ * for a reason that has nothing to do with the meter being right.
+ *
+ * It counts `prepare`, not execution. A statement prepared once and executed twenty-five times counts **1**.
+ * `batch` is not intercepted at all, so a batch of eight statements counts its eight prepares and **zero**
+ * executions, while two hundred inserts inside one batch count two hundred rather than one. And it proxies
+ * `CATALOG` and `EVIDENCE` only, so **Durable Object RPCs are invisible** — the two `KEY_VAULT` calls behind
+ * every evidence read and write do not appear at all.
+ *
+ * Today's number is nonetheless right, and that is the landmine in the AGENTS.md sense: every `prepare`
+ * reachable from `runDoctor` is chained into exactly one execution, so prepare-count happens to equal
+ * execution-count on this path. Nothing enforces that, nothing would notice it changing, and the meter would
+ * keep reporting a plausible figure.
+ *
+ * **So this meter must not be reused to price anything else.** Butler step costing was going to use it, and
+ * would have measured `mail.send.propose` at 6 subrequests when the real figure is 10 — the four missing ones
+ * being vault RPCs it cannot see. `test/node/doctor-meter-honesty.test.ts` pins the property that makes the
+ * current figure true, so that if a reused statement or a `batch` ever appears on the doctor path, the
+ * assumption fails loudly instead of the number drifting quietly.
+ */
 function metered(env: Env): { env: Env; cost: DoctorReport["cost"] } {
   const cost = { d1Queries: 0, r2Reads: 0, subrequests: 0 };
 
