@@ -79,11 +79,11 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,549 lines specifying the target state, with 41 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,557 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 25 receipts in [`docs/receipts/`](./docs/receipts/) generating 151 verified constants |
-| **Code** | A measurement harness and one Worker. 432 tests, checked on every push. Not a product. |
+| **Measurements** | 26 receipts in [`docs/receipts/`](./docs/receipts/) generating 156 verified constants |
+| **Code** | A measurement harness and one Worker. 439 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -99,6 +99,25 @@ detected. Lose the race and you are told **who** holds it and for how long, beca
 row instead of reporting a bare failure. There is no expiry: an expiry is a policy guess, a claim's age is a
 fact, so the queue shows the age and a colleague decides. Taking a case from somebody is allowed and
 audited — the design prevents accidents, not takeover, and says so.
+
+**One clock, and it promises nothing until somebody says what to promise.** Time to first response: from
+the oldest inbound message nobody has answered to the first outbound hand-over. No pause and no
+`waiting-on-customer`, because a pause needs to know whose turn it is and this Node cannot observe that — a
+clock that pauses wrongly measures nothing. The target is **per mailbox with no default**: NULL means no
+service level, which is the shipped state, because how fast a business answers its customers is not a
+platform limit and not ours to invent. It is set on the queue screen, beside the clocks it governs, so a
+promise nobody can see the source of is not one anybody has to trust. A breach is recorded by a cron sweep —
+a query over due rows, idempotent by construction, so a dropped invocation is repaired by the next minute's
+rather than losing the breach — and it does **not** change the case's state: a case that is late is not a
+different kind of case, so the fact is shown beside it rather than folded into it.
+
+**Merging two conversations mostly refuses, and the refusal is the feature.** Twelve pair-states can occur
+when merging A into B; two are safe to automate. The rest mean a single-winner merge destroys a claim
+somebody is working, reopens something reported closed, or resets a breach that happened — and that last
+class is the deciding one, because the failure of merge-by-picking is not lost text but a system reporting
+something untrue about work it owes a customer. So it merges the two safe states and refuses the others
+**naming the mailbox and the case pair to resolve first**. One contested pair refuses the whole merge, since
+a partially merged conversation contradicts a conversation being one thing.
 
 **A delivery is what gets filed, not a message.** §12 says a message may have many deliveries and access
 is evaluated per delivery — and that was *assumed* rather than implemented. The ingress derived key was the

@@ -258,6 +258,15 @@ export interface QueueEntry extends CaseRow {
    * disclosure, which is why it is bounded to the queue's own members by the check above.
    */
   assignee_email: string | null;
+  /**
+   * The clock (#41). NULL throughout when the mailbox promises nothing, which is the shipped default.
+   *
+   * Carried into the queue because a breach recorded and never shown is the silence this whole codebase
+   * exists to remove — the sweep writes `response_breached_at` and, until this, nothing displayed it.
+   */
+  response_due_at: string | null;
+  first_response_at: string | null;
+  response_breached_at: string | null;
 }
 
 /**
@@ -291,7 +300,8 @@ export async function queueFor(
               ORDER BY m.sent_at DESC LIMIT 1) AS from_addr,
             (SELECT COUNT(*) FROM messages m
               WHERE m.org_id = c.org_id AND m.conversation_id = c.conversation_id) AS message_count,
-            (SELECT u.email FROM users u WHERE u.id = c.assignee) AS assignee_email
+            (SELECT u.email FROM users u WHERE u.id = c.assignee) AS assignee_email,
+            c.response_due_at, c.first_response_at, c.response_breached_at
        FROM cases c
       WHERE c.org_id = ? AND c.mailbox_id = ? AND c.state != 'closed'
       ORDER BY CASE WHEN c.assignee IS NULL THEN 0 ELSE 1 END, c.created_at`,
@@ -304,6 +314,10 @@ export async function queueFor(
 export interface MailboxQueue {
   id: string;
   name: string;
+  /** NULL means this mailbox promises nothing, which is what a fresh Node ships with. */
+  first_response_minutes: number | null;
+  /** Cases past their target and unanswered — the number that should make somebody act. */
+  breached: number;
   /** Unclaimed, open cases — the number the rail exists to carry. */
   unclaimed: number;
   /** Claimed by anybody, including the caller. Distinguished because "in progress" is not "waiting". */
@@ -332,7 +346,11 @@ export async function mailboxQueues(env: Env, orgId: string, userId: string): Pr
   const placeholders = subjects.map(() => "?").join(", ");
 
   const { results } = await env.CATALOG.prepare(
-    `SELECT m.id, m.name,
+    `SELECT m.id, m.name, m.first_response_minutes,
+            (SELECT COUNT(*) FROM cases c
+              WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
+                AND c.response_breached_at IS NOT NULL AND c.first_response_at IS NULL
+                AND c.state != 'closed') AS breached,
             (SELECT COUNT(*) FROM cases c
               WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
                 AND c.state = 'open' AND c.assignee IS NULL) AS unclaimed,

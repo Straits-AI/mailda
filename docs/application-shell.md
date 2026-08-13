@@ -106,6 +106,16 @@ Two TypeScript programs, not one: the browser half needs `lib: DOM` and JSX, and
 have them, or `document` resolving inside `src/index.ts` becomes a runtime error in somebody's mailbox
 instead of a type error. `pnpm typecheck` runs both.
 
+The stylesheet is CSS inside a TypeScript template literal in `src/ui.ts`, which has two hazards worth
+naming because they have cost real time. A **backtick in a CSS comment** ends the literal; the build fails
+loudly, so the cost is diagnosis rather than a defect. A **stray comment terminator** is the dangerous one:
+the prose after it sits outside any comment, CSS error recovery consumes that prose as a selector up to the
+next `{…}`, and **the rule immediately following it is silently discarded**. That shipped once. It put
+`width: 100%` on the queue's subject column into the served bytes and out of
+`document.styleSheets[0].cssRules`, so four consecutive layout attempts were measured honestly against a
+stylesheet that never contained the rule under test. `test/node/stylesheet-hazards.test.ts` now fails on
+either, and names the line.
+
 ## Routes
 
 `src/app-routes.ts` is imported by both `index.ts` and `main.tsx`, so a route is added once. The Worker
@@ -133,8 +143,10 @@ misses things: the duplicate `main` landmark this shell shipped is `landmark-one
 `best-practice` and so invisible to an AA-only run. On the first advisory run it immediately found that the
 Inbox had no level-one heading at all, and that `/log` and `/doctor` lost theirs while loading.
 
-Current state: **10 screens, 0 AA violations, 0 advisories, 10 unproven** — the unproven being the gradient
-contrast that the computed check covers instead.
+Current state: **12 screens, 0 AA violations, 0 advisories, 12 unproven** — the unproven being the gradient
+contrast that the computed check covers instead. The queue screen is in that count with its clock column,
+its inline response-target field and its merge selection present, which is the point of running it against
+a seeded fixture rather than an empty one.
 
 **One caveat worth keeping in view:** the harness measures whatever state the fixture happens to be in. The
 first clean run had an empty inbox, so the message list did not exist to be checked; the moment a message

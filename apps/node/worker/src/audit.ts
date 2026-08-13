@@ -63,6 +63,9 @@ export const AUDIT_ACTIONS = {
    * somebody could be asked about. Frequency and answerability, not importance.
    */
   "case.claim_taken": { says: "One person took a claimed case from another; both are named." },
+  "mailbox.response_target_set": {
+    says: "An administrator set or cleared a mailbox's first-response target, which is a promise to customers.",
+  },
   "conversation.merged": {
     says: "A person decided two conversations were one thing; both ids and every mailbox are named.",
   },

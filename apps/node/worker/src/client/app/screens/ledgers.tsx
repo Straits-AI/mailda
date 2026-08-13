@@ -101,6 +101,7 @@ export function Outbox() {
   const sends = useSends();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
 
   if (sends.isPending || sends.isError) {
     return (
@@ -119,7 +120,9 @@ export function Outbox() {
     // Refetched rather than patched locally: the reason a cancel failed is a server fact, and guessing the
     // new state here is how a UI ends up disagreeing with the ledger it is displaying.
     await queryClient.invalidateQueries({ queryKey: ["sends"] });
-    if (!outcome.cancelled) window.alert(outcome.reason ?? "It could not be stopped.");
+    // Rendered, not alerted. `window.alert` blocks the page, cannot be styled or announced properly, and the
+    // reason a send could not be stopped is exactly the kind of message somebody needs to read twice.
+    if (!outcome.cancelled) setProblem(outcome.reason ?? "It could not be stopped.");
   }
 
   return (
@@ -132,6 +135,7 @@ export function Outbox() {
       {capability.canSend ? null : (
         <p className="notice bad">{capability.detail}</p>
       )}
+      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
       <p className="notice dim">
         {daily.throttledAtCount === null
           ? `${daily.handedOver} handed over today. Your daily limit is not published by Cloudflare; it will be recorded here the first time you hit it.`

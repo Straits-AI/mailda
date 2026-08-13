@@ -17,6 +17,7 @@ import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.t
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { mergeConversations } from "./merge.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
+import { setResponseTarget } from "./mailbox-policy.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "./drafts.ts";
 import { publicJwks, rotateSigningKey } from "./auth/keys.ts";
 import {
@@ -431,6 +432,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       return Response.json({ mailboxes: await mailboxQueues(env, who.orgId, who.userId) });
+    }
+
+    const mailboxPatch = /^\/api\/mailboxes\/([^/]+)$/.exec(url.pathname);
+    if (mailboxPatch && request.method === "PATCH") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // Absent and null are the same request — "promise nothing" — because a PATCH that omitted the field
+      // would otherwise silently mean "leave it", and there is only one field to change.
+      const raw = body.firstResponseMinutes;
+      const minutes = raw === null || raw === undefined ? null : Number(raw);
+      return Response.json(
+        await setResponseTarget(env, clock, who.orgId, who.userId, mailboxPatch[1]!, minutes),
+      );
     }
 
     if (url.pathname === "/api/cases" && request.method === "GET") {

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
 import { clockOnInbound, stopClockForConversation, sweepResponseClocks } from "../src/response-clock.ts";
+import { setResponseTarget } from "../src/mailbox-policy.ts";
 
 /**
  * The first-response clock (#41, decided in migration 0017).
@@ -227,5 +228,69 @@ describe("the due time is stored in the same format the sweep compares against",
     // Same shape as `new Date(...).toISOString()`, which is the other side of every comparison.
     expect(due).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(due! <= new Date(Date.parse("2026-08-10T11:00:00.000Z")).toISOString()).toBe(false);
+  });
+});
+
+describe("setting the target, which is what made the clock reachable at all", () => {
+  const ADMIN = "usr_admin_clock";
+  const AGENT = "usr_agent_clock";
+
+  beforeEach(async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples").run();
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries").run();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?, 'org.admin', 'organization', ?, ?)`,
+    ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?, 'send.propose', 'mailbox', ?, ?)`,
+    ).bind(ctx.id("rt"), ORG, AGENT, PROMISED, at).run();
+  });
+
+  it("was the missing half: 0017 shipped no way to set the column it added", async () => {
+    // Recorded as a test rather than a note. The decision not to pick a default was right, and it was only
+    // coherent alongside a way to pick one — without this, every mailbox is permanently NULL and the sweep
+    // correctly finds nothing forever.
+    await testEnv.CATALOG.prepare("UPDATE mailboxes SET first_response_minutes = NULL WHERE id = ?")
+      .bind(PROMISED).run();
+    await setResponseTarget(testEnv, atTime(1_000_000), ORG, ADMIN, PROMISED, 90);
+
+    const row = await testEnv.CATALOG.prepare("SELECT first_response_minutes FROM mailboxes WHERE id = ?")
+      .bind(PROMISED).first<{ first_response_minutes: number }>();
+    expect(row?.first_response_minutes).toBe(90);
+  });
+
+  it("refuses somebody who only works the queue, because a target is a promise not a preference", async () => {
+    await expect(setResponseTarget(testEnv, atTime(1_100_000), ORG, AGENT, PROMISED, 30))
+      .rejects.toThrow(/E_NOT_AN_ADMINISTRATOR/);
+  });
+
+  it("refuses zero, which would breach every case on arrival", async () => {
+    await expect(setResponseTarget(testEnv, atTime(1_200_000), ORG, ADMIN, PROMISED, 0))
+      .rejects.toThrow(/E_BAD_RESPONSE_TARGET/);
+    // Null is how you promise nothing; zero is how you make the breach count meaningless.
+    await expect(setResponseTarget(testEnv, atTime(1_300_000), ORG, ADMIN, PROMISED, null))
+      .resolves.toMatchObject({ firstResponseMinutes: null });
+  });
+
+  it("records both the old value and the new one, because that is the interesting question", async () => {
+    await setResponseTarget(testEnv, atTime(1_400_000), ORG, ADMIN, PROMISED, 60);
+    await setResponseTarget(testEnv, atTime(1_500_000), ORG, ADMIN, PROMISED, 15);
+
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, subject, detail FROM audit_entries
+        WHERE action = 'mailbox.response_target_set' ORDER BY seq DESC LIMIT 1`,
+    ).first<{ actor_user_id: string; subject: string; detail: string }>();
+    expect(entry?.actor_user_id).toBe(ADMIN);
+    expect(entry?.subject).toBe(PROMISED);
+    expect(JSON.parse(entry!.detail)).toMatchObject({ from: 60, to: 15 });
+  });
+
+  it("refuses a mailbox that does not exist rather than promising something about nothing", async () => {
+    await expect(setResponseTarget(testEnv, atTime(1_600_000), ORG, ADMIN, "mbx_nope", 30))
+      .rejects.toThrow(/E_NO_MAILBOX/);
   });
 });

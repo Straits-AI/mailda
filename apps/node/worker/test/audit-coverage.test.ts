@@ -39,7 +39,14 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   team_members: { exempt: "No mutation path exists yet. Auditable when membership admin lands (§28)." },
-  mailboxes: { exempt: "No mutation path exists yet." },
+  mailboxes: {
+    // Was exempt for "no mutation path exists yet". A mailbox's first-response target is now settable, and
+    // it is the one thing about a mailbox anybody can change — because it is a **promise to customers**
+    // rather than a preference, and a breach recorded against it is a fact somebody may be asked about.
+    // Creating and archiving mailboxes are still unbuilt; when they land they join this list rather than
+    // moving the table back.
+    actions: ["mailbox.response_target_set"],
+  },
   messages: { exempt: "Written by ingress from mail that arrived; the mail is its own evidence (§13)." },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
   ingress_receipts: { exempt: "The receipt *is* the audit record for arrival, and is hashed (§13)." },

@@ -225,6 +225,9 @@ export interface MailboxQueue {
   unclaimed: number;
   claimed: number;
   mine: number;
+  /** NULL means the mailbox promises nothing — the shipped default, and not a missing value. */
+  first_response_minutes: number | null;
+  breached: number;
 }
 
 export interface CaseRow {
@@ -240,6 +243,9 @@ export interface CaseRow {
   from_addr: string | null;
   message_count: number;
   assignee_email: string | null;
+  response_due_at: string | null;
+  first_response_at: string | null;
+  response_breached_at: string | null;
 }
 
 /** The rail's rows. Only mailboxes this person may work, with their depths. */
@@ -299,3 +305,40 @@ export const claimCase = (id: string) => act(id, "claim");
 export const stealCase = (id: string) => act(id, "steal");
 export const releaseCase = (id: string) => act(id, "release");
 export const closeCase = (id: string) => act(id, "close");
+
+/** Sets or clears a mailbox's first-response target. Administrator only, and audited. */
+export async function setResponseTarget(
+  mailboxId: string,
+  minutes: number | null,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(`/api/mailboxes/${encodeURIComponent(mailboxId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ firstResponseMinutes: minutes }),
+  });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  // The Node's four-part message verbatim: it names the remedy, and paraphrasing drops that half.
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+/** Merges one conversation into another. Refuses more often than it succeeds, by design (#43). */
+export async function mergeConversations(
+  from: string,
+  into: string,
+): Promise<{ ok: true; messagesMoved: number } | { ok: false; message: string }> {
+  const response = await apiFetch("/api/conversations/merge", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ from, into }),
+  });
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok && body?.merged === true) {
+    return { ok: true, messagesMoved: Number(body.messagesMoved ?? 0) };
+  }
+  // The refusal reason *is* the deliverable here — it names the case pair to resolve first.
+  return {
+    ok: false,
+    message: String(body?.reason ?? body?.message ?? `This Node answered ${response.status}.`),
+  };
+}

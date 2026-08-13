@@ -731,6 +731,40 @@ body.shell main#app {
    ledger of who a message went to, actively misleading. The table gets a floor and its container
    scrolls instead. */
 .ledger table { min-width: 52rem; }
+/* The queue carries two columns the ledgers do not — a pick control and the response clock — and adding them
+   first crushed the subject to a few characters per line. The fix attempted then was a 68rem floor, which
+   traded the crushed subject for something worse: at a 1200px window the response clock and the action
+   buttons both sat past the right edge, reachable only by a horizontal scroll whose bar macOS hides. The two
+   columns a person acts on were the two that disappeared.
+
+   So the queue keeps the ledgers' 52rem floor and earns its width back instead: the holder cell wraps
+   between the name and the age (two nowrap spans, not one nowrap string) and the actions stack. Six columns
+   then fit without scrolling at 1200px, which is the width the visual check runs at.
+
+   One declared width, on the subject, and it is 100%. Under auto layout that means "give me the surplus": the
+   five font-shaped columns settle at the width their content needs and everything left over goes to the one
+   column that is prose. A ceiling was tried instead and did nothing useful, because a max-width does not stop
+   the surplus going to the address columns, which do not need it — the subject came out at 146px while From
+   sat at 226.
+
+   Three wrong answers preceded it, recorded because each looked right: a 68rem floor (pushed the clock and
+   the actions off a 1200px window entirely), table-layout: fixed with per-cent shares (clipped every address
+   by about 20px, a share of the container being the wrong unit for text whose width the font sets), and a
+   min/max pair on the subject (min-width on a table cell did not raise the column at all). */
+.queue-table th:nth-child(2), .queue-table td:nth-child(2) { width: 100%; }
+.queue-table .case-subject { display: inline-block; }
+/* This cell is the exception to td.mono's nowrap: it holds two facts, so it may break between them but never
+   inside either. An address split across lines reads as two addresses (the reason nowrap exists at all).
+   Scoped under .ledger to outrank the .ledger td.mono rule above — equal specificity would leave this to
+   source order, which is how the first version silently kept nowrap and overflowed its cell by 77px.
+   (And no backticks in here. This is the third time one in a comment has closed this template literal.) */
+.ledger .queue-table td.case-holder { white-space: normal; }
+.ledger .queue-table td.case-holder > span { white-space: nowrap; }
+/* Stacked, right-aligned. Side by side, release-and-close is the widest cell in the table for the sake of two
+   words. Achieved with block buttons rather than a flex cell: display: flex on a td replaces its table-cell
+   box, and the visible symptom was the row rule stopping short of the last column. */
+.case-actions { text-align: right; }
+.case-actions button { display: block; margin-left: auto; }
 /* nowrap, not a smarter wrap. overflow-wrap: anywhere still split "billing@example.com" across lines,
    which reads as two addresses. The table has a floor and the ledger scrolls. */
 .ledger td.mono { word-break: normal; overflow-wrap: normal; white-space: nowrap; }
@@ -778,6 +812,32 @@ body.shell main#app {
   font-size: .8rem;
 }
 .rail-mine { color: var(--live); }
+/* ---- the first-response clock ------------------------------------------------------------- */
+
+/* Each carries a word, so none of them depends on colour being measured. --signal and --alarm are still
+   unproven (contrast-tokens.md proves --dim only), which is now the third feature shaped by that gap. */
+.clock-answered { border-color: var(--live);   color: var(--live); }
+.clock-due      { border-color: var(--signal); color: var(--signal); }
+.clock-breached { border-color: var(--alarm);  color: var(--alarm); }
+
+.queue-target { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.queue-breached { margin-left: auto; }
+
+.target-edit { display: inline-flex; align-items: baseline; gap: .4rem; }
+.target-edit span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
+.target-edit input {
+  font-family: var(--mono);
+  font-size: .78rem;
+  width: 5rem;
+  background: var(--ground-2);
+  color: var(--text);
+  border: 1px solid var(--rule-strong);
+  padding: .18rem .35rem;
+}
+
+/* The pick control sits with the state word rather than in a column of its own: a case is picked *as* a
+   state, and a bare checkbox column reads as a table that wants bulk actions it does not have. */
+.case-pick { display: inline-flex; align-items: baseline; gap: .5rem; cursor: pointer; }
 </style>
 </head>
 <body>
