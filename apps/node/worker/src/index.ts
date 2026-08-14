@@ -587,6 +587,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         mailboxId: String(body.mailboxId ?? ""),
         authorUserId: who.userId,
         inReplyToMessageId: body.inReplyToMessageId === undefined ? undefined : String(body.inReplyToMessageId),
+        // Absent is a real answer: it means "this mailbox has one address, use it". Only a multi-address
+        // mailbox refuses when it is absent, which is what makes adding this field non-breaking.
+        senderAddress: body.senderAddress === undefined ? undefined : String(body.senderAddress),
         to: Array.isArray(body.to) ? (body.to as string[]) : [],
         cc: Array.isArray(body.cc) ? (body.cc as string[]) : undefined,
         bcc: Array.isArray(body.bcc) ? (body.bcc as string[]) : undefined,

@@ -357,6 +357,17 @@ export interface MailboxQueue {
   name: string;
   /** NULL means this mailbox promises nothing, which is what a fresh Node ships with. */
   first_response_minutes: number | null;
+  /**
+   * Every address routed to this mailbox, oldest first, comma-separated.
+   *
+   * Carried so the composer can *offer* the From choice rather than a caller discovering by refusal that a
+   * mailbox has several. `sealManifest` refuses an unnamed sender on a multi-address mailbox, and a refusal
+   * with no way to comply is a dead end — this is the way to comply.
+   *
+   * Disclosing them here is bounded by the same relation the queue is: the caller already holds
+   * `send.propose` on this mailbox, so these are the addresses they may send as.
+   */
+  addresses: string;
   /** Cases past their target and unanswered — the number that should make somebody act. */
   breached: number;
   /** Unclaimed, open cases — the number the rail exists to carry. */
@@ -388,6 +399,10 @@ export async function mailboxQueues(env: Env, orgId: string, userId: string): Pr
 
   const { results } = await env.CATALOG.prepare(
     `SELECT m.id, m.name, m.first_response_minutes,
+            (SELECT GROUP_CONCAT(a.address) FROM (
+               SELECT address FROM addresses
+                WHERE org_id = m.org_id AND mailbox_id = m.id ORDER BY created_at
+             ) a) AS addresses,
             (SELECT COUNT(*) FROM cases c
               WHERE c.org_id = m.org_id AND c.mailbox_id = m.id
                 AND c.response_breached_at IS NOT NULL AND c.first_response_at IS NULL

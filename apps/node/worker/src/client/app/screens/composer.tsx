@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { apiFetch } from "/app/session.js";
 
+import { useMailboxes } from "../api.ts";
+
 /**
  * The docked composer — the reason ADR 30 put React at this layer.
  *
@@ -103,8 +105,23 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   const [phase, setPhase] = useState<Phase>({ kind: "empty" });
   const [sealing, setSealing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /**
+   * Which address this goes out as. Empty means "not chosen", which is only a problem when there is a choice
+   * to make — the Node decides that, and its refusal names the addresses.
+   */
+  const [senderAddress, setSenderAddress] = useState("");
   const [resuming, setResuming] = useState(context.inReplyToMessageId !== undefined);
   const queryClient = useQueryClient();
+  /**
+   * The addresses this mailbox may send as, from the rail's own query rather than a second endpoint — it is
+   * already loaded and already bounded by the relation that decides whether this composer should exist.
+   */
+  const mailboxes = useMailboxes();
+  const senderOptions = (mailboxes.data?.mailboxes
+    .find((box) => box.id === context.mailboxId)?.addresses ?? "")
+    .split(",")
+    .map((address) => address.trim())
+    .filter((address) => address !== "");
   const navigate = useNavigate();
 
   // `latest` exists so the debounced save reads the values at the moment it fires rather than the ones
@@ -228,6 +245,9 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           to: splitAddresses(to),
           subject,
           body,
+          // Omitted rather than sent empty when there is nothing to choose: absent means "this mailbox has
+          // one address, use it", and an empty string would be a sender that matches nothing.
+          ...(senderAddress === "" ? {} : { senderAddress }),
           // The Node retires the draft once the manifest exists, rather than the browser deleting it and
           // hoping the seal succeeded.
           draftId,
@@ -288,6 +308,37 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
       </header>
 
       <form onSubmit={(event) => void seal(event)} noValidate>
+        {/*
+          From, offered rather than assumed.
+
+          A mailbox may have several addresses, and the Node used to pick the oldest by `created_at` — so
+          adding `billing@` to a support mailbox sent billing replies as `support@`, silently. The Node now
+          refuses an unnamed sender when there is a choice, and this is how somebody complies. Rendered only
+          when there *is* a choice: a select with one option is furniture, and the overwhelming majority of
+          mailboxes have exactly one address.
+
+          **First, before To.** It was appended after the message body in the first version, so somebody
+          wrote the whole reply and only then met a required field — and From is identity, which belongs at
+          the top of a letter rather than under it.
+        */}
+        {senderOptions.length > 1 ? (
+          <label className="field-row" htmlFor="composer-from">
+            <span>From</span>
+            <select
+              id="composer-from"
+              className="mono"
+              value={senderAddress}
+              onChange={(event) => setSenderAddress(event.target.value)}
+              required
+            >
+              <option value="">choose an address…</option>
+              {senderOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         <label className="field-row" htmlFor="composer-to">
           <span>To</span>
           <input

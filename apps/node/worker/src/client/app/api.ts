@@ -228,6 +228,14 @@ export interface MailboxQueue {
   /** NULL means the mailbox promises nothing — the shipped default, and not a missing value. */
   first_response_minutes: number | null;
   breached: number;
+  /**
+   * Every address routed to this mailbox, oldest first, comma-separated — NULL when it has none.
+   *
+   * Present so the composer can *offer* the From choice. A mailbox may have several addresses, and
+   * `sealManifest` refuses an unnamed sender when it does — a refusal a person cannot comply with is a dead
+   * end, and this is the way to comply.
+   */
+  addresses: string | null;
 }
 
 export interface CaseRow {

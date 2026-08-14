@@ -46,6 +46,16 @@ export type Fidelity = "authored" | "reconstructed";
 export interface Composition {
   mailboxId: string;
   authorUserId: string;
+  /**
+   * Which of the mailbox's addresses to send as. Required when the mailbox has more than one.
+   *
+   * A mailbox may have several addresses — `addresses` is unique on the address, **not** on `mailbox_id` —
+   * and From used to be chosen by `ORDER BY created_at LIMIT 1`, the oldest. So adding `billing@` to a
+   * support mailbox made billing replies go out as `support@`, decided by a timestamp, with nothing saying
+   * so. The grain of `send.propose` is still the mailbox (ADR 36); what changed is that the *choice* is no
+   * longer silent.
+   */
+  senderAddress?: string;
   /** Our own `msg_` id when this is a reply. The threading chain is read from its evidence. */
   inReplyToMessageId?: string;
   to: string[];
@@ -166,11 +176,52 @@ export async function sealManifest(
     });
   }
 
-  const address = await env.CATALOG.prepare(
-    "SELECT address FROM addresses WHERE org_id = ? AND mailbox_id = ? ORDER BY created_at LIMIT 1",
+  /**
+   * From, chosen rather than assumed.
+   *
+   * Every address on the mailbox, oldest first — the order the previous version silently picked from. One
+   * address needs no ceremony; more than one is a decision with consequences for every recipient, and this
+   * refuses rather than picking. Same reasoning as merge: a choice a person would want to make must not be
+   * made by `created_at`.
+   */
+  const { results: mailboxAddresses } = await env.CATALOG.prepare(
+    "SELECT address FROM addresses WHERE org_id = ? AND mailbox_id = ? ORDER BY created_at",
   )
     .bind(orgId, composition.mailboxId)
-    .first<{ address: string }>();
+    .all<{ address: string }>();
+
+  let address: { address: string } | null = mailboxAddresses[0] ?? null;
+
+  if (composition.senderAddress !== undefined) {
+    // Verified against this mailbox, not merely well-formed. Otherwise `senderAddress` would be a way to
+    // send as an address routed to a mailbox the author holds nothing on, which is the authority
+    // `send.propose` is bound to.
+    // Compared case-insensitively on the whole address rather than by `===`, so a caller echoing back
+    // `Support@Acme.example` from a display is not refused for capitalisation. `normalizeAddress` throws on
+    // a control character, which is the injection guard, so it runs on the caller's value first.
+    const wanted = normalizeAddress("senderAddress", composition.senderAddress).toLowerCase();
+    const named = mailboxAddresses.find((row) => row.address.trim().toLowerCase() === wanted);
+    if (named === undefined) {
+      throw notFound("E_SENDER_NOT_ON_MAILBOX", {
+        what: `${composition.senderAddress} is not an address of the mailbox you are sending as`,
+        why: "From is bound to the mailbox (ADR 36), so the sender must be one of its own addresses",
+        fix: mailboxAddresses.length === 0
+          ? "give this mailbox an address first"
+          : `use one of: ${mailboxAddresses.map((row) => row.address).join(", ")}`,
+      });
+    }
+    address = named;
+  } else if (mailboxAddresses.length > 1) {
+    // Refused, not guessed. Naming the addresses because the fix is to pick one, and a refusal a person
+    // cannot act on is a complaint.
+    throw conflict("E_SENDER_AMBIGUOUS", {
+      what: `mailbox ${composition.mailboxId} has ${mailboxAddresses.length} addresses, so which one this `
+        + "is from is not decided",
+      why: "the previous behaviour picked the oldest by created_at, which is a choice about what every "
+        + "recipient sees being made by a timestamp",
+      fix: `name one of: ${mailboxAddresses.map((row) => row.address).join(", ")}`,
+    });
+  }
 
   if (address === null) {
     throw conflict("E_MAILBOX_HAS_NO_ADDRESS", {

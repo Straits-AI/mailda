@@ -803,6 +803,23 @@ body.shell main#app {
    quietly overrides a later intention is the same class of thing as the swallowed one. */
 .case-actions { white-space: nowrap; }
 
+/* The composer's From selector, matched to the bare-underline fields beside it rather than left as browser
+   furniture. It first shipped as an unstyled full-width native select among underlined inputs and looked
+   like it belonged to a different application. */
+.field-row select {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: .95rem;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  padding: .3rem 0;
+  width: auto;
+  min-width: 18rem;
+}
+.field-row select:focus { outline: none; border-bottom-color: var(--accent); }
+
 .queue-picker { display: inline-flex; align-items: baseline; gap: .5rem; margin-left: auto; }
 .queue-picker span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
 .queue-picker select {
