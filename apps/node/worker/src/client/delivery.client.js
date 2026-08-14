@@ -134,3 +134,84 @@ export function summariseDelivery(recipients) {
       return { state, count, label: meta.label, note: meta.note };
     });
 }
+
+/**
+ * The manifest's own state, and the one case where this Node knows more than the state name admits.
+ *
+ * ## Why the words moved here from the React screen
+ *
+ * They were a literal map inside `ledgers.tsx`, keyed on `state` alone. That is fine for every state but
+ * one. `outcome_unknown` read "We do not know whether it left" **unconditionally**, and there is a
+ * combination in which the Node can prove it did not:
+ *
+ *     state = outcome_unknown  AND  fidelity = authored  AND  submitted_key IS NULL
+ *
+ * On the authored path `dispatch.ts` stores the submitted bytes and sets `submitted_key` **before** calling
+ * `transport.submit`. So a terminal authored send with no submitted key never reached the transport — the
+ * bytes were never handed anywhere. Saying "we do not know" there is weaker than the evidence, and Layer 2's
+ * proof line is that these words are never blurred.
+ *
+ * The `authored` guard is load-bearing rather than decorative: on the reconstructed path `submitted_key` is
+ * never written at all, so its being NULL says nothing. ADR 33 routes all customer mail through `authored`,
+ * so the distinction covers the path that matters and stays silent on the one it cannot speak about.
+ *
+ * ## Why here rather than on the server
+ *
+ * The same three fields already decide whether the outbox offers the `.eml` link, so a server-side flag
+ * would be a second derivation that has to agree with that one. And this module exists precisely because
+ * the rule deciding what a reader is shown belongs somewhere a test can reach — the outbox's previous
+ * honesty defect lived in the one file with no coverage.
+ */
+export const SEND_STATES = {
+  held: { label: "held", note: "Not sent yet. You can still stop this." },
+  cancelled: { label: "cancelled", note: "Stopped before it left." },
+  withheld: {
+    label: "withheld",
+    note:
+      "Not sent. The author's authority to send as this mailbox was withdrawn during the hold window, so " +
+      "this Node refused to hand it over. Nobody cancelled it and the mail service was never asked.",
+  },
+  throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
+  refused: { label: "refused", note: "The mail service would not accept it. It never left." },
+  suppressed: { label: "suppressed", note: "The mail service will never deliver to this recipient." },
+  handed_over: {
+    label: "handed over",
+    note: "Accepted by the mail service. Whether it arrived is not knowable from here.",
+  },
+  outcome_unknown: {
+    label: "outcome unknown",
+    note: "We do not know whether it left. It will not be retried automatically.",
+  },
+};
+
+/**
+ * The stronger statement available when the bytes provably never reached the transport.
+ *
+ * Deliberately a separate entry rather than a rewrite of `outcome_unknown`: the state in the database really
+ * is `outcome_unknown`, and this is a *reading* of it plus one more column. Anything comparing the label to
+ * the stored state should still find them consistent, which is why the label keeps the state's name and the
+ * note carries the extra knowledge.
+ */
+export const NEVER_SUBMITTED = {
+  label: "outcome unknown",
+  note:
+    "It never left. This Node stores the submitted bytes before asking the mail service, and there are " +
+    "none — so the attempt failed before the mail service was contacted. Nothing was sent, and no " +
+    "duplicate can result from sending it again.",
+};
+
+/**
+ * What to tell a reader about one send, given the row.
+ *
+ * Takes the row rather than a state string, because the honest answer needs three of its fields. Returns the
+ * same shape as `DELIVERY_STATES` so a caller renders both identically.
+ */
+export function describeSend(send) {
+  const base = SEND_STATES[send?.state] ?? { label: String(send?.state ?? "unknown"), note: "" };
+  const neverSubmitted = send?.state === "outcome_unknown"
+    && send?.fidelity === "authored"
+    // Served as 0/1 by D1's `submitted_key IS NOT NULL AS has_submitted`, so both forms are accepted
+    // rather than assuming one — a boolean here and an integer there is how a truthiness bug arrives.
+    && (send?.has_submitted === 0 || send?.has_submitted === false);
+  return neverSubmitted ? NEVER_SUBMITTED : base;
+}

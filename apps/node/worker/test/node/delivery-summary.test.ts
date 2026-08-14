@@ -151,3 +151,78 @@ describe("the outbox delivery summary", () => {
     );
   });
 });
+
+/**
+ * The send's own state, and the one reading where the Node knows more than the state name admits.
+ *
+ * `outcome_unknown` used to read *"We do not know whether it left"* unconditionally, in a literal map inside
+ * `ledgers.tsx`. But `dispatch.ts` stores the submitted bytes and sets `submitted_key` **before** calling
+ * `transport.submit` on the authored path — so a terminal authored send with **no** submitted key never
+ * reached the transport, and the Node can say so. Saying "we do not know" there is weaker than the evidence,
+ * and Layer 2's proof line is that these words are never blurred.
+ *
+ * The words moved into the delivery module for the same reason the summary rule did: this is the rule that
+ * decides what a person is told, and the previous outbox honesty defect lived in the one file no test could
+ * import.
+ */
+describe("what a send's state is called", () => {
+  let describeSend: (send: unknown) => { label: string; note: string };
+  let NEVER_SUBMITTED: { label: string; note: string };
+
+  beforeAll(async () => {
+    const source = readFileSync(SOURCE, "utf8");
+    const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+    describeSend = module.describeSend;
+    NEVER_SUBMITTED = module.NEVER_SUBMITTED;
+  });
+
+  it("says it never left when the submitted bytes provably do not exist", () => {
+    const said = describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 });
+    expect(said.note).toContain("It never left");
+    expect(said.note).not.toContain("We do not know");
+    // And it says the useful operational thing, which is the whole point of knowing.
+    expect(said.note).toContain("no duplicate");
+  });
+
+  it("keeps saying we do not know when the bytes were submitted", () => {
+    const said = describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 1 });
+    expect(said.note).toContain("We do not know");
+  });
+
+  it("stays silent about the reconstructed path, where the NULL proves nothing", () => {
+    // `submitted_key` is never written on that path at all, so its absence carries no information. This is
+    // the guard that stops the stronger claim being made where it is unfounded.
+    const said = describeSend({ state: "outcome_unknown", fidelity: "reconstructed", has_submitted: 0 });
+    expect(said.note).toContain("We do not know");
+  });
+
+  it("accepts the integer D1 actually serves as well as a boolean", () => {
+    // The API ships `submitted_key IS NOT NULL AS has_submitted`, which is 0 or 1. A truthiness assumption
+    // here is how a correct rule renders the wrong sentence.
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: false }).note)
+      .toBe(NEVER_SUBMITTED.note);
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 }).note)
+      .toBe(NEVER_SUBMITTED.note);
+  });
+
+  it("keeps the label consistent with the stored state", () => {
+    // The row in D1 really is `outcome_unknown`. This is a reading of it plus one column, not a different
+    // state, so anything comparing label to stored state must still find them agreeing.
+    expect(describeSend({ state: "outcome_unknown", fidelity: "authored", has_submitted: 0 }).label)
+      .toBe("outcome unknown");
+  });
+
+  it("still names every other state, so moving the map lost nothing", () => {
+    for (const state of ["held", "cancelled", "withheld", "throttled", "refused", "suppressed",
+                         "handed_over", "outcome_unknown"]) {
+      const said = describeSend({ state, fidelity: "authored", has_submitted: 1 });
+      expect(said.label, `no words for ${state}`).toBeTruthy();
+      expect(said.note, `no explanation for ${state}`).toBeTruthy();
+    }
+  });
+
+  it("falls back to the raw state rather than rendering nothing", () => {
+    const said = describeSend({ state: "some_future_state", fidelity: "authored", has_submitted: 1 });
+    expect(said.label).toBe("some_future_state");
+  });
+});

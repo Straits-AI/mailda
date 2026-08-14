@@ -24,3 +24,14 @@ export function summariseDelivery(recipients: unknown): DeliveryEntry[];
 // there for a JavaScript caller, and weakening the parameter to `unknown` here defeated inference and
 // widened every caller's recipient back to `RecipientLike`.
 export function orderRecipients<T extends RecipientLike>(recipients: readonly T[]): T[];
+
+export interface SendLike {
+  state?: string;
+  fidelity?: string;
+  has_submitted?: number | boolean;
+}
+export const SEND_STATES: Record<string, DeliveryMeta>;
+/** The stronger reading available when the submitted bytes provably do not exist. */
+export const NEVER_SUBMITTED: DeliveryMeta;
+/** Takes the row, not the state, because the honest answer needs three of its fields. */
+export function describeSend(send: SendLike): DeliveryMeta;

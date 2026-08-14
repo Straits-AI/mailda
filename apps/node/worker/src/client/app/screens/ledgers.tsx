@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { apiFetch } from "/app/session.js";
-import { DELIVERY_STATES, UNOBSERVED, orderRecipients, summariseDelivery } from "/app/delivery.js";
+import { DELIVERY_STATES, UNOBSERVED, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 
 import { Nothing } from "../chrome.tsx";
 import { type SendRow, useAudit, useDoctor, useLogs, useSends } from "../api.ts";
@@ -19,27 +19,16 @@ import { type SendRow, useAudit, useDoctor, useLogs, useSends } from "../api.ts"
  */
 
 /** ADR 39's seven, grouped four/three, nothing collapsed away. */
-const SEND_STATES: Record<string, { label: string; note: string }> = {
-  held: { label: "held", note: "Not sent yet. You can still stop this." },
-  cancelled: { label: "cancelled", note: "Stopped before it left." },
-  withheld: {
-    label: "withheld",
-    note:
-      "Not sent. The author's authority to send as this mailbox was withdrawn during the hold window, so " +
-      "this Node refused to hand it over. Nobody cancelled it and the mail service was never asked.",
-  },
-  throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
-  refused: { label: "refused", note: "The mail service would not accept it. It never left." },
-  suppressed: { label: "suppressed", note: "The mail service will never deliver to this recipient." },
-  handed_over: {
-    label: "handed over",
-    note: "Accepted by the mail service. Whether it arrived is not knowable from here.",
-  },
-  outcome_unknown: {
-    label: "outcome unknown",
-    note: "We do not know whether it left. It will not be retried automatically.",
-  },
-};
+/*
+ * The send-state words moved to `/app/delivery.js`.
+ *
+ * They were a literal map here, keyed on `state` alone, and `outcome_unknown` therefore read "We do not know
+ * whether it left" even when the Node could prove it had not — `fidelity === "authored"` with no submitted
+ * key means the bytes were stored before the transport was asked, and there are none. That is a *reading* of
+ * three fields rather than a lookup on one, and it belongs beside the delivery vocabulary in a module a test
+ * can import. This screen touches `document`, which is why the previous honesty defect in the outbox lived
+ * here uncovered.
+ */
 
 function clock(at: string): string {
   return new Date(at).toLocaleTimeString(undefined, { hour12: false });
@@ -157,7 +146,7 @@ export function Outbox() {
           </thead>
           <tbody>
             {rows.map((send) => {
-              const state = SEND_STATES[send.state] ?? { label: send.state, note: "" };
+              const state = describeSend(send);
               const expanded = open === send.id;
               return (
                 // `Fragment` with a key, not `<>`. A keyless fragment in a list leaves React reconciling
