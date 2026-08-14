@@ -350,10 +350,21 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
           JOIN send_manifests m ON m.id = r.manifest_id
          WHERE r.org_id = ? AND r.submission_state = 'handed_over' AND m.state_at < ?
            AND r.delivery_state IS NULL) AS unobserved,
-       (SELECT COUNT(*) FROM send_recipient_events WHERE org_id = ?) AS events`,
+       -- Split, and the split is the point. An event this Node could not tie to a manifest is evidence
+       -- that ATTRIBUTION is broken, not evidence that the Node can see. Counting the two together meant
+       -- one unattributable event flipped the blindness flag to false and suppressed the very warning the
+       -- check exists to raise. Migration 0010 built the sre_unattributed index over exactly these rows
+       -- and nothing ever read it, which is the tell that somebody expected them to matter.
+       --
+       -- No backticks in this comment: it sits inside a TypeScript template literal, so one would end it.
+       -- That hazard has now bitten four times in this codebase (ui.ts, response-clock.ts, and here).
+       (SELECT COUNT(*) FROM send_recipient_events
+         WHERE org_id = ? AND manifest_id IS NOT NULL) AS attributed,
+       (SELECT COUNT(*) FROM send_recipient_events
+         WHERE org_id = ? AND manifest_id IS NULL) AS unattributed`,
   )
-    .bind(orgId, window, orgId, window, orgId)
-    .first<{ awaiting: number; unobserved: number; events: number }>()
+    .bind(orgId, window, orgId, window, orgId, orgId)
+    .first<{ awaiting: number; unobserved: number; attributed: number; unattributed: number }>()
     .catch(() => null);
 
   if (counted === null) {
@@ -368,10 +379,35 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
   }
 
   // Every hand-over old enough to have been answered, and not one answer among them. One unobserved
-  // recipient means nothing; all of them, with zero events ever received, means the channel is not there.
-  const blind = counted.awaiting > 0 && counted.unobserved === counted.awaiting && counted.events === 0;
+  // recipient means nothing; all of them, with zero **attributed** events ever received, means the channel
+  // is not there. `attributed`, not the total: see the query above.
+  const blind = counted.awaiting > 0 && counted.unobserved === counted.awaiting
+    && counted.attributed === 0;
 
-  return [{
+  /**
+   * The third state, which used to be invisible.
+   *
+   * A Node receiving events it cannot tie to a manifest is **neither blind nor healthy**, and §5C's rule
+   * against collapsing distinct states applies with more force in a diagnostic than anywhere else — the
+   * whole value of `doctor` is that it does not blur. It is `degraded` rather than `refuse` because mail is
+   * still leaving correctly; what is broken is this Node's ability to say what happened to it.
+   */
+  const attribution: Finding[] = counted.unattributed === 0 ? [] : [{
+    check: "delivery_attribution",
+    severity: "degraded",
+    discloses: "data",
+    ok: false,
+    detail: `${counted.unattributed} delivery event(s) could not be matched to anything this Node sent. ` +
+      `Their outcome is recorded against no recipient, so those sends stay unobserved however many ` +
+      `events arrive. This is not the same as receiving no events, and not the same as being healthy.`,
+    fix: "check that the event subscription is scoped to this Node's sending domain and no other — the " +
+      "usual cause is a subscription covering a domain sent from elsewhere, whose events arrive here " +
+      "with no matching manifest. transport_message_id is written only on hand-over, so a send whose " +
+      "outcome was never determined has no join key and its events land here too",
+    receipt: "docs/receipts/email-sending-events.md",
+  }];
+
+  return [...attribution, {
     check: "delivery_visibility",
     severity: "degraded",
     discloses: "data",
@@ -384,7 +420,7 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
       : counted.awaiting === 0
         ? "Nothing has been handed over long enough to expect an answer yet."
         : `${counted.awaiting - counted.unobserved} of ${counted.awaiting} handed-over recipient(s) have ` +
-          `an observed outcome, from ${counted.events} event(s).`,
+          `an observed outcome, from ${counted.attributed} attributed event(s).`,
     ...(blind ? {
       fix: "create an Email Sending event subscription for this sending domain, delivering to the " +
         "mailda-sending-events queue (docs/receipts/email-sending-events.md). Without it every recipient " +

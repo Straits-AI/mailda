@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -32,6 +32,8 @@ import { describe, expect, it } from "vitest";
  * The invariant is exact: scanning the stylesheet left to right, every comment terminator must close a
  * comment that an opener opened, and no comment may be left open at the end.
  */
+
+const srcDir = join(import.meta.dirname, "..", "..", "src");
 
 const stylesheetSources = [
   join(import.meta.dirname, "..", "..", "src", "ui.ts"),
@@ -97,4 +99,47 @@ describe("stylesheet hazards", () => {
       }
     });
   }
+});
+
+/**
+ * The same hazard, everywhere else: a backtick inside a **SQL** comment.
+ *
+ * The CSS check above was written after this bit twice. It has now bitten **four** times — `ui.ts`'s
+ * stylesheet, a SQL comment in `response-clock.ts`, and a SQL comment in `doctor.ts` written while fixing an
+ * unrelated defect. Three of the four were SQL, which the CSS-only guard could not see, so the guard was
+ * narrower than the hazard.
+ *
+ * Every `--` comment inside a template literal is a candidate, and a backtick in one ends the literal. The
+ * build does fail loudly — esbuild reports a parse error from a line that reads as prose — so the cost is
+ * diagnosis rather than a shipped defect. But diagnosis is the slow part, and four repeats say the comment
+ * warning attached to two files is not reaching whoever writes the third.
+ */
+describe("SQL comments inside template literals carry no backticks", () => {
+  const sourceFiles = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
+    .filter((entry) => entry.endsWith(".ts") && !entry.includes("client/"));
+
+  it("finds source files to check, so this cannot pass vacuously", () => {
+    expect(sourceFiles.length).toBeGreaterThan(10);
+  });
+
+  it("has no backtick in any SQL line comment", () => {
+    const offenders: string[] = [];
+    for (const relative of sourceFiles) {
+      const source = readFileSync(join(srcDir, relative), "utf8");
+      source.split("\n").forEach((line, index) => {
+        // A SQL line comment: `--` with SQL-ish indentation, inside what is almost certainly a template
+        // literal. Deliberately loose — a false positive costs one rename, a false negative costs the
+        // afternoon somebody spends on "Expected ; but found td".
+        const comment = /^\s*--\s(.*)$/.exec(line);
+        if (comment !== null && comment[1]!.includes("`")) {
+          offenders.push(`${relative}:${index + 1}`);
+        }
+      });
+    }
+    expect(
+      offenders.length === 0 ? null
+        : `backtick inside a SQL comment (${offenders.join(", ")}) — these sit inside TypeScript template `
+          + "literals, so a backtick ends the literal and the build fails from a line that reads as prose",
+    ).toBeNull();
+  });
 });
