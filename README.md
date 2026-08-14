@@ -79,11 +79,11 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,557 lines specifying the target state, with 41 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,586 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 26 receipts in [`docs/receipts/`](./docs/receipts/) generating 156 verified constants |
-| **Code** | A measurement harness and one Worker. 448 tests, checked on every push. Not a product. |
+| **Measurements** | 30 receipts in [`docs/receipts/`](./docs/receipts/) generating 169 verified constants |
+| **Code** | A measurement harness and one Worker. 488 tests, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -208,6 +208,27 @@ permission catalogue and implemented nowhere, one mention in a test seed — now
 either it or `mailbox.content.read` satisfies them, and a responder holding neither is shown the
 restricted-content placeholder the contract already specified. The withheld columns are `NULL` in the SQL
 rather than read and discarded, because a value in the result set is one line of code from being returned.
+
+**A choice with consequences for every recipient is not made by a timestamp.** A mailbox may have several
+addresses — `addresses` is unique on the address, not on the mailbox — and From was picked by `ORDER BY
+created_at LIMIT 1`. So adding `billing@` to a support mailbox sent billing replies as `support@`, silently.
+The authority is still the mailbox (ADR 36) and the finer `sender:` grain is still deferred; what changed is
+that a mailbox with more than one address now **refuses** a send that does not name which, listing them, and
+the composer offers the choice. Refusing rather than picking is the same move merge makes.
+
+**Replying stopped the clock only in the tests.** The dispatch path joined `messages.rfc_message_id` against
+`send_manifests.in_reply_to_message_id` — one is a `<…@domain>` header, the other our own `msg_` id, and their
+schema comments say so. It could never match, so every case in a mailbox with a response target was reported
+breached however fast the reply left. **Eighteen tests passed over it**, because every one called the clock
+function directly with a conversation id it already knew; the only real caller is the one that has to *find*
+the conversation. That is the shape of most defects found this way: the mechanism is tested exhaustively and
+the wiring is not tested at all.
+
+**A diagnostic that counted evidence of its own blindness as evidence of sight.** `doctor` decides "this Node
+cannot see delivery outcomes" partly on there being no delivery events — and counted events it had failed to
+attribute to anything. One unattributable event, which is proof that attribution is broken, was enough to
+suppress the warning. Now blindness counts attributed events only, and unattributable ones raise their own
+finding, because a Node receiving events it cannot place is neither blind nor healthy.
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both

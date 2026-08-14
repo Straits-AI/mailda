@@ -58,6 +58,28 @@ every recipient bounced rendered as green `handed over`. `test/node/delivery-sum
 `session.client.js` is external for a different reason: it holds the token lifecycle in module scope, so a
 bundled copy would put two refresh timers on a page that also loads the framework-free script.
 
+## The composer's From selector, and why the words live outside React
+
+A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1` — the
+oldest — so adding `billing@` to a support mailbox sent billing replies as `support@` with nothing saying so.
+The Node now refuses a send from a multi-address mailbox that does not name which address, listing them, and
+the composer renders a **From selector when and only when there is a choice**: a select with one option is
+furniture, and almost every mailbox has one address.
+
+Two things about it were wrong on first render and were found by opening the composer rather than by the
+suite. It sat **below the message body**, so somebody wrote the whole reply and only then met a required
+field — From is identity and belongs at the top of a letter. And it was an unstyled full-width native select
+among bare-underline inputs, which read as belonging to another application.
+
+**The send-state words live in `delivery.client.js`, not in the React screen**, and that placement earns its
+keep. They were a literal map in `ledgers.tsx` keyed on `state` alone, which made `outcome_unknown` read *"We
+do not know whether it left"* even in the one case where the Node can prove otherwise: on the authored path
+the submitted bytes are stored **before** the transport is asked, so a terminal authored send with no
+submitted key never reached it. That is a reading of three fields rather than a lookup on one, and it belongs
+where a test can import it — `ledgers.tsx` touches `document`, which is why the outbox's previous honesty
+defect (a unanimous all-bounced send rendering as "handed over") lived there uncovered until somebody looked
+at the page.
+
 ## Drafts
 
 A draft survives a reload, which is what earns the composer's middle phase — *saved on your node* — after
