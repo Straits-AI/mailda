@@ -28,13 +28,21 @@
  * over-count makes a derived bound conservative, never optimistic, and `AGENTS.md` prefers a bound that is
  * too small to one that fails under load.
  *
- * ## What it still cannot see
+ * ## Every binding is classified, and an unclassified one throws
  *
- * `env.EMAIL.send` and the queue producer are **not proxied**, because neither is reachable from anything
- * this meter is used to price today — `sealManifest` stops at the manifest and the transport is a separate
- * act. Stated rather than left implicit: pricing a node that hands bytes to the transport, or that publishes
- * to the queue, needs this widened first, and nothing here will notice if it is not. That is a known gap in
- * the instrument, not a claim about the instrument being complete.
+ * The first version proxied `CATALOG`, `EVIDENCE` and `KEY_VAULT` and said so — which left the same gap for
+ * the next binding: pricing a node that hands bytes to the transport would have under-reported silently, and
+ * nothing here would have noticed. A known gap stated in a comment is the shape this codebase keeps finding
+ * defects in.
+ *
+ * So the world is closed. Every binding the Worker declares is named below as **metered** or **free**, and
+ * reading anything else off a metered env **throws**, naming what to do. A binding added to `wrangler.jsonc`
+ * therefore cannot be silently un-metered: it fails the first time a priced operation touches it, and
+ * `test/node/cost-meter-coverage.test.ts` fails earlier still, at test time, by comparing this list against
+ * the config.
+ *
+ * `OUTBOX_SWEEPER` is metered rather than excluded even though nothing priced reaches it today, because
+ * "nothing reaches it today" is exactly the assumption that expired for the transport.
  */
 
 export interface Cost {
@@ -45,12 +53,19 @@ export interface Cost {
   r2Operations: number;
   /** Durable Object RPCs — the term doctor's meter is blind to. */
   doRpcs: number;
+  /** Messages handed to the transport. Zero for everything priced today, and metered anyway. */
+  transportSends: number;
+  /** Queue publishes. `sendBatch` is one, like `batch()`, because it is one round trip. */
+  queuePublishes: number;
   /** The sum, which is what the platform budget is spent in. */
   subrequests: number;
 }
 
 export function emptyCost(): Cost {
-  return { d1Executions: 0, d1Batches: 0, r2Operations: 0, doRpcs: 0, subrequests: 0 };
+  return {
+    d1Executions: 0, d1Batches: 0, r2Operations: 0, doRpcs: 0, transportSends: 0,
+    queuePublishes: 0, subrequests: 0,
+  };
 }
 
 /** The three methods that make a prepared statement actually cost something. */
@@ -132,27 +147,28 @@ export function metering(env: Env): { env: Env; cost: Cost } {
   });
 
   /**
-   * The vault, which is a Durable Object namespace rather than a store.
+   * A Durable Object namespace, which is a resolver rather than a store.
    *
    * `getByName` costs nothing — it resolves a stub. Every method called *on* that stub is an RPC and spends
-   * one subrequest. Both key fetches are **uncached** by design (`openingKey` on every read, `sealingKey` on
-   * every write), which is why a send spends two of these and a reply three — measured, and invisible to the
-   * old meter.
+   * one subrequest. Both vault key fetches are uncached by design (`openingKey` on every read, `sealingKey`
+   * on every write), which is why a send spends two of these and a reply three — measured, and invisible to
+   * doctor's meter.
    */
-  const keyVault = new Proxy(env.KEY_VAULT, {
+  const durableNamespace = <T extends object>(namespace: T): T => new Proxy(namespace, {
     get(target, property) {
-      if (property === "getByName" || property === "get") {
+      if (property === "getByName" || property === "get" || property === "idFromName") {
         return (...args: unknown[]) => {
-          const stub = (Reflect.get(target, property) as (...a: unknown[]) => object).apply(target, args);
-          return new Proxy(stub, {
+          const resolved = (Reflect.get(target, property) as (...a: unknown[]) => unknown).apply(target, args);
+          // `idFromName` returns an id, not a stub — nothing to meter, and wrapping it would break `get`.
+          if (property === "idFromName" || typeof resolved !== "object" || resolved === null) return resolved;
+          return new Proxy(resolved as object, {
             get(stubTarget, stubProperty) {
               const value = Reflect.get(stubTarget, stubProperty) as unknown;
               if (typeof value !== "function") return value;
               // Invoked **through the stub** rather than with `.apply`. A Durable Object stub's methods are
               // RPC proxies: `typeof` reports "function" but they do not implement `apply`, so the usual
               // `fn.apply(target, args)` fails with "The RPC receiver does not implement the method apply".
-              // Calling `stub[name](...)` keeps the RPC machinery in charge of dispatch. This is the same
-              // class of hazard `doctor.ts` records for `R2Bucket.list()`, one layer further in.
+              // Same class of hazard as the `R2Bucket.list()` illegal-invocation note in `doctor.ts`.
               return (...callArgs: unknown[]) => {
                 cost.doRpcs += 1;
                 cost.subrequests += 1;
@@ -167,8 +183,71 @@ export function metering(env: Env): { env: Env; cost: Cost } {
     },
   });
 
-  return {
-    env: { ...env, CATALOG: catalog, EVIDENCE: evidence, KEY_VAULT: keyVault } as unknown as Env,
-    cost,
+  /** The transport. Nothing priced today reaches it; metered so that when something does, it is counted. */
+  const email = env.EMAIL === undefined ? undefined : new Proxy(env.EMAIL as object, {
+    get(target, property) {
+      if (property === "send") {
+        return (...args: unknown[]) => {
+          cost.transportSends += 1;
+          cost.subrequests += 1;
+          return (Reflect.get(target, property) as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      }
+      return passthrough(target, property);
+    },
+  });
+
+  /** The queue producer. `sendBatch` counts one, like `batch()`, because it is one round trip. */
+  const sendingEvents = env.SENDING_EVENTS === undefined ? undefined
+    : new Proxy(env.SENDING_EVENTS as object, {
+      get(target, property) {
+        if (property === "send" || property === "sendBatch") {
+          return (...args: unknown[]) => {
+            cost.queuePublishes += 1;
+            cost.subrequests += 1;
+            return (Reflect.get(target, property) as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        return passthrough(target, property);
+      },
+    });
+
+  /**
+   * Every binding, classified — and reading an unclassified one **throws**.
+   *
+   * This is what makes the instrument's coverage a property rather than a claim. A binding added to
+   * `wrangler.jsonc` and touched by a priced operation fails here, loudly, instead of being counted as free.
+   * `TEST_MIGRATIONS` is a value rather than a binding, so it passes through untouched.
+   */
+  const metered: Record<string, unknown> = {
+    CATALOG: catalog,
+    EVIDENCE: evidence,
+    KEY_VAULT: durableNamespace(env.KEY_VAULT),
+    OUTBOX_SWEEPER: durableNamespace(env.OUTBOX_SWEEPER),
+    ...(email === undefined ? {} : { EMAIL: email }),
+    ...(sendingEvents === undefined ? {} : { SENDING_EVENTS: sendingEvents }),
   };
+
+  /** Not bindings, so nothing to meter: values passed through by the test harness or by config. */
+  const FREE = new Set(["TEST_MIGRATIONS"]);
+
+  const wrapped = new Proxy(env as unknown as Record<string, unknown>, {
+    get(target, property) {
+      if (typeof property !== "string") return Reflect.get(target, property);
+      if (property in metered) return metered[property];
+      if (FREE.has(property)) return Reflect.get(target, property);
+      // Absent from the env entirely is not a coverage gap — `EMAIL` and `SENDING_EVENTS` are optional by
+      // design, and `transport.ts` reports absence rather than throwing. Only a *present* binding this
+      // meter does not classify is the problem.
+      const value = Reflect.get(target, property);
+      if (value === undefined) return undefined;
+      throw new Error(
+        `cost-meter: env.${property} is not classified, so a priced operation touching it would be counted `
+        + "as free. Add it to `metered` in src/cost-meter.ts (with the cost of its operations) or to `FREE` "
+        + "if it is not a binding. See test/node/cost-meter-coverage.test.ts.",
+      );
+    },
+  });
+
+  return { env: wrapped as unknown as Env, cost };
 }

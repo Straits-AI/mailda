@@ -222,3 +222,33 @@ describe("what one Butler step costs (#54)", () => {
     expect(itemsThatExhaustTheRun).toBeLessThan(1000);
   });
 });
+
+describe("the meter's coverage is a property, not a claim", () => {
+  it("throws on a binding it does not classify, rather than counting it free", () => {
+    // The instrument's own header used to *state* that `EMAIL` and the queue were uncovered. A gap named in a
+    // comment is a gap nothing enforces, and pricing a node that reached one would have under-reported in the
+    // permissive direction. Now the world is closed: an unclassified binding is an error at the moment it is
+    // read, and `test/node/cost-meter-coverage.test.ts` catches it earlier still, from the config.
+    const { env: metered } = metering({ ...testEnv, SOMETHING_NEW: { send: () => undefined } } as unknown as Env);
+    expect(() => (metered as unknown as Record<string, unknown>).SOMETHING_NEW)
+      .toThrow(/not classified/);
+  });
+
+  it("meters the transport and the queue, which nothing priced reaches yet", () => {
+    // Metered *because* nothing reaches them. "Nothing reaches it today" is the assumption that expired for
+    // the transport the moment a Butler node was going to hand bytes over.
+    const { env: metered, cost } = metering(testEnv);
+    expect(cost.transportSends).toBe(0);
+    expect(cost.queuePublishes).toBe(0);
+    // Reading them must not throw — they are classified, merely unused here.
+    expect(() => (metered as unknown as Record<string, unknown>).EMAIL).not.toThrow();
+    expect(() => (metered as unknown as Record<string, unknown>).SENDING_EVENTS).not.toThrow();
+  });
+
+  it("still lets every existing binding through", () => {
+    const { env: metered } = metering(testEnv);
+    for (const binding of ["CATALOG", "EVIDENCE", "KEY_VAULT", "OUTBOX_SWEEPER"]) {
+      expect(() => (metered as unknown as Record<string, unknown>)[binding], binding).not.toThrow();
+    }
+  });
+});

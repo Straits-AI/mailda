@@ -94,3 +94,28 @@ in the shipped set reaches it, because `template.render` was moved to reserved-a
 no template subsystem exists. **Which limit binds first, CPU or subrequests, is therefore unestablished**, and
 the two CPU figures in circulation for a Workers invocation (5 minutes, 30 seconds) have not been reconciled
 either. The subrequest bound is the one with a measurement behind it, so it is the one the checker uses.
+
+## The instrument's coverage is a property, not a claim
+
+Added 15 August 2026, and the reason is worth as much as the change.
+
+The meter originally proxied `CATALOG`, `EVIDENCE` and `KEY_VAULT` and **said so in its own header**: that
+`env.EMAIL.send` and the queue producer were uncovered, that nothing priced reached them, and that widening
+would be needed first. Every part of that was true and it was still the wrong shape. **A gap named in a
+comment is a gap nothing enforces**, and pricing a node that reached the transport would have under-reported
+in the **permissive** direction — the direction that fails under load rather than in review.
+
+So the world is closed. Every binding `wrangler.jsonc` declares is classified in `src/cost-meter.ts` as
+metered or free; reading an unclassified one **throws**, naming what to do; and
+`test/node/cost-meter-coverage.test.ts` reads the binding list **from the config** and fails at test time if
+one is unaccounted for. Proved by declaring a binding the meter does not know and watching both guards fire.
+
+`OUTBOX_SWEEPER` is metered despite nothing priced reaching it, because *"nothing reaches it today"* is
+precisely the assumption that expired for the transport the moment a Butler node was going to hand bytes over.
+
+**The figures above are unchanged by the widening**, which is the expected result and is now demonstrated
+rather than assumed: `transportSends` and `queuePublishes` measure **0** for every node in the table.
+
+This is the same correction, in miniature, that `doctor-check-cost.md` needed when its `stale_when` named the
+exact condition that had already invalidated it. A documented limitation and an enforced one are different
+kinds of object, and this project keeps finding that out.
