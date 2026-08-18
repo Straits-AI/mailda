@@ -41,25 +41,56 @@ protection on its own. `doctor.max_subrequests_per_run = 220` — the tripwire t
 affected, which is the argument for tripwires over documented conditions and is worth carrying into any
 receipt that leans on a platform figure.
 
+## Correction, 18 August 2026: the `stale_when` fired, and the recorded run cost is now stale
+
+The clause **"including any new fixed-cost check"** is true again. `doctor` gained
+`draft_bodies_stranded` (#67): one `R2Bucket.list()` of `${orgId}/drafts/` and one `SELECT body_key FROM
+drafts`, reporting draft bodies that no code path in the Worker can collect. Recorded here rather than
+left for the next reader to notice, because the last time this clause fired the receipt simply carried
+the wrong figure for six months.
+
+**Locally measured delta: 10 → 12 subrequests** (8 D1 / 2 R2 → 9 D1 / 3 R2), so **+1 D1 query and +1 R2
+`list`**, fixed per run rather than per object. Method: `runDoctor` on a **claimed** Node with an empty
+catalog — no receipts, no drafts, no mail — reading `report.cost` from the run itself, under
+`vitest-pool-workers` (`pnpm vitest run`), taken twice: once with the new check wired into `runDoctor`
+and once with that one line commented out. On an **unclaimed** Node the figure does not move at all (6
+both times): with no org there is no draft prefix, and the check returns before it spends anything.
+
+**This is not the deployed number and must not be read as one.** The 20-subrequest figure in *Measured
+cost of a full run* below was taken against `mailda.swmengappdev.workers.dev`; 10 → 12 was taken against
+miniflare, which is a different D1, a different R2 and a different catalog. The two are not comparable in
+absolute terms — only the *delta* transfers, because it is two extra calls on a fixed path. **The
+deployed figure needs a redeploy to remeasure**, and `values:` above is deliberately untouched until
+that run happens: every number in it is a deployed-Node measurement, and replacing one with a miniflare
+reading would quietly change what the file means.
+
+Nothing about the tripwire moved: `doctor.max_subrequests_per_run = 220` still holds with room to spare,
+and it is per-run cost — not per-row — that grew, which is the distinction the clause exists to separate.
+
 `doctor` verifies the runtime claims other decisions made. Most of its checks cost one query; one
 of them — evidence integrity — costs **one R2 `head` per receipt examined**, which is why it has a
 bound at all.
 
 ## The bound, and why it is a sample
 
-A Worker invocation may issue at most **1,000 subrequests** (the same cap #4 sized service-binding
-fan-out against). Both D1 queries and R2 operations spend one. `message-metadata-bytes.md` measured
-that a 10 GB shard holds **~8.5 million messages**, so "check every receipt" is not a bounded
-operation and never becomes one.
+A Worker invocation may issue at most **10,000 subrequests** on Paid — it was **1,000** when this
+derivation was run (the same cap #4 sized service-binding fan-out against), and that figure was withdrawn
+on 11 February 2026, per the first correction above. Both D1 queries and R2 operations spend one.
+`message-metadata-bytes.md` measured that a 10 GB shard holds **~8.5 million messages**, so "check every
+receipt" is not a bounded operation and never becomes one.
 
-**200 receipts, most recent first.** Derivation rather than taste:
+**200 receipts, most recent first.** The derivation below is the one that actually produced 200, kept as
+it was run — against the withdrawn 1,000. Under the live 10,000 it makes 200 *conservative*, not wrong,
+and 200 is deliberately **not** re-derived upward: a bound that has become generous is not thereby
+incorrect, and raising it needs its own measurement. (Same call as `reseal.batch_size` in the first
+correction above.)
 
 | | |
 |---:|:---|
-| 1,000 | subrequests available |
+| 1,000 | subrequests available — the withdrawn cap this derivation used; the live ceiling is 10,000 |
 | ~10 | spent by every other check (schema, KEKs, keys, outbox, counts) |
 | 200 | R2 `head` calls |
-| ~790 | headroom, so adding a check never silently pushes this over the cap |
+| ~790 | headroom, so adding a check never silently pushes this over the cap — ~9,790 under the live ceiling |
 
 The bound is **visible in the output**, not just in this file. The finding's detail line reads
 `200 of 8,500,000 receipt(s) checked, most recent 200` — because a check that examines 200 rows of
@@ -80,7 +111,7 @@ current signing key:
 |---:|:---|
 | **13** | D1 queries |
 | **7** | R2 reads — 5 receipts sampled, plus one `head` for `evidence_bucket_reachable` |
-| **20** | subrequests total, against a cap of 1,000 |
+| **20** | subrequests total, against a cap of 10,000 — this row read "1,000" until the 13 August correction *recorded* the withdrawal; Cloudflare withdrew the figure itself on 11 February 2026 |
 
 Re-measured 5 August 2026 on a catalog holding 5 receipts, 22 tables and 1 current signing key. The
 4 August figure was 7 D1 / 1 R2 / 8 subrequests on a catalog with 1 receipt and 14 tables; the
@@ -89,8 +120,9 @@ below, not a regression in any single check. Recorded rather than quietly replac
 whose number moves without saying why is a receipt nobody trusts the second time.
 
 **`evidence_bucket_reachable` costs one R2 `head` per run, not per row.** That distinction is the one
-`stale_when` cares about: a fixed cost is absorbed by the ~790 subrequests of headroom, while a
-per-row cost is what `doctor.max_subrequests_per_run` exists to catch. It was added because the
+`stale_when` cares about: a fixed cost is absorbed by the headroom derived above, while a
+per-row cost is what `doctor.max_subrequests_per_run` exists to catch. `draft_bodies_stranded` is the
+second check of that shape — see the 18 August correction. It was added because the
 Deploy to Cloudflare button provisions D1 but **not** R2
 (`deploy-button-behaviour.md`), so a binding pointing at a bucket that does not exist is the single
 most likely state of a freshly-installed Node — and it previously surfaced as a generic

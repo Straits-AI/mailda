@@ -204,6 +204,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkSigningKeys(env, ctx)),
     ...(await checkOutbox(env, ctx)),
     ...(await checkEvidence(env, ctx, claim?.org_id ?? null)),
+    ...(await checkStrandedDraftBodies(env, ctx, claim?.org_id ?? null)),
     planCheck(),
   );
 
@@ -652,7 +653,10 @@ async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<
 
   const scope =
     `${report.scanned.receipts} of ${report.scanned.receiptsTotal} receipt(s) and ` +
-    `${report.scanned.objects} object(s)${report.scanned.truncated ? ", truncated" : ""} examined`;
+    // The prefixes, so "no orphans" cannot be read as a statement about the whole bucket. The truncation
+    // clause goes last rather than inside the phrase "examined under", which it used to split.
+    `${report.scanned.objects} object(s) examined under ${report.scanned.prefixes.join(", ")}` +
+    (report.scanned.truncated ? `, listing truncated — more objects remain unexamined` : ``);
 
   const findings: Finding[] = [{
     check: "evidence_present",
@@ -684,6 +688,181 @@ async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<
   }
 
   return findings;
+}
+
+/**
+ * Draft bodies nothing can collect (#67).
+ *
+ * A draft body is an R2 object at `${orgId}/drafts/{draftId}.txt` whose only referent is a `drafts`
+ * row. `deleteDraft` issues one `DELETE FROM drafts` and touches R2 not at all, and a draft is deleted
+ * when its message is *sealed* — the ordinary path through the composer. So every message ever sent
+ * from a draft, and every draft anybody abandoned, leaves its body behind.
+ *
+ * **These are not collectable orphans.** `reconcile.ts` lists `${orgId}/raw/` and nothing else, and its
+ * `EVIDENCE.delete` only ever sees objects from that listing — the one R2 delete in this Worker. So
+ * these objects are not *late* to be collected: **no code path deletes them at all.** They were
+ * unreferenced, uncounted, and until this finding existed, invisible to every check the Node has —
+ * this check lists the prefix precisely so that stops being true. The code and
+ * `application-shell.md` both used to say the object was "left for the reconciler, because ADR 32
+ * makes an orphan blob collectable", which was true of ADR 32 and false of this prefix.
+ *
+ * This finding **counts them and stops**. Collection is deferred deliberately: #64 requires every
+ * content-destroying call site to be allowlisted and to consult a legal hold, that hold does not exist
+ * yet, and a sweep is itself a content-destroying path. Reporting a number is not.
+ *
+ * ## Two numbers borrowed rather than invented
+ *
+ * `reconcile.list_limit` bounds the listing and `reconcile.orphan_grace_seconds` bounds the judgement,
+ * both from `evidence-lifecycle.md`. Neither is a new figure and neither is borrowed loosely:
+ *
+ *   - the listing is over the same bucket through the same `R2Bucket.list()`, and costs **one**
+ *     subrequest for the page plus one for the D1 query below — not one per object, which is the
+ *     distinction `doctor-check-cost.md`'s `stale_when` actually cares about. That two-subrequest
+ *     figure is measured, not reasoned: see that receipt's 18 August 2026 correction.
+ *   - the grace window exists for the identical mechanism: `saveDraft` writes R2 *before* the row, so
+ *     a brand-new draft's object legitimately has no row for the width of that gap. Counting it would
+ *     be a false positive, and this finding must never accuse a live draft of being residue.
+ *
+ * ## Every branch discloses `data`
+ *
+ * Including the ones that read like plumbing failures. The prefix this check lists *is* the org id, so
+ * a detail naming it is org-scoped by construction — and `withoutDataFindings` keeps every
+ * `infrastructure` finding for the unauthenticated reduced report, where `discloses` promises only
+ * names already public in this repository. `checkEvidence` takes the same line on all of its branches,
+ * including its catch. `test/stranded-draft-bodies.test.ts` asserts that the reduced report contains no
+ * org id, on the failing branch as well as the passing one.
+ */
+async function checkStrandedDraftBodies(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "draft_bodies_stranded",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so no draft body has been written.",
+    }];
+  }
+
+  const prefix = `${orgId}/drafts/`;
+  // The cause is kept, not discarded. `checkEvidence` above preserves `message.split("\n")[0]` in its own
+  // catch, and a finding that says only "could not list" leaves an operator with a symptom and no lead —
+  // strictly less diagnosable than the check this one says it matches.
+  let listFailure: string | null = null;
+  const listed = await env.EVIDENCE.list({ prefix, limit: BUDGETS["reconcile.list_limit"] })
+    .catch((error: unknown) => {
+      listFailure = (error as Error).message.split("\n")[0] ?? null;
+      return null;
+    });
+  if (listed === null) {
+    return [{
+      check: "draft_bodies_stranded",
+      // `degraded` here, unlike the finding below, because *this* one is actionable: a bucket that
+      // will not answer is a repair somebody can perform today, and `evidence_bucket_reachable`
+      // refuses on the same condition.
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `Could not list ${prefix} in the evidence bucket`
+        + (listFailure === null ? "." : `: ${listFailure}`),
+      fix: "check the evidence_bucket_reachable finding first",
+    }];
+  }
+
+  // Every live referent, in one query, deliberately without a LIMIT. A partial set of referents would
+  // report a *live* draft's body as stranded, and a false accusation is the one error this finding may
+  // not make. It is bounded in practice by what it reads: one column of `drafts`, which is working
+  // state deleted at seal, so it grows with drafts in progress rather than with mail volume.
+  let readFailure: string | null = null;
+  const referenced = await env.CATALOG.prepare(
+    "SELECT body_key FROM drafts WHERE org_id = ? AND body_key IS NOT NULL",
+  ).bind(orgId).all<{ body_key: string }>().catch((error: unknown) => {
+    readFailure = (error as Error).message.split("\n")[0] ?? null;
+    return null;
+  });
+  if (referenced === null) {
+    return [{
+      check: "draft_bodies_stranded",
+      // Actionable for the same reason as the listing failure above, and `migrations_applied` refuses
+      // on the same condition.
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read the drafts table, so a draft body's referent cannot be checked"
+        + (readFailure === null ? "." : `: ${readFailure}`),
+      fix: "check the migrations_applied finding first",
+    }];
+  }
+
+  const live = new Set(referenced.results.map((row) => row.body_key));
+  const cutoff = ctx.now() - BUDGETS["reconcile.orphan_grace_seconds"] * 1000;
+  let stranded = 0;
+  let tooFreshToJudge = 0;
+  for (const object of listed.objects) {
+    if (live.has(object.key)) continue;
+    // An autosave may be between its R2 write and its D1 commit right now.
+    if (object.uploaded.getTime() > cutoff) tooFreshToJudge += 1;
+    else stranded += 1;
+  }
+
+  // One scope clause, used by both branches. The truncation note goes at the end rather than inside
+  // the phrase it used to split — "200 object(s), truncated — more remain examined under org_x/drafts/"
+  // was a sentence about nothing. The too-fresh count is printed even when it is zero, matching
+  // `formatReconcile`: a judgement withheld on N objects is part of the scope of the answer, and a
+  // count that appears only when non-zero cannot be relied on by the reader who sees it absent.
+  const examined =
+    `${listed.objects.length} object(s) examined under ${prefix}, ` +
+    `${tooFreshToJudge} too fresh to judge` +
+    (listed.truncated ? `, listing truncated — more objects remain unexamined` : ``);
+  // Whether this pass judged everything under the prefix. It is the success branch that needs it:
+  // "every" from a scan that skipped objects is the overclaim #67 is about.
+  const judgedEverything = !listed.truncated && tooFreshToJudge === 0;
+
+  return [{
+    check: "draft_bodies_stranded",
+    /**
+     * `report`, not `degraded`, until something can collect these bytes.
+     *
+     * A draft is deleted on the *ordinary* send path, so any Node that ever sent one message from the
+     * composer has stranded residue for good. Reported as `degraded` that is a permanent WARN with a
+     * `fix` of "nothing to run yet" — and this repo already names that failure mode next to
+     * `DELIVERY_SILENCE_MS`: a false alarm gets a check muted, and a muted check guards nothing. A
+     * verdict that is degraded on every healthy Node also stops distinguishing healthy from degraded,
+     * which is the only job a verdict has. `workers_paid_plan` is the precedent for the honest shape:
+     * a real gap, correctly reported, that no operator action closes.
+     *
+     * **Promote it to `degraded` when a collector exists** — that is, when #64's legal hold lands and a
+     * sweep can consult it. At that point residue means the sweep is not running or is failing, which
+     * is a state an operator can act on, and the `fix` becomes a command instead of an explanation.
+     * Nothing else should promote it: a bigger count is the same un-actionable fact, larger.
+     */
+    severity: "report",
+    discloses: "data",
+    ok: stranded === 0,
+    detail: stranded === 0
+      ? `No draft body without a drafts row among those judged (${examined}).` +
+        (judgedEverything
+          ? ` Every object under the prefix was listed and judged.`
+          : ` Not every draft body was judged, so this is a clean sample rather than a clean prefix.`)
+      : `${stranded} draft body object(s) have no drafts row (${examined}). ` +
+        `A draft is deleted when its message is sealed, and deleting it removes the row only — so ` +
+        `these are the bodies of messages already sent and of drafts somebody abandoned. They are ` +
+        `not collectable orphans: nothing in this Node deletes under ${prefix} — the only R2 delete ` +
+        `is fed by the raw/ listing — so no code path can collect them, and R2 usage grows with ` +
+        `composer use. The product said the draft was deleted; the row is gone and these bytes are ` +
+        `not.` +
+        // A floor for either reason it withheld judgement, not only truncation. A too-fresh object may
+        // prove stranded on the next run, so a count that omits it is a floor exactly as a truncated
+        // listing is — and the success branch already caveats both. Saying it on one branch and not the
+        // other is the asymmetry this slice's own D-fix argued against.
+        (listed.truncated || tooFreshToJudge > 0 ? ` This count is a floor, not a total.` : ``),
+    ...(stranded === 0 ? {} : {
+      fix: "nothing to run yet, and that is the finding. Collection is deferred to the legal hold " +
+        "every content-destroying call site must consult (#64) — a sweep is itself such a path, so it " +
+        "must not land before the hold. Do not delete this prefix by hand: that is the same " +
+        "unbound deletion, performed without the check. Tracked by #67",
+    }),
+    receipt: "docs/receipts/evidence-lifecycle.md",
+  }];
 }
 
 /**

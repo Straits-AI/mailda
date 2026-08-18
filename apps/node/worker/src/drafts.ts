@@ -160,10 +160,16 @@ export async function saveDraft(
     };
   }
 
-  // Written before the row, so a crash between the two leaves an orphan object rather than a row pointing
-  // at bytes that were never stored. The reconciler already treats an unreferenced blob as collectable and
-  // a reference with no blob as *reportable only* (ADR 32) — this ordering keeps drafts on the safe side of
-  // that asymmetry.
+  // Written before the row, so a crash between the two leaves bytes nobody references rather than a row
+  // pointing at bytes that were never stored. ADR 32 makes that the safe side of an asymmetry: a reference
+  // with no blob is *reportable only*, the side no automatic repair can fix, while a stray object costs
+  // storage and reveals nothing. That argument stands on its own.
+  //
+  // What it is **not** is a handoff to a collector. Nothing in this Worker *deletes* under
+  // `${orgId}/drafts/`: the only R2 delete is fed by the reconciler's `${orgId}/raw/` listing. So a stray
+  // draft body is not a late-collected orphan — no code path can collect it at all. `doctor`'s
+  // `draft_bodies_stranded` finding does list this prefix, and counts them; collection waits for the legal
+  // hold every content-destroying call site must consult (#64). See `deleteDraft` below.
   let bodyKey = existing?.body_key ?? null;
   let bodySha: string | null = null;
   let bodyBytes = 0;
@@ -310,13 +316,22 @@ export async function draftForReply(
 }
 
 /**
- * Deletes a draft. Called when a message is sealed, and by a person abandoning one.
+ * Deletes a draft — **the row, and only the row**. Called when a message is sealed, which is the ordinary
+ * send path, and by a person abandoning one.
  *
- * The R2 object is **not** deleted here. ADR 32 makes reconciliation deliberately asymmetric — an orphan
- * blob past grace may be collected, a reference with no blob may only be reported — and deleting the object
- * inline would mean a failure between the two writes leaves a row pointing at nothing, which is the side of
- * that asymmetry that cannot be repaired automatically. The row goes; the object becomes an orphan the
- * reconciler collects.
+ * The R2 object is not deleted here, and **nothing else deletes it either.** The reconciler's only listing
+ * is `${orgId}/raw/`, and that listing is the only thing its `EVIDENCE.delete` ever sees, while a draft body
+ * lives at `${orgId}/drafts/{draftId}.txt`. So the body is not an orphan awaiting collection — **no code
+ * path deletes it**, and R2 usage grows with composer use. `doctor`'s `draft_bodies_stranded` finding lists
+ * this prefix and **counts** them, which is as far as this may go: collection is deferred to the legal hold
+ * every
+ * content-destroying call site must consult (#64), because a cleanup sweep is itself such a call site.
+ * Tracked by #67.
+ *
+ * Deleting the object inline is not the repair either. ADR 32 makes reconciliation deliberately asymmetric —
+ * a reference with no blob may only be reported, never repaired automatically — so a failure between the two
+ * writes must leave a stray object rather than a row pointing at nothing. The ordering is right; what was
+ * false, until #67, was the claim that something collects what it leaves.
  */
 export async function deleteDraft(env: Env, orgId: string, userId: string, draftId: string): Promise<boolean> {
   const result = await env.CATALOG.prepare(

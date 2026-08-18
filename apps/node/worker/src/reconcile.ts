@@ -35,6 +35,26 @@ const LIST_LIMIT = BUDGETS["reconcile.list_limit"];
  */
 const ORPHAN_GRACE_MS = BUDGETS["reconcile.orphan_grace_seconds"] * 1000;
 
+/**
+ * Every prefix this pass lists — the one place it is written, so the report cannot claim a scope the
+ * scan does not have.
+ *
+ * It is reported rather than merely used, because the report previously could not distinguish
+ * *"nothing to collect"* from *"did not look"*. Both printed `0 orphans`. `${orgId}/drafts/` is the
+ * prefix that made that ambiguity expensive: draft bodies live there, `deleteDraft` removes only the
+ * row, and no listing in this Worker covered it until `doctor`'s `draft_bodies_stranded` finding did —
+ * so those objects were absent from the output rather than reported as unexamined.
+ *
+ * Adding `drafts/` **here** would not fix that, and is deliberately not done: this listing feeds
+ * `EVIDENCE.delete`, so widening it turns a reporting gap into a deletion path, and a draft body's
+ * referent is a `drafts` row rather than an `ingress_receipt` so "no receipt" is not even the right
+ * test for it. `doctor`'s `draft_bodies_stranded` finding counts them read-only instead, and
+ * collection waits for the legal hold that has to bind every content-destroying call site (#64).
+ */
+function scannedPrefixes(orgId: string): string[] {
+  return [`${orgId}/raw/`];
+}
+
 export interface ReconcileReport {
   /** Objects with no receipt, older than the grace period. Deleted only when `collect` is set. */
   orphans: { blobKey: string; bytes: number; uploaded: string }[];
@@ -43,8 +63,17 @@ export interface ReconcileReport {
   tooFreshToJudge: number;
   /** Receipts whose evidence is absent. This is lost mail. */
   missing: { receiptId: string; blobKey: string; acceptedAt: string }[];
-  /** What was examined, so a bounded pass cannot read as an exhaustive one. */
-  scanned: { objects: number; truncated: boolean; receipts: number; receiptsTotal: number };
+  /**
+   * What was examined, so a bounded pass cannot read as an exhaustive one — including **which
+   * prefixes**, so a prefix outside the scan appears in the output instead of being absent from it.
+   */
+  scanned: {
+    objects: number;
+    truncated: boolean;
+    receipts: number;
+    receiptsTotal: number;
+    prefixes: string[];
+  };
 }
 
 /**
@@ -62,39 +91,46 @@ export async function reconcileEvidence(
     orphansDeleted: 0,
     tooFreshToJudge: 0,
     missing: [],
-    scanned: { objects: 0, truncated: false, receipts: 0, receiptsTotal: 0 },
+    scanned: { objects: 0, truncated: false, receipts: 0, receiptsTotal: 0, prefixes: [] },
   };
 
   // ---- direction 1: objects with no receipt ------------------------------------------------
-  const listed = await env.EVIDENCE.list({ prefix: `${orgId}/raw/`, limit: LIST_LIMIT });
-  report.scanned.objects = listed.objects.length;
-  report.scanned.truncated = listed.truncated;
-
+  // The reported prefixes are the ones this loop actually lists — iterated rather than assumed to be
+  // one, so the report cannot name a prefix the scan skipped. That is the whole point of reporting
+  // them: an unscanned prefix has to be visible somewhere other than in a comment.
+  report.scanned.prefixes = scannedPrefixes(orgId);
   const cutoff = ctx.now() - ORPHAN_GRACE_MS;
-  for (const object of listed.objects) {
-    if (object.uploaded.getTime() > cutoff) {
-      // A delivery may be between its R2 write and its D1 commit right now.
-      report.tooFreshToJudge += 1;
-      continue;
-    }
 
-    const receipt = await env.CATALOG.prepare(
-      "SELECT id FROM ingress_receipts WHERE org_id = ? AND blob_key = ? LIMIT 1",
-    )
-      .bind(orgId, object.key)
-      .first<{ id: string }>();
+  for (const prefix of report.scanned.prefixes) {
+    const listed = await env.EVIDENCE.list({ prefix, limit: LIST_LIMIT });
+    report.scanned.objects += listed.objects.length;
+    if (listed.truncated) report.scanned.truncated = true;
 
-    if (receipt !== null) continue;
+    for (const object of listed.objects) {
+      if (object.uploaded.getTime() > cutoff) {
+        // A delivery may be between its R2 write and its D1 commit right now.
+        report.tooFreshToJudge += 1;
+        continue;
+      }
 
-    report.orphans.push({
-      blobKey: object.key,
-      bytes: object.size,
-      uploaded: object.uploaded.toISOString(),
-    });
+      const receipt = await env.CATALOG.prepare(
+        "SELECT id FROM ingress_receipts WHERE org_id = ? AND blob_key = ? LIMIT 1",
+      )
+        .bind(orgId, object.key)
+        .first<{ id: string }>();
 
-    if (options.collect === true) {
-      await env.EVIDENCE.delete(object.key);
-      report.orphansDeleted += 1;
+      if (receipt !== null) continue;
+
+      report.orphans.push({
+        blobKey: object.key,
+        bytes: object.size,
+        uploaded: object.uploaded.toISOString(),
+      });
+
+      if (options.collect === true) {
+        await env.EVIDENCE.delete(object.key);
+        report.orphansDeleted += 1;
+      }
     }
   }
 
@@ -135,6 +171,10 @@ export function formatReconcile(report: ReconcileReport): string {
     `evidence reconcile`,
     `  scanned   ${report.scanned.objects} object(s)${report.scanned.truncated ? " (truncated — more remain)" : ""}, ` +
       `${report.scanned.receipts} of ${report.scanned.receiptsTotal} receipt(s)`,
+    // Named, because "0 orphans" from a scan of one prefix reads exactly like "0 orphans" from a scan
+    // of the bucket. An object under any other prefix was not examined and is not collectable here.
+    `  prefixes  ${report.scanned.prefixes.join(", ")} — objects under any other prefix were not ` +
+      `listed, so they are neither counted above nor collectable by this pass`,
     `  orphans   ${report.orphans.length} collectable, ${report.orphansDeleted} deleted, ` +
       `${report.tooFreshToJudge} too fresh to judge`,
   ];

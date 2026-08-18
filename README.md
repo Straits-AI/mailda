@@ -230,6 +230,18 @@ attribute to anything. One unattributable event, which is proof that attribution
 suppress the warning. Now blindness counts attributed events only, and unattributable ones raise their own
 finding, because a Node receiving events it cannot place is neither blind nor healthy.
 
+**"Deleted" meant dereferenced, and no report could say so.** A draft body is an R2 object; `deleteDraft`
+removes the row and touches R2 not at all; a draft is deleted when its message is **sealed**, which is the
+ordinary send path. The code and the shell doc both said the object was "left for the reconciler, because
+ADR 32 makes an orphan blob collectable" — true of ADR 32, false of this prefix, because the reconciler
+lists `${orgId}/raw/` only and draft bodies are written under `${orgId}/drafts/`. So every message ever sent
+from the composer left an unreferenced copy of its draft, and no figure anywhere could reveal it: a scan of
+one prefix printed `0 orphans` exactly as a scan of the bucket would. `reconcile` now **names the prefixes
+it scanned**, so a prefix outside the scan appears in the output instead of being absent from it, and
+`doctor` counts the stranded bodies and says plainly that nothing can collect them. **No deletion was
+added** — that waits for the legal hold every content-destroying call site must consult, because a cleanup
+sweep is itself one of those call sites.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.

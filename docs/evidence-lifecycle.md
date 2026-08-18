@@ -81,6 +81,39 @@ safe the deletion looks.
 The grace period is an hour, and it is sized by asymmetry rather than measurement: being slow costs an
 hour of R2 storage for a few kilobytes, being fast destroys mail that was about to be accepted.
 
+### The report names the prefixes it scanned
+
+`scanned.prefixes` is in the structured report and in the text form, and it is the loop's own input
+rather than a second description of it. Until it existed the report could not distinguish **"nothing to
+collect"** from **"did not look"** — both printed `0 orphans` — and one prefix made that expensive.
+
+This pass lists `${orgId}/raw/` and nothing else, and that listing is the only thing its
+`EVIDENCE.delete` ever sees. **Draft bodies live at `${orgId}/drafts/{draftId}.txt`**, `deleteDraft`
+removes only the row, and a draft is deleted when its message is *sealed* — the ordinary send path. So
+those objects are not collected late, they are outside the scan, and no code path in the Worker can
+collect them.
+
+Widening this listing would be the wrong repair, twice over: it feeds a delete, and a draft body's
+referent is a `drafts` row rather than an `ingress_receipt`, so "no receipt" is not even the right test.
+`doctor`'s `draft_bodies_stranded` finding counts them **read-only** instead, reusing this file's
+`reconcile.list_limit` for the page and `reconcile.orphan_grace_seconds` for the judgement — the grace
+window applies for the identical reason, because `saveDraft` also writes R2 before the row. Collection
+is deferred to the legal hold every content-destroying call site must consult (#64); a sweep is itself
+such a path, so it must not land before the hold. Tracked by #67.
+
+It reports at **`report` severity, not `degraded`**, and that is a decision rather than an oversight. A
+draft is deleted on the ordinary send path, so a Node that has ever sent one message from the composer
+has residue permanently — `degraded` would make every healthy Node warn forever with a `fix` of "nothing
+to run yet", and a check that always fails is a check somebody mutes. `workers_paid_plan` is the existing
+shape for a real gap no operator action closes. **Promote it to `degraded` when a collector exists**: once
+a sweep can consult #64's hold, residue means the sweep is not running, which is actionable. A larger
+count is not grounds to promote it — that is the same un-actionable fact, larger.
+
+Its success line also carries what it did **not** judge: the count held back by the grace window and, if
+the listing was truncated, that more objects remain unexamined. A pass that skipped objects may not say
+"every draft body has a row", which is the same overclaim — a partial scan reading as a complete one —
+that made this residue invisible in the first place.
+
 ## The processing pipeline
 
 §13 accepts synchronously and defers everything else to an outbox event. The outbox and its sweeper

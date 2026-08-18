@@ -104,8 +104,18 @@ shipping deliberately without it.
   `saveDraft` — the layer that owns the column — as well as in the composer.
 - **Deleted when the message is sealed**, by the Node rather than the browser, and *after* the seal: the
   residual is a draft for a message already sent, which is visible and takes one click, rather than losing
-  somebody's writing to a seal that then failed. The R2 object is left for the reconciler, because ADR 32
-  makes an orphan blob collectable and a dangling reference reportable-only.
+  somebody's writing to a seal that then failed. **The row is deleted; the R2 object is not, and nothing
+  collects it.** This sentence used to say the object was "left for the reconciler, because ADR 32 makes an
+  orphan blob collectable" — every clause of that is true about ADR 32 and false about this prefix.
+  `deleteDraft` issues one `DELETE FROM drafts` and touches R2 not at all, and the reconciler's only
+  listing is `${orgId}/raw/`, which is also the only listing its `EVIDENCE.delete` ever sees. A draft body
+  lives at `${orgId}/drafts/{draftId}.txt`, so it is not collected late — **no code path deletes it at
+  all.** Since a draft is deleted on the *ordinary* send path, a Node's R2 usage grows with composer use.
+  `doctor`'s `draft_bodies_stranded` finding lists that prefix and now **counts** them, which is the part
+  that was missing: the
+  residue was previously absent from every report rather than reported as unexamined. **Collection is
+  deferred** to the legal hold that every content-destroying call site must consult (#64) — a cleanup sweep
+  is itself such a path, so it must not land before the hold exists. Tracked by #67.
 
 Nothing here is audited. A draft is the only write path a person triggers by *typing* rather than by
 deciding, and an entry per autosave would put dozens behind one human action —
