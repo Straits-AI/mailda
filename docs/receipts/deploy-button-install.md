@@ -4,15 +4,16 @@ kind: platform-limit
 measured_on: 2026-08-06
 stale_when: >
   Workers Builds stops overriding the Worker name from the CI project; the Deploy button starts writing
-  resource ids into the clone; the button's setup page gains a root-directory field; Cloudflare stops
-  stripping .github/workflows from the clone; the button starts preserving upstream git history; or the
-  deploy-command detection starts picking up a `deploy` script
+  resource ids into the clone; the Path field on the setup page stops defaulting to the repository
+  root; Cloudflare stops stripping .github/workflows from the clone; the button starts preserving
+  upstream git history; or the deploy-command detection stops picking up a `deploy` script, which it
+  does as of 19 August 2026
 values:
   install.writes_resource_ids_to_clone: 0
   install.preserves_upstream_history: 0
   install.strips_github_workflows: 1
   install.renames_root_package: 1
-  install.detects_deploy_script: 0
+  install.detects_deploy_script: 1
   install.applies_migrations: 0
   install.provisions_d1_in_build: 1
   install.provisions_r2_in_build: 1
@@ -48,6 +49,53 @@ migrations:apply` — was present in both the root and the Worker `package.json`
 cloned, and Cloudflare documents that it "will automatically detect and pre-populate the build and
 deploy fields". It did not. **Cause unknown** and recorded as unknown; what is measured is that the
 default ran and the schema was never applied.
+
+## Correction, 19 August 2026: two clauses fired, and one of them was the good kind
+
+Observed on a second install (#55's Workflow measurement), which means this receipt's own `stale_when`
+did its job twice in one build log.
+
+**`install.detects_deploy_script` is now 1.** The clause named *"the deploy-command detection starts
+picking up a `deploy` script"*, and it does:
+
+```
+Executing user deploy command: pnpm run deploy
+> pnpm --filter @mailda/worker run deploy
+> wrangler deploy && pnpm run migrations:apply
+```
+
+On 6 August the default `npx wrangler deploy` ran instead, the schema was never applied, and **the cause
+was recorded as unknown**. It is no longer the behaviour. The cause of the original failure is still
+unknown and now unknowable — the thing that would have explained it has changed underneath — so this is
+recorded as a behaviour change rather than as a diagnosis.
+
+The consequence is better than it looks: **the install path now runs this repository's own deploy
+script**, so 6 August's failure mode is gone by Cloudflare's change as well as by ours. That is not a
+reason to remove the Node's own schema application (`POST /api/prepare`). A detection that started
+working can stop, and this receipt is the evidence that it moves without notice.
+
+**The setup page has a root-directory field**, labelled **Path**, defaulting to `/`. The clause named its
+appearance; the clause is now rewritten to fire on the *default* changing, which is the part that would
+actually break a monorepo install. Left at `/` for the #55 deploy, because the monorepo finding above
+still holds: isolating `apps/node/worker` strands the three `workspace:*` packages the Worker depends on.
+
+**`install.applies_migrations` stays 0, and the reason changed.** On 6 August migrations never ran because
+the deploy script was never invoked. On 19 August the script *was* invoked and `wrangler deploy` exited
+non-zero before the `&&`, so `pnpm run migrations:apply` still never ran — this time because a queue
+consumer collided with the Node already in that account (filed separately: a hardcoded account-scoped
+queue name makes the install non-repeatable within one account). The figure is unchanged and would be
+misleading if left unexplained: it does not mean the detection is still broken.
+
+**What this install did provision**, confirming `install.provisions_d1_in_build` and
+`install.provisions_r2_in_build` have not regressed, and adding a third:
+
+```
+Provisioning CATALOG (D1 Database)...   ✨ provisioned 🎉
+Provisioning EVIDENCE (R2 Bucket)...    ✨ provisioned 🎉
+env.BUTLER_PROBE (ButlerProbe)          Workflow
+```
+
+The Workflow is `workflow-provisioning.md`'s measurement, not this one's, and it is recorded there.
 
 ## ADR 24: the specific worry was wrong, the premise still fails
 
