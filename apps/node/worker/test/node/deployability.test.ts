@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, resolve } from "node:path";
 
-import { parse as parseJsonc } from "jsonc-parser";
 import { describe, expect, it } from "vitest";
 
 import { BUDGETS } from "@mailda/budgets";
+
+import {
+  BINDING_BLOCKS, bindingBlocksIn, CONFIG_PATH, readWranglerConfig, unclassifiedKeys, WORKER_DIR,
+  type ConfigScope,
+} from "./wrangler-world";
 
 /**
  * Holds the Worker's configuration to what a customer's deploy can actually do.
@@ -19,31 +22,47 @@ import { BUDGETS } from "@mailda/budgets";
  * config drifting away from the measured facts *before* it is built, which is the cheap moment: adding
  * a binding the button cannot provision is a decision about somebody's first five minutes, and it should
  * be made deliberately rather than discovered by the first customer who clicks.
+ *
+ * ## Which half of the question this file owns
+ *
+ * What counts as a binding block lives in `test/node/wrangler-world.ts` and is shared with
+ * `test/node/cost-meter-coverage.test.ts`. Before #71 each file kept its own rule — this one matched
+ * `_databases` / `_buckets` / `_namespaces` suffixes plus six exact names, and omitted `workflows` while
+ * the type below and the schedules guard at the bottom both already knew `workflows` was a binding block.
+ * Two incomplete rules over one property is how both came to be trusted and neither was sufficient.
+ *
+ * The two files still ask different questions, which is why they are still two files: coverage asks
+ * whether the cost meter classifies every binding **name**; this file asks whether a customer's install
+ * can **provision** every binding **block**, and says how when it cannot.
  */
 
-const here = dirname(fileURLToPath(import.meta.url));
-const workerDir = resolve(here, "../..");
-const repoRoot = resolve(workerDir, "../../..");
-const configPath = join(workerDir, "wrangler.jsonc");
+const repoRoot = resolve(WORKER_DIR, "../../..");
 
-interface WranglerConfig {
-  name?: string;
+/**
+ * Only the fields this file reads. Every binding block is classified by the shared world instead.
+ *
+ * A type alias rather than an interface so it is still assignable to that module's `ConfigScope`.
+ */
+type WranglerConfig = ConfigScope & {
   main?: string;
-  d1_databases?: Record<string, unknown>[];
-  r2_buckets?: Record<string, unknown>[];
-  send_email?: Record<string, unknown>[];
-  queues?: Record<string, unknown>;
-  kv_namespaces?: Record<string, unknown>[];
-  durable_objects?: { bindings?: Record<string, unknown>[] };
-  secrets_store_secrets?: Record<string, unknown>[];
   /** Not declared yet. Typed so the schedules guard below reads the real shape rather than `any`. */
   workflows?: Record<string, unknown>[];
   env?: Record<string, WranglerConfig>;
-}
+};
 
-const config = parseJsonc(readFileSync(configPath, "utf8")) as WranglerConfig;
+const config = readWranglerConfig() as WranglerConfig;
 
-/** The binding blocks a Worker config may declare, and how a customer comes to have each one. */
+/**
+ * How a customer comes to have each binding block this config declares.
+ *
+ * Deliberately keyed by *declared* block rather than by every block `wrangler-world.ts` recognises. Each
+ * entry is a measured claim about somebody's first five minutes, and a block nothing declares has no
+ * measurement behind it: `workflow-provisioning.md` provisioned a Workflow with a Super Administrator
+ * OAuth token and says in as many words that this must not be read as "provisioned by the button", since
+ * whether a Workers Builds auto-generated token has the scope is untested. Writing an entry now would
+ * make that unmeasured claim. The test below fails the moment `[[workflows]]` is declared, which is when
+ * somebody has the context to measure it.
+ */
 const BINDING_KINDS = {
   d1_databases: {
     provisionedByButton: Boolean(BUDGETS["builds.provisions_d1"]),
@@ -96,7 +115,7 @@ const ACCOUNT_SPECIFIC_KEYS = [
 ];
 
 function bindingKindsIn(scope: WranglerConfig): BindingKind[] {
-  return (Object.keys(BINDING_KINDS) as BindingKind[]).filter((kind) => scope[kind] !== undefined);
+  return bindingBlocksIn(scope).filter((key): key is BindingKind => key in BINDING_KINDS);
 }
 
 /** Every key path in the config, so a resource id cannot hide in a block nobody thought to check. */
@@ -118,22 +137,45 @@ describe("what a customer's deploy can provision", () => {
     // The receipt's headline finding: Workers Builds pins one Worker name per project and overrides
     // whatever the config says, so a chained multi-Worker deploy command deploys the wrong code under
     // the wrong name and then fails. A second Worker config in this repo would resurrect that shape.
-    const configs = [relative(repoRoot, configPath)];
+    const configs = [relative(repoRoot, CONFIG_PATH)];
     expect(configs).toHaveLength(BUDGETS["builds.workers_deployable_per_project"]);
     expect(config.main).toBeTypeOf("string");
   });
 
-  it("classifies every binding block it declares", () => {
+  it("classifies every key in the config as a binding block or a field that binds nothing", () => {
+    // The closed world #71 asked for, replacing a suffix-and-exact-name filter that skipped any key it
+    // had not been told about — `workflows` among them. An unknown key now fails here, which is the only
+    // version that catches the binding block nobody has thought of. One call covers the whole file: the
+    // top level and every named environment under `env`.
+    expect(unclassifiedKeys(config)).toBeNull();
+  });
+
+  it("fails on a key it does not know, so the closed world is not vacuously closed", () => {
+    // Proves the guard above fires without editing wrangler.jsonc: the same config, one stranger richer.
+    const complaint = unclassifiedKeys({ ...config, mailda_unheard_of_block: [{ binding: "SURPRISE" }] });
+    expect(complaint, "the closed world accepted a top-level key nothing classifies").not.toBeNull();
+    expect(complaint).toContain("mailda_unheard_of_block");
+    expect(complaint).toContain("BINDING_KINDS");
+  });
+
+  it("says how a customer comes to have every binding block it declares", () => {
     // A new binding block is a question about the customer's first five minutes: does the button create
     // this, and if not, who does? Failing here is that question being asked at the moment somebody still
-    // has the context to answer it.
-    const declared = Object.keys(config).filter(
-      (key) => key.endsWith("_databases") || key.endsWith("_buckets") || key.endsWith("_namespaces")
-        || key === "send_email" || key === "durable_objects" || key === "queues"
-        || key === "secrets_store_secrets" || key === "vectorize" || key === "hyperdrive",
-    );
-    const unclassified = declared.filter((key) => !(key in BINDING_KINDS));
-    expect(unclassified).toEqual([]);
+    // has the context to answer it. Declared blocks only — see BINDING_KINDS on why an undeclared block
+    // gets no entry until something declares it.
+    const unclassified = bindingBlocksIn(config).filter((key) => !(key in BINDING_KINDS));
+    expect(
+      unclassified.length === 0 ? null
+        : `${unclassified.join(", ")} declared in wrangler.jsonc with no entry in BINDING_KINDS — say `
+          + "whether a customer's install provisions it, and if not, what does",
+    ).toBeNull();
+  });
+
+  it("keeps BINDING_KINDS inside the shared world, so the two cannot drift apart", () => {
+    // A kind here that wrangler-world.ts does not know as a binding block would be a provisioning claim
+    // about a key the coverage tripwire never reads — the divergence #71 is about, in the other direction.
+    const strangers = Object.keys(BINDING_KINDS).filter((kind) => !(kind in BINDING_BLOCKS));
+    expect(strangers).toEqual([]);
   });
 
   it("says how anything the button cannot provision is provisioned instead", () => {
@@ -171,7 +213,34 @@ describe("what a customer's deploy can provision", () => {
     // Nothing checked it. Wrangler warns at deploy time, which is after the tests have gone green.
     const testEnv = config.env?.test;
     expect(testEnv).toBeDefined();
-    expect(bindingKindsIn(testEnv!)).toEqual(bindingKindsIn(config));
+    // Compared over the whole shared world rather than over BINDING_KINDS, so a block declared in one
+    // scope and not the other is caught even before it has a provisioning entry. Whether env.test's own
+    // keys are classified is not asked here — the guard above already covers every environment.
+    expect(bindingBlocksIn(testEnv!)).toEqual(bindingBlocksIn(config));
+  });
+
+  it("classifies every named environment, not only the one called test", () => {
+    // The reason `env` may be a non-binding field is that its values are classified in their own right.
+    // Both tripwires used to reach for `env.test` by name, so a second environment was classified by
+    // neither — #71's hole one level down, and the same permissive direction. `unclassifiedKeys`
+    // iterates, so this fails without either test file knowing an environment's name.
+    const complaint = unclassifiedKeys({
+      ...config,
+      env: { ...config.env, staging: { mailda_unheard_of_block: [{ binding: "SURPRISE" }] } },
+    });
+    expect(complaint, "a binding block hid in an environment nothing looks up by name").not.toBeNull();
+    expect(complaint).toContain("env.staging.mailda_unheard_of_block");
+  });
+
+  it("refuses an env block inside a named environment, since environments do not nest", () => {
+    // The one rule in the shared world that the real config cannot exercise, so it is exercised here
+    // rather than left as an untested branch: `env` is a top-level field, and an `env` under `env.test`
+    // would be silently ignored by wrangler while reading as configuration that does something.
+    const complaint = unclassifiedKeys(
+      { env: { staging: {} } }, { label: "wrangler.jsonc env.test", kind: "environment" },
+    );
+    expect(complaint, "a nested env was accepted as configuration").not.toBeNull();
+    expect(complaint).toContain("top-level-only");
   });
 
   /**
@@ -193,7 +262,7 @@ describe("what a customer's deploy can provision", () => {
     if (withSchedules.length === 0) return;  // nothing declares one yet; the guard is for when it does
 
     const workerPackage = JSON.parse(
-      readFileSync(join(workerDir, "package.json"), "utf8"),
+      readFileSync(join(WORKER_DIR, "package.json"), "utf8"),
     ) as { devDependencies?: Record<string, string> };
     const range = workerPackage.devDependencies?.wrangler ?? "";
     const floor = /(\d+)\.(\d+)\./.exec(range);
