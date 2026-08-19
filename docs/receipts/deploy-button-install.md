@@ -97,6 +97,31 @@ env.BUTLER_PROBE (ButlerProbe)          Workflow
 
 The Workflow is `workflow-provisioning.md`'s measurement, not this one's, and it is recorded there.
 
+## The button honours a `/tree/<branch>` URL, and imports it as the clone's default branch
+
+Measured 19 August 2026, and recorded because nothing here said it and #55 needed it.
+
+Cloudflare documents the URL's optional trailing path only as a *subdirectory* — the published example is
+`.../?url=https://github.com/cloudflare/templates/tree/main/saas-admin-template`, where the branch happens
+to be the default. So whether `/tree/<branch>` with **no** subdirectory selects a branch or is ignored was
+unstated, and the setup page shows no branch anywhere: the only hint was the **Path** field defaulting to
+`/`, consistent with the tree path being consumed as `<branch>` + empty subdirectory.
+
+It selects the branch. Verified from the artifact rather than from the page: the clone created by a
+`/tree/workflow-provisioning-probe` install contained `apps/node/worker/src/butler-probe.ts` and the
+`[[workflows]]` block in both config scopes, neither of which exists on `main` — and it contained them on a
+branch called **`main`**, its only branch, from a single `source repo import` commit.
+
+Two things follow for anyone measuring the install path again:
+
+- **A branch can be deployed without touching `main`**, which is what made #55 safe to run: a negative
+  result could not have broken the install button this repository advertises.
+- **The clone's history says nothing about which branch it came from.** One squashed commit named
+  `source repo import`, on `main`, whatever the source. So *"did the branch I asked for actually get
+  deployed"* has to be answered by looking for a file that exists only on that branch. A deploy that
+  silently used `main` would have succeeded and measured nothing, which for #55 — whose whole subject was a
+  binding that exists only on the branch — would have been a false positive rather than a visible failure.
+
 ## ADR 24: the specific worry was wrong, the premise still fails
 
 The previous receipt recorded resource ids being written into the customer's clone, and called ADR 24
