@@ -10,11 +10,12 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
 /**
  * Dispatch: the hold window, the state machine, and the retry rule (ADR 39, ADR 40).
  *
- * ## Seven states, and two of them are forbidden
+ * ## Nine states, and two of them are forbidden
  *
  *   held             sealed, undispatched, still cancellable
+ *   awaiting         a policy gate somebody can clear; `state_reason` says which gate (#60)
  *   cancelled        stopped during the hold window by a person
- *   withheld         the author's authority to send as this mailbox was withdrawn before hand-over
+ *   withheld         this Node declined; `state_reason` says why — `authority_lost` or `policy_denied`
  *   throttled        rate-limited — provably never left
  *   refused          rejected at the API boundary — provably never left
  *   suppressed       on the suppression list — will never arrive, and that is knowable now
@@ -23,6 +24,18 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  *
  * `sent` and `delivered` do not exist here and must never be added. §5C forbids claiming an outcome
  * nobody observed, and the transport reports acceptance rather than arrival.
+ *
+ * ## `awaiting` is never dispatched, and it is never dispatched by *omission* rather than by a check
+ *
+ * Both the sweep and the claim below select `state = 'held' AND release_at <= ?` or `state = 'throttled'`.
+ * `awaiting` is neither, so a gated send cannot leave — there is no guard to forget, because the predicate
+ * that lets a send out never admitted it. `test/policy.test.ts` asserts that rather than trusting it.
+ *
+ * **What #60 does not build: the release path.** A hold is cleared by any `send.propose` holder and an
+ * approval by an `approval.decide` holder, and neither act exists yet — #61 owns the approval machinery and
+ * #62 owns the dispatch-time recheck. So today an `awaiting` send drains in exactly one way: its author
+ * **cancels** it, which `cancelSend` now permits for that reason. Said plainly rather than left to be
+ * discovered, because a queue with no drain is the failure `deny` was kept out of `awaiting` to avoid.
  *
  * ## Retry is permitted only where the send provably never left
  *
@@ -37,8 +50,20 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  */
 
 export type SendState =
-  | "held" | "cancelled" | "withheld" | "throttled" | "refused" | "suppressed"
+  | "held" | "awaiting" | "cancelled" | "withheld" | "throttled" | "refused" | "suppressed"
   | "handed_over" | "outcome_unknown";
+
+/**
+ * The two states a person may still stop.
+ *
+ * `awaiting` belongs here for a reason sharper than convenience: nothing else in this build clears it, so
+ * without cancellation a policy-gated send would be **unstoppable** — accumulating in a state that reads as
+ * pending with no act that resolves it. That is precisely the argument #60's `deny` mapping uses against
+ * parking denials in `awaiting`, and it applies to gates too until #61 ships the release act. Cancelling is
+ * already the author's own authority (`send.propose`, the same relation sealing took), so this widens no
+ * permission.
+ */
+const STOPPABLE: ReadonlySet<SendState> = new Set<SendState>(["held", "awaiting"]);
 
 /** Which states the system may retry on its own. Everything absent here needs a human, or nothing. */
 const AUTO_RETRYABLE: ReadonlySet<SendState> = new Set<SendState>(["throttled"]);
@@ -50,11 +75,14 @@ export interface DispatchResult {
 }
 
 /**
- * Cancels a held manifest.
+ * Cancels a manifest nothing has handed over: `held`, or `awaiting` a policy gate.
  *
- * Conditional on still being `held`, which is what makes the race safe without a transaction D1 does
+ * Conditional on still being stoppable, which is what makes the race safe without a transaction D1 does
  * not offer (#10): a cancel arriving as the dispatcher releases loses at the database rather than
  * producing a cancelled-but-sent message.
+ *
+ * The predicate is built from `STOPPABLE` rather than written out, so the set and the SQL cannot disagree —
+ * a second literal list is how `awaiting` would have been added to one and not the other.
  */
 export async function cancelSend(
   env: Env,
@@ -63,8 +91,10 @@ export async function cancelSend(
   manifestId: string,
 ): Promise<{ cancelled: boolean; reason?: string }> {
   // Conditional, so the record is conditional on the same predicate and in the same transaction.
-  // The entry is placed *first* deliberately: the update clears `state = 'held'`, so an entry gated on
+  // The entry is placed *first* deliberately: the update clears the stoppable state, so an entry gated on
   // it and running afterwards would never insert, and a cancellation would go unrecorded.
+  const stoppable = [...STOPPABLE];
+  const stoppablePredicate = `state IN (${stoppable.map(() => "?").join(", ")})`;
   const { results } = await auditedBatch<never>(
     env, ctx, orgId,
     {
@@ -75,18 +105,18 @@ export async function cancelSend(
       entry,
       env.CATALOG.prepare(
         `UPDATE send_manifests SET state = 'cancelled', state_at = ?
-          WHERE id = ? AND org_id = ? AND state = 'held'`,
-      ).bind(new Date(ctx.now()).toISOString(), manifestId, orgId),
+          WHERE id = ? AND org_id = ? AND ${stoppablePredicate}`,
+      ).bind(new Date(ctx.now()).toISOString(), manifestId, orgId, ...stoppable),
       // Recipients follow the manifest. Unconditional here because the batch only commits when the gate
-      // above found the manifest still held, so this cannot cancel recipients of a send that went out.
+      // above found the manifest still stoppable, so this cannot cancel recipients of a send that went out.
       env.CATALOG.prepare(
         `UPDATE send_recipients SET submission_state = 'cancelled', submission_state_at = ?
           WHERE org_id = ? AND manifest_id = ?`,
       ).bind(new Date(ctx.now()).toISOString(), orgId, manifestId),
     ],
     {
-      sql: "SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND state = 'held'",
-      params: [manifestId, orgId],
+      sql: `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND ${stoppablePredicate}`,
+      params: [manifestId, orgId, ...stoppable],
     },
   );
 
@@ -106,7 +136,7 @@ export async function cancelSend(
     reason:
       current.state === "handed_over"
         ? "This message was already handed to the mail service and cannot be recalled."
-        : `This message is no longer held; it is ${current.state}.`,
+        : `This message can no longer be stopped; it is ${current.state}.`,
   };
 }
 
@@ -200,7 +230,13 @@ export async function dispatchOne(
       (entry) => [
         entry,
         env.CATALOG.prepare(
-          `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?
+          // `state_reason` is set here as well as `last_error`, and the two are not redundant: `last_error`
+          // is prose for a person and this is the machine token #62's vocabulary is built from. Populated
+          // now rather than left NULL because this is the one existing writer of `withheld` and the reason
+          // is known — a column NULL exactly where its meaning is known is the placeholder shape this
+          // repository keeps finding defects in. #62 adds the other five reasons.
+          `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?,
+                  state_reason = 'authority_lost'
             WHERE id = ? AND org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
         ).bind(at, "The author's authority to send as this mailbox was withdrawn before hand-over.",
           manifestId, orgId, at),

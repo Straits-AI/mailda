@@ -6,6 +6,7 @@ import { auditedBatch } from "../audit.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
+import { evaluate, STATE_FOR, type Outcome } from "../policy.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
@@ -35,6 +36,23 @@ import { getEvidence } from "../evidence-store.ts";
  * normalizing afterwards would contradict ADR 11 outright. The author's typed original is stored
  * alongside, because if normalization ever changes meaning a record holding only the normalized form
  * cannot settle the dispute. Both are R2 evidence; only their hashes reach D1 (§12).
+ *
+ * ## The policy decision happens here, and the state it produces is not always `held`
+ *
+ * §18 places the policy decision between authorization and the effect intent, which is exactly where this
+ * sits — and #60 makes it *this* function rather than dispatch for a stronger reason: the outcome
+ * **determines the state**, and the state has to exist when the manifest does. A manifest that is sealed now
+ * and gated later has a window in which it reads as sendable.
+ *
+ * So `SealedManifest.state` is one of three: `held` when policy allowed, `awaiting` when it holds or requires
+ * approval, `withheld` when it denied. See `STATE_FOR` in `src/policy.ts` for the mapping and the argument
+ * for `deny` landing in `withheld` rather than in `awaiting`.
+ *
+ * **Re-evaluation at dispatch is #62's, and the seam is named rather than filled.** The manifest *binds* the
+ * version set it was decided under (`policy_versions`) and the result (`policy_outcome`); the decision at
+ * dispatch uses the **current** policy, because that is what honours §18's "stricter policy fails closed".
+ * `evaluate()` plus `isStricter()` is the whole of what that recheck needs, and it belongs in `dispatchOne`
+ * beside ADR 39's authority re-check. Nothing here should be copied there.
  */
 
 const REFERENCES_MAX = BUDGETS["send.references_emitted_max"];
@@ -69,10 +87,26 @@ export interface Composition {
 
 export interface SealedManifest {
   id: string;
-  state: "held";
+  /** `held` when policy allowed, `awaiting` when it gated, `withheld` when it denied (#60). */
+  state: "held" | "awaiting" | "withheld";
   releaseAt: string;
   rfcMessageId: string;
   referencesHeader: string | null;
+  /** The `max` over every matching policy. `allow` when nothing matched. */
+  policyOutcome: Outcome;
+  /**
+   * Which policy versions decided this, in the order they were read. Empty when none matched — which is a
+   * real answer, not a gap: it means the send *was* evaluated and no rule applied.
+   */
+  policyVersionIds: string[];
+  /**
+   * The machine token behind a gated or refused state, and NULL when `held`.
+   *
+   * A token rather than a sentence, deliberately: the words for every send state and reason live in
+   * `src/client/delivery.client.js`, which is the one place with a test over them. Two copies of the same
+   * sentence is how the authoritative one becomes whichever file the reader opened.
+   */
+  stateReason: string | null;
 }
 
 /**
@@ -305,6 +339,23 @@ export async function sealManifest(
     referencesHeader = await rebuildReferences(env, parent.blob_key, parent.rfc_message_id);
   }
 
+  /**
+   * The policy decision (#60), after the parent is resolved and before anything is persisted.
+   *
+   * After the parent, because `is_reply` is one of the five conditions and a named parent that fails the
+   * authority check above must refuse rather than be evaluated as a reply. Before the writes, because the
+   * outcome decides the state the row is inserted with — the whole reason evaluation is here rather than at
+   * dispatch. The refusals above still come first: an unauthorized send is refused without a policy being
+   * consulted, so a policy denial never becomes a way to learn that a mailbox exists.
+   */
+  const decision = await evaluate(env, ctx, orgId, {
+    mailboxId: composition.mailboxId,
+    actorUserId: composition.authorUserId,
+    recipients: [...to, ...cc, ...bcc],
+    isReply: composition.inReplyToMessageId !== undefined,
+  });
+  const { state: sealedState, reason: stateReason } = STATE_FOR[decision.outcome];
+
   const normalized = normalizeBody(composition.bodyTyped);
 
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
@@ -328,8 +379,9 @@ export async function sealManifest(
         references_header, fidelity,
         body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
         submitted_key, submitted_sha256,
-        sealed_at, release_at, state, state_at, transport_message_id, last_error, attempts)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,'held',?,NULL,NULL,0)`,
+        sealed_at, release_at, state, state_at, transport_message_id, last_error, attempts,
+        policy_outcome, policy_versions, state_reason)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,NULL,0,?,?,?)`,
   )
     .bind(
       manifestId, orgId, composition.mailboxId, composition.authorUserId,
@@ -344,7 +396,10 @@ export async function sealManifest(
       composition.fidelity,
       typedStored.blobKey, typedStored.plaintextSha256,
       normalizedStored.blobKey, normalizedStored.plaintextSha256,
-      at, releaseAt, at,
+      at, releaseAt, sealedState, at,
+      decision.outcome,
+      JSON.stringify(decision.matched.map((match) => match.versionId)),
+      stateReason,
     );
 
   // One row per recipient, in the same transaction as the manifest.
@@ -353,9 +408,12 @@ export async function sealManifest(
   // are unknown until something else runs is a manifest whose per-recipient state cannot be shown, and the
   // window between the two is exactly where a bounce would arrive with nowhere to land.
   //
-  // `submission_state` starts as `held` and mirrors the manifest at hand-over — it is a fact about the
-  // envelope, so it is the same for every row. `delivery_state` is left NULL, and that NULL is load
-  // bearing: it means *not yet observed*, which is a different claim from any outcome.
+  // `submission_state` mirrors the manifest at hand-over — it is a fact about the envelope, so it is the
+  // same for every row, and it starts at whatever the policy decision made the manifest rather than at a
+  // literal `held`. A gated manifest whose recipients read `held` would show a person a message that is
+  // simultaneously stopped and pending, which is the defect the cancel and withhold paths already fixed
+  // downstream. `delivery_state` is left NULL, and that NULL is load bearing: it means *not yet observed*,
+  // which is a different claim from any outcome.
   //
   // Duplicates are collapsed rather than rejected. The same address in To and Cc is one recipient in SMTP
   // terms, and two rows would count one bounce twice; `sr_unique` enforces it, and the first mention wins
@@ -373,7 +431,7 @@ export async function sealManifest(
              (id, org_id, manifest_id, kind, address, submission_state, submission_state_at,
               delivery_state, delivery_state_at, bounce_type, last_error, last_event_id, created_at)
            VALUES (?,?,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,?)`,
-        ).bind(ctx.id("srp"), orgId, manifestId, kind, address, "held", at, at));
+        ).bind(ctx.id("srp"), orgId, manifestId, kind, address, sealedState, at, at));
       }
     }
     return rows;
@@ -394,15 +452,26 @@ export async function sealManifest(
       recipients: composition.to.length + (composition.cc?.length ?? 0) + (composition.bcc?.length ?? 0),
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
+      // Which rule applied, in the entry for the act that applied it. §18 requires the audit trail to say
+      // this, and it rides in `send.sealed`'s detail rather than as a second entry because sealing is **one**
+      // act: a denial is not a separate event that happened afterwards, it is what this seal produced.
+      // `send.withheld` stays the name of dispatch's own refusal, which is a genuinely later act.
+      policyOutcome: decision.outcome,
+      policyVersions: decision.matched.map((match) => `${match.policyName}@${match.version}:${match.versionId}`),
+      state: sealedState,
+      stateReason,
     },
   }, (entry) => [manifestRow, ...recipientRows, entry]);
 
   return {
     id: manifestId,
-    state: "held",
+    state: sealedState,
     releaseAt,
     rfcMessageId,
     referencesHeader,
+    policyOutcome: decision.outcome,
+    policyVersionIds: decision.matched.map((match) => match.versionId),
+    stateReason,
   };
 }
 

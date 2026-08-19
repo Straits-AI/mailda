@@ -126,6 +126,19 @@ const SITES: Site[] = [
     why: "A draft is a message before it becomes one, addressed from a mailbox (ADR 36), so it is coverable.",
   },
   {
+    file: "src/policy.ts",
+    target: "policy_versions",
+    content: false,
+    why:
+      "The delete only ever removes a **draft**, in the same transaction that inserts its replacement — " +
+      "`pv_one_draft` permits exactly one, so editing is delete-then-insert rather than an update of a " +
+      "frozen row. A draft carries no mail and no message: it is an outcome and five conditions, none of " +
+      "which is customer content, and it is not consulted by evaluation, so destroying one cannot destroy " +
+      "any record of a decision. Published and superseded versions are what a send binds and what an " +
+      "investigation would ask about, and nothing in this Worker deletes those — the `state = 'draft'` " +
+      "clause in the SQL is what makes that a property rather than a promise.",
+  },
+  {
     file: "src/merge.ts",
     target: "cases",
     content: true,

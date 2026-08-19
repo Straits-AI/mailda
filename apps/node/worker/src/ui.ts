@@ -462,6 +462,13 @@ textarea:focus { outline: 0; border-color: var(--signal); }
    measurement (docs/receipts/contrast-tokens.md) for no gain — "did not leave, needs a person" is the
    same signal as refused. */
 .state-withheld       { border-color: var(--alarm); color: var(--alarm); }
+/* A policy gate (#60). --signal rather than --alarm, and rather than a new token: a gated send is waiting
+   on a person, which is the same signal as held, and a fifth colour would need its own contrast
+   measurement in docs/receipts/contrast-tokens.md for no gain. */
+.state-awaiting       { border-color: var(--signal); color: var(--signal); }
+/* The reason chip beside a state. Deliberately unpainted apart from the default rule colour: the state
+   already carries the signal, and two coloured chips side by side would make the reader compare them. */
+.state-reason         { color: var(--dim); }
 
 /* Delivery is a different scale from submission — what the receiving world did, not what this Node did —
    so it reuses the same three signal colours rather than inventing a fourth. Every one of these is an

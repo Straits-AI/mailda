@@ -50,6 +50,10 @@ CREATE TABLE send_manifests (
   -- Exactly the seven states of ADR 39. `sent` and `delivered` are not among them and must never be:
   -- §5C forbids claiming an outcome nobody observed, and the transport reports acceptance, not
   -- arrival.
+  --
+  -- Extended by 0019_policy.sql, which adds `awaiting` -- a policy gate somebody can clear -- and the
+  -- `state_reason` column that says which gate. Read 0019's header for the full vocabulary; this line is
+  -- what it was on 6 August 2026 and is left as the historical record rather than rewritten.
   state                  TEXT NOT NULL,      -- held|cancelled|throttled|refused|suppressed|handed_over|outcome_unknown
   state_at               TEXT NOT NULL,
   transport_message_id   TEXT,               -- Cloudflare's messageId, only when handed_over

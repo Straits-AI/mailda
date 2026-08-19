@@ -99,6 +99,16 @@ export interface SendRow {
    * anyway produced a 409 with a clear explanation that a person should never have been shown.
    */
   has_submitted: number;
+  /**
+   * The machine token behind a gated or refused state, or null when the state needs no reason (#60).
+   *
+   * Shipped alongside `state` rather than folded into it, because #62's vocabulary is state-plus-reason on
+   * purpose: `awaiting` a hold and `awaiting` an approval are the same state with different answers to
+   * "who can clear this", and collapsing them into two states is the shape that later reads as an accident.
+   */
+  state_reason: string | null;
+  /** What policy decided at seal: allow | hold | require_approval | deny, or null for a pre-#60 send. */
+  policy_outcome: string | null;
   recipients: RecipientRow[];
 }
 

@@ -353,6 +353,17 @@ const FIGURES: Record<string, Classification> = {
     "auth.access_token_refresh_margin_seconds", "auth.max_failed_logins_per_15min",
   ),
 
+  // docs/receipts/policy-evaluation-cost.md
+  ...mailda(
+    // Not plan-scoped, and worth saying why rather than defaulting: these count operations Mailda's own code
+    // performs, and the plan changes the size of the *pot* those operations spend from, never how many of
+    // them the code performs. The pot is `workflow.{paid,free}.subrequest_budget_per_instance`, which is
+    // plan-named, and the arithmetic dividing it lives in butler-step-cost.md — so the plan stays visible
+    // exactly once, where the division happens, instead of leaking into the name of every cost figure.
+    "the D1 operations Mailda's own policy evaluation and publication perform, measured in workerd",
+    "policy.evaluate_max_subrequests", "policy.publish_max_subrequests",
+  ),
+
   // docs/receipts/queue-provisioning.md
   ...bothPlans(
     "which queue and subscription operations exist and by what path; capability facts, not plan-scaled quantities",

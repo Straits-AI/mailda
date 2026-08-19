@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
 import { apiFetch } from "/app/session.js";
-import { DELIVERY_STATES, UNOBSERVED, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
+import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 
 import { Nothing } from "../chrome.tsx";
 import { type SendRow, useAudit, useDoctor, useLogs, useSends } from "../api.ts";
@@ -18,7 +18,7 @@ import { type SendRow, useAudit, useDoctor, useLogs, useSends } from "../api.ts"
  * have recreated exactly the bug that rule exists to prevent, in a file the test cannot see.
  */
 
-/** ADR 39's seven, grouped four/three, nothing collapsed away. */
+/** ADR 39's seven plus `withheld` and `awaiting`, nothing collapsed away. */
 /*
  * The send-state words moved to `/app/delivery.js`.
  *
@@ -147,6 +147,7 @@ export function Outbox() {
           <tbody>
             {rows.map((send) => {
               const state = describeSend(send);
+              const reason = describeReason(send);
               const expanded = open === send.id;
               return (
                 // `Fragment` with a key, not `<>`. A keyless fragment in a list leaves React reconciling
@@ -171,11 +172,21 @@ export function Outbox() {
                       <span className={`state state-${send.state}`} title={state.note}>
                         {state.label}
                       </span>
+                      {reason === null ? null : (
+                        // Beside the state, not instead of it. The state says what happened to the send; the
+                        // reason says who can act. Collapsing them would lose whichever half the reader needs.
+                        <span className="state state-reason delivery-chip" title={reason.note}>
+                          {reason.label}
+                        </span>
+                      )}
                       <DeliveryChips send={send} />
                     </td>
                     <td className="num mono dim">{clock(send.state_at)}</td>
                     <td className="num">
-                      {send.state === "held" ? (
+                      {send.state === "held" || send.state === "awaiting" ? (
+                        // `awaiting` too, and not as a convenience: nothing else in this build clears a
+                        // policy gate (#61 owns the release act), so without this the only thing a person
+                        // could do with a gated send is watch it. `cancelSend` bounds the authority.
                         <button type="button" className="linkish" onClick={() => void stop(send.id)}>
                           stop
                         </button>
@@ -195,6 +206,12 @@ export function Outbox() {
                       <dl>
                         <dt>what this means</dt>
                         <dd>{state.note}</dd>
+                        {reason === null ? null : (
+                          <>
+                            <dt>why</dt>
+                            <dd>{reason.note}</dd>
+                          </>
+                        )}
                         <Recipients send={send} />
                         <dt>manifest</dt>
                         <dd className="mono">{send.id}</dd>

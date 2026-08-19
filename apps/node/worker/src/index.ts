@@ -16,6 +16,7 @@ import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { placeHold } from "./holds.ts";
+import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import { mergeConversations } from "./merge.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
 import { setResponseTarget } from "./mailbox-policy.ts";
@@ -612,6 +613,95 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ hold });
     }
 
+    /**
+     * Authoring a policy (#60, Layer 5). `org.admin` only, audited as `policy.drafted` and `policy.published`.
+     *
+     * The minimal surface, and it exists for the reason the legal-hold endpoint above exists: **a policy
+     * nobody can write is dead code**, and worse than dead — #60's own governing principle is that a
+     * condition backed by no data is a policy that silently never fires. A policy plane with no authoring
+     * surface is that failure one level up: the machinery would read as governance while no rule could ever
+     * exist. So there are four calls, and no more than four.
+     *
+     * `POST /api/policies`               create a policy and its first draft
+     * `POST /api/policies/:id/draft`     replace the draft — a published version is never edited (#49)
+     * `POST /api/policies/:id/publish`   mint the version; refused if the draft changes nothing
+     * `GET  /api/policies`               what is live, what is drafted, and what has been superseded
+     *
+     * **There is deliberately no delete and no unpublish.** Neither is decided: a policy version is what an
+     * in-flight send binds, so removing one would leave a manifest pointing at a rule nobody can read, and
+     * #62's `max(current) > max(bound)` comparison needs both sides to exist. Withdrawing a rule is
+     * expressible today by publishing a version whose outcome is `allow`, which leaves the history intact —
+     * that is a smaller product than "retire this policy" and the difference should be visible here rather
+     * than discovered by whoever tries it.
+     *
+     * **There is deliberately no UI**, for the same reason as the hold: the shell is Layer 1–3's surface and
+     * a screen for authoring rules is a design question this ticket does not settle. What the shell *does*
+     * show is the consequence — the outbox renders `awaiting` and `withheld` with the reason beside them,
+     * because a state a person cannot explain is worse than one they cannot set.
+     *
+     * `GET` is admin-only too, and that is a decision rather than an inherited default: the conditions name
+     * mailbox ids and user ids, so the live policy set is a map of who sends where. A responder holding
+     * `send.propose` learns from their own outbox that a send was gated and why; they do not need the
+     * organization's whole rule set to learn it.
+     */
+    if (url.pathname === "/api/policies" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        policy: await createPolicyDraft(env, clock, who.orgId, who.userId, {
+          name: String(body.name ?? ""),
+          outcome: String(body.outcome ?? ""),
+          conditions: conditionsFrom(body.conditions),
+        }),
+      });
+    }
+
+    const policyDraft = /^\/api\/policies\/([^/]+)\/draft$/.exec(url.pathname);
+    if (policyDraft && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        policy: await editPolicyDraft(env, clock, who.orgId, who.userId, policyDraft[1]!, {
+          outcome: String(body.outcome ?? ""),
+          conditions: conditionsFrom(body.conditions),
+        }),
+      });
+    }
+
+    const policyPublish = /^\/api\/policies\/([^/]+)\/publish$/.exec(url.pathname);
+    if (policyPublish && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({
+        published: await publishPolicy(env, clock, who.orgId, who.userId, policyPublish[1]!),
+      });
+    }
+
+    if (url.pathname === "/api/policies" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        // §5C: the same answer an absent organization would give. A list that 403s tells a caller the rule
+        // set exists and is worth asking about, which is the oracle the outbox's own refusals avoid.
+        return Response.json(
+          { error: "not_found", message: "No policy set, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
+      const rows = await env.CATALOG.prepare(
+        `SELECT p.id AS policy_id, p.name, v.id AS version_id, v.version, v.state, v.outcome,
+                v.when_mailbox_id, v.when_actor_user_id, v.when_recipient_external, v.when_is_reply,
+                v.when_org_daily_volume_min, v.created_at, v.published_at, v.superseded_at
+           FROM policy_versions v
+           JOIN policies p ON p.id = v.policy_id AND p.org_id = v.org_id
+          WHERE v.org_id = ?
+          ORDER BY p.name, v.version IS NULL DESC, v.version DESC`,
+      ).bind(who.orgId).all<Record<string, unknown>>();
+      return Response.json({ policies: rows.results });
+    }
+
     if (url.pathname === "/api/sends" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
@@ -762,7 +852,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         // may not see must never be counted, sliced or paginated, and a post-filter gets that wrong the
         // first time somebody adds a LIMIT above it.
         `SELECT id, subject, envelope_to, state, state_at, release_at, attempts, last_error,
-                transport_message_id, fidelity,
+                transport_message_id, fidelity, state_reason, policy_outcome,
                 submitted_key IS NOT NULL AS has_submitted
            FROM send_manifests
           WHERE org_id = ?
@@ -1145,6 +1235,39 @@ function unauthenticated(): Response {
     { error: "unauthenticated", message: "Sign in to continue.", refreshable: true },
     { status: 401, headers: { "x-mailda-refreshable": "true" } },
   );
+}
+
+/**
+ * A policy's five conditions out of a JSON body, and nothing else.
+ *
+ * Five named reads rather than a spread, deliberately. `{ ...body.conditions }` would accept `dataClass` or
+ * `device` — a field #60 named **absent** because no data answers it — and store it nowhere while the caller
+ * believed a rule had been written. That is exactly *"a condition backed by no data is a policy that silently
+ * never fires"*, arriving through the API instead of through the schema, and the five-column table would not
+ * have caught it because the extra key would never reach a column.
+ *
+ * An unrecognised key is therefore **ignored rather than refused**, and that is the one weak spot here worth
+ * naming: a caller who spells `mailbox_id` instead of `mailboxId` publishes an unconditional policy and is
+ * told nothing. Refusing unknown keys is the better behaviour and it belongs with the command contract in
+ * `packages/contract`, which is where every channel's validation is generated from — a second hand-written
+ * validator in this file is the correspondence problem `errors.ts` already rejected once.
+ */
+function conditionsFrom(raw: unknown): PolicyConditions {
+  if (typeof raw !== "object" || raw === null) return {};
+  const source = raw as Record<string, unknown>;
+  const text = (value: unknown): string | null | undefined =>
+    value === undefined ? undefined : value === null ? null : String(value);
+  const flag = (value: unknown): boolean | null | undefined =>
+    value === undefined ? undefined : value === null ? null : Boolean(value);
+  const count = (value: unknown): number | null | undefined =>
+    value === undefined ? undefined : value === null ? null : Number(value);
+  return {
+    mailboxId: text(source.mailboxId),
+    actorUserId: text(source.actorUserId),
+    recipientExternal: flag(source.recipientExternal),
+    isReply: flag(source.isReply),
+    orgDailyVolumeMin: count(source.orgDailyVolumeMin),
+  };
 }
 
 /** The claimed organization, or null on an unclaimed Node. */

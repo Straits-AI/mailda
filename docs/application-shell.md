@@ -80,6 +80,45 @@ where a test can import it — `ledgers.tsx` touches `document`, which is why th
 defect (a unanimous all-bounced send rendering as "handed over") lived there uncovered until somebody looked
 at the page.
 
+## Policy, and the two states it added to the outbox (#60)
+
+A policy decision now runs inside `sealManifest`, so a send's state is a policy outcome and not only a
+transport outcome. The shell's outbox therefore renders two states it did not before, and one column it did
+not have.
+
+- **`awaiting`** — a policy gated the send. Rendered with `--signal`, the same colour as `held`, because in
+  both cases the send is waiting on a person and a fifth chip colour would need its own contrast measurement
+  for no new meaning.
+- **`withheld`** — this Node declined. It already existed for withdrawn send authority; a policy denial is the
+  second thing that produces it.
+- **`state_reason`**, a machine token beside the state, rendered as its own unpainted chip. The state says what
+  happened to the send; the reason says **who can act**. `awaiting` a hold and `awaiting` an approval are the
+  same state with different answers to that question, and the whole point of a reason column is that they do
+  not render identically.
+
+**The reason words live in `delivery.client.js`, not in `policy.ts` and not in `ledgers.tsx`**, which is the
+same placement rule the send-state words follow and for the same reason: `src/policy.ts` mints the token, one
+client module owns the prose, and a test evaluates that module rather than a copy of it. Two copies of one
+sentence means the authoritative one is whichever file the reader opened.
+
+The split is **enforced in both directions**, because a placement rule nothing checks is a placement rule that
+drifts on the first token somebody adds. `test/node/delivery-summary.test.ts` evaluates the served module and
+fails if any send *state* has no words; `test/policy.test.ts` reads the same bytes and fails if any *reason*
+this Node can write has none — driven off `POLICY_REASONS`, which is derived from the outcome-to-state mapping
+rather than written out, so a renamed or added token arrives at the check without anybody remembering to bring
+it. Without that second check the outbox would fall back to rendering `policy_approval_required` at a person,
+which is the failure the first check exists to prevent, reached through the other column.
+
+**The stop button now offers itself on `awaiting` as well as `held`**, and that is not a convenience. Nothing
+in this build clears a policy gate — releasing a hold and deciding an approval are #61's acts — so without it
+the only thing a person could do with their own gated send is watch it. `cancelSend` bounds the authority to
+`send.propose`, which whoever sealed it holds by definition, so nothing widened.
+
+**There is deliberately no screen for authoring a policy.** Four routes exist — create, edit the draft,
+publish, list — because a rule nothing can write is dead code, and `org.admin` is the only principal for all
+four. A screen for writing rules is a design question this ticket does not settle. What the shell does show is
+the *consequence*, because a state a person cannot explain is worse than one they cannot set.
+
 ## Drafts
 
 A draft survives a reload, which is what earns the composer's middle phase — *saved on your node* — after

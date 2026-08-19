@@ -213,7 +213,10 @@ describe("what a send's state is called", () => {
   });
 
   it("still names every other state, so moving the map lost nothing", () => {
-    for (const state of ["held", "cancelled", "withheld", "throttled", "refused", "suppressed",
+    // `awaiting` joined the vocabulary with the policy object (#60). A state with no words is the shape this
+    // list exists to catch: the fallback below renders the raw token, which for a policy-gated send would
+    // show somebody `awaiting` and nothing about what is being awaited.
+    for (const state of ["held", "awaiting", "cancelled", "withheld", "throttled", "refused", "suppressed",
                          "handed_over", "outcome_unknown"]) {
       const said = describeSend({ state, fidelity: "authored", has_submitted: 1 });
       expect(said.label, `no words for ${state}`).toBeTruthy();

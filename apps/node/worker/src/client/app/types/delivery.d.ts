@@ -29,9 +29,15 @@ export interface SendLike {
   state?: string;
   fidelity?: string;
   has_submitted?: number | boolean;
+  /** The machine token behind `awaiting` or `withheld` (#60), or null when the state needs no reason. */
+  state_reason?: string | null;
 }
 export const SEND_STATES: Record<string, DeliveryMeta>;
 /** The stronger reading available when the submitted bytes provably do not exist. */
 export const NEVER_SUBMITTED: DeliveryMeta;
 /** Takes the row, not the state, because the honest answer needs three of its fields. */
 export function describeSend(send: SendLike): DeliveryMeta;
+/** Why a send is `awaiting` or `withheld`, keyed on `state_reason`. */
+export const SEND_REASONS: Record<string, DeliveryMeta>;
+/** `null` when the row carries no reason, which is the ordinary case for `held`. */
+export function describeReason(send: SendLike): DeliveryMeta | null;

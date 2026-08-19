@@ -94,6 +94,27 @@ export const AUDIT_ACTIONS = {
     says: "An administrator placed a legal hold over a mailbox and a date window; placing only preserves.",
   },
 
+  /*
+   * Layer 5: the policy object (#60). §18 lists policy publication among the acts an approval binds, which
+   * settles whether it is answerable — it plainly is: a published policy decides whether other people's mail
+   * may leave, and "who made this rule live" is the question an audit exists to answer.
+   *
+   * `policy.drafted` is audited too, and the boundary that exempts `drafts` is what argues for it rather than
+   * against it. A composer draft is somebody *typing*, autosaved on a pause, dozens of entries behind one
+   * human action. A policy draft is an administrator writing a rule — rare, and separation of duty (§18)
+   * means the person who drafted and the person who published may deliberately differ, so a trail carrying
+   * only the publication cannot answer who wrote what was published.
+   *
+   * Both ride in `auditedBatch`: each accompanies rows in `policy_versions`, so neither is `standalone`, and
+   * the compiler enforces that rather than a reviewer.
+   */
+  "policy.drafted": {
+    says: "An administrator wrote or replaced a policy's draft; a draft is never consulted by evaluation.",
+  },
+  "policy.published": {
+    says: "An administrator made a policy version live; the previous version froze and was superseded.",
+  },
+
   /**
    * `standalone` means there is no accompanying write, so the bare `audit` append is correct and
    * `auditedBatch` has nothing to be atomic with. A lockout is a *refusal*: it changes nothing, and by

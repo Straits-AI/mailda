@@ -164,12 +164,20 @@ export function summariseDelivery(recipients) {
  */
 export const SEND_STATES = {
   held: { label: "held", note: "Not sent yet. You can still stop this." },
+  awaiting: {
+    label: "awaiting",
+    note:
+      "Not sent. A policy gated this send, and it is waiting for somebody to clear the gate. Which gate is " +
+      "in the reason beside it — a hold anybody who may send as this mailbox can release, or an approval " +
+      "only an approver can give.",
+  },
   cancelled: { label: "cancelled", note: "Stopped before it left." },
   withheld: {
     label: "withheld",
     note:
-      "Not sent. The author's authority to send as this mailbox was withdrawn during the hold window, so " +
-      "this Node refused to hand it over. Nobody cancelled it and the mail service was never asked.",
+      "Not sent. This Node declined to hand it over — either the author's authority to send as this mailbox " +
+      "was withdrawn during the hold window, or a policy denied it. The reason beside it says which. Nobody " +
+      "cancelled it and the mail service was never asked.",
   },
   throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
   refused: { label: "refused", note: "The mail service would not accept it. It never left." },
@@ -199,6 +207,66 @@ export const NEVER_SUBMITTED = {
     "none — so the attempt failed before the mail service was contacted. Nothing was sent, and no " +
     "duplicate can result from sending it again.",
 };
+
+/**
+ * Why a send is `awaiting` or `withheld`, in words, keyed on `state_reason` (#60, #62).
+ *
+ * ## Why the reasons are here and not beside the code that writes them
+ *
+ * `src/policy.ts` mints the tokens; this module owns the sentences. One place for the prose, because two
+ * copies of the same claim means the authoritative one is whichever file the reader opened — and because
+ * this is the module a test can evaluate as the exact bytes a browser is served. The same argument that
+ * moved `SEND_STATES` here in the first place.
+ *
+ * ## Why a reason at all, rather than more states
+ *
+ * `awaiting` a hold and `awaiting` an approval are the same state with different answers to *"who can clear
+ * this"*, and #62 settled that the machine's two halves stay symmetric — gates are `awaiting` plus a reason,
+ * refusals are `withheld` plus a reason. Five new states would have made §5C's distinctness a property of
+ * the state machine rather than of the explanation, and two conventions in one state machine is what later
+ * reads as an accident.
+ *
+ * Every sentence names **who can act**, because a state a person cannot act on is a complaint.
+ */
+export const SEND_REASONS = {
+  policy_hold: {
+    label: "policy hold",
+    note:
+      "A policy holds this send. It has not left. Anybody who may send as this mailbox can release it — no " +
+      "approver is needed, which is what makes a hold the lesser of the two gates.",
+  },
+  policy_approval_required: {
+    label: "approval required",
+    note:
+      "A policy requires this send to be approved. It has not left. Only somebody holding approval.decide " +
+      "on this mailbox can approve it, which is why this is the stricter gate.",
+  },
+  policy_denied: {
+    label: "policy denied",
+    note:
+      "A policy denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
+      "service was never asked. There is no act that clears a denial — compose again, or change the policy.",
+  },
+  authority_lost: {
+    label: "authority lost",
+    note:
+      "The author's authority to send as this mailbox was withdrawn before hand-over, so this Node declined " +
+      "to hand it over.",
+  },
+};
+
+/**
+ * The words for a reason, or `null` when the row carries none.
+ *
+ * An unrecognised reason returns the raw token as its label rather than nothing, for the same reason
+ * `describeSend` falls back on the raw state: the tokens #61 and #62 add will arrive before this map does,
+ * and showing a person `approval_revoked` is worse than a blank only in the sense that a blank is worse.
+ */
+export function describeReason(send) {
+  const reason = send?.state_reason;
+  if (reason === null || reason === undefined || reason === "") return null;
+  return SEND_REASONS[reason] ?? { label: String(reason), note: "" };
+}
 
 /**
  * What to tell a reader about one send, given the row.

@@ -192,3 +192,43 @@ Paid one is measured twice from two directions, the Free one is documented and e
 
 `test/butler-step-cost.measure.test.ts` asserts both rows, so the arithmetic here cannot fall out of step with
 the budgets it divides, and `test/node/budget-plan-scope.test.ts` fails if either key stops naming its plan.
+
+### Correction, 20 August 2026: the `stale_when` fired — `mail.send.propose` now evaluates policy (#60)
+
+**No value in this receipt moves.** The four bounds are unchanged and all four still hold. What moved is the
+measured figure behind one of them, and the `stale_when` clause that fired is its first: *"a node's
+implementation gains or loses an I/O operation."* Layer 5's policy object puts the policy decision inside
+`sealManifest`, which is `mail.send.propose`, so the node gained one query — and up to three.
+
+Re-measured on the day by `test/butler-step-cost.measure.test.ts` and
+`test/policy-cost.measure.test.ts`, both in `workerd` against real D1 and R2 through `src/cost-meter.ts`:
+
+| `mail.send.propose` | Before (14 Aug) | Now | D1 | batches | R2 | DO RPCs |
+|:--|--:|--:|--:|--:|--:|--:|
+| new thread, no policies published | 10 | **11** | 7 | 1 | 2 | 2 |
+| reply, no policies published | 14 | **15** | 9 | 1 | 3 | 3 |
+| new thread, both derived conditions in play | — | **13** | 9 | 1 | 2 | 2 |
+| reply, both derived conditions in play | — | **17** | 11 | 1 | 3 | 3 |
+
+**Why the increase is one and not three.** Evaluation reads the published policy set (one query) and then
+fetches the two *derived* inputs — the organization's domain set for `recipient_external`, today's counter for
+`org_daily_volume` — **only when some published policy constrains them**. A Node with no policies, or with
+policies on mailbox, actor and reply only, pays one. Three is the ceiling.
+`docs/receipts/policy-evaluation-cost.md` carries the full table and the argument for evaluating the predicate
+in TypeScript rather than pushing it into SQL, which is what buys that.
+
+**The worst realistic send is now 17 against a bound of 20**, so the headroom that made these bounds
+comfortable has narrowed from 6 to 3 on the reply path. Stated rather than glossed, because it is the figure a
+reader would want and because raising the bound is not free: `butler.step_cost_max_send_propose` is what the
+loop arithmetic above divides, so 25 would take the Paid row from 500 sends to 400 and the Free row from 50 to
+40. The bound is left at 20 — it still holds against the measurement, and moving it would change a published
+figure to buy comfort rather than correctness. **What would force it up** is a sixth condition, a derived
+condition needing more than one query, or #62's dispatch-time recheck landing on the same path.
+
+**The other three nodes are unchanged and were re-measured rather than assumed**: `case.assign` 5,
+`case.close` 1, `draft` 5. The fifty-recipient result also stands — 11 for one recipient and 11 for fifty,
+because the per-recipient inserts still ride inside one `batch()` and policy evaluation is per envelope rather
+than per recipient.
+
+**The loop arithmetic above is unaffected**, both rows, because it divides the bound rather than the measured
+figure and the bound did not move. `test/butler-step-cost.measure.test.ts` still asserts 500 and 50.

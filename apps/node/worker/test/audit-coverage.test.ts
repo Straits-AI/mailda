@@ -109,6 +109,29 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // which the last assertion in this file fails on.
     actions: ["hold.placed", "hold.blocked"],
   },
+  policies: {
+    exempt:
+      "A name and its owner, written once when the policy is first drafted and never again. Every "
+      + "consequential act is on its versions: `policy.drafted` records the write that created this row in "
+      + "the same transaction, and `policy.published` records what became live. Auditing the shell as well "
+      + "would put two entries behind one act and make 'who created policy X' answerable from two places "
+      + "that could disagree.",
+  },
+  policy_versions: {
+    // Both a draft write and a publication are writes to this table, and both are audited. The boundary is
+    // the same one that exempts `drafts` and it argues the opposite way here: a composer draft is somebody
+    // typing, autosaved on a pause; a policy draft is an administrator writing a rule that will decide
+    // whether other people's mail may leave. Rare, and answerable.
+    //
+    // Separation of duty (§18) is what makes the draft entry load-bearing rather than tidy: the person who
+    // drafted and the person who published may deliberately differ, so a trail carrying only the
+    // publication cannot answer who wrote what was published.
+    //
+    // There is no `policy.unpublished` or `policy.retired`, and that is a decision rather than an omission:
+    // #60 builds draft and publish and nothing else, and a declared action nothing emits is a category of
+    // one — which the last assertion in this file fails on.
+    actions: ["policy.drafted", "policy.published"],
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },

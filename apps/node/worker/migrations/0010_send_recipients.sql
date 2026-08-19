@@ -35,7 +35,9 @@ CREATE TABLE send_recipients (
   address              TEXT NOT NULL,
 
   -- Mirrors send_manifests.state at hand-over: held|cancelled|withheld|throttled|refused|suppressed|
-  -- handed_over|outcome_unknown.
+  -- handed_over|outcome_unknown -- plus `awaiting`, added by 0019_policy.sql, because a manifest a policy
+  -- gated must not have recipients reading `held`: that would show a person a message which is
+  -- simultaneously stopped and pending.
   submission_state     TEXT NOT NULL,
   submission_state_at  TEXT NOT NULL,
 

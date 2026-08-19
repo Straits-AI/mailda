@@ -80,6 +80,11 @@ function OutboundCounts() {
   const sends = useSends();
   if (!sends.isSuccess) return null;
   const held = sends.data.sends.filter((send) => send.state === "held").length;
+  // Counted separately rather than folded into `held`, and shown whenever it is non-zero. A policy-gated send
+  // is pending mail somebody is waiting on, so leaving it out of the bar would make the bar under-report the
+  // outbox — and folding it into `held` would say a person can release it by waiting, which is what `held`
+  // means and is exactly what `awaiting` does not.
+  const awaiting = sends.data.sends.filter((send) => send.state === "awaiting").length;
   return (
     <span className="field">
       <span className="key">handed over today</span>
@@ -88,6 +93,12 @@ function OutboundCounts() {
         <>
           <span className="key">held</span>
           <span className="mono num">{held}</span>
+        </>
+      ) : null}
+      {awaiting > 0 ? (
+        <>
+          <span className="key">awaiting</span>
+          <span className="mono num">{awaiting}</span>
         </>
       ) : null}
     </span>

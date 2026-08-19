@@ -360,6 +360,55 @@ and **there is no way to lift a hold**, because lifting takes two approvers and 
 yet — so `doctor` reports the missing path as a finding instead of leaving it silent, and a check fails on any
 code that would quietly narrow a hold's window.
 
+**A policy that cannot be expressed is a policy that never fires, and so is one that can.** The blueprint
+lists thirteen policy dimensions and six outcomes. This Node ships **five conditions and four outcomes**, and
+the arithmetic in that sentence is the whole of the decision: the five — mailbox, actor, external recipient,
+reply, org daily volume — are the ones answerable from a column that exists or one derivation over storage that
+exists, and every other dimension is **named absent with its reason** rather than given a column nothing fills.
+A condition backed by no data is worse than a missing feature, because it reads as governance. The conditions
+are five typed columns rather than a JSON bag for the same reason pointed the other way: a bag would have
+accepted `dataClass`, stored it, published it, and fired never. External recipients are exact rather than
+heuristic, and exact for a **platform** reason rather than a schema one — Email Routing only accepts addresses
+on domains in the customer's own Cloudflare account, so every domain this Node has an address on is one the
+customer controls, and the internal set derives from those with no domains table and no cache. Which is a
+correctness argument resting on somebody else's product, so it is the first clause of a receipt's `stale_when`
+rather than a comment.
+
+**Four outcomes, totally ordered, so conflict resolution is one comparison and sixteen tests.**
+`allow < hold < require_approval < deny`, and a send's outcome is `max` over every rule that matched. There is
+no priority field, deliberately: a priority lets a narrow `allow` beat a broad `deny`, which is exactly how a
+policy system fails open, and it makes *"why was this allowed"* unanswerable from one row. The order between
+the two gates is the part that is not intuitive and is settled by **who may clear them** — anybody who may send
+as the mailbox releases a hold, only an approver approves — so a hold is the *less* restrictive gate. All
+sixteen ordered pairs are tested, three ways each: against the declared order, symmetrically, and through the
+real evaluator with two rules actually published, because a total order being right where it is defined proves
+nothing about the code that uses it. A precedence table would have been sixteen cells with a wrong one nobody
+notices; this is four numbers.
+
+**A denial goes to `withheld`, not to `awaiting`, and that overrules the ticket that specified it.** The
+resolution said "held if `allow`, `awaiting` otherwise" in one sentence and named only the two gates as
+`awaiting` in another. The loose sentence is the one to distrust: a denied send parked in `awaiting` is a send
+**nobody can ever clear** — a hold gets released, an approval gets decided, a denial has no counterpart — so it
+would accumulate forever in a state that renders as pending. `withheld` already means precisely the right
+thing. The state machine now has two halves that are symmetric rather than accidental: gates are `awaiting`
+plus a reason, refusals are `withheld` plus a reason, and the reason is a machine token whose words live in the
+one client module a test can evaluate as the exact bytes a browser is served. `awaiting` was also given a
+drain, because the argument above applies to gates too until the approval act exists: an author can stop their
+own gated send, and until they can, "waiting for somebody to clear this" and "unstoppable" would have rendered
+identically.
+
+**The cost was owed as a receipt and came back one third of the estimate.** The resolution counted "at most
+three queries" by reading the source, and said so in as many words — *"counted by reading, not measured, and
+that is a hypothesis."* Measured with `src/cost-meter.ts` against real D1 in `workerd`: three is the ceiling
+and **one** is the ordinary cost, because the two conditions that need a derived input — the domain set, the
+daily counter — are fetched only when some published rule actually asks for them, and reading the rules first
+is what makes that possible. Which is also why the five conditions are columns and the matching is not pushed
+into SQL: a SQL predicate would have to bind both inputs before it could run, spending both on every send from
+every Node whether or not any rule mentions them. Thirty published policies cost the same as three. The seal
+that carries the decision went from 10 subrequests to 11, and to 17 at the worst realistic case against a
+published bound of 20 — so the receipt that divides that bound got a dated correction saying the headroom
+narrowed from 6 to 3 rather than a quietly raised number.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.

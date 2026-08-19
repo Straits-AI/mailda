@@ -1754,6 +1754,51 @@ Mail approval is a specialized single-use effect envelope that additionally bind
 
 Any material edit invalidates approval. Separation-of-duty policies prevent self-approval and support sequential/parallel/dual review.
 
+### The policy object, and the shape Layer 5 fixes
+
+Amended 20 August 2026 (#60). The outcome list and dimension list above describe the target; this subsection is
+the contract, because the implementation is both **narrower** and **more specific** than the prose above and
+the two must not be left to disagree.
+
+**Four outcomes, totally ordered.** `allow < hold < require_approval < deny`, and the outcome of a decision is
+`max` over every matching policy. There is **no priority field**: a priority lets a narrow `allow` beat a broad
+`deny`, which is how a policy system fails open, and it makes *"why was this allowed"* unanswerable from one
+row. The order between the two gates follows from who may clear them — any `send.propose` holder releases a
+hold, only an `approval.decide` holder approves — so a hold is the *less* restrictive gate.
+
+`quarantine` is **not** an outcome. §21 gives it a five-way access split plus a rule that a Butler may
+quarantine an item and never release its own, which makes it a subsystem rather than a value. `allow with
+obligations` is not an outcome either, and one part of it is an unresolved contract tension rather than an
+omission: *redaction* rewrites content while ADR 35 binds an approval to exactly the bytes that will be sent,
+so redaction after approval means the approver reviewed something else and redaction before it means the
+manifest is not what the author wrote. *Rate limit* is a circuit breaker.
+
+**Five conditions.** `mailbox`, `actor`, `recipient_external`, `is_reply` and `org_daily_volume`. Each is
+answerable from a stored column or one derivation over storage that exists, and every other dimension listed
+above is **absent with its reason** rather than stubbed, because a condition backed by no data is a policy that
+silently never fires — which reads as governance and is not. Volume is org-wide and daily, which is all the
+counter is; per-user, per-mailbox, per-Butler and per-domain volume are circuit-breaker subjects.
+
+`recipient_external` is exact rather than heuristic, and its exactness is a **platform** property: Email
+Routing only accepts addresses on domains in the customer's own account, so every domain a Node has an address
+on is one the customer controls, and the internal set derives from those with no domains table.
+
+**Policy versioning is publication.** A policy has a draft; publishing mints a version; a published version
+freezes; a publish that changes nothing is refused. Same discipline as Butler publication, and the canonical
+serialization that makes "changes nothing" decidable is ADR 35's.
+
+**A decision produces a state, at seal.** The policy decision runs where the pipeline above places it —
+between authorization and the effect intent — which is when the composition manifest is sealed, because the
+outcome determines the manifest's state and the state must exist when the manifest does. `allow` seals `held`;
+`hold` and `require_approval` seal `awaiting` with distinct reasons; `deny` seals **`withheld`** with a policy
+reason. A denial must not park in `awaiting`: there is no act that clears a denial, so denied sends would
+accumulate in a state that reads as pending.
+
+**Binding and deciding are separate.** An in-flight send *binds* the policy version set it was evaluated under
+and the result, for the record. The *decision* immediately before execution uses the **current** policy, which
+is what makes "stricter policy fails closed" above operative — and stricter is computable rather than a
+judgement, because the outcomes are totally ordered: `max(current) > max(bound)`.
+
 ### Circuit breakers
 
 - Per-user/mailbox/Butler/domain/org volume limits.

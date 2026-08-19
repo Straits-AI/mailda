@@ -188,6 +188,8 @@ const EXPECTED_TABLES = [
   "conversations", "cases",
   // Migration 0018 (Layer 5: legal hold).
   "holds",
+  // Migration 0019 (Layer 5: the policy object).
+  "policies", "policy_versions",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
