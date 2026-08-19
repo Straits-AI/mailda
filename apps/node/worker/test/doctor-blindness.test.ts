@@ -97,6 +97,14 @@ describe("delivery visibility distinguishes blind from attributing-badly", () =>
     const finding = visibility(await runDoctor(testEnv, ctx));
     expect(finding.ok, "a Node with hand-overs and no events should report blind").toBe(false);
     expect(finding.detail).toContain("nothing heard");
+
+    // Since #72 there are **two** account-level things missing from a blind Node, not one, and the queue
+    // consumer is the one an install can now legitimately lack. A fix naming only the subscription sends an
+    // operator to look for a misrouted subscription that may not be the problem at all.
+    expect(finding.fix, "the fix must name the consumer attach step").toContain("queue:attach-consumer");
+    expect(finding.fix).toContain("event subscription");
+    // And it must not name a queue: the name is derived per Node since #72, so a printed one is a guess.
+    expect(finding.fix).not.toContain("mailda-sending-events");
   });
 
   it("stays blind when the only event could not be attributed", async () => {

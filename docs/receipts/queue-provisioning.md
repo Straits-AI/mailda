@@ -4,16 +4,103 @@ kind: platform-limit
 measured_on: 2026-08-07
 stale_when: >
   automatic resource provisioning leaves beta; wrangler starts provisioning a queue named only by a
-  consumer block; `email.sending` appears in `wrangler queues subscription create --source`; or the
+  consumer block; a consumers block becomes valid without a `queue` field; a producer binding stops
+  validating without one; wrangler gains any way to interpolate the Worker name into a config value;
+  `email.sending` appears in `wrangler queues subscription create --source`; or the
   Deploy button's setup page gains a field for event subscriptions
 values:
   queues.producer_binding_provisions: 1
   queues.consumer_block_provisions: 0
   queues.consumer_attaches_when_producer_provisions: 1
+  queues.producer_queue_name_omissible: 1
+  queues.consumer_queue_name_required: 1
   queues.subscription_creatable_by_cli: 0
   queues.email_sending_subscription_is_dashboard_only: 0
   queues.subscription_creatable_by_api: 1
 ---
+
+## Addition, 19 August 2026: a queue name is account-scoped, and this receipt never asked whether it had to be written down (#72)
+
+Two new values, measured today, and a **narrowing** of one of the values above. No `stale_when` clause
+fired — the conditions it names are all still false — but the world this receipt describes changed anyway,
+which is worth recording as its own kind of miss: the receipt answered *"can the install create a queue"*
+and never asked *"can two installs in one account create two"*.
+
+They cannot, or could not. `wrangler.jsonc` named the queue as a constant, and a queue name is
+**account-scoped**, so a second Node in an account that already had one failed its consumer registration
+(`Queue 'mailda-sending-events' already has a consumer. [code: 11004]`) and — the serious half — had its
+**producer binding attach to the existing queue**. Observed live during the probe: that queue's producer
+count read **2**, and dropped back to 1 when the probe Worker was deleted. One Node's sending events were
+therefore drained by another Node's consumer, across two separate D1 catalogs, with nothing looking wrong
+on either Node. The full argument is in #72.
+
+### The two new values, and how each was measured
+
+Both by `wrangler deploy --dry-run` against a **scratch config**, wrangler 4.118.0, 19 August 2026. A
+dry-run rather than a deploy on purpose: what was in question is what the *configuration parser and
+binding table* accept, and that is settled without creating anything in anybody's account.
+
+| value | method | result |
+|:--|:--|:--|
+| `queues.producer_queue_name_omissible: 1` | a producers entry carrying `binding` and no `queue` | validates and builds; the binding table printed `env.SENDING_EVENTS  Queue` **with no name** |
+| `queues.consumer_queue_name_required: 1` | a consumers entry carrying batch settings and no `queue` | **refused at config parse**: `"queues.consumers[0]" should have a string "queue" field but got {"max_batch_size":25,…}` |
+
+**The frontmatter `measured_on` deliberately stays 2026-08-07**, which is a limitation of the receipt
+format and not an oversight: it carries one date per file and the generator has no per-value date, so
+`BUDGET_ORIGINS["queues.producer_queue_name_omissible"].measuredOn` reads **older** than the measurement
+actually is. Nothing enforces the table above against that field — it cannot, there is nowhere to put a
+second date — and the direction of the error is the reason this is the acceptable half of the choice:
+under-reporting freshness invites a re-measurement, while stamping today's date onto the 7 August values
+would claim a verification of *those* numbers that nobody performed.
+
+Also checked, and it closes the obvious third option: `--var` and `--define` substitute into the **script**,
+not into config values. **There is no way to interpolate the Worker name into a queue name in
+`wrangler.jsonc`.** So the choice was never "template the name" — it was between omitting the name and
+creating the queue through the API, and omitting it keeps ADR 24's byte-identical fork intact.
+
+`wrangler queues consumer worker add <queue-name> <script-name>` exists, with `remove` and `list` beside it.
+That is what makes the out-of-band attachment a CLI step rather than a second hand-rolled API call.
+
+### What `queues.consumer_attaches_when_producer_provisions: 1` does and does not cover
+
+It stays **1** and it is **not widened**. It was measured on 7 August with a **named** queue — a producer
+binding and a consumer block both carrying the same literal `mailda-qprov-both` — and it records that
+provisioning ran before consumer registration in that configuration. It says nothing about the
+omitted-name case, and it cannot: with the name omitted there is **no consumer block to attach**, because
+the row above measures that such a block is refused outright. Reading it as "the consumer still attaches
+when the name is derived" would be inventing a measurement, and the value would then look like evidence for
+the very thing this change had to work around.
+
+### So the section below headed "Declaring both makes one deploy sufficient" is now history, not instruction
+
+Its measurement stands. Its conclusion — *"Mailda can ship bounce consumption in committed configuration
+and both install paths still work"* — is **false as of today**, and deliberately so: it was true only for a
+single Node per account. The consumer is now attached out of band by
+`apps/node/worker/scripts/attach-queue-consumer.mjs`, which **discovers** the queue from the deployed
+Worker's `SENDING_EVENTS` binding rather than deriving its name.
+
+That the name is derived at all is **Cloudflare's documentation, not a measurement here**. The
+configuration page says automatic provisioning covers Queues and that resources are created with the
+Worker's name as a prefix; the **exact derived string is unmeasured**, and this repository has been wrong
+twice this week trusting that page in the specific. So nothing in the codebase hardcodes or guesses it,
+the script refuses rather than assumes when it finds zero or more than one candidate, and `doctor` reports
+the capability instead of pretending to check it.
+
+Two things that follow from "documented, not measured", and both are load-bearing enough to write down.
+**Whether a producer binding with no queue name provisions anything at all** is also documented rather than
+measured: `queues.producer_binding_provisions: 1` above was measured with a *named* queue, so a deploy that
+creates no queue is a real outcome, which is why the script has a refusal for it rather than an assumption.
+And the script's branches — discovery, the idempotent re-run, the foreign consumer, an unreadable consumer
+list, an ambiguous gradual deployment, and a deploy that provisioned nothing — are exercised on every test
+run by `apps/node/worker/test/node/attach-queue-consumer.test.ts`, which puts a stub `npx` on `PATH`
+speaking wrangler's documented JSON shapes. That tests the script against the shape; it does not measure
+the shape, and it is not a run against an account.
+
+**The accepted cost, stated rather than hidden:** a button-only install has run no such script, so it
+observes **no delivery outcomes at all** until somebody runs it. That is not a new *class* of gap — the
+`email.sending` subscription this receipt already covers is out of band for the same reason
+(`queues.subscription_creatable_by_cli: 0`) — but it is now two steps rather than one, and doctor's
+`sending_events_consumer` finding exists so that the first of them is visible rather than silent.
 
 **Measured:** live Cloudflare account, Workers Paid, wrangler 4.118.0 (and 4.119.0 and `latest` for the
 CLI-surface checks), 7 August 2026. Three throwaway Workers and three queues created and deleted; the

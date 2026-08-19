@@ -74,7 +74,11 @@ const arrayOfEntries: ReadEntries = (block) => (Array.isArray(block) ? block : n
 const entriesUnder = (key: string): ReadEntries => (block) => {
   if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
   const inner = (block as Record<string, unknown>)[key];
-  // Absent is legitimate: a queues block may declare consumers only, and a consumer binds nothing.
+  // Absent is legitimate, and the queues block is why: a consumer binds nothing, so a block could once
+  // declare consumers only. Since #72 this config declares producers only and no consumers at all — the
+  // consumer cannot name a queue whose name the deploy derives — so the tolerance is now for the shape this
+  // reader might meet rather than the one it does. Left in place deliberately: it returns "no bindings
+  // here", never "unreadable", and the difference is what `blocksWithUnreadableShape` exists to preserve.
   if (inner === undefined) return [];
   return Array.isArray(inner) ? inner : null;
 };
@@ -113,7 +117,12 @@ export const BINDING_BLOCKS: Record<string, BindingBlock> = {
   queues: {
     entries: entriesUnder("producers"),
     nameKey: "binding",
-    note: "declared: SENDING_EVENTS. Consumers bind nothing; the producer is the provisioning lever.",
+    // Read off `producers` and nothing else, which is what let #72's fix land here without a change: the
+    // consumers block is gone (a consumer cannot name a queue whose name the deploy derives) and consumers
+    // never contributed a binding name anyway. The producer entry now carries `binding` and **no** `queue`,
+    // and `binding` is the only property this reader wants, so removing the name did not blind it either.
+    note: "declared: SENDING_EVENTS, with no queue name. The producer is the provisioning lever; the "
+      + "consumer is attached out of band by scripts/attach-queue-consumer.mjs and is not in this config.",
   },
   workflows: {
     entries: arrayOfEntries,

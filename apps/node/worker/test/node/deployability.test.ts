@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -108,15 +108,36 @@ const BINDING_KINDS = {
     how: "Created by the migrations block on first deploy. No account-level resource to provision.",
   },
   queues: {
-    // Measured, and the asymmetry is why the config carries a producer binding it never publishes to:
-    // a producer binding provisions the queue, a bare consumer block fails the deploy outright.
+    /*
+     * The **queue** is provisioned by the deploy. The **consumer** is not, and since #72 cannot be.
+     *
+     * This entry used to say the deploy created the queue and attached the consumer in one go, which was
+     * measured and true and is no longer what this config asks for. A queue name is account-scoped, so the
+     * name that made that work made the *second* Node in one account unusable: its consumer registration
+     * failed with "already has a consumer" and its producer binding attached to the **first** Node's queue,
+     * so one Node's sending events were drained by another Node's consumer across two D1 catalogs.
+     *
+     * So the producer binding now names no queue and the consumers block is gone. `provisionedByButton`
+     * still reads `queues.producer_binding_provisions`, and that value is still the right one to lean on —
+     * it is what makes a *producer* binding a provisioning lever at all. What it does **not** cover is the
+     * nameless case: it was measured with a named queue, so *that provisioning fires without a name at all*
+     * and *what the derived name is* are both Cloudflare's documentation and unmeasured here. Nor does it
+     * cover the consumer — which is why the `how` below sends the reader to a script rather than the deploy,
+     * and why that script discovers the queue and refuses when a deploy provisioned none.
+     */
     provisionedByButton: Boolean(BUDGETS["queues.producer_binding_provisions"]),
     how:
-      "Provisioned by the deploy itself, but only because a producer binding names it — a consumer block " +
-      "alone fails with 'Queue does not exist' and would break every one-click install (measured: " +
-      "queue-provisioning.md). The event *subscription* that feeds the queue is an account-level object " +
-      "outside this config, created through the API by `mailda deploy`; doctor reports its absence, " +
-      "because a Node receiving no events is indistinguishable from one where nothing bounced.",
+      "The queue is created by the deploy itself, like D1 and R2: the producer binding names a binding and " +
+      "no queue. Measured with a *named* queue — a producer binding provisions it, a bare consumer block " +
+      "fails the deploy outright (queue-provisioning.md). That a **nameless** producer binding provisions " +
+      "a per-Worker queue is Cloudflare's documentation and is unmeasured here, which is why the attach " +
+      "step discovers the queue and refuses when it finds none. The **consumer** is not " +
+      "provisioned by any install path and cannot be declared here — a consumers block is refused without " +
+      "a string queue field, and the derived name is not knowable in this file — so it is attached out of " +
+      "band by `pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from the " +
+      "deployed binding. The event *subscription* that feeds the queue is a second account-level object, " +
+      "API-only, and equally absent. So a button-only install observes no delivery outcomes until both are " +
+      "done: doctor's sending_events_consumer names the gap and delivery_visibility names its consequence.",
   },
 } as const;
 
@@ -133,6 +154,24 @@ const ACCOUNT_SPECIFIC_KEYS = [
   "account_id", "database_id", "database_name", "bucket_name", "preview_bucket_name",
   "store_id", "secret_name", "namespace_id", "id", "queue_id", "dataset",
 ];
+
+/**
+ * Keys that name a resource whose name must be **unique within the account**.
+ *
+ * A different property from the list above and it took #72 to separate them. A queue name is not an id, so
+ * `mailda-sending-events` passed the id check for weeks — and it was as install-breaking as an id, in a
+ * worse way. Queues are account-scoped: the second Node in one account failed its consumer registration
+ * with "already has a consumer" *and* had its producer binding attach to the **first** Node's queue, so one
+ * Node's sending events were drained by another Node's consumer across two D1 catalogs. Nothing looked
+ * broken on either Node.
+ *
+ * The shape that works is the one D1 and R2 already use: declare the binding, let the deploy derive the
+ * name from the Worker's name, which is per-install by construction.
+ *
+ * `dead_letter_queue` is listed although nothing declares one, because it is the same kind of name and the
+ * point is to catch it before it arrives rather than after.
+ */
+const ACCOUNT_SCOPED_NAME_KEYS = ["queue", "queue_name", "dead_letter_queue"];
 
 function bindingKindsIn(scope: WranglerConfig): BindingKind[] {
   return bindingBlocksIn(scope).filter((key): key is BindingKind => key in BINDING_KINDS);
@@ -228,6 +267,54 @@ describe("what a customer's deploy can provision", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("commits no name that has to be unique within the account (#72)", () => {
+    const offenders = keyPaths(config)
+      .filter((entry) => ACCOUNT_SCOPED_NAME_KEYS.includes(entry.key))
+      .map((entry) => entry.path);
+
+    // The property the id check above misses, and the reason #72 got past it: a queue name is not an id, so
+    // committing one passed every check here while making the *second* install into an account bind its
+    // producer to the *first* Node's queue. Let the deploy derive the name from the Worker's name instead,
+    // which is what D1 and R2 already do.
+    expect(
+      offenders.length === 0 ? null
+        : `${offenders.join(", ")} name(s) an account-scoped resource in committed config. A name that must `
+          + "be unique within an account is as install-breaking as a committed id: the second Node in one "
+          + "account collides with the first, and a queue producer silently attaches to the queue that is "
+          + "already there (#72). Declare the binding and let the deploy derive the name",
+    ).toBeNull();
+  });
+
+  it("declares no queue consumer, because a consumer cannot name a derived queue", () => {
+    // Both halves of this are measured (queue-provisioning.md, 19 August 2026) and both are read from the
+    // receipt rather than restated here, so that if either measurement flips this test says the rule has
+    // changed instead of going on enforcing an obsolete one.
+    expect(
+      BUDGETS["queues.consumer_queue_name_required"] === 1
+        ? null
+        : "a consumers block no longer needs a queue field, so the consumer may be declarable here after "
+          + "all — re-read docs/receipts/queue-provisioning.md before trusting this test",
+    ).toBeNull();
+    expect(
+      BUDGETS["queues.producer_queue_name_omissible"] === 1
+        ? null
+        : "a producer binding can no longer omit its queue name, so a per-Worker derived queue is not "
+          + "available and #72 needs a different answer — re-read docs/receipts/queue-provisioning.md",
+    ).toBeNull();
+
+    // So the consumer is attached out of band, and a consumers block reappearing here means somebody has
+    // re-introduced either a hardcoded account-scoped name or a config the parser rejects.
+    const blocks = keyPaths(config)
+      .filter((entry) => entry.key === "consumers" && /(^|\.)queues\.consumers$/.test(entry.path))
+      .map((entry) => entry.path);
+    expect(
+      blocks.length === 0 ? null
+        : `${blocks.join(", ")} declared. A consumers block needs a string queue field (wrangler refuses `
+          + "without one) and the queue's name is derived per Node, so it cannot be declared here at all. "
+          + "The consumer is attached by scripts/attach-queue-consumer.mjs",
+    ).toBeNull();
+  });
+
   it("keeps the test environment's bindings in step with the top level", () => {
     // The config comments claim this duplication is "drift-checked rather than silently divergent".
     // Nothing checked it. Wrangler warns at deploy time, which is after the tests have gone green.
@@ -297,6 +384,92 @@ describe("what a customer's deploy can provision", () => {
     expect(
       ok ? null : `wrangler ${range} permits ${major}.${minor}, which is below ${required} and `
         + "drops workflows[].schedules silently with exit code 0 — see docs/receipts/workflow-provisioning.md",
+    ).toBeNull();
+  });
+});
+
+/**
+ * The one thing about this Worker that **no install path provisions**: its queue consumer.
+ *
+ * Everything in the describe above asks whether a customer's deploy can create what the config declares.
+ * This asks the opposite question, which #72 forced into existence: the consumer *cannot* be declared, so it
+ * is attached by a script, and a script nothing checks is a step that quietly stops existing. Three ways
+ * that goes wrong and all three are cheap to catch here — the script disappearing, the script losing the
+ * binding it discovers by, and the script being chained into `deploy` after somebody decides it should not
+ * be.
+ *
+ * What the script *does* when it runs is a different question and is answered in
+ * `test/node/attach-queue-consumer.test.ts`, which runs it against a stub wrangler: whether it discovers
+ * the queue rather than composing a name, whether a second run succeeds, and what it refuses.
+ */
+describe("the queue consumer, which no install path attaches", () => {
+  const scriptPath = join(WORKER_DIR, "scripts", "attach-queue-consumer.mjs");
+  const workerPackage = JSON.parse(readFileSync(join(WORKER_DIR, "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  const scripts = workerPackage.scripts ?? {};
+
+  it("has a script wired into package.json under a name that says what it does", () => {
+    expect(existsSync(scriptPath), `${relative(repoRoot, scriptPath)} is missing`).toBe(true);
+    const entry = scripts["queue:attach-consumer"];
+    expect(
+      entry === undefined
+        ? "no queue:attach-consumer script in apps/node/worker/package.json — the consumer is attached by "
+          + "nothing, and a Node with no consumer observes no delivery outcomes at all"
+        : null,
+    ).toBeNull();
+    expect(entry).toContain("attach-queue-consumer.mjs");
+  });
+
+  it("discovers the binding by the name the config declares, rather than repeating it", () => {
+    // A rename of SENDING_EVENTS would otherwise leave the script looking for a binding that no longer
+    // exists — and it would fail at the worst moment, on an operator's machine, after a deploy.
+    const producers = (config.queues as { producers?: Record<string, unknown>[] } | undefined)?.producers
+      ?? [];
+    const declared = producers.map((producer) => producer.binding).filter((name) => typeof name === "string");
+    expect(declared.length, "wrangler.jsonc declares no queue producer binding").toBeGreaterThan(0);
+
+    const source = readFileSync(scriptPath, "utf8");
+    // The script reads `queues.producers[].binding` out of wrangler.jsonc. That is the property under test:
+    // the name must come *from* the config, so the config's own path into it has to appear in the source.
+    expect(source).toContain("config.queues?.producers");
+    for (const name of declared) {
+      // And the binding is named in the script's prose too, so a reader knows which one it means. That is
+      // documentation rather than behaviour — hence a separate expectation with its own reason.
+      expect(source, `${String(name)} is not mentioned anywhere in the attach script`).toContain(String(name));
+    }
+  });
+
+  it("is deliberately not chained into deploy, and that decision is enforced rather than remembered", () => {
+    /*
+     * Three reasons, and they are here because a future reader will otherwise "fix" this by adding it.
+     *
+     * 1. The button's install path never runs this script anyway. Cloudflare runs `npx wrangler deploy`
+     *    directly and never sees `package.json` scripts (measured: deploy-button-install.md), so chaining
+     *    would serve only the CLI path while leaving the case that matters most untouched.
+     * 2. Discovery needs the Worker to already exist and to be the *live* deployment. Ordering after
+     *    `wrangler deploy` satisfies that, but a failure — a token without Queues edit, a gradual
+     *    deployment in flight, a deploy that provisioned no queue — would turn a working install red, and
+     *    an installed Node with no consumer is fully functional except that it observes no delivery
+     *    outcomes. AGENTS.md §6: never trade a working product for unfinished complexity.
+     * 3. Attaching a consumer is a one-time account-level act, and `deploy` runs on every redeploy. Two
+     *    extra API round trips and a new hard-failure surface on every deploy, for a state that does not
+     *    change, is a bad trade.
+     *
+     * The cost is accepted and made visible instead: doctor's `sending_events_consumer` says the step
+     * exists and cannot be checked from inside a Worker, `delivery_visibility` fails from evidence when the
+     * silence it causes is real, and the README says so where an installer reads it.
+     */
+    // The property, not the exact command: pinning the whole string would fail on any legitimate change to
+    // `deploy` with a message that explains nothing. Asserted as a string first, because `undefined` would
+    // satisfy the rule below by containing nothing at all.
+    expect(scripts.deploy, "no deploy script to check").toBeTypeOf("string");
+    expect(
+      /attach/.test(scripts.deploy ?? "")
+        ? `deploy now runs the consumer attach: "${scripts.deploy}". If that is deliberate, the argument in `
+          + "this test is what has to change first — a discovery failure inside deploy turns a working "
+          + "install red, and the button's install path does not run deploy at all"
+        : null,
     ).toBeNull();
   });
 });

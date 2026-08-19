@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy && pnpm run migrations:apply",
     "migrations:apply": "wrangler d1 migrations apply CATALOG --remote",
     "set-password": "node --experimental-strip-types scripts/set-password.mjs",
+    "queue:attach-consumer": "node scripts/attach-queue-consumer.mjs",
     "build:client": "node scripts/build-client.mjs",
     "axe": "node scripts/axe.mjs"
   },

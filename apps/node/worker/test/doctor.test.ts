@@ -224,6 +224,36 @@ describe("doctor", () => {
     expect(finding.detail).toContain("mailda deploy");
   });
 
+  it("reports the queue consumer as un-checkable, and names the step that attaches it (#72)", async () => {
+    // Since #72 the queue is provisioned per Node with a derived name and the consumer is attached out of
+    // band, so a Node can be healthy, sending, and observing nothing. A Worker holds no account credential,
+    // so it cannot ask Queues who consumes its queue — and an absent check reads exactly like a passing one,
+    // which is the argument `workers_paid_plan` already makes.
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const finding = find(report.findings, "sending_events_consumer");
+
+    // `report` and `ok`, exactly like `workers_paid_plan`: a real gap that no operator action closes from in
+    // here. A permanently-failing `degraded` is the muted-check failure mode DELIVERY_SILENCE_MS names.
+    expect(finding.severity).toBe("report");
+    expect(finding.ok).toBe(true);
+    expect(report.verdict).not.toBe("refuse");
+    expect(finding.detail).toContain("Not checkable");
+    // The command, because a capability gap that does not name its remedy is a complaint (AGENTS.md §3).
+    expect(finding.detail).toContain("queue:attach-consumer");
+    // And the accepted cost, where the reader meets the gap rather than in a doc they have not opened.
+    expect(finding.detail).toContain("button-only install");
+    expect(finding.receipt).toBe("docs/receipts/queue-provisioning.md");
+
+    // No queue name anywhere in it. The derived name is unmeasured, so a Node printing one would be
+    // asserting something nobody checked — the defect this whole change is about, one layer up.
+    expect(finding.detail).not.toContain("mailda-sending-events");
+
+    // Infrastructure, so it survives into the report a locked-out operator sees unauthenticated: the queue's
+    // name is derived from this Worker's name and its binding, and neither is organization content.
+    expect(finding.discloses).toBe("infrastructure");
+    expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("sending_events_consumer");
+  });
+
   it("gives every failure a fix — a refusal without a remedy is a dead end", async () => {
     const ctx = createSystemCtx();
     await claim(ctx);

@@ -65,8 +65,37 @@ chained PBKDF2 the Worker uses rather than a second copy of it, and revokes ever
 the same breath. It cannot appear in the audit trail: it runs outside the Worker, and an operator with
 database access is outside what a hash chain can attest to.
 
-The CLI path has no such caveat: clone, `pnpm install`, `pnpm run deploy`. It provisions D1 and R2 on
-first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md)) and applies the schema.
+**One step the install does not do, and what it costs you.** Delivery outcomes — whether a message was
+`accepted` or `bounced`, per recipient — arrive on a Cloudflare queue. A queue name is *account-scoped*, so
+this repository names none, and the deploy is expected to provision one per Worker the way it already does
+for D1 and R2 — that much is **Cloudflare's documentation, which we have not measured**, so the command
+below discovers the queue from the deployed Worker and refuses if the deploy created none, rather than
+assuming a name ([receipt](./docs/receipts/queue-provisioning.md)). Naming none is not optional: the
+committed name meant a **second** Node installed into the same Cloudflare
+account bound its producer to the **first** Node's queue and had its sending events drained by the first
+Node's consumer, across two separate catalogs, with nothing looking wrong on either
+([#72](https://github.com/Straits-AI/mailda/issues/72)).
+
+The cost is that a *consumer* cannot be declared in configuration at all — a consumer block must name its
+queue, and the derived name is not knowable in a committed file — so attaching it is one command, after the
+first deploy:
+
+```sh
+pnpm run queue:attach-consumer
+```
+
+It discovers the queue from the deployed Worker's own binding rather than guessing its name, and re-running
+it is safe. **Until it runs, the Node observes no delivery outcomes at all** — every recipient stays
+`unobserved`, which is honest but blind. `mailda doctor` reports both the step and its consequence rather
+than letting the silence read as "nothing bounced". A second command is still missing and is the other half
+of the same gap: the `email.sending` event subscription, which wrangler cannot create
+([receipt](./docs/receipts/queue-provisioning.md)).
+
+The CLI path escapes the button's caveats above but **not** this one: clone, `pnpm install`,
+`pnpm run deploy` provisions D1 and R2 on first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md))
+and applies the schema — then `pnpm run queue:attach-consumer`, deliberately **not** chained into `deploy`:
+the button's install path never runs our scripts anyway, and a discovery failure inside `deploy` would turn a
+working install red for a Node that works in every respect but one.
 
 ---
 
@@ -127,11 +156,12 @@ received nothing, and nothing recorded that it hadn't. It looked exactly like de
 is why it survived. Now the key is the Message-ID **and** the recipient: two deliveries file twice, the same
 delivery twice still files once, and the retry-safety the key existed for is untouched.
 
-**A Node that cannot see delivery outcomes says so.** The event subscription that carries them is an
-account-level object outside the Worker's config, so it can be absent, deleted, or pointed at the wrong
-domain — and nothing about a Node in that state looks wrong: sends hand over, the outbox fills, and every
-recipient sits unobserved forever. `doctor` compares what was handed over against what came back and names
-the silence, because "no bounces" must not be able to mean "nothing heard".
+**A Node that cannot see delivery outcomes says so.** *Two* account-level objects carry them and neither is
+in the Worker's config: the queue consumer and the event subscription. Both can be absent, deleted, or
+pointed at the wrong thing — and nothing about a Node in that state looks wrong: sends hand over, the outbox
+fills, and every recipient sits unobserved forever. `doctor` reports the capability it cannot check from
+inside a Worker, then compares what was handed over against what came back and names the silence, because
+"no bounces" must not be able to mean "nothing heard".
 
 **The authenticated application is React now, and the screens you need when it is broken are not.**
 ADR 30 put React at this layer with the composer, where client state first outlives a request. The split is
@@ -497,6 +527,13 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
   a conservative daily quota that scales with reputation and publishes no number for it. Mailda counts
   sends per rolling day and records the count at which you were first throttled — a limit you can hit
   is a limit you must see. ([receipt](./docs/receipts/cloudflare-email-sending.md))
+- **Delivery outcomes take one command after the install, and are blind until it runs.** The queue that
+  carries `accepted` and `bounced` is provisioned per Node with a name Cloudflare derives — documented by
+  Cloudflare and unmeasured by us, so nothing here writes that name down — because a queue name is
+  account-scoped and a committed one made two Nodes in one account share a queue. A consumer cannot
+  name a derived queue, so `pnpm run queue:attach-consumer` attaches it out of band — and a button-only
+  install that never runs it observes nothing, honestly and permanently, until somebody does.
+  ([receipt](./docs/receipts/queue-provisioning.md))
 - **Paying for Workers is not enough to send.** Arbitrary recipients require a *sending domain
   onboarded* with SPF and DKIM. Until then a Node can only send to addresses already verified in your
   own account — so it can receive a customer's message and be unable to answer it. `mailda deploy`
@@ -532,6 +569,7 @@ apps/node/worker                       the single Worker (ADR 18): inbound mail,
                                        authorization, auth, outbox sweeper, interface
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
 apps/node/worker/src/client            browser scripts, served as real .js files
+apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made
 probes/                                throwaway platform experiments
 ```

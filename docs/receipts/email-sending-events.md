@@ -179,10 +179,14 @@ ambiguity Layer 2 exists to remove.
 
 - **A queue and an event subscription**, scoped to *one* sending domain — the apex or one verified
   sending subdomain. A Node sending from several subdomains needs several subscriptions.
-- **A `queue()` consumer**, which is a `queues.consumers` block in `wrangler.jsonc`. Deploying a consumer
-  for a queue that does not exist fails the deploy, so it cannot be committed unconditionally without
-  breaking Layer 0's one-click install — see the note in `deploy-button-install.md` about
-  `test/node/deployability.test.ts` asserting the install can satisfy every declared binding.
+- **A `queue()` consumer.** This said "which is a `queues.consumers` block in `wrangler.jsonc`", and as of
+  19 August 2026 it is **not**: a queue name is account-scoped, so naming one in committed config made the
+  second Node in an account bind its producer to the first Node's queue (#72, and
+  `queue-provisioning.md`'s addition of that date). The producer binding now names no queue, the deploy
+  derives one per Worker, and a consumers block cannot name a derived queue — so the consumer is attached
+  out of band by `pnpm --filter @mailda/worker run queue:attach-consumer`. The older point still holds and
+  is now moot for a different reason: deploying a consumer for a queue that does not exist fails the deploy,
+  which is why a bare consumers block could never have been committed either.
 - **Idempotency**, because Queues delivers at least once. `payload.eventId` is the natural key, and the
   consumer example in Cloudflare's own docs uses it in exactly that role.
 - **Something to say when events are missing.** Retention and backfill for event subscriptions are

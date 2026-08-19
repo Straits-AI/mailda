@@ -34,21 +34,44 @@
     { "tag": "v2", "new_sqlite_classes": ["KeyVault"] }
   ],
 
-  // Delivery outcomes arrive here (receipt: email-sending-events.md). A Node cannot receive its own
-  // bounces — cf-bounce belongs to Cloudflare for the lifetime of the domain — so this queue is the only
+  // Delivery outcomes arrive on a queue (receipt: email-sending-events.md). A Node cannot receive its own
+  // bounces — cf-bounce belongs to Cloudflare for the lifetime of the domain — so that queue is the only
   // channel by which "accepted" and "bounced" become observable per recipient.
   //
   // The **producer** binding is a provisioning lever, not something this Worker publishes to. Measured
   // (queue-provisioning.md): `wrangler deploy` provisions a queue named by a producer binding but fails
-  // hard on one named only by a consumer, so a bare consumers block would break every one-click install.
-  // Declaring both makes a single deploy create the queue and attach the consumer.
+  // hard on one named only by a consumer. That much is unchanged.
   //
-  // The subscription that feeds it is separate and is *not* in this file — it is an account-level object
-  // created through the API, which `mailda deploy` does. A Node without it receives no events, which is
-  // why doctor reports the capability rather than letting silence read as "nothing bounced".
+  // What changed (#72): the binding **names no queue**. A queue name is account-scoped, so the constant
+  // that used to sit here made a *second* Node in one account unusable — its consumer registration failed
+  // with "already has a consumer" and, worse, its producer binding attached to the **first** Node's queue,
+  // so one Node's sending events were consumed by another Node's consumer across two D1 catalogs. Omitting
+  // the name is measured to validate and build (19 August 2026, dry-run against a scratch config: the
+  // binding table printed `env.SENDING_EVENTS  Queue` with no name), and it is *intended* to put the queue
+  // in the same shape as D1 and R2 — provisioned per install, named after this Worker, which is per-install
+  // by construction. Intended rather than measured, and the difference is the point: R2 in this shape is
+  // measured (r2-auto-provisioning.md, `provisioning.r2_created_without_bucket_name`) while a nameless queue
+  // producer is not. Cloudflare **documents** that provisioning now covers Queues and names the resource with
+  // the Worker as a prefix; the exact derived string is **unmeasured**, so nothing in this repository may
+  // hardcode or guess it. It is discovered from the deployed Worker instead.
+  //
+  // **The consumer cannot be declared here at all**, and that is a config-parse fact rather than a
+  // preference: a consumers block with no `queue` field is refused outright — `"queues.consumers[0]" should
+  // have a string "queue" field` (measured the same day) — and the only name it could carry is the derived
+  // one this file does not know. `--var` and `--define` substitute into the *script*, not into config
+  // values, so there is no interpolation route either.
+  //
+  // So the consumer is attached **out of band**, by `pnpm --filter @mailda/worker run queue:attach-consumer`
+  // (`scripts/attach-queue-consumer.mjs`), which discovers the queue from this Worker's deployed
+  // SENDING_EVENTS binding. That joins the step that already creates the `email.sending` **subscription** —
+  // an account-level object, API-only, also absent from this file (queue-provisioning.md records
+  // `queues.subscription_creatable_by_cli: 0`).
+  //
+  // **Accepted cost, stated rather than hidden:** a button-only install observes **no delivery outcomes**
+  // until that step runs. doctor's `sending_events_consumer` reports the gap and `delivery_visibility`
+  // reports the silence it causes, so neither reads as "nothing bounced".
   "queues": {
-    "producers": [{ "queue": "mailda-sending-events", "binding": "SENDING_EVENTS" }],
-    "consumers": [{ "queue": "mailda-sending-events", "max_batch_size": 25, "max_batch_timeout": 10 }]
+    "producers": [{ "binding": "SENDING_EVENTS" }]
   },
 
   // Browser-side scripts are served verbatim as text, so they stay real `.js` files that a
@@ -109,9 +132,13 @@
           { "name": "KEY_VAULT", "class_name": "KeyVault" }
         ]
       },
+      // No queue name and no consumers block, for the reasons given at the top level — and duplicated
+      // rather than inherited because named environments inherit nothing. What holds this copy to the one
+      // above is not the drift check, which compares only *which* binding blocks each scope declares: it is
+      // the pair of tests in test/node/deployability.test.ts that walk every key path in this file, in every
+      // environment, and fail on an account-scoped name or a consumers block wherever it appears.
       "queues": {
-        "producers": [{ "queue": "mailda-sending-events", "binding": "SENDING_EVENTS" }],
-        "consumers": [{ "queue": "mailda-sending-events", "max_batch_size": 25, "max_batch_timeout": 10 }]
+        "producers": [{ "binding": "SENDING_EVENTS" }]
       }
     }
   }

@@ -294,11 +294,24 @@ adds *decoupling*, and for this pipeline the trigger is still ahead: **it arrive
 to be slow** — scanning, an LLM call, an outbound webhook.
 
 There *is* now a queue on this Worker, and it is worth being precise about why it does not contradict
-the above. `mailda-sending-events` carries **delivery outcomes inbound from Cloudflare**, which are not
+the above. It carries **delivery outcomes inbound from Cloudflare**, which are not
 this Node's own work items: a Node cannot receive its own bounces, and Queues event subscriptions are
 the only channel by which `accepted` and `bounced` become observable at all (receipt:
 `email-sending-events.md`). It was not adopted to decouple anything — it was adopted because there was
 no alternative source for the fact. The outbox's own events remain in D1.
+
+**That queue has no name in this repository, and cannot.** It used to be the constant
+`mailda-sending-events`, and a queue name is account-scoped, so the second Node installed into one
+Cloudflare account bound its producer to the *first* Node's queue and had its sending events drained by the
+first Node's consumer, across two D1 catalogs (#72). The producer binding now names no queue, and the deploy
+is expected to provision one per Worker exactly as it does for D1 and R2 — **documented by Cloudflare, not
+measured here**, which is why the attach step below discovers the queue and refuses when it finds none
+rather than assuming one exists. The consequence is that the **consumer** cannot
+be declared either — a consumers block is refused without a queue name, and the derived name is not
+knowable in committed config — so it is attached out of band by
+`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from the deployed
+binding rather than deriving its name. **Until that runs, a Node observes no delivery outcomes at all**;
+`doctor`'s `sending_events_consumer` says so and `delivery_visibility` fails on the evidence.
 
 What ships instead is the structural part — **every topic must be registered:**
 

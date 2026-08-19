@@ -359,6 +359,9 @@ const FIGURES: Record<string, Classification> = {
     "queues.producer_binding_provisions", "queues.consumer_block_provisions",
     "queues.consumer_attaches_when_producer_provisions", "queues.subscription_creatable_by_cli",
     "queues.email_sending_subscription_is_dashboard_only", "queues.subscription_creatable_by_api",
+    // #72's pair. Config-parser behaviour, which has no plan column at all: the file is accepted or refused
+    // before anything reaches an account, and the dry-run that measured both never touched one.
+    "queues.producer_queue_name_omissible", "queues.consumer_queue_name_required",
   ),
 
   // docs/receipts/r2-auto-provisioning.md

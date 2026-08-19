@@ -215,6 +215,9 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
   findings.push(
     ...(await checkSchema(env)),
     ...(await checkEvidenceBucket(env)),
+    // Before the evidence-based one, because it says which question this report cannot answer at all, and a
+    // reader meeting a blind Node needs that first. Costs no subrequest: it reads nothing.
+    sendingEventsConsumerCheck(),
     ...(await checkDeliveryVisibility(env, ctx, claim?.org_id ?? null)),
     ...(await checkVault(env)),
     ...(await checkCredentialKek(env)),
@@ -331,12 +334,58 @@ async function checkEvidenceBucket(env: Env): Promise<Finding[]> {
 }
 
 /**
+ * Two things a Node needs before a delivery outcome can reach it, and **neither is in this Worker's
+ * config** — so neither can be checked from inside a Worker, and both are reported rather than omitted.
+ *
+ *   the queue consumer   — this Worker subscribed to its own sending-events queue. Since #72 the producer
+ *                          binding names no queue (a queue name is account-scoped, so a committed one made
+ *                          the second Node in an account bind to the first Node's queue), and a consumer
+ *                          block cannot name a queue whose name the config does not know. So the consumer
+ *                          is attached out of band.
+ *   the subscription     — the account-level `email.sending` object that feeds the queue. API-only:
+ *                          `queue-provisioning.md` records `queues.subscription_creatable_by_cli: 0`.
+ *
+ * `workers_paid_plan` is the precedent for the shape and the argument is the same one: an absent check
+ * reads exactly like a passing one. A Worker holds no account credential — §5A forbids it retaining one —
+ * so it cannot ask Queues who consumes its queue, and inventing a check that cannot work would be worse
+ * than saying which question this report cannot answer.
+ *
+ * `report`, `ok: true`, always. It is a fact about how a Node is installed rather than a fault, it varies
+ * with nothing this Node can see, and a finding that fails on every Node forever is one somebody mutes —
+ * the failure mode `DELIVERY_SILENCE_MS` names in this same file. What *does* fail, from evidence, is
+ * `delivery_visibility` below: hand-overs old enough to have been answered with nothing heard back. So the
+ * un-actionable capability is stated once and the observable consequence is what carries a severity.
+ */
+function sendingEventsConsumerCheck(): Finding {
+  return {
+    check: "sending_events_consumer",
+    severity: "report",
+    // The queue's name is derived from the Worker's name and the binding's name, both of which are in this
+    // public repository or chosen by the operator. No organization content, so this survives into the
+    // reduced report an unauthenticated locked-out operator sees, for the reason planCheck's does.
+    discloses: "infrastructure",
+    ok: true,
+    detail:
+      "Not checkable from inside a Worker — no account API access, so this Node cannot ask Queues who " +
+      "consumes its sending-events queue. The consumer is attached out of band by " +
+      "`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from this " +
+      "Worker's deployed binding; the queue itself is provisioned by the deploy, which Cloudflare documents " +
+      "and this repository has not measured, so that step refuses rather than assume a name. A " +
+      "button-only install has " +
+      "not run that step, so it observes no delivery outcomes at all until somebody does.",
+    receipt: "docs/receipts/queue-provisioning.md",
+  };
+}
+
+/**
  * Can this Node see what happened to the mail it sent?
  *
  * A Node cannot receive its own bounces (`cloudflare-email-sending.md`, corrected), so delivery outcomes
- * arrive only on a Queues event subscription. That subscription is an **account-level** object: it is not
- * in `wrangler.jsonc`, wrangler's CLI cannot create it, and the dashboard's own modal currently throws —
- * so it is created through the API by `mailda deploy` (`queue-provisioning.md`).
+ * arrive only on a queue, fed by a Queues event subscription. Two account-level things stand between a
+ * hand-over and an observed outcome, and the `sending_events_consumer` finding above names both: the
+ * subscription is not in `wrangler.jsonc`, wrangler's CLI cannot create it, and the dashboard's own modal
+ * currently throws — so it is created through the API by `mailda deploy` (`queue-provisioning.md`) — and
+ * since #72 the consumer is attached out of band too.
  *
  * Which means it can be absent, deleted, disabled, or pointed at the wrong sending domain, and **nothing
  * about a Node in that state looks wrong**: sends still hand over, the outbox still fills, and every
@@ -445,9 +494,13 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
         : `${counted.awaiting - counted.unobserved} of ${counted.awaiting} handed-over recipient(s) have ` +
           `an observed outcome, from ${counted.attributed} attributed event(s).`,
     ...(blind ? {
-      fix: "create an Email Sending event subscription for this sending domain, delivering to the " +
-        "mailda-sending-events queue (docs/receipts/email-sending-events.md). Without it every recipient " +
-        "stays unobserved forever",
+      fix: "two things have to exist and neither is in this Worker's config, so check both. First attach " +
+        "the queue consumer: pnpm --filter @mailda/worker run queue:attach-consumer, which discovers this " +
+        "Worker's queue rather than naming it — the name is derived per Node since #72 and is not written " +
+        "down anywhere. Then create an Email Sending event subscription for this sending domain, " +
+        "delivering to that queue (docs/receipts/email-sending-events.md). The sending_events_consumer " +
+        "finding says why neither can be checked from in here. Without both, every recipient stays " +
+        "unobserved forever",
     } : {}),
   }];
 }

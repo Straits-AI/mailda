@@ -146,6 +146,24 @@ decision — it restores the derivation to the number it was actually run agains
 question from the deferred one in `butler-step-budget.md`: these two relations are checks on numbers that
 already exist and hold under both plans, not a bound a checker will impose on a customer's Butler.
 
+## Correction, 19 August 2026: doctor gained a check that spends nothing, and the run cost did not move (#72)
+
+**No value moved and no `stale_when` clause fired** — recorded for the same reason as the correction below
+it, that the clause *"including any new fixed-cost check"* is what a reader will reach for on hearing that
+`doctor` grew a check.
+
+`sending_events_consumer` reports that a Worker cannot see who consumes its own sending-events queue: since
+#72 the queue is provisioned per Node with a derived name and the consumer is attached out of band, so the
+question exists and is unanswerable from in here. The finding is built by a function taking **no arguments**
+— it touches no binding, so it cannot spend a subrequest, and that is a property of its signature rather
+than a claim about its body.
+
+**Locally measured: 6 → 6 subrequests** (5 D1 / 1 R2, unchanged) on an **unclaimed** Node, findings **13 →
+14**. Method as in the corrections below so the figures are comparable: `runDoctor` reading `report.cost` off
+the run itself under `vitest-pool-workers` (`pnpm vitest run`), taken twice — once with the check wired into
+`runDoctor` and once with that one line removed — on 19 August 2026. The finding count moving while the cost
+does not is the whole content of the measurement.
+
 ## Correction, 19 August 2026: the draft-body scan moved into the reconcile pass, and the run cost did not move (#67)
 
 **No value moved, and this time the `stale_when` did not fire either** — recorded anyway, because the clause
