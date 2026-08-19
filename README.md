@@ -85,11 +85,21 @@ pnpm run queue:attach-consumer
 ```
 
 It discovers the queue from the deployed Worker's own binding rather than guessing its name, and re-running
-it is safe. **Until it runs, the Node observes no delivery outcomes at all** — every recipient stays
-`unobserved`, which is honest but blind. `mailda doctor` reports both the step and its consequence rather
-than letting the silence read as "nothing bounced". A second command is still missing and is the other half
-of the same gap: the `email.sending` event subscription, which wrangler cannot create
-([receipt](./docs/receipts/queue-provisioning.md)).
+it is safe.
+
+**This is not a cost the per-Node queue introduced, and saying otherwise would be the more flattering
+version.** Delivery outcomes need *two* account-level objects: a consumer on the queue, and an
+`email.sending` **event subscription** that publishes to it. The subscription has never been creatable by
+wrangler — re-measured 19 August 2026, `--source` accepts `artifacts`, `artifacts.repo`, `images`, `kv`,
+`r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker` and `workflows.workflow`, and
+**not** `email.sending`. So a button-only install has **never** observed a delivery outcome, before this
+change or after it: the queue existed, the consumer was attached, and nothing was ever published to it.
+
+What changed is the count. One out-of-band step became two, both in the same place, and neither is
+scriptable end to end — so **running the command above is necessary and not sufficient**, and a reader who
+stops there still has a blind Node. Until both exist every recipient stays `unobserved`, which is honest but
+blind, and `mailda doctor` reports each missing half separately rather than letting silence read as
+"nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
 
 The CLI path escapes the button's caveats above but **not** this one: clone, `pnpm install`,
 `pnpm run deploy` provisions D1 and R2 on first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md))

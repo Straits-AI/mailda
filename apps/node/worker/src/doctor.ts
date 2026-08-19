@@ -370,9 +370,12 @@ function sendingEventsConsumerCheck(): Finding {
       "consumes its sending-events queue. The consumer is attached out of band by " +
       "`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from this " +
       "Worker's deployed binding; the queue itself is provisioned by the deploy, which Cloudflare documents " +
-      "and this repository has not measured, so that step refuses rather than assume a name. A " +
-      "button-only install has " +
-      "not run that step, so it observes no delivery outcomes at all until somebody does.",
+      "and this repository has not measured, so that step refuses rather than assume a name. That step is " +
+      "necessary and NOT sufficient: an `email.sending` event subscription has to publish to the queue as " +
+      "well, and wrangler cannot create one (re-measured 19 August 2026 — `email.sending` is not a " +
+      "`queues subscription create --source` choice). So a button-only install has never observed a " +
+      "delivery outcome, before the per-Node queue or after it, and attaching the consumer alone does not " +
+      "change that. `delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
   };
 }

@@ -121,6 +121,35 @@ two ways a Worker names a queue:
 | `queues.producers: [{ queue, binding }]` | **Provisioned.** `Provisioning EVENTS (Queue)... 🌀 Creating new Queue` |
 | `queues.consumers: [{ queue }]` | **Deploy fails.** `Queue "…" does not exist. To create it, run: wrangler queues create …` |
 
+## Re-measured 19 August 2026: `email.sending` is still not a CLI subscription source
+
+Checked because this receipt's `stale_when` names the exact condition — *"`email.sending` appears in
+`wrangler queues subscription create --source`"* — and because #72 made the answer load-bearing: if the CLI
+could create the subscription, the whole out-of-band step could plausibly move into a script and the
+button's blindness would be worth attacking.
+
+It cannot. `npx wrangler queues subscription create --help`, wrangler 4.118.0:
+
+```
+--source  [required] [choices: "artifacts", "artifacts.repo", "images", "kv", "r2", "superSlurper",
+                                "vectorize", "workersAi.model", "workersBuilds.worker", "workflows.workflow"]
+```
+
+**`queues.subscription_creatable_by_cli: 0` therefore stands**, unchanged. The source list *has* grown since
+7 August — `artifacts`, `artifacts.repo` and `images` are new — which is worth recording precisely because it
+is the kind of change that looks like it might have included the one we need and did not. A clause that fires
+on a list gaining entries would have fired here and been wrong.
+
+**The consequence for #72 is a correction to how its cost was described.** Delivery outcomes need two
+account-level objects: a queue consumer and an `email.sending` subscription. The subscription has never been
+creatable by the button or by `wrangler deploy`, so a button-only install has **never** observed a delivery
+outcome — the queue existed and the consumer was attached, and nothing was ever published to it. #72 did not
+introduce that; it added a second item to an out-of-band step that was already mandatory. Stating it as a new
+cost of the per-Node queue would have been the more flattering description and the false one.
+
+Which also means the attach step is **necessary and not sufficient**, and anything that implies otherwise —
+README, `doctor`, this receipt — is overclaiming. Fixed in all three.
+
 A consumer is not a binding — it is a subscription of the Worker to a queue — so provisioning never
 considers it. Nothing in the documentation says so, and the failure is a hard error rather than a
 warning, which means **committing a bare `queues.consumers` block would break every one-click install**
