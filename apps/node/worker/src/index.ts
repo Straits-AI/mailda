@@ -15,6 +15,7 @@ import {
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
+import { placeHold } from "./holds.ts";
 import { mergeConversations } from "./merge.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
 import { setResponseTarget } from "./mailbox-policy.ts";
@@ -418,7 +419,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (draft && request.method === "DELETE") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
-      const deleted = await deleteDraft(env, who.orgId, who.userId, draft[1]!);
+      // A legal hold refuses this with `E_LEGAL_HOLD` (409) and the central `CallerError` handler renders it.
+      // Deliberately not caught here: somebody pressing "discard" is owed the reason, and the alternative —
+      // answering `{ deleted: false }` — would say the draft is still there without saying why.
+      const deleted = await deleteDraft(env, clock, who.orgId, who.userId, draft[1]!);
       return Response.json({ deleted }, { status: deleted ? 200 : 404 });
     }
 
@@ -576,6 +580,38 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ subjectId, relations: await relationsOf(env, who.orgId, subjectId) });
     }
 
+    /**
+     * Placing a legal hold (#64, Layer 5). `org.admin` only, immediate, audited as `hold.placed`.
+     *
+     * The minimal surface, and it exists because **a hold nobody can place is dead code**: the enforcement
+     * this ticket is about is only real if the table can be written by somebody other than a test. There is
+     * deliberately no UI yet, and deliberately no lift — #64 gave lifting dual approval and #61's machinery
+     * does not exist, so an endpoint that removed a hold would contradict a decision rather than implement
+     * one.
+     *
+     * There is also **no list endpoint**, and that is not an oversight: `doctor` reports every active hold
+     * with its scope, its age and whether its mailbox still exists, which is the read a person needs and the
+     * one that already has an authenticated home. A second projection of the same rows would be a parity
+     * surface to keep honest for no new answer.
+     *
+     * `placeHold` refuses a non-admin with `E_NOT_AN_ADMINISTRATOR`, an absent mailbox with `E_NO_MAILBOX`,
+     * and an unreadable or inverted window with its own code; all four are `CallerError`s rendered centrally.
+     */
+    if (url.pathname === "/api/holds" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const optional = (value: unknown): string | null =>
+        value === undefined || value === null ? null : String(value);
+      const hold = await placeHold(env, clock, who.orgId, who.userId, {
+        mailboxId: String(body.mailboxId ?? ""),
+        matterId: optional(body.matterId),
+        fromDate: optional(body.fromDate),
+        toDate: optional(body.toDate),
+      });
+      return Response.json({ hold });
+    }
+
     if (url.pathname === "/api/sends" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
@@ -605,11 +641,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // message already sent, which is visible on the screen they are looking at and takes one click to
       // resolve. Not in the same transaction, because `sealManifest` owns its own batch — the residual is a
       // duplicate a person can see rather than a loss they cannot recover.
+      //
+      // A legal hold refuses that deletion (#64), and the send must not fail because of it: the manifest is
+      // sealed, the message is leaving, and the draft is now being **preserved on purpose**. So the refusal
+      // becomes a reported state rather than an error — this is not a swallowed catch, because the caller is
+      // told (`draftRetained`), the attempt is already in the audit trail as `hold.blocked`, and any other
+      // failure re-raises. Answering 409 here would tell somebody their send failed when it did not.
+      let draftRetained = false;
       if (typeof body.draftId === "string" && body.draftId !== "") {
-        await deleteDraft(env, who.orgId, who.userId, body.draftId);
+        try {
+          await deleteDraft(env, clock, who.orgId, who.userId, body.draftId);
+        } catch (error) {
+          if (!(error instanceof CallerError) || error.code !== "E_LEGAL_HOLD") throw error;
+          draftRetained = true;
+        }
       }
 
-      return Response.json({ ...sealed, capability });
+      return Response.json({ ...sealed, capability, draftRetained });
     }
 
     /**

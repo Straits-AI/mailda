@@ -67,14 +67,21 @@ export async function isAdmin(env: Env, orgId: string, userId: string): Promise<
   return row !== null;
 }
 
-async function assertAdmin(env: Env, orgId: string, userId: string): Promise<void> {
+/**
+ * Exported, so `holds.ts` refuses a non-admin with **this** message rather than a second one that says
+ * nearly the same thing. Two refusals for one relation is how the wording drifts, and the wording is the
+ * part a person acts on.
+ */
+export async function assertAdmin(env: Env, orgId: string, userId: string): Promise<void> {
   if (await isAdmin(env, orgId, userId)) return;
   // 403 naming the missing relation, not a 404. §5C hides whether a *thing* exists; the caller's own lack of
   // authority is not a thing whose existence needs hiding, and naming it is the answer that says what to do.
   // Same reasoning `drafts.ts` records for its own 403.
   throw new CallerError("E_NOT_AN_ADMINISTRATOR", 403, {
     what: "you are not an administrator of this organization",
-    why: "granting and revoking relations requires org.admin, which is itself a relation (#39)",
+    // Names the relation rather than the act, because three acts now share this refusal: granting a
+    // relation, revoking one, and placing a legal hold (#64).
+    why: "this act requires org.admin, which is itself a relation on the organization (#39)",
     fix: "ask somebody who holds org.admin to grant it to you",
   });
 }

@@ -55,6 +55,12 @@ const DOCTOR_PATH = [
   "doctor.ts",
   "reconcile.ts",
   "reseal.ts",
+  // Added deliberately with #64's `legal_holds_active` check: `holdsForReport` is one query on the doctor
+  // path, so it is one prepare that must be one execution. `placeHold` in the same file goes through
+  // `auditedBatch`, which `runDoctor` never reaches — and would not trip the `.batch(` guard below in any
+  // case, since the call has no dot before `batch`. Worth knowing, because that is the shape a real batch on
+  // this path would hide behind.
+  "holds.ts",
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

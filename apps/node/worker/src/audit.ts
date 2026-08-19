@@ -84,6 +84,16 @@ export const AUDIT_ACTIONS = {
   "send.handed_over": { says: "The transport accepted the bytes." },
   "send.outcome_unknown": { says: "Hand-over neither succeeded nor failed observably." },
 
+  /*
+   * Layer 5: legal hold (#64). `hold.lifted` is deliberately absent — there is no lift path in this build,
+   * and #64 decided lifting takes dual approval that #61 has not built. A declared action nothing emits is
+   * a category of one, which is exactly what the catalogue exists to prevent, and `audit-coverage.test.ts`
+   * fails on an action no table claims.
+   */
+  "hold.placed": {
+    says: "An administrator placed a legal hold over a mailbox and a date window; placing only preserves.",
+  },
+
   /**
    * `standalone` means there is no accompanying write, so the bare `audit` append is correct and
    * `auditedBatch` has nothing to be atomic with. A lockout is a *refusal*: it changes nothing, and by
@@ -96,6 +106,21 @@ export const AUDIT_ACTIONS = {
    */
   "auth.locked_out": {
     says: "Sign-in was refused because the failure count was already spent.",
+    standalone: true,
+  },
+
+  /**
+   * Standalone for the same reason, reached from the other direction: a deletion refused by a legal hold
+   * **writes nothing**, so there is no transaction for the entry to ride in, and the decision is already
+   * made by the time this records it. Using `auditedBatch` here would demand a state change that must not
+   * happen.
+   *
+   * The asymmetry that makes this safe: `audit` never throws, so a Node that cannot record the refusal
+   * still refuses. For a preserving act that is the correct failure direction, and it is the opposite of
+   * `hold.placed`, where nothing has happened yet and a Node that cannot record the act must not perform it.
+   */
+  "hold.blocked": {
+    says: "A content-destroying act was refused because a legal hold covered it; the attempt is the evidence.",
     standalone: true,
   },
 } as const;

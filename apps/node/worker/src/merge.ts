@@ -2,6 +2,7 @@ import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { mayRead } from "./authz-read.ts";
+import { assertNotHeld } from "./holds.ts";
 import { notFound, unprocessable } from "./errors.ts";
 
 /**
@@ -59,8 +60,9 @@ export type MergeOutcome = MergeSuccess | MergeRefusal;
 
 interface CasePair {
   mailboxId: string;
-  source: { id: string; state: string; assignee: string | null } | null;
-  target: { id: string; state: string; assignee: string | null } | null;
+  /** `createdAt` is here for the legal hold: it is the instant the hold's window is tested against. */
+  source: { id: string; state: string; assignee: string | null; createdAt: string } | null;
+  target: { id: string; state: string; assignee: string | null; createdAt: string } | null;
 }
 
 /**
@@ -169,15 +171,19 @@ export async function mergeConversations(
   const pairs: CasePair[] = [];
   for (const { mailbox_id } of touched) {
     const { results } = await env.CATALOG.prepare(
-      `SELECT id, conversation_id, state, assignee FROM cases
+      `SELECT id, conversation_id, state, assignee, created_at FROM cases
         WHERE org_id = ? AND mailbox_id = ? AND conversation_id IN (?, ?)`,
     ).bind(orgId, mailbox_id, sourceId, targetId)
-      .all<{ id: string; conversation_id: string; state: string; assignee: string | null }>();
-    pairs.push({
-      mailboxId: mailbox_id,
-      source: results.find((r) => r.conversation_id === sourceId) ?? null,
-      target: results.find((r) => r.conversation_id === targetId) ?? null,
-    });
+      .all<{
+        id: string; conversation_id: string; state: string; assignee: string | null; created_at: string;
+      }>();
+    const of = (conversationId: string): CasePair["source"] => {
+      const row = results.find((r) => r.conversation_id === conversationId);
+      return row === undefined
+        ? null
+        : { id: row.id, state: row.state, assignee: row.assignee, createdAt: row.created_at };
+    };
+    pairs.push({ mailboxId: mailbox_id, source: of(sourceId), target: of(targetId) });
   }
 
   for (const pair of pairs) {
@@ -191,6 +197,33 @@ export async function mergeConversations(
           + "first — close, release or take one of them — and merge again.",
       };
     }
+  }
+
+  /**
+   * The legal hold, before a single statement is built (#64).
+   *
+   * `DELETE FROM cases` is one of the two D1 sites #64 classified as **content-carrying**, and it is the
+   * judgement call of the two. The merged messages survive; what the delete destroys is the source case's
+   * *history* — who held it, when it was first responded to, whether its target was met. That is exactly
+   * the class of fact an investigation asks about, so it is held.
+   *
+   * Only the pairs where **both** sides have a case reach the delete; where only the source has one it is
+   * repointed, which destroys nothing and is therefore not the hold's business. Refusing here refuses the
+   * whole merge, which is the all-or-nothing rule this function already has for a contested pair: a
+   * partially merged conversation is not a thing, and a hold on one mailbox must not produce one.
+   *
+   * `created_at` is the instant tested, being when the case came into existence. It throws rather than
+   * returning a `MergeRefusal` because a hold is not a case pair a person can resolve by closing or
+   * releasing something — the refusal names a different remedy, and `E_LEGAL_HOLD` carries it.
+   */
+  for (const pair of pairs) {
+    if (pair.source === null || pair.target === null) continue;
+    await assertNotHeld(env, ctx, orgId, userId, {
+      kind: "case",
+      id: pair.source.id,
+      mailboxId: pair.mailboxId,
+      at: pair.source.createdAt,
+    });
   }
 
   const at = new Date(ctx.now()).toISOString();

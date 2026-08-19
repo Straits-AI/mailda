@@ -96,6 +96,19 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "message. What would change this is a draft becoming shareable — Layer 3's question — because then " +
       "reading somebody else's unfinished writing is an act a person could be asked about.",
   },
+  /* ---- Layer 5 ---- */
+  holds: {
+    // `hold.placed` is a write to this table. `hold.blocked` is **not** — nothing is written when a deletion
+    // is refused — and it is classified here anyway, because this is the table the act is *about*: the entry's
+    // subject is the hold id, and the hold is what refused. The alternative was to hang it off `drafts` and
+    // `cases`, which would make an exempt table audited for an act that never touches it and would have to be
+    // repeated on every table a future call site protects.
+    //
+    // There is no `hold.lifted`, and that is the decision rather than an omission: #64 gave lifting dual
+    // approval, #61's machinery does not exist, and a declared action nothing emits is a category of one —
+    // which the last assertion in this file fails on.
+    actions: ["hold.placed", "hold.blocked"],
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },
@@ -154,12 +167,18 @@ describe("audit coverage", () => {
     // A lockout earns it by changing nothing: it is a refusal, and by the time it is recorded the
     // decision is already made. If a new action appears below, the question to answer is whether it
     // really has no accompanying write — and if it has one, it belongs in `auditedBatch` instead.
+    //
+    // `hold.blocked` earns it the same way and by the same test: a deletion refused by a legal hold writes
+    // **nothing**, so there is no transaction for the entry to ride in, and demanding one would mean
+    // inventing the state change this refusal exists to prevent. The asymmetry that makes it safe is
+    // `audit`'s never-throwing contract: a Node that cannot record the refusal still refuses, which for a
+    // preserving act is the correct direction to fail in.
     const standalone = Object.entries(AUDIT_ACTIONS)
       .filter(([, meta]) => "standalone" in meta && meta.standalone)
       .map(([action]) => action)
       .sort();
 
-    expect(standalone).toEqual(["auth.locked_out"]);
+    expect(standalone).toEqual(["auth.locked_out", "hold.blocked"]);
   });
 
   it("gives every exemption a reason long enough to have needed thought", () => {
