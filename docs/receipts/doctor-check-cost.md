@@ -17,8 +17,9 @@ values:
 
 ## Correction, 13 August 2026: this receipt shipped stale
 
-`doctor.max_subrequests` — since 19 August 2026 `doctor.paid.max_subrequests`, see the third correction
-below — was **1000**, and the `stale_when` above named the exact condition that
+`doctor.max_subrequests` — since 19 August 2026 `doctor.paid.max_subrequests`, see the correction below headed
+*"the cap this file prints was a Paid figure with no plan in its name"* — was **1000**, and the `stale_when`
+above named the exact condition that
 invalidated it — *"Cloudflare changes the 1,000-subrequest per-invocation cap"*. Cloudflare changed it on
 **11 February 2026**, roughly six months **before** this receipt's own `measured_on` of 5 August. So the
 figure was wrong on the day it was written, and the staleness condition was already true when it was
@@ -69,6 +70,43 @@ reading would quietly change what the file means.
 Nothing about the tripwire moved: `doctor.max_subrequests_per_run = 220` still holds with room to spare,
 and it is per-run cost — not per-row — that grew, which is the distinction the clause exists to separate.
 
+## Correction, 19 August 2026: the `stale_when` fired again — legal hold added a fixed-cost check
+
+The clause **"including any new fixed-cost check"** is true for the third time. `doctor` gained the legal-hold
+findings (#64): one `SELECT … FROM holds LEFT JOIN mailboxes` per run, reporting every active hold with its
+scope and age, the holds whose mailbox no longer exists, and the **absent lift path**. Recorded here for the
+reason the 13 August correction gives: the last time this receipt let a fired clause pass unrecorded it
+carried a wrong figure for six months.
+
+**Locally measured delta: 12 → 13 subrequests** (9 D1 / 3 R2 → 10 D1 / 3 R2), so **+1 D1 query and no R2
+call**, fixed per run rather than per hold. Method, identical to the 18 August correction so the two deltas
+are comparable: `runDoctor` on a **claimed** Node with an empty catalog — no holds, no receipts, no drafts, no
+mail — reading `report.cost` from the run itself under `vitest-pool-workers` (`pnpm vitest run`), taken twice,
+once with `checkHolds` wired into `runDoctor` and once with that one line commented out. On an **unclaimed**
+Node the figure does not move at all (6 both times): with no organization the check returns before it spends
+anything, the same shape as `draft_bodies_stranded`.
+
+**Three holds cost the same as one**, which is the distinction this clause exists to separate, and it is
+asserted rather than stated: `test/legal-hold.test.ts` ("costs one fixed query, not one per hold") compares
+`report.cost.d1Queries` for a run with one hold against a run with three and requires them equal.
+
+**Not the deployed number.** Same caveat as 18 August: the 20-subrequest figure under *Measured cost of a full
+run* was taken against `mailda.swmengappdev.workers.dev`, and 12 → 13 was taken against miniflare — a
+different D1, a different R2, a different catalog. Only the delta transfers, because it is one extra call on a
+fixed path. `values:` is deliberately untouched: every number in it is a deployed-Node measurement, and
+`doctor.max_subrequests_per_run = 220` still holds with room to spare.
+
+Inserting this section displaced an **ordinal** cross-reference: the 13 August correction pointed a reader at
+*"the third correction below"*, which meant the #68 one until this became the third. It now names that section
+by its heading instead, because a pointer that depends on how many corrections exist breaks every time one is
+added — quietly, and in a file whose whole purpose is that a number can be traced to what produced it.
+
+One thing the reconciler deliberately does **not** add to this figure. Orphan collection is now suppressed
+org-wide while any hold stands, and that check (`anyActiveHold`) runs **only when `collect` is requested** —
+`doctor` calls `reconcileEvidence` read-only, so it spends nothing on it. Had it been placed at the top of the
+pass unconditionally, this delta would have been +2 rather than +1, for a query whose answer the diagnostic
+does not use.
+
 ## Correction, 19 August 2026: the cap this file prints was a Paid figure with no plan in its name (#68)
 
 **No measured value moved.** `doctor.max_subrequests: 10000` is now `doctor.paid.max_subrequests: 10000`, and
@@ -107,6 +145,39 @@ decision — it restores the derivation to the number it was actually run agains
 **either** plan rather than only on the one nothing can verify. Neither figure changes. This is a different
 question from the deferred one in `butler-step-budget.md`: these two relations are checks on numbers that
 already exist and hold under both plans, not a bound a checker will impose on a customer's Butler.
+
+## Correction, 19 August 2026: the draft-body scan moved into the reconcile pass, and the run cost did not move (#67)
+
+**No value moved, and this time the `stale_when` did not fire either** — recorded anyway, because the clause
+it would have fired on last time (*"including any new fixed-cost check"*) is the one this change is most
+likely to be mistaken for. #67 gave `reconcile.ts` the `${orgId}/drafts/` prefix so a stranded draft body is
+*collected* rather than only counted. `doctor` calls that pass read-only and `draft_bodies_stranded` now
+**reports the pass's scan instead of performing one of its own**, so the two subrequests the 18 August
+correction added moved from the check into the pass rather than being spent twice.
+
+**Locally measured: 13 → 13 subrequests** (10 D1 / 3 R2, unchanged). Method identical to the 18 and 19 August
+corrections above so the three are comparable: `runDoctor` on a **claimed** Node with an empty catalog — no
+holds, no receipts, no drafts, no mail — reading `report.cost` off the run itself under `vitest-pool-workers`
+(`pnpm vitest run`), on 19 August 2026. Unclaimed Node: **6 → 6**.
+
+The scan really is still being paid for, which is why "did not move" is not "was removed". Measured the same
+way with the one line that calls `scanDraftBodies` disabled inside the pass: **11 subrequests** (9 D1 / 2 R2).
+So the draft direction costs **2** on the doctor path — one `R2Bucket.list()` and one `SELECT body_key` — and
+it is now spent by the pass that could delete, on behalf of the check that only reports.
+
+**That figure is fixed per run, not per object, and it was measured at two object counts rather than argued.**
+`metering()` from `src/cost-meter.ts` around `scanDraftBodies` alone: **2 subrequests** (1 D1 execution, 1 R2
+operation) with **0** stranded bodies and **2** with **5** of them. The bulk `SELECT body_key` is what buys
+that; the raw direction, by contrast, spends one D1 lookup per listed object, measured in
+`evidence-lifecycle.md`'s correction of the same date.
+
+Two sentences elsewhere in this file are now false of the product and are deliberately **not** rewritten,
+because a correction that edits the record it corrects destroys the thing the record was for. The 18 August
+correction describes `draft_bodies_stranded` as *"reporting draft bodies that no code path in the Worker can
+collect"*: true when measured, false since #67. The 19 August legal-hold correction's closing paragraph still
+holds exactly as written — `anyActiveHold` runs only when `collect` is requested, so the read-only doctor path
+still spends nothing on it, and that is now the reason **two** collectable sets can be suppressed without
+this figure moving.
 
 `doctor` verifies the runtime claims other decisions made. Most of its checks cost one query; one
 of them — evidence integrity — costs **one R2 `head` per receipt examined**, which is why it has a

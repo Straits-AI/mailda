@@ -64,13 +64,20 @@ Four properties, each preventing a specific failure:
 POST /api/maintenance/reconcile[?collect=1][&format=text]
 ```
 
-The two directions are **not symmetric**, and treating them alike is the mistake to avoid:
+The two directions are **not symmetric**, and treating them alike is the mistake to avoid. Direction 1 has
+**two referent rules**, because two prefixes are scanned and a draft body's referent is not a receipt (#67):
 
 | Found | Meaning | Action |
 |---|---|---|
-| Object, no receipt, past grace | A write that lost its transaction | Delete — but only when explicitly asked |
-| Object, no receipt, inside grace | Possibly a delivery mid-flight | Count it, touch nothing |
+| `raw/` object, no receipt, past grace | A write that lost its transaction | Delete — only when explicitly asked, and only while no legal hold stands anywhere in the organization (#64) |
+| `drafts/` object, no `drafts` row, past grace | The body of a message already sent, or of a draft somebody abandoned | Same: delete only when asked, and never while a hold stands |
+| Either, inside grace | Possibly a write mid-flight — a delivery, or an autosave | Count it, touch nothing |
 | Receipt, no object | **Lost mail** | Enumerate and report. Never repaired |
+
+The two collectable rows are counted and reported **separately and never summed**. An orphan means a
+transaction was lost; a stranded draft body means somebody used the composer. One total would be a number
+nobody could act on, and it would make the orphan finding's "N object(s) have no receipt" false of half its
+own count.
 
 Deleting a receipt whose evidence is gone would turn a detectable data loss into an undetectable one.
 It is also the tempting option, because it is the one that makes the report go green.
@@ -87,32 +94,193 @@ hour of R2 storage for a few kilobytes, being fast destroys mail that was about 
 rather than a second description of it. Until it existed the report could not distinguish **"nothing to
 collect"** from **"did not look"** — both printed `0 orphans` — and one prefix made that expensive.
 
-This pass lists `${orgId}/raw/` and nothing else, and that listing is the only thing its
-`EVIDENCE.delete` ever sees. **Draft bodies live at `${orgId}/drafts/{draftId}.txt`**, `deleteDraft`
-removes only the row, and a draft is deleted when its message is *sealed* — the ordinary send path. So
-those objects are not collected late, they are outside the scan, and no code path in the Worker can
-collect them.
+This pass lists `${orgId}/raw/` **and `${orgId}/drafts/`**, and those two listings are the only things its
+`EVIDENCE.delete` ever sees. The second one is #67: **draft bodies live at
+`${orgId}/drafts/{draftId}.txt`**, `deleteDraft` removes only the row, and a draft is deleted when its
+message is *sealed* — the ordinary send path. So for as long as the pass listed one prefix, every message
+ever sent from the composer left an unreferenced copy of its draft behind, and there was no figure anywhere
+that could reveal it: a scan of one prefix printed `0 orphans` exactly as a scan of the whole bucket would.
 
-Widening this listing would be the wrong repair, twice over: it feeds a delete, and a draft body's
-referent is a `drafts` row rather than an `ingress_receipt`, so "no receipt" is not even the right test.
-`doctor`'s `draft_bodies_stranded` finding counts them **read-only** instead, reusing this file's
-`reconcile.list_limit` for the page and `reconcile.orphan_grace_seconds` for the judgement — the grace
-window applies for the identical reason, because `saveDraft` also writes R2 before the row. Collection
-is deferred to the legal hold every content-destroying call site must consult (#64); a sweep is itself
-such a path, so it must not land before the hold. Tracked by #67.
+### The draft prefix, and why it is here rather than anywhere else
 
-It reports at **`report` severity, not `degraded`**, and that is a decision rather than an oversight. A
-draft is deleted on the ordinary send path, so a Node that has ever sent one message from the composer
-has residue permanently — `degraded` would make every healthy Node warn forever with a `fix` of "nothing
-to run yet", and a check that always fails is a check somebody mutes. `workers_paid_plan` is the existing
-shape for a real gap no operator action closes. **Promote it to `degraded` when a collector exists**: once
-a sweep can consult #64's hold, residue means the sweep is not running, which is actionable. A larger
-count is not grounds to promote it — that is the same un-actionable fact, larger.
+Three properties made the reconciler the right owner, and each one rules out an alternative:
+
+- **`deleteDraft` stays row-only.** ADR 32 makes reconciliation deliberately asymmetric — a reference with
+  no blob may only be *reported* — so an inline delete that failed after the row was gone would create
+  precisely the unreachable orphan #67 was filed about.
+- **No new R2 delete site.** Both prefixes fill one list and one loop drains it, so
+  `EVIDENCE.delete` is still the only call in the product that destroys content bytes, and the closed world
+  in `test/node/content-deletion-world.test.ts` stays at one entry. A separate sweep would have been a
+  second place to remember to put a hold in front of.
+- **One predicate, two readers.** `scanDraftBodies` in `reconcile.ts` decides which objects are stranded,
+  and `doctor`'s `draft_bodies_stranded` finding *reports that scan* rather than listing the prefix again.
+  Two definitions that can disagree is the same defect one layer up, and the disagreement would be silent
+  in the worst direction: a diagnostic reporting a count the collector declines to act on.
+
+"No receipt" is not the test for a draft body — its referent is a `drafts` row keyed by `body_key` — but the
+budgets carry over unchanged: `reconcile.list_limit` bounds the page, `reconcile.orphan_grace_seconds` bounds
+the judgement, and the grace window applies for the *identical* reason, because `saveDraft` also writes R2
+before the row. Collecting inside it would delete the body of a draft mid-save. The measured cost of the
+second prefix, and the worst case a full pass can now reach, are in
+`docs/receipts/evidence-lifecycle.md`'s 19 August 2026 correction; the pass spends **two** fixed subrequests
+on it however many objects are under the prefix, because the referents come back in one bulk query.
+
+That bulk query is a **correctness** requirement before it is a cost one, and the correctness half was the
+claim in this change that nothing enforced. It carries no `LIMIT`: a partial set of referents does not
+under-count residue, it names a *live* draft's body as stranded, and under `collect` that is not a wrong
+number, it is the deletion of somebody's unfinished writing. `LIMIT 1` on that one line passed all 481 tests,
+because every fixture had exactly one live draft and so could not tell a first row from every row — the
+vacuity mode `AGENTS.md` warns about, in the property with the worst consequence in the file. It is now
+collected against **three** live drafts and one residue
+(`test/stranded-draft-bodies.test.ts`, *"spares every live draft, not just one"*). What that bounds is stated
+in `reconcile.ts` beside the claim: any limit below three, not the absence of every limit, which no fixture
+count can settle.
+
+**Collection is suppressed org-wide while any hold stands** (#64), and the draft prefix inherits that rule
+for the same reason as an orphan rather than by analogy: a stranded body has no `drafts` row, so there is no
+mailbox to test a hold against, and the key's own prefix is the organization. Enumeration and reporting are
+unaffected. The per-mailbox hold is consulted earlier, in `deleteDraft`, which is the last moment at which
+the mailbox is still known.
+
+### What `draft_bodies_stranded` means now
+
+Residue no longer means *"nothing can ever collect these"*. It means one of exactly two things, and the
+finding's `fix` says both: the collector has not been run — it runs on
+`POST /api/maintenance/reconcile?collect=1` and nowhere else, since #67 deliberately added no cron — or a
+legal hold is suppressing it.
+
+It still reports at **`report` severity, not `degraded`**, and the argument was re-made rather than
+inherited, because the old one had an expiry date on it: *"promote it when a collector exists"*. A collector
+exists, and that turns out to have been the wrong condition. `degraded` has to mean *something is wrong
+here*, and a Node that has sent a message from the composer and has not been swept since is **healthy**.
+Degrading it would put a permanent WARN on the ordinary state of the product — worse under a hold, where
+collection is refused on purpose and no operator action can close the finding at all. `evidence_orphans` is
+`degraded` for the opposite reason, and the contrast is the argument: a raw orphan exists only because a
+write lost its transaction. **The condition that would justify `degraded` is residue that survives a
+collection run**, and nothing in the report can know that today, because no collection run is recorded
+anywhere. That missing input is stated rather than approximated: a guessed one would degrade exactly the
+healthy Nodes described above.
 
 Its success line also carries what it did **not** judge: the count held back by the grace window and, if
 the listing was truncated, that more objects remain unexamined. A pass that skipped objects may not say
 "every draft body has a row", which is the same overclaim — a partial scan reading as a complete one —
-that made this residue invisible in the first place.
+that made this residue invisible in the first place. A prefix that could **not be read** says so, on its own
+line, rather than contributing a `0`: `read: "unreadable"` is a separate arm of the scan's union, so no
+caller can reach a count without having narrowed on a completed read.
+
+## Legal hold
+
+Decisions: #64. Schema: `migrations/0018_legal_hold.sql`. Code: `src/holds.ts`. The closed world over what may
+destroy content: `test/node/content-deletion-world.test.ts`. Behaviour: `test/legal-hold.test.ts` for the
+functions, and `test/legal-hold-routes.test.ts` for the HTTP surface — every claim about what a *caller* is
+told (the 409 and its body, `draftRetained`, who may place a hold) is checked against a real response there,
+because none of those are checkable from a function-level test.
+
+```
+POST /api/holds   { mailboxId, matterId?, fromDate?, toDate? }   →  { hold }
+```
+
+**A hold is a predicate, not a list.** One requirement decided the shape: a hold placed on Tuesday must cover
+Wednesday's mail. So the scope is a mailbox plus two optional bounds, evaluated at the instant of the
+destroying act, and nothing anywhere materialises a set of ids — a frozen list needs maintenance to stay
+right, and a hold that needs maintenance to keep covering things will quietly stop. It is deliberately coarser
+than any matter it serves, because **over-holding costs storage and under-holding is unrecoverable.**
+
+`matter_id` is nullable and has no foreign key: the realistic first act is an urgent preservation before
+anybody has opened a matter, and there is no `matters` table on this Node at all (#63 is charted, not built).
+
+Both bounds are stored as full ISO-8601 instants. A bare `2026-08-31` given as `toDate` is widened to that
+day's last millisecond, because coverage is a string comparison and the un-widened form sorts *below*
+everything that happened during 31 August — an under-hold at exactly the boundary somebody chose deliberately.
+
+### Placing and refusing
+
+| Act | Who | Recorded as |
+|---|---|---|
+| Place | one `org.admin`, alone, effective immediately | `hold.placed`, in the same transaction as the row |
+| Refuse a deletion | nobody: the Node does it | `hold.blocked`, standalone — nothing was written |
+| **Lift** | **not built** | — |
+
+Placing and lifting are asymmetric because the two acts have opposite risk. Placing only ever preserves; its
+worst case is wasted bytes, and ceremony in front of it is how evidence is lost in the hour after somebody
+realises they need it. Lifting re-permits destruction and is irreversible in effect, so #64 gave it dual
+approval — one stage of two distinct approvers with a mandatory reason — and #61's approval machinery does not
+exist. **So there is no lift path, and `doctor` reports that as a finding** (`legal_hold_lift_path`) rather
+than leaving it to a comment. A hold placed on this build is permanent.
+
+That absence is enforced in two directions rather than described: `DELETE FROM holds` would be an undeclared
+call site and fails the closed world, and an `UPDATE holds` — narrowing a window, which lifts a hold without
+deleting anything — fails a check of its own. The migration also leaves `lifted_at` and `lifted_reason` **out**
+for the same reason: a column nothing writes cannot tell a reader whether `NULL` means "in force" or "never
+built".
+
+### What consults it
+
+| Site | Target | Content | Guard |
+|:--|:--|:--|:--|
+| `auth/session.ts` | `login_attempts` | no | — |
+| `auth/session.ts` | `refresh_tokens` | no | — |
+| `access.ts` | `relationship_tuples` | no | — |
+| `audit.ts` | `log_entries` | no — telemetry, `detail` is never content | — |
+| `drafts.ts` | `drafts` | **yes** | `assertNotHeld` |
+| `merge.ts` | `cases` | **yes** | `assertNotHeld` |
+| `reconcile.ts` | R2 objects | **yes** | `anyActiveHold`, org-wide |
+
+`merge.ts` is the judgement call. The merged messages survive; what `DELETE FROM cases` destroys is the source
+case's *history* — who held it, when it was first answered, whether its target was met — which is exactly the
+class of fact an investigation asks about.
+
+The table above is not maintained by hand. The test derives every call site from `src/` and `migrations/` by
+scanning for `DELETE FROM` and `EVIDENCE.delete`, fails on an undeclared one, fails on a declared one that no
+longer exists, and — for the sites carrying content — **asserts the guard is called in the same function** as
+the destroying statement. Migrations are held to a stricter rule, zero matches, because a migration is raw SQL
+inside `batch()` and no Worker code can stand between its statements and a hold.
+
+**Its blind spots are declared in the test itself**, because a tripwire that hides its boundary is the thing it
+replaces: dynamically constructed SQL, `wrangler d1 execute`, the Cloudflare dashboard, and whether the guard
+is reached on every branch. The last is what `test/legal-hold.test.ts` is for; the middle two are not fixable
+from inside a Worker, since the customer owns the database (ADR 2).
+
+### Collection stops org-wide, and the report says so
+
+While any hold stands anywhere in the organization, `?collect=1` deletes nothing — **neither raw orphans nor
+stranded draft bodies** (#67). Both are still enumerated and still reported.
+
+The reason is not cost. **An unreferenced object is unattributable by definition** — this pass finds it
+*because* its referent is missing — so nothing can establish which mailbox it belonged to, and therefore
+nothing can prove it is not responsive. A per-hold check is not expensive here, it is **unimplementable**: it
+would require inferring a mailbox from exactly the data whose absence defines the state. That is as true of a
+draft body as of an orphan: the `drafts` row carried the mailbox, and the row is what is gone.
+
+`reconcile` prints a hold line on every branch, because suppression nobody can see is indistinguishable from a
+reconciler that has stopped working — and this pass is what an operator reaches for when they suspect exactly
+that. `anyActiveHold` is asked once per pass and **only when collection was requested**, so `doctor`'s
+read-only call spends nothing on it.
+
+That last point makes the line **three-valued, not two**, and the third value is the one worth stating: a
+read-only pass has not consulted a hold, so it reports that it did not look rather than that nothing was in the
+way. The first version of this line printed *"collection was not requested; nothing suppresses it"* — measured
+false against a Node with a hold standing, and false in the permissive direction. `requested` is in the report
+precisely to stop `suppressed: false` being read as "nothing was in the way" by somebody who never asked; the
+text form must not commit that misreading on the report's behalf, and `test/legal-hold.test.ts` now fails on
+the sentence rather than on a value.
+
+### Consequences of a hold, for a person using the product
+
+- Discarding a draft in a held mailbox answers 409 naming the hold. Sending from one succeeds and **keeps the
+  draft**: the seal already happened, so the send route reports `draftRetained` rather than failing a message
+  that has left.
+- A merge that would delete a held case refuses, all-or-nothing, and nothing is changed.
+- `doctor` reports every hold with its mailbox, window, matter, who placed it and how long ago; a `degraded`
+  finding for any hold whose mailbox no longer exists (a hold enforcing nothing while reporting as active);
+  and the missing lift path.
+
+There is deliberately **no UI and no list endpoint**. `doctor` is the read, and a second projection of the same
+rows would be a parity surface to keep honest for no new answer.
+
+The sweep this check was waiting for has since landed **on** it rather than beside it: #67's draft-body
+collection is gated on `anyActiveHold` and declared in the same closed world, which is why the R2 row of the
+table above still names one guard and one call site.
 
 ## The processing pipeline
 

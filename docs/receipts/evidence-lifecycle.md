@@ -77,3 +77,75 @@ than "tight and measured" — an hour is orders of magnitude beyond a Worker inv
 
 Deleting a receipt whose evidence is gone would convert a *detectable* data loss into an undetectable
 one. It is also the tempting option, because it is the one that makes the report go green.
+
+The table above is the **raw** prefix only. A second prefix with a different referent rule was added on
+19 August 2026 — see the correction below.
+
+## Correction, 19 August 2026: the pass gained a second prefix, and `list_limit` is per prefix (#67)
+
+**No value moved.** `reconcile.list_limit: 200` and `reconcile.orphan_grace_seconds: 3600` both still hold,
+for the reasons below, and neither was re-derived. What changed is the shape of the pass: #67 gave it
+`${orgId}/drafts/`, whose referent is a row in `drafts` keyed by `body_key` rather than an `ingress_receipt`,
+so a draft body left behind by `deleteDraft` is now collected through the pass's single `EVIDENCE.delete`
+instead of persisting for the lifetime of the bucket. Recorded here because the derivation under *Reconcile
+list limit: 200* above is written as though there were one listing, and after this change there are two.
+
+**No `stale_when` clause fired**: `R2Bucket.list()`'s per-call limit did not move, the per-invocation
+subrequest cap did not move, and re-seal is untouched. The clause is deliberately **not** widened either,
+because the condition that would matter here — a third prefix, or a per-object cost appearing in the draft
+direction — is checked by a test below rather than described in prose, and this file already records what a
+`stale_when` is worth on its own.
+
+**Measured, on 19 August 2026, with `metering()` from `src/cost-meter.ts` wrapped around one
+`reconcileEvidence` call under `vitest-pool-workers` (`pnpm vitest run`), against miniflare:**
+
+| Pass | Subrequests | D1 | R2 |
+|---|--:|--:|--:|
+| empty bucket, read-only | 5 | 3 | 2 |
+| empty bucket, `collect` | 6 | 4 | 2 |
+| **5 stranded draft bodies**, read-only | **5** | 3 | 2 |
+| 5 raw objects with no receipt, read-only | 10 | 8 | 2 |
+| 5 stranded draft bodies, `collect` | 11 | 4 | 7 |
+
+Three figures in that table are the whole cost argument for putting the sweep here:
+
+- **The draft direction is flat.** Five stranded bodies cost exactly what zero cost, because the referents
+  come back in **one** bulk `SELECT body_key` with no `LIMIT`. Measured directly on the scan function alone as
+  well: 2 subrequests (1 D1, 1 R2 `list`) at 0 objects and 2 at 5.
+- **The raw direction is not**, and never was: five objects cost five extra D1 executions, one lookup per
+  listed key. That is the asymmetry the `list_limit` derivation above is really about.
+- **`collect` costs one D1 query more than read-only**, once per pass: `anyActiveHold` (#64). It is asked only
+  when collection was requested, which is why `doctor`'s read-only call pays nothing for it — see
+  `doctor-check-cost.md`'s correction of the same date, which measures that path at 13 → 13.
+
+**`list_limit` applies per prefix, so the worst case a full pass can reach roughly doubled.** Derived from the
+per-object figures above rather than measured — reaching it needs 400 objects and 200 receipts, which no
+fixture here builds:
+
+| Term | Cost | |
+|---|--:|:--|
+| listings | 2 | one per prefix |
+| raw referents | 200 | one D1 lookup per listed object |
+| draft referents | 1 | one bulk query |
+| hold check | 1 | once, and only under `collect` |
+| deletes | 400 | both prefixes drain the same single delete |
+| receipt direction | 202 | count, page, one R2 `head` per sampled receipt |
+| **806** | | **4 × `list_limit` + 6** |
+
+That is **under the Free ceiling of 1,000** (`doctor.free.max_subrequests`) with 194 to spare, and far under
+Paid's 10,000. It was **604** before this change, so the prefix cost up to 202.
+
+**This one is checked, not just written down.** `test/evidence-lifecycle.test.ts` — *"keeps the worst case a
+collecting pass can reach inside the ceiling it was derived against"* — computes `4 × list_limit + 6` from the
+budget and asserts it stays under the Free ceiling. Verified non-vacuous by temporarily setting
+`reconcile.list_limit: 300` in this file and regenerating: the test failed with *"expected 1206 to be less
+than 1000"*. That is the protection the 13 August correction in `doctor-check-cost.md` says a `stale_when`
+clause cannot give on its own, and it is why raising `list_limit` is now a change that argues with a test
+rather than one that quietly reprices a pass. What it bounds is **the pass, not the invocation**: the route
+around it authenticates and authorizes first, and that residue lives in the headroom rather than in the sum.
+
+**The grace window did not need re-deriving, and that is a finding rather than an omission.** It was sized by
+asymmetry against `ingress.ts` writing R2 before D1; `saveDraft` writes R2 before its row for the same
+reason, so the second referent rule inherits the window unchanged. Collecting a draft body inside it would
+delete the body of a draft somebody is part-way through saving — the same unrecoverable error as deleting mail
+that was about to be accepted, which is what the hour was chosen to make impossible.

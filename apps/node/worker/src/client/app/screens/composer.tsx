@@ -274,11 +274,32 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
     }
   }
 
-  /** Throws the draft away on purpose, which is different from closing the dock and leaving it saved. */
+  /**
+   * Throws the draft away on purpose, which is different from closing the dock and leaving it saved.
+   *
+   * **The refusal is read, because one exists.** A legal hold answers this DELETE with 409 `E_LEGAL_HOLD` and
+   * the Node's four-part message (#64), and `apiFetch` *resolves* for a non-ok response rather than throwing —
+   * so the version that ignored the response closed the dock as though the draft had gone while it was still
+   * there, and the reason `index.ts` deliberately declines to swallow was thrown away by the only caller that
+   * presses this button. Handled exactly as `seal` handles its own refusal: the Node's words verbatim, and the
+   * dock stays open, because a person owed a reason has to still be looking at the thing it is about.
+   *
+   * 404 closes as before. It means the draft is already absent, which is the state discard was asking for, and
+   * that route answers it with no `message` for §5C's reason — it keeps "gone" and "not yours" alike.
+   */
   async function discard() {
+    setProblem(null);
     if (draftId !== null) {
-      await apiFetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      if (!response.ok && response.status !== 404) {
+        const result = (await response.json().catch(() => null)) as { message?: string } | null;
+        setProblem(
+          result?.message
+          ?? `This Node answered ${response.status} and gave no reason, so this draft may still be here.`,
+        );
+        return;
+      }
     }
     onClose();
   }

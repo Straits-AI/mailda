@@ -234,13 +234,37 @@ finding, because a Node receiving events it cannot place is neither blind nor he
 removes the row and touches R2 not at all; a draft is deleted when its message is **sealed**, which is the
 ordinary send path. The code and the shell doc both said the object was "left for the reconciler, because
 ADR 32 makes an orphan blob collectable" — true of ADR 32, false of this prefix, because the reconciler
-lists `${orgId}/raw/` only and draft bodies are written under `${orgId}/drafts/`. So every message ever sent
+listed `${orgId}/raw/` only and draft bodies are written under `${orgId}/drafts/`. So every message ever sent
 from the composer left an unreferenced copy of its draft, and no figure anywhere could reveal it: a scan of
 one prefix printed `0 orphans` exactly as a scan of the bucket would. `reconcile` now **names the prefixes
 it scanned**, so a prefix outside the scan appears in the output instead of being absent from it, and
-`doctor` counts the stranded bodies and says plainly that nothing can collect them. **No deletion was
-added** — that waits for the legal hold every content-destroying call site must consult, because a cleanup
-sweep is itself one of those call sites.
+`doctor` counts the stranded bodies. The deletion waited for the legal hold every content-destroying call
+site must consult, because a cleanup sweep is itself one of those call sites — and now that the hold exists,
+the sweep landed **on** that check rather than beside it.
+
+**The collector was given the prefix, not a sweep of its own.** `deleteDraft` is still row-only: ADR 32 makes
+reconciliation asymmetric on purpose, so an inline delete that failed after the row was gone would create
+exactly the unreachable object being fixed. The reconciler scans `${orgId}/drafts/` under its own referent
+rule — a `drafts` row keyed by `body_key`, not a receipt, past the same grace window, because `saveDraft`
+writes R2 before the row and collecting inside that gap would delete somebody's writing mid-save — and both
+prefixes drain **one** delete loop, so `EVIDENCE.delete` is still the only call in the product that destroys
+content bytes and the closed world stays at one entry. Collection is refused org-wide while any hold stands,
+for the orphan reason rather than by analogy: a stranded body has no row, so there is no mailbox to test a
+hold against. The predicate is **one function** that `doctor` reads rather than reimplements, checked by
+counting listings at the binding, because two definitions of "which objects are stranded" can disagree
+silently in the direction where the diagnostic reports a count the collector declines to act on. The residue
+every existing Node already has is collected by the ordinary pass — no migration. Measured: the second prefix
+costs the pass **2 subrequests, flat at 0 and at 5 stranded bodies**, and `doctor`'s per-run cost did not move
+at all (13 → 13) because the scan it used to perform itself is now the scan it reads. Two claims that had gone
+stale in these exact comments for the third time — "nothing collects the body", "nothing to run yet" — are
+now sentences a test fails on. A **third** claim was found unenforced while verifying this one: the referent
+query "deliberately has no LIMIT", because a partial set of referents names a live draft's body as stranded
+and under collection deletes somebody's unfinished writing — and `LIMIT 1` on that line passed all 481 tests,
+since every fixture had exactly one live draft. It is now collected against three, and what that bounds
+(any limit below three, not the absence of every limit) is written beside the claim rather than implied.
+What did **not** change is the finding's severity: residue means the collector
+has not run, not that something is broken, and the condition that would justify `degraded` is residue that
+survives a collection run, which nothing records yet and so is named as the missing input rather than guessed.
 
 **The lockout report opened for one of the two lockouts.** `doctor` is served unauthenticated, reduced to
 findings whose contents are already public here, when the Node cannot authenticate anyone — and the test for
@@ -276,6 +300,25 @@ with nothing firing. Both now share one **closed world** over the config's top-l
 declared binding block or a declared field that binds nothing, and anything else fails, naming the key and
 what to do with it. That is the version that catches the binding nobody has thought of, which was the only
 point of having the guards. An allowlist of the blocks somebody already thought of never could.
+
+**A legal hold that a call site can forget to ask is not a hold.** Seven places in this Worker can destroy
+something, and until now nothing anywhere said which of them destroy *content* — so preservation was a
+property of whoever remembered. A hold is now a **predicate**, not a list: a mailbox and two optional date
+bounds, evaluated at the moment of the act, because a hold placed on Tuesday has to cover Wednesday's mail and
+a frozen set of ids stops covering things the day nobody maintains it. Placing is one administrator, alone,
+immediate and audited — it only ever preserves, and ceremony in front of it is how evidence is lost in the hour
+after somebody realises they need it. A refused deletion is audited too, as `hold.blocked`, because an attempt
+to destroy held mail is evidence about the attempt. **The tripwire is worth more than the mechanism**: a test
+derives every `DELETE FROM` and `EVIDENCE.delete` in `src/` and `migrations/` from the source, fails on one
+nobody classified, and for the three that carry content **asserts the guard is called in the same function** as
+the statement that destroys. Migrations are held to zero, because a migration is raw SQL inside `batch()` and
+no code can stand between its statements and a hold. Its blind spots — dynamic SQL, `wrangler d1 execute`, the
+dashboard — are declared in the test, since a tripwire that hides its boundary is the thing it replaces. Two
+consequences stated rather than discovered: orphan collection stops for the **whole organization** while any
+hold stands, because an orphan is unattributable *by definition* and nothing can prove one is not responsive;
+and **there is no way to lift a hold**, because lifting takes two approvers and that machinery does not exist
+yet — so `doctor` reports the missing path as a finding instead of leaving it silent, and a check fails on any
+code that would quietly narrow a hold's window.
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both

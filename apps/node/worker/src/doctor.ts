@@ -4,7 +4,8 @@ import { BUDGETS } from "@mailda/budgets";
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
-import { reconcileEvidence } from "./reconcile.ts";
+import { holdsForReport } from "./holds.ts";
+import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "./reconcile.ts";
 import { pendingReseal } from "./reseal.ts";
 
 /**
@@ -185,6 +186,8 @@ const EXPECTED_TABLES = [
   "drafts",
   // Migration 0014 (Layer 3: conversations and cases).
   "conversations", "cases",
+  // Migration 0018 (Layer 5: legal hold).
+  "holds",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -195,6 +198,20 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
   ).first<{ org_id: string | null; claimed_at: string | null }>().catch(() => null);
   const claimed = claim?.claimed_at != null;
 
+  /**
+   * Hoisted out of the list below because **two findings read one scan** (#67).
+   *
+   * `checkEvidence` performs the reconciler's read-only pass, and that pass now scans `${orgId}/drafts/`
+   * as well as `${orgId}/raw/`. `draft_bodies_stranded` reports the draft-body half of it rather than
+   * listing the prefix a second time — two listings of the same prefix that could disagree is the defect
+   * #67 filed, in miniature, and it would cost two extra subrequests per run to build.
+   *
+   * Hoisting moves *when* these subrequests are spent, not how many, and that is measured rather than
+   * reasoned: 13 subrequests before and after, in `doctor-check-cost.md`'s correction headed *"the draft-body
+   * scan moved into the reconcile pass"*. The findings are still pushed in their original order.
+   */
+  const evidence = await checkEvidence(env, ctx, claim?.org_id ?? null);
+
   findings.push(
     ...(await checkSchema(env)),
     ...(await checkEvidenceBucket(env)),
@@ -203,8 +220,9 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkCredentialKek(env)),
     ...(await checkSigningKeys(env, ctx)),
     ...(await checkOutbox(env, ctx)),
-    ...(await checkEvidence(env, ctx, claim?.org_id ?? null)),
-    ...(await checkStrandedDraftBodies(env, ctx, claim?.org_id ?? null)),
+    ...evidence.findings,
+    ...strandedDraftBodyFindings(evidence.draftBodies),
+    ...(await checkHolds(env, ctx, claim?.org_id ?? null)),
     planCheck(),
   );
 
@@ -629,30 +647,53 @@ const DELIVERY_SILENCE_MS = BUDGETS["events.delivery_silence_minutes"] * 60 * 10
  * "is the mail actually there" and it cannot drift between the diagnostic and the repair tool. Called
  * **read-only** — `collect` is not set — because a diagnostic must never be the thing that deletes
  * data, however safe the deletion looks.
+ *
+ * ## It returns the draft-body scan as well as its own findings
+ *
+ * Because the pass it delegates to produces both (#67), and `draft_bodies_stranded` must report **the same
+ * set the collector would act on**, not a second opinion about it. That is why the return type is a pair
+ * rather than a `Finding[]`: the alternative is a second `R2Bucket.list()` of the same prefix and a second
+ * definition of "stranded", which is the shape of the defect #67 filed. `null` means there was no prefix
+ * to scan — an unclaimed Node — and is the only case that is not a scan result.
  */
-async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+interface EvidenceCheck {
+  findings: Finding[];
+  draftBodies: DraftBodyScan | null;
+}
+
+async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<EvidenceCheck> {
   if (orgId === null) {
-    return [{
-      check: "evidence_present",
-      severity: "degraded",
-      discloses: "data",
-      ok: true,
-      detail: "No organization yet, so there is no evidence to check.",
-    }];
+    return {
+      findings: [{
+        check: "evidence_present",
+        severity: "degraded",
+        discloses: "data",
+        ok: true,
+        detail: "No organization yet, so there is no evidence to check.",
+      }],
+      draftBodies: null,
+    };
   }
 
   let report;
   try {
     report = await reconcileEvidence(env, ctx, orgId);
   } catch (error) {
-    return [{
-      check: "evidence_present",
-      severity: "degraded",
-      discloses: "data",
-      ok: false,
-      detail: `Reconciliation failed: ${(error as Error).message.split("\n")[0]}`,
-      fix: "check the migrations_applied and key_vault findings first",
-    }];
+    // The cause is kept, not discarded — a finding that says only "failed" leaves an operator with a
+    // symptom and no lead. It is also the one channel by which the draft-body check learns it could not
+    // judge: the whole pass threw, so there is no scan, and saying so is not the same as saying zero.
+    const because = (error as Error).message.split("\n")[0] ?? null;
+    return {
+      findings: [{
+        check: "evidence_present",
+        severity: "degraded",
+        discloses: "data",
+        ok: false,
+        detail: `Reconciliation failed: ${because}`,
+        fix: "check the migrations_applied and key_vault findings first",
+      }],
+      draftBodies: { read: "unreadable", prefix: draftBodyPrefix(orgId), because },
+    };
   }
 
   const scope =
@@ -686,58 +727,65 @@ async function checkEvidence(env: Env, ctx: Ctx, orgId: string | null): Promise<
       ok: false,
       detail: `${report.orphans.length} object(s) have no receipt and are past the grace period — ` +
         `writes that lost their transaction. They cost storage and reveal nothing.`,
-      fix: "POST /api/maintenance/reconcile?collect=1 to delete them",
+      // The caveat is unconditional rather than computed, so this check spends no query on holds and the
+      // advice cannot be wrong: collection is suppressed org-wide while any hold stands (#64), and the
+      // finding that knows whether one does is named here rather than restated.
+      fix: "POST /api/maintenance/reconcile?collect=1 to delete them — unless a legal hold is in force, " +
+        "which suppresses orphan collection for the whole organization because an orphan is unattributable " +
+        "by definition. The legal_holds_active finding says whether one is",
       receipt: "docs/receipts/evidence-lifecycle.md",
     });
   }
 
-  return findings;
+  return { findings, draftBodies: report.draftBodies };
 }
 
 /**
- * Draft bodies nothing can collect (#67).
+ * Draft bodies with no `drafts` row (#67).
  *
  * A draft body is an R2 object at `${orgId}/drafts/{draftId}.txt` whose only referent is a `drafts`
  * row. `deleteDraft` issues one `DELETE FROM drafts` and touches R2 not at all, and a draft is deleted
  * when its message is *sealed* — the ordinary path through the composer. So every message ever sent
  * from a draft, and every draft anybody abandoned, leaves its body behind.
  *
- * **These are not collectable orphans.** `reconcile.ts` lists `${orgId}/raw/` and nothing else, and its
- * `EVIDENCE.delete` only ever sees objects from that listing — the one R2 delete in this Worker. So
- * these objects are not *late* to be collected: **no code path deletes them at all.** They were
- * unreferenced, uncounted, and until this finding existed, invisible to every check the Node has —
- * this check lists the prefix precisely so that stops being true. The code and
- * `application-shell.md` both used to say the object was "left for the reconciler, because ADR 32
- * makes an orphan blob collectable", which was true of ADR 32 and false of this prefix.
+ * ## What this finding means now, which is not what it meant when it was written
  *
- * This finding **counts them and stops**. Collection is deferred deliberately: #64 requires every
- * content-destroying call site to be allowlisted and to consult a legal hold, that hold does not exist
- * yet, and a sweep is itself a content-destroying path. Reporting a number is not.
+ * It used to say these were **not collectable**: `reconcile.ts` listed `${orgId}/raw/` and nothing else,
+ * its `EVIDENCE.delete` only ever saw objects from that listing, and so no code path deleted a draft body
+ * at all. That was the defect. The reconciler now scans `${orgId}/drafts/` under its own referent rule and
+ * collects from it through the same single delete, so residue no longer means *"nothing can ever collect
+ * these"*. It means one of exactly two things, and the `fix` says both:
  *
- * ## Two numbers borrowed rather than invented
+ *   - **the collector has not been run.** Collection happens on `POST /api/maintenance/reconcile?collect=1`
+ *     and nowhere else — there is no cron for it — so residue is the ordinary state of a Node between runs.
+ *   - **a legal hold is suppressing it.** Any hold in the organization stops collection org-wide (#64),
+ *     because an object with no referent is unattributable by definition.
  *
- * `reconcile.list_limit` bounds the listing and `reconcile.orphan_grace_seconds` bounds the judgement,
- * both from `evidence-lifecycle.md`. Neither is a new figure and neither is borrowed loosely:
+ * ## It takes the scan rather than performing one
  *
- *   - the listing is over the same bucket through the same `R2Bucket.list()`, and costs **one**
- *     subrequest for the page plus one for the D1 query below — not one per object, which is the
- *     distinction `doctor-check-cost.md`'s `stale_when` actually cares about. That two-subrequest
- *     figure is measured, not reasoned: see that receipt's 18 August 2026 correction.
- *   - the grace window exists for the identical mechanism: `saveDraft` writes R2 *before* the row, so
- *     a brand-new draft's object legitimately has no row for the width of that gap. Counting it would
- *     be a false positive, and this finding must never accuse a live draft of being residue.
+ * The set is computed by `scanDraftBodies` in `reconcile.ts` — **one definition**, called by the collector
+ * and read here out of the read-only pass `checkEvidence` already performs. Two copies of "which objects
+ * are stranded" that can disagree is a defect in waiting, and the disagreement would be silent in the
+ * direction that matters: this finding would report a count the collector then declined to act on.
+ *
+ * That also makes this function pure. It spends no subrequest of its own, which is a **reduction** in what
+ * it used to cost: the `R2Bucket.list()` and the `SELECT body_key` moved into the pass rather than being
+ * added to it. Measured both ways in `doctor-check-cost.md`'s correction headed *"the draft-body scan moved
+ * into the reconcile pass"* — 13 subrequests with it, 11 with the pass's call to `scanDraftBodies` disabled.
+ * Cited by heading rather than by date because three corrections in that file now share 19 August 2026, and
+ * the file records what an ordinal cross-reference cost the last time one was inserted.
  *
  * ## Every branch discloses `data`
  *
- * Including the ones that read like plumbing failures. The prefix this check lists *is* the org id, so
+ * Including the ones that read like plumbing failures. The prefix this finding names *is* the org id, so
  * a detail naming it is org-scoped by construction — and `withoutDataFindings` keeps every
  * `infrastructure` finding for the unauthenticated reduced report, where `discloses` promises only
  * names already public in this repository. `checkEvidence` takes the same line on all of its branches,
  * including its catch. `test/stranded-draft-bodies.test.ts` asserts that the reduced report contains no
  * org id, on the failing branch as well as the passing one.
  */
-async function checkStrandedDraftBodies(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
-  if (orgId === null) {
+function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[] {
+  if (scan === null) {
     return [{
       check: "draft_bodies_stranded",
       severity: "report",
@@ -747,65 +795,21 @@ async function checkStrandedDraftBodies(env: Env, ctx: Ctx, orgId: string | null
     }];
   }
 
-  const prefix = `${orgId}/drafts/`;
-  // The cause is kept, not discarded. `checkEvidence` above preserves `message.split("\n")[0]` in its own
-  // catch, and a finding that says only "could not list" leaves an operator with a symptom and no lead —
-  // strictly less diagnosable than the check this one says it matches.
-  let listFailure: string | null = null;
-  const listed = await env.EVIDENCE.list({ prefix, limit: BUDGETS["reconcile.list_limit"] })
-    .catch((error: unknown) => {
-      listFailure = (error as Error).message.split("\n")[0] ?? null;
-      return null;
-    });
-  if (listed === null) {
+  if (scan.read === "unreadable") {
     return [{
       check: "draft_bodies_stranded",
-      // `degraded` here, unlike the finding below, because *this* one is actionable: a bucket that
-      // will not answer is a repair somebody can perform today, and `evidence_bucket_reachable`
-      // refuses on the same condition.
+      // `degraded` here, unlike the finding below, because *this* one is actionable: a bucket or a
+      // catalog that will not answer is a repair somebody can perform today, and it is the same
+      // condition `evidence_present` and `migrations_applied` refuse on.
       severity: "degraded",
       discloses: "data",
       ok: false,
-      detail: `Could not list ${prefix} in the evidence bucket`
-        + (listFailure === null ? "." : `: ${listFailure}`),
-      fix: "check the evidence_bucket_reachable finding first",
+      detail: `Could not read ${scan.prefix}, so no draft body was counted and none could be collected`
+        + (scan.because === null ? "." : `: ${scan.because}.`),
+      // Both, because one catch now covers both halves of the scan and this finding cannot tell which
+      // failed. Naming one would send an operator to a healthy subsystem, which is worse than naming two.
+      fix: "check the evidence_present, evidence_bucket_reachable and migrations_applied findings first",
     }];
-  }
-
-  // Every live referent, in one query, deliberately without a LIMIT. A partial set of referents would
-  // report a *live* draft's body as stranded, and a false accusation is the one error this finding may
-  // not make. It is bounded in practice by what it reads: one column of `drafts`, which is working
-  // state deleted at seal, so it grows with drafts in progress rather than with mail volume.
-  let readFailure: string | null = null;
-  const referenced = await env.CATALOG.prepare(
-    "SELECT body_key FROM drafts WHERE org_id = ? AND body_key IS NOT NULL",
-  ).bind(orgId).all<{ body_key: string }>().catch((error: unknown) => {
-    readFailure = (error as Error).message.split("\n")[0] ?? null;
-    return null;
-  });
-  if (referenced === null) {
-    return [{
-      check: "draft_bodies_stranded",
-      // Actionable for the same reason as the listing failure above, and `migrations_applied` refuses
-      // on the same condition.
-      severity: "degraded",
-      discloses: "data",
-      ok: false,
-      detail: "Could not read the drafts table, so a draft body's referent cannot be checked"
-        + (readFailure === null ? "." : `: ${readFailure}`),
-      fix: "check the migrations_applied finding first",
-    }];
-  }
-
-  const live = new Set(referenced.results.map((row) => row.body_key));
-  const cutoff = ctx.now() - BUDGETS["reconcile.orphan_grace_seconds"] * 1000;
-  let stranded = 0;
-  let tooFreshToJudge = 0;
-  for (const object of listed.objects) {
-    if (live.has(object.key)) continue;
-    // An autosave may be between its R2 write and its D1 commit right now.
-    if (object.uploaded.getTime() > cutoff) tooFreshToJudge += 1;
-    else stranded += 1;
   }
 
   // One scope clause, used by both branches. The truncation note goes at the end rather than inside
@@ -814,30 +818,45 @@ async function checkStrandedDraftBodies(env: Env, ctx: Ctx, orgId: string | null
   // `formatReconcile`: a judgement withheld on N objects is part of the scope of the answer, and a
   // count that appears only when non-zero cannot be relied on by the reader who sees it absent.
   const examined =
-    `${listed.objects.length} object(s) examined under ${prefix}, ` +
-    `${tooFreshToJudge} too fresh to judge` +
-    (listed.truncated ? `, listing truncated — more objects remain unexamined` : ``);
+    `${scan.examined} object(s) examined under ${scan.prefix}, ` +
+    `${scan.tooFreshToJudge} too fresh to judge` +
+    (scan.truncated ? `, listing truncated — more objects remain unexamined` : ``);
   // Whether this pass judged everything under the prefix. It is the success branch that needs it:
   // "every" from a scan that skipped objects is the overclaim #67 is about.
-  const judgedEverything = !listed.truncated && tooFreshToJudge === 0;
+  const judgedEverything = !scan.truncated && scan.tooFreshToJudge === 0;
+  const stranded = scan.stranded.length;
 
   return [{
     check: "draft_bodies_stranded",
     /**
-     * `report`, not `degraded`, until something can collect these bytes.
+     * Still `report`, and the argument had to be made again because the old one expired.
      *
-     * A draft is deleted on the *ordinary* send path, so any Node that ever sent one message from the
-     * composer has stranded residue for good. Reported as `degraded` that is a permanent WARN with a
-     * `fix` of "nothing to run yet" — and this repo already names that failure mode next to
-     * `DELIVERY_SILENCE_MS`: a false alarm gets a check muted, and a muted check guards nothing. A
-     * verdict that is degraded on every healthy Node also stops distinguishing healthy from degraded,
-     * which is the only job a verdict has. `workers_paid_plan` is the precedent for the honest shape:
-     * a real gap, correctly reported, that no operator action closes.
+     * The comment here used to say *"promote it to `degraded` when a collector exists"*. A collector now
+     * exists, so that condition has been met — and it turns out to have been the wrong condition, which is
+     * worth writing down rather than quietly honouring or quietly dropping.
      *
-     * **Promote it to `degraded` when a collector exists** — that is, when #64's legal hold lands and a
-     * sweep can consult it. At that point residue means the sweep is not running or is failing, which
-     * is a state an operator can act on, and the `fix` becomes a command instead of an explanation.
-     * Nothing else should promote it: a bigger count is the same un-actionable fact, larger.
+     * **What `degraded` has to mean is "something is wrong here".** Residue does not mean that. Collection
+     * runs only on `POST /api/maintenance/reconcile?collect=1`; there is no cron and #67 deliberately did
+     * not add one, because the sweep belongs to the pass an operator invokes rather than to a schedule
+     * nobody asked for. So a Node that has sent one message from the composer and has not been swept since
+     * has residue, correctly, and it is **healthy**. Degrading it would put a permanent WARN on the
+     * ordinary state of the product — the failure mode `DELIVERY_SILENCE_MS` names in this same file, where
+     * a false alarm gets a check muted and a muted check guards nothing. It gets worse under a hold, where
+     * collection is refused org-wide on purpose and no operator action can close the finding at all.
+     *
+     * `evidence_orphans` is `degraded` for the opposite reason, and the contrast is the argument: a raw
+     * orphan only exists because a write lost its transaction, so a nonzero count there really is evidence
+     * that something went wrong. Residue here is evidence that somebody used the composer.
+     *
+     * **The condition that would justify `degraded` is residue that survives a collection run** — the
+     * collector ran, was not suppressed, and the bytes are still there. Nothing in this report can know
+     * that today: no collection run is recorded anywhere, so there is no last-swept instant to compare
+     * against. That is the missing input, stated rather than approximated, and it is not invented here
+     * because a guessed one would degrade exactly the healthy Nodes described above.
+     *
+     * What did change is the `fix`: it was *"nothing to run yet, and that is the finding"*, and there is
+     * now a command. `workers_paid_plan` remains the precedent for the shape — a real fact, correctly
+     * reported, that does not by itself mean a fault.
      */
     severity: "report",
     discloses: "data",
@@ -849,24 +868,159 @@ async function checkStrandedDraftBodies(env: Env, ctx: Ctx, orgId: string | null
           : ` Not every draft body was judged, so this is a clean sample rather than a clean prefix.`)
       : `${stranded} draft body object(s) have no drafts row (${examined}). ` +
         `A draft is deleted when its message is sealed, and deleting it removes the row only — so ` +
-        `these are the bodies of messages already sent and of drafts somebody abandoned. They are ` +
-        `not collectable orphans: nothing in this Node deletes under ${prefix} — the only R2 delete ` +
-        `is fed by the raw/ listing — so no code path can collect them, and R2 usage grows with ` +
-        `composer use. The product said the draft was deleted; the row is gone and these bytes are ` +
-        `not.` +
+        `these are the bodies of messages already sent and of drafts somebody abandoned. The ` +
+        `reconciler collects them under its own referent rule, through the same single R2 delete as ` +
+        `raw orphans, so residue means the collector has not run or a legal hold is suppressing it — ` +
+        `not that nothing can collect them, which is what this said until #67.` +
         // A floor for either reason it withheld judgement, not only truncation. A too-fresh object may
         // prove stranded on the next run, so a count that omits it is a floor exactly as a truncated
         // listing is — and the success branch already caveats both. Saying it on one branch and not the
         // other is the asymmetry this slice's own D-fix argued against.
-        (listed.truncated || tooFreshToJudge > 0 ? ` This count is a floor, not a total.` : ``),
+        (scan.truncated || scan.tooFreshToJudge > 0 ? ` This count is a floor, not a total.` : ``),
     ...(stranded === 0 ? {} : {
-      fix: "nothing to run yet, and that is the finding. Collection is deferred to the legal hold " +
-        "every content-destroying call site must consult (#64) — a sweep is itself such a path, so it " +
-        "must not land before the hold. Do not delete this prefix by hand: that is the same " +
-        "unbound deletion, performed without the check. Tracked by #67",
+      // A command, at last, and the hold caveat is unconditional rather than computed for the reason
+      // `evidence_orphans` gives above: this finding spends no query, so the advice must be true whether
+      // or not a hold stands, and the finding that knows is named instead of restated.
+      fix: "POST /api/maintenance/reconcile?collect=1 to delete them — unless a legal hold is in force, " +
+        "which suppresses collection for the whole organization because an object with no referent is " +
+        "unattributable by definition. The legal_holds_active finding says whether one is. Do not delete " +
+        "this prefix by hand: that is the same deletion performed without the hold check",
     }),
     receipt: "docs/receipts/evidence-lifecycle.md",
   }];
+}
+
+/**
+ * Legal hold (#64): what is held, what a hold is failing to enforce, and the lift path that does not exist.
+ *
+ * ## Why a mechanism with no observable was not an option
+ *
+ * A hold changes what the Node refuses to destroy and nothing else. It has no screen, and until #64's place
+ * route there was no way to make one — so if `doctor` did not report holds, the only evidence a hold existed
+ * would be a deletion failing. Three of this month's defects took exactly that shape: a mechanism whose only
+ * observable was the failure it caused.
+ *
+ * ## One query, three findings, and one of them is a gap
+ *
+ * `holdsForReport` is a single `LEFT JOIN` — one fixed D1 query per run, not one per hold, which is the
+ * distinction `doctor-check-cost.md`'s `stale_when` cares about — see its correction headed *"legal hold added
+ * a fixed-cost check"*, named that way because three of its corrections share the date 19 August 2026.
+ *
+ * **The "matter closed but unlifted" finding #64 asked for is deliberately absent**, and this is where that
+ * is recorded: there are no matters. #63 charted them and settled that `legal_hold` is one of their types,
+ * but nothing builds them, `holds.matter_id` is a nullable TEXT with no table behind it, and a check for a
+ * closed matter would have to read a table that does not exist. It arrives with matters.
+ *
+ * ## Severities
+ *
+ *   legal_holds_active         `report`. A hold is a normal state of a governed Node, not a fault.
+ *   legal_hold_mailbox_missing `degraded`, and only when one exists. A hold naming an absent mailbox is a
+ *                              hold enforcing nothing while reporting as active — a false statement about
+ *                              preservation, which is the one error class this mechanism may not make. It is
+ *                              also **not** reachable through the product: `placeHold` refuses an absent
+ *                              mailbox and nothing deletes a mailbox, so this cannot become the permanent
+ *                              WARN that `DELIVERY_SILENCE_MS` names and `draft_bodies_stranded` avoids.
+ *   legal_hold_lift_path       `report`, `ok: true`, always. `workers_paid_plan` is the precedent for the
+ *                              honest shape: a real gap, correctly reported, that no operator action closes.
+ *                              Reporting it as a failure would make **every** Node carry a failing finding
+ *                              for good, and a check that always fails is a check somebody mutes.
+ *
+ * ## Disclosure
+ *
+ * A hold names a mailbox, and the two findings that name one disclose `data` — the reduced report served
+ * without authentication promises only names already public in this repository, and a mailbox id is not one.
+ * `legal_hold_lift_path` is the exception and it is deliberate: it names no mailbox and no count, because it
+ * is a fact about this **build** rather than about this organization, and it must survive into the reduced
+ * report for the same reason `workers_paid_plan` does. That is also why it does not vary with the hold count:
+ * a finding whose text moved when a hold was placed would leak that a hold exists to an unauthenticated
+ * caller.
+ */
+async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  const lift: Finding = {
+    check: "legal_hold_lift_path",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: true,
+    detail:
+      "There is no way to lift a legal hold on this Node. #64 decided lifting takes dual approval — one " +
+      "stage of two distinct approvers with a mandatory reason — and #61's approval machinery is not built, " +
+      "so a hold placed here is permanent until a lift ships. Placing is deliberately the easy half: it " +
+      "only ever preserves. Nothing here should grow a single-admin lift, which would contradict #64.",
+  };
+
+  if (orgId === null) {
+    return [
+      {
+        check: "legal_holds_active",
+        severity: "report",
+        discloses: "data",
+        ok: true,
+        detail: "No organization yet, so no hold can have been placed.",
+      },
+      lift,
+    ];
+  }
+
+  const holds = await holdsForReport(env, orgId).catch(() => null);
+  if (holds === null) {
+    return [
+      {
+        check: "legal_holds_active",
+        // Actionable, and the same condition `migrations_applied` refuses on: a Node that cannot read this
+        // table cannot enforce a hold either, and it must not read as "no holds".
+        severity: "degraded",
+        discloses: "data",
+        ok: false,
+        detail: "Could not read the holds table, so this report cannot say what is preserved.",
+        fix: "check the migrations_applied finding first — a Node that cannot read holds also cannot enforce one",
+      },
+      lift,
+    ];
+  }
+
+  const orphaned = holds.filter((hold) => !hold.mailboxExists);
+  const day = 24 * 60 * 60 * 1000;
+  const scope = (hold: (typeof holds)[number]): string => {
+    const age = Math.floor((ctx.now() - new Date(hold.placedAt).getTime()) / day);
+    const window = hold.fromDate === null && hold.toDate === null
+      ? "all dates"
+      : `${hold.fromDate ?? "the beginning"} to ${hold.toDate ?? "ongoing"}`;
+    return `${hold.id} on mailbox ${hold.mailboxId}, ${window}, ` +
+      `matter ${hold.matterId ?? "none cited"}, placed by ${hold.placedBy} ${age} day(s) ago`;
+  };
+
+  const findings: Finding[] = [{
+    check: "legal_holds_active",
+    severity: "report",
+    discloses: "data",
+    // A hold is not a fault. What would be a fault is one enforcing nothing, which is the finding below.
+    ok: true,
+    detail: holds.length === 0
+      ? "No legal hold is in force, so nothing suppresses orphan collection."
+      : `${holds.length} legal hold(s) in force. Orphan collection is suppressed for the whole ` +
+        `organization while any hold stands — an orphan is unattributable by definition, so nothing can ` +
+        `prove one is not responsive; they are still enumerated by reconcile and never deleted. ` +
+        holds.map(scope).join("; ") + ".",
+  }];
+
+  if (orphaned.length > 0) {
+    findings.push({
+      check: "legal_hold_mailbox_missing",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `${orphaned.length} hold(s) name a mailbox that no longer exists, so they enforce nothing ` +
+        `while reporting as active: ${orphaned.map((hold) => `${hold.id} on ${hold.mailboxId}`).join(", ")}.`,
+      fix: "this Node cannot reach that state on its own — placing refuses an absent mailbox and nothing " +
+        "deletes a mailbox — so either the mailbox row was removed outside the product or the hold was " +
+        "inserted outside it. Restore the mailbox row: the hold cannot be lifted (see the " +
+        "legal_hold_lift_path finding) and must not be deleted by hand, which would destroy the record of " +
+        "what somebody decided to preserve",
+    });
+  }
+
+  findings.push(lift);
+  return findings;
 }
 
 /**

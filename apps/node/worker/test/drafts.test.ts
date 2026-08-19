@@ -168,21 +168,29 @@ describe("replying twice resumes rather than forking", () => {
 });
 
 describe("retiring a draft", () => {
-  it("deletes the row and leaves the object for the reconciler", async () => {
-    const saved = await saveDraft(testEnv, atTime(3_300_000_000_000), ORG, AUTHOR, null, composition);
-    expect(await deleteDraft(testEnv, ORG, AUTHOR, saved.id)).toBe(true);
+  // This name has now been wrong twice. It was "leaves the object for the reconciler" while the reconciler
+  // listed `raw/` only — a hand-off to a component that had never been given the prefix — and then "which no
+  // code path collects", which #67 made false by giving it that prefix. What it asserts is what `deleteDraft`
+  // does: the row, and only the row. Which component collects the object afterwards is
+  // `test/stranded-draft-bodies.test.ts`'s claim to make, against a real pass, so this name no longer makes
+  // any claim about it at all.
+  it("deletes the row and leaves the object, because an inline delete is the unrepairable order", async () => {
+    const ctx = atTime(3_300_000_000_000);
+    const saved = await saveDraft(testEnv, ctx, ORG, AUTHOR, null, composition);
+    expect(await deleteDraft(testEnv, ctx, ORG, AUTHOR, saved.id)).toBe(true);
     expect(await readDraft(testEnv, ORG, AUTHOR, saved.id)).toBeNull();
 
-    // Deliberate, per ADR 32's asymmetry: an orphan blob past grace may be collected, while a reference
-    // with no blob may only be *reported*. Deleting the object inline would mean a failure between the two
-    // writes leaves a row pointing at nothing — the unrepairable side.
+    // Deliberate, per ADR 32's asymmetry: an object past grace whose referent is gone may be collected, while
+    // a reference with no object may only be *reported*. Deleting the object here would mean a failure
+    // between the two writes leaves a row pointing at nothing — the unrepairable side.
     const listed = await testEnv.EVIDENCE.list({ prefix: `${ORG}/drafts/` });
     expect(listed.objects).toHaveLength(1);
   });
 
   it("will not delete somebody else's", async () => {
-    const saved = await saveDraft(testEnv, atTime(3_300_000_100_000), ORG, AUTHOR, null, composition);
-    expect(await deleteDraft(testEnv, ORG, OTHER, saved.id)).toBe(false);
+    const ctx = atTime(3_300_000_100_000);
+    const saved = await saveDraft(testEnv, ctx, ORG, AUTHOR, null, composition);
+    expect(await deleteDraft(testEnv, ctx, ORG, OTHER, saved.id)).toBe(false);
     expect(await readDraft(testEnv, ORG, AUTHOR, saved.id)).not.toBeNull();
   });
 });

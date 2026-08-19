@@ -8,39 +8,42 @@ import { utf8 } from "@mailda/evidence";
 import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
 import { runDoctor, withoutDataFindings, type Finding } from "../src/doctor.ts";
 import { putEvidence } from "../src/evidence-store.ts";
-import { formatReconcile, reconcileEvidence } from "../src/reconcile.ts";
+import { placeHold } from "../src/holds.ts";
+import { formatReconcile, reconcileEvidence, scanDraftBodies } from "../src/reconcile.ts";
 
 /**
- * A draft body nothing can collect has to be counted by something (#67).
+ * Draft bodies whose row is gone: counted, and now collected (#67).
  *
  * ## What was invisible
  *
  * A draft body is written to `${orgId}/drafts/{draftId}.txt`. `deleteDraft` issues one
  * `DELETE FROM drafts` and touches R2 not at all, and a draft is deleted when its message is **sealed** —
- * the ordinary path through the composer, not an exception. The reconciler's only listing is
+ * the ordinary path through the composer, not an exception. The reconciler's only listing was
  * `${orgId}/raw/`, and its `EVIDENCE.delete` is the one R2 delete in the Worker.
  *
- * So these objects are not collected late. They are **outside every scan**: no listing covers the prefix,
- * `reconcile` printed `0 orphans` while never having looked, and `doctor` had no figure that could reveal
- * them. The code and `application-shell.md` both said the object was *"left for the reconciler, because
- * ADR 32 makes an orphan blob collectable"* — true of ADR 32, false of this prefix. The same shape as
- * three of this month's defects: a claim in a comment with nothing enforcing it.
+ * So those objects were not collected late. They were **outside every scan**: no listing covered the
+ * prefix, `reconcile` printed `0 orphans` while never having looked, and `doctor` had no figure that could
+ * reveal them. The code and `application-shell.md` both said the object was *"left for the reconciler,
+ * because ADR 32 makes an orphan blob collectable"* — true of ADR 32, false of this prefix. The same shape
+ * as three of this month's defects: a claim in a comment with nothing enforcing it.
  *
- * ## What this file pins, and what it deliberately does not
+ * ## What this file pins
  *
- * That the residue is **counted**, that a live draft's body is not accused of being residue, and that
- * `reconcile` now names the prefixes it scanned so a prefix outside the scan appears in the output rather
- * than being absent from it.
+ * That the residue is **counted**, that it is **collected by the reconciler's existing pass** rather than by
+ * a sweep of its own, that a live or mid-save draft's body is never accused or destroyed, that a legal hold
+ * suppresses collection org-wide (#64), and that `doctor` reads the collector's own scan rather than
+ * repeating the predicate — because two definitions of "which objects are stranded" that can disagree is
+ * the defect this issue is about, one layer up.
  *
- * It asserts **nothing is deleted**, because nothing may be: #64 requires every content-destroying call
- * site to consult a legal hold that does not exist yet, and a cleanup sweep is itself such a path.
- * Reporting is the whole of the change.
+ * The delete itself is not tested here for *being the only one*: `test/node/content-deletion-world.test.ts`
+ * owns that, and asserts it lexically.
  */
 
 const testEnv = env as unknown as Env;
 const ORG = "org_stranded";
 const MAILBOX = "mbx_stranded";
 const AUTHOR = "usr_stranded";
+const ADMIN = "usr_stranded_admin";
 
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
@@ -63,16 +66,22 @@ function find(findings: Finding[], check: string): Finding {
  *
  * Written through `putEvidence` with the key `bodyKeyFor` produces, so the fixture is the real artifact
  * rather than a plausible-looking one — `putEvidence` writes the key verbatim, which is why the object
- * lands outside the reconciler's prefix in the first place.
+ * lands outside the reconciler's raw prefix in the first place.
  */
 async function aSealedDraftsResidue(draftId: string): Promise<string> {
   const stored = await putEvidence(testEnv, `${ORG}/drafts/${draftId}.txt`, utf8("half a sentence"));
   return stored.blobKey;
 }
 
+/** An accepted-mail object with no receipt: the *other* referent rule, for telling the two counts apart. */
+async function aRawOrphan(name: string): Promise<string> {
+  const stored = await putEvidence(testEnv, `${ORG}/raw/${name}.eml`, utf8("From: a@b.com\r\n\r\nhi\r\n"));
+  return stored.blobKey;
+}
+
 /**
  * The same Node with an `EVIDENCE` binding whose `list` refuses — the state a bucket that was never
- * created presents as. It is here to reach the check's *error* branch, which is the branch that names the
+ * created presents as. It is here to reach the *unreadable* branch, which is the branch that names the
  * prefix (and therefore the org id) in a detail a locked-out operator might be served.
  */
 function withUnlistableEvidence(): Env {
@@ -110,12 +119,11 @@ function withTruncatedListing(): Env {
 }
 
 /**
- * The same Node whose `drafts` read refuses — the check's *other* error branch.
+ * The same Node whose `drafts` read refuses — the referent half of the scan rather than the listing half.
  *
- * It exists because the check's JSDoc claimed both failing branches were asserted and only one was. That
- * branch's detail names nothing org-scoped today, so this is not a leak now; the point is that a later edit
- * adding the prefix to it would otherwise be caught by nothing. Proved by putting `infrastructure` back on
- * it and watching the full suite stay green.
+ * It matters because the two halves fail for different reasons in the world (an absent bucket, an
+ * unmigrated catalog) and both have to end in a report that says *the prefix was not read* rather than in a
+ * zero. A zero is what the single-prefix report used to print for a prefix nobody had looked at.
  */
 function withUnreadableDrafts(): Env {
   const catalog = new Proxy(testEnv.CATALOG, {
@@ -144,6 +152,23 @@ function withUnreadableDrafts(): Env {
   return { ...testEnv, CATALOG: catalog } as Env;
 }
 
+/** The same Node, recording every prefix `list()` was called with, so a second listing is countable. */
+function withListingLog(log: string[]): Env {
+  const evidence = new Proxy(testEnv.EVIDENCE, {
+    get(target, property) {
+      if (property === "list") {
+        return (options?: R2ListOptions) => {
+          log.push(options?.prefix ?? "(no prefix)");
+          return target.list(options);
+        };
+      }
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return { ...testEnv, EVIDENCE: evidence } as Env;
+}
+
 /** A draft somebody is still writing: body object **and** the row that references it. */
 async function aLiveDraft(ctx: Ctx, draftId: string): Promise<string> {
   const stored = await putEvidence(testEnv, `${ORG}/drafts/${draftId}.txt`, utf8("still typing"));
@@ -159,7 +184,8 @@ async function aLiveDraft(ctx: Ctx, draftId: string): Promise<string> {
 }
 
 beforeEach(async () => {
-  for (const table of ["drafts", "ingress_receipts", "node_claim", "mailboxes"]) {
+  for (const table of ["drafts", "ingress_receipts", "node_claim", "mailboxes", "holds",
+                       "relationship_tuples", "audit_entries"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const listed = await testEnv.EVIDENCE.list({ prefix: `${ORG}/` });
@@ -168,13 +194,20 @@ beforeEach(async () => {
   const at = new Date(Date.now()).toISOString();
   await testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
     .bind(MAILBOX, ORG, "Support", at).run();
+  // `placeHold` is `org.admin` only, and the suppression cases below place a real hold rather than
+  // inserting a row: the closed world requires `INSERT INTO holds` to live in `src/holds.ts` alone, and a
+  // fixture that wrote the table directly would be testing suppression against a bound nothing normalised.
+  await testEnv.CATALOG.prepare(
+    `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+     VALUES (?,?,?,?,?,?,?)`,
+  ).bind("rt_stranded_admin", ORG, ADMIN, "org.admin", "organization", ORG, at).run();
   // Claimed: the draft prefix is scoped to an organization, so an unclaimed Node has none to check.
   await testEnv.CATALOG.prepare(
     "INSERT INTO node_claim (id, secret_hash, org_id, claimed_at) VALUES (1, ?, ?, ?)",
   ).bind("unused-in-this-test", ORG, at).run();
 });
 
-describe("doctor counts draft bodies nothing can collect", () => {
+describe("doctor counts draft bodies whose drafts row is gone", () => {
   it("counts a body whose draft row is gone", async () => {
     const ctx = afterTheGraceWindow();
     await aSealedDraftsResidue("dft_sealed");
@@ -185,12 +218,13 @@ describe("doctor counts draft bodies nothing can collect", () => {
     expect(finding.detail).toContain(`${ORG}/drafts/`);
   });
 
-  it("reports the gap without degrading the verdict, because no operator action closes it", async () => {
-    // A draft is deleted on the ordinary send path, so residue is permanent until #64's legal hold makes a
-    // collector possible. `degraded` here would mean every Node that ever sent one message from the
-    // composer reports WARN for good, and a check that is always failing is a check somebody mutes —
-    // `DELIVERY_SILENCE_MS` names that failure mode in this same file. `workers_paid_plan` is the
-    // precedent: a real gap, honestly reported, at `report`.
+  it("reports the residue without degrading the verdict, because residue is not a fault", async () => {
+    // The severity argument was **re-made** for #67 and came out the same way, which is why this test kept
+    // its shape. Collection runs on `?collect=1` and nowhere else — there is no cron — so a Node that has
+    // sent one message from the composer and has not been swept since has residue and is healthy.
+    // `degraded` would put a permanent WARN on the ordinary state of the product, and it would be
+    // unclosable under a hold, where collection is refused on purpose. `DELIVERY_SILENCE_MS` names that
+    // failure mode in the same file: a false alarm gets a check muted.
     const ctx = afterTheGraceWindow();
     // Otherwise-healthy: the stranded finding must be the *only* failure, or this proves nothing about
     // which finding moved the verdict.
@@ -205,18 +239,18 @@ describe("doctor counts draft bodies nothing can collect", () => {
     expect(find(report.findings, "draft_bodies_stranded").severity).toBe("report");
   });
 
-  it("keeps every org id out of the unauthenticated reduced report, on the error branch too", async () => {
+  it("keeps every org id out of the unauthenticated reduced report, on the unreadable branch too", async () => {
     // `withoutDataFindings` keeps every `infrastructure` finding, and `/api/doctor` serves that reduced
     // report with no authentication when the Node cannot authenticate anyone. `discloses:
-    // "infrastructure"` promises names already public in this repository; the prefix this check lists is
+    // "infrastructure"` promises names already public in this repository; the prefix this check names is
     // the org id, so no branch of it may claim that.
     const ctx = afterTheGraceWindow();
     await aSealedDraftsResidue("dft_sealed");
 
     const cases = [
-      ["listing works", testEnv],
+      ["scan complete", testEnv],
+      // Both halves of the scan, not one: the listing and the referent query fail for different reasons.
       ["listing refuses", withUnlistableEvidence()],
-      // Both failing branches, not one. The JSDoc claimed this coverage before it existed.
       ["drafts read refuses", withUnreadableDrafts()],
     ] as const;
     for (const [label, nodeEnv] of cases) {
@@ -230,19 +264,24 @@ describe("doctor counts draft bodies nothing can collect", () => {
     }
   });
 
-  it("says these are not collectable orphans, and that collection is deferred", async () => {
-    // The wording is the point of the finding. "Collectable orphan" is the false claim that made this
-    // invisible: the reconciler cannot collect what it does not list.
+  it("says why residue exists now that something can collect it, and gives the command", async () => {
+    // The wording is the point of the finding, and it is the wording that had gone stale. "Not collectable
+    // orphans / no code path can collect them" was the true statement before #67 and is false after it:
+    // residue now means the collector has not run, or a hold is suppressing it. A `fix` that still read
+    // "nothing to run yet" would be the same defect this issue is about, pointing the other way.
     const ctx = afterTheGraceWindow();
     await aSealedDraftsResidue("dft_sealed");
 
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
-    expect(finding.detail).toContain("not collectable orphans");
-    expect(finding.detail).toContain("no code path can collect");
-    // Deferred to #64's legal hold, because a sweep is itself a content-destroying path.
-    expect(finding.fix, "a finding a person cannot act on still has to say why").toBeTruthy();
+    expect(finding.detail).toContain("the collector has not run or a legal hold is suppressing it");
+    expect(finding.detail, "the old claim, which the collector made false")
+      .not.toContain("no code path can collect");
+    expect(finding.fix, "a finding a person can act on has to say the act").toBeTruthy();
+    expect(finding.fix).toContain("/api/maintenance/reconcile?collect=1");
+    // And the hold caveat, unconditional because this finding spends no query and so cannot know.
     expect(finding.fix).toContain("legal hold");
-    expect(finding.fix).toContain("deferred");
+    expect(finding.fix, "the old deferral, which no longer describes anything")
+      .not.toContain("nothing to run yet");
   });
 
   it("counts one residue per stranded object rather than reporting a boolean", async () => {
@@ -294,18 +333,12 @@ describe("doctor counts draft bodies nothing can collect", () => {
     expect(finding.detail).not.toContain("Every object under the prefix");
   });
 
-  it("reports rather than collects: the object is still there afterwards", async () => {
-    // #64 decided every content-destroying call site must consult a legal hold, and that hold does not
-    // exist. A diagnostic was never allowed to delete anyway, and this slice adds no deletion at all.
+  it("reports and never collects, because a diagnostic must not be the thing that deletes", async () => {
     const ctx = afterTheGraceWindow();
     const blobKey = await aSealedDraftsResidue("dft_sealed");
 
     await runDoctor(testEnv, ctx);
-    expect(await testEnv.EVIDENCE.head(blobKey)).not.toBeNull();
-
-    // Even the reconciler asked to collect leaves it, because it never lists this prefix.
-    await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
-    expect(await testEnv.EVIDENCE.head(blobKey)).not.toBeNull();
+    expect(await testEnv.EVIDENCE.head(blobKey), "doctor calls the pass read-only").not.toBeNull();
   });
 
   it("keeps the count out of a locked-out operator's report — it is derived from mail", async () => {
@@ -315,25 +348,29 @@ describe("doctor counts draft bodies nothing can collect", () => {
     const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
     expect(finding.discloses).toBe("data");
   });
-});
 
-describe("reconcile names the prefixes it scanned", () => {
-  it("reports the prefix it listed, so a prefix outside the scan is visible", async () => {
+  it("reads the collector's own scan instead of listing the prefix a second time", async () => {
+    // The predicate is shared, not duplicated (#67). Two copies of "which objects are stranded" that can
+    // disagree is a defect in waiting, and the disagreement would be silent in the worst direction: the
+    // diagnostic reporting a count the collector then declines to act on. Counted at the binding, because
+    // "it is shared" is otherwise a claim about the shape of the source that nothing checks.
     const ctx = afterTheGraceWindow();
     await aSealedDraftsResidue("dft_sealed");
 
-    const report = await reconcileEvidence(testEnv, ctx, ORG);
-    expect(report.scanned.prefixes).toEqual([`${ORG}/raw/`]);
-    // The draft prefix is not scanned, and the residue therefore does not appear as an orphan. Before
-    // this field existed the report was silent about both facts at once.
-    expect(report.scanned.prefixes).not.toContain(`${ORG}/drafts/`);
-    expect(report.orphans).toEqual([]);
+    const listings: string[] = [];
+    await runDoctor(withListingLog(listings), ctx);
+
+    // The anchor: if the log were empty every count below would pass against nothing.
+    expect(listings.length, "the listing log recorded nothing, so the counts prove nothing")
+      .toBeGreaterThan(0);
+    expect(listings.filter((prefix) => prefix === `${ORG}/drafts/`)).toEqual([`${ORG}/drafts/`]);
+    expect(listings.filter((prefix) => prefix === `${ORG}/raw/`)).toEqual([`${ORG}/raw/`]);
   });
 
   it("carries the scanned prefixes into doctor's own finding, un-spliced when truncated", async () => {
-    // This slice also un-spliced the truncation clause in `checkEvidence`, where it used to split the
-    // phrase "examined under" — "200 object(s), truncated examined under org_x/raw/". Nothing guarded
-    // that: `doctor.test.ts` only asserts the receipt count.
+    // The truncation clause in `checkEvidence` used to split the phrase "examined under" — "200 object(s),
+    // truncated examined under org_x/raw/". Nothing guarded that: `doctor.test.ts` only asserts the
+    // receipt count.
     //
     // The listing **must be forced truncated**, because that is the only state in which the splice
     // appears at all. A first version of this test asserted against an ordinary fixture and passed with
@@ -342,24 +379,199 @@ describe("reconcile names the prefixes it scanned", () => {
     await aSealedDraftsResidue("dft_sealed");
 
     const detail = find((await runDoctor(withTruncatedListing(), ctx)).findings, "evidence_present").detail;
-    expect(detail).toContain(`object(s) examined under ${ORG}/raw/`);
+    expect(detail).toContain(`object(s) examined under ${ORG}/raw/, ${ORG}/drafts/`);
     expect(detail).toContain("listing truncated");
-    // The clause goes after the prefix, never inside the phrase it used to split.
+    // The clause goes after the prefixes, never inside the phrase it used to split.
     expect(detail).not.toContain("truncated examined");
+  });
+});
+
+describe("reconcile collects a stranded draft body through its one delete", () => {
+  it("collects it when asked, past the grace window", async () => {
+    const ctx = afterTheGraceWindow();
+    const blobKey = await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.draftBodiesDeleted).toBe(1);
+    expect(await testEnv.EVIDENCE.head(blobKey), "the residue #67 was filed about").toBeNull();
+  });
+
+  it("leaves it alone when collection was not asked for, which is doctor's mode", async () => {
+    const ctx = afterTheGraceWindow();
+    const blobKey = await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG);
+    expect(report.draftBodies.read).toBe("complete");
+    if (report.draftBodies.read !== "complete") throw new Error("unreachable");
+    expect(report.draftBodies.stranded.map((object) => object.blobKey)).toEqual([blobKey]);
+    expect(report.draftBodiesDeleted).toBe(0);
+    expect(await testEnv.EVIDENCE.head(blobKey)).not.toBeNull();
+  });
+
+  it("never touches a live draft's body, even asked to collect", async () => {
+    // The referent rule is a `drafts` row keyed by `body_key`, not a receipt — so getting this wrong does
+    // not cost storage, it destroys somebody's unfinished writing while they are writing it.
+    const ctx = afterTheGraceWindow();
+    const live = await aLiveDraft(ctx, "dft_live");
+    const residue = await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.draftBodiesDeleted, "the residue, and only the residue").toBe(1);
+    expect(await testEnv.EVIDENCE.head(live), "a draft somebody is still writing").not.toBeNull();
+    expect(await testEnv.EVIDENCE.head(residue)).toBeNull();
+  });
+
+  it("spares every live draft, not just one, because the referent read is not paged", async () => {
+    // `scanDraftBodies` claims its referent query "deliberately has **no LIMIT**", because a partial set of
+    // referents reports a *live* draft's body as stranded and under `collect` that deletes somebody's
+    // unfinished writing. **Nothing checked that claim.** Adding `LIMIT 1` to the query passed the entire
+    // suite — 481 tests — because every fixture above sets up exactly one live draft, so a referent read that
+    // returned only the first row was indistinguishable from one that returned all of them. That is the
+    // vacuity mode AGENTS.md names: a mutation that can only manifest in a state no fixture builds.
+    //
+    // **What this bounds, and what it does not.** Behaviourally it fails for any limit below
+    // `liveDrafts.length`; it cannot prove the *absence* of a limit, because a `LIMIT 9` would need nine live
+    // drafts to show and a test cannot enumerate every number. The count is therefore a tripwire and not a
+    // proof: three is past the one that already slipped through, and a paging bug introduced by pagination
+    // rather than by a literal — `.all()` swapped for a cursor, a D1 row cap — shows up at any plurality,
+    // which is the realistic shape. The residual is stated in `reconcile.ts` beside the claim rather than
+    // left for a reader to discover here.
+    const ctx = afterTheGraceWindow();
+    const liveDrafts = [
+      await aLiveDraft(ctx, "dft_live_one"),
+      await aLiveDraft(ctx, "dft_live_two"),
+      await aLiveDraft(ctx, "dft_live_three"),
+    ];
+    const residue = await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.draftBodies.read).toBe("complete");
+    if (report.draftBodies.read !== "complete") throw new Error("unreachable");
+    // The accusation, before the deletion: a live body named as stranded is already the whole bug, and the
+    // read-only pass `doctor` performs would report it even where no delete follows.
+    expect(report.draftBodies.stranded.map((object) => object.blobKey), "only the residue is stranded")
+      .toEqual([residue]);
+    expect(report.draftBodiesDeleted, "the residue, and nothing anybody is still writing").toBe(1);
+    for (const key of liveDrafts) {
+      expect(await testEnv.EVIDENCE.head(key), `live draft body ${key}`).not.toBeNull();
+    }
+    expect(await testEnv.EVIDENCE.head(residue)).toBeNull();
+  });
+
+  it("never touches a body inside the grace window", async () => {
+    // `saveDraft` writes R2 before the row, so a body legitimately has no row for the width of that gap.
+    // Collecting inside it would delete the body of a draft mid-save.
+    const ctx = createSystemCtx();
+    const blobKey = await aSealedDraftsResidue("dft_inflight");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.draftBodies.read).toBe("complete");
+    if (report.draftBodies.read !== "complete") throw new Error("unreachable");
+    expect(report.draftBodies.tooFreshToJudge).toBe(1);
+    expect(report.draftBodiesDeleted).toBe(0);
+    expect(await testEnv.EVIDENCE.head(blobKey)).not.toBeNull();
+  });
+
+  it("counts the two referent rules apart rather than as one total", async () => {
+    // "3 deleted" mixing a lost transaction with the residue of a sent message is a number an operator
+    // cannot act on, and it would make `evidence_orphans`'s "N object(s) have no receipt" false of half
+    // its own count.
+    const ctx = afterTheGraceWindow();
+    await aRawOrphan("msg_orphan");
+    await aSealedDraftsResidue("dft_one");
+    await aSealedDraftsResidue("dft_two");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.orphansDeleted).toBe(1);
+    expect(report.draftBodiesDeleted).toBe(2);
+    expect(report.orphans.length, "an orphan is an object with no receipt, and only that").toBe(1);
+  });
+
+  it("collects the residue every Node already has, in the same pass, with no migration", async () => {
+    // Item 4 of the design: every Node that has ever sent from the composer holds these objects, and they
+    // are collected by the ordinary pass rather than by a one-off sweep. Three pre-existing objects, none
+    // of which this test created through a draft lifecycle, all gone in one call.
+    const ctx = afterTheGraceWindow();
+    const keys = [
+      await aSealedDraftsResidue("dft_old_one"),
+      await aSealedDraftsResidue("dft_old_two"),
+      await aSealedDraftsResidue("dft_old_three"),
+    ];
+
+    await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    for (const key of keys) expect(await testEnv.EVIDENCE.head(key)).toBeNull();
+  });
+});
+
+describe("a legal hold suppresses draft-body collection org-wide", () => {
+  const AUGUST_10 = Date.parse("2026-08-10T09:00:00.000Z");
+
+  it("enumerates the residue and leaves the bytes in place", async () => {
+    // #64's rule, and it applies here for the same reason it applies to an orphan: a stranded body has no
+    // `drafts` row, so there is no mailbox to test a hold against, and the key's own prefix is the
+    // organization. Unattributable by definition, so nothing can prove it is not responsive.
+    const ctx = afterTheGraceWindow();
+    const blobKey = await aSealedDraftsResidue("dft_sealed");
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: MAILBOX });
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.collection).toEqual({ requested: true, suppressed: true });
+    expect(report.draftBodiesDeleted, "a suppressed pass deletes nothing").toBe(0);
+    expect(report.draftBodies.read).toBe("complete");
+    if (report.draftBodies.read !== "complete") throw new Error("unreachable");
+    expect(report.draftBodies.stranded.map((object) => object.blobKey), "still enumerated").toEqual([blobKey]);
+    expect(await testEnv.EVIDENCE.head(blobKey), "the bytes a hold protects").not.toBeNull();
+  });
+
+  it("counts the withheld draft bodies in the line an operator reads", async () => {
+    // Suppression nobody can see is indistinguishable from a reconciler that has stopped working, and the
+    // held count has to include the draft bodies or the line understates what is being preserved.
+    const ctx = afterTheGraceWindow();
+    await aSealedDraftsResidue("dft_one");
+    await aSealedDraftsResidue("dft_two");
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: MAILBOX });
+
+    const text = formatReconcile(await reconcileEvidence(testEnv, ctx, ORG, { collect: true }));
+    expect(text).toContain("HELD      2 collectable object(s) not collected");
+  });
+
+  it("collects when nothing is held, so the suppression is the hold and not the code path", async () => {
+    const ctx = afterTheGraceWindow();
+    const blobKey = await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.collection).toEqual({ requested: true, suppressed: false });
+    expect(report.draftBodiesDeleted).toBe(1);
+    expect(await testEnv.EVIDENCE.head(blobKey)).toBeNull();
+  });
+});
+
+describe("reconcile says what it scanned, and what it could not read", () => {
+  it("names both prefixes, because a prefix outside the scan has to be visible", async () => {
+    const ctx = afterTheGraceWindow();
+    await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(testEnv, ctx, ORG);
+    expect(report.scanned.prefixes).toEqual([`${ORG}/raw/`, `${ORG}/drafts/`]);
   });
 
   it("prints them, because a structured field a human never sees is not a disclosure", async () => {
     const ctx = afterTheGraceWindow();
+    await aSealedDraftsResidue("dft_sealed");
+
     const text = formatReconcile(await reconcileEvidence(testEnv, ctx, ORG));
     expect(text).toContain(`${ORG}/raw/`);
+    expect(text).toContain(`${ORG}/drafts/`);
     expect(text).toContain("any other prefix");
+    // The draft-body line is its own, because "no receipt" is not the test that produced it.
+    expect(text).toContain("1 body object(s) with no drafts row");
   });
 
   it("counts every object it lists, so the reported prefixes cannot outrun the scan", async () => {
     // The report's prefixes are the loop's own input. If they ever name more than the scan lists, this
     // total goes stale — which is the failure mode the field exists to remove, not to reproduce.
     const ctx = afterTheGraceWindow();
-    await putEvidence(testEnv, `${ORG}/raw/2026-Q3/one.eml`, utf8("From: a@b.com\r\n\r\nhi\r\n"));
+    await aRawOrphan("one");
     await aSealedDraftsResidue("dft_sealed");
 
     const report = await reconcileEvidence(testEnv, ctx, ORG);
@@ -368,7 +580,61 @@ describe("reconcile names the prefixes it scanned", () => {
       listedAcrossPrefixes += (await testEnv.EVIDENCE.list({ prefix })).objects.length;
     }
     expect(report.scanned.objects).toBe(listedAcrossPrefixes);
-    // And the draft body is not among them: one raw object, one draft body, one object scanned.
-    expect(report.scanned.objects).toBe(1);
+    // Both prefixes are now in the total: one raw object, one draft body, two objects scanned.
+    expect(report.scanned.objects).toBe(2);
+  });
+
+  it("reports a prefix it could not read instead of counting zero under it", async () => {
+    // The whole of #67 in one assertion. A prefix nobody could read must not contribute a `0`, because a
+    // `0` from a prefix nobody looked at is exactly what the single-prefix report printed for two months.
+    const ctx = afterTheGraceWindow();
+    await aSealedDraftsResidue("dft_sealed");
+
+    const report = await reconcileEvidence(withUnreadableDrafts(), ctx, ORG, { collect: true });
+    expect(report.draftBodies.read).toBe("unreadable");
+    if (report.draftBodies.read !== "unreadable") throw new Error("unreachable");
+    expect(report.draftBodies.because, "the cause, not just the symptom").toContain("no such table");
+    expect(report.draftBodiesDeleted).toBe(0);
+    expect(formatReconcile(report)).toContain(`UNREAD    ${ORG}/drafts/ could not be read`);
+  });
+
+  it("still reports lost mail when the draft prefix will not answer", async () => {
+    // Why the failure is caught rather than thrown: direction 2 — a receipt pointing at an absent object —
+    // is produced by nothing else in this Node, and losing that report because a second prefix would not
+    // answer trades the serious finding for the cheap one.
+    const ctx = afterTheGraceWindow();
+    // Every column `0003_ingress.sql` declares NOT NULL, filled: a fixture that omits one fails on the
+    // constraint rather than on the thing under test, which has cost this repository hours before.
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+         raw_bytes, blob_key, blob_sha256, accepted_at, key_generation) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    ).bind("igr_lost", ORG, "igr_lost", "a@b.com", "c@d.com", 7, `${ORG}/raw/gone.eml`,
+      "0".repeat(64), new Date(Date.now()).toISOString(), 1).run();
+
+    const report = await reconcileEvidence(withUnreadableDrafts(), ctx, ORG);
+    expect(report.draftBodies.read).toBe("unreadable");
+    expect(report.missing.map((entry) => entry.receiptId), "lost mail, still reported").toEqual(["igr_lost"]);
+  });
+});
+
+describe("the predicate has one definition", () => {
+  it("is the function both readers call, and it judges the same objects they report", async () => {
+    // `scanDraftBodies` is exported so `doctor` reads the collector's set rather than recomputing it. This
+    // asserts the two agree on a fixture where they could differ: one live body, one residue, one too
+    // fresh. If the shared function is ever bypassed, the counts drift here first.
+    const ctx = afterTheGraceWindow();
+    await aLiveDraft(ctx, "dft_live");
+    const residue = await aSealedDraftsResidue("dft_sealed");
+
+    const direct = await scanDraftBodies(testEnv, ctx, ORG);
+    expect(direct.read).toBe("complete");
+    if (direct.read !== "complete") throw new Error("unreachable");
+    expect(direct.stranded.map((object) => object.blobKey)).toEqual([residue]);
+
+    const viaPass = await reconcileEvidence(testEnv, ctx, ORG);
+    expect(viaPass.draftBodies).toEqual(direct);
+
+    const finding = find((await runDoctor(testEnv, ctx)).findings, "draft_bodies_stranded");
+    expect(finding.detail).toContain(`${direct.stranded.length} draft body object(s)`);
   });
 });

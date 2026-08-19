@@ -2,6 +2,7 @@ import type { Ctx } from "@mailda/runtime";
 import { utf8 } from "@mailda/evidence";
 
 import { getEvidence, putEvidence, sha256Hex } from "./evidence-store.ts";
+import { assertNotHeld } from "./holds.ts";
 import { maySend } from "./authz-read.ts";
 import { CallerError, notFound } from "./errors.ts";
 
@@ -165,11 +166,13 @@ export async function saveDraft(
   // with no blob is *reportable only*, the side no automatic repair can fix, while a stray object costs
   // storage and reveals nothing. That argument stands on its own.
   //
-  // What it is **not** is a handoff to a collector. Nothing in this Worker *deletes* under
-  // `${orgId}/drafts/`: the only R2 delete is fed by the reconciler's `${orgId}/raw/` listing. So a stray
-  // draft body is not a late-collected orphan — no code path can collect it at all. `doctor`'s
-  // `draft_bodies_stranded` finding does list this prefix, and counts them; collection waits for the legal
-  // hold every content-destroying call site must consult (#64). See `deleteDraft` below.
+  // And it **is** a handoff to a collector, which is new (#67) and is why this comment changed. The
+  // reconciler scans `${orgId}/drafts/` under its own referent rule — a row in `drafts` keyed by
+  // `body_key`, not a receipt — and collects from it through the same single `EVIDENCE.delete` as raw
+  // orphans, gated on the org-wide legal hold. The same grace window applies for the identical reason: a
+  // body written here has no row for the width of the gap below, so collecting it fast would delete
+  // somebody's writing mid-save. This comment said "no code path can collect it at all" until the pass
+  // existed; `test/stranded-draft-bodies.test.ts` is what keeps that from silently reverting.
   let bodyKey = existing?.body_key ?? null;
   let bodySha: string | null = null;
   let bodyBytes = 0;
@@ -319,21 +322,70 @@ export async function draftForReply(
  * Deletes a draft — **the row, and only the row**. Called when a message is sealed, which is the ordinary
  * send path, and by a person abandoning one.
  *
- * The R2 object is not deleted here, and **nothing else deletes it either.** The reconciler's only listing
- * is `${orgId}/raw/`, and that listing is the only thing its `EVIDENCE.delete` ever sees, while a draft body
- * lives at `${orgId}/drafts/{draftId}.txt`. So the body is not an orphan awaiting collection — **no code
- * path deletes it**, and R2 usage grows with composer use. `doctor`'s `draft_bodies_stranded` finding lists
- * this prefix and **counts** them, which is as far as this may go: collection is deferred to the legal hold
- * every
- * content-destroying call site must consult (#64), because a cleanup sweep is itself such a call site.
- * Tracked by #67.
+ * ## It consults the legal hold first (#64)
  *
- * Deleting the object inline is not the repair either. ADR 32 makes reconciliation deliberately asymmetric —
- * a reference with no blob may only be reported, never repaired automatically — so a failure between the two
- * writes must leave a stray object rather than a row pointing at nothing. The ordering is right; what was
- * false, until #67, was the claim that something collects what it leaves.
+ * A draft is addressed *from a mailbox* (ADR 36), so it is coverable by a hold on that mailbox, and this is
+ * one of the two D1 sites #64 classified as carrying content. The row is read before the delete — the one
+ * extra query this costs — because the hold predicate needs the mailbox and the instant, and neither is in
+ * the caller's hand: the composer sends a draft id.
+ *
+ * `created_at`, not `updated_at`, is the instant tested. See `HoldTarget.at` in `holds.ts` for what that
+ * chooses and the one residual it leaves.
+ *
+ * A draft that is absent, or somebody else's, returns `false` **without consulting a hold**, and the order is
+ * deliberate: §5C keeps those two answers alike, and asking about a hold first would let a caller learn that
+ * a draft exists in a held mailbox from the shape of the refusal.
+ *
+ * ## Which makes the ordinary send path able to refuse
+ *
+ * A send seals the manifest and then deletes the draft. Under a hold that deletion is refused, so the caller
+ * gets a completed send *and* a retained draft — `index.ts` reports that as `draftRetained` rather than
+ * failing the send, because the message did leave and the draft is now preserved on purpose. One
+ * `hold.blocked` entry per send from a held mailbox is within `audit-and-log-retention.md`'s sizing of a
+ * handful of entries per message.
+ *
+ * ## The R2 object is not deleted here, and that is now a handoff rather than a hole
+ *
+ * The reconciler scans `${orgId}/drafts/` and collects a body whose `drafts` row is gone, past the same
+ * grace window, through the same single `EVIDENCE.delete` as a raw orphan (#67, `reconcile.ts`). Until that
+ * existed this comment said the object was left for the reconciler while the reconciler listed only
+ * `${orgId}/raw/` — a claim about a hand-off to a component that had never been given the prefix, and the
+ * third time that shape has been found in these exact comments. What keeps the sentence true now is not the
+ * sentence: `test/stranded-draft-bodies.test.ts` collects a real residue object through a real pass.
+ *
+ * **No delete is added here, deliberately.** ADR 32 makes reconciliation asymmetric — a reference with no
+ * blob may only be reported, never repaired automatically — so an inline delete that failed after the row
+ * was gone would create exactly the unreachable orphan #67 was filed about. Routing it through the existing
+ * collector also means no new R2 delete site, which is the property
+ * `test/node/content-deletion-world.test.ts` exists to protect: the allowlist stays at one entry.
+ *
+ * The collector inherits the orphan problem in miniature, which is why its suppression is org-wide rather
+ * than per-hold: a stranded body has no `drafts` row, so there is no mailbox to test a hold against, and the
+ * key's own prefix is the organization. The hold consulted *here*, before the row is deleted, is the
+ * per-mailbox one — this is the last moment at which the mailbox is still known.
  */
-export async function deleteDraft(env: Env, orgId: string, userId: string, draftId: string): Promise<boolean> {
+export async function deleteDraft(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  userId: string,
+  draftId: string,
+): Promise<boolean> {
+  const held = await env.CATALOG.prepare(
+    "SELECT mailbox_id, created_at FROM drafts WHERE org_id = ? AND id = ? AND author_user_id = ? LIMIT 1",
+  )
+    .bind(orgId, draftId, userId)
+    .first<{ mailbox_id: string; created_at: string }>();
+  // Nothing to destroy, so nothing to hold. Also §5C: absent and somebody else's answer identically.
+  if (held === null) return false;
+
+  await assertNotHeld(env, ctx, orgId, userId, {
+    kind: "draft",
+    id: draftId,
+    mailboxId: held.mailbox_id,
+    at: held.created_at,
+  });
+
   const result = await env.CATALOG.prepare(
     "DELETE FROM drafts WHERE org_id = ? AND id = ? AND author_user_id = ?",
   )

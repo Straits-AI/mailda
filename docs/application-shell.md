@@ -104,23 +104,48 @@ shipping deliberately without it.
   `saveDraft` — the layer that owns the column — as well as in the composer.
 - **Deleted when the message is sealed**, by the Node rather than the browser, and *after* the seal: the
   residual is a draft for a message already sent, which is visible and takes one click, rather than losing
-  somebody's writing to a seal that then failed. **The row is deleted; the R2 object is not, and nothing
-  collects it.** This sentence used to say the object was "left for the reconciler, because ADR 32 makes an
-  orphan blob collectable" — every clause of that is true about ADR 32 and false about this prefix.
-  `deleteDraft` issues one `DELETE FROM drafts` and touches R2 not at all, and the reconciler's only
-  listing is `${orgId}/raw/`, which is also the only listing its `EVIDENCE.delete` ever sees. A draft body
-  lives at `${orgId}/drafts/{draftId}.txt`, so it is not collected late — **no code path deletes it at
-  all.** Since a draft is deleted on the *ordinary* send path, a Node's R2 usage grows with composer use.
-  `doctor`'s `draft_bodies_stranded` finding lists that prefix and now **counts** them, which is the part
-  that was missing: the
-  residue was previously absent from every report rather than reported as unexamined. **Collection is
-  deferred** to the legal hold that every content-destroying call site must consult (#64) — a cleanup sweep
-  is itself such a path, so it must not land before the hold exists. Tracked by #67.
+  somebody's writing to a seal that then failed. **The row is deleted here; the R2 object is collected by the
+  reconciler** (#67), and that division is deliberate rather than a leftover. `deleteDraft` issues one
+  `DELETE FROM drafts` and touches R2 not at all, because ADR 32 makes reconciliation asymmetric — a
+  reference with no blob may only be *reported* — so an inline delete that failed after the row was gone
+  would create an object nothing could reach. Routing it through the existing collector also means **no new
+  R2 delete site**: `EVIDENCE.delete` in `reconcile.ts` is still the one call in the product that destroys
+  content bytes, which is the property `test/node/content-deletion-world.test.ts` exists to protect.
+  What this bullet said for two months was that the object was "left for the reconciler, because ADR 32 makes
+  an orphan blob collectable" — true of ADR 32 and false of the prefix, because the reconciler listed
+  `${orgId}/raw/` only and a draft body lives at `${orgId}/drafts/{draftId}.txt`. Since a draft is deleted on
+  the *ordinary* send path, that made a Node's R2 usage grow with composer use, with nothing able to say so.
+  The pass now scans that prefix under its own referent rule — a `drafts` row keyed by `body_key`, past the
+  same grace window — and collects **the residue every existing Node already has** in the same run, with no
+  migration and no separate sweep. It is gated on the org-wide legal hold (#64) and stays report-only while
+  one stands, so residue in `doctor`'s `draft_bodies_stranded` finding now means the collector has not been
+  run or a hold is suppressing it. `docs/evidence-lifecycle.md` has the predicate, the costs and the
+  severity argument; `test/stranded-draft-bodies.test.ts` is what keeps this bullet from going stale a
+  third time.
+- **A legal hold refuses the deletion** (#64). A draft is addressed from a mailbox, so a hold on that mailbox
+  covers it: `deleteDraft` reads the row first, tests the hold against the draft's `created_at`, and refuses
+  with `E_LEGAL_HOLD` while recording the attempt as `hold.blocked`. Two consequences a reader should not have
+  to discover: pressing **discard** on a held draft answers 409 with the reason, and **sending** from a held
+  mailbox succeeds and keeps the draft — the seal happened, so the send route reports `draftRetained: true`
+  rather than failing a message that has already left. The composer's draft list then shows a draft for a sent
+  message, which is the correct state under a hold and not a bug to tidy away.
+- **The composer reads that 409 rather than closing over it.** `apiFetch` *resolves* for a non-ok response,
+  so the first version of `discard` closed the dock as though the draft had gone while it was being preserved,
+  throwing away the message the route deliberately declines to swallow. It now renders the Node's words
+  verbatim in the same `role="alert"` region `seal` uses and leaves the dock open, because a person owed a
+  reason has to still be looking at the thing it is about. A 404 still closes: that means the draft is already
+  absent, which is what discard asked for, and the route answers it with no message for §5C's reason. Both the
+  route's 409 body and the handler's reading of it are asserted — `test/legal-hold-routes.test.ts` and
+  `test/node/content-deletion-world.test.ts` — the second lexically, and it says so.
 
-Nothing here is audited. A draft is the only write path a person triggers by *typing* rather than by
-deciding, and an entry per autosave would put dozens behind one human action —
+Nothing about a draft's own lifecycle is audited. A draft is the only write path a person triggers by *typing*
+rather than by deciding, and an entry per autosave would put dozens behind one human action —
 `audit-and-log-retention.md`'s sizing, falsified as a side effect of a convenience. The act that *is*
 audited is `send.sealed`.
+
+The one exception is not about the draft: a deletion **refused by a legal hold** records `hold.blocked`, whose
+subject is the draft id. That is an entry about an attempt to destroy held content, not about somebody's
+writing, and it is at most one per send from a held mailbox — inside the same sizing.
 
 ## The build
 

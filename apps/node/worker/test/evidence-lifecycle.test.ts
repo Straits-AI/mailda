@@ -220,6 +220,48 @@ describe("re-seal (#25)", () => {
 });
 
 describe("reconcile (#25, §24)", () => {
+  /**
+   * The worst a collecting pass can cost, checked rather than described (#67).
+   *
+   * `reconcile.list_limit` was derived when the pass listed **one** prefix: "200 objects + 200 receipts ≈ 400
+   * subrequests plus fixed overhead". #67 gave it a second prefix, and the limit applies **per prefix**, so
+   * the ceiling a full pass can reach nearly doubled — a consequence of adding the prefix that no measurement
+   * of an ordinary pass would reveal, because an ordinary pass has a handful of objects and not 400.
+   *
+   * Every term is a measured per-object or per-pass figure from `docs/receipts/evidence-lifecycle.md`'s
+   * 19 August 2026 correction, so this is arithmetic over receipts rather than a new number:
+   *
+   * | Term | Cost | Why |
+   * |---|---|---|
+   * | 2 listings | 2 | one `R2Bucket.list()` per prefix |
+   * | raw referents | `list_limit` | one D1 lookup **per listed object** — it samples by key |
+   * | draft referents | 1 | one bulk `SELECT body_key`, measured flat at 0 and at 5 objects |
+   * | hold check | 1 | `anyActiveHold`, once, and only when collection was requested |
+   * | deletes | 2 × `list_limit` | both prefixes drain the same single `EVIDENCE.delete` |
+   * | receipt direction | 2 + `list_limit` | count, page, then one R2 `head` per sampled receipt |
+   *
+   * Checked against the **Free** ceiling for the reason `reseal.batch_size` is above: it is the smaller of
+   * the two and the Node cannot tell which plan it is on (#68).
+   *
+   * **What this does not bound: the invocation.** It bounds the pass. The route around it authenticates and
+   * authorizes first, which is a handful of queries more, and that residue is deliberately left out rather
+   * than guessed at — the headroom this assertion leaves is where it lives.
+   */
+  it("keeps the worst case a collecting pass can reach inside the ceiling it was derived against", () => {
+    const perPrefix = BUDGETS["reconcile.list_limit"];
+    const listings = 2;
+    const rawReferents = perPrefix;
+    const draftReferents = 1;
+    const holdCheck = 1;
+    const deletes = 2 * perPrefix;
+    const receiptDirection = 2 + perPrefix;
+    const worstCase =
+      listings + rawReferents + draftReferents + holdCheck + deletes + receiptDirection;
+
+    expect(worstCase, "4 × list_limit + 6, which is 806 at a list_limit of 200").toBe(4 * perPrefix + 6);
+    expect(worstCase).toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
+  });
+
   it("finds an orphan blob but will not delete it unless asked", async () => {
     const blobKey = `${ORG}/raw/2026-Q3/orphan.eml`;
     await writeLegacyObject(blobKey, RAW);
