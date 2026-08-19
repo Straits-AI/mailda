@@ -6,9 +6,12 @@ stale_when: >
   wrangler changes how it resolves a workflow binding declared without an id; Workflows gains
   automatic-provisioning semantics different from the observed create-on-deploy; the schedules field
   becomes recognised by older wrangler releases; the scheduled-instance id format changes; or
-  event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time
+  event.schedule.scheduledTime starts reporting the cron boundary rather than the dispatch time; or the
+  Workers Builds token's scope set changes such that creating a workflow no longer rides on Workers
+  Scripts:Edit, which is what makes provisioned_by_button true
 values:
   workflow.provisioned_by_deploy: 1
+  workflow.provisioned_by_button: 1
   workflow.schedules_min_wrangler: 4.97
   workflow.schedule_cron_ceiling_per_account: 100
   workflow.instance_id_max_chars: 100
@@ -36,11 +39,53 @@ the schedule is the part it does *not* name. See below.
 That makes a workflow binding ADR-24-safe on both counts: byte-identical config across a fork, and
 provisioned by the install rather than by a step a customer has to be told about.
 
-**Not measured, and it is the remaining risk:** whether a **Workers Builds auto-generated token** has
-the scope to create a workflow. This deploy used an interactive OAuth token with Super Administrator
-privileges, which is the *easy* case. §11A's one-click equivalence claim rests on the harder one, and
-`queue-provisioning.md` needed a real Deploy-button click for exactly this reason. **Do not read
-"provisioned by deploy" as "provisioned by the button".**
+**Measured 19 August 2026, and the answer is yes** — this paragraph used to say *"not measured, and it is the
+remaining risk"*, and the gap is now closed by a real Deploy-button click (#55).
+
+The 13 August deploy above used an interactive OAuth token with Super Administrator privileges, which is the
+*easy* case. §11A's one-click equivalence claim rests on the token **Workers Builds mints for itself**, and
+`queue-provisioning.md` had already established that the button can behave differently from the CLI — so the
+CLI result was not evidence about the button, and the caveat was correct to exist.
+
+A branch declaring `[[workflows]]` with `name`, `binding` and `class_name` was deployed through the button
+into an account running no live mail. Both halves came back:
+
+```
+env.BUTLER_PROBE (ButlerProbe)      Workflow          ← the binding
+workflow: mailda-butler-probe                         ← in the deployed triggers
+```
+
+**And the token has no Workflows scope.** Its 24 permissions were read from the dashboard before deploying,
+and contain no Workflows entry of any kind — the account-scoped ones are AI Search, Connectivity Directory
+(Read and Bind), Containers, Secrets Store, Browser Run, AI Gateway (Run/Edit/Read), Workers Pipelines,
+Workers AI, Queues, Vectorize, Hyperdrive, Cloudchamber, D1, Workers R2 Storage, Workers KV Storage, Workers
+Scripts and Account Settings:Read, plus Workers Routes and SSL on all zones and two read-only user scopes.
+
+So **creating a workflow rides on `Workers Scripts:Edit`** rather than needing a permission of its own. That
+is why the setup page's missing-permissions warning named two Email Routing scopes and never mentioned
+Workflows, and it is why the scope list alone could not have settled this: an absent scope is not evidence of
+an absent capability when the capability belongs to a different scope.
+
+`workflow.provisioned_by_button = 1` records it. **"Provisioned by deploy" and "provisioned by the button" are
+now both measured**, separately, which is the distinction the previous version of this paragraph insisted on
+keeping.
+
+**One methodological trap, recorded because it nearly voided the measurement.** The button **reused** the
+Builds token from the 6 August install rather than minting a fresh one — its `Last used` was that date, and on
+6 August no `[[workflows]]` binding existed anywhere in the repository. A missing Workflows scope could
+therefore have been an artifact of when the token was created rather than a property of Builds tokens.
+
+It is not, and the evidence is in the list above: the token carries `Queues:Edit`, `Vectorize:Edit`,
+`Hyperdrive:Edit`, `Containers:Edit`, `Workers Pipelines:Edit`, `Workers KV Storage:Edit`,
+`Cloudchamber:Edit` and `Browser Run:Edit`, while `wrangler.jsonc` declares **none** of those. The scope set
+is a fixed superset, not derived from the configuration, so neither its contents nor its omissions say
+anything about what the repository declared when it was minted. Had the set been config-derived, this
+measurement would have needed a fresh token and this receipt would be recording a different thing.
+
+**The same deploy failed, on something unrelated**, and the workflow answer survives it because the workflow
+trigger is among the changes wrangler reported as applied before the failure: a queue consumer collision with
+the Node already in that account, filed as its own defect. A hardcoded account-scoped queue name means the
+install is not repeatable within one account. Nothing about it touches tokens or Workflows.
 
 ## `schedules` is silently dropped by the wrangler this repo permits
 

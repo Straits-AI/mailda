@@ -392,6 +392,17 @@ const FIGURES: Record<string, Classification> = {
     "workflow.provisioned_by_deploy", "workflow.schedules_min_wrangler",
     "workflow.schedule_cron_ceiling_per_account", "workflow.instance_id_max_chars",
   ),
+  ...bothPlans(
+    // Checked rather than assumed, because the sibling figures in this receipt *are* plan-split and it
+    // would be easy to inherit that: Cloudflare's Workflows pricing page states "Workflows is included in
+    // both the Free and Paid Workers plans", so the *ability* to provision one does not differ. What does
+    // differ — steps per day, storage, instance-state retention (3 days Free, 30 Paid) — is prose in that
+    // receipt and deliberately not recorded as values, exactly as the entry above says.
+    "whether the Deploy button's Workers Builds token can create a workflow: measured on a Paid account,"
+      + " but Workflows is available on both plans and creating one rides on Workers Scripts:Edit, which the"
+      + " token carries regardless of plan",
+    "workflow.provisioned_by_button",
+  ),
 };
 
 function planSegmentsIn(key: string): string[] {

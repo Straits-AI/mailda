@@ -64,6 +64,26 @@ const config = readWranglerConfig() as WranglerConfig;
  * somebody has the context to measure it.
  */
 const BINDING_KINDS = {
+  /*
+   * Classified ahead of being declared, which is unusual here and deliberate.
+   *
+   * Layer 4 chose Workflows as the Butler engine, so this block is the next one this config is likely to
+   * gain, and #55 measured the question that would otherwise be asked at the worst moment: whether a
+   * customer's install can provision one. It can. The measurement is in `workflow-provisioning.md` and the
+   * value below is `workflow.provisioned_by_button`, so this entry moves if that figure ever does.
+   *
+   * The finding behind it is worth carrying: the Workers Builds token has **no Workflows scope at all**, and
+   * creating a workflow rides on `Workers Scripts:Edit`. So the scope list cannot be used to predict this —
+   * an absent scope is not an absent capability when the capability belongs to another scope.
+   */
+  workflows: {
+    provisionedByButton: Boolean(BUDGETS["workflow.provisioned_by_button"]),
+    how:
+      "Created by the deploy itself, like D1 and R2 and unlike Secrets Store: the binding declares name, " +
+      "binding and class_name with no resource id. Measured twice — through an interactive OAuth token " +
+      "(#47) and through the Deploy button's own Workers Builds token (#55), which is the harder case " +
+      "§11A's one-click equivalence claim actually rests on.",
+  },
   d1_databases: {
     provisionedByButton: Boolean(BUDGETS["builds.provisions_d1"]),
     how: "The button provisions D1 before the build, independently of the build token (measured).",
