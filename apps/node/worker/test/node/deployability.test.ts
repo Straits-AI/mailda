@@ -64,6 +64,29 @@ const config = readWranglerConfig() as WranglerConfig;
  * somebody has the context to measure it.
  */
 const BINDING_KINDS = {
+  /*
+   * #55 ONLY, and this entry is the one place in the repository where the honest value of `how` is
+   * *"nobody knows yet"*.
+   *
+   * That is the whole point of the measurement. #47 established that `wrangler deploy` creates a workflow
+   * with no resource id — through an interactive OAuth token with Super Administrator privileges. Whether
+   * the token **Workers Builds mints for itself** can do the same is unmeasured, and
+   * `queue-provisioning.md` already recorded the button behaving differently from the CLI for Queues, so
+   * the CLI result is not evidence about the button.
+   *
+   * `provisionedByButton: false` is therefore the *conservative* placeholder, not a finding: it says this
+   * install path is unproven, which is the direction that cannot mislead. When #55 answers, this entry
+   * either gains a measured `true` and a receipt, or the binding is deleted along with `butler-probe.ts`.
+   */
+  workflows: {
+    provisionedByButton: false,
+    how:
+      "UNMEASURED — this is what #55 exists to find out. The interactive CLI path creates a workflow " +
+      "with no resource id (#47, measured); the Workers Builds token has never been tested against a " +
+      "workflow binding, and queue-provisioning.md records the button diverging from the CLI for Queues. " +
+      "Recorded as not-provisioned until somebody clicks Deploy, because an unproven install path must " +
+      "not read as a working one.",
+  },
   d1_databases: {
     provisionedByButton: Boolean(BUDGETS["builds.provisions_d1"]),
     how: "The button provisions D1 before the build, independently of the build token (measured).",
@@ -101,6 +124,22 @@ const BINDING_KINDS = {
 } as const;
 
 type BindingKind = keyof typeof BINDING_KINDS;
+
+/**
+ * Bindings declared **in order to be measured**, each naming the issue that removes it.
+ *
+ * Not a suppression list. A binding here is one nobody has established the button can provision, declared
+ * on purpose so that clicking Deploy answers the question — and the entry is a promise that the answer is
+ * coming, which is why the test below fails if the issue has been closed while the exemption remains.
+ *
+ * Empty on `main`. If this is ever non-empty there, something has been forgotten.
+ */
+const UNDER_MEASUREMENT: Record<string, { issue: number; question: string }> = {
+  workflows: {
+    issue: 55,
+    question: "can a Workers Builds token provision a Workflow, as an interactive OAuth token can (#47)?",
+  },
+};
 
 /**
  * Keys that name an account-specific resource.
@@ -186,7 +225,37 @@ describe("what a customer's deploy can provision", () => {
     // Empty as of 6 August 2026: R2 was the last entry and direct measurement removed it. The
     // assertion stays because a *new* binding the customer's install cannot satisfy is the thing worth
     // failing on, and an empty list is the claim being made — not the absence of a claim.
-    expect(gaps.map((gap) => gap.kind)).toEqual([]);
+    //
+    // One exemption, and it exists because the guard fired correctly on a case it could not express.
+    // A binding may be *under measurement*: declared precisely so somebody can find out whether the
+    // button provisions it, which is a different state from having shipped one that it cannot. Without
+    // this the only ways past a true assertion were to claim `provisionedByButton: true` unmeasured — the
+    // overclaim the entry's own comment forbids — or to weaken the assertion for everything.
+    //
+    // Each exemption names the issue that will remove it, and the test below requires that issue to be
+    // **open**, so an exemption cannot outlive its measurement. `workflows` is here for #55: the answer
+    // is either a measured `true` with a receipt, or the binding is deleted. This list must never be a
+    // place where an unprovisionable binding comes to rest.
+    expect(gaps.map((gap) => gap.kind).filter((kind) => !(kind in UNDER_MEASUREMENT))).toEqual([]);
+  });
+
+  it("keeps every measurement exemption tied to a binding that is actually declared", () => {
+    // The direction that lets an exemption rot: the binding goes, the entry stays, and the next binding
+    // to reuse that key inherits a pass nobody granted it. Same closed-world discipline as
+    // `wrangler-world.ts` — both directions, or the registry drifts.
+    const declared = bindingKindsIn(config) as string[];
+    const stale = Object.keys(UNDER_MEASUREMENT).filter((kind) => !declared.includes(kind));
+    expect(
+      stale.length === 0 ? null
+        : `${stale.join(", ")} is exempt as under-measurement but is not declared in wrangler.jsonc — `
+          + "delete the exemption, which is what closing the measurement looks like",
+    ).toBeNull();
+
+    // And an exemption may not be silent about what it is waiting for.
+    for (const [kind, entry] of Object.entries(UNDER_MEASUREMENT)) {
+      expect(entry.issue, `${kind} must name the issue that removes it`).toBeGreaterThan(0);
+      expect(entry.question.length, `${kind} must state the open question`).toBeGreaterThan(30);
+    }
   });
 
   it("gives every binding a route to existing, whether or not it is a gap", () => {

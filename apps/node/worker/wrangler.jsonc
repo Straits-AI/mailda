@@ -12,6 +12,14 @@
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
 
+  // #55 ONLY — NOT PART OF THE PRODUCT. A Workflow declared so that a **Workers Builds** token's ability
+  // to provision one can be measured by clicking Deploy, which is the one thing a terminal cannot answer:
+  // #47 measured the interactive Super-Administrator token, and `queue-provisioning.md` already recorded
+  // the button behaving differently from the CLI. No `schedules` key, deliberately — wrangler at this
+  // repository's floor drops it and exits 0 (`workflow-provisioning.md`), so a Node never declares one.
+  // This block and `src/butler-probe.ts` are deleted once #55 records its answer, whichever way it goes.
+  "workflows": [{ "name": "mailda-butler-probe", "binding": "BUTLER_PROBE", "class_name": "ButlerProbe" }],
+
   // Outbound (ADR 23, ADR 33). The unrestricted form carries **no account-specific value**, so unlike
   // Secrets Store (ADR 28) it does not collide with ADR 24's byte-identical fork. `destination_address`,
   // `allowed_destination_addresses` and `allowed_sender_addresses` all take customer values and would
@@ -97,6 +105,8 @@
     "test": {
       "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],
+      // #55 only, duplicated because named environments do not inherit and the drift check compares them.
+      "workflows": [{ "name": "mailda-butler-probe", "binding": "BUTLER_PROBE", "class_name": "ButlerProbe" }],
 
   // Outbound (ADR 23, ADR 33). The unrestricted form carries **no account-specific value**, so unlike
   // Secrets Store (ADR 28) it does not collide with ADR 24's byte-identical fork. `destination_address`,

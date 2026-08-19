@@ -43,6 +43,9 @@ import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
 export { KeyVault } from "./keyvault.ts";
+// #55 only: a Workflow that exists to be provisioned, so a Workers Builds token's permissions can be
+// measured rather than assumed. Deleted with its binding once the measurement is recorded either way.
+export { ButlerProbe } from "./butler-probe.ts";
 
 /**
  * The Mailda Node. One Worker (ADR 18).

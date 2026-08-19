@@ -229,7 +229,20 @@ export function metering(env: Env): { env: Env; cost: Cost } {
   };
 
   /** Not bindings, so nothing to meter: values passed through by the test harness or by config. */
-  const FREE = new Set(["TEST_MIGRATIONS"]);
+  const FREE = new Set([
+    "TEST_MIGRATIONS",
+    // #55 ONLY. `BUTLER_PROBE` exists to be *provisioned*, not called: nothing priced reaches it, and
+    // `butler-probe.ts` performs no I/O. Classified `FREE` rather than metered on purpose, and the reason
+    // is worth stating because this file's own header argues the opposite for `OUTBOX_SWEEPER` — that
+    // "nothing reaches it today" is exactly the assumption that expired for the transport.
+    //
+    // The difference is that this binding is scheduled for **deletion**, not for use. When a real Butler
+    // engine is built against #55's answer, its binding is a new decision and must be metered then —
+    // `create()` on a workflow is a subrequest, and a fan-out of instances is the whole reason
+    // `butler-step-budget.md` exists. `test/node/cost-meter-coverage.test.ts` will demand that
+    // classification the moment the binding is renamed, so this cannot be inherited by mistake.
+    "BUTLER_PROBE",
+  ]);
 
   const wrapped = new Proxy(env as unknown as Record<string, unknown>, {
     get(target, property) {
