@@ -242,6 +242,41 @@ it scanned**, so a prefix outside the scan appears in the output instead of bein
 added** — that waits for the legal hold every content-destroying call site must consult, because a cleanup
 sweep is itself one of those call sites.
 
+**The lockout report opened for one of the two lockouts.** `doctor` is served unauthenticated, reduced to
+findings whose contents are already public here, when the Node cannot authenticate anyone — and the test for
+"cannot authenticate anyone" asked for a finding named `credential_kek`, which nothing has ever emitted. The
+credential checks emit `credential_key`. So the disjunct covering *the scenario the function was written
+for* — a credential key that cannot wrap while the signing key is fine — was permanently false, and the
+`fix` text sent a locked-out operator to a finding that would not be in the report. `signing_key` is real,
+which is why the commonest lockout worked and every test passed: one of two branches being dead is invisible
+to a test that exercises the other. The name is fixed, that lockout now has its own end-to-end test, and a
+tripwire derives the emitted check names from `doctor.ts` and fails on any name the file *refers to* —
+in a comparison or in a `fix` naming "the X finding" — that no check emits. A wrong identifier is worse
+than a wrong comment, because prose does not look like it is being checked.
+
+**A cap named in bytes counted something else.** `audit.max_detail_bytes` and `log.max_detail_bytes` are
+2,048, and the check was `JSON.stringify(detail).length` — UTF-16 code units. Measured: a detail of 700 CJK
+characters is 714 units and **2,114 bytes**, so it passed a 2,048-*byte* cap untouched, and the truncation
+record then reported `bytes: 714` — a wrong number under a key that ends the question a blank would have
+prompted. The cap is a **disclosure** bound, not a storage one: it exists because the audit table is read by
+a wider set of people than the mail it describes. One that can be exceeded threefold by writing in Chinese
+is not that bound. Both now measure UTF-8, the truncated head is cut between code points so no lone
+surrogate is stored, and the record's own envelope is measured rather than allowed for with a magic
+constant. The 2,048 itself was a round number inside a receipt marked `measured-tripwire`; it now carries a
+derivation, and the frontmatter says which of its values were sized rather than measured.
+
+**Both binding guards were allowlists, and neither knew about Workflows.** Two tests exist so that a new
+binding cannot arrive unpriced or unprovisionable: one asks whether the cost meter classifies every binding
+the Worker declares, the other whether a customer's install can provision every binding block. Each
+hand-maintained its own idea of what a binding block *is* — one iterated five block names it listed itself,
+directly under a comment claiming it read them from the config; the other matched key suffixes plus six exact
+names. Neither recognised `[[workflows]]`, which is the engine Layer 4 runs Butlers on and therefore the next
+block this config will gain: a Workflow step touching an unmetered binding would have been priced as free,
+with nothing firing. Both now share one **closed world** over the config's top-level keys — every key is a
+declared binding block or a declared field that binds nothing, and anything else fails, naming the key and
+what to do with it. That is the version that catches the binding nobody has thought of, which was the only
+point of having the guards. An allowlist of the blocks somebody already thought of never could.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.

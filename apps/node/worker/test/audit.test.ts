@@ -20,6 +20,14 @@ async function append(ctx: Ctx, event: AuditEvent) {
   return entry;
 }
 
+/**
+ * The unit the budget key names. Written out here rather than reusing the Worker's own helper, so a test
+ * that says "within the cap" cannot agree with a broken implementation by sharing its measurement.
+ */
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 const SAMPLE: readonly AuditAction[] = [
   "auth.signed_in", "send.sealed", "key.rotated", "send.handed_over", "auth.locked_out",
 ];
@@ -120,9 +128,84 @@ describe("the audit chain", () => {
     });
     const row = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'send.sealed'")
       .first<{ detail: string }>();
-    expect(row!.detail.length).toBeLessThanOrEqual(BUDGETS["audit.max_detail_bytes"]);
+    // Bytes, not `String.length`. An ASCII fixture cannot tell the two apart, which is why the cap read
+    // as measured for months while enforcing code units — the three tests below carry that job.
+    expect(utf8Length(row!.detail)).toBeLessThanOrEqual(BUDGETS["audit.max_detail_bytes"]);
     // Truncation is stated, not silent.
     expect(row!.detail).toContain("truncated");
+  });
+
+  it("counts the cap in UTF-8 bytes, not UTF-16 code units", async () => {
+    const ctx = createSystemCtx();
+    // 700 CJK characters: ~714 code units, comfortably under a 2,048 cap read as `String.length`, but
+    // 2,114 bytes of UTF-8, over it. A Chinese subject line is the ordinary case here, not a contrived one.
+    const subject = "中".repeat(700);
+    expect(JSON.stringify({ subject }).length).toBeLessThan(BUDGETS["audit.max_detail_bytes"]);
+    expect(utf8Length(JSON.stringify({ subject }))).toBeGreaterThan(BUDGETS["audit.max_detail_bytes"]);
+
+    await append(ctx, { action: "send.sealed", outcome: "ok", detail: { subject } });
+    const row = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'send.sealed'")
+      .first<{ detail: string }>();
+
+    // The disclosure bound holds in the unit its own key names, so a non-Latin script cannot walk 3x
+    // past it.
+    expect(utf8Length(row!.detail)).toBeLessThanOrEqual(BUDGETS["audit.max_detail_bytes"]);
+    const record = JSON.parse(row!.detail) as { truncated: boolean; bytes: number; head: string };
+    expect(record.truncated).toBe(true);
+    // `bytes` says bytes. A code-unit count under that key would read 714 for a 2,114-byte detail.
+    expect(record.bytes).toBe(utf8Length(JSON.stringify({ subject })));
+  });
+
+  // Between code points of the *already-escaped* JSON text, so no lone surrogate is ever stored — which is
+  // what this asserts. It does not promise more than that: a `\uXXXX` escape sequence can still be cut, so a
+  // head may end `…\u00`. That is ugly and harmless, and claiming "no character in half" would overstate it.
+  it("cuts the head between code points, so no lone surrogate is stored", async () => {
+    const ctx = createSystemCtx();
+    // Emoji are surrogate pairs, so a cut counted in code units lands inside a character at every odd
+    // offset. **Both key lengths are here on purpose**: one shifts the run of pairs by a single code unit,
+    // so whatever offset a unit-counting cut chooses, exactly one of these two fixtures is cut in half.
+    // A single fixture passes or fails on the parity of that offset, which is how a test like this can
+    // agree with the bug.
+    for (const key of ["e", "ee"] as const) {
+      await append(ctx, {
+        action: "send.sealed", outcome: "ok",
+        detail: { [key]: "\u{1F600}".repeat(1200) },
+      });
+    }
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE action = 'send.sealed' ORDER BY seq",
+    ).all<{ detail: string }>();
+    expect(rows.results).toHaveLength(2);
+
+    for (const row of rows.results) {
+      const head = (JSON.parse(row.detail) as { head: string }).head;
+      expect(head.length).toBeGreaterThan(0);
+      // Half a character *is* an unpaired surrogate: iterating by code point, any element still inside
+      // U+D800..U+DFFF is one half of a pair whose other half was cut off. Counted rather than compared
+      // against the whole head, because a lone surrogate in an assertion message is not valid UTF-8 and
+      // takes the test reporter's own socket down with it — the failure stops being readable.
+      const halves = [...head].filter((c) => {
+        const code = c.codePointAt(0)!;
+        return code >= 0xd800 && code <= 0xdfff;
+      }).length;
+      expect(halves).toBe(0);
+    }
+  });
+
+  it("keeps the truncation record itself inside the cap, escaping included", async () => {
+    const ctx = createSystemCtx();
+    // A control character reaches the record as the six characters of its own escape, and each backslash
+    // among them costs two bytes again when the head is stringified. So a head sized against raw bytes
+    // overflows the record it is placed in - a state no ordinary fixture reaches.
+    await append(ctx, {
+      action: "send.sealed", outcome: "ok",
+      detail: { blob: "\u0001".repeat(3000) },
+    });
+    const row = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'send.sealed'")
+      .first<{ detail: string }>();
+
+    expect(row!.detail).toContain("truncated");
+    expect(utf8Length(row!.detail)).toBeLessThanOrEqual(BUDGETS["audit.max_detail_bytes"]);
   });
 
   it("never throws, because logging that can fail a request gets removed", async () => {
@@ -144,6 +227,19 @@ describe("the operational log", () => {
     expect(row?.level).toBe("error");
     // The request id is the smallest thing that is a trace: it ties records from one request together.
     expect(row?.request_id).toBe("req_1");
+  });
+
+  it("bounds its detail in bytes too, since the key says bytes", async () => {
+    // The same defect lived in both caps, so it is held shut in both places. An error string carrying a
+    // non-ASCII subject is the ordinary way a log line gets big.
+    await log(testEnv, createSystemCtx(), {
+      level: "error", event: "parse.failed", message: "boom",
+      detail: { subject: "中".repeat(700) },
+    });
+    const row = await testEnv.CATALOG.prepare("SELECT detail FROM log_entries WHERE event = 'parse.failed'")
+      .first<{ detail: string }>();
+    expect(utf8Length(row!.detail)).toBeLessThanOrEqual(BUDGETS["log.max_detail_bytes"]);
+    expect(row!.detail).toContain("truncated");
   });
 
   it("never throws either", async () => {

@@ -145,17 +145,83 @@ function canonical(entry: {
   ].join("");
 }
 
+const UTF8 = new TextEncoder();
+
+/** What the budget key says: UTF-8 bytes, not JavaScript string length. */
+function utf8Bytes(text: string): number {
+  return UTF8.encode(text).length;
+}
+
+/**
+ * The longest prefix of `text` that costs at most `budget` bytes *once escaped into a JSON string*,
+ * cut only between code points.
+ *
+ * Two ways to get this wrong, both of which were in the version this replaces:
+ *
+ * - `slice` counts UTF-16 code units, so it can cut between the halves of a surrogate pair and leave
+ *   a head ending in a lone surrogate. Iterating with `for...of` yields whole code points, so the cut
+ *   can only land between characters.
+ * - a prefix measured raw does not stay within `budget` once it is escaped, because the head is
+ *   re-escaped when the truncation record is stringified — a quote costs two bytes there, a control
+ *   character six. So each code point is priced at what it will actually cost inside the record, and
+ *   the price comes from `JSON.stringify` itself rather than from a table of escape rules restated
+ *   here: a restated table is a claim that drifts away from the runtime that decides.
+ */
+function jsonHeadWithinBytes(text: string, budget: number): string {
+  let spent = 0;
+  let end = 0;
+  for (const codePoint of text) {
+    const cost = utf8Bytes(JSON.stringify(codePoint)) - 2; // minus the two quotes stringify adds.
+    if (spent + cost > budget) break;
+    spent += cost;
+    end += codePoint.length; // 2 for an astral code point, so the pair moves as one unit.
+  }
+  return text.slice(0, end);
+}
+
 /**
  * Bounded, and bounded for a disclosure reason rather than a storage one: this table is read by whoever
  * may audit, which is a wider set than whoever may read the mail. An unbounded detail invites a subject
  * line or a token into a table with different access rules than the content it came from.
+ *
+ * Measured in **bytes**, which is what `audit.max_detail_bytes` claims and what the disclosure argument
+ * needs. `text.length` counts UTF-16 code units, so a 2,048-unit Chinese subject or a run of emoji is up
+ * to ~6 KiB of UTF-8 and used to pass a 2 KiB cap — a disclosure bound that a non-Latin script defeats by
+ * 3x is not a bound. The truncation record is sized against the same unit, envelope included, so the
+ * substitute cannot itself exceed the cap it is announcing. `test/audit.test.ts` holds both to the byte
+ * count rather than to `String.length`, which is why the two units can no longer be confused here.
  */
 function boundedDetail(detail: Record<string, unknown> | undefined): string | null {
   if (detail === undefined) return null;
-  const text = JSON.stringify(detail);
-  return text.length <= MAX_DETAIL
-    ? text
-    : JSON.stringify({ truncated: true, bytes: text.length, head: text.slice(0, MAX_DETAIL - 120) });
+  return boundedJson(JSON.stringify(detail), MAX_DETAIL);
+}
+
+/**
+ * `text` if it fits `maxBytes` of UTF-8, otherwise a truncation record that also fits **when `maxBytes` is
+ * at least the envelope**, which the two callers' budgets are by three orders of magnitude.
+ *
+ * The qualifier is not pedantry. Below ~41 bytes the `Math.max(0, …)` below clamps and this returns a record
+ * *larger* than the cap it was asked to respect — a silent overrun, and the one degradation path this
+ * function has. `MAX_DETAIL` and `LOG_MAX_DETAIL` are both 2,048, so it is unreachable today; it is stated
+ * because an unconditional "also fits" would be a false claim with nothing checking it, and this file's
+ * defect history is exactly that.
+ *
+ * Shared by the audit detail and the log detail because they are the same bound for the same reason and
+ * both budget keys end in `_bytes`; one of them silently drifting to a different unit is exactly how this
+ * defect arrived. Not exported: the tests go through `audit` and `log` and read the stored row, so what
+ * they hold to the cap is what a reader of the table would actually get.
+ */
+function boundedJson(text: string, maxBytes: number): string {
+  const bytes = utf8Bytes(text);
+  if (bytes <= maxBytes) return text;
+
+  // `bytes` is the real UTF-8 length of what was dropped, which is the only reason this record exists. A
+  // code-unit count under a key spelled `bytes` is a wrong number ending the question a blank would have
+  // prompted, so the test asserts this field against an encoder rather than against `String.length`.
+  const record = { truncated: true, bytes, head: "" };
+  const envelope = utf8Bytes(JSON.stringify(record));
+  record.head = jsonHeadWithinBytes(text, Math.max(0, maxBytes - envelope));
+  return JSON.stringify(record);
 }
 
 export interface AppendedEntry {
@@ -451,10 +517,11 @@ export interface LogEvent {
  */
 export async function log(env: Env, ctx: Ctx, entry: LogEvent): Promise<void> {
   try {
+    // Bytes, and truncated on a code-point boundary, for the same reasons as `boundedDetail` above:
+    // `log.max_detail_bytes` says bytes, and a log line is where a non-ASCII subject or error string
+    // lands. Sized with the record's own envelope counted, so the substitute fits the cap too.
     const text = entry.detail === undefined ? null : JSON.stringify(entry.detail);
-    const detail = text === null || text.length <= LOG_MAX_DETAIL
-      ? text
-      : JSON.stringify({ truncated: true, head: text.slice(0, LOG_MAX_DETAIL - 60) });
+    const detail = text === null ? null : boundedJson(text, LOG_MAX_DETAIL);
 
     await env.CATALOG.prepare(
       `INSERT INTO log_entries (id, org_id, at, level, event, message, detail, request_id)
