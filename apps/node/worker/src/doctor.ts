@@ -214,7 +214,11 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     severity: "report",
     discloses: "data",
     ok: cost.subrequests <= BUDGETS["doctor.max_subrequests_per_run"],
-    detail: `${cost.subrequests} subrequest(s): ${cost.d1Queries} D1 quer${cost.d1Queries === 1 ? "y" : "ies"}, ${cost.r2Reads} R2 read(s). Cap is ${BUDGETS["doctor.max_subrequests"]} per invocation.`,
+    // Both plans' caps, because this Worker cannot tell which one it is under — the `workers_paid_plan`
+    // finding in this same report says exactly that. Printing only the Paid figure told an operator on
+    // Free a ceiling ten times theirs, and a wrong number ends the question a blank would have prompted
+    // (#68, docs/receipts/doctor-check-cost.md).
+    detail: `${cost.subrequests} subrequest(s): ${cost.d1Queries} D1 quer${cost.d1Queries === 1 ? "y" : "ies"}, ${cost.r2Reads} R2 read(s). Cap per invocation is ${BUDGETS["doctor.paid.max_subrequests"]} on Workers Paid and ${BUDGETS["doctor.free.max_subrequests"]} on Workers Free; a Worker cannot tell which plan it is on.`,
     ...(cost.subrequests <= BUDGETS["doctor.max_subrequests_per_run"] ? {} : {
       fix: `a doctor run now costs more than the tripwire allows — a check has become proportional to mailbox size, which is how the authorization path grew a full table scan unnoticed`,
     }),

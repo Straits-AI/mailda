@@ -3,12 +3,15 @@ id: butler-step-budget
 kind: platform-limit
 measured_on: 2026-08-13
 stale_when: >
-  Cloudflare changes the per-invocation subrequest ceiling again; a Workflow instance stops being one
-  invocation for the purposes of that ceiling, which would make the budget per step and invert this
-  result; the Worker starts declaring a limits.subrequests block, which overrides the platform default;
-  or D1 gains a query ceiling of its own, which this measurement shows it does not currently impose
+  Cloudflare changes the per-invocation subrequest ceiling on either plan again; the free plan's
+  internal-service subrequest allowance stops being 1,000, or stops being stated separately from its
+  50-external allowance; a Workflow instance stops being one invocation for the purposes of that
+  ceiling, which would make the budget per step and invert this result; the Worker starts declaring a
+  limits.subrequests block, which overrides the platform default; or D1 gains a query ceiling of its
+  own, which this measurement shows it does not currently impose
 values:
-  workflow.subrequest_budget_per_instance: 10000
+  workflow.paid.subrequest_budget_per_instance: 10000
+  workflow.free.subrequest_budget_per_instance: 1000
   workflow.budget_unit_is_instance: 1
 ---
 
@@ -45,8 +48,9 @@ measurement. The engine choice is unaffected — the reasons for Workflows were 
 instances costing no concurrency, and Cloudflare re-driving instances, none of which depend on this.
 
 **What it means for a Butler.** At the counted per-node costs — `case.assign` 5, `draft` 5–6,
-`mail.send.propose` 10, and 3 more for any node reading a message body — a run has room for roughly **1,000
-to 2,000 nodes' worth of work in total**, not per step. That is generous for an ordinary Butler and
+`mail.send.propose` 10, and 3 more for any node reading a message body — a run **on Workers Paid** has room
+for roughly **1,000 to 2,000 nodes' worth of work in total**, not per step, and a run on Workers Free for a
+tenth of that. That is generous for an ordinary Butler and
 **restrictive for a bounded loop that sends**: a `foreach` of 200 items each proposing a send costs ~2,000,
 which is a fifth of the whole run's budget for one step. `maxItems` therefore has to be checked against
 what the **rest of the AST** already spends, not against the loop alone.
@@ -81,10 +85,13 @@ both pointing here for the method, and both named as what they are.
 
 ## Sized
 
-- `workflow.subrequest_budget_per_instance = 10000` — **measured**, twice, from two directions: a single step
-  stopped at exactly 10,000, and a twenty-step run stopped at a total of exactly 10,000. Not a documented
+- `workflow.paid.subrequest_budget_per_instance = 10000` — **measured**, twice, from two directions: a single
+  step stopped at exactly 10,000, and a twenty-step run stopped at a total of exactly 10,000. Not a documented
   figure taken on trust; the documentation says 10,000 but says it against a unit ("/request") that this
-  measurement had to disambiguate.
+  measurement had to disambiguate. The plan is in the name because the probe ran on a **Workers Paid**
+  account and 10,000 is the Paid default — see the correction below.
+- `workflow.free.subrequest_budget_per_instance = 1000` — **documented, not measured.** No Free Node was
+  probed. Labelled in full in the correction below.
 - `workflow.budget_unit_is_instance = 1` — recorded as a value rather than prose so that a change in it trips
   something. If this ever becomes per-step, every `maxItems` derived from it is wrong in the permissive
   direction, which is the direction that fails under load.
@@ -95,3 +102,61 @@ code, not measured, and the only instrument available cannot verify them — `do
 price `mail.send.propose` at 6 against a real 10. `test/node/doctor-meter-honesty.test.ts` pins why that
 meter's own figure is nonetheless true, and says it must not be reused. A step-cost tripwire needs an
 instrument first.
+
+## Correction, 19 August 2026: the budget was a Paid figure with no plan in its name (#68)
+
+**No measured value moved.** `workflow.subrequest_budget_per_instance: 10000` is now
+`workflow.paid.subrequest_budget_per_instance: 10000` — the same figure, from the same probe, with the plan
+it was measured on in its name. `workflow.free.subrequest_budget_per_instance: 1000` is new and is **not
+measured**; see below. No `stale_when` clause fired; the clause about the free allowance was added by this
+correction, because the file now carries a free figure that can go stale on its own.
+
+**Why the old name was a defect and not a preference.** Every other plan-conditional value in this repository
+is plan-named — `d1.paid.*` / `d1.free.*`, `plan.paid.*` / `plan.free.*` — and this one was not, while
+carrying the Paid number. That is the overclaiming name AGENTS.md §4 forbids, and it is the *same* failure
+this receipt was written to correct three sections above: `d1.*.max_queries_per_invocation` attributed the
+limit to the wrong **subsystem**, so the changelog that invalidated it did not look relevant; this name
+omitted the **plan**, so the plan that invalidates it did not look relevant either. It was already load
+bearing: `butler-step-cost.md` derived *"10,000 / 20 = 500 sends exhausts an entire run"* from it, and on
+Free that arithmetic gives 50 — wrong by a factor of ten, in the permissive direction.
+
+**What the free figure rests on, stated exactly.** It is **read from Cloudflare's published documentation on
+19 August 2026**, not measured, and nobody has run this probe on a Free account:
+
+| Source, read 19 August 2026 | Says |
+|---|---|
+| [Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests) | Subrequests per invocation: **50** Free, **10,000** Paid (up to 10M). Subrequests **to internal services**: **1,000** Free, "matches configured limit (default 10,000)" Paid |
+| [Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/) | "the maximum number of subrequests per Workflow instance is 10,000 on Workers Paid plans"; "Workers on the free plan remain limited to 50 external subrequests and 1,000 subrequests to Cloudflare services per invocation" |
+| [Subrequests changelog, 11 February 2026](https://developers.cloudflare.com/changelog/post/2026-02-11-subrequests-limit/) | the same two sentences, which is where the withdrawn 1,000 Paid figure went |
+
+So the 1,000 is documented twice and consistent, and this receipt's own prose already stated it while
+correcting the D1 keys — *"D1 being an internal service with its own 1,000 on free"*. It is still **not a
+measurement**: the 10,000 was escalated-until-broken on a live Paid account and the arithmetic closed to the
+unit; the 1,000 has had none of that done to it. **Do not repeat the word "measured" about it.** What would
+upgrade it: the same scratch Worker, a `[[workflows]]` binding and a scratch D1 on a Free account, escalating
+until the error appears. That is the only thing that turns this row into the other kind of number.
+
+**A second free figure exists and is deliberately not recorded: 50 external subrequests.** Every node
+`butler-step-cost.md` priced spends *internal* subrequests (D1, R2, Durable Object RPC), so the 1,000 is the
+row that binds today. The moment a Butler node calls `fetch()` — an LLM node is the obvious one — a Free Node
+gets **50** for the whole instance, which is a twentieth of the internal allowance and not derivable from any
+value in this file. It is not recorded because nothing in the shipped set makes an external subrequest, and a
+number with no consumer is a number nobody rechecks. Recorded here so the next reader does not divide 1,000
+by an external cost.
+
+**Which figure a derived bound should use is deferred, deliberately.** The Butler AST checker does not exist
+yet, so no code holds a wrong bound today, and the choice is a real trade-off rather than an oversight:
+nothing in a running Node can detect the plan (`doctor`'s plan check is `severity: "report"`, *"Not checkable
+from inside a Worker"*), so a publication-time refusal derived from the Paid figure admits a Butler that dies
+mid-run on Free, while one derived from the Free figure imposes an unusably small bound on the supported
+configuration — the failure `butler-step-cost.md` names, *"gets raised by whoever hits it, without
+re-measuring"*. Both figures are now recorded and plan-named so that whoever writes the checker chooses in
+the open. ADR 25 refuses Workers Free at install and `mailda deploy` enforces that with an account token, but
+that refusal is out of band: `deploy-button-install.md` measured the one-click path, which provisions D1 and
+R2 from the build's own `wrangler deploy` and verifies no plan at all. So "unsupported" is not the same as
+"cannot exist", which is why the free row is here rather than omitted.
+
+**Enforced, not just written down:** `test/node/budget-plan-scope.test.ts` fails if any plan-conditional
+budget key stops naming its plan, and pins these two figures equal to the other three names the same ceiling
+is recorded under (`d1.paid`/`d1.free.max_queries_per_invocation`, `doctor.paid`/`doctor.free.max_subrequests`)
+so one copy cannot move without the others.

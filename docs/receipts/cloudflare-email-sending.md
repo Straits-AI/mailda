@@ -8,8 +8,8 @@ stale_when: >
   records become unlockable — which would make a Node able to receive its own bounces for the first
   time and reopen the mechanism corrected below
 values:
-  send.included_per_month: 3000
-  send.cost_per_thousand_cents: 35
+  send.paid.included_per_month: 3000
+  send.paid.cost_per_thousand_cents: 35
   send.max_custom_headers: 20
   send.max_header_value_bytes: 2048
   send.max_headers_total_bytes: 16384
@@ -294,3 +294,50 @@ Mailda wants it, belongs in the adapter and in D1, not in `wrangler.jsonc`.
 
 `remote: true` on the binding lets local development call the real API, which is the only way to
 exercise this path outside a deploy.
+
+## Correction, 19 August 2026: the two priced figures are Paid figures, and now say so (#68)
+
+**No value moved.** `send.included_per_month: 3000` is now `send.paid.included_per_month` and
+`send.cost_per_thousand_cents: 35` is now `send.paid.cost_per_thousand_cents`. Nothing was remeasured; the
+names were wrong and the numbers were not. #68 flagged both as inheriting the caveat it found on
+`workflow.subrequest_budget_per_instance`, and they do — but not in the same way, so the treatment differs
+and the difference is the point of this section.
+
+**They are Paid figures.** `cloudflare-plan-costs.md` read the pricing table on 3 August 2026: *"Outbound
+emails (Email Sending) — Workers Free: **Not available**. Workers Paid: 3,000 included per month, then $0.35
+per 1,000."* A quota and a unit price with no plan in their names invite a reader — or an agent pricing a
+Node — to grant a Free account 3,000 metered sends a month. That is the overclaiming name AGENTS.md §4
+forbids, and the fix is the same rename the D1 keys got.
+
+**There is no `send.free.*` sibling, deliberately, and this is where it differs from the subrequest ceiling.**
+That ceiling is *plan-conditional*: one thing, two numbers, and a receipt that records only one of them is
+incomplete. This is **plan-gated**: on Workers Free the metered product does not exist, so there is no second
+number to record. Writing `send.free.included_per_month: 0` would be worse than omitting it, because zero
+reads as an **exhausted quota** — wait for the month to turn — when the truth is an **absent product**, whose
+remedy is a plan upgrade. Those are different states with different fixes, and §5C forbids collapsing them.
+
+**The free state is already recorded, as measured values, in the receipt that measured it.**
+`free-plan-node-capability.md` probed a live Workers Free account: `freeplan.send_to_verified_destination: 1`,
+`freeplan.send_to_arbitrary_recipient: 0`, `freeplan.send_error_names_the_plan: 0`. A Free Node's send
+capability is a capability question, answered by those three, not a quantity question answered by a fourth
+figure here.
+
+**Nothing else in this receipt's set is plan-scoped, and that is evidenced rather than assumed.** Sends to
+verified destinations *"are always free: they do not count toward your monthly quota or your daily sending
+limits, **on any plan**"* (quoted in `cloudflare-email-service-limits.md`), so the quota and the unit price
+are the only two figures here that the plan touches. The header, `References` and threading limits are
+published once with no plan column; `send.counts_per_recipient: 1` is a unit of accounting measured on the
+live account, not a quantity; `send.daily_limit_is_published: 0` and `send.bounce_dsn_reaches_node: 0` are
+facts about the platform that hold on both; and `send.hold_window_default_seconds: 15` is Mailda's own
+preference about human regret, as the section above already says at length.
+
+**Plan-naming the quota does not make the plan the only gate.** *"The entitlement is domain onboarding, not
+the plan"* above still stands: a Node can be fully paid up, hold all 3,000 of these, and still be unable to
+reply to a customer until its sending domain is onboarded. Two gates, and the rename touches only one of them.
+
+**The 3,000 is recorded twice and the copies are now pinned.** `plan.paid.emails_included_per_month: 3000` in
+`cloudflare-plan-costs.md` is the same figure from the same pricing table, read a day earlier.
+`test/node/budget-plan-scope.test.ts` asserts the two are equal, so a remeasurement that moves one and not the
+other fails instead of leaving two receipts quietly disagreeing — which is exactly how the withdrawn
+1,000-subrequest cap survived six months in `doctor-check-cost.md`. `send.paid.cost_per_thousand_cents` has no
+twin to pin.

@@ -6,10 +6,10 @@ stale_when: >
   Cloudflare changes how it distributes cron invocations within the scheduled interval; the per-Worker
   offset into the minute stops being stable; controller.scheduledTime starts carrying sub-second
   precision, which would mean it has become an observed dispatch rather than a computed schedule; the
-  documented per-account Cron Trigger ceiling changes; or wrangler stops replacing a Worker's triggers
-  wholesale on deploy
+  documented per-account Cron Trigger ceiling changes on either plan; or wrangler stops replacing a
+  Worker's triggers wholesale on deploy
 values:
-  cron.trigger_ceiling_per_account: 250
+  cron.paid.trigger_ceiling_per_account: 250
   cron.propagation_ceiling_seconds: 900
   cron.observed_lateness_p99_ms: 8093
 ---
@@ -135,8 +135,8 @@ else's production to settle a documentation question. There is also no way to si
 experiment from here: enumerating the account's current cron usage needs a REST API token, and only
 interactive OAuth was available. **Settling it needs a throwaway account with nothing else in it.**
 
-`cron.trigger_ceiling_per_account = 250` therefore records the **conservative reading**, and the name says
-which reading it is. Designing for per-account is safe under both readings; designing for per-Worker is
+`cron.paid.trigger_ceiling_per_account = 250` therefore records the **conservative reading**, and the name
+says which reading it is and which plan it is. Designing for per-account is safe under both readings; designing for per-Worker is
 broken under one. A Node must not assume it owns the budget in any case, because it cannot discover from
 inside the Worker how much of it the customer's other Workers already hold.
 
@@ -184,10 +184,31 @@ threshold has a receipt behind it rather than a guess.
 
 ## Sized
 
-- `cron.trigger_ceiling_per_account = 250` — documented, Workers Paid, and the **conservative** reading of
-  two contradictory pages. Not measured; the measurement is unsafe on a shared production account.
+- `cron.paid.trigger_ceiling_per_account = 250` — documented, Workers Paid, and the **conservative** reading
+  of two contradictory pages. Not measured; the measurement is unsafe on a shared production account. The
+  plan is in the name as of 19 August 2026 — see the correction at the end of this file.
 - `cron.propagation_ceiling_seconds = 900` — the documented "up to 15 minutes". A design must survive it;
   one observation of 74 s does not lower it.
 - `cron.observed_lateness_p99_ms` — from the sample below, against `controller.scheduledTime`. A
   **sighting figure, not a service level**: one Worker, one account, one schedule, over well under an hour.
   It is recorded so that a later, longer run has something to disagree with.
+
+## Correction, 19 August 2026: the trigger ceiling was the Paid column, unnamed (#68)
+
+**No value moved.** `cron.trigger_ceiling_per_account: 250` is now `cron.paid.trigger_ceiling_per_account`.
+Found by the tripwire #68 asked for — `test/node/budget-plan-scope.test.ts` classifies every budget key as
+plan-scoped or not and fails when a plan-scoped one does not name its plan — and this key was not in #68's
+list. That is the point of having a mechanism rather than a reviewer: the same defect existed in a fourth
+place nobody had looked.
+
+The prose above already said which plan it was: *"5 Free, 250 Paid"*, quoted from
+`/workers/platform/limits/`, followed by *"The Free figure does not bind: **ADR 25 makes Workers Paid
+mandatory**"*. So the receipt knew and the key did not, which is the whole shape of #68.
+
+**No `cron.free.trigger_ceiling_per_account: 5` is recorded, and the reason is not ADR 25.** ADR 25 is why the
+figure does not bind; it is not why the value is absent — `butler-step-budget.md` records a Free figure under
+the same ADR, because something derives from it. Nothing derives from this ceiling at all: no code reads it,
+and the section above explains why it is *"nearly moot"* — a Butler schedule cannot be a platform cron
+trigger, because triggers are deploy-time config that the next ordinary update replaces wholesale. A second
+documented number with no consumer is a number nobody rechecks. If a Butler ever does own a platform
+schedule, the Free figure is 5, in the table already quoted here, and it goes in then.

@@ -4,9 +4,10 @@ kind: measured-tripwire
 measured_on: 2026-08-14
 stale_when: >
   a node's implementation gains or loses an I/O operation; the vault key fetches become cached, which would
-  remove one to two subrequests from every evidence read and write; the per-instance subrequest budget in
-  butler-step-budget.md changes; a batch stops being one round trip; or a node type is added to the shipped
-  set without a measurement here
+  remove one to two subrequests from every evidence read and write; either per-instance subrequest budget in
+  butler-step-budget.md changes, the Paid one or the free sibling, both of which the loop arithmetic below
+  divides; a batch stops being one round trip; or a node type is added to the shipped set without a
+  measurement here
 values:
   butler.step_cost_max_case_assign: 8
   butler.step_cost_max_case_close: 3
@@ -57,15 +58,33 @@ it was invisible to the previous instrument.
 
 ## The arithmetic a checker has to do
 
-`butler-step-budget.md` measured **10,000 subrequests per Workflow *instance*** — one pot for the whole run,
-not per step. At the reply-send bound of 20:
+`butler-step-budget.md` establishes **one subrequest pot per Workflow *instance*** — for the whole run, not
+per step — and the size of that pot **depends on the customer's Cloudflare plan**. At the reply-send bound of
+20, there are two rows and a checker needs both:
 
 ```
-10,000 / 20  =  500 sends exhausts an entire run
+Workers Paid   10,000 / 20  =    500 sends exhausts an entire run
+Workers Free    1,000 / 20  =     50 sends exhausts an entire run
 ```
 
-So **a `foreach` of 500 sending items consumes the whole budget**, and a loop of 200 — the number this
-repository reaches for elsewhere — spends 4,000, which is 40% of the run in one step.
+**A Node cannot tell which row it is on.** `doctor`'s plan check is `severity: "report"`, `ok: true`, detail
+*"Not checkable from inside a Worker"* — there is no account API from inside a Worker, so the plan is not
+observable at runtime and a bound cannot be selected by looking. ADR 25 refuses Workers Free at install and
+`mailda deploy` enforces it with an account token, but `deploy-button-install.md` measured the one-click path
+and it verifies no plan at all, so a Free Node is unsupported rather than impossible.
+
+**Which row a publication-time refusal should use is deferred, not chosen here.** The Paid row admits a
+Butler that dies mid-run on Free — permissive, the direction that fails under load. The Free row imposes a
+bound a tenth the size on the supported configuration, which is the failure named below: an unusably small
+bound *"gets raised by whoever hits it, without re-measuring"*. No code holds either bound today — the AST
+checker does not exist — so the honest state is both rows recorded, plan-named, and the choice made in the
+open by whoever writes it. The Paid figure is measured; the Free figure is documented and not measured, and
+`butler-step-budget.md` labels it as such.
+
+So on Paid **a `foreach` of 500 sending items consumes the whole budget**, and a loop of 200 — the number this
+repository reaches for elsewhere — spends 4,000, which is 40% of the run in one step. On Free that same loop
+of 200 is **four times the entire run**: the pot is empty at item 50 and the instance dies mid-loop, having
+already sent 50 messages it cannot finish accounting for.
 
 **This is why the checker cannot price a loop in isolation.** `maxItems` must be checked against what the
 rest of the AST already spends, and the AST ticket's publication-time refusal therefore needs the whole
@@ -119,3 +138,57 @@ rather than assumed: `transportSends` and `queuePublishes` measure **0** for eve
 This is the same correction, in miniature, that `doctor-check-cost.md` needed when its `stale_when` named the
 exact condition that had already invalidated it. A documented limitation and an enforced one are different
 kinds of object, and this project keeps finding that out.
+
+### Correction, 18 August 2026: "reads the binding list from the config" was half of it
+
+**No value in this receipt moves and no `stale_when` clause fired** — the correction is to the sentence above,
+which overstated what the guard did. `test/node/cost-meter-coverage.test.ts` read the binding *names* from the
+config, but the *block types* it looked in were a list of five inside the test itself (`d1_databases`,
+`r2_buckets`, `send_email`, `kv_namespaces`, `secrets_store_secrets`), directly under a comment claiming the
+names were read from the config precisely so no hand-maintained list could stop matching it. A `[[workflows]]`
+block — Layer 4's Butler engine, and so the next block this config is likely to gain — was invisible to it, and
+its binding would have been priced as **free** with nothing firing (#71).
+
+Fixed by closing the world one level up, in the shape `src/cost-meter.ts` already used for binding names:
+`test/node/wrangler-world.ts` classifies every top-level key of `wrangler.jsonc` as a binding block or a field
+that binds nothing, and an unrecognised key fails. `test/node/deployability.test.ts` shares that module rather
+than keeping its own second, differently incomplete rule. Counted on the day: 15 top-level keys, 5 binding
+blocks and 10 non-binding fields. Proved by declaring a key nothing classifies and watching both guards fire,
+then by declaring a real `workflows` block and watching the meter's guard name its unclassified `BUTLER`
+binding — which is the failure this correction exists to have caused.
+
+### Correction, 19 August 2026: the closed world stopped at the top level, and `env` was the hole
+
+**No value moves and no `stale_when` clause fired here either.** Verifying the correction above re-counted its
+figures by parsing `wrangler.jsonc` with `jsonc-parser` and grouping the keys: **15** top-level keys, **5**
+binding blocks (`d1_databases`, `r2_buckets`, `send_email`, `durable_objects`, `queues`) and **10** non-binding
+fields — unchanged, so that sentence stands. Both proofs reproduced: an unrecognised top-level key failed both
+tripwires, and a declared `[[workflows]]` block made the meter's guard report *"BUTLER declared in
+wrangler.jsonc but absent from src/cost-meter.ts"*.
+
+What did not stand was the reach of "every top-level key". `env` was admitted as a non-binding field on the
+stated grounds that each environment under it is "a scope classified in its own right", while both tripwires
+only ever reached for `env.test` **by name** — so a second named environment declaring a binding block was
+classified by neither. That is the same hole one level down, in the same permissive direction, and it was a
+reason given in a comment that nothing enforced. `unclassifiedKeys` now descends into every value under `env`
+by iteration, and a stranger key planted in an `env.staging` fails it. `env.test` today declares 5 keys, all 5
+of them binding blocks, matching the top level exactly.
+
+### Correction, 19 August 2026: the loop arithmetic had one row and needed two (#68)
+
+**No value in this receipt moves and no `stale_when` clause fired** — the four bounds are properties of
+Mailda's own nodes and no plan changes what the code does. What changed is the division above it. *"The
+arithmetic a checker has to do"* divided **10,000** by the reply-send bound and stopped, and 10,000 is the
+**Workers Paid** figure: `workflow.subrequest_budget_per_instance` carried no plan in its name, so the
+arithmetic inherited a plan it never mentioned. On Workers Free the pot is 1,000 and the answer is **50, not
+500** — a tenth, in the permissive direction, in the sentence that also states the rule a publication-time
+checker is meant to apply.
+
+Both rows are now shown, each says which plan it assumes, and the section says plainly that a Node cannot tell
+which it is on and that the choice of row for a derived bound is deferred rather than made. The two budget keys
+are `workflow.paid.subrequest_budget_per_instance` and `workflow.free.subrequest_budget_per_instance`; the
+Paid one is measured twice from two directions, the Free one is documented and explicitly not measured, and
+`butler-step-budget.md` carries both labels and the published sources.
+
+`test/butler-step-cost.measure.test.ts` asserts both rows, so the arithmetic here cannot fall out of step with
+the budgets it divides, and `test/node/budget-plan-scope.test.ts` fails if either key stops naming its plan.

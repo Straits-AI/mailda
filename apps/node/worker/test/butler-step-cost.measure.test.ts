@@ -204,22 +204,30 @@ describe("what one Butler step costs (#54)", () => {
     expect(many.cost.d1Batches).toBe(one.cost.d1Batches);
   });
 
-  it("states the loop arithmetic the checker has to do", async () => {
-    // Not an assertion about code — an assertion about the budget, so that a change to either figure fails
-    // here and forces the arithmetic to be redone.
-    const budget = BUDGETS["workflow.subrequest_budget_per_instance"];
-    expect(budget).toBe(10000);
-
-    // At the measured cost of a reply-send, a loop of this many items consumes the whole run's budget.
+  it("states the loop arithmetic the checker has to do, on both plans", () => {
+    // Not an assertion about code — an assertion about the budgets, so that a change to any figure fails
+    // here and forces the arithmetic to be redone. Two rows, because the pot is plan-conditional and a
+    // Node cannot tell which plan it is on: one row was the Paid one, unlabelled, and the rule stated in
+    // docs/receipts/butler-step-cost.md was therefore 10x too permissive on Free (#68).
     const perSendUpperBound = BUDGETS["butler.step_cost_max_send_propose"];
-    const itemsThatExhaustTheRun = Math.floor(budget / perSendUpperBound);
-    console.log(
-      `MEASURE loop_arithmetic  budget_per_instance=${budget}  send_upper_bound=${perSendUpperBound}` +
-      `  items_that_exhaust_the_run=${itemsThatExhaustTheRun}`,
-    );
-    // 500 items of sending is a whole run. A maxItems anywhere near that leaves nothing for the rest of the
-    // AST, which is why the checker cannot price a loop in isolation.
-    expect(itemsThatExhaustTheRun).toBeLessThan(1000);
+    const rows = [
+      { plan: "paid", budget: BUDGETS["workflow.paid.subrequest_budget_per_instance"], expected: 500 },
+      { plan: "free", budget: BUDGETS["workflow.free.subrequest_budget_per_instance"], expected: 50 },
+    ] as const;
+
+    for (const { plan, budget, expected } of rows) {
+      const itemsThatExhaustTheRun = Math.floor(budget / perSendUpperBound);
+      console.log(
+        `MEASURE loop_arithmetic  plan=${plan}  budget_per_instance=${budget}` +
+        `  send_upper_bound=${perSendUpperBound}  items_that_exhaust_the_run=${itemsThatExhaustTheRun}`,
+      );
+      // The receipt prints these two numbers; if either moves, the prose has to move with it.
+      expect(itemsThatExhaustTheRun, `the ${plan} row of the loop arithmetic`).toBe(expected);
+    }
+
+    // The Free row is a tenth of the Paid one, which is the whole reason the rule cannot be stated without
+    // saying which plan it assumes.
+    expect(rows[0].budget).toBe(rows[1].budget * 10);
   });
 });
 

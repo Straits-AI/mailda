@@ -253,8 +253,17 @@ describe("doctor", () => {
     expect(find(report.findings, "doctor_cost").ok).toBe(true);
 
     // The sample bound is why this is bounded at all; asserted structurally so a future check
-    // cannot quietly make doctor proportional to mailbox size.
-    expect(BUDGETS["doctor.evidence_sample_size"]).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests"] / 2);
+    // cannot quietly make doctor proportional to mailbox size. Against the **free** ceiling, which is
+    // the 1,000 the 200 was originally derived against and the only one a Node on an unverified plan
+    // can be sure of — the plan is not observable from in here (#68).
+    expect(BUDGETS["doctor.evidence_sample_size"]).toBeLessThanOrEqual(BUDGETS["doctor.free.max_subrequests"] / 2);
+
+    // The operator is told both caps, because this Worker cannot tell which is theirs. A single figure
+    // here was the Paid one, unlabelled, on a report that elsewhere says the plan is not checkable.
+    const detail = find(report.findings, "doctor_cost").detail;
+    expect(detail).toContain(`${BUDGETS["doctor.paid.max_subrequests"]} on Workers Paid`);
+    expect(detail).toContain(`${BUDGETS["doctor.free.max_subrequests"]} on Workers Free`);
+    expect(detail).toContain("cannot tell which plan");
   });
 
   it("costs more per receipt, which is exactly what the scan bound exists to cap", async () => {

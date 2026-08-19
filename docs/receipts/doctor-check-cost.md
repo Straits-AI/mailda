@@ -3,20 +3,22 @@ id: doctor-check-cost
 kind: measured-tripwire
 measured_on: 2026-08-05
 stale_when: >
-  Cloudflare changes the per-invocation subrequest ceiling again, the Worker starts declaring a
+  Cloudflare changes the per-invocation subrequest ceiling on either plan again, the Worker starts declaring a
   limits.subrequests block (which would override the platform default), R2 head stops counting as a
   subrequest, doctor gains a check that costs a subrequest per row, or the measured cost of a
   doctor run changes materially — including any new fixed-cost check, which is what made the
   4 August figure stale
 values:
   doctor.evidence_sample_size: 200
-  doctor.max_subrequests: 10000
+  doctor.paid.max_subrequests: 10000
+  doctor.free.max_subrequests: 1000
   doctor.max_subrequests_per_run: 220
 ---
 
 ## Correction, 13 August 2026: this receipt shipped stale
 
-`doctor.max_subrequests` was **1000**, and the `stale_when` above named the exact condition that
+`doctor.max_subrequests` — since 19 August 2026 `doctor.paid.max_subrequests`, see the third correction
+below — was **1000**, and the `stale_when` above named the exact condition that
 invalidated it — *"Cloudflare changes the 1,000-subrequest per-invocation cap"*. Cloudflare changed it on
 **11 February 2026**, roughly six months **before** this receipt's own `measured_on` of 5 August. So the
 figure was wrong on the day it was written, and the staleness condition was already true when it was
@@ -67,6 +69,45 @@ reading would quietly change what the file means.
 Nothing about the tripwire moved: `doctor.max_subrequests_per_run = 220` still holds with room to spare,
 and it is per-run cost — not per-row — that grew, which is the distinction the clause exists to separate.
 
+## Correction, 19 August 2026: the cap this file prints was a Paid figure with no plan in its name (#68)
+
+**No measured value moved.** `doctor.max_subrequests: 10000` is now `doctor.paid.max_subrequests: 10000`, and
+`doctor.free.max_subrequests: 1000` is new — **documented, not measured**, from Cloudflare's published Workers
+limits read on 19 August 2026 (Free gets **1,000** subrequests to internal services and 50 external; the
+full quotation and the labelling are in `butler-step-budget.md`, which owns the measurement of the Paid
+figure). No `stale_when` clause fired: the first clause was widened from "the ceiling" to "the ceiling on
+either plan", because this file now carries both.
+
+**This value is not doctor's own tripwire, it is the platform's ceiling restated.** It is the *same* figure as
+`workflow.paid.subrequest_budget_per_instance`, measured there and taken here on trust, exactly as
+`d1.paid.max_queries_per_invocation` restates it a third time. Three names for one ceiling is how the 13
+August correction above came to be needed — a name that does not look relevant to the changelog that moved it.
+The three are now **pinned equal** in `test/node/budget-plan-scope.test.ts`, per plan, so no copy can move
+alone; that check is the mechanism the first correction's "the transferable finding is about `stale_when`
+itself" was asking for.
+
+**`doctor` was printing one plan's number as if it were the operator's.** The `doctor_cost` finding read
+*"Cap is 10000 per invocation"*, unconditionally, on a Node that **cannot know its plan** — the
+`workers_paid_plan` finding in the same report says so in the same breath: `severity: "report"`, *"Not
+checkable from inside a Worker"*. An operator on Free was told a ceiling ten times theirs, which is worse
+than printing nothing, because a blank prompts a question and a wrong number ends one (AGENTS.md §2). The
+detail line now names **both** plans and says the Node cannot tell which applies, and
+`test/doctor.test.ts` asserts that both figures and the words that qualify them are in the string.
+
+**The two bounds derived from this ceiling now check against the Free figure**, and that is not a new
+decision — it restores the derivation to the number it was actually run against:
+
+| Relation | Where | Arithmetic |
+|---|---|---|
+| `doctor.evidence_sample_size` ≤ cap / 2 | `test/doctor.test.ts` | 200 ≤ 1,000 / 2 = 500 |
+| `reseal.batch_size` × `reseal.subrequests_per_message` + 2 < cap | `test/evidence-lifecycle.test.ts` | 602 < 1,000 |
+
+*"The derivation below is the one that actually produced 200, kept as it was run — against the withdrawn
+1,000"* — and 1,000 is now exactly the Free ceiling, so the sample bound and the reseal batch are sound on
+**either** plan rather than only on the one nothing can verify. Neither figure changes. This is a different
+question from the deferred one in `butler-step-budget.md`: these two relations are checks on numbers that
+already exist and hold under both plans, not a bound a checker will impose on a customer's Butler.
+
 `doctor` verifies the runtime claims other decisions made. Most of its checks cost one query; one
 of them — evidence integrity — costs **one R2 `head` per receipt examined**, which is why it has a
 bound at all.
@@ -87,10 +128,10 @@ correction above.)
 
 | | |
 |---:|:---|
-| 1,000 | subrequests available — the withdrawn cap this derivation used; the live ceiling is 10,000 |
+| 1,000 | subrequests available — the withdrawn Paid cap this derivation used, which is also the live **Free** ceiling (`doctor.free.max_subrequests`); the live Paid ceiling is 10,000 |
 | ~10 | spent by every other check (schema, KEKs, keys, outbox, counts) |
 | 200 | R2 `head` calls |
-| ~790 | headroom, so adding a check never silently pushes this over the cap — ~9,790 under the live ceiling |
+| ~790 | headroom, so adding a check never silently pushes this over the cap — ~9,790 under the live Paid ceiling |
 
 The bound is **visible in the output**, not just in this file. The finding's detail line reads
 `200 of 8,500,000 receipt(s) checked, most recent 200` — because a check that examines 200 rows of

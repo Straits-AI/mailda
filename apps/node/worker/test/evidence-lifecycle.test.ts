@@ -213,8 +213,9 @@ describe("re-seal (#25)", () => {
     const perMessage = BUDGETS["reseal.subrequests_per_message"];
     const batch = BUDGETS["reseal.batch_size"];
     // The reason the batch is 100 and not 200: 200 would exceed the cap on a full batch, and that is
-    // a limit that only appears under load.
-    expect(batch * perMessage + 2).toBeLessThan(BUDGETS["doctor.max_subrequests"]);
+    // a limit that only appears under load. Against the **free** ceiling — the 1,000 this batch size was
+    // derived against, and the one that holds whatever plan the Node turns out to be on (#68).
+    expect(batch * perMessage + 2).toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
   });
 });
 
