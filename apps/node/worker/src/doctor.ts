@@ -573,7 +573,7 @@ async function checkSigningKeys(env: Env, ctx: Ctx): Promise<Finding[]> {
       discloses: "infrastructure",
       ok: false,
       detail: `Could not use the current signing key: ${(error as Error).message.split("\n")[0]}`,
-      fix: "the key is unwrappable only with the credential KEK that wrapped it — check the credential_kek finding first",
+      fix: "the key is unwrappable only with the credential key that wrapped it — check the credential_key finding first",
     }];
   }
 }
@@ -908,10 +908,20 @@ export function formatReport(report: DoctorReport): string {
  * refusing to explain why is worse than disclosing which binding is missing. So the report is served
  * unauthenticated — reduced to `infrastructure` findings, whose contents are all already published
  * in this repository. Nothing derived from an organization's mail crosses that line.
+ *
+ * ## Both names below are the names checks emit, and something checks that
+ *
+ * This predicate tested `credential_kek` until #70. Nothing in this file has ever emitted that —
+ * `checkCredentialKek` emits `credential_key` — so half of the disjunction was permanently false, and the
+ * half that was dead was the case the paragraph above was written for: a credential key that cannot wrap
+ * while the signing key is fine. `signing_key` is real, so the commonest lockout worked and every test
+ * passed. `test/node/doctor-check-names.test.ts` now derives the emitted set from this file and fails on
+ * any name referenced here — in this predicate or in a `fix:` that points at "the X finding" — that no
+ * check emits, and `test/doctor.test.ts` covers the KEK-alone lockout end to end.
  */
 export function authenticationIsImpossible(report: DoctorReport): boolean {
   return report.findings.some(
-    (f) => !f.ok && f.severity === "refuse" && (f.check === "credential_kek" || f.check === "signing_key"),
+    (f) => !f.ok && f.severity === "refuse" && (f.check === "credential_key" || f.check === "signing_key"),
   );
 }
 

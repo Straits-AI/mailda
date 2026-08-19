@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import worker from "../src/index.ts";
 import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
 import { LEGACY_KEY_GENERATION, vault } from "../src/keyvault.ts";
 import {
@@ -26,6 +27,50 @@ async function claim(ctx: ReturnType<typeof createSystemCtx>, orgId = "org_1"): 
     "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,?,?)",
   ).bind(ctx.id("clm"), "x", new Date(ctx.now()).toISOString(), orgId).run();
   return orgId;
+}
+
+/**
+ * A vault whose credential *sealing* key is not the one its `openingKey` hands back.
+ *
+ * That is what an interrupted rotation or a half-restored vault looks like from the outside, and it is
+ * the state `checkCredentialKek`'s own comment describes: presence is fine, usability is gone. It is not
+ * reachable through `KeyVault`'s own API — the DO writes the key before the pointer precisely so it
+ * cannot happen by accident — so it is injected at the single seam the doctor reaches the vault through,
+ * the same way `metered()` wraps `CATALOG` and `EVIDENCE`.
+ *
+ * Only `sealingKey("credential")` is diverted. `openingKey` passes through, so an *existing* wrapped
+ * signing key still unwraps and `signing_key` stays healthy — without that, this would be the
+ * signing-key lockout again and would prove nothing the test above does not.
+ */
+function withUnopenableCredentialKey(base: Env): Env {
+  const bound = (target: object, property: string | symbol): unknown => {
+    const value = Reflect.get(target, property) as unknown;
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+  };
+
+  const namespace = new Proxy(base.KEY_VAULT, {
+    get(target, property) {
+      if (property !== "getByName") return bound(target, property);
+      return (name: string) =>
+        new Proxy(target.getByName(name), {
+          get(stub, stubProperty) {
+            // Returned unbound, unlike the namespace above: an RPC stub's properties are themselves
+            // proxies that carry their target, and calling `.bind` on one sends `bind` over the wire —
+            // "The RPC receiver does not implement the method bind", observed before this comment existed.
+            if (stubProperty !== "sealingKey") return Reflect.get(stub, stubProperty) as unknown;
+            return async (purpose: "content" | "credential") => {
+              const real = await stub.sealingKey(purpose);
+              if (purpose !== "credential") return real;
+              // Same generation, different bytes. The generation is what `key_vault` reports, so that
+              // finding stays green and the failure is isolated to the round trip.
+              return { generation: real.generation, secret: btoa("not-the-key-that-wrapped-anything") };
+            };
+          },
+        });
+    },
+  });
+
+  return { ...base, KEY_VAULT: namespace } as Env;
 }
 
 beforeEach(async () => {
@@ -259,6 +304,67 @@ describe("doctor", () => {
     // And it says it is reduced, rather than looking like a complete clean report.
     const note = reduced.findings.find((f) => f.check === "report_reduced")!;
     expect(note.detail).toContain("withheld");
+  });
+
+  it("answers a locked-out operator when only the credential key is broken (#70)", async () => {
+    const ctx = createSystemCtx();
+    await claim(ctx);
+    // A signing key wrapped under the *real* credential key, so it stays usable. That is the whole
+    // point of this case: the test above breaks the signing key, and `authenticationIsImpossible`
+    // tested `credential_kek` — a name no check emits — for the other half of its disjunction, so a
+    // Node in *this* state got a 401 from the one endpoint that exists to explain it.
+    await currentSigningKey(testEnv, ctx);
+    clearKeyCache();
+
+    const report = await runDoctor(withUnopenableCredentialKey(testEnv), ctx);
+
+    const credential = find(report.findings, "credential_key");
+    expect(credential.ok, "the credential round trip cannot succeed in this state").toBe(false);
+    expect(credential.severity).toBe("refuse");
+    // The half that was never covered: signing is *healthy* here. If this ever flips, the test has
+    // drifted into being a second copy of the signing-key case and proves nothing new.
+    expect(find(report.findings, "signing_key").ok, "the signing key must still work").toBe(true);
+    // The injection's blast radius, asserted rather than described. A comment claimed `key_vault` stays
+    // green and nothing checked it; if the proxy ever starts breaking the vault too, this case stops
+    // being the credential-alone case and the comment goes quietly false.
+    expect(find(report.findings, "key_vault").ok, "the vault itself is reachable").toBe(true);
+    expect(
+      report.findings.filter((f) => !f.ok && f.severity === "refuse").map((f) => f.check),
+      "exactly one refusal, and it is the credential round trip",
+    ).toEqual(["credential_key"]);
+
+    expect(
+      authenticationIsImpossible(report),
+      "a Node that cannot round-trip a credential cannot mint a usable signing key, so nobody can sign in",
+    ).toBe(true);
+
+    const reduced = withoutDataFindings(report);
+    expect(reduced.findings.some((f) => f.check === "credential_key" && !f.ok)).toBe(true);
+    expect(reduced.findings.every((f) => f.discloses === "infrastructure")).toBe(true);
+    expect(reduced.findings.some((f) => f.check === "evidence_present")).toBe(false);
+  });
+
+  it("serves that operator the report over HTTP rather than a 401 (#70)", async () => {
+    // The decision this defect actually broke lives at `src/index.ts:314` — a claimed, unsigned-in caller
+    // gets `unauthenticated()` *unless* `authenticationIsImpossible`. Every other test here asserts that
+    // predicate and `withoutDataFindings` directly, and the only route-level doctor test runs on an
+    // *unclaimed* Node where `orgId === null` skips the gate entirely. So nothing reached the branch, and
+    // `authenticationIsImpossible` could return false forever for this state with the suite green.
+    const ctx = createSystemCtx();
+    await claim(ctx);
+    await currentSigningKey(testEnv, ctx);
+    clearKeyCache();
+
+    const response = await worker.fetch(
+      new Request("https://node.example/api/doctor"),
+      withUnopenableCredentialKey(testEnv),
+      ctx as unknown as ExecutionContext,
+    );
+
+    // 503 rather than 401: a refusing verdict tells a load balancer and a human the same thing.
+    expect(response.status, "the locked-out operator is answered, not refused").toBe(503);
+    const body = await response.json<{ findings: { check: string; ok: boolean }[] }>();
+    expect(body.findings.some((f) => f.check === "credential_key" && !f.ok)).toBe(true);
   });
 
   it("does not open up when authentication merely fails for one caller", async () => {
