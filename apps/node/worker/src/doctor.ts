@@ -200,6 +200,8 @@ const EXPECTED_TABLES = [
   "matters", "supervised_grants",
   // Migration 0024 (Layer 5: per-act recording and the employee notice).
   "notifications",
+  // Migration 0025 (Layer 5: eDiscovery export).
+  "exports",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

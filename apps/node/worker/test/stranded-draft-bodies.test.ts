@@ -547,12 +547,14 @@ describe("a legal hold suppresses draft-body collection org-wide", () => {
 });
 
 describe("reconcile says what it scanned, and what it could not read", () => {
-  it("names both prefixes, because a prefix outside the scan has to be visible", async () => {
+  it("names every prefix, because a prefix outside the scan has to be visible", async () => {
     const ctx = afterTheGraceWindow();
     await aSealedDraftsResidue("dft_sealed");
 
     const report = await reconcileEvidence(testEnv, ctx, ORG);
-    expect(report.scanned.prefixes).toEqual([`${ORG}/raw/`, `${ORG}/drafts/`]);
+    // Three since #65. `${ORG}/sent/` is deliberately **not** here: it is unscanned, filed as its own
+    // finding, and this assertion is exactly where its absence becomes visible rather than assumed away.
+    expect(report.scanned.prefixes).toEqual([`${ORG}/raw/`, `${ORG}/drafts/`, `${ORG}/exports/`]);
   });
 
   it("prints them, because a structured field a human never sees is not a disclosure", async () => {

@@ -54,7 +54,7 @@ type ConferredBy = "admin_grant" | "supervised_grant";
  * Every relation this Node confers, the object type each belongs to, and how it is conferred. A relation not
  * named here cannot be conferred by any path.
  *
- * Five of the blueprint's eleven mailbox relations (`:697`), which is layering rather than divergence — but
+ * Seven of the blueprint's eleven mailbox relations (`:697`), which is layering rather than divergence — but
  * `mailbox.metadata.read` was **not** a deferral, it was a hole. The queue is gated on `send.propose` and
  * returns subject lines and sender addresses, so until it existed a responder read the metadata of every
  * message in the mailbox with no relation permitting it. See `mayReadMetadata`.
@@ -117,6 +117,39 @@ const GRANTABLE = {
    *     table, because it is a fact about read paths rather than about this registry.
    */
   "supervised.read": { object: "mailbox", conferredBy: "supervised_grant" },
+  /**
+   * Taking one message's original `.eml` off this Node (#65, blueprint:698).
+   *
+   * Separate from `mailbox.content.read` because they are different acts on the same bytes: reading a
+   * message renders it inside the product, and exporting it produces a complete RFC822 copy that leaves.
+   * Until #65 there was no relation for the second one, so *"has anybody taken a copy of this message off
+   * the Node"* was unanswerable — the route produced the copy on the strength of the read relation and
+   * recorded nothing.
+   *
+   * **Backfilled rather than introduced empty**, and that is the one thing about this entry that needed a
+   * decision. `migrations/0025_ediscovery_export.sql` grants it to every subject already holding
+   * `mailbox.content.read` on the same mailbox, and `claimNode` grants it to a new Node's owner, because
+   * Layer 1's own proof is *"original `.eml` exportable"* and a check shipped without its grant would break
+   * that on every existing install. What the relation buys is that it is now separately **revocable**: an
+   * administrator can withdraw the ability to take copies away while leaving the ability to read.
+   */
+  "message.export": { object: "mailbox", conferredBy: "admin_grant" },
+  /**
+   * Asking for a bulk eDiscovery export of a mailbox (#65, blueprint:709, §7, §22).
+   *
+   * Deliberately **not** backfilled and not granted at claim: nothing could do this before, so nobody is
+   * losing an ability, and an export is the act §7 has the most to say about. Holding it lets somebody
+   * *ask*; what authorizes the copy is two other people holding `approval.decide` on the same mailbox
+   * agreeing to a canonical predicate hash and a hard `max_messages` (`src/exports.ts`).
+   *
+   * On the **mailbox**, like `approval.decide` and for the same reason: an export is a copy of one
+   * mailbox's mail, so the people who decide it are the people trusted with that mailbox. An
+   * organization-scoped export permission would let one grant authorize copying every mailbox in the Node.
+   *
+   * It is also re-read **per page** by a running export rather than once at approval, which is what makes
+   * §7's *"revocation terminates export jobs"* enforceable rather than asserted.
+   */
+  "ediscovery.export": { object: "mailbox", conferredBy: "admin_grant" },
   "org.admin": { object: "organization", conferredBy: "admin_grant" },
 } as const satisfies Record<string, { object: ObjectType; conferredBy: ConferredBy }>;
 

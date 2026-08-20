@@ -49,7 +49,18 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   },
   messages: { exempt: "Written by ingress from mail that arrived; the mail is its own evidence (§13)." },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
-  ingress_receipts: { exempt: "The receipt *is* the audit record for arrival, and is hashed (§13)." },
+  ingress_receipts: {
+    // **Was exempt, and the exemption was about the wrong direction.** "The receipt *is* the audit record for
+    // arrival" is still true — nothing writes this table except mail arriving, and §13 hashes it — but #65
+    // added an act *about* a receipt that leaves no row anywhere: downloading the original `.eml`, which is a
+    // complete RFC822 copy going off the Node. Arrival is self-evidencing; departure is not, and it was
+    // unrecorded until now.
+    //
+    // Classified here because this is the table the act is about — `message.exported`'s subject is the
+    // receipt id, which is what makes "who has taken a copy of this message" one filter. The `hold.blocked`
+    // and `supervised.query` shape: no write, and the table it belongs to is the one it names.
+    actions: ["message.exported"],
+  },
   outbox: { exempt: "Internal work queue. Its effects are audited where they land, not on enqueue." },
   send_counters: { exempt: "Aggregate counters derived from send_manifests, which is audited." },
   send_recipients: {
@@ -234,6 +245,29 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // person to answer for it.
     actions: ["supervised.granted", "approval.requested"],
   },
+  exports: {
+    // #65. Four actions, and the split is the same one `supervised_grants` uses one table over: the `INSERT`
+    // rides with `approval.requested`, because asking for an export **is** asking for an approval and that
+    // entry's detail already names the mailbox, the matter, the predicate hash and the bound. The terminal
+    // writes each get their own action, because each answers a different question an investigation asks —
+    // what two people authorized, what actually left, and what was refused.
+    //
+    // The **page** writes are deliberately unaudited, and that is the interesting classification here: an
+    // export advances `cursor_after`, `pages_done` and `messages_emitted` once per page with no entry. One
+    // entry per page would put hundreds of rows behind one act and falsify `audit-and-log-retention.md`'s "a
+    // handful per message" sizing — the same per-row-versus-per-act reasoning that exempts `send_recipients`
+    // and `approval_stages`. What makes it safe rather than a gap is that progress is not an act somebody
+    // could be asked about: `supervised.export_completed` names the manifest hash and the emitted count, so
+    // the trail says exactly what was copied without narrating how many invocations it took.
+    //
+    // There is no `supervised.export_downloaded`: the manifest is the list of what was staged and the
+    // completion entry names its hash, so an entry per object retrieved would be the same per-row mistake at
+    // the other end of the pipe. `docs/ediscovery-export.md` names it under "Still not built".
+    actions: [
+      "approval.requested", "supervised.export_requested", "supervised.export_completed",
+      "supervised.export_aborted",
+    ],
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },
@@ -323,7 +357,14 @@ describe("audit coverage", () => {
       .map(([action]) => action)
       .sort();
 
-    expect(disclosure).toEqual(["supervised.attachment", "supervised.opened", "supervised.query"]);
+    // `message.exported` is the fourth (#65), and it earns the classification the same way: taking a copy of
+    // a message off this Node writes nothing, and a copy that could not be recorded must not be handed over.
+    // It is the one disclosure action emitted for an **ordinary** reader as well as a supervised one, which
+    // is the point — the three above only ever fire under a grant, so the question "who has a copy of this
+    // message" was unanswerable for everybody who held the plain relation.
+    expect(disclosure).toEqual([
+      "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
+    ]);
   });
 
   it("gives every exemption a reason long enough to have needed thought", () => {

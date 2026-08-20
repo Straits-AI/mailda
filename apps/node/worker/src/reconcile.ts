@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { exportsPrefix } from "./exports.ts";
 import { anyActiveHold } from "./holds.ts";
 
 /**
@@ -22,17 +23,28 @@ import { anyActiveHold } from "./holds.ts";
  * Deleting the receipt would turn a detectable data loss into an undetectable one, which is the worst
  * available outcome and also the tempting one, because it makes the report go green.
  *
- * ## Two prefixes, two referent rules, one delete (#67)
+ * ## Three prefixes, three referent rules, one delete (#67, #65)
  *
  * `${orgId}/raw/` holds accepted mail, whose referent is a row in `ingress_receipts`. `${orgId}/drafts/`
  * holds draft bodies, whose referent is a row in `drafts` keyed by `body_key` — so **"no receipt" is not
  * the test for a draft body**, and that is why widening one listing was never the whole repair.
+ * `${orgId}/exports/` holds eDiscovery exports (#65), whose referent is a row in `exports` **keyed by the
+ * id in the key's own second segment** — a third rule again, and "no receipt" is not the test for one of
+ * those either.
  *
  * The prefixes are scanned by different rules and then **collected by the same loop**. That is
  * deliberate: `EVIDENCE.delete` below is still the only call in the product that destroys content
  * *bytes*, so the allowlist in `test/node/content-deletion-world.test.ts` stays at one entry, which is the
  * property that tripwire exists to protect. A second delete site would be a second thing to remember to
  * put a hold in front of.
+ *
+ * **The export prefix was put into the scan in the change that created it**, rather than after somebody
+ * noticed. #67's whole finding was a prefix nothing listed, and the cost of that was invisible precisely
+ * because nothing reported it. What is still unscanned is `${orgId}/sent/` — `outbound/dispatch.ts:458`,
+ * `outbound/manifest.ts:433` and `:436` — which is a separate finding with its own referent question and is
+ * **filed as #74** rather than remembered. It is not repaired here, and `scanned.prefixes` is what makes its
+ * absence visible in the output instead of absent from it. The arithmetic for it is already paid: `#65`
+ * lowered `reconcile.list_limit` to 150 so a fourth prefix does not force a third re-derivation.
  *
  * #64 classified this site content-carrying and gave it the **org-wide** rule rather than a per-hold one,
  * because an unreferenced object cannot be attributed to a mailbox — see `anyActiveHold` at the top of the
@@ -84,7 +96,7 @@ export function draftBodyPrefix(orgId: string): string {
  * a prefix named here that nothing lists would have to be a prefix nothing scans either.
  */
 function scannedPrefixes(orgId: string): string[] {
-  return [rawPrefix(orgId), draftBodyPrefix(orgId)];
+  return [rawPrefix(orgId), draftBodyPrefix(orgId), exportsPrefix(orgId)];
 }
 
 /** One object with no live referent, in the shape both directions of this pass report it. */
@@ -135,9 +147,12 @@ export type DraftBodyScan =
  * it samples by key. Both halves of that are measured in `docs/receipts/evidence-lifecycle.md`'s correction
  * headed *"the pass gained a second prefix"*: this scan costs 2 subrequests at 0 stranded bodies and 2 at
  * five, while five raw objects with no receipt cost five extra D1 executions. The same correction derives what
- * a *full* pass can now reach — `4 × reconcile.list_limit + 6` — and `test/evidence-lifecycle.test.ts` asserts
- * that arithmetic stays under the Workers Free subrequest ceiling, because `list_limit` bounds each prefix
- * separately and adding one nearly doubled the ceiling a pass can touch.
+ * a *full* pass can now reach — `(n + 2) × reconcile.list_limit + (2n + 2)` over `n` prefixes — and
+ * `test/evidence-lifecycle.test.ts` asserts that arithmetic stays under the Workers Free subrequest ceiling,
+ * because `list_limit` bounds each prefix separately and every prefix added raises the worst case by two
+ * `list_limit`s. #65's third prefix is what forced the figure to be re-derived rather than re-read: at a
+ * `list_limit` of 200 it comes to **1,008**, which is *over* the Free ceiling of 1,000, so that receipt's
+ * 20 August correction lowers the limit instead of letting the assertion start lying.
  *
  * The referent query deliberately has **no LIMIT**. A partial set of referents would report a *live*
  * draft's body as stranded, and under `collect` that is not a false accusation, it is a deletion of
@@ -190,6 +205,91 @@ export async function scanDraftBodies(env: Env, ctx: Ctx, orgId: string): Promis
   };
 }
 
+/**
+ * Which objects under `${orgId}/exports/` have no `exports` row behind them (#65).
+ *
+ * The same union shape as `DraftBodyScan`, and for the same reason: a caller cannot reach `stranded` without
+ * narrowing on `read`, so *"0 stranded"* can never stand in for *"could not look"*. That distinction is the
+ * whole of #67 and it is worth having twice rather than sharing a type that would have to be generic in the
+ * referent to say anything useful.
+ *
+ * **The referent rule is the third one in this file.** An export object's key is
+ * `${orgId}/exports/${exportId}/<name>`, so the referent is an `exports` row whose id is the second segment
+ * — not a receipt, and not a row keyed by the object's full key the way a draft body is. An export stages
+ * many objects under one row, which is why the id has to be cut out of the key rather than looked up whole.
+ *
+ * A stranded export object is **rare by construction and therefore worth reporting loudly**: the `exports`
+ * row is written at request time, before the approval exists and long before any object is staged, so an
+ * object with no row means the row went away. Nothing in this product deletes one.
+ */
+export type ExportObjectScan =
+  | {
+    read: "complete";
+    prefix: string;
+    examined: number;
+    truncated: boolean;
+    /** Inside the grace window: a page may be between its R2 write and its D1 checkpoint right now. */
+    tooFreshToJudge: number;
+    /** Past the grace window with no `exports` row. Deleted only when `collect` is set and no hold stands. */
+    stranded: Unreferenced[];
+  }
+  | { read: "unreadable"; prefix: string; because: string | null };
+
+/**
+ * The export half of direction 1.
+ *
+ * Two calls, fixed, whatever the listing returns: one `R2Bucket.list()` and **one** `SELECT id FROM exports`
+ * for every live referent at once — the same bulk shape `scanDraftBodies` uses, and the reason adding this
+ * prefix costs two subrequests rather than two hundred. The raw direction still spends one D1 lookup per
+ * object because it samples by key; this one cannot, because many objects share one row.
+ *
+ * The referent query deliberately has **no LIMIT**, for `scanDraftBodies`'s reason, which is sharper here: a
+ * partial set of referents would report a *live* export's staged objects as stranded, and under `collect`
+ * that is not a false accusation, it is the destruction of evidence in an open matter. It is bounded in
+ * practice by what it reads — one column of `exports`, one row per export ever asked for, which grows with
+ * investigations rather than with mail volume.
+ */
+export async function scanExportObjects(env: Env, ctx: Ctx, orgId: string): Promise<ExportObjectScan> {
+  const prefix = exportsPrefix(orgId);
+  const listed = await env.EVIDENCE.list({ prefix, limit: LIST_LIMIT });
+
+  const referenced = await env.CATALOG.prepare(
+    "SELECT id FROM exports WHERE org_id = ?",
+  ).bind(orgId).all<{ id: string }>();
+  const live = new Set(referenced.results.map((row) => row.id));
+
+  const cutoff = ctx.now() - ORPHAN_GRACE_MS;
+  const stranded: Unreferenced[] = [];
+  let tooFreshToJudge = 0;
+  for (const object of listed.objects) {
+    // `${orgId}/exports/${exportId}/<name>` — the id is the segment after the prefix. A key with no slash
+    // after the prefix has no export id in it at all, so it belongs to no row by definition and is treated
+    // as stranded rather than skipped: skipping it would leave an object this pass can see and never
+    // collect, which is the shape #67 filed.
+    const rest = object.key.slice(prefix.length);
+    const exportId = rest.slice(0, rest.indexOf("/"));
+    if (exportId !== "" && live.has(exportId)) continue;
+    if (object.uploaded.getTime() > cutoff) {
+      tooFreshToJudge += 1;
+      continue;
+    }
+    stranded.push({
+      blobKey: object.key,
+      bytes: object.size,
+      uploaded: object.uploaded.toISOString(),
+    });
+  }
+
+  return {
+    read: "complete",
+    prefix,
+    examined: listed.objects.length,
+    truncated: listed.truncated,
+    tooFreshToJudge,
+    stranded,
+  };
+}
+
 export interface ReconcileReport {
   /** Raw objects with no receipt, older than the grace period. Deleted only when `collect` is set. */
   orphans: Unreferenced[];
@@ -204,6 +304,16 @@ export interface ReconcileReport {
    */
   draftBodies: DraftBodyScan;
   draftBodiesDeleted: number;
+  /**
+   * The export half of direction 1 (#65), by its own referent rule.
+   *
+   * A third sibling rather than a third total, for the reason `draftBodies` is a sibling of `orphans`: an
+   * orphan is a lost transaction, a stranded draft body is the ordinary residue of a sent message, and a
+   * stranded export object is **material somebody was authorized to copy whose record has gone**. Three
+   * different meanings, so three counts an operator can act on rather than one they cannot.
+   */
+  exportObjects: ExportObjectScan;
+  exportObjectsDeleted: number;
   /**
    * What this pass was asked to delete, and whether a legal hold stopped it (#64).
    *
@@ -252,6 +362,14 @@ export async function reconcileEvidence(
       because: "the pass returned before reaching this prefix",
     },
     draftBodiesDeleted: 0,
+    // Same refusing placeholder as `draftBodies` above, for the same reason: a `complete` scan with an empty
+    // `stranded` would claim a clean prefix this pass had not looked at yet.
+    exportObjects: {
+      read: "unreadable",
+      prefix: exportsPrefix(orgId),
+      because: "the pass returned before reaching this prefix",
+    },
+    exportObjectsDeleted: 0,
     collection: { requested: options.collect === true, suppressed: false },
     tooFreshToJudge: 0,
     missing: [],
@@ -290,7 +408,7 @@ export async function reconcileEvidence(
    * `test/node/content-deletion-world.test.ts` exists to protect, and the reason #67's residue is collected
    * here rather than by a sweep of its own.
    */
-  const collectable: { blobKey: string; referent: "ingress_receipt" | "drafts_row" }[] = [];
+  const collectable: { blobKey: string; referent: "ingress_receipt" | "drafts_row" | "exports_row" }[] = [];
 
   const listed = await env.EVIDENCE.list({ prefix: rawPrefix(orgId), limit: LIST_LIMIT });
   report.scanned.objects += listed.objects.length;
@@ -341,6 +459,24 @@ export async function reconcileEvidence(
     }
   }
 
+  /**
+   * The export half (#65), caught for the same reason the draft half is: direction 2 below reports **lost
+   * mail**, which nothing else in this Node produces, and losing that report because a third prefix would
+   * not answer trades the serious finding for the cheap one.
+   */
+  report.exportObjects = await scanExportObjects(env, ctx, orgId).catch((error: unknown) => ({
+    read: "unreadable" as const,
+    prefix: exportsPrefix(orgId),
+    because: (error as Error).message.split("\n")[0] ?? null,
+  }));
+  if (report.exportObjects.read === "complete") {
+    report.scanned.objects += report.exportObjects.examined;
+    if (report.exportObjects.truncated) report.scanned.truncated = true;
+    for (const object of report.exportObjects.stranded) {
+      collectable.push({ blobKey: object.blobKey, referent: "exports_row" });
+    }
+  }
+
   // ---- the one R2 delete in this Worker ----------------------------------------------------
   // Everything above is enumerated whatever happens; deleted only when collection was asked for and no
   // hold stands anywhere in the organization.
@@ -350,7 +486,8 @@ export async function reconcileEvidence(
       // Counted per referent rule, not as one total: "3 deleted" that mixed a lost transaction with the
       // residue of a sent message would be a number an operator could not act on.
       if (object.referent === "ingress_receipt") report.orphansDeleted += 1;
-      else report.draftBodiesDeleted += 1;
+      else if (object.referent === "drafts_row") report.draftBodiesDeleted += 1;
+      else report.exportObjectsDeleted += 1;
     }
   }
 
@@ -394,7 +531,8 @@ export async function reconcileEvidence(
  */
 function reconcileHoldLine(report: ReconcileReport): string {
   const held = report.orphans.length
-    + (report.draftBodies.read === "complete" ? report.draftBodies.stranded.length : 0);
+    + (report.draftBodies.read === "complete" ? report.draftBodies.stranded.length : 0)
+    + (report.exportObjects.read === "complete" ? report.exportObjects.stranded.length : 0);
   if (report.collection.suppressed) {
     return `  HELD      ${held} collectable object(s) not collected: a legal hold is active in this `
       + `organization, and an object with no referent is unattributable by definition, so nothing can prove `
@@ -426,6 +564,25 @@ function draftBodyLine(report: ReconcileReport): string {
     + (scan.truncated ? ` (truncated — more remain)` : ``);
 }
 
+/**
+ * The export line, printed on every branch including the unreadable one (#65).
+ *
+ * Its own line rather than folded into the draft one, because the referent rule differs and a reader who
+ * assumed otherwise would draw the wrong conclusion about what is missing — the same argument #67 made for
+ * separating drafts from orphans, one prefix along.
+ */
+function exportObjectLine(report: ReconcileReport): string {
+  const scan = report.exportObjects;
+  if (scan.read === "unreadable") {
+    return `  UNREAD    ${scan.prefix} could not be read, so nothing under it was counted or collected`
+      + (scan.because === null ? `` : `: ${scan.because}`);
+  }
+  return `  exports   ${scan.stranded.length} staged object(s) with no exports row, `
+    + `${report.exportObjectsDeleted} deleted, ${scan.tooFreshToJudge} too fresh to judge, `
+    + `out of ${scan.examined} examined under ${scan.prefix}`
+    + (scan.truncated ? ` (truncated — more remain)` : ``);
+}
+
 /** The text form, for a CLI and for a log line. */
 export function formatReconcile(report: ReconcileReport): string {
   const lines = [
@@ -442,6 +599,8 @@ export function formatReconcile(report: ReconcileReport): string {
     // "no receipt" is not the test that produced it and a reader who assumes it was would draw the wrong
     // conclusion about what is missing (#67).
     draftBodyLine(report),
+    // The third referent rule, on its own line for the same reason the second one is (#65).
+    exportObjectLine(report),
     // Printed on every branch, including "collection was not asked for", because a reader who sees nothing
     // about holds cannot tell whether the line is absent or the suppression is.
     //

@@ -333,6 +333,47 @@ const FIGURES: Record<string, Classification> = {
     "reseal.batch_size",
   ),
 
+  // docs/receipts/r2-list-page-size.md
+  ...bothPlans(
+    // Checked rather than inherited from its neighbours: R2's operation limits table states one figure per
+    // row with no plan column, and the Workers plan changes what an account is billed for rather than how
+    // many keys one API call returns. The plan-scoped figure in this neighbourhood is the *subrequest
+    // ceiling*, which is `doctor.{free,paid}.max_subrequests` and bounds how many listings a pass may make —
+    // a different question, recorded elsewhere and deliberately not restated here.
+    // Two figures because they are two different calls: a bare listing caps at 1,000 and a listing that asks
+    // for customMetadata caps at 100, measured against workerd. Both are published-once platform limits, and
+    // conflating them is what made an export above a hundred messages unable to finish.
+    "the maximum keys one R2Bucket.list() call returns, with and without customMetadata; published once, "
+      + "and measured against workerd",
+    "r2.list_max_keys_per_call", "r2.list_max_keys_with_metadata",
+  ),
+
+  // docs/receipts/ediscovery-export-cost.md
+  ...mailda(
+    // Not plan-scoped, for the reason the policy, approval and dispatch cost figures are not: these count
+    // operations Mailda's own export performs. The plan changes the size of the pot they spend from, never
+    // how many of them the code performs — and because an export checkpoints (blueprint:1276), the pot only
+    // decides how many invocations a run takes rather than whether it finishes.
+    "the R2 and vault operations one exported message costs, with and without the run-scoped key cache, "
+      + "measured with metering() in workerd",
+    "export.subrequests_per_message", "export.subrequests_per_message_cached",
+  ),
+  ...derived(
+    "messages per invocation before the cursor checkpoints: a full page with the cache sits at a fifth of "
+      + "the Free ceiling, and the same argument reseal.batch_size records applies — the ceiling no longer "
+      + "binds the choice, a failing page costs a retry of the whole page",
+    ["export.subrequests_per_message_cached", "doctor.free.max_subrequests"],
+    "export.page_size",
+  ),
+  ...derived(
+    "the largest export this Node will authorize: the manifest build pages one R2 listing and stops at this "
+      + "many objects, so the ceiling is a bare listing's cap and blueprint:1280 says to name the boundary "
+      + "rather than work around it. Not the metadata cap, which decides how many pages the build spends "
+      + "rather than how many objects it can name",
+    ["r2.list_max_keys_per_call"],
+    "export.max_messages_ceiling",
+  ),
+
   // docs/receipts/free-plan-node-capability.md — the plan is in the namespace, which is what these figures are about.
   ...planScoped(
     "measured on a live Workers Free account: what a Free Node can and cannot do",

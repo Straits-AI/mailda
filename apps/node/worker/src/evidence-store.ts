@@ -29,8 +29,49 @@ const HEADER_BYTES = 32;
 /** Metadata key. Changing this string orphans every existing object's generation. */
 const GENERATION_META = "keyGeneration";
 
-async function contentKeyFor(env: Env, generation: number): Promise<CryptoKey> {
-  return aesKeyFrom((await vault(env).openingKey("content", generation)).secret);
+/**
+ * A cache of vault keys **belonging to one operation**, or absent (#65).
+ *
+ * ## Why this is a parameter and not a module-level map
+ *
+ * Every vault call is a Durable Object RPC and therefore a subrequest. A read-decrypt-re-emit spends two of
+ * them per message — one opening key, one sealing key — and on a bulk export that is the difference between
+ * a run finishing in one instance and needing two. Caching them removes both.
+ *
+ * What it costs is **staleness of a content key**, and that is why the cache is scoped to a caller's own
+ * object rather than to the isolate. `auth/keys.ts` caches signing keys isolate-wide with its TTL reasoned
+ * explicitly as *"a staleness bound on key revocation"*; doing the same here would make content-key
+ * revocation eventually-consistent **product-wide** in order to speed up one feature, which is a much
+ * heavier promise than the one being asked for. Confined to one run, the longest a stale key can survive is
+ * that run — which is already the unit the export's approval authorizes.
+ *
+ * Every other caller passes nothing and behaves exactly as before, byte for byte: `undefined` means "ask the
+ * vault", which is what `getEvidence`, `streamEvidence` and `openForReseal` all still do. Forgetting to pass
+ * one costs subrequests and can never cost correctness, which is the direction an optional parameter is
+ * allowed to fail in.
+ */
+export interface RunKeyCache {
+  /** Opening keys by generation. A generation's key never changes, so within a run this cannot go wrong. */
+  opening: Map<number, CryptoKey>;
+  /** The sealing key and the generation it is. Null until the first seal in this run. */
+  sealing: { generation: number; key: CryptoKey } | null;
+}
+
+/** A fresh cache. Held by one operation and discarded with it — there is deliberately no way to share one. */
+export function runKeyCache(): RunKeyCache {
+  return { opening: new Map(), sealing: null };
+}
+
+async function contentKeyFor(
+  env: Env,
+  generation: number,
+  cache?: RunKeyCache,
+): Promise<CryptoKey> {
+  const cached = cache?.opening.get(generation);
+  if (cached !== undefined) return cached;
+  const key = await aesKeyFrom((await vault(env).openingKey("content", generation)).secret);
+  cache?.opening.set(generation, key);
+  return key;
 }
 
 export interface StoredEvidence {
@@ -51,11 +92,30 @@ export async function putEvidence(
   env: Env,
   blobKey: string,
   plaintext: Bytes,
+  options: {
+    /** See `RunKeyCache`. Absent means "ask the vault", which is what every pre-#65 caller does. */
+    cache?: RunKeyCache;
+    /**
+     * Extra `customMetadata` entries, merged **under** the two this function owns.
+     *
+     * One caller: an eDiscovery export stamps each staged object with its plaintext SHA-256, so the manifest
+     * can be built from a single `R2Bucket.list()` with `include: ["customMetadata"]` rather than from one
+     * `get` per message. The order of the spread is what makes that safe — `frames` and `keyGeneration` are
+     * written last, so a caller cannot overwrite the fields that decide whether an object can be opened.
+     */
+    metadata?: Record<string, string>;
+  } = {},
 ): Promise<StoredEvidence> {
   // Always the highest generation. `sealingKey` never returns the legacy constant, so a Node cannot
   // write a new object under a published key even by mistake.
-  const sealing = await vault(env).sealingKey("content");
-  const sealed = await seal(await aesKeyFrom(sealing.secret), plaintext, DEFAULT_FRAME_BYTES);
+  const cached = options.cache?.sealing;
+  const sealing = cached ?? await (async () => {
+    const key = await vault(env).sealingKey("content");
+    const derived = { generation: key.generation, key: await aesKeyFrom(key.secret) };
+    if (options.cache !== undefined) options.cache.sealing = derived;
+    return derived;
+  })();
+  const sealed = await seal(sealing.key, plaintext, DEFAULT_FRAME_BYTES);
 
   const object = new Uint8Array(sealed.header.length + sealed.body.length);
   object.set(sealed.header, 0);
@@ -63,6 +123,7 @@ export async function putEvidence(
 
   await env.EVIDENCE.put(blobKey, object, {
     customMetadata: {
+      ...options.metadata,
       frames: "aes-256-gcm/256KiB/v1",
       [GENERATION_META]: String(sealing.generation),
     },
@@ -124,10 +185,18 @@ async function fetchSealed(env: Env, blobKey: string): Promise<FetchedEvidence> 
   };
 }
 
-/** Whole-object read. For small messages and tests; see `streamEvidence` for a response path. */
-export async function getEvidence(env: Env, blobKey: string): Promise<Bytes> {
+/**
+ * Whole-object read. For small messages and tests; see `streamEvidence` for a response path.
+ *
+ * `cache` is the export's run-scoped key cache and is absent everywhere else — see `RunKeyCache`.
+ */
+export async function getEvidence(
+  env: Env,
+  blobKey: string,
+  cache?: RunKeyCache,
+): Promise<Bytes> {
   const fetched = await fetchSealed(env, blobKey);
-  return openFrames(await contentKeyFor(env, fetched.generation), fetched);
+  return openFrames(await contentKeyFor(env, fetched.generation, cache), fetched);
 }
 
 /**

@@ -10,8 +10,10 @@ import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/eve
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import {
-  listMessages, authorize, mailboxesWithRelation, mayRead, maySend, principalFor, readableSubjects,
+  listMessages, authorize, authorizeExport, mailboxesWithRelation, mayRead, maySend, principalFor,
+  readableSubjects,
 } from "./authz-read.ts";
+import { authorizeExportObject, exportsForReport, requestExport, runExport } from "./exports.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
@@ -808,6 +810,107 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     /**
+     * eDiscovery export (#65, §7, §22, Layer 5).
+     *
+     * `POST /api/exports`                     ask for one. `ediscovery.export`, a matter, a predicate, a bound
+     * `GET  /api/exports`                     every export this organization has asked for
+     * `POST /api/exports/:id/run`             copy one page, and finish if that page was the last
+     * `GET  /api/exports/:id/objects/:name`   download one staged object, re-checking the grant
+     *
+     * **There is no endpoint that authorizes an export**, exactly as there is none that grants a supervised
+     * read: what makes one runnable is two people holding `approval.decide` on that mailbox deciding it at
+     * `POST /api/approvals/:id/decide`. Fourth subject kind, same machinery (#61), no second approval path.
+     *
+     * **The run is a page at a time and the caller loops**, because blueprint:1276 requires an export to use
+     * resumable checkpoints and a page is what the cursor advances over. That is also what dissolves the
+     * plan arithmetic: a checkpointing run does not need to know its budget in advance, so Free versus Paid
+     * changes how many calls an export takes rather than whether it finishes. `done` in the response is the
+     * loop's condition, and `E_EXPORT_BOUND_EXCEEDED` is the one refusal that ends it without a manifest.
+     *
+     * **The download is mediated rather than presigned**, and that is not a preference: the Workers R2
+     * binding has no presign method at all, and mediating it is what makes §7's *"revocation terminates
+     * export jobs"* enforceable — every object re-asks whether the requester still holds
+     * `ediscovery.export` and whether the approval still stands, so a revocation stops a download mid-file.
+     *
+     * There is deliberately **no UI**, for the reason the policy, approval and supervised planes have none:
+     * the shell is Layer 1-3's surface, and an export is a governance act performed by an investigator with
+     * a matter open.
+     */
+    if (url.pathname === "/api/exports" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const optional = (value: unknown): string | null =>
+        value === undefined || value === null ? null : String(value);
+      /*
+       * Every field is passed through as it arrived. `requestExport` refuses an absent matter, an
+       * unparseable window and a `maxMessages` that is not a whole positive number below the ceiling, each
+       * by naming the field — rather than defaulting, which for a bound would mean this Node choosing how
+       * much of somebody's mailbox may leave.
+       */
+      return Response.json({
+        export: await requestExport(env, clock, who.orgId, who.userId, {
+          mailboxId: String(body.mailboxId ?? ""),
+          matterId: String(body.matterId ?? ""),
+          fromDate: optional(body.fromDate),
+          toDate: optional(body.toDate),
+          subjectContains: optional(body.subjectContains),
+          maxMessages: Number(body.maxMessages),
+        }),
+      });
+    }
+
+    if (url.pathname === "/api/exports" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        // §5C, and the same answer `GET /api/supervised` gives for the same reason: this list names who is
+        // taking copies of whose mailbox under which matter, which is the organization's investigation map.
+        // A 403 would tell a caller the map exists and is worth asking about.
+        return Response.json(
+          { error: "not_found", message: "No exports, or you do not have access to them." },
+          { status: 404 },
+        );
+      }
+      return Response.json({ exports: await exportsForReport(env, who.orgId) });
+    }
+
+    const exportRun = /^\/api\/exports\/([^/]+)\/run$/.exec(url.pathname);
+    if (exportRun && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // Only the requester may run their own export — `runExport` enforces it and answers 404 otherwise, for
+      // the reason its own comment gives: the approval named a person, and somebody else staging the bytes
+      // would put a copy in the trail under a name that never asked for it.
+      return Response.json({ run: await runExport(env, clock, who.orgId, who, exportRun[1]!) });
+    }
+
+    const exportObject = /^\/api\/exports\/([^/]+)\/objects\/([^/]+)$/.exec(url.pathname);
+    if (exportObject && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const allowed = await authorizeExportObject(
+        env, who.orgId, who, exportObject[1]!, exportObject[2]!,
+      );
+      if (!allowed.ok) return allowed.response;
+      return new Response(await streamEvidence(env, allowed.blobKey), {
+        headers: {
+          // The manifest is JSON and every other object is a message. Decided from the name rather than
+          // from a column, because the name is what the manifest itself records and a second answer would
+          // be a second thing to keep true.
+          "content-type": exportObject[2] === "manifest.json"
+            ? "application/json"
+            : "message/rfc822",
+          // Built rather than interpolated, for `safeFilename`'s reason one route down: a header value
+          // assembled from a path segment is where a CR or LF becomes a second header.
+          "content-disposition":
+            `attachment; filename="${safeFilename(exportObject[2]!.replace(/\.[a-z]+$/, ""),
+              exportObject[2] === "manifest.json" ? ".json" : ".eml")}"`,
+        },
+      });
+    }
+
+    /**
      * Authoring a policy (#60, Layer 5). `org.admin` only, audited as `policy.drafted` and `policy.published`.
      *
      * The minimal surface, and it exists for the reason the legal-hold endpoint above exists: **a policy
@@ -1439,12 +1542,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json(await renderBody(await getEvidence(env, allowed.blobKey)));
     }
 
-    // Original .eml, streamed frame by frame so a 25 MiB message is never buffered (#16).
+    /**
+     * Original `.eml`, streamed frame by frame so a 25 MiB message is never buffered (#16) — and, since
+     * #65, **the single-message export**.
+     *
+     * `authorizeExport` rather than `authorize`, and the difference is the whole of #65's smaller half. This
+     * route produces a complete RFC822 copy with `content-disposition: attachment`, and until now it did so
+     * on the strength of `mailbox.content.read` alone and **recorded nothing** — so *"has anybody taken a
+     * copy of this message off the Node"* had no answer. It now takes `message.export` as well and appends
+     * `message.exported` before any byte moves. The supervised `.eml` path is unchanged: a grant of scope
+     * `content` satisfies both checks and still emits `supervised.attachment`.
+     *
+     * `/api/messages/:id/body` deliberately keeps `authorize`: rendering one message's text inside the
+     * product is a read, not a copy leaving, which is the boundary the two permissions draw.
+     */
     const raw = /^\/api\/messages\/([^/]+)\/raw$/.exec(url.pathname);
     if (raw && request.method === "GET") {
-      // `supervised.attachment` — the original `.eml` carries every attachment, so recording this as an
-      // *opened* result would understate what left the Node by however many files were in it.
-      const allowed = await authorize(env, clock, request, raw[1]!, "supervised.attachment");
+      const allowed = await authorizeExport(env, clock, request, raw[1]!);
       if (!allowed.ok) return allowed.response;
       return new Response(await streamEvidence(env, allowed.blobKey), {
         headers: {

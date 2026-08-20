@@ -113,6 +113,19 @@ export async function claimNode(
          (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,?,?,?,?)`,
     ).bind(ctx.id("rt"), orgId, userId, "send.propose", "mailbox", mailboxId, at),
+    // `message.export` (#65). Granted here for the same reason `send.propose` is: Layer 1's proof is that
+    // the original `.eml` is exportable, and `GET /api/messages/:id/raw` now requires this relation — so a
+    // Node whose owner did not hold it would be one that could receive mail and not produce the copy the
+    // layer is proven by. Existing Nodes get it from migration 0025's backfill; this is the same grant for
+    // a Node that never had a `mailbox.content.read` row to backfill from.
+    //
+    // Separate from the read grant above rather than folded into it, because the whole value of the
+    // relation is that an administrator can revoke one without the other.
+    env.CATALOG.prepare(
+      `INSERT INTO relationship_tuples
+         (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), orgId, userId, "message.export", "mailbox", mailboxId, at),
   ]);
 
   // If the conditional update changed nothing, someone else claimed it between our read and

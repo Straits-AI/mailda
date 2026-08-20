@@ -8,7 +8,7 @@ stale_when: >
 values:
   reseal.batch_size: 100
   reseal.subrequests_per_message: 6
-  reconcile.list_limit: 200
+  reconcile.list_limit: 150
   reconcile.orphan_grace_seconds: 3600
 ---
 
@@ -149,3 +149,77 @@ asymmetry against `ingress.ts` writing R2 before D1; `saveDraft` writes R2 befor
 reason, so the second referent rule inherits the window unchanged. Collecting a draft body inside it would
 delete the body of a draft somebody is part-way through saving — the same unrecoverable error as deleting mail
 that was about to be accepted, which is what the hour was chosen to make impossible.
+
+## Correction, 20 August 2026: a third prefix, and `list_limit` comes down from 200 to 150 (#65)
+
+**A value moved, and it moved because the check written on 19 August fired.** That is the whole point of the
+paragraph above which says the `stale_when` clause was *deliberately not widened* to cover a third prefix,
+because "the condition that would matter here is checked by a test below rather than described in prose". The
+condition arrived: #65's eDiscovery export gave the reconciler `${orgId}/exports/`, whose referent is a row in
+`exports` keyed by the id in the object key's own second segment — a third rule again, and "no receipt" is not
+the test for one of those either.
+
+**No `stale_when` clause fired**, and both are still true: `R2Bucket.list()`'s per-call limit did not move
+(it is now recorded as a value of its own in `r2-list-page-size.md`), the per-invocation subrequest cap did
+not move, and re-seal is untouched. What fired was `test/evidence-lifecycle.test.ts`.
+
+### The arithmetic, generalised, because it has now been re-derived twice
+
+For `n` scanned prefixes, of which exactly one (`raw/`) samples per object and the rest answer in one bulk
+query:
+
+| Term | Cost | |
+|---|--:|:--|
+| listings | `n` | one `R2Bucket.list()` per prefix |
+| raw referents | `list_limit` | one D1 lookup per listed object |
+| bulk referents | `n − 1` | one query each for drafts and for exports |
+| hold check | 1 | once, and only under `collect` |
+| deletes | `n × list_limit` | every prefix drains the same single delete |
+| receipt direction | `2 + list_limit` | count, page, one R2 `head` per sampled receipt |
+| **total** | **`(n + 2) × list_limit + (2n + 2)`** | |
+
+At `n = 2` that is `4 × list_limit + 6` — **806** at 200, which is exactly the figure the 19 August correction
+recorded, so the generalisation is checked against the measurement that already existed rather than replacing
+it.
+
+At `n = 3` it is `5 × list_limit + 8`. **At a `list_limit` of 200 that is 1,008, which is over the Free
+ceiling of 1,000.** Adding the prefix without touching this value would have left the assertion protecting it
+false — the exact outcome the 19 August correction said a `stale_when` clause cannot prevent on its own and a
+test can.
+
+### Why 150 rather than 198
+
+198 is the largest value satisfying `5 × list_limit + 8 < 1000`, and it is the wrong answer: it leaves 2
+subrequests of headroom, and the **fourth** prefix is already known to be missing. `${orgId}/sent/` holds
+submitted bytes (`src/outbound/dispatch.ts`, `src/outbound/manifest.ts`) and is not scanned; #65's grounding
+found it and filed it rather than repairing it, because its referent question is its own decision.
+
+So the value is sized for `n = 4`: `6 × 150 + 10 = 910`, under 1,000 with 90 to spare, and `5 × 150 + 8 = 758`
+today with 242. Sizing for the prefix that is already coming is what stops this being re-derived a third time
+by whoever adds it — which is the same reasoning `reseal.batch_size` uses when it declines to rise to meet a
+ceiling that moved.
+
+**What it costs.** A pass examines 150 objects per prefix instead of 200 and 150 receipts instead of 200. The
+pass was never exhaustive — `truncated` is reported precisely because it is a sample — so the change is that
+a very large bucket takes proportionally more passes to sweep. Being slow to collect is free; the asymmetry
+recorded under *Orphan grace* above applies to this direction too.
+
+**Verified non-vacuous.** Setting `reconcile.list_limit: 200` in this file and regenerating fails
+`test/evidence-lifecycle.test.ts` with *"expected 1008 to be less than 1000"*, and setting it back passes.
+That is the check doing its job on the change it was written for.
+
+### The export prefix's per-object cost, measured
+
+Same instrument as the 19 August table — `metering()` around one `reconcileEvidence` call under
+`vitest-pool-workers`, against miniflare, on 20 August 2026:
+
+| Pass | Subrequests | D1 | R2 |
+|---|--:|--:|--:|
+| empty bucket, read-only | 7 | 4 | 3 |
+| **5 stranded export objects**, read-only | **7** | 4 | 3 |
+| 5 stranded export objects, `collect` | 13 | 5 | 8 |
+
+**Flat, like the draft direction and for the same reason**: the referents come back in one bulk
+`SELECT id FROM exports` with no `LIMIT`. Five stranded objects cost exactly what zero cost. The read-only
+pass moved from 5 to 7 — one `list` and one bulk query — which is the +2 the arithmetic above charges for a
+bulk prefix, confirmed rather than assumed.

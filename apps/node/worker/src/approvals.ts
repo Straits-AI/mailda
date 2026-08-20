@@ -188,8 +188,16 @@ export type Decision = "approve" | "deny";
  * the design working rather than a coincidence: #63 needed dual approval and the alternative was a second
  * approval path, which would have been a second copy of the race logic **all three of #61's defects lived in**.
  * The hold lift proved the generalisation; this ticket spent it.
+ *
+ * `ediscovery_export` is the fourth (#65), and it was a compile error in **five** places — the three above
+ * plus `HAS_AWAITING_MANIFEST` and the outcome field in `decideApproval`, both of which #63 added precisely
+ * because a two-way test on `hold_lift` had silently sent a third kind down the send path. Nothing about the
+ * fourth kind needed new race logic, which is the whole return: an export is requested, decided, withdrawn
+ * and refused by the same code as a send.
  */
-export const APPROVAL_SUBJECT_KINDS = ["send_manifest", "hold_lift", "supervised_read"] as const;
+export const APPROVAL_SUBJECT_KINDS = [
+  "send_manifest", "hold_lift", "supervised_read", "ediscovery_export",
+] as const;
 
 export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
 
@@ -207,6 +215,10 @@ const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
   // refusal is the one that stops somebody approving their own way into a mailbox.
   supervised_read:
     "you asked to read this mailbox, so you cannot be one of the two people who approve it",
+  // The requester is the person the export is *for* — `exports.requested_by` is the caller, always — so this
+  // is the refusal that stops an investigator approving their own bulk copy of somebody's mailbox.
+  ediscovery_export:
+    "you asked for this export, so you cannot be one of the two people who approve it",
 };
 
 /**
@@ -223,6 +235,9 @@ const ACTOR_FIX: Record<ApprovalSubjectKind, string> = {
   hold_lift: "two other people holding approval.decide on the held mailbox have to approve it",
   supervised_read: "two other people holding approval.decide on that mailbox have to approve it — "
     + "GET /api/approvals shows them the request, its scope and its deadline",
+  ediscovery_export: "two other people holding approval.decide on that mailbox have to approve it — "
+    + "GET /api/approvals shows them the predicate, its hash and the maximum number of messages it may "
+    + "export. If the bound is wrong, they can deny it and a fresh request can be made",
 };
 
 /**
@@ -255,6 +270,22 @@ const EXPIRES_AFTER_SECONDS: Record<ApprovalSubjectKind, number | null> = {
    * asked sees it before they answer.
    */
   supervised_read: null,
+  /*
+   * `null`, and the reasoning is the mirror image of the supervised read's rather than a copy of it.
+   *
+   * A supervised read has a deadline that is not this column; an export has **no deadline at all**, and that
+   * is deliberate. What bounds an export is `exports.max_messages` — a count the two approvers agreed to,
+   * checked on every page — and a wall-clock deadline beside it would be a second bound with no measurement
+   * behind it: an export is explicitly resumable across instances (blueprint:1276), so how long one takes is
+   * a function of the Node's plan and the size of the mailbox, not of anything an approver could size. A
+   * deadline here would refuse a legitimate large export on a Free Node for reasons nobody chose.
+   *
+   * The residual, stated because it follows: an approved export can be run months later. What stops that
+   * being a standing authority is that the run rechecks the live approval and the live
+   * `ediscovery.export` relation **per page**, so revoking either terminates it mid-file — which is §7's
+   * *"revocation terminates export jobs"*, enforced rather than asserted.
+   */
+  ediscovery_export: null,
 };
 
 /**
@@ -706,6 +737,13 @@ export interface DecisionOutcome {
   holdLifted?: boolean;
   /** For a `supervised_read` subject: true when this decision was the one that made the grant live. */
   supervisedGranted?: boolean;
+  /**
+   * For an `ediscovery_export` subject: true when this decision was the one that authorized the export.
+   *
+   * `exportApproved`, not `exportStarted` and not `exportRunning`: completing the approval authorizes the
+   * copy and copies nothing. Somebody still has to run it, and until they do nothing has left the Node.
+   */
+  exportApproved?: boolean;
   /** True when this decision closed the last stage and had its subject's effect. */
   completed: boolean;
   /**
@@ -993,15 +1031,43 @@ export async function decideApproval(
     approvalState,
     // One field per subject kind, and never a field belonging to another one. A `manifestState` reading
     // `awaiting` on a supervised read would be the kind of name AGENTS.md calls a landmine.
-    ...(approval.subjectKind === "send_manifest"
-      ? { manifestState: decision === "deny" ? "withheld" : completed ? "held" : "awaiting" } as const
-      : approval.subjectKind === "hold_lift"
-        ? { holdLifted: decision === "approve" && completed }
-        : { supervisedGranted: decision === "approve" && completed }),
+    ...outcomeFieldFor(approval.subjectKind, decision, completed),
     completed,
     ...(conflictKind === undefined ? {} : { conflict: conflictKind }),
     openStage: decision === "deny" ? stage : openStage(stages, afterDecisions),
   };
+}
+
+/**
+ * The one field a decision reports about its **subject**, per kind — and the exhaustiveness is real.
+ *
+ * It was a ternary chain, which is the shape that let #63's third kind be handed the send's advice: a chain's
+ * final arm accepts every kind that reaches it, so a fifth would land in whichever branch was written last
+ * and report an export's outcome for a connector write. A `switch` with a `never` binding at the foot cannot
+ * do that — adding a member to `ApprovalSubjectKind` fails to compile here until it decides what it reports.
+ *
+ * Written as an assertion rather than a comment claiming exhaustiveness, because a claim nothing enforces is
+ * exactly the defect this module's history is made of.
+ */
+function outcomeFieldFor(
+  kind: ApprovalSubjectKind,
+  decision: Decision,
+  completed: boolean,
+): Partial<DecisionOutcome> {
+  switch (kind) {
+    case "send_manifest":
+      return { manifestState: decision === "deny" ? "withheld" : completed ? "held" : "awaiting" };
+    case "hold_lift":
+      return { holdLifted: decision === "approve" && completed };
+    case "supervised_read":
+      return { supervisedGranted: decision === "approve" && completed };
+    case "ediscovery_export":
+      return { exportApproved: decision === "approve" && completed };
+    default: {
+      const unhandled: never = kind;
+      throw new Error(`E_APPROVAL_SUBJECT_UNHANDLED  ${String(unhandled)} reports no outcome field`);
+    }
+  }
 }
 
 const SETTLED_WHY: Record<Exclude<ApprovalState, "pending">, string> = {
@@ -1158,6 +1224,24 @@ function approveStatements(
     ];
   }
 
+  if (approval.subjectKind === "ediscovery_export") {
+    /*
+     * **The completion itself is the whole effect, and there is deliberately no `UPDATE exports` here.**
+     *
+     * The two kinds above each have a second fact to write — a hold becomes lifted, a grant becomes live —
+     * because in both cases the authority *is* a column. An export's authority is the approval, and
+     * `runExport` reads it live on every page. An `exports.approved_at` beside it would be a second answer
+     * to "may this run", and the one that counted would be whichever the reader opened: the copy on the row
+     * would still say yes after a withdrawal, which is exactly the state §7 requires the run to stop in.
+     *
+     * So the export row is untouched by the decision, and the `supervised.export_requested` entry rides in
+     * this transaction with the `UPDATE approvals` above it — which is what makes an authorized export with
+     * nothing in the trail unrepresentable, the same property the lift and the grant get from their own
+     * writes.
+     */
+    return [completion];
+  }
+
   return [
     completion,
     // Back to `held`, so the ordinary hold window and the ordinary dispatcher take it from here. `state_reason`
@@ -1198,6 +1282,9 @@ const HAS_AWAITING_MANIFEST: Record<ApprovalSubjectKind, boolean> = {
   send_manifest: true,
   hold_lift: false,
   supervised_read: false,
+  // An export stays `requested` until somebody runs it, so a denial leaves it exactly where it was and a
+  // withdrawal that makes the request unsatisfiable does too. Nothing was moved to be moved back.
+  ediscovery_export: false,
 };
 
 /**
@@ -1295,6 +1382,35 @@ async function readSupervisedGrant(
     `SELECT id, subject_id, mailbox_id, scope, matter_id, requested_at, expires_at
        FROM supervised_grants WHERE org_id = ? AND id = ? LIMIT 1`,
   ).bind(orgId, grantId).first<SupervisedGrantRow>();
+}
+
+/** What an export's own entry has to say: for whom, over what, under what matter, bound by what. */
+interface ExportRequestRow {
+  id: string;
+  requested_by: string;
+  mailbox_id: string;
+  matter_id: string;
+  predicate_sha256: string;
+  max_messages: number;
+  destination: string;
+}
+
+/**
+ * The export an approval names, or null if there is none.
+ *
+ * Here rather than in `src/exports.ts` for the reason `readHoldLift` and `readSupervisedGrant` give: that
+ * module calls `planApproval` to open the request, so importing from it here would close a cycle. Seven
+ * columns of a nineteen-column table, on an act that happens at most twice per export.
+ */
+async function readExportRequest(
+  env: Env,
+  orgId: string,
+  exportId: string,
+): Promise<ExportRequestRow | null> {
+  return env.CATALOG.prepare(
+    `SELECT id, requested_by, mailbox_id, matter_id, predicate_sha256, max_messages, destination
+       FROM exports WHERE org_id = ? AND id = ? LIMIT 1`,
+  ).bind(orgId, exportId).first<ExportRequestRow>();
 }
 
 /**
@@ -1435,6 +1551,64 @@ const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | null> = 
       why: "the decision that completes a supervised read is refused rather than recorded when the state moves "
         + "under it: either somebody withdrew their approval, or the grant was already live. Recording it "
         + "would put a supervised.granted entry in the trail for an authorization that did not happen",
+    },
+  },
+
+  /**
+   * An eDiscovery export (#65). The same shape again, and the `undone` clause is the one that needed
+   * thought: an export has no authority column to check for "already done", so what must still be undone is
+   * that **the run has not started**.
+   *
+   * `state = 'requested'` is that test. An export already `running`, `completed` or `aborted` when its
+   * approval completes is a state no path here produces — nothing runs an unapproved export — so reaching it
+   * means the world moved outside the product, and recording `supervised.export_requested` for it would put
+   * an entry in the trail claiming two people authorized a copy that had already been taken.
+   */
+  ediscovery_export: {
+    undone: `SELECT 1 FROM exports e
+              WHERE e.org_id = a.org_id AND e.id = a.subject_id AND e.state = 'requested'`,
+    event: async (env, orgId, approval, actorUserId, approvedBy) => {
+      const row = await readExportRequest(env, orgId, approval.subjectId);
+      if (row === null) return null;
+      return {
+        action: "supervised.export_requested",
+        outcome: "ok",
+        actorUserId,
+        // The export, not the approval: every later entry about this copy — the completion, the abort —
+        // cites the same id, so one filter answers "everything that happened to this export".
+        subject: row.id,
+        detail: {
+          exportId: row.id,
+          // The person the copy is for, named separately from the entry's actor, who is an approver. #63
+          // records the same separation for a grant, and conflating them is how a trail comes to say the
+          // wrong person took somebody's mail.
+          requestedBy: row.requested_by,
+          mailboxId: row.mailbox_id,
+          matterId: row.matter_id,
+          // The hash rather than the predicate text: this is the bound object §18 asks an approval to name,
+          // and the text is on the row for anybody who wants to read it.
+          predicateSha256: row.predicate_sha256,
+          maxMessages: row.max_messages,
+          destination: row.destination,
+          approvedBy: [...approvedBy],
+        },
+      };
+    },
+    missing: {
+      code: "E_NO_EXPORT",
+      what: (approval) =>
+        `approval ${approval.id} names export ${approval.subjectId}, which does not exist`,
+      fix: "investigate; completing this would authorize a bulk copy with no record of the predicate, the "
+        + "bound, the matter or the destination it was agreed for",
+    },
+    raced: {
+      code: "E_EXPORT_RACED",
+      what: (approval) =>
+        `approval ${approval.id} was not the decision that authorized this export, so nothing was recorded`,
+      why: "the decision that completes an export is refused rather than recorded when the state moves under "
+        + "it: either somebody withdrew their approval, or the export had already started. Recording it "
+        + "would put a supervised.export_requested entry in the trail for an authorization that did not "
+        + "happen",
     },
   },
 };
@@ -1693,6 +1867,29 @@ export interface PendingApproval extends ApprovalRow {
     matter: { type: string; description: string } | null;
     expiresAt: string;
   } | null;
+  /**
+   * What an `ediscovery_export` request asks for, and null for every other subject kind (#65).
+   *
+   * **In the queue, and this is the whole of the control on how much an export copies.** §18 binds an
+   * approval to the artifact hashes it names, and an export's bound artifact is a *predicate* — so the two
+   * people being asked have to see the predicate itself, its canonical hash, and the hard `max_messages`
+   * that stops the same predicate matching more next week. A queue that showed only "somebody wants an
+   * export" would be asking them to agree to an unbounded future disclosure, which is the exact failure
+   * `max_messages` exists to close.
+   *
+   * A fourth `LEFT JOIN` on the same query rather than a second round trip, the shape `reason` and
+   * `supervised` already use.
+   */
+  exportRequest: {
+    exportId: string;
+    requestedBy: string;
+    /** The canonical predicate as stored — the text the hash beside it is over. */
+    predicate: string;
+    predicateSha256: string;
+    maxMessages: number;
+    matterId: string;
+    destination: string;
+  } | null;
 }
 
 /**
@@ -1728,7 +1925,10 @@ export async function pendingApprovals(
     `SELECT ${APPROVAL_COLUMNS.split(", ").map((column) => `a.${column}`).join(", ")}, l.reason AS reason,
             g.id AS grant_id, g.subject_id AS grant_subject_id, g.scope AS grant_scope,
             g.matter_id AS grant_matter_id, g.expires_at AS grant_expires_at,
-            mt.type AS matter_type, mt.description AS matter_description
+            mt.type AS matter_type, mt.description AS matter_description,
+            x.id AS export_id, x.requested_by AS export_requested_by, x.predicate AS export_predicate,
+            x.predicate_sha256 AS export_predicate_sha256, x.max_messages AS export_max_messages,
+            x.matter_id AS export_matter_id, x.destination AS export_destination
        FROM approvals a
        LEFT JOIN hold_lifts l ON a.subject_kind = 'hold_lift' AND l.id = a.subject_id AND l.org_id = a.org_id
        LEFT JOIN supervised_grants g ON a.subject_kind = 'supervised_read' AND g.id = a.subject_id
@@ -1736,6 +1936,10 @@ export async function pendingApprovals(
        -- The cited matter, for the two people being asked. A third outer join on the same query rather than a
        -- second round trip, and outer because a grant citing no matter is a real answer rather than a gap.
        LEFT JOIN matters mt ON mt.org_id = g.org_id AND mt.id = g.matter_id
+       -- #65's export, on the same query and outer for the same reason: every other subject kind produces
+       -- all-null here, and an approver deciding an export must see the bound before they agree to it.
+       LEFT JOIN exports x ON a.subject_kind = 'ediscovery_export' AND x.id = a.subject_id
+                          AND x.org_id = a.org_id
       WHERE a.org_id = ? AND a.state = 'pending' AND a.mailbox_id IN (${placeholders})
         AND a.actor_user_id != ?
       ORDER BY a.requested_at, a.id`,
@@ -1748,6 +1952,13 @@ export async function pendingApprovals(
     grant_expires_at: string | null;
     matter_type: string | null;
     matter_description: string | null;
+    export_id: string | null;
+    export_requested_by: string | null;
+    export_predicate: string | null;
+    export_predicate_sha256: string | null;
+    export_max_messages: number | null;
+    export_matter_id: string | null;
+    export_destination: string | null;
   }>();
 
   const out: PendingApproval[] = [];
@@ -1778,6 +1989,22 @@ export async function pendingApprovals(
             ? null
             : { type: row.matter_type, description: row.matter_description },
           expiresAt: row.grant_expires_at,
+        },
+      // Every field or none, like `supervised` above: the bound is the field this exists for, and a
+      // half-populated object would let a caller render "up to null messages".
+      exportRequest: row.export_id === null || row.export_predicate === null
+        || row.export_predicate_sha256 === null || row.export_max_messages === null
+        || row.export_matter_id === null || row.export_destination === null
+        || row.export_requested_by === null
+        ? null
+        : {
+          exportId: row.export_id,
+          requestedBy: row.export_requested_by,
+          predicate: row.export_predicate,
+          predicateSha256: row.export_predicate_sha256,
+          maxMessages: row.export_max_messages,
+          matterId: row.export_matter_id,
+          destination: row.export_destination,
         },
     });
   }

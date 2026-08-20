@@ -286,6 +286,116 @@ describe("the supervised scope enum is a constraint rather than a convention", (
   });
 });
 
+/* ------------------------------------------------------------------ #65 ------------------------ */
+
+describe("the export state enum is a constraint rather than a convention", () => {
+  const declared = declaredIn("src/exports.ts", "EXPORT_STATES");
+
+  it("is extractable and names the four states an export can be in", () => {
+    /*
+     * **Extraction only, and unlike the three enums around it there is no import of the union beside it.**
+     * `src/exports.ts` reaches `cloudflare:workers` through `evidence-store.ts` and the key vault, which the
+     * Node pool cannot load — the same constraint that made `sql-statements.ts` a module with no `.sql`
+     * imports. Stated rather than worked around by shuffling the declaration into a module of its own, which
+     * would separate the state machine from the code that runs it for the benefit of one test.
+     *
+     * What replaces the import is **behavioural** and lives in the workerd pool:
+     * `test/ediscovery-export.test.ts` — *"reaches every state the union declares"* — drives a real export
+     * into each one, which is a stronger claim than textual agreement with a type. So the union is checked
+     * against the source here and against the world there.
+     */
+    expect(declared.length).toBeGreaterThan(0);
+    // The four an export can be in. `requested` is the one the approval's completing predicate names, and
+    // `aborted` is the one that makes the bound terminal rather than a retry — if either vanished, an
+    // export would be authorized or stopped by a state nothing recognises.
+    expect(declared).toEqual(["requested", "running", "completed", "aborted"]);
+  });
+
+  it("uses no state in its own SQL that the union does not declare", () => {
+    /*
+     * `exports.state` carries no CHECK, so this union is the constraint — and unlike the two enums above
+     * there is no narrowing function to guard, because a state never comes from the wire: every value is a
+     * literal this module writes. What can go wrong is therefore a **typo in SQL**, which would match no row
+     * and silently make an export unrunnable or uncollectable.
+     *
+     * Scoped to `src/exports.ts` deliberately. A scan across `src/` would sweep up `approvals.state` and
+     * `send_manifests.state`, which are different columns with different vocabularies, and a check that has
+     * to know which table a `state = '…'` belongs to is a check that would be wrong the first time somebody
+     * reformatted a query. The one clause outside this file is asserted by name below instead.
+     */
+    const code = codeOf("src/exports.ts");
+    const used = new Set<string>();
+    for (const match of code.matchAll(/state\s*(?:=|IN)\s*\(?((?:\s*'[a-z_]+'\s*,?)+)\)?/gi)) {
+      for (const literal of match[1]!.matchAll(/'([a-z_]+)'/g)) used.add(literal[1]!);
+    }
+    // Anti-vacuity: the extractor found the states the module writes. An empty set would pass the check
+    // below against nothing, which is the vacuous green this whole file exists to avoid.
+    expect([...used].sort()).toEqual(["aborted", "completed", "requested", "running"]);
+    expect([...used].filter((state) => !declared.includes(state))).toEqual([]);
+  });
+
+  it("has the approval's completing predicate naming a state the union declares", () => {
+    // The one `exports.state` literal outside `src/exports.ts`: `COMPLETING_EFFECT.ediscovery_export.undone`,
+    // which is what stops a completing decision authorizing an export that already ran. A typo there would
+    // make every export's approval un-completable — loudly, but only once somebody tried.
+    const approvals = codeOf("src/approvals.ts");
+    const undone = /FROM exports e[\s\S]{0,200}?e\.state = '([a-z_]+)'/.exec(approvals);
+    expect(undone, "the export's completing predicate could not be read in src/approvals.ts").not.toBeNull();
+    expect(declared).toContain(undone![1]!);
+    expect(undone![1]).toBe("requested");
+  });
+
+  it("is written from one place, so one module owns the state machine", () => {
+    const writers = writersOf("exports");
+    expect(
+      writers.join(", ") === "src/exports.ts" ? null
+        : `exports is written from ${writers.length === 0 ? "nowhere" : writers.join(", ")}, and it must be `
+          + "written only from src/exports.ts: the state column has no CHECK, so a second INSERT would be "
+          + "free to store a state no run recognises — an export that is approved, recorded and can never "
+          + "be run or collected",
+    ).toBeNull();
+
+    // And the same for the updates, which are what move an export through its states. A second `UPDATE
+    // exports` anywhere would be a way to complete one without a manifest, or to advance a cursor without
+    // counting the messages it skipped past.
+    const updates: string[] = [];
+    for (const file of SOURCES) {
+      codeOf(file).split("\n").forEach((line, index) => {
+        if (/\bUPDATE\s+exports\b/i.test(line)) updates.push(`${file}:${index + 1}`);
+      });
+    }
+    expect(updates.length, `UPDATE exports at ${updates.join(", ") || "nowhere"}`).toBeGreaterThan(0);
+    expect(updates.filter((site) => !site.startsWith("src/exports.ts:"))).toEqual([]);
+  });
+
+  it("spells the export destination in exactly one place", () => {
+    /*
+     * `${orgId}/exports/${exportId}/` is written by the run, read by the download route and listed by the
+     * reconciler. Three spellings would be three things that can disagree, and the disagreement is silent in
+     * the worst direction: the reconciler would list a prefix nothing writes and report a clean scan of it,
+     * which is exactly #67's defect with the roles reversed.
+     */
+    const offenders: string[] = [];
+    for (const file of SOURCES) {
+      if (file === "src/exports.ts") continue;
+      codeOf(file).split("\n").forEach((line, index) => {
+        if (/\/exports\//.test(line)) offenders.push(`${file}:${index + 1}`);
+      });
+    }
+    expect(
+      offenders.length === 0 ? null
+        : `the exports prefix is spelled again at ${offenders.join(", ")} — it must come from `
+          + "exportDestination or exportsPrefix in src/exports.ts, or the reconciler will one day scan a "
+          + "prefix nothing writes and report it clean",
+    ).toBeNull();
+
+    // Anti-vacuity: the two builders really are there, so the scan above is guarding something.
+    const source = codeOf("src/exports.ts");
+    expect(source).toContain("${orgId}/exports/${exportId}/");
+    expect(source).toContain("${orgId}/exports/");
+  });
+});
+
 /* ------------------------------------------------------------------ #63 part B ----------------- */
 
 describe("the notification kind enum is a constraint rather than a convention", () => {

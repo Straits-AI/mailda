@@ -882,6 +882,17 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
   Passkeys are specified and not yet built. The reasoning, including what this does and does not
   protect against, is written down rather than implied.
   ([receipt](./docs/receipts/password-hash-cost.md))
+- **Downloading a message used to leave no trace. It does now.** The `.eml` button produces a complete
+  copy of somebody's mail, off the Node, and until now it did that on the strength of "you can read this
+  mailbox" and recorded nothing — so *has anyone taken a copy of this message* had no answer. It is a
+  permission of its own, `message.export`, which every existing reader was granted so nothing broke, and
+  every download is now in the trail. What that buys is that exporting can be taken away without taking
+  away reading. The bulk version — a whole mailbox, for a matter — is a different permission with a
+  different price: two approvers, and they agree to a **hash of the query and a hard message count**,
+  because a query that matches forty things today matches four hundred next month. An export that would
+  exceed the count stops and asks again rather than quietly copying more, and one too large for a manifest
+  to name is refused with the number rather than truncated. Revoking the permission stops a running export
+  at its next page and a download at its next file. ([the design](./docs/ediscovery-export.md))
 - **A signed token cannot be recalled.** Removing someone's access takes effect on the next request
   for everything authorization-related, because authority is never carried in the token — but a
   revoked account keeps a working *session* for up to ten minutes. That window is the access
@@ -899,6 +910,7 @@ docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
 docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
 docs/supervised-access.md              matters, the time-boxed grant, per-act recording, the notice
+docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

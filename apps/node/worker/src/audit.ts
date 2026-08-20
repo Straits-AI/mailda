@@ -175,6 +175,70 @@ export const AUDIT_ACTIONS = {
   },
 
   /*
+   * Layer 5: export (#65, §7, §22). Four actions across two acts of different grain, and the grain is the
+   * whole reason there are two permissions rather than one.
+   *
+   * `message.exported` is the **single-message** `.eml` download, and it is the entry this ticket exists to
+   * add: until #65 that route produced a complete RFC822 copy with `content-disposition: attachment` and
+   * recorded **nothing**, so *"has anybody taken a copy of this message off the Node"* — the exact question
+   * §7 exists to make answerable — had no answer. It is a `disclosure`, like the three supervised acts above
+   * and for the same reason: nothing is written, and an export that cannot be recorded must not happen.
+   *
+   * It is emitted for **every** download, not only for supervised ones. `supervised.attachment` already
+   * covers the case where a time-boxed grant authorized the read, and it is keyed on the grant; this is
+   * keyed on the receipt and is emitted whichever authority answered, because the question is about the
+   * message rather than about the access. A holder of the ordinary standing relation produces exactly one
+   * entry, a supervised reader produces two, and neither is redundant — one says *who was let in*, the other
+   * says *what left*.
+   *
+   * The other three are the **bulk** act, and the count is deliberate: **not one entry per page**. A page is
+   * progress, and progress lives in the `exports` row (migration 0025). One entry per page would put
+   * hundreds of rows behind one act and falsify `audit-and-log-retention.md`'s "a handful per message"
+   * sizing, which is the reasoning that already exempts `send_recipients`.
+   *
+   *   supervised.export_requested   what two approvers agreed to, recorded beside the `UPDATE exports` that
+   *                                 makes the export runnable. Named for the request rather than for the
+   *                                 approval because what it carries is **what was asked for** — the
+   *                                 predicate hash, the bound, the matter, the destination — and
+   *                                 `approval.decided` structurally cannot say what was agreed to. It is the
+   *                                 slot `supervised.granted` and `hold.lifted` occupy for their subjects.
+   *                                 There is no separate entry at request time, for `hold.lift_requested`'s
+   *                                 reason: requesting **is** requesting an approval, and
+   *                                 `approval.requested` records it in the same transaction as the row.
+   *   supervised.export_completed   the manifest exists. Carries the export id, the manifest's SHA-256, the
+   *                                 emitted count, the destination and the matter — five short fields, which
+   *                                 keeps it far inside `audit.max_detail_bytes` even at the tight bound #69
+   *                                 measured. It carries **no message ids**: the manifest is the list, its
+   *                                 hash is in this entry, and putting the ids here as well would be the
+   *                                 unbounded detail `buildSupervisedQuery` has to split around.
+   *   supervised.export_aborted     the run stopped at `max_messages` with no manifest. A third action
+   *                                 rather than `export_completed` with `outcome: "refused"`, because
+   *                                 "completed" is not true of it and a name that overclaims is the defect
+   *                                 AGENTS.md §4 names — #65's resolution enumerated the two entries a
+   *                                 *successful* export produces and did not rule on the refusal, so this is
+   *                                 the case it left rather than a decision reopened.
+   *
+   * All three ride in `auditedBatch` beside the `UPDATE exports` they record, so none is `standalone`: an
+   * export whose state moved with nothing in the trail is not representable.
+   */
+  "message.exported": {
+    says: "Somebody downloaded one message's original .eml — a complete RFC822 copy, off this Node.",
+    disclosure: true,
+  },
+  "supervised.export_requested": {
+    says: "Two distinct approvers authorized an eDiscovery export; the predicate hash, the message bound, "
+      + "the matter and the destination are recorded with it.",
+  },
+  "supervised.export_completed": {
+    says: "An eDiscovery export finished; the manifest's SHA-256 and the number of messages emitted are "
+      + "recorded with it.",
+  },
+  "supervised.export_aborted": {
+    says: "An eDiscovery export stopped without a manifest because it would have exceeded the message "
+      + "bound its approvers agreed to.",
+  },
+
+  /*
    * Layer 5: the policy object (#60). §18 lists policy publication among the acts an approval binds, which
    * settles whether it is answerable — it plainly is: a published policy decides whether other people's mail
    * may leave, and "who made this rule live" is the question an audit exists to answer.

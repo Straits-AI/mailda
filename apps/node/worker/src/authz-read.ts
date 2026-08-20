@@ -33,6 +33,8 @@ import {
  * | `holdsStandingRead` | `mailbox.content.read` | **no** | The gate in front of `mergeConversations`. Reading is not restructuring. |
  * | `maySend` | `send.propose` | **no** | Reading somebody's mail is not authority to write as them. |
  * | `mailboxesWithRelation` | the named relation | **no** | Only ever asked about `send.propose`, and a supervised grant is not a relation this returns. |
+ * | `authorizeExport` | `message.export` **and** `mailbox.content.read` | scope `content` | Taking a copy off the Node is a second act on the same bytes; an investigator who could read but not export would be told to screenshot. |
+ * | `mayExportBulk` | `ediscovery.export` | **no** | One approval pair must not supply the standing to ask for a second (§21). |
  *
  * Two of those rows are the ones worth arguing about.
  *
@@ -373,6 +375,29 @@ export async function maySend(env: Env, who: Principal, mailboxId: string): Prom
   return (await hasAnyRelation(env, who, ["send.propose"], mailboxId, null)).allowed;
 }
 
+/**
+ * May this principal ask for a **bulk eDiscovery export** of this mailbox (#65, blueprint:709)?
+ *
+ * Tuples only — **no supervised arm**, and this is the one place in this file where that needs an argument
+ * rather than an observation. A supervised grant is §7's answer to *"I need to look at a mailbox I hold
+ * nothing on"*, time-boxed and matter-bound, and it is already the ceremony. Letting it also confer the
+ * authority to *request* a bulk copy would mean one approval pair silently supplying the standing to ask for
+ * a second — approval laundering, one relation along, which is the shape §21 forbids when it says approval
+ * assignment does not grant ambient access. So an export is asked for by somebody an administrator granted
+ * `ediscovery.export` to, and authorized by two more people who are not them.
+ *
+ * **Called on every page of a running export, not once at approval.** That is what makes §7's *"revocation
+ * terminates export jobs"* a mechanism rather than a sentence: revoking the relation stops the next page and
+ * the next download, because nothing about the run is cached.
+ */
+export async function mayExportBulk(
+  env: Env,
+  who: Principal,
+  mailboxId: string,
+): Promise<boolean> {
+  return (await hasAnyRelation(env, who, ["ediscovery.export"], mailboxId, null)).allowed;
+}
+
 type Authorized = { ok: true; blobKey: string } | { ok: false; response: Response };
 
 /**
@@ -433,6 +458,119 @@ export async function authorize(
   // so there is no capability that outlives this call for an expiry to have to revoke (§7's enumeration came
   // back empty). `test/supervised-read.test.ts` proves the stop through this function.
   if (!(await mayRead(env, ctx, who, row.mailbox_id, { action, subject: receiptId }))) return notFound;
+  return { ok: true, blobKey: row.blob_key };
+}
+
+/**
+ * Authorizes the **single-message export**: `GET /api/messages/:id/raw`, the original `.eml` (#65, §7).
+ *
+ * ## The door this closes, and why it was the reachable one
+ *
+ * That route produced a complete RFC822 copy with `content-disposition: attachment` on the strength of
+ * `mailbox.content.read` alone, and **recorded nothing**. So *"has anybody taken a copy of this message off
+ * the Node"* — the exact question §7 exists to make answerable — had no answer, while the bulk export the
+ * same ticket builds is ceremony-heavy and rare. The small door was the one anybody could walk through.
+ *
+ * ## Two authorities, checked in this order, and the order is the point
+ *
+ *   1. `message.export` on the mailbox — a standing relation, **or** a supervised grant of scope `content`.
+ *      The supervised arm is not a courtesy: #63's whole point is that a time-boxed grant is the sanctioned
+ *      path to somebody else's mail, and a grant that could read a body but not produce the original would
+ *      be an investigator told to screenshot it.
+ *   2. `mayRead`, which is where a supervised grant's `supervised.attachment` entry is appended.
+ *
+ * Reversed, the supervised entry would be written for a read that the export check then refused — a
+ * disclosure in the trail that did not happen, which is worse than a missing one because it is *wrong*
+ * rather than absent.
+ *
+ * ## The record is inside the authority, for `mayRead`'s reason
+ *
+ * `message.exported` is appended **before** the blob key is returned, and `recordDisclosure` throws, so a
+ * Node that cannot write its trail does not hand over the copy. It is emitted for **every** download, not
+ * only supervised ones: `supervised.attachment` answers *who was let in*, keyed on the grant, and this
+ * answers *what left*, keyed on the receipt. A holder of the ordinary relation produces exactly one entry
+ * and previously produced none.
+ *
+ * ## What this changes for ordinary users, said plainly rather than smoothed over
+ *
+ * The route now requires a relation that did not exist yesterday. Every install already deployed keeps
+ * working because `migrations/0025_ediscovery_export.sql` grants `message.export` to every subject holding
+ * `mailbox.content.read` on the same mailbox, and `claimNode` grants it to a new Node's owner — Layer 1's
+ * proof is *"original `.eml` exportable"*, and shipping the check without the grant would have broken that
+ * everywhere. What genuinely changes: an administrator can now revoke exporting without revoking reading,
+ * and every download appears in the trail. Neither was expressible before.
+ *
+ * **The sibling door is still open and is named rather than half-closed**: `GET /api/sends/:id/submitted`
+ * streams the submitted bytes of an outbound message, which is also a complete `.eml`, and it is not
+ * governed by this. #65 ruled on the inbound route and the outbound one needs its own decision about what
+ * the entry's subject is — a manifest is not a receipt. `docs/ediscovery-export.md` carries it under
+ * "Still not built".
+ */
+export async function authorizeExport(
+  env: Env,
+  ctx: Ctx,
+  request: Request,
+  receiptId: string,
+): Promise<Authorized> {
+  const notFound = {
+    ok: false as const,
+    response: Response.json(
+      { error: "not_found", message: "No such message, or you do not have access to it." },
+      { status: 404 },
+    ),
+  };
+
+  const who = await principalFor(env, ctx, request);
+  if (who === null) {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: "unauthenticated", message: "Sign in to read messages.", refreshable: true },
+        { status: 401, headers: { "x-mailda-refreshable": "true" } },
+      ),
+    };
+  }
+
+  const row = await env.CATALOG.prepare(
+    `SELECT r.blob_key, a.mailbox_id
+       FROM ingress_receipts r
+       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+      WHERE r.org_id = ? AND r.id = ? LIMIT 1`,
+  )
+    .bind(who.orgId, receiptId)
+    .first<{ blob_key: string; mailbox_id: string }>();
+  if (row === null) return notFound;
+
+  // §5C keeps "you may not export this" and "there is no such message" answering alike, exactly as the read
+  // path does: the id itself discloses that a message exists in a mailbox the caller may hold nothing on.
+  const exportable = await hasAnyRelation(env, who, ["message.export"], row.mailbox_id, {
+    scopes: SCOPES_FOR_CONTENT,
+    at: new Date(ctx.now()).toISOString(),
+  });
+  if (!exportable.allowed) return notFound;
+
+  if (!(await mayRead(env, ctx, who, row.mailbox_id,
+    { action: "supervised.attachment", subject: receiptId }))) return notFound;
+
+  // Throws if it cannot append, so the caller never reaches the bytes. Same contract as `mayRead`'s own
+  // entry, reached from the other side: this one is owed whichever authority answered.
+  await recordDisclosure(env, ctx, who.orgId, [{
+    action: "message.exported",
+    outcome: "ok",
+    actorUserId: who.userId,
+    // The receipt: an auditor asking "who has taken a copy of *this message*" filters on one subject, which
+    // is the question the entry exists for. The grant, when one answered, is on the sibling
+    // `supervised.attachment` entry — two entries, two questions, neither pretending to answer the other.
+    subject: receiptId,
+    detail: {
+      receiptId,
+      mailboxId: row.mailbox_id,
+      // Which authority answered, so the trail can distinguish an ordinary copy from a supervised one
+      // without joining to `supervised_grants`. Null means a standing relation.
+      grantId: exportable.grantId,
+    },
+  }]);
+
   return { ok: true, blobKey: row.blob_key };
 }
 
