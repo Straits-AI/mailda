@@ -307,24 +307,45 @@ anything is computed from.
 The **cost** figure in the same receipt *is* measured, and the receipt opens by separating the two, because
 conflating them is the defect this month's house rules were written about.
 
-## Named absent
+## Named absent — and built on 21 August 2026
 
-**Loop detection**, which [#66][66] excluded and this records as an absence rather than a threshold: detecting
-a loop needs a per-Butler-run causal record, and nothing records per-run outcomes at all — Layer 4 is unbuilt.
-A breaker needs a denominator, and for loops there is nothing to count.
+This section recorded two absences and both are now closed by [#75][75]. **The absences are left standing
+above the answer rather than deleted**, because the reasoning is the point: a `butler_pauses` table shipped in
+[#66][66] would have been *expressible and unusable*, and what changed is not the design but the substrate.
 
 **The Butler pause.** [#66][66]'s resolution keys a pause on `butler_id`, precisely so that republishing a
-fixed Butler cannot silently clear a pause the machine placed — a good decision about an object that does not
-exist yet. `grep "CREATE TABLE" migrations/` returns nothing for butler: **there are no Butler tables at
-all**. A `butler_pauses` table would be *expressible and unusable* — no Butler can be created, no run can be
-recorded, nothing could ever write a row, and a pause referencing a `butler_id` could not be validated against
-anything. That is [#60][60]'s governing failure, which this repository has now hit five times: *a condition
-backed by no data is a policy that silently never fires*, which reads as governance and is not. Same call
-[#61][61] made for team-scoped stages, tracked as [#73][73]. Filed as [#75][75] with the evidence.
+fixed Butler cannot silently clear a pause the machine placed — a good decision about an object that did not
+exist yet. `grep "CREATE TABLE" migrations/` returned nothing for butler: **there were no Butler tables at
+all**. No Butler could be created, no run could be recorded, nothing could ever write a row, and a pause
+referencing a `butler_id` could not be validated against anything. That is [#60][60]'s governing failure,
+which this repository has now hit five times: *a condition backed by no data is a policy that silently never
+fires*, which reads as governance and is not. Same call [#61][61] made for team-scoped stages, tracked as
+[#73][73].
 
-What survives is not diminished, and it is worth saying so plainly rather than implying the feature is
-crippled: volume, bounce rate and complaint rate all have real substrate today, and the domain pause is a
-human act that needs no Butler at all.
+**Loop detection**, excluded for a reason one layer down: detecting a loop needs a per-Butler-run causal
+record, and nothing recorded per-run outcomes at all. A breaker needs a denominator, and for loops there was
+nothing to count.
+
+**#49, #50 and #54 built all three of the things that were missing** — `butlers`, `butler_versions`,
+`butler_runs` and `butler_run_effects` — and [#75][75] implemented the decision as written, with two
+corrections to what this section assumed:
+
+- **The causal link the loop needed already existed**, and had done since Layer 2. It was checked rather than
+  inherited: `send_manifests.rfc_message_id` is the Message-ID this Node emits, `messages.in_reply_to` stores
+  what a reply quoted with its angle brackets already stripped, and `butler_run_effects.subject` names the
+  manifest a run sealed. So *"this delivery is a reply to a send this Butler made"* is a join, and the loop
+  that ships is the **causal** one rather than a runs-per-window count.
+- **A runs-per-window breaker is what is now named absent**, and *not* for want of substrate — `butler_runs`
+  supports it in one `COUNT(*)`. It has no defensible threshold: a Butler's legitimate run rate is its
+  mailbox's inbound mail rate, and nothing here has measured that for even one organization.
+
+What that section said about the rest still holds: volume, bounce rate and complaint rate all had real
+substrate then, and the domain pause is a human act that needs no Butler at all.
+
+The Butler pause is documented with the engine —
+[`docs/butler-engine.md`](./butler-engine.md#the-pause-and-the-loop-that-places-it) — because it stops a
+*Butler* rather than a send, and its receipt is
+[`docs/receipts/butler-pause.md`](./receipts/butler-pause.md).
 
 ## Surface
 

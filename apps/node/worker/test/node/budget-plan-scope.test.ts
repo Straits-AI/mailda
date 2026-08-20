@@ -193,6 +193,21 @@ const FIGURES: Record<string, Classification> = {
     "butler.run_cost_max_case_close", "butler.run_cost_max_lookup", "butler.run_cost_engine_fixed",
   ),
 
+  // docs/receipts/butler-pause.md
+  ...mailda(
+    // Not plan-scoped, and the argument is made rather than inherited from the two Butler groups above,
+    // because these two are *governance* figures where those were cost ones. What counts as a loop is
+    // Mailda's own opinion about its own run records — the same class as `breaker.bounce_max_percent` and
+    // `approval.send_expiry_seconds`, which this file already classifies here — and no Cloudflare plan has a
+    // view on how many times a Butler may re-trigger itself. `butler.pause_check_added_subrequests` joins
+    // them as a cost figure over Mailda's own statements, exactly like every other cost group: the plan
+    // changes the size of the pot, never the number of operations, and this one's number of operations is
+    // zero because both questions ride on statements that were already being issued.
+    "what this Node calls a Butler looping, and what asking costs; the plan changes neither",
+    "butler.loop_window_seconds", "butler.loop_max_self_provoked_runs",
+    "butler.pause_check_added_subrequests",
+  ),
+
   // docs/receipts/cloudflare-email-sending.md
   "send.included_per_month": {
     ground: "plan_scoped",

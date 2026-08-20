@@ -44,6 +44,8 @@ import {
 } from "./auth/session.ts";
 import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
 import { releaseButlerSend } from "./butler/release.ts";
+import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
+import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
@@ -1336,6 +1338,59 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const limit = Number(url.searchParams.get("limit") ?? "25");
       return Response.json({ runs: await recentRuns(env, who.orgId, Number.isFinite(limit) ? limit : 25) });
+    }
+
+    /**
+     * The Butler pause (#75, Layer 5 over Layer 4's substrate).
+     *
+     * `GET  /api/butler-pauses`             every Butler this Node has stopped, with the figure behind it
+     * `POST /api/butler-pauses/:id/resume`  restart one. **One** administrator, alone, with a reason
+     *
+     * ## There is deliberately no endpoint that pauses a Butler
+     *
+     * The machine places this one — `triggerButlers`, at the moment a detector's reading goes over its limit
+     * — and nothing else does. That is the inverse of `/api/domain-pauses`, where a person asks and two
+     * administrators agree, and the reason both are right is in `src/butler/pause-acts.ts`: a breaker that
+     * waits for a person is not a breaker, and a pause that stops a customer's *mail* needs somebody to have
+     * decided it should.
+     *
+     * ## Both are `org.admin`, like `/api/butler-runs`
+     *
+     * A pause names a Butler, a delivery and a windowed figure across every mailbox that Butler touches, and
+     * resuming one re-arms a program that proposes sends from other people's mailboxes. That is governance:
+     * the person who may publish a Butler is the person who may read what stopped it and decide it is safe
+     * again. 404 rather than 403 for a non-administrator, the same answer the run routes give, so the route
+     * is not a way to learn whether this Node has Butlers at all (§5C).
+     *
+     * The reason is **mandatory** and is refused with the four parts rather than defaulted, exactly as
+     * `POST /api/domain-pauses` refuses a blank reason for placing one: a resume with an invented
+     * justification would be this Node writing down a decision nobody made — and this resume is the only
+     * human judgement anywhere in a machine-placed pause.
+     */
+    if (url.pathname === "/api/butler-pauses" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      return Response.json({ pauses: await butlerPausesInForce(env, who.orgId) });
+    }
+
+    const butlerResume = /^\/api\/butler-pauses\/([^/]+)\/resume$/.exec(url.pathname);
+    if (butlerResume && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // An absent reason reaches `resumeButlerPause` as the empty string and is refused there with the
+      // four-part message. Not defaulted: see the header.
+      return Response.json({
+        resumed: await resumeButlerPause(
+          env, clock, who.orgId, who.userId, butlerResume[1]!, String(body.reason ?? ""),
+        ),
+      });
     }
 
     const oneRun = /^\/api\/butler-runs\/([^/]+)$/.exec(url.pathname);

@@ -79,6 +79,14 @@ const DOCTOR_PATH = [
   // because placing a pause needs a `batch()`. That is the same seam `deciders.ts` and `notice-delivery.ts`
   // were carved out along, and its header says so.
   "breakers.ts",
+  // Added with #75's `butler_paused`, `butler_run_silence` and `butler_loop_detection` checks:
+  // `publishedButlerState` is one prepare and one execution — the pause, the run counts and both visibility
+  // figures are sub-selects in a single statement — and `deliveryActivity` is a second, run only when the
+  // first found a published Butler. `src/butler/pause.ts` is **read-only for this guard**, and #75's two
+  // *write* acts live in `src/butler/pause-acts.ts` because placing and resuming a pause each need an
+  // `auditedBatch`. That is the same seam `deciders.ts`, `notice-delivery.ts` and `breakers.ts` /
+  // `domain-pause.ts` were carved along, and its header says so.
+  join("butler", "pause.ts"),
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

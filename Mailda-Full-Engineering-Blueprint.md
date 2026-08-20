@@ -564,12 +564,20 @@ The former "or is marked receive-only" escape is withdrawn: ADR 25 requires Work
 **What the domain pause taught this list.** Point 1 reads as one act with four scopes and it is not: pausing a
 *domain* stops a customer's mail outright, so it takes **two** administrators and a mandatory reason, and the
 unfreeze at point 4 takes **one**, alone — the reverse of §22's legal hold, because the harm of a wrongly
-paused domain grows every minute it stands while a wrongly placed hold only preserves. A pause of a *Butler*
-is not built at all, and the reason is recorded rather than left as an unmet bullet: it must key on a Butler id
-so that republishing a fixed Butler cannot silently clear a pause the machine placed, and there is no Butler
-object to key on until Layer 4 exists. Point 4's *re-evaluated rather than released blindly* is what the
-dispatch-time re-ask already gives every gated send: a paused domain's queued sends are refused at the
-hand-over, not released when the pause lifts.
+paused domain grows every minute it stands while a wrongly placed hold only preserves.
+
+**And a pause of a *Butler* points the other way again, which is what settled that point 1 is four acts rather
+than one.** Amended 21 August 2026: it is built, on Layer 4's tables, and it keys on a Butler id exactly so
+that republishing a fixed Butler cannot silently clear a pause the machine placed. **No authorized operator
+places one** — the machine does, from a windowed count of runs this Butler provoked with its own mail — and
+**one** administrator resumes it alone, with a mandatory reason. That is the reverse of the domain's ceremony
+because what a wrongly paused Butler stops is *automation* rather than mail: the message still arrives, is
+still filed and is still answerable by hand. Point 2's *affected queued effects* is answered by a run record
+per Butler run; point 3's *policy/definition correction* is the republish, which deliberately does **not**
+resume. §18 carries the mechanism.
+
+Point 4's *re-evaluated rather than released blindly* is what the dispatch-time re-ask already gives every
+gated send: a paused domain's queued sends are refused at the hand-over, not released when the pause lifts.
 
 ## 5C. Status, edge-state and responsive UX contract
 
@@ -1727,6 +1735,13 @@ written down here rather than left to be inferred (#50; `docs/butler-engine.md` 
   `butler_run_effects`), because instance state is retained 3 days Free / 30 Paid and is therefore not a
   record. That record is deliberately *not* the run ledger: complete provenance and the four replay modes
   below are still owed.
+- **A Butler that re-triggers itself off its own mail is stopped, and the pause is on the Butler.**
+  `butler_pauses` is keyed on `butler_id`, so **republishing a fixed Butler does not clear it** — that is the
+  decision rather than a consequence, because a version-keyed pause would let a comment-only edit re-arm a
+  Butler the machine stopped. It is placed by the machine and resumed by one administrator with a mandatory
+  reason. What counts is a **self-provoked run**: one whose triggering delivery is a reply to a manifest this
+  Butler's own run sealed, which the run record and `send_manifests.rfc_message_id` make a join. §18 carries
+  the breaker's half of it.
 
 Still unbuilt and named here rather than implied: static taint tracking, the **capability** ceiling at
 publication (the **cost** ceiling is built), the run ledger and its four replay modes, simulation, and every
@@ -2094,6 +2109,7 @@ and explicit in code**, not inferred from a severity or a threshold.
 | Bounce rate | rate | attributed `send_recipient_events` | `awaiting` + reason |
 | Complaint rate | rate | attributed `send_recipient_events` | `awaiting` + reason |
 | Domain-wide send pause | abuse | `domain_pauses`, dual control | `withheld` + reason |
+| Butler pause on a causal loop | abuse | `butler_pauses`, machine-placed | the Butler starts **no run** |
 
 **The counter is a windowed `COUNT(*)` over rows that already exist**, the shape the sign-in limiter already
 has. Nothing to increment, so nothing to contend on, no compare-and-swap, and no cell that can drift from the
@@ -2134,13 +2150,45 @@ delivery channel is dead is the silent failure this section exists to prevent, s
 nothing, which is the blindness predicate `delivery_visibility` already computes. Failing closed on no
 observations is refused: a Node that has never sent would refuse to send.
 
-**Named absent, with the reason rather than stubbed.** *Auto-disabling an offending Butler* and *loop
-detection using trace headers, causal depth and route history* both need a per-Butler-run causal record, and
-nothing records per-run outcomes at all — Layer 4 is unbuilt, and a breaker needs a denominator. A pause keyed
-on a `butler_id` would be expressible and unusable: no Butler can be created, so nothing could ever write the
-row. That is the same failure the eight absent policy dimensions above are absent for. *New-recipient and
-new-domain throttles* need a first-contact record this Node does not keep. *Suppression enforcement* is the
-transport's own list, surfaced as the `suppressed` submission state rather than re-implemented here.
+**The Butler pause is the second abuse breaker, and it stops a *Butler* rather than a send.** Amended 21
+August 2026: the paragraph below named it absent for want of Layer 4's tables, and those exist now, so the
+design is implemented as it was written. A pause is a latched row keyed on **`butler_id`, never on a
+version** — because a published version is frozen and, more decisively, because republishing a fixed Butler
+must not silently clear a pause the machine placed. It is evaluated at trigger time, so a paused Butler starts
+no run at all, and again once per invocation of every live run, so a pause reaches an instance that was already
+sleeping when it was placed. Both questions ride on statements already being issued, so asking costs nothing.
+
+**Its asymmetry is the domain pause's, inverted a second time and for the same kind of reason.** The
+**machine** places it, automatically, with no human path at all, because a breaker that waits for a person is
+not a breaker. **One** administrator resumes it, alone, with a **mandatory** reason: one, because an automatic
+pause nobody can resume is an outage and placement needed no administrators; `org.admin` rather than anybody,
+because one anybody can resume is not a pause; and mandatory, because this resume is the only human judgement
+anywhere in a machine-placed pause. What a wrongly paused Butler costs is *stopped automation*, not stopped
+mail — the message still arrives, is still filed and is still answerable by hand — which is exactly why the
+ceremony sits on the resume here and on the placement for a domain.
+
+**The loop it detects is the causal one, and the link was already in the schema.** A **self-provoked run** is a
+run of a Butler whose triggering delivery is a reply to a manifest that Butler's own run sealed — a join from
+`messages.in_reply_to` to `send_manifests.rfc_message_id` to `butler_run_effects.subject` to
+`butler_runs.butler_id`, all of it stored since Layer 2 and checked rather than assumed. A windowed count of
+those, over a threshold, latches the pause. `doctor` reports a paused Butler, a Butler that has stopped
+producing runs while mail was arriving at the address its trigger names, and whether the detector can see
+threaded replies at all rather than reporting a reassuring zero.
+
+**Named absent, with the reason rather than stubbed.** *A runs-per-window breaker on a Butler* — and **not**
+for want of substrate, which is the point: `butler_runs` supports it in one `COUNT(*)`. It has no defensible
+threshold, because a Butler's legitimate run rate **is** its trigger mailbox's inbound mail rate and nothing
+has measured that. *An unthreaded reply* and *a loop through two Butlers* are outside the causal count, the
+first because there is no link back and the second because each Butler counts only what it sealed itself.
+*New-recipient and new-domain throttles* need a first-contact record this Node does not keep. *Suppression
+enforcement* is the transport's own list, surfaced as the `suppressed` submission state rather than
+re-implemented here.
+
+*Superseded, kept for the reasoning:* **auto-disabling an offending Butler** and **loop detection using trace
+headers, causal depth and route history** both needed a per-Butler-run causal record, and nothing recorded
+per-run outcomes at all — Layer 4 was unbuilt, and a breaker needs a denominator. A pause keyed on a
+`butler_id` would have been expressible and unusable: no Butler could be created, so nothing could ever write
+the row. That is the same failure the eight absent policy dimensions above are absent for.
 
 ---
 

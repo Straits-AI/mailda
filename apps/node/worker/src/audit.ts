@@ -144,7 +144,50 @@ export const AUDIT_ACTIONS = {
     says: "An administrator wrote or replaced a Butler's draft; the AST digest and node count are recorded.",
   },
   "butler.published": {
-    says: "A Butler draft became an immutable version. Nothing executes it yet; detail.runnable says so.",
+    // Amended with #50: this said *"Nothing executes it yet; detail.runnable says so"*, which was true when
+    // 0027 shipped the store with no engine and became false the day the engine landed — in the one table
+    // that must not hold a false statement. `detail.runnable` no longer exists either; what the entry carries
+    // is the **trigger**, which is what a reader of the trail wants next.
+    says: "A Butler draft became an immutable version, and it is live: the entry names the trigger that "
+      + "will fire it.",
+  },
+
+  /*
+   * Layer 5 over Layer 4's substrate: the Butler pause (#75, §18). Two actions, and the asymmetry between
+   * them is #66's asymmetry pointing a third way.
+   *
+   * `butler.paused` is placed by the **machine**, so its `actorUserId` is `null` and `kindOfActor` renders
+   * `node` — *"an alarm, a sweeper"*, which is literally where it happens: `triggerButlers` runs inside the
+   * outbox sweeper's invocation. Not the Butler, which did not stop itself; not the administrator who
+   * published it, who is not present and decided nothing. It is this Node's own act and the trail says so.
+   *
+   * It carries the **sentence** as well as the token, in `detail.said`, and that is the same reasoning
+   * `send.rate_limited` records for itself: the reading behind a pause is a windowed count, so by the time
+   * anybody reads the entry the rows that produced the number have aged out of the window and nothing can
+   * reproduce it. Unusually, the fact is *also* a column (`butler_pauses.detail`) — because the person
+   * deciding whether to resume is reading the pause, not the trail, and neither reader should have to find
+   * the other's copy.
+   *
+   * `butler.resumed` is the human half, and it is the **only** human judgement anywhere in this breaker's
+   * lifecycle. So its reason is mandatory, which inverts `domain.pause_lifted`'s optional one: that pause was
+   * placed by two people who wrote down why, and this one was placed by nothing that can be asked. The
+   * argument in full is in `src/butler/pause-acts.ts`.
+   *
+   * There is deliberately **no** `butler.pause_requested`: nobody requests one. And no third action for
+   * *"a paused Butler was passed over"* — that is the absence of an act rather than an act, and it happens
+   * once per delivery per paused Butler, which is exactly the per-row frequency
+   * `audit-and-log-retention.md`'s "a handful per message" sizing forbids. What records it is the latched
+   * row itself and `doctor`'s `butler_paused` finding; `TriggerOutcome.paused` names them for the caller.
+   *
+   * Both ride in `auditedBatch` beside the write they record, so neither is `standalone`.
+   */
+  "butler.paused": {
+    says: "This Node stopped a Butler by its own rule; the reason, the delivery that tripped it and the "
+      + "figure behind it are recorded with it. Republishing the Butler does not clear it.",
+  },
+  "butler.resumed": {
+    says: "One administrator restarted a paused Butler, alone and with a mandatory reason — the only human "
+      + "judgement anywhere in a machine-placed pause.",
   },
 
   /*

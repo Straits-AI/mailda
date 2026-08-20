@@ -10,8 +10,9 @@ import { metering, type Cost } from "../cost-meter.ts";
 import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectResult } from "./effects.ts";
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
+import { describePause, pausedFrom, PAUSE_COLUMNS_FOR_RUN } from "./pause.ts";
 import {
-  closeRun, effectStatement, openRunStatement, parkStatement, resumeRun, spendStatement,
+  abandonRun, closeRun, effectStatement, openRunStatement, parkStatement, resumeRun, spendStatement,
   type EffectRecord, type RunCounts, type TerminalState,
 } from "./record.ts";
 import type { ButlerPrincipal } from "./principal.ts";
@@ -64,7 +65,7 @@ import type { ButlerPrincipal } from "./principal.ts";
  * |:--|:--|
  * | `finished` | the graph ran out of nodes |
  * | `stopped` | a `stop` node ended it, or a release gate timed out — reason says which |
- * | `refused` | **the run stopped itself**: the stored AST no longer checks, a `validate` did not hold, or it could not afford to go on |
+ * | `refused` | **the run stopped itself**: the stored AST no longer checks, a `validate` did not hold, it could not afford to go on, or its Butler was paused (#75) between the trigger and this invocation |
  * | `failed` | a fault: an unresolvable path, a schema this engine cannot honour, a loop over more items than its bound |
  *
  * A *policy* denial, a breaker, an unsatisfiable approval, a held case — none of those is any of the above.
@@ -342,9 +343,59 @@ export async function interpret(
    * for ever, which is the one value that must not be cached.
    */
   const carried = await env.CATALOG.prepare(
-    "SELECT subrequests_spent FROM butler_runs WHERE org_id = ? AND id = ? LIMIT 1",
-  ).bind(orgId, runId).first<{ subrequests_spent: number }>();
+    `SELECT
+       (SELECT subrequests_spent FROM butler_runs WHERE org_id = ?1 AND id = ?2) AS subrequests_spent,
+       ${PAUSE_COLUMNS_FOR_RUN}`,
+  ).bind(orgId, runId, payload.butlerId).first<{
+    subrequests_spent: number | null;
+    pause_id: string | null; pause_reason: string | null; pause_at: string | null;
+  }>();
   const spentBefore = carried?.subrequests_spent ?? 0;
+
+  /*
+   * The pause, asked once **per invocation** — and this is the second half of #75's answer, not a repeat of
+   * the first.
+   *
+   * `triggerButlers` stops a paused Butler starting a run. It cannot stop a run that was **already in
+   * flight** when the pause landed, and #50 measured that a workflow outlives the Worker that declared it: a
+   * `wait` node reaches 365 days, and a Node with ten thousand proposed sends holds ten thousand sleeping
+   * instances. A pause that stopped new triggers and let all of them wake up and act would be a pause in name
+   * only.
+   *
+   * So the question rides on the read above, which is already issued once per invocation and already
+   * deliberately **not** cached inside a `step.do`. Three more scalar sub-selects on a statement that was
+   * already being made: `butler.pause_check_added_subrequests` is 0, and that is why it is pinned as an
+   * equality rather than bounded.
+   *
+   * **`abandonRun`, not `finish`.** A resumed run may have performed effects in an earlier invocation, and
+   * this act does not know what they were — only that the Butler is stopped. So it writes the state and the
+   * reason and states no counts, which is the distinction `abandonRun` was written for by the release path,
+   * reached from a second direction.
+   *
+   * **What that does not do is rescue a figure, and `abandonRun`'s own header says why.** The count columns
+   * are written by `closeRun` alone, and this can only reach a run that has never closed, so on this path they
+   * read zero either way. What a suspended run performed is its `butler_run_effects` rows — measured in
+   * `test/butler-pause.test.ts`, which suspends a run for real and finds the row saying `effects = 0` beside
+   * two effect rows. Naming that here rather than implying the row is trustworthy.
+   */
+  const stopped = pausedFrom(carried);
+  if (stopped !== null) {
+    await complain(env, ctx, orgId, runId, butler, "paused", describePause(stopped, {
+      id: butler.butlerId, name: butler.name,
+    }));
+    await abandonRun(env, ctx, orgId, runId, "refused", "butler_paused");
+    return {
+      runId,
+      state: "refused",
+      reason: "butler_paused",
+      // What **this invocation** walked and performed, which is nothing. It is not a claim about the run:
+      // what the run did is its `butler_run_effects` rows, and `abandonRun` above deliberately writes no
+      // count over them — see the note there about what that does and does not preserve.
+      nodesExecuted: 0,
+      effects: [],
+      cost,
+    };
+  }
 
   const ast: Butler = checked.ast;
   const byId = new Map(ast.nodes.map((node) => [node.id, node]));

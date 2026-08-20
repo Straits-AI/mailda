@@ -4,6 +4,11 @@ import type { Ctx } from "@mailda/runtime";
 
 import { log } from "../audit.ts";
 import type { ButlerRunPayload } from "./interpret.ts";
+import {
+  describeLoopTrip, loopReading, loopWindowStart, pausedFrom, PAUSE_AND_LOOP_COLUMNS,
+  type PauseAndLoopRow,
+} from "./pause.ts";
+import { placeButlerPause } from "./pause-acts.ts";
 
 /**
  * What starts a run: one delivery, every published Butler listening on the mailbox it landed in (#50).
@@ -54,6 +59,22 @@ import type { ButlerRunPayload } from "./interpret.ts";
  *
  * Its cost is charged to whatever invoked `materialiseReceipt`, not to any Butler's pot.
  * `docs/receipts/butler-run-cost.md` measures it separately for that reason.
+ *
+ * ## This is where a pause is evaluated, and where one is placed (#75)
+ *
+ * #66 decided that a Butler stopped by a breaker is a latched row keyed on `butler_id`, **evaluated at
+ * trigger time**. This function is that place. A paused Butler does not start a run at all — an abuse breaker
+ * refuses rather than gating — so what a paused Butler looks like is **silence**, which is why `doctor` grew
+ * `butler_paused` and `butler_run_silence` in the same change.
+ *
+ * The pause and the loop reading are **five correlated sub-selects on the version listing this function was
+ * already issuing**, so asking costs nothing: `butler.pause_check_added_subrequests` is 0, pinned as an
+ * equality in `docs/receipts/butler-pause.md`. A paused Butler is in fact *cheaper* than a running one,
+ * because the `create` never happens.
+ *
+ * Placing a pause costs one `auditedBatch`, once, at the moment the reading goes over — never per delivery.
+ * `src/butler/pause-acts.ts` carries who may place one (nothing but this) and who may resume one (one
+ * administrator, with a mandatory reason).
  */
 
 /**
@@ -96,11 +117,29 @@ export interface TriggerOutcome {
    * distinguishes them, and it names the version in both cases.
    */
   readonly notStarted: readonly string[];
+  /**
+   * Butlers that matched this delivery and were **passed over because a pause is in force** (#75).
+   *
+   * `btl_` ids rather than instance ids, because there is no instance: a paused Butler starts no run, so
+   * there is nothing with a run's identity to name. Reported rather than logged, and that is a decision: a
+   * pass-over happens once per delivery per paused Butler, which is the per-row frequency
+   * `audit-and-log-retention.md`'s sizing forbids in the trail and would drown `log_entries`. What records it
+   * is the latched row itself, and `doctor`'s `butler_paused` finding is what puts it in front of a person.
+   */
+  readonly paused: readonly string[];
+  /**
+   * Butlers this call **paused**, having found their self-provoked run count over the limit.
+   *
+   * At most one entry per Butler ever, because the pause latches. A `btl_` id appears here on the delivery
+   * that tripped it and in `paused` on every delivery after it.
+   */
+  readonly looped: readonly string[];
 }
 
-interface VersionRow {
+interface VersionRow extends PauseAndLoopRow {
   id: string;
   butler_id: string;
+  butler_name: string;
   ast_json: string;
 }
 
@@ -170,17 +209,34 @@ export async function triggerButlers(
     // A message with no attributable mailbox: its address was removed, or the receipt is gone. Nothing to
     // trigger, and not an error — the same judgement `materialiseReceipt` makes about a receipt that has
     // disappeared, for the same reason: raising would wedge the outbox on an event that can never succeed.
-    return { started: [], duplicates: [], notListening: 0, notStarted: [] };
+    return { started: [], duplicates: [], notListening: 0, notStarted: [], paused: [], looped: [] };
   }
 
+  /*
+   * One statement for three questions: which Butlers are published, which of them is paused, and how long a
+   * chain each has made itself. The pause and loop columns are correlated sub-selects on `v`, so this costs
+   * exactly what it cost before #75 — measured, `docs/receipts/butler-pause.md`.
+   *
+   * `butlers` is joined for the **name**, which the pause's stored sentence needs: *"Butler btl_01J… has been
+   * re-triggered four times"* answers nothing, and `createButlerDraft` refuses a nameless Butler for exactly
+   * that reason.
+   *
+   * `?1`, `?2`, `?3` are numbered rather than anonymous because `PAUSE_AND_LOOP_COLUMNS` is pasted in from
+   * another module and names its own positions. An unnumbered `?` there would take whatever slot this
+   * statement happened to leave it.
+   */
   const { results } = await env.CATALOG.prepare(
-    `SELECT id, butler_id, ast_json FROM butler_versions
-      WHERE org_id = ? AND state = 'published'`,
-  ).bind(orgId).all<VersionRow>();
+    `SELECT v.id, v.butler_id, v.ast_json, b.name AS butler_name,
+      ${PAUSE_AND_LOOP_COLUMNS}
+     FROM butler_versions v JOIN butlers b ON b.org_id = v.org_id AND b.id = v.butler_id
+     WHERE v.org_id = ?1 AND v.state = 'published'`,
+  ).bind(orgId, facts.message_id, loopWindowStart(ctx.now())).all<VersionRow>();
 
   const started: string[] = [];
   const duplicates: string[] = [];
   const notStarted: string[] = [];
+  const paused: string[] = [];
+  const looped: string[] = [];
   let notListening = 0;
   const wanted = facts.mailbox_address.trim().toLowerCase();
 
@@ -206,6 +262,50 @@ export async function triggerButlers(
     }
     if (ast.trigger.mailbox.trim().toLowerCase() !== wanted) {
       notListening += 1;
+      continue;
+    }
+
+    /*
+     * The pause, evaluated **after** the trigger match and before anything else (#75).
+     *
+     * After, because a Butler listening on another mailbox was never going to run and calling it "paused"
+     * would put it in a list an operator reads as *"these were stopped"*. Before everything else, because a
+     * pause is an abuse breaker: it refuses rather than gating, so the answer is that no run happens — not a
+     * run that starts and refuses itself, and not a queue somebody releases later.
+     *
+     * The row was read in the statement above at no extra cost, so this is a comparison rather than a query.
+     */
+    const inForce = pausedFrom(version);
+    if (inForce !== null) {
+      paused.push(version.butler_id);
+      continue;
+    }
+
+    /*
+     * The loop detector, and it is the thing that places a pause.
+     *
+     * `loop_prior` and `loop_this` came back with the row: how many runs of this Butler inside the window
+     * were triggered by a reply to a send **this Butler** made, and whether the delivery in front of us is
+     * one too. `docs/receipts/butler-pause.md` says what that count can and cannot see, and says plainly
+     * that a Butler-proposed send cannot leave this Node today without a person releasing it — so what this
+     * catches now is a human-assisted chain, and what it exists for is the day that gate moves.
+     *
+     * The pause is placed **before** the run it refuses would have started, so the trip and the refusal are
+     * one decision rather than a run that has to be caught later.
+     */
+    const loop = loopReading(version);
+    if (loop.tripped) {
+      const placed = await placeButlerPause(env, ctx, orgId, {
+        butlerId: version.butler_id,
+        butlerName: version.butler_name,
+        reason: "loop_detected",
+        detail: describeLoopTrip(loop, { id: version.butler_id, name: version.butler_name }, facts.message_id),
+        trippedBy: facts.message_id,
+      });
+      // `null` means a concurrent delivery placed it first, which is the outcome this wanted: the Butler is
+      // paused either way. Reported as `paused` rather than `looped`, because this call did not place it.
+      if (placed === null) paused.push(version.butler_id);
+      else looped.push(version.butler_id);
       continue;
     }
 
@@ -246,5 +346,5 @@ export async function triggerButlers(
     }
   }
 
-  return { started, duplicates, notListening, notStarted };
+  return { started, duplicates, notListening, notStarted, paused, looped };
 }

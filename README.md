@@ -982,6 +982,69 @@ first and the last is the whole finding: **500** admitted at publication, **434*
 permitted by the guard. The guard being strictest is the right direction — refusing one send too early costs a
 run that could have finished, and refusing one too late means it has already gone.
 
+**A Butler that talks to itself gets stopped, and the thing that made that possible was already in the
+schema.** #66 designed a Butler pause — a latched row, keyed on the *Butler* rather than on a version, so
+republishing a fixed one cannot silently clear a pause the machine placed — and then named it absent, because
+there was no `butlers` table to key one on and no run record to place one from. Both exist now, so the decision
+was implemented as written rather than re-argued. What did get re-argued was the loop, because #66 had said
+detecting one needed a causal record that did not exist. **It did exist**: a manifest carries the `Message-ID`
+this Node emits, an inbound reply stores what it quoted with the brackets already stripped, and a run's effect
+row names the manifest it sealed — so *"this delivery is a reply to a send this Butler made"* is a join across
+three tables that have been there since Layer 2. Checked rather than inherited, which is the only reason this
+ticket built the loop that matters instead of the one that was easy.
+
+**So the loop that ships is causal, and the easy one is what is now named absent.** A windowed count of *runs*
+would have been trivial — `butler_runs` supports it in one `COUNT(*)` — and it has no threshold anybody can
+defend, because a Butler's legitimate run rate **is** its mailbox's inbound mail rate and nothing here has
+measured that for even one organization. What is counted instead is **self-provoked runs**: links of a chain
+this Butler made itself, inside an hour, and over three of them it is paused before the next run starts. Three
+absences go with it and each has a reason rather than a shrug: an unthreaded reply has no link back and is
+invisible, a loop through two Butlers counts for neither, and — the one that bounds the whole feature today —
+**a Butler's send cannot leave this Node without a person releasing it**, so a real chain needs an
+administrator clicking release at every hop. What this catches now is a human-assisted loop; what it exists for
+is the day that gate moves, because at that moment a chain with nothing counting it is a sending loop with no
+bound at all. Saying which of those two it is was the whole point.
+
+**Asking costs nothing, which is a design property rather than a small number.** Both evaluation points ride on
+statements that were already being issued: the pause and both loop counts are sub-selects on the read of
+published versions the trigger already makes, and the run-side question is a sub-select on the read of
+accumulated spend the interpreter already makes once per invocation and already must not cache. That second one
+is not symmetry — a workflow outlives the Worker that declared it and a `wait` node reaches 365 days, so a
+pause that stopped new triggers and let ten thousand parked instances wake up and act would be a pause in name
+only. Measured: the trigger costs **3** subrequests with a live Butler and **2** with a paused one, because a
+paused Butler starts no run at all. A control that exists to stop a runaway makes the runaway's own path
+cheaper.
+
+**The machine places it and one administrator resumes it, which inverts the domain pause's ceremony and for the
+same reason it had ceremony.** Stopping a customer's *mail* takes two administrators and a written reason,
+because somebody should have decided it. Stopping a customer's *automation* takes nobody, because a breaker
+that waits for a person is not a breaker — the mail still arrives, is still filed, and is still answerable by
+hand. The resume is one administrator alone, because an automatic pause nobody can resume is an outage and
+placement needed no administrators at all; it is `org.admin` and not anybody, because one anybody can resume is
+not a pause. And the reason is **mandatory** here where a domain lift's is optional: a domain pause already had
+two people's judgement in it, and this one has none anywhere except at the resume. **Republishing does not
+resume**, deliberately, and that is this feature's loudest test — a fix needs an explicit decision that it is
+safe to run again, which is the act somebody should have to perform.
+
+**A paused Butler produces silence, and silence is what `doctor` exists to distinguish from health.** So the
+harder finding is not *"which Butlers are stopped"* — it is *"has one stopped producing runs"*, which from the
+run record alone is indistinguishable from a Butler nothing has triggered. The discriminator is whether mail
+actually arrived at the address the trigger names: the address parsed out of the frozen AST, the arrivals from
+one grouped read. Mail arrived and no run started is a fault; no mail arrived is not; a stored AST that will
+not parse is a fault of its own. Anchored on the publication instant rather than on a window, because a window
+would have needed a figure for *how long may a Butler legitimately go without running* and a Butler on a quiet
+mailbox may honestly go a month. A third finding refuses to call the loop detector armed on a Node whose
+inbound mail carries no threading at all, rather than reporting a reassuring zero — which is the same refusal
+the bounce-rate breaker already makes about a dead delivery channel.
+
+**And an index for something else nearly turned a diagnostic into a table scan.** The causal join needs
+`send_manifests` reachable by the Message-ID a reply quotes, and written the way every other index in this
+schema is written — leading on `org_id` — it displaced the partial index `doctor`'s evidence-mismatch check
+depends on, turning a seek into an empty B-tree into a scan of every manifest ever sealed. Found by a test that
+reads the query plan from the planner rather than trusting a comment, in the same change rather than six months
+later. It leads on the Message-ID instead, and is UNIQUE, so two manifests cannot claim one — which would have
+let a single reply attribute to two sends and counted a chain that never happened.
+
 **What is still not enforced is said rather than implied.** A loop whose body performs no I/O costs nothing,
 so it is affordable at a billion — true in subrequests, the only currency with a measurement behind it — and
 the engine does not refuse it either: it runs until the platform's CPU limit kills the step. And a workflow's
@@ -1215,7 +1278,8 @@ docs/supervised-access.md              matters, the time-boxed grant, per-act re
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
 docs/butler-ast.md                     the node set, what the checker refuses, how a version freezes
-docs/butler-engine.md                  what runs a Butler: the principal, the release gate, the budget
+docs/butler-engine.md                  what runs a Butler: the principal, the release gate, the budget,
+                                       the pause and the loop that places it
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
@@ -1227,7 +1291,8 @@ packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
                                        authorization, auth, outbox sweeper, interface
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
-apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate
+apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate,
+                                       the latched pause and its two write acts
 apps/node/worker/src/client            browser scripts, served as real .js files
 apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made

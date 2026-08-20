@@ -39,6 +39,8 @@ require a deploy. Three consequences fall out of the generic form and each is wo
 | `src/butler/trigger.ts` | what starts a run, and the instance id that dedups it |
 | `src/butler/release.ts` | the human half of the gate |
 | `src/butler/record.ts` | the run record in D1 |
+| `src/butler/pause.ts` | the latched pause and the loop that places it — **read-only**, because `doctor` imports it |
+| `src/butler/pause-acts.ts` | the two writes: the machine placing a pause, a person resuming one |
 
 **The entrypoint is four lines and the interpreter is a function**, because `run()` receives `this.env` from
 the platform while `metering()` wraps an env a *caller* passes in. An entrypoint that did the work could
@@ -335,6 +337,179 @@ authoring a Butler takes. A run's effect list names ids across every mailbox the
 it per mailbox would mean either a partial answer that reads as complete or a query deciding visibility row by
 row. There is deliberately no route that *creates* a run: a Butler that could be fired by a request would be an
 automation with a manual override nobody governed.
+
+---
+
+## The pause, and the loop that places it
+
+#66 designed a Butler pause and named it **absent**, because there was no `butlers` table to key one on
+and no run record to place one from. #75 is the same design against the substrate #49, #50 and #54 built.
+Receipt: [`docs/receipts/butler-pause.md`](./receipts/butler-pause.md). Migration 0029.
+
+### Keyed on the Butler, never on a version
+
+A published version is frozen in both AST and source by two database triggers, so auto-disabling **cannot** be
+a mutation of the version — invariant 9 forbids it. That rules out one implementation. What decides the key is
+the consequence: **republishing a fixed Butler must not silently clear a pause the machine placed.** With a
+version-keyed pause, an operator who changed one comment and published would have re-armed a Butler the machine
+stopped, with nobody deciding it was safe.
+
+The cost is accepted deliberately: a fix needs an **explicit resume** as well as a publish. That is the act
+somebody should have to perform, and it is this feature's loudest test.
+
+An enablement pointer on `butlers` was rejected in #66 for conflating *not deployed* with *stopped by a
+breaker*: the reason a Butler is not running would stop being recorded in the thing that stopped it, and
+recovery would look like an ordinary deploy in the trail.
+
+### It refuses rather than gating, so what it looks like is silence
+
+#66's split: a **rate** breaker is a question re-asked per act, so it gates and clears when the window slides;
+an **abuse** breaker latches and refuses. A paused Butler does not run at all — not a run that starts and
+refuses itself, not a queue somebody releases later. So its observable is **no runs**, which is what a Butler
+nothing has triggered also produces, which is why `doctor` grew three findings in the same change.
+
+### Two evaluation points, and both cost nothing
+
+`butler.pause_check_added_subrequests` is **0**, pinned as an equality rather than bounded, because it is a
+count of the statements the check adds and the count is none:
+
+| Point | Rides on | What it covers |
+|:--|:--|:--|
+| trigger time | the read of published versions `triggerButlers` already issues | a paused Butler starts no run |
+| once per invocation | the read of `butler_runs.subrequests_spent` the interpreter already issues | a run that was **already in flight** |
+
+The second is not symmetry. A workflow outlives the Worker that declared it and a `wait` node reaches 365 days,
+so a pause that stopped new triggers and let ten thousand parked instances wake up and act would be a pause in
+name only. That read is already outside a `step.do` because it must not be cached — which makes it exactly the
+hook a run resuming from a thirty-day sleep needs.
+
+A run that finds its Butler paused ends `refused` with `butler_paused` through **`abandonRun`, not
+`closeRun`** — it writes the state and the reason and states no counts, because the refusing invocation does
+not know what earlier ones did.
+
+**And the limit of that is stated rather than implied, because the obvious reading of it is wrong.**
+`nodes_executed`, `effects` and `refusals` are written by `closeRun` **alone**, and `abandonRun` can only match
+a run that has never closed — so on this path those three columns read **zero either way**, and calling
+`abandonRun` rescues no figure. It is the right call because it does not *state* one. What a suspended run
+actually performed is its `butler_run_effects` rows, which are written with each effect in one transaction and
+returned beside the run row by `GET /api/butler-runs/:id`. Measured, not reasoned: `test/butler-pause.test.ts`
+suspends a run for real, places the pause under it, and finds the row reading `effects = 0` next to two effect
+rows. #53's run ledger owns closing that gap; until then, a reader who trusts `effects` on an abandoned run is
+reading a figure nothing ever wrote.
+
+Measured, `docs/receipts/butler-pause.md`: the trigger is **3** subrequests with a live Butler and **2** with a
+paused one — a pause makes the ingress path *cheaper*, because the `create` never happens. Placing one costs
+**4**, once in a Butler's life.
+
+### Which loop this is, exactly, and which one is absent
+
+**A causal loop**, not a runs-per-window count, and the two are not the same problem. The link #66 said did not
+exist turns out to have been complete since Layer 2, and it was checked rather than assumed:
+
+```
+messages.in_reply_to  =  send_manifests.rfc_message_id   the Message-ID this Node emitted, brackets stripped
+send_manifests.id     =  butler_run_effects.subject      the manifest a mail.send.propose sealed
+butler_run_effects.run_id -> butler_runs.butler_id       whose run sealed it
+```
+
+So a **self-provoked run** is a run of Butler B whose triggering delivery is a reply to a manifest a run of *B
+itself* sealed. The reading is the count of those inside the window plus one when the delivery being decided is
+itself self-provoked — *how many links of a chain this Butler made itself, counting the one in front of it*.
+Over `butler.loop_max_self_provoked_runs` and the Butler is paused before the run starts.
+
+The query is all index seeks, read from the planner rather than asserted:
+`sm_by_rfc_message_id` then `bre_by_subject`. That index leads on `rfc_message_id` and **not** on `org_id`,
+breaking this schema's convention, because written the usual way round it displaced `sm_evidence_changed` in
+the planner for `doctor`'s evidence check — turning a seek into an empty partial index into a scan of every
+manifest ever sealed. Migration 0029 records the observed plan.
+
+**Named absent, three of them, each with its reason:**
+
+- **An unthreaded reply.** No `In-Reply-To`, or headers that would not parse, means no link back. The detector
+  catches a loop with a correspondent that threads properly and misses one that does not.
+  `doctor`'s `butler_loop_detection` reports whether this Node is seeing threaded replies at all, rather than
+  reporting a reassuring zero.
+- **A loop through two Butlers.** A → B → A counts for neither, because each counts only what it sealed itself.
+  That needs a chain walk rather than a windowed count.
+- **A runs-per-window breaker**, and *not* for want of substrate: `butler_runs` supports it in one `COUNT(*)`.
+  It has no threshold anybody can defend, because a Butler's legitimate run rate **is** its mailbox's inbound
+  mail rate and nothing here has measured that.
+
+**And what the detector's teeth are today, because the obvious reading overstates them.** `proposeSend` sets
+`releaseRequired: true` unconditionally, so a Butler's send is sealed `awaiting butler_release_required` and
+**cannot leave without a person releasing it**. A self-provoked chain therefore cannot extend itself: every
+link needs an administrator to click release. What this catches now is a *human-assisted* chain — an operator
+releasing a stream of near-identical replies, which is the muted-check failure this repository names in three
+other places — plus the runs and instances behind it. What it exists for is the day that gate is removed or
+outranked by a policy, because at that moment a chain with nothing counting it is a sending loop with no bound
+at all.
+
+### Who places, who resumes
+
+|  | Domain pause (#66) | Butler pause (#75) |
+|:--|:--|:--|
+| **Places** | a person asks; **two** administrators agree; mandatory reason | the **machine**, automatically. No human path exists |
+| **Resumes** | **one** administrator, alone, reason optional | **one** administrator, alone, reason **mandatory** |
+| **What a wrong one costs** | a customer's mail stops | a customer's mail is *unautomated* — still filed, still visible, still answerable by hand |
+
+Both are the same principle producing different answers, and both halves of the premise differ. Placement is
+automatic because *a breaker that waits for a person is not a breaker*. Resume is **one** administrator because
+*an automatic pause nobody can resume is an outage* — placement needs no administrators at all, so requiring
+two to undo it would make the machine strictly more powerful than the organization, and a Node with one
+administrator could never restart a Butler. It is `org.admin` and not *anybody*, because *one anybody can
+resume is not a pause*, and because that is the authority publishing a Butler already takes.
+
+The reason is **mandatory here and optional on a domain lift**, which is the inversion worth the paragraph: a
+domain pause was placed by two people who wrote down why, so lifting needs no second justification and delay is
+the harm. A Butler pause was placed by a machine — this resume is the *only* human judgement anywhere in its
+lifecycle, so a blank reason would mean nobody recorded a decision at any point in it. And delay here costs a
+convenience rather than somebody's mail.
+
+Nothing lets a person *place* one, and there is no `placed_by` column either — the machine is the only placer,
+so its only value would be NULL, and an always-NULL column is the placeholder shape this repository has a test
+for. The actor is recorded where an actor belongs: the `butler.paused` entry carries `actor_kind = node`. What a
+person can do to stop a Butler is revoke the relations granted to its `btl_` id — which stops it at its next
+effect, since a Butler's principal is the Butler — or publish a policy denying its sends. Both are audited and
+neither needs this table. The column arrives with the act the day a human placement is wanted, which is cheaper
+than carrying an empty one until then.
+
+### What `doctor` says, and the hard one
+
+`butler_paused` is the easy finding: which Butlers are stopped, since when, what tripped them, the figure
+behind it, and the exact command to resume one. `degraded`, never `refuse` — the mail still arrives.
+
+`butler_run_silence` is the hard one, and it is #66's `no_observations` reasoning one layer along. From
+`butler_runs` alone, *stopped* and *never triggered* are the same reading. What separates them is whether **mail
+arrived at the address the trigger names** — the address parsed out of the frozen AST, the arrivals from one
+grouped read of `ingress_receipts`:
+
+| | |
+|:--|:--|
+| mail arrived after publication, no runs | **degraded** — it should have run and did not |
+| no mail arrived after publication | **report** — nothing triggered it, which is not a fault |
+| the stored AST will not parse | **degraded** — it can never run, and the trigger agrees |
+
+Anchored on `published_at` rather than on a window, because a window would need a figure for *how long may a
+Butler legitimately go without running* and a Butler on a quiet mailbox may honestly go a month. A **paused**
+Butler is excluded from it: its silence is already explained, and a check that fails on every Node with a pause
+is a permanent WARN, which is a muted check.
+
+`butler_loop_detection` is the third: `armed=false (no_threaded_replies)` when nothing inbound carries an
+`In-Reply-To`, `degraded` only when a Butler has also proposed a send — because `ok: false` on every freshly
+installed Node forever is the other way to get a check muted.
+
+Cost: **+1** subrequest on a claimed Node with no Butlers, **+2** when it has one — the delivery scan is issued
+only when the first read found something. Measured before and after in
+[`docs/receipts/doctor-check-cost.md`](./receipts/doctor-check-cost.md).
+
+### Surface
+
+```
+GET  /api/butler-pauses               every Butler this Node has stopped, with the figure behind it
+POST /api/butler-pauses/:id/resume    restart one. One org.admin, alone, with a mandatory reason
+```
+
+There is deliberately **no endpoint that pauses a Butler** — one would contradict the asymmetry above.
 
 ---
 

@@ -48,7 +48,11 @@ export const RUN_STATES = [
   "finished",
   /** A `stop` node ended it, or a release gate timed out. The reason says which. */
   "stopped",
-  /** The run stopped **itself**: its AST no longer checks, a `validate` did not hold, or it ran out of pot. */
+  /**
+   * The run stopped **itself**: its AST no longer checks, a `validate` did not hold, it ran out of pot, or
+   * its Butler was paused (#75) while it was in flight — in which case the counts on the row are the ones the
+   * run last wrote, because `abandonRun` and not `closeRun` is what ends it.
+   */
   "refused",
   /** A fault: an unresolvable path, a schema this engine cannot honour, a loop past its own bound. */
   "failed",
@@ -199,11 +203,34 @@ export async function closeRun(
 /**
  * Ends a run nobody can resume, **without touching the counts**.
  *
- * Its one caller is a release that found the instance gone: the send is released, the run's execution state
- * has expired, and leaving the record reading `awaiting_release` for ever would be a lie about a run that is
- * not waiting for anything. It writes the state and the reason and nothing else, because the counts are what
- * the run itself last recorded and this act does not know what the run did — only that it is no longer there.
- * `closeRun` with zeroes would have been this act claiming knowledge it lacks.
+ * **Two callers, and the second is why the shape generalises rather than being a special case.**
+ *
+ * The first is a release that found the instance gone: the send is released, the run's execution state has
+ * expired, and leaving the record reading `awaiting_release` for ever would be a lie about a run that is not
+ * waiting for anything. The second is `interpret` finding its Butler **paused** (#75) at the top of an
+ * invocation — a run that slept through a pause being placed, which is the case a trigger-time check
+ * structurally cannot cover.
+ *
+ * Both write the state and the reason and nothing else, because neither act knows what the run did — only
+ * that it is not going on. `closeRun` with the caller's zeroes would be either act claiming knowledge it
+ * lacks.
+ *
+ * ## What this does **not** protect, said plainly because the obvious reading is wrong
+ *
+ * `nodes_executed`, `effects` and `refusals` are written by **`closeRun` alone** — not by `openRun`, not by
+ * `spendStatement`, not by `parkStatement`. And `LIVE` is `running` and `awaiting_release`, so the only rows
+ * this statement can match are rows that have never closed. **Therefore there is no reachable state in which
+ * a run reaching here has non-zero counts to preserve**: on both paths the three columns read zero, and
+ * writing zeroes over them would have been indistinguishable. Measured, not assumed —
+ * `test/butler-pause.test.ts` drives a genuinely suspended run through the pause and asserts the row reads
+ * `effects = 0` while `butler_run_effects` holds its two rows.
+ *
+ * So the reason to call this rather than `closeRun` is **not** that it rescues a figure: it is that it does
+ * not *state* one. What a run performed is `butler_run_effects`, which has a row per effect written with the
+ * effect in one transaction and is what `GET /api/butler-runs/:id` returns beside the row. The count columns
+ * are a projection of those rows that only a close computes, and a run abandoned before it closed has the
+ * rows without the projection. #53's run ledger owns closing that gap; until it does, a reader who trusts
+ * `effects` on an abandoned run is reading a figure nothing ever wrote.
  */
 export async function abandonRun(
   env: Env,

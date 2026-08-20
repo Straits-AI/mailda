@@ -155,11 +155,31 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       + "frequent and only taking work off a *named colleague* is answerable. A Butler's claim is an "
       + "ordinary claim by a non-human principal, and this table is where it is answerable.",
   },
+  /*
+   * #75's latched breaker, and its pair of actions is a **third** asymmetry rather than a copy of either
+   * earlier one.
+   *
+   * `butler.paused` rides beside the one INSERT that creates the row, inside `auditedBatch` with the same
+   * predicate as the insert — so a Butler that stopped with nothing in the trail is not representable. Its
+   * actor is `null`, which `kindOfActor` renders as `node`: the machine placed it, in the sweeper's
+   * invocation, and neither the Butler (which did not stop itself) nor its publisher (who is not present)
+   * decided anything. `butler.resumed` rides beside the single conditional UPDATE that clears it.
+   *
+   * There is deliberately **no** `butler.pause_requested` — nobody requests one, because no human placement
+   * path exists (migration 0029 says so and says what a person can do instead) — and no action for *"a paused
+   * Butler was passed over"*, which is the absence of an act and happens once per delivery per paused Butler.
+   * `TriggerOutcome.paused` names those for the caller and `doctor`'s `butler_paused` puts them in front of a
+   * person.
+   */
+  butler_pauses: { actions: ["butler.paused", "butler.resumed"] },
+
   butler_versions: {
     // Auditable for a reason the other frozen-history table shares: a published version is the program a
     // run binds, so "who published this, and when" is a fact somebody could be asked about. There is
-    // deliberately no `butler.edited` — an edit *is* a draft — and no run action, because nothing runs a
-    // Butler yet and a declared action nothing emits is the category of one this file fails on.
+    // deliberately no `butler.edited` — an edit *is* a draft — and no run action: a run is not an act, and
+    // every act inside one that somebody could be asked about is audited where it happens. That second half
+    // used to read "because nothing runs a Butler yet", which stopped being true when #50 landed; the
+    // conclusion survived the premise, and it is restated here rather than left resting on a dead one.
     actions: ["butler.drafted", "butler.published"],
   },
 

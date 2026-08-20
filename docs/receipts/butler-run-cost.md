@@ -102,6 +102,13 @@ without it, which is the quantity the pot is actually spent in.
 2. **One read** of `butler_runs.subrequests_spent`, per **invocation**. Deliberately not inside a `step.do`:
    a cached step would return the first invocation's figure for ever, and that is the one value that must
    not be cached.
+
+   **Amended 21 August 2026 (#75): this statement now also asks whether the run's Butler is paused**, as three
+   more scalar sub-selects. The figure is unchanged — still one statement, still `butler.run_cost_engine_fixed
+   = 3`, re-measured at 3 in `test/butler-pause-cost.measure.test.ts` — and the reason the question was put
+   *here* rather than anywhere else is the sentence above it: a per-invocation read that must not be cached is
+   exactly what a run resuming from a thirty-day sleep needs, and #75's pause has to reach an instance that
+   was already in flight when it was placed.
 3. **One write** of the terminal state and the counts.
 
 A run that sleeps or parks pays (2) again on each resume. That is why the *fixed* figure is per invocation

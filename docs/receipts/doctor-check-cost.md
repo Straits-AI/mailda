@@ -15,6 +15,46 @@ values:
   doctor.max_subrequests_per_run: 220
 ---
 
+## Correction, 21 August 2026: three new checks, one new subrequest — and a second that a Node without Butlers never spends (#75)
+
+The **"any new fixed-cost check"** clause fires again. #75's Butler pause needs `doctor` for a reason the rate
+breakers did not: a paused Butler produces **no runs**, so what it looks like is silence, and silence is what
+this file exists to distinguish from health. Three findings, from one statement — `butler_paused`,
+`butler_run_silence` and `butler_loop_detection`.
+
+**Measured before and after, on the claimed-and-clean fixture in `test/outbound-recheck.test.ts`, by removing
+the one line that calls `checkButlerPauses` and putting it back:**
+
+```
+without   subrequests=22  d1=16  r2=6  findings=19
+with      subrequests=23  d1=17  r2=6  findings=20
+```
+
+Restored and re-measured to confirm the figure came back, which is the method every correction in this file
+uses.
+
+**+1 and not +3**, because the pause fields, the run counts and both loop-visibility figures are correlated
+sub-selects on one read of `butler_versions` — the shape `checkDeliveryVisibility` and `evaluateBreakers`
+already use here. And **+1 and not +2** on a Node with no Butlers: the second statement, the per-address
+delivery activity that separates *a Butler that stopped running* from *a Butler nothing triggered*, is issued
+only when the first read found a published Butler. That is `checkBreakers`' own conditional-listing mechanism,
+and the delta from no Butlers to one is asserted as a standing test in `test/butler-pause.test.ts` (**45 → 46**
+on its fixture, printed as `MEASURE doctor no-butlers` / `MEASURE doctor one-butler` on every suite run) rather
+than by editing source, because it is measurable between two runs in one process. The absolute figures differ
+from the 22/23 above because it is a different fixture — what is asserted there is the **delta**, which is the
+only part either fixture agrees on.
+
+**The one residual, named rather than glossed:** that second statement is a `GROUP BY` over
+`ingress_receipts`, bounded by the earliest publication among live Butlers and **not** by a constant, so its
+*rows read* grow with inbound volume. This receipt's `stale_when` watches for "a check that costs a subrequest
+per row", which this is not — it is one subrequest whichever it finds — and `checkDeliveryVisibility` has been
+in the same position since Layer 2. Stated because the honest form of that clause is about subrequests, and
+somebody reading it for rows should find the answer here.
+
+Full receipt for the feature: `docs/receipts/butler-pause.md`.
+
+---
+
 ## Correction, 20 August 2026: one new fixed-cost check, `send_evidence_changed` (#62)
 
 The clause **"including any new fixed-cost check"** fires, and this time it fires plainly rather than partly.
