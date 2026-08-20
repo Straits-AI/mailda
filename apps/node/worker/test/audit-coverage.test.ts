@@ -104,11 +104,22 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // `cases`, which would make an exempt table audited for an act that never touches it and would have to be
     // repeated on every table a future call site protects.
     //
-    // There is no `hold.lifted`, and that is the decision rather than an omission: #64 gave lifting dual
-    // approval, and while #61's machinery now exists the lift itself does not — it needs the columns 0018 left
-    // out and an approval targeting a hold. A declared action nothing emits is a category of one, which the
-    // last assertion in this file fails on, so the action lands with the act.
-    actions: ["hold.placed", "hold.blocked"],
+    // `hold.lifted` is the third, and it is a write to this table: the `UPDATE holds` that sets `lifted_at`,
+    // `lifted_reason` and `lift_id`, in the same transaction as the entry. It was absent while nothing could
+    // emit it — a declared action nothing emits is a category of one, which the last assertion in this file
+    // fails on — and it arrived with the act rather than before it.
+    actions: ["hold.placed", "hold.blocked", "hold.lifted"],
+  },
+  hold_lifts: {
+    // A request to lift a hold, and **the act that writes it is already audited**: `requestHoldLift` inserts
+    // this row in the same transaction as the `approval.requested` entry, whose detail names the hold, the
+    // request and the reason. A `hold.lift_requested` action beside it would make "who asked to lift this
+    // hold" answerable from two places that can disagree — the reasoning that gives `cancelSend` one entry
+    // for the manifest and the approval it settles, reached from the other direction.
+    //
+    // Not exempt, because the act plainly is answerable: somebody asked for destruction to be re-permitted.
+    // The entry that records it just belongs to the approval, which is what the request *is*.
+    actions: ["approval.requested"],
   },
   policies: {
     exempt:
@@ -156,6 +167,11 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // `send.cancelled` is here because `cancelSend` settles a pending approval in the same transaction as the
     // manifest it cancels. No fourth action: cancelling is one act with one record, and a second entry saying
     // the request went with the send would make "why is this request closed" answerable from two places.
+    //
+    // These four cover **every subject kind**, which is the whole return on generalising this table from a
+    // manifest to a subject (0021): a hold lift is requested, decided and withdrawn by the same three acts,
+    // so the trail grew one action for the lift's *effect* (`hold.lifted`, on `holds`) and none for its
+    // lifecycle.
     actions: ["approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled"],
   },
   approval_stages: {

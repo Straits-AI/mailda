@@ -30,6 +30,8 @@ const HELD_MAILBOX = "mbx_routes_held";
 const ADDRESS = "support@acme.example";
 const ADMIN = "usr_routes_admin";
 const ANA = "usr_routes_ana";
+/** The second approver: a lift takes two people who are not the one who asked. */
+const BEN = "usr_routes_ben";
 const PASSWORD = "fixture-password-not-a-real-secret";
 
 async function sessionFor(userId: string): Promise<string> {
@@ -48,7 +50,8 @@ function as(token: string, body?: unknown): RequestInit {
 }
 
 beforeEach(async () => {
-  for (const table of ["holds", "drafts", "send_manifests", "send_recipients", "send_counters",
+  for (const table of ["approval_decisions", "approval_stages", "approvals", "hold_lifts",
+                       "holds", "drafts", "send_manifests", "send_recipients", "send_counters",
                        "relationship_tuples", "addresses", "mailboxes", "users", "node_claim",
                        "login_attempts", "sessions", "refresh_tokens", "audit_entries"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
@@ -67,7 +70,7 @@ beforeEach(async () => {
     ).bind(ctx.id("addr"), ORG, ADDRESS, HELD_MAILBOX, at),
   ]);
 
-  for (const userId of [ADMIN, ANA]) {
+  for (const userId of [ADMIN, ANA, BEN]) {
     await testEnv.CATALOG.prepare(
       `INSERT INTO users (id, org_id, email, created_at, password_hash, password_iterations,
          password_updated_at) VALUES (?,?,?,?,?,?,?)`,
@@ -79,6 +82,14 @@ beforeEach(async () => {
          VALUES (?,?,?,?,?,?,?)`,
       ).bind(ctx.id("rt"), ORG, userId, relation, "mailbox", HELD_MAILBOX, at).run();
     }
+  }
+
+  // Ana and Ben can decide an approval; the administrator cannot decide their own request.
+  for (const userId of [ANA, BEN]) {
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), ORG, userId, "approval.decide", "mailbox", HELD_MAILBOX, at).run();
   }
 
   // Only the administrator holds org.admin. Ana is a real, authenticated member without it.
@@ -129,6 +140,100 @@ describe("POST /api/holds is the only way to place one", () => {
   });
 });
 
+describe("POST /api/holds/:id/lift asks; the approvals endpoints decide", () => {
+  it("refuses a member who does not hold org.admin", async () => {
+    const hold = await placeHold(testEnv, createSystemCtx(), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const response = await SELF.fetch(
+      `https://node/api/holds/${hold.id}/lift`,
+      as(await sessionFor(ANA), { reason: "I would like this gone" }),
+    );
+    expect(response.status).toBe(403);
+    const lifts = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM hold_lifts").first<{ n: number }>();
+    expect(lifts?.n).toBe(0);
+  });
+
+  it("refuses a request with no reason at all, rather than inventing one", async () => {
+    const hold = await placeHold(testEnv, createSystemCtx(), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    // No `reason` key. The route passes the empty string through so the refusal comes from one place, with
+    // its four parts, rather than being defaulted here into "no reason given" — which would be this Node
+    // writing a justification for re-permitting destruction.
+    const response = await SELF.fetch(`https://node/api/holds/${hold.id}/lift`, as(await sessionFor(ADMIN), {}));
+    expect(response.status).toBe(422);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("E_HOLD_LIFT_REASON_REQUIRED");
+    expect(body.message).toContain("fix");
+  });
+
+  it("opens a request the requester cannot decide, and two others can", async () => {
+    const hold = await placeHold(testEnv, createSystemCtx(), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const asked = await SELF.fetch(
+      `https://node/api/holds/${hold.id}/lift`,
+      as(await sessionFor(ADMIN), { reason: "matter closed on 9 August" }),
+    );
+    expect(asked.status).toBe(200);
+    const { lift } = await asked.json() as {
+      lift: { liftId: string; approvalId: string; stages: number[]; eligible: number };
+    };
+    expect(lift.stages).toEqual([2]);
+    expect(lift.eligible).toBe(2);
+
+    // The administrator is given approval.decide as well, so nothing but the actor exclusion stands between
+    // them and lifting their own request. Without this the refusal would be §5C's 404 — "not an approval you
+    // may decide" — which is also correct and does not test the exclusion at all.
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(createSystemCtx().id("rt"), ORG, ADMIN, "approval.decide", "mailbox", HELD_MAILBOX,
+      new Date(createSystemCtx().now()).toISOString()).run();
+
+    // The requester's own decision, refused through the ordinary decide endpoint. 409, because the request is
+    // well-formed and it is the *state* — whose act this is — that does not permit it.
+    const own = await SELF.fetch(
+      `https://node/api/approvals/${lift.approvalId}/decide`,
+      as(await sessionFor(ADMIN), { decision: "approve" }),
+    );
+    expect(own.status).toBe(409);
+    expect((await own.json() as { error: string }).error).toBe("E_APPROVER_IS_ACTOR");
+
+    // Ana sees it in the queue **with the reason**, which is what she is being asked to agree to.
+    const queue = await SELF.fetch("https://node/api/approvals", {
+      headers: { cookie: `mailda_at=${await sessionFor(ANA)}` },
+    });
+    const { approvals } = await queue.json() as {
+      approvals: Array<{ id: string; subjectKind: string; reason: string | null }>;
+    };
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]!.subjectKind).toBe("hold_lift");
+    expect(approvals[0]!.reason).toBe("matter closed on 9 August");
+
+    // Two decisions, through the same endpoint a send's approval uses. No second plane for the lift.
+    for (const [userId, expected] of [[ANA, false], [BEN, true]] as const) {
+      const decided = await SELF.fetch(
+        `https://node/api/approvals/${lift.approvalId}/decide`,
+        as(await sessionFor(userId), { decision: "approve" }),
+      );
+      expect(decided.status).toBe(200);
+      const body = await decided.json() as { decided: { holdLifted: boolean } };
+      expect(body.decided.holdLifted).toBe(expected);
+    }
+
+    const row = await testEnv.CATALOG.prepare("SELECT lifted_at, lifted_reason FROM holds WHERE id = ?")
+      .bind(hold.id).first<{ lifted_at: string | null; lifted_reason: string | null }>();
+    expect(row?.lifted_at).not.toBeNull();
+    expect(row?.lifted_reason).toBe("matter closed on 9 August");
+  });
+
+  it("requires authentication, like every other governed surface", async () => {
+    const hold = await placeHold(testEnv, createSystemCtx(), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const response = await SELF.fetch(`https://node/api/holds/${hold.id}/lift`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: "no session" }),
+    });
+    expect(response.status).toBe(401);
+  });
+});
+
 describe("DELETE /api/drafts/:id answers the refusal rather than swallowing it", () => {
   it("returns 409 and the Node's four-part message, naming the hold", async () => {
     const ctx = createSystemCtx();
@@ -147,7 +252,10 @@ describe("DELETE /api/drafts/:id answers the refusal rather than swallowing it",
     expect(body.error).toBe("E_LEGAL_HOLD");
     expect(body.message).toContain(hold.id);
     expect(body.message).toContain("fix");
-    expect(body.message).toContain("#61");
+    // The remedy exists now and the message names it: request a lift, and two other people decide. The
+    // assertion was "#61" while there was no lift and the honest remedy was "there is none yet".
+    expect(body.message).toContain("/lift");
+    expect(body.message).toContain("#64");
 
     const row = await testEnv.CATALOG.prepare("SELECT id FROM drafts WHERE id = ?").bind(saved.id).first();
     expect(row, "the row a refused deletion must leave alone").not.toBeNull();

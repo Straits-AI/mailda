@@ -1,10 +1,39 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { type AuditEvent, auditedBatch } from "./audit.ts";
+import { type AuditEvent, type AuditGate, auditedBatch, auditedBatchMany } from "./audit.ts";
+import { decidersByMailbox, decidersOf } from "./deciders.ts";
 import { conflict, notFound } from "./errors.ts";
 
 /**
  * Approvals: ordered stages with a count, decided by distinct people (#61, §18, Layer 5).
+ *
+ * ## An approval decides on a **subject**, and there are two kinds
+ *
+ * This module shipped manifest-shaped: `approvals.manifest_id TEXT NOT NULL` with `UNIQUE (manifest_id)`.
+ * The legal-hold lift (#64) is the second caller and it is not a manifest, so migration 0021 generalised the
+ * target to `(subject_kind, subject_id)` — see that file for why a nullable second id column and a second
+ * approvals table were both refused. §18 names connector writes, forwarding, export and domain/routing
+ * changes as further subjects, and #65's eDiscovery export is already charted as one, so the third caller is
+ * known rather than imagined.
+ *
+ *     send_manifest   the subject is a send_manifests row. Completion releases the send to `held`.
+ *     hold_lift       the subject is a hold_lifts row. Completion applies the lift: one conditional
+ *                     `UPDATE holds` setting `lifted_at`, `lifted_reason` and `lift_id`.
+ *
+ * Two columns carry across both kinds, and both were checked rather than assumed:
+ *
+ *   `mailbox_id`      keeps its name and meaning. For a send it is the mailbox the message is from; for a
+ *                     lift it is the **held** mailbox. In both cases it answers exactly one question — who
+ *                     holds `approval.decide` here, and is therefore eligible.
+ *   `actor_user_id`   was `author_user_id`, renamed because a lift has no author. It always meant *the
+ *                     person whose act this approval gates, and therefore the one person who may never
+ *                     decide it*: the author of the send, the requester of the lift. §18's separation of
+ *                     duty is a rule about that person, and it is the same rule in both cases — which is
+ *                     why the lift uses this exclusion rather than writing a second one.
+ *
+ * What every kind shares beyond that: the fold, the eligible set, the completion predicate in SQL, and the
+ * conditional UPDATE. **All three of #61's defects were in that race logic**, which is the argument against
+ * ever giving a subject kind its own copy of it.
  *
  * ## One mechanism for §18's three review shapes
  *
@@ -114,6 +143,32 @@ export const APPROVAL_REASONS = ["approval_denied", "approval_unsatisfiable"] as
 export type ApprovalState = "pending" | "approved" | "denied" | "unsatisfiable" | "cancelled";
 export type Decision = "approve" | "deny";
 
+/**
+ * The subject kinds an approval may decide on.
+ *
+ * The declared set, and **the only place it is declared**. `approvals.subject_kind` carries no CHECK
+ * constraint — SQLite cannot add one with `ALTER TABLE`, and a trigger cannot exist in this tree because
+ * `src/migrate.ts` splits migrations on semicolons (`test/node/migrations.test.ts`). So this union is the
+ * constraint, and `test/node/content-deletion-world.test.ts` is what makes it one rather than a convention:
+ * it requires every subject-kind literal in `src/` to appear here and requires `approvals` to have exactly
+ * one writer, because a kind that slipped past would be an approval nothing knows how to complete.
+ */
+export const APPROVAL_SUBJECT_KINDS = ["send_manifest", "hold_lift"] as const;
+
+export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
+
+/**
+ * The word each kind uses for the act it gates, in the second person, for the refusal an actor reads when
+ * they try to decide their own.
+ *
+ * A `Record` keyed on the type, so a new subject kind is a compile error here rather than a refusal that
+ * says "you composed this send" to somebody who requested a hold lift.
+ */
+const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
+  send_manifest: "you composed this send, so you cannot decide its approval",
+  hold_lift: "you requested this hold lift, so you cannot be one of the two people who approve it",
+};
+
 /* ---- stages, and the arithmetic of a shortfall ----------------------------------------------- */
 
 /**
@@ -197,69 +252,32 @@ export async function stagesOfApproval(env: Env, approvalId: string): Promise<nu
 
 /* ---- who may decide -------------------------------------------------------------------------- */
 
-/**
- * Every person holding `approval.decide` on a mailbox, resolved through teams and de-duplicated.
+/*
+ * `decidersByMailbox` and `decidersOf` live in `src/deciders.ts`.
  *
- * One query for the whole organization, or for one mailbox when `mailboxId` is given — publication needs the
- * first (a policy with no mailbox condition applies to every mailbox) and a decision needs the second.
- *
- * ## Three things this SQL does deliberately
- *
- * **It resolves teams.** A tuple's subject may be a user or a team, because `readableSubjects` authorizes as
- * both. The second branch expands a team-held tuple into its members, which is what makes a team grant work at
- * all.
- *
- * **It de-duplicates on the person.** `UNION` (not `UNION ALL`) collapses `(mailbox, user)` pairs, so somebody
- * who holds the relation directly *and* through two teams is one decider. This is the property dual control
- * rests on and it is asserted in `test/approvals.test.ts` by constructing exactly that person.
- *
- * **It requires a row in `users`.** `grant` does not verify that a subject is a person — it cannot, since the
- * same call grants to teams — so a tuple whose subject is a team id would otherwise be counted as one
- * "decider" *and* expanded into its members. Counting a subject nothing identifies as a person is how a stale
- * team id would satisfy dual control on its own.
+ * They moved there rather than being re-exported from here, so there is one import path and not two. That
+ * file's header carries the reason: `doctor` now asks the same question for `legal_hold_unliftable`, and its
+ * cost meter's honesty guard pins a property over every file `doctor.ts` imports that this module cannot
+ * satisfy — it prepares statements it binds to names, in functions `runDoctor` never calls.
  */
-export async function decidersByMailbox(
-  env: Env,
-  orgId: string,
-  mailboxId?: string,
-): Promise<Map<string, Set<string>>> {
-  const only = mailboxId === undefined ? "" : " AND t.object_id = ?";
-  const params = mailboxId === undefined ? [orgId] : [orgId, mailboxId];
-  const { results } = await env.CATALOG.prepare(
-    `SELECT t.object_id AS mailbox_id, t.subject_id AS user_id
-       FROM relationship_tuples t
-       JOIN users u ON u.org_id = t.org_id AND u.id = t.subject_id
-      WHERE t.org_id = ? AND t.object_type = 'mailbox' AND t.relation = 'approval.decide'${only}
-     UNION
-     SELECT t.object_id AS mailbox_id, m.user_id AS user_id
-       FROM relationship_tuples t
-       JOIN team_members m ON m.org_id = t.org_id AND m.team_id = t.subject_id
-       JOIN users u ON u.org_id = m.org_id AND u.id = m.user_id
-      WHERE t.org_id = ? AND t.object_type = 'mailbox' AND t.relation = 'approval.decide'${only}`,
-  ).bind(...params, ...params).all<{ mailbox_id: string; user_id: string }>();
-
-  const byMailbox = new Map<string, Set<string>>();
-  for (const row of results) {
-    const people = byMailbox.get(row.mailbox_id) ?? new Set<string>();
-    people.add(row.user_id);
-    byMailbox.set(row.mailbox_id, people);
-  }
-  return byMailbox;
-}
-
-/** The people who could decide on one mailbox, before the author and the already-decided are taken out. */
-export async function decidersOf(env: Env, orgId: string, mailboxId: string): Promise<Set<string>> {
-  return (await decidersByMailbox(env, orgId, mailboxId)).get(mailboxId) ?? new Set<string>();
-}
-
 /* ---- requesting ------------------------------------------------------------------------------ */
 
 export interface ApprovalRequestFacts {
-  manifestId: string;
+  subjectKind: ApprovalSubjectKind;
+  /** The row being decided on: a manifest id for a send, a `hold_lifts` id for a lift. */
+  subjectId: string;
   mailboxId: string;
-  authorUserId: string;
-  /** The fold over every matching `require_approval` version — see `requiredStages` in `src/policy.ts`. */
+  /** The person whose act this gates, and therefore the one person excluded from deciding it. */
+  actorUserId: string;
+  /**
+   * How many distinct decisions, per stage, in order.
+   *
+   * For a send: the fold over every matching `require_approval` version — see `requiredStages` in
+   * `src/policy.ts`. For a lift: `LIFT_STAGES`, which is #64's decision rather than a policy's.
+   */
   stages: Stages;
+  /** Extra fields for the `approval.requested` detail — a lift's reason is the first. */
+  detail?: Record<string, unknown>;
 }
 
 export interface ApprovalPlan {
@@ -284,9 +302,19 @@ export type ApprovalPlanned =
  * the state #60 refused to let `deny` occupy. `sealManifest` places these in its own `batch()`, and
  * `auditedBatchMany` carries both audit entries in the same transaction.
  *
- * The author is removed here rather than by the caller, because *"minus the author"* is a rule about approvals
- * and not about sealing: §18 requires separation-of-duty policies to prevent self-approval, and a caller that
- * had to remember to subtract would be a caller that could forget.
+ * The actor is removed here rather than by the caller, because *"minus the person whose act this is"* is a rule
+ * about approvals and not about sealing: §18 requires separation-of-duty policies to prevent self-approval, and
+ * a caller that had to remember to subtract would be a caller that could forget. The lift gets that rule by
+ * calling this rather than by restating it.
+ *
+ * ## The optional gate, and which caller needs it
+ *
+ * A send's subject is a manifest minted a moment ago in the same transaction, so its rows are unconditional.
+ * A lift's subject is a **hold**, which somebody else may have lifted between this caller's read and its write
+ * — so `requestHoldLift` passes a gate, and every statement built here becomes
+ * `INSERT ... SELECT ... WHERE EXISTS (<gate>)`. That is the same compare-and-swap the rest of this module
+ * runs on (#9, the conflict is the signal); without it the eligible-set read and the "no lift is pending yet"
+ * read would be a check somebody could race past, and the loser would open a second question about one hold.
  */
 export function planApproval(
   env: Env,
@@ -294,24 +322,42 @@ export function planApproval(
   orgId: string,
   facts: ApprovalRequestFacts,
   deciders: ReadonlySet<string>,
+  gate?: AuditGate,
 ): ApprovalPlanned {
-  const eligible = [...deciders].filter((userId) => userId !== facts.authorUserId).length;
+  const eligible = [...deciders].filter((userId) => userId !== facts.actorUserId).length;
   const shortfall = shortfallFor(facts.stages, eligible);
   if (shortfall !== null) return { satisfiable: false, shortfall, eligible };
 
   const approvalId = ctx.id("apr");
   const at = new Date(ctx.now()).toISOString();
 
+  /**
+   * One insert, gated or not, with the placeholders counted from the values so the two forms cannot drift.
+   *
+   * The `INSERT INTO <table>` head is passed in **written out** rather than assembled from a table name,
+   * because `test/node/content-deletion-world.test.ts` scans this source for literal table names and states
+   * that dynamically built SQL is its blind spot. A table name in a template hole would have made the one
+   * `INSERT INTO approvals` in this product invisible to the test that requires there to be exactly one.
+   */
+  const gated = (head: string, values: unknown[]): D1PreparedStatement => {
+    const holes = values.map(() => "?").join(",");
+    return gate === undefined
+      ? env.CATALOG.prepare(`${head} VALUES (${holes})`).bind(...values)
+      : env.CATALOG.prepare(`${head} SELECT ${holes} WHERE EXISTS (${gate.sql})`)
+        .bind(...values, ...gate.params);
+  };
+
   const statements = [
-    env.CATALOG.prepare(
+    gated(
       `INSERT INTO approvals
-         (id, org_id, manifest_id, mailbox_id, author_user_id, state, requested_at, resolved_at)
-       VALUES (?,?,?,?,?,'pending',?,NULL)`,
-    ).bind(approvalId, orgId, facts.manifestId, facts.mailboxId, facts.authorUserId, at),
-    ...facts.stages.map((required, index) => env.CATALOG.prepare(
-      `INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count)
-       VALUES (?,?,?,?,?)`,
-    ).bind(ctx.id("ast"), orgId, approvalId, index + 1, required)),
+         (id, org_id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at)`,
+      [approvalId, orgId, facts.subjectKind, facts.subjectId, facts.mailboxId, facts.actorUserId,
+        "pending", at, null],
+    ),
+    ...facts.stages.map((required, index) => gated(
+      "INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count)",
+      [ctx.id("ast"), orgId, approvalId, index + 1, required],
+    )),
   ];
 
   return {
@@ -324,18 +370,22 @@ export function planApproval(
       event: {
         action: "approval.requested",
         outcome: "ok",
-        // The Node asked, not the author: the policy required it. `actorKind` follows from a null actor.
+        // The Node asked, not the actor: for a send a policy required it, and for a lift the request and the
+        // asking are one act by one person, recorded below rather than as the entry's actor. `actorKind`
+        // follows from a null actor.
         actorUserId: null,
         subject: approvalId,
         detail: {
-          manifestId: facts.manifestId,
+          subjectKind: facts.subjectKind,
+          subjectId: facts.subjectId,
           mailboxId: facts.mailboxId,
-          authorUserId: facts.authorUserId,
+          actorUserId: facts.actorUserId,
           stages: [...facts.stages],
           // How many people could have been asked, at the moment of asking. Recorded because the eligible set
           // is live — it is not reconstructable from the trail later, and "who could have decided this" is a
           // question an investigation asks about a decision that took a suspiciously long time to arrive.
           eligible,
+          ...facts.detail,
         },
       },
     },
@@ -346,9 +396,11 @@ export function planApproval(
 
 export interface ApprovalRow {
   id: string;
-  manifestId: string;
+  subjectKind: ApprovalSubjectKind;
+  subjectId: string;
   mailboxId: string;
-  authorUserId: string;
+  /** The person whose act this gates. Never eligible to decide it. */
+  actorUserId: string;
   state: ApprovalState;
   requestedAt: string;
   resolvedAt: string | null;
@@ -356,9 +408,10 @@ export interface ApprovalRow {
 
 interface RawApproval {
   id: string;
-  manifest_id: string;
+  subject_kind: ApprovalSubjectKind;
+  subject_id: string;
   mailbox_id: string;
-  author_user_id: string;
+  actor_user_id: string;
   state: ApprovalState;
   requested_at: string;
   resolved_at: string | null;
@@ -367,9 +420,10 @@ interface RawApproval {
 function approvalOf(row: RawApproval): ApprovalRow {
   return {
     id: row.id,
-    manifestId: row.manifest_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
     mailboxId: row.mailbox_id,
-    authorUserId: row.author_user_id,
+    actorUserId: row.actor_user_id,
     state: row.state,
     requestedAt: row.requested_at,
     resolvedAt: row.resolved_at,
@@ -377,7 +431,7 @@ function approvalOf(row: RawApproval): ApprovalRow {
 }
 
 const APPROVAL_COLUMNS =
-  "id, manifest_id, mailbox_id, author_user_id, state, requested_at, resolved_at";
+  "id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at";
 
 async function readApproval(env: Env, orgId: string, approvalId: string): Promise<ApprovalRow | null> {
   const row = await env.CATALOG.prepare(
@@ -386,14 +440,22 @@ async function readApproval(env: Env, orgId: string, approvalId: string): Promis
   return row === null ? null : approvalOf(row);
 }
 
-/** The approval of one manifest, which is the lookup #62's recheck needs. One query, through `apr_manifest`. */
+/**
+ * The approval of one manifest, which is the lookup #62's recheck needs. One query, through `apr_subject`.
+ *
+ * Named for the manifest rather than for the subject, because that is the question it answers and the caller
+ * that asks it holds a manifest. `subject_kind` is pinned rather than left to the id's prefix: a `snd_` id and
+ * an `hlf_` id can never collide, but a lookup that relied on that would be relying on a convention this
+ * schema does not enforce, and the unique index wants both columns anyway.
+ */
 export async function approvalOfManifest(
   env: Env,
   orgId: string,
   manifestId: string,
 ): Promise<ApprovalRow | null> {
   const row = await env.CATALOG.prepare(
-    `SELECT ${APPROVAL_COLUMNS} FROM approvals WHERE org_id = ? AND manifest_id = ? LIMIT 1`,
+    `SELECT ${APPROVAL_COLUMNS} FROM approvals
+      WHERE org_id = ? AND subject_kind = 'send_manifest' AND subject_id = ? LIMIT 1`,
   ).bind(orgId, manifestId).first<RawApproval>();
   return row === null ? null : approvalOf(row);
 }
@@ -450,14 +512,23 @@ export function openStage(stages: Stages, decisions: readonly DecisionRow[]): nu
 
 export interface DecisionOutcome {
   approvalId: string;
-  manifestId: string;
+  subjectKind: ApprovalSubjectKind;
+  subjectId: string;
   decision: Decision;
   /** The stage this decision was taken against. */
   stageOrdinal: number;
   approvalState: ApprovalState;
-  /** What the send is now. `held` once the last stage closes, `withheld` on a denial. */
-  manifestState: "awaiting" | "held" | "withheld";
-  /** True when this decision closed the last stage and released the send. */
+  /**
+   * What the send is now. `held` once the last stage closes, `withheld` on a denial.
+   *
+   * Absent for every other subject kind rather than filled with a word that would not be true of it: a hold
+   * lift has no manifest, and a field named `manifestState` reading `awaiting` on one would be the kind of
+   * name AGENTS.md calls a landmine.
+   */
+  manifestState?: "awaiting" | "held" | "withheld";
+  /** For a `hold_lift` subject: true when this decision was the one that applied the lift. */
+  holdLifted?: boolean;
+  /** True when this decision closed the last stage and had its subject's effect. */
   completed: boolean;
   /**
    * Set when this decision was *expected* to close the last stage and did not, which means exactly one thing:
@@ -502,6 +573,21 @@ export interface DecisionOutcome {
  * it on the INSERT, a decision could be recorded against a settled approval with the audit entry skipped by its
  * own gate — an act with no record, which is the exact hole `auditedBatch` exists to close. Same reasoning
  * `publishPolicy` records for putting its gate on the supersede as well as on the promotion.
+ *
+ * ## The one decision that is refused rather than recorded, and why the asymmetry is deliberate
+ *
+ * A decision that **completes a `hold_lift`** carries a stronger predicate than `pending`: *the approval is
+ * pending, this decision closes every stage, and the hold is not lifted already*. Two entries ride in that
+ * transaction — `approval.decided` and `hold.lifted` — and they share one gate, because `auditedBatchMany`
+ * gates a batch rather than an entry. Under the weak predicate the withdrawal race that #61 documents would
+ * insert a `hold.lifted` entry for a lift that did not happen: a false statement in the one place that is
+ * supposed to be checkable, which is worse than any refusal.
+ *
+ * So in that single case a lost race records **nothing** and answers `E_HOLD_LIFT_RACED`, telling the decider
+ * to read the request and decide again. A send in the same position keeps its decision and reports
+ * `conflict: "withdrawn"`, and that difference is not an inconsistency: a send's decision still counts toward
+ * its stage whatever else happened, while the lift's completing decision and the lift itself are one act that
+ * must either both be true or both be absent.
  */
 export async function decideApproval(
   env: Env,
@@ -517,8 +603,9 @@ export async function decideApproval(
   // which is what keeps this a refusal somebody can act on rather than a dead end.
   const unknown = () => notFound("E_NO_APPROVAL", {
     what: `${approvalId} is not an approval you may decide`,
-    why: "deciding takes approval.decide on the mailbox the send is from (§21 makes it the sole decision "
-      + "permission), and §5C keeps an invisible thing and an absent one answering alike",
+    why: "deciding takes approval.decide on the approval's mailbox — the one a send is from, or the one a "
+      + "legal hold is over (§21 makes it the sole decision permission) — and §5C keeps an invisible thing "
+      + "and an absent one answering alike",
     fix: "ask an administrator for approval.decide on that mailbox, or check the approval id",
   });
   if (approval === null) throw unknown();
@@ -526,14 +613,18 @@ export async function decideApproval(
   const deciders = await decidersOf(env, orgId, approval.mailboxId);
   if (!deciders.has(actorUserId)) throw unknown();
 
-  if (approval.authorUserId === actorUserId) {
+  if (approval.actorUserId === actorUserId) {
     // §18: separation-of-duty policies prevent self-approval. Refused even for a denial — an author who wants
     // to stop their own send cancels it, which is their own authority and does not put their name in the trail
-    // as somebody else's reviewer.
-    throw conflict("E_APPROVER_IS_AUTHOR", {
-      what: "you composed this send, so you cannot decide its approval",
-      why: "§18 requires separation of duty: an approval by its own author is not a second pair of eyes",
-      fix: "cancel the send if you want to stop it, or ask another approver to decide",
+    // as somebody else's reviewer. The same exclusion is what stops one administrator lifting a hold alone:
+    // they may request it, and after that they are the one person who cannot be either of its two approvers.
+    throw conflict("E_APPROVER_IS_ACTOR", {
+      what: ACTOR_DID[approval.subjectKind],
+      why: "§18 requires separation of duty: an approval by the person whose act it is is not a second pair "
+        + "of eyes",
+      fix: approval.subjectKind === "hold_lift"
+        ? "two other people holding approval.decide on the held mailbox have to approve it"
+        : "cancel the send if you want to stop it, or ask another approver to decide",
     });
   }
 
@@ -567,8 +658,6 @@ export async function decideApproval(
   }
 
   const at = new Date(ctx.now()).toISOString();
-  const pending = "SELECT 1 FROM approvals WHERE id = ? AND org_id = ? AND state = 'pending'";
-  const gate = { sql: pending, params: [approvalId, orgId] };
 
   // Would this decision close the last stage? Computed from what was read, so the conflict below is
   // "we expected to complete and the database disagreed" rather than a bare zero.
@@ -579,46 +668,141 @@ export async function decideApproval(
       return have >= required;
     });
 
+  /**
+   * The lift this decision is about to apply, or null for every other decision in this Node.
+   *
+   * Read only on the completing decision of a `hold_lift`, because that is the only path with something to
+   * say about it: the `hold.lifted` entry has to carry the hold and the reason it was requested for, and an
+   * investigator reading the trail must not have to join two tables to learn why destruction was re-permitted.
+   * One extra query, on an act that happens twice per lift at most.
+   */
+  const lift = approval.subjectKind === "hold_lift" && expectedToComplete
+    ? await readHoldLift(env, orgId, approval.subjectId)
+    : null;
+  if (approval.subjectKind === "hold_lift" && expectedToComplete && lift === null) {
+    // The subject of an approval cannot be missing: `requestHoldLift` writes both rows in one transaction
+    // behind one predicate. So this is a corrupted state rather than a race, and completing into it would
+    // lift a hold with no record of what was asked for.
+    throw conflict("E_NO_HOLD_LIFT", {
+      what: `approval ${approvalId} names hold lift ${approval.subjectId}, which does not exist`,
+      why: "the request row and its approval are written in one transaction, so neither can exist alone",
+      fix: "investigate; completing this would lift a hold with no record of the reason it was lifted for",
+    });
+  }
+
+  /**
+   * The predicate every statement in this batch carries.
+   *
+   * `pending` for every decision except the one that completes a lift, which additionally requires that this
+   * decision really does close every stage and that the hold has not already been lifted. See the header for
+   * why that one case refuses rather than records.
+   *
+   * The `+ CASE` is this decision counted before its row exists: the entries are placed first in the batch,
+   * so the predicate is evaluated against the decisions that had committed **before** this one.
+   */
+  const pending = "SELECT 1 FROM approvals WHERE id = ? AND org_id = ? AND state = 'pending'";
+  const gate: AuditGate = lift === null
+    ? { sql: pending, params: [approvalId, orgId] }
+    : {
+      sql: `SELECT 1 FROM approvals a
+              WHERE a.id = ? AND a.org_id = ? AND a.state = 'pending'
+                AND NOT EXISTS (
+                  SELECT 1 FROM approval_stages s
+                   WHERE s.approval_id = a.id
+                     AND (SELECT COUNT(DISTINCT d.decider_user_id) FROM approval_decisions d
+                           WHERE d.approval_id = s.approval_id AND d.stage_ordinal = s.ordinal
+                             AND d.decision = 'approve' AND d.withdrawn_at IS NULL)
+                         + (CASE WHEN s.ordinal = ? THEN 1 ELSE 0 END) < s.required_count)
+                AND EXISTS (SELECT 1 FROM hold_lifts l
+                              JOIN holds h ON h.org_id = l.org_id AND h.id = l.hold_id
+                             WHERE l.id = a.subject_id AND h.lifted_at IS NULL)`,
+      params: [approvalId, orgId, stage],
+    };
+
   const decisionInsert = env.CATALOG.prepare(
     `INSERT INTO approval_decisions
        (id, org_id, approval_id, stage_ordinal, decider_user_id, decision, decided_at, withdrawn_at)
-     SELECT ?,?,?,?,?,?,?,NULL WHERE EXISTS (${pending})`,
-  ).bind(ctx.id("apd"), orgId, approvalId, stage, actorUserId, decision, at, approvalId, orgId);
+     SELECT ?,?,?,?,?,?,?,NULL WHERE EXISTS (${gate.sql})`,
+  ).bind(ctx.id("apd"), orgId, approvalId, stage, actorUserId, decision, at, ...gate.params);
 
-  const event: AuditEvent = {
+  const events: AuditEvent[] = [{
     action: "approval.decided",
-    // A denial is a refusal of the send, and the trail should filter as one. An approval is `ok`.
+    // A denial is a refusal of the act, and the trail should filter as one. An approval is `ok`.
     outcome: decision === "approve" ? "ok" : "refused",
     actorUserId,
     subject: approvalId,
     detail: {
-      manifestId: approval.manifestId,
+      subjectKind: approval.subjectKind,
+      subjectId: approval.subjectId,
       mailboxId: approval.mailboxId,
       decision,
       stage,
       stages,
-      authorUserId: approval.authorUserId,
+      actorUserId: approval.actorUserId,
     },
-  };
+  }];
+
+  if (lift !== null) {
+    events.push({
+      action: "hold.lifted",
+      outcome: "ok",
+      actorUserId,
+      // The hold, not the approval: an auditor filtering `hold.lifted` is asking which holds were released,
+      // and `hold.placed` already keys on the same subject so the two entries about one hold line up.
+      subject: lift.holdId,
+      detail: {
+        holdId: lift.holdId,
+        liftId: lift.id,
+        approvalId,
+        mailboxId: approval.mailboxId,
+        // The reason, in the trail as well as on the hold: this is the entry an investigation reaches for
+        // when it asks why preservation stopped.
+        reason: lift.reason,
+        requestedBy: approval.actorUserId,
+        // Both names. Dual control is only evidence if the trail says who the two were, and the eligible set
+        // is live — it cannot be reconstructed from the tuples as they stand later.
+        approvedBy: [
+          ...decisions
+            .filter((row) => row.decision === "approve" && row.withdrawn_at === null)
+            .map((row) => row.decider_user_id),
+          actorUserId,
+        ],
+      },
+    });
+  }
 
   const statements = decision === "approve"
-    ? approveStatements(env, orgId, approvalId, approval.manifestId, at)
-    : denyStatements(env, orgId, approvalId, approval.manifestId, at);
+    ? approveStatements(env, orgId, approval, at)
+    : denyStatements(env, orgId, approval, at);
 
-  const { results } = await auditedBatch<never>(
-    env, ctx, orgId, event,
-    // The entry first: everything after it clears the predicate it is gated on.
-    (entry) => [entry, decisionInsert, ...statements],
+  const { results } = await auditedBatchMany<never>(
+    env, ctx, orgId, events,
+    // The entries first: everything after them clears the predicate they are gated on.
+    (entries) => [...entries, decisionInsert, ...statements],
     gate,
   );
 
-  if ((results[1]?.meta.changes ?? 0) === 0) {
+  // Indexed off the number of entries rather than a literal, because a completing lift carries two and
+  // everything else carries one. A hardcoded `results[1]` read the second *entry* on the lift path.
+  const decisionResult = results[events.length]?.meta.changes ?? 0;
+  const settledChanges = results[events.length + 1]?.meta.changes ?? 0;
+
+  if (decisionResult === 0) {
     // The predicate failed for every statement, so nothing was recorded and nothing changed.
     const now = await readApproval(env, orgId, approvalId);
-    throw settled(now ?? approval);
+    if (lift === null || now === null || now.state !== "pending") throw settled(now ?? approval);
+    // Still pending, so the part of the predicate that failed was the stronger half: a standing approval was
+    // withdrawn, or the hold went out from under this request. Either way nothing was recorded, and saying
+    // which of the two it was would need a read whose answer could change again before it was rendered.
+    throw conflict("E_HOLD_LIFT_RACED", {
+      what: `approval ${approvalId} was not the decision that lifted this hold, so nothing was recorded`,
+      why: "the decision that completes a lift is refused rather than recorded when the state moves under it: "
+        + "either somebody withdrew their approval, or the hold was already lifted. Recording it would put a "
+        + "hold.lifted entry in the trail for a lift that did not happen",
+      fix: "read the approval again — GET /api/approvals — and decide again if it is still open",
+    });
   }
 
-  const settledChanges = results[2]?.meta.changes ?? 0;
   const completed = decision === "approve" ? settledChanges > 0 : true;
 
   // No extra read: see the header. Given that the decision itself landed, an expected completion that did not
@@ -641,11 +825,14 @@ export async function decideApproval(
 
   return {
     approvalId,
-    manifestId: approval.manifestId,
+    subjectKind: approval.subjectKind,
+    subjectId: approval.subjectId,
     decision,
     stageOrdinal: stage,
     approvalState,
-    manifestState: decision === "deny" ? "withheld" : completed ? "held" : "awaiting",
+    ...(approval.subjectKind === "send_manifest"
+      ? { manifestState: decision === "deny" ? "withheld" : completed ? "held" : "awaiting" } as const
+      : { holdLifted: decision === "approve" && completed }),
     completed,
     ...(conflictKind === undefined ? {} : { conflict: conflictKind }),
     openStage: decision === "deny" ? stage : openStage(stages, afterDecisions),
@@ -654,19 +841,19 @@ export async function decideApproval(
 
 const SETTLED_WHY: Record<Exclude<ApprovalState, "pending">, string> = {
   denied:
-    "a denial is terminal: there is no act that reverses one, because re-sealing mints a new manifest and a "
-    + "fresh approval (Layer 5's answer 1)",
+    "a denial is terminal: there is no act that reverses one, because asking again mints a new subject — a "
+    + "re-sealed manifest, or a second lift request — and with it a fresh approval (Layer 5's answer 1)",
   approved: "an approval is decided once; a second decision would be a second answer to the same question",
   unsatisfiable:
     "a withdrawal left fewer eligible approvers than the stages need, so there is no decision left that could "
-    + "release this send",
+    + "complete this request",
   cancelled:
     "the author cancelled the send while this request was open, so there is nothing left to decide — cancelling "
     + "is their own authority over their own message (`cancelSend`)",
 };
 
 const SETTLED_FIX: Record<Exclude<ApprovalState, "pending">, string> = {
-  denied: "compose again — the new manifest gets its own approval",
+  denied: "ask again — a re-sealed send, or a fresh lift request, gets its own approval",
   approved: "read the send's state; it has already moved",
   unsatisfiable: "ask an administrator to grant approval.decide more widely, then compose again",
   cancelled: "nothing to do; the send is cancelled",
@@ -698,37 +885,73 @@ function settled(approval: ApprovalRow): Error {
 }
 
 /**
- * Approving: close the approval if this decision satisfies every stage, and release the send if it did.
+ * Approving: close the approval if this decision satisfies every stage, then let the subject's own effect run.
  *
  * The completion predicate is the SQL twin of `openStage` — *no stage whose standing, non-withdrawn, distinct
  * approvers fall short of its count*. `COUNT(DISTINCT decider_user_id)` rather than `COUNT(*)`, which is
  * belt-and-braces beside `apd_one_per_person` and is the layer that would still hold if that index were ever
  * relaxed to allow a second decision after a withdrawal.
  *
- * The two statements after it are conditional on the approval **having become approved**, not on this
- * function's own expectation: a decision that did not complete the approval must leave the send exactly where
- * it was. They run after the UPDATE in the same `batch()`, which D1 executes in order inside one transaction,
- * so they see it.
+ * **The first statement is the same for every subject kind, and it is `results[events.length + 1]`** — the one
+ * `decideApproval` reads to learn whether this decision completed the approval. Anything a kind adds goes after
+ * it, conditional on the approval **having become approved** rather than on this function's expectation: a
+ * decision that did not complete must leave its subject exactly where it was. Those statements run after the
+ * UPDATE in the same `batch()`, which D1 executes in order inside one transaction, so they see it.
  */
 function approveStatements(
   env: Env,
   orgId: string,
-  approvalId: string,
-  manifestId: string,
+  approval: ApprovalRow,
   at: string,
 ): D1PreparedStatement[] {
+  const approvalId = approval.id;
   const approved = "SELECT 1 FROM approvals WHERE id = ? AND org_id = ? AND state = 'approved'";
+  const completion = env.CATALOG.prepare(
+    `UPDATE approvals SET state = 'approved', resolved_at = ?
+      WHERE id = ? AND org_id = ? AND state = 'pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM approval_stages s
+           WHERE s.approval_id = approvals.id
+             AND (SELECT COUNT(DISTINCT d.decider_user_id) FROM approval_decisions d
+                   WHERE d.approval_id = s.approval_id AND d.stage_ordinal = s.ordinal
+                     AND d.decision = 'approve' AND d.withdrawn_at IS NULL) < s.required_count)`,
+  ).bind(at, approvalId, orgId);
+
+  if (approval.subjectKind === "hold_lift") {
+    return [
+      completion,
+      /*
+       * **The one UPDATE holds in this product**, and every clause on it is load-bearing.
+       *
+       * `test/node/content-deletion-world.test.ts` fails on a second one, because narrowing a hold's window
+       * (`UPDATE holds SET to_date = …`) is a lift with no reason, no second approver and no audit action —
+       * the silent lift that test was written to catch while there was no loud one.
+       *
+       *   EXISTS (approved)   #64's dual control, at the database. The approval became `approved` one
+       *                       statement ago in this same transaction, which means two distinct people
+       *                       approved it and neither was the requester.
+       *   lifted_at IS NULL   nothing lifts a hold twice. Unreachable through the product — a second
+       *                       request is refused while one is pending and refused once the hold is lifted —
+       *                       and kept as the layer that holds if that ever stops being true, the same way
+       *                       `COUNT(DISTINCT …)` sits beside `apd_one_per_person`.
+       *   lifted_reason       copied from the request rather than joined to it, so a reader of a hold meets
+       *                       the reason without a join and the words cannot change afterwards (§13).
+       */
+      env.CATALOG.prepare(
+        `UPDATE holds
+            SET lifted_at = ?,
+                lifted_reason = (SELECT l.reason FROM hold_lifts l WHERE l.id = ?),
+                lift_id = ?
+          WHERE org_id = ? AND lifted_at IS NULL
+            AND id = (SELECT l.hold_id FROM hold_lifts l WHERE l.id = ? AND l.org_id = ?)
+            AND EXISTS (${approved})`,
+      ).bind(at, approval.subjectId, approval.subjectId, orgId, approval.subjectId, orgId,
+        approvalId, orgId),
+    ];
+  }
+
   return [
-    env.CATALOG.prepare(
-      `UPDATE approvals SET state = 'approved', resolved_at = ?
-        WHERE id = ? AND org_id = ? AND state = 'pending'
-          AND NOT EXISTS (
-            SELECT 1 FROM approval_stages s
-             WHERE s.approval_id = approvals.id
-               AND (SELECT COUNT(DISTINCT d.decider_user_id) FROM approval_decisions d
-                     WHERE d.approval_id = s.approval_id AND d.stage_ordinal = s.ordinal
-                       AND d.decision = 'approve' AND d.withdrawn_at IS NULL) < s.required_count)`,
-    ).bind(at, approvalId, orgId),
+    completion,
     // Back to `held`, so the ordinary hold window and the ordinary dispatcher take it from here. `state_reason`
     // returns to NULL because the gate is cleared and the reason column answers "why is it in this state" --
     // the record that this send was gated and approved lives in `policy_outcome`, in the approval, and in the
@@ -736,42 +959,75 @@ function approveStatements(
     env.CATALOG.prepare(
       `UPDATE send_manifests SET state = 'held', state_at = ?, state_reason = NULL
         WHERE id = ? AND org_id = ? AND state = 'awaiting' AND EXISTS (${approved})`,
-    ).bind(at, manifestId, orgId, approvalId, orgId),
+    ).bind(at, approval.subjectId, orgId, approvalId, orgId),
     // The recipients follow the manifest in the same transaction, for the reason the cancel and withhold paths
     // already record: a send whose recipients disagree with it shows a person a message that is two things at
     // once.
     env.CATALOG.prepare(
       `UPDATE send_recipients SET submission_state = 'held', submission_state_at = ?
         WHERE org_id = ? AND manifest_id = ? AND EXISTS (${approved})`,
-    ).bind(at, orgId, manifestId, approvalId, orgId),
+    ).bind(at, orgId, approval.subjectId, approvalId, orgId),
   ];
 }
 
-/** Denying: terminal, and the send is `withheld` with `approval_denied`. */
+/**
+ * Denying: terminal, and the send is `withheld` with `approval_denied`.
+ *
+ * A denied **lift** adds nothing beyond closing the request: the hold stays exactly as it was, which is the
+ * whole point of refusing a lift, and the `hold_lifts` row stays as the record that somebody asked and was
+ * told no. Nothing there needs a state column of its own — the approval carries it (0021).
+ */
 function denyStatements(
   env: Env,
   orgId: string,
-  approvalId: string,
-  manifestId: string,
+  approval: ApprovalRow,
   at: string,
 ): D1PreparedStatement[] {
+  const approvalId = approval.id;
   const denied = "SELECT 1 FROM approvals WHERE id = ? AND org_id = ? AND state = 'denied'";
+  const closed = env.CATALOG.prepare(
+    `UPDATE approvals SET state = 'denied', resolved_at = ?
+      WHERE id = ? AND org_id = ? AND state = 'pending'`,
+  ).bind(at, approvalId, orgId);
+
+  if (approval.subjectKind === "hold_lift") return [closed];
+
   return [
-    env.CATALOG.prepare(
-      `UPDATE approvals SET state = 'denied', resolved_at = ?
-        WHERE id = ? AND org_id = ? AND state = 'pending'`,
-    ).bind(at, approvalId, orgId),
+    closed,
     env.CATALOG.prepare(
       `UPDATE send_manifests SET state = 'withheld', state_at = ?, state_reason = 'approval_denied',
               last_error = ?
         WHERE id = ? AND org_id = ? AND state = 'awaiting' AND EXISTS (${denied})`,
     ).bind(at, "An approver denied this send. Compose again if it still needs to go.",
-      manifestId, orgId, approvalId, orgId),
+      approval.subjectId, orgId, approvalId, orgId),
     env.CATALOG.prepare(
       `UPDATE send_recipients SET submission_state = 'withheld', submission_state_at = ?
         WHERE org_id = ? AND manifest_id = ? AND EXISTS (${denied})`,
-    ).bind(at, orgId, manifestId, approvalId, orgId),
+    ).bind(at, orgId, approval.subjectId, approvalId, orgId),
   ];
+}
+
+/* ---- the lift subject, read from here so the audit entry can name it ------------------------- */
+
+/** One lift request: what it asks to lift, and the reason it was asked for. */
+export interface HoldLiftRow {
+  id: string;
+  holdId: string;
+  reason: string;
+}
+
+/**
+ * The lift request an approval names, or null if there is none.
+ *
+ * Lives here rather than in `src/holds.ts` because `decideApproval` is its only caller and a module that
+ * imported holds would close a cycle: `holds.ts` calls `planApproval` to open the request. The SQL is three
+ * columns of a four-column table, which is a smaller seam than a cycle.
+ */
+async function readHoldLift(env: Env, orgId: string, liftId: string): Promise<HoldLiftRow | null> {
+  const row = await env.CATALOG.prepare(
+    "SELECT id, hold_id, reason FROM hold_lifts WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, liftId).first<{ id: string; hold_id: string; reason: string }>();
+  return row === null ? null : { id: row.id, holdId: row.hold_id, reason: row.reason };
 }
 
 /* ---- withdrawing ----------------------------------------------------------------------------- */
@@ -781,9 +1037,10 @@ export interface WithdrawOutcome {
   approvalState: ApprovalState;
   /** The stage the withdrawn decision had satisfied, which is now open again. */
   stageOrdinal: number;
-  /** Set when the withdrawal left too few eligible people, in which case the send was withheld. */
+  /** Set when the withdrawal left too few eligible people, in which case the subject was closed out. */
   shortfall?: Shortfall;
-  manifestState: "awaiting" | "withheld";
+  /** Present for a `send_manifest` subject only, for the reason `DecisionOutcome` gives. */
+  manifestState?: "awaiting" | "withheld";
 }
 
 /**
@@ -855,17 +1112,17 @@ export async function withdrawApproval(
       what: "you have no standing approval on this request",
       why: "a withdrawal takes back your own decision; nobody may withdraw somebody else's, because that "
         + "would put your judgement in the trail under their name",
-      fix: "if you meant to stop this send, deny it — a denial is terminal and is recorded as yours",
+      fix: "if you meant to stop this, deny it — a denial is terminal and is recorded as yours",
     });
   }
 
-  // What the eligible set becomes: the holders, minus the author, minus everybody who has decided — the
-  // withdrawer included, because `apd_one_per_person` makes their withdrawal terminal for them.
+  // What the eligible set becomes: the holders, minus the person whose act this is, minus everybody who has
+  // decided — the withdrawer included, because `apd_one_per_person` makes their withdrawal terminal for them.
   const deciders = await decidersOf(env, orgId, approval.mailboxId);
   const decided = new Set(decisions.map((row) => row.decider_user_id));
   const stages = await stagesOfApproval(env, approvalId);
   const remaining = [...deciders].filter(
-    (userId) => userId !== approval.authorUserId && !decided.has(userId),
+    (userId) => userId !== approval.actorUserId && !decided.has(userId),
   ).length;
   // Counted against what is still needed, not against the whole chain: the stages the withdrawal does not
   // touch keep the decisions that already stand. The standing set is recomputed with this decision removed.
@@ -900,21 +1157,32 @@ export async function withdrawApproval(
     "SELECT 1 FROM approval_decisions WHERE approval_id = ? AND decider_user_id = ? AND withdrawn_at = ?";
   const withdrewParams = [approvalId, actorUserId, at];
 
-  const unsatisfiable = shortfall === null ? [] : [
+  const closesRequest = shortfall === null ? [] : [
     env.CATALOG.prepare(
       `UPDATE approvals SET state = 'unsatisfiable', resolved_at = ?
         WHERE id = ? AND org_id = ? AND state = 'pending' AND EXISTS (${withdrew})`,
     ).bind(at, approvalId, orgId, ...withdrewParams),
+  ];
+  /*
+   * A lift adds nothing here, and that is the honest end state rather than a gap.
+   *
+   * An unsatisfiable lift request leaves the **hold standing** — the safe direction, since a lift nobody can
+   * complete is a hold that keeps preserving — and `doctor`'s `legal_hold_unliftable` finding is what stops
+   * that being invisible: it reports a held mailbox with too few eligible approvers, which is exactly the
+   * state a withdrawal can leave behind. Asking again means a fresh request, which is a new subject.
+   */
+  const unsatisfiable = shortfall === null || approval.subjectKind === "hold_lift" ? closesRequest : [
+    ...closesRequest,
     env.CATALOG.prepare(
       `UPDATE send_manifests SET state = 'withheld', state_at = ?,
               state_reason = 'approval_unsatisfiable', last_error = ?
         WHERE id = ? AND org_id = ? AND state = 'awaiting' AND EXISTS (${withdrew})`,
-    ).bind(at, describeShortfall(shortfall, approval.mailboxId), approval.manifestId, orgId,
+    ).bind(at, describeShortfall(shortfall, approval.mailboxId), approval.subjectId, orgId,
       ...withdrewParams),
     env.CATALOG.prepare(
       `UPDATE send_recipients SET submission_state = 'withheld', submission_state_at = ?
         WHERE org_id = ? AND manifest_id = ? AND EXISTS (${withdrew})`,
-    ).bind(at, orgId, approval.manifestId, ...withdrewParams),
+    ).bind(at, orgId, approval.subjectId, ...withdrewParams),
   ];
 
   const { results } = await auditedBatch<never>(
@@ -925,7 +1193,8 @@ export async function withdrawApproval(
       actorUserId,
       subject: approvalId,
       detail: {
-        manifestId: approval.manifestId,
+        subjectKind: approval.subjectKind,
+        subjectId: approval.subjectId,
         stage: mine.stage_ordinal,
         // Named in the entry, because the consequence of this act is not otherwise attributable to it: the
         // send went to `withheld` and the only thing that says why is this.
@@ -958,7 +1227,9 @@ export async function withdrawApproval(
     approvalState: shortfall === null ? "pending" : "unsatisfiable",
     stageOrdinal: mine.stage_ordinal,
     ...(shortfall === null ? {} : { shortfall }),
-    manifestState: shortfall === null ? "awaiting" : "withheld",
+    ...(approval.subjectKind === "send_manifest"
+      ? { manifestState: shortfall === null ? "awaiting" : "withheld" } as const
+      : {}),
   };
 }
 
@@ -969,15 +1240,25 @@ export interface PendingApproval extends ApprovalRow {
   openStage: number | null;
   /** True when the caller has already decided, so the row is theirs to withdraw rather than to decide. */
   decidedByMe: boolean;
+  /**
+   * The reason a `hold_lift` was requested for, and null for every other subject kind.
+   *
+   * In the queue, not only in the audit trail, because **this is where a reader meets it**: somebody being
+   * asked to re-permit destruction has to be able to see what they are being asked for, and a trail is where
+   * a decision is accounted for afterwards. `LEFT JOIN`, so it costs no extra query — the outer join is what
+   * makes a send's null a null rather than a missing row.
+   */
+  reason: string | null;
 }
 
 /**
- * The pending approvals this person could act on: on a mailbox where they hold `approval.decide`, and not
- * their own send.
+ * The pending approvals this person could act on: on a mailbox where they hold `approval.decide`, and never one
+ * gating their own act.
  *
- * Their own authored sends are excluded rather than shown as undecidable, because a queue that lists work
- * somebody cannot do is a queue they learn to ignore. They see those in their own outbox, where the state and
- * its reason already are.
+ * Their own sends and their own lift requests are excluded rather than shown as undecidable, because a queue
+ * that lists work somebody cannot do is a queue they learn to ignore. They see a send in their own outbox,
+ * where the state and its reason already are, and a lift in `doctor`, which reports a pending one beside the
+ * hold it would release.
  *
  * The rows they have already decided **are** included, with `decidedByMe`, because withdrawal is an act on
  * exactly those and a person cannot withdraw from something they cannot find.
@@ -1000,11 +1281,13 @@ export async function pendingApprovals(
 
   const placeholders = mailboxes.map(() => "?").join(", ");
   const { results } = await env.CATALOG.prepare(
-    `SELECT ${APPROVAL_COLUMNS} FROM approvals
-      WHERE org_id = ? AND state = 'pending' AND mailbox_id IN (${placeholders})
-        AND author_user_id != ?
-      ORDER BY requested_at, id`,
-  ).bind(orgId, ...mailboxes, userId).all<RawApproval>();
+    `SELECT ${APPROVAL_COLUMNS.split(", ").map((column) => `a.${column}`).join(", ")}, l.reason AS reason
+       FROM approvals a
+       LEFT JOIN hold_lifts l ON a.subject_kind = 'hold_lift' AND l.id = a.subject_id AND l.org_id = a.org_id
+      WHERE a.org_id = ? AND a.state = 'pending' AND a.mailbox_id IN (${placeholders})
+        AND a.actor_user_id != ?
+      ORDER BY a.requested_at, a.id`,
+  ).bind(orgId, ...mailboxes, userId).all<RawApproval & { reason: string | null }>();
 
   const out: PendingApproval[] = [];
   for (const row of results) {
@@ -1016,6 +1299,7 @@ export async function pendingApprovals(
       stages,
       openStage: openStage(stages, decisions),
       decidedByMe: decisions.some((decision) => decision.decider_user_id === userId),
+      reason: row.reason,
     });
   }
   return out;

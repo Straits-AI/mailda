@@ -4,6 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
+import { decidersByMailbox } from "./deciders.ts";
 import { holdsForReport } from "./holds.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "./reconcile.ts";
 import { pendingReseal } from "./reseal.ts";
@@ -192,6 +193,8 @@ const EXPECTED_TABLES = [
   "policies", "policy_versions",
   // Migration 0020 (Layer 5: approvals).
   "policy_stages", "approvals", "approval_stages", "approval_decisions",
+  // Migration 0021 (Layer 5: lifting a hold).
+  "hold_lifts",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -951,7 +954,7 @@ function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[] {
 }
 
 /**
- * Legal hold (#64): what is held, what a hold is failing to enforce, and the lift path that does not exist.
+ * Legal hold (#64): what is held, what a hold is failing to enforce, and whether anybody could lift it.
  *
  * ## Why a mechanism with no observable was not an option
  *
@@ -960,84 +963,81 @@ function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[] {
  * would be a deletion failing. Three of this month's defects took exactly that shape: a mechanism whose only
  * observable was the failure it caused.
  *
- * ## One query, three findings, and one of them is a gap
+ * ## What changed when the lift arrived, and what it cost
  *
- * `holdsForReport` is a single `LEFT JOIN` — one fixed D1 query per run, not one per hold, which is the
- * distinction `doctor-check-cost.md`'s `stale_when` cares about — see its correction headed *"legal hold added
- * a fixed-cost check"*, named that way because three of its corrections share the date 19 August 2026.
+ * `legal_hold_lift_path` is **gone**, because its whole content was the sentence *"there is no way to lift a
+ * legal hold on this Node"* and that is now false. A finding kept alive by rewriting it into "lifting works"
+ * would be a check that always passes and tells an operator nothing they can act on — which is not the same
+ * shape as `workers_paid_plan`, the gap it was modelled on: that one names something no operator action can
+ * close, and this one named something a ticket closed.
  *
- * **The "matter closed but unlifted" finding #64 asked for is deliberately absent**, and this is where that
- * is recorded: there are no matters. #63 charted them and settled that `legal_hold` is one of their types,
- * but nothing builds them, `holds.matter_id` is a nullable TEXT with no table behind it, and a check for a
- * closed matter would have to read a table that does not exist. It arrives with matters.
+ * What replaces it is a finding about the state that actually traps people. #64's argument was that *a hold
+ * nobody can lift is an operational trap*, and with a lift built that trap is computable: a hold over a
+ * mailbox where fewer than two people hold `approval.decide` cannot be lifted by anybody, because #64
+ * requires two distinct approvers and excludes whoever requested it. `legal_hold_unliftable` says so **before**
+ * an administrator finds out by being refused.
+ *
+ * Cost: `holdsForReport` is still one fixed query per run, and one further query — `decidersByMailbox`, the
+ * single definition of who may decide — is spent **only when a hold is in force**. Three holds still cost what
+ * one hold costs, which is the distinction `doctor-check-cost.md`'s `stale_when` separates, and that receipt
+ * carries the measured delta.
+ *
+ * **The "matter closed but unlifted" finding #64 asked for is still deliberately absent**, and the reason is
+ * unchanged rather than newly convenient: there are no matters. #63 charted them and settled that `legal_hold`
+ * is one of their types, but nothing builds them, `holds.matter_id` is a nullable TEXT with no table behind
+ * it, and a check for a closed matter would have to read a table that does not exist. Now that lifting works,
+ * the finding it would produce is *actionable* rather than rhetorical — so it arrives with matters, and this
+ * paragraph is what stops it being silently dropped in the meantime.
  *
  * ## Severities
  *
  *   legal_holds_active         `report`. A hold is a normal state of a governed Node, not a fault.
+ *   legal_hold_lift_pending    `report`, and only when one is open. Somebody is being asked to re-permit
+ *                              destruction; that is a normal act with a normal answer, and the reason it was
+ *                              asked for is in the detail because that is the fact a reader needs.
  *   legal_hold_mailbox_missing `degraded`, and only when one exists. A hold naming an absent mailbox is a
  *                              hold enforcing nothing while reporting as active — a false statement about
  *                              preservation, which is the one error class this mechanism may not make. It is
  *                              also **not** reachable through the product: `placeHold` refuses an absent
  *                              mailbox and nothing deletes a mailbox, so this cannot become the permanent
  *                              WARN that `DELIVERY_SILENCE_MS` names and `draft_bodies_stranded` avoids.
- *   legal_hold_lift_path       `report`, `ok: true`, always. `workers_paid_plan` is the precedent for the
- *                              honest shape: a real gap, correctly reported, that no operator action closes.
- *                              Reporting it as a failure would make **every** Node carry a failing finding
- *                              for good, and a check that always fails is a check somebody mutes.
+ *   legal_hold_unliftable      `degraded`, and only when a hold in force has too few eligible approvers. It
+ *                              has a fix somebody can run, which is what separates it from a permanent WARN:
+ *                              grant `approval.decide` to two people who are not the requester.
  *
  * ## Disclosure
  *
- * A hold names a mailbox, and the two findings that name one disclose `data` — the reduced report served
+ * Every finding here names a mailbox or a hold id and therefore discloses `data`: the reduced report served
  * without authentication promises only names already public in this repository, and a mailbox id is not one.
- * `legal_hold_lift_path` is the exception and it is deliberate: it names no mailbox and no count, because it
- * is a fact about this **build** rather than about this organization, and it must survive into the reduced
- * report for the same reason `workers_paid_plan` does. That is also why it does not vary with the hold count:
- * a finding whose text moved when a hold was placed would leak that a hold exists to an unauthenticated
- * caller.
+ * That is a change — `legal_hold_lift_path` was the one `infrastructure` finding in this group, and it earned
+ * that by being a fact about the **build** rather than about the organization. Nothing that survives it is,
+ * so nothing here reaches the unauthenticated report, and a Node that cannot authenticate anybody reports no
+ * holds at all. Stated because it is a real reduction in what a locked-out operator can see, and the
+ * alternative — a finding whose text moved when a hold was placed — would leak that a hold exists.
  */
 async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
-  const lift: Finding = {
-    check: "legal_hold_lift_path",
-    severity: "report",
-    discloses: "infrastructure",
-    ok: true,
-    detail:
-      "There is no way to lift a legal hold on this Node. #64 decided lifting takes dual approval — one " +
-      "stage of two distinct approvers with a mandatory reason — and #61's approval machinery now exists, so " +
-      "what is missing is the lift itself: a hold.lifted action, the lifted_at and lifted_reason columns 0018 " +
-      "left out, and a call into approvals. Until that ships a hold placed here is permanent. Placing is " +
-      "deliberately the easy half: it only ever preserves. Nothing here should grow a single-admin lift, " +
-      "which would contradict #64.",
-  };
-
   if (orgId === null) {
-    return [
-      {
-        check: "legal_holds_active",
-        severity: "report",
-        discloses: "data",
-        ok: true,
-        detail: "No organization yet, so no hold can have been placed.",
-      },
-      lift,
-    ];
+    return [{
+      check: "legal_holds_active",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so no hold can have been placed.",
+    }];
   }
 
   const holds = await holdsForReport(env, orgId).catch(() => null);
   if (holds === null) {
-    return [
-      {
-        check: "legal_holds_active",
-        // Actionable, and the same condition `migrations_applied` refuses on: a Node that cannot read this
-        // table cannot enforce a hold either, and it must not read as "no holds".
-        severity: "degraded",
-        discloses: "data",
-        ok: false,
-        detail: "Could not read the holds table, so this report cannot say what is preserved.",
-        fix: "check the migrations_applied finding first — a Node that cannot read holds also cannot enforce one",
-      },
-      lift,
-    ];
+    return [{
+      check: "legal_holds_active",
+      // Actionable, and the same condition `migrations_applied` refuses on: a Node that cannot read this
+      // table cannot enforce a hold either, and it must not read as "no holds".
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read the holds table, so this report cannot say what is preserved.",
+      fix: "check the migrations_applied finding first — a Node that cannot read holds also cannot enforce one",
+    }];
   }
 
   const orphaned = holds.filter((hold) => !hold.mailboxExists);
@@ -1065,6 +1065,30 @@ async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Fin
         holds.map(scope).join("; ") + ".",
   }];
 
+  // Nothing below has anything to say about a Node with no holds, and the eligibility query at the end costs
+  // a subrequest. So a clean Node pays for `holdsForReport` and nothing else — the same shape
+  // `draft_bodies_stranded` uses to spend nothing on an unclaimed Node.
+  if (holds.length === 0) return findings;
+
+  const pending = holds.filter((hold) => hold.pendingLift !== null);
+  if (pending.length > 0) {
+    findings.push({
+      check: "legal_hold_lift_pending",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: `${pending.length} lift request(s) waiting on two distinct approvers: ` +
+        pending.map((hold) =>
+          `${hold.id} on mailbox ${hold.mailboxId}, requested by ${hold.pendingLift?.requestedBy} ` +
+          `(approval ${hold.pendingLift?.approvalId}), reason: ${hold.pendingLift?.reason}`).join("; ") +
+        ". The hold is still in force until the last stage closes.",
+      // Not a fault and not an instruction: whether to approve is the approvers' judgement, and doctor
+      // pointing at the queue is the whole of its business here.
+      fix: "the people holding approval.decide on that mailbox see it at GET /api/approvals and decide with " +
+        "POST /api/approvals/:id/decide — the requester cannot be one of them (§18)",
+    });
+  }
+
   if (orphaned.length > 0) {
     findings.push({
       check: "legal_hold_mailbox_missing",
@@ -1075,13 +1099,60 @@ async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Fin
         `while reporting as active: ${orphaned.map((hold) => `${hold.id} on ${hold.mailboxId}`).join(", ")}.`,
       fix: "this Node cannot reach that state on its own — placing refuses an absent mailbox and nothing " +
         "deletes a mailbox — so either the mailbox row was removed outside the product or the hold was " +
-        "inserted outside it. Restore the mailbox row: the hold cannot be lifted (see the " +
-        "legal_hold_lift_path finding) and must not be deleted by hand, which would destroy the record of " +
-        "what somebody decided to preserve",
+        "inserted outside it. Restore the mailbox row rather than deleting the hold by hand, which would " +
+        "destroy the record of what somebody decided to preserve. Lifting it needs two approvers holding " +
+        "approval.decide on a mailbox that is not there, which is why the legal_hold_unliftable finding is " +
+        "the one to read next",
     });
   }
 
-  findings.push(lift);
+  /*
+   * Can anybody actually lift these? #64's operational trap, computed rather than warned about.
+   *
+   * One query for the whole organization — `decidersByMailbox` is the single definition of who may decide, and
+   * duplicating its team-resolving UNION here to save nothing would be the second copy of an eligibility
+   * computation this repository has already refused once (0021). Spent only when a hold is in force, so a Node
+   * with no holds pays nothing, and it does not grow with the number of holds.
+   *
+   * The arithmetic is deliberately the pessimistic one: a lift needs two approvers **who did not request it**,
+   * and the requester is any `org.admin`. So two holders are enough only if neither of them is the person who
+   * asks. Reporting "fewer than two holders" as the trap and naming the requester rule in the fix is honest
+   * without pretending to know who will ask.
+   */
+  const eligible = await decidersByMailbox(env, orgId).catch(() => null);
+  if (eligible === null) {
+    findings.push({
+      check: "legal_hold_unliftable",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read who holds approval.decide, so this report cannot say whether these holds can " +
+        "be lifted.",
+      fix: "check the migrations_applied finding first",
+    });
+    return findings;
+  }
+
+  const stuck = holds.filter((hold) => (eligible.get(hold.mailboxId)?.size ?? 0) < 2);
+  if (stuck.length > 0) {
+    findings.push({
+      check: "legal_hold_unliftable",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `${stuck.length} hold(s) in force cannot be lifted by anybody: ` +
+        stuck.map((hold) =>
+          `${hold.id} on mailbox ${hold.mailboxId}, where ${eligible.get(hold.mailboxId)?.size ?? 0} ` +
+          "person(s) hold approval.decide").join("; ") +
+        ". A lift takes two distinct approvers and excludes whoever requested it (#64), so this hold is " +
+        "permanent until somebody is granted the relation. Preservation is unaffected — the failure " +
+        "direction is over-holding.",
+      fix: "grant approval.decide on those mailboxes to at least two people who will not be the one " +
+        "requesting the lift — POST /api/access/grant with {\"relation\":\"approval.decide\"} — then " +
+        "POST /api/holds/:id/lift with a reason",
+    });
+  }
+
   return findings;
 }
 

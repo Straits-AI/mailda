@@ -143,7 +143,7 @@ export async function cancelSend(
       // trail's `send.cancelled` entry points at and `approval_decisions` still holds the answers to.
       env.CATALOG.prepare(
         `UPDATE approvals SET state = 'cancelled', resolved_at = ?
-          WHERE org_id = ? AND manifest_id = ? AND state = 'pending'`,
+          WHERE org_id = ? AND subject_kind = 'send_manifest' AND subject_id = ? AND state = 'pending'`,
       ).bind(new Date(ctx.now()).toISOString(), orgId, manifestId),
     ],
     {

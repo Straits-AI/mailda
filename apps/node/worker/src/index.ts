@@ -15,7 +15,7 @@ import {
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
-import { placeHold } from "./holds.ts";
+import { placeHold, requestHoldLift } from "./holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
 import { mergeConversations } from "./merge.ts";
@@ -583,22 +583,33 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     /**
-     * Placing a legal hold (#64, Layer 5). `org.admin` only, immediate, audited as `hold.placed`.
+     * Legal hold (#64, Layer 5). Placing, and asking for a lift.
      *
-     * The minimal surface, and it exists because **a hold nobody can place is dead code**: the enforcement
-     * this ticket is about is only real if the table can be written by somebody other than a test. There is
-     * deliberately no UI yet, and deliberately no lift. #64 gave lifting dual approval and #61's machinery now
-     * exists, but the lift does not: it needs a `hold.lifted` action and the columns 0018 left out, and an
-     * approval whose target is a hold. An endpoint that removed a hold today would contradict a decision
-     * rather than implement one.
+     * `POST /api/holds`            `org.admin`, alone, immediate, audited `hold.placed`
+     * `POST /api/holds/:id/lift`   `org.admin` asks, with a mandatory reason, audited `approval.requested`
      *
-     * There is also **no list endpoint**, and that is not an oversight: `doctor` reports every active hold
-     * with its scope, its age and whether its mailbox still exists, which is the read a person needs and the
-     * one that already has an authenticated home. A second projection of the same rows would be a parity
-     * surface to keep honest for no new answer.
+     * The asymmetry is the decision, not an accident of what got built: placing only ever preserves, so
+     * ceremony in front of it is how evidence is lost in the hour after somebody realises they need it.
+     * Lifting re-permits destruction, so it takes **two other people** — the lift request opens a
+     * `hold_lift` approval with one stage of two distinct approvers, and the requester is excluded from
+     * deciding it. There is deliberately no endpoint that lifts a hold outright: one would contradict #64.
+     *
+     * **Deciding a lift is `POST /api/approvals/:id/decide`**, unchanged and not duplicated here. That is the
+     * point of generalising `approvals` to a subject (migration 0021) rather than giving the lift a plane of
+     * its own: an approver's queue, a decision, a withdrawal and the audit trail behind them all work for a
+     * lift because they were never about sends.
+     *
+     * There is deliberately **no list endpoint and no UI**: `doctor` reports every hold in force with its
+     * scope, its age, whether its mailbox still exists, whether a lift is pending on it and whether anybody
+     * could complete one. A second projection of the same rows would be a parity surface to keep honest for
+     * no new answer.
      *
      * `placeHold` refuses a non-admin with `E_NOT_AN_ADMINISTRATOR`, an absent mailbox with `E_NO_MAILBOX`,
-     * and an unreadable or inverted window with its own code; all four are `CallerError`s rendered centrally.
+     * and an unreadable or inverted window with its own code. `requestHoldLift` refuses an absent hold
+     * (`E_NO_HOLD`), a blank reason (`E_HOLD_LIFT_REASON_REQUIRED`), a hold already lifted
+     * (`E_HOLD_ALREADY_LIFTED`), a second open request (`E_HOLD_LIFT_PENDING`) and a mailbox with too few
+     * approvers (`E_HOLD_LIFT_UNSATISFIABLE`). All of them are `CallerError`s rendered centrally with their
+     * four parts.
      */
     if (url.pathname === "/api/holds" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
@@ -613,6 +624,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         toDate: optional(body.toDate),
       });
       return Response.json({ hold });
+    }
+
+    const holdLift = /^\/api\/holds\/([^/]+)\/lift$/.exec(url.pathname);
+    if (holdLift && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // An absent reason reaches `requestHoldLift` as the empty string and is refused there with the
+      // four-part message, rather than being defaulted to something like "no reason given" — which would be
+      // this Node inventing a justification for re-permitting destruction.
+      const requested = await requestHoldLift(
+        env, clock, who.orgId, who.userId, holdLift[1]!, String(body.reason ?? ""),
+      );
+      return Response.json({ lift: requested });
     }
 
     /**
@@ -717,6 +742,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * `GET  /api/approvals`               what is waiting on you, with the stage set and which stage is open
      * `POST /api/approvals/:id/decide`    approve or deny; a denial is terminal
      * `POST /api/approvals/:id/withdraw`  take back your own approval while the request is incomplete
+     *
+     * **These three decide legal-hold lifts as well as sends**, and that is why migration 0021 generalised
+     * `approvals` to a subject rather than building a second plane: a lift arrives in this queue with its
+     * `subjectKind` and the reason it was requested for, and a decision that closes its last stage applies
+     * the lift in the same transaction as the `hold.lifted` entry. Nothing here is send-specific except the
+     * words `manifestState`, which is absent on any other subject.
      *
      * **There is deliberately no UI**, for the same reason as the policy plane: the shell is Layer 1-3's
      * surface, and an approver's queue is a design question this ticket does not settle. What the shell does

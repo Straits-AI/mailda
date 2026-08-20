@@ -3,7 +3,8 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, auditedBatchMany } from "../audit.ts";
-import { decidersOf, describeShortfall, planApproval, type Shortfall } from "../approvals.ts";
+import { describeShortfall, planApproval, type Shortfall } from "../approvals.ts";
+import { decidersOf } from "../deciders.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
@@ -400,7 +401,14 @@ export async function sealManifest(
     );
     const deciders = await decidersOf(env, orgId, composition.mailboxId);
     const planned = planApproval(env, ctx, orgId, {
-      manifestId, mailboxId: composition.mailboxId, authorUserId: composition.authorUserId, stages,
+      // The subject is this manifest. `subject_kind` is written rather than implied by the id's prefix, for
+      // the reason 0021 gives: a kind the writer leaves out falls back on a column default, and a default is
+      // not a classification.
+      subjectKind: "send_manifest",
+      subjectId: manifestId,
+      mailboxId: composition.mailboxId,
+      actorUserId: composition.authorUserId,
+      stages,
     }, deciders);
 
     if (planned.satisfiable) {

@@ -85,14 +85,26 @@ export const AUDIT_ACTIONS = {
   "send.outcome_unknown": { says: "Hand-over neither succeeded nor failed observably." },
 
   /*
-   * Layer 5: legal hold (#64). `hold.lifted` is deliberately absent — there is no lift path in this build.
-   * #61's dual-approval machinery now exists, so what is missing is the lift itself: the columns 0018 left
-   * out, and an approval whose target is a hold rather than a send. A declared action nothing emits is a
-   * category of one, which is exactly what the catalogue exists to prevent, and `audit-coverage.test.ts`
-   * fails on an action no table claims — so this action arrives with the act, not before it.
+   * Layer 5: legal hold (#64). Two actions, and the asymmetry between them is the decision: placing is one
+   * administrator alone because it only ever preserves, and lifting is dual control with a mandatory reason
+   * because it re-permits destruction.
+   *
+   * `hold.lifted` arrived **with** the act rather than before it. It was absent while there was no lift path,
+   * because a declared action nothing emits is a category of one — what this catalogue exists to prevent, and
+   * what `audit-coverage.test.ts` fails on. What made it emittable is #61's approval machinery generalising
+   * from a manifest to a subject (migration 0021), so a lift is an approval like any other.
+   *
+   * There is deliberately **no** `hold.lift_requested`: requesting a lift *is* requesting an approval, and
+   * `approval.requested` records it in the same transaction as the request row, with the stages, the eligible
+   * count and the reason in its detail. A second action for one transaction would make "who asked to lift
+   * this hold" answerable from two places that can disagree — the reasoning that gives `cancelSend` one
+   * entry rather than two.
    */
   "hold.placed": {
     says: "An administrator placed a legal hold over a mailbox and a date window; placing only preserves.",
+  },
+  "hold.lifted": {
+    says: "Two distinct approvers released a legal hold; the reason it was requested for is recorded with it.",
   },
 
   /*

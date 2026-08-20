@@ -1767,9 +1767,29 @@ is what makes an order expressible over authority defined by a relation, since e
 derived from the relation while only the stages are sequenced. A version with no stages means one stage of
 count 1.
 
-**The eligible set** for a stage is the `approval.decide` holders on the manifest's mailbox, minus the
-manifest's author, minus everybody who has already decided in that approval. `approval.decide` is a relation on
-the mailbox and is implied by nothing: not by `org.admin`, not by `send.propose`.
+**The eligible set** for a stage is the `approval.decide` holders on the approval's mailbox, minus the actor —
+the person whose act is being approved — minus everybody who has already decided in that approval.
+`approval.decide` is a relation on the mailbox and is implied by nothing: not by `org.admin`, not by
+`send.propose`.
+
+**An approval decides on a subject, and a mail manifest is one of two.** Amended 20 August 2026 (#64). The
+section above describes mail approval, and the list of things this section says an approval binds —
+*"connector writes, forwarding, export, domain/routing changes"* — was always wider than one subject kind. The
+implementation therefore keys an approval on `(subject_kind, subject_id)`, unique over the pair, and ships two
+kinds: a **send manifest**, whose completion releases the send, and a **legal-hold lift**, whose completion
+re-permits destruction. Everything above holds for both: the stages, the eligible set, the distinctness rule,
+the withdrawal asymmetry and the races. Three consequences are contract rather than implementation detail.
+
+*The actor, not the author.* The excluded person is whoever performed the act being approved — the author of a
+send, the requester of a lift — because separation of duty is a rule about that person and not about authorship.
+
+*The subject of a lift is the request, not the hold.* Asking again has to be representable: a send re-seals into
+a new manifest, and a refused lift is asked again as a new request. Keying a lift on the hold would make one
+denial permanent, which is precisely the trap §18's dual control exists to avoid creating.
+
+*A subject kind with no mailbox is not yet answered.* Domain and routing changes are named above as approval
+subjects and they name no mailbox, so their eligible set needs either a mailbox or a second source. A nullable
+mailbox would make eligibility a question nothing validates, so the kind that needs it brings the answer.
 
 **Distinctness is on the user, not on the relation tuple.** A principal authorizes as themselves plus every
 team they belong to, so a relation may be held through a team and the holder set is a set of tuples while a
@@ -2059,7 +2079,9 @@ Quarantine access is split into metadata read, content read, original download, 
 ### Compliance
 
 - Retention by org, mailbox, label, case, geography and data class.
-- Legal hold overrides deletion.
+- Legal hold overrides deletion. Placing it is one administrator, alone and immediate, because placing only
+  preserves; **lifting it is dual control with a mandatory reason**, because lifting re-permits destruction, and
+  the lift is an approval subject rather than a mechanism of its own (§18, #64).
 - eDiscovery matter with purpose/scope/approval.
 - Read/export audit at message and attachment level.
 - Evidence export with hashes, manifest, reason and chain of custody.

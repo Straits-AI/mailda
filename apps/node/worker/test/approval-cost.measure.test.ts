@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { decidersOf, decideApproval, withdrawApproval } from "../src/approvals.ts";
+import { decideApproval, withdrawApproval } from "../src/approvals.ts";
+import { placeHold, requestHoldLift } from "../src/holds.ts";
+import { decidersOf } from "../src/deciders.ts";
 import { metering } from "../src/cost-meter.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
 import { createPolicyDraft, publishPolicy } from "../src/policy.ts";
@@ -22,6 +24,14 @@ import { createPolicyDraft, publishPolicy } from "../src/policy.ts";
  * operations Mailda performs* — which is exactly what the subrequest budget is spent in — and not their
  * latency. `policy-evaluation-cost.md` and `doctor-check-cost.md` draw the same line for the same instrument,
  * and it is the honest boundary rather than a caveat added to be safe.
+ *
+ * ## The hold lift is measured here too, and that is not scope creep
+ *
+ * A lift (#64) is an approval whose subject is a `hold_lifts` row rather than a manifest, so it spends this
+ * receipt's budget and the same `stale_when` clauses govern it — *"the approvals tables gain a column a
+ * decision has to read"* fired the moment `subject_kind` existed. Measuring it in a second file would have put
+ * two sets of figures for one mechanism in two places, which is how the three-names-for-one-ceiling defect in
+ * `doctor-check-cost.md` came about.
  *
  * ## Why these three scenarios
  *
@@ -90,7 +100,8 @@ async function gatedSend(stages: number[]): Promise<{ manifestId: string; approv
 }
 
 beforeEach(async () => {
-  for (const table of ["approval_decisions", "approval_stages", "approvals", "policy_stages",
+  for (const table of ["approval_decisions", "approval_stages", "approvals", "hold_lifts", "holds",
+                       "policy_stages",
                        "policy_versions", "policies", "send_manifests", "send_recipients", "send_counters",
                        "relationship_tuples", "team_members", "addresses", "mailboxes", "users",
                        "audit_entries", "outbox"]) {
@@ -231,5 +242,75 @@ describe("what an approval costs (#61)", () => {
     expect(gated.cost.d1Batches).toBe(1);
     // And the whole gated seal still fits the bound the Butler loop arithmetic divides.
     expect(gated.cost.subrequests).toBeLessThanOrEqual(BUDGETS["butler.step_cost_max_send_propose"]);
+  });
+});
+
+describe("what a hold lift costs (#64)", () => {
+  /** A hold placed by the administrator, ready to be asked about. */
+  async function heldMailbox(): Promise<string> {
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: MAILBOX });
+    return hold.id;
+  }
+
+  it("prices the request: the hold, the eligible set, the chain tip and one batch", async () => {
+    const holdId = await heldMailbox();
+    const { env: metered, cost } = metering(testEnv);
+    const asked = await requestHoldLift(metered, atTime(AUGUST_10 + 1000), ORG, ADMIN, holdId, "matter closed");
+    expect(asked.stages).toEqual([2]);
+
+    report("hold-lift/request", cost);
+    // One batch carries the `approval.requested` entry, the request row, the approval and its stage. The rest
+    // are reads: the administrator check, the hold, the eligible set, and the audit tip.
+    expect(cost.d1Batches).toBe(1);
+    expect(cost.r2Operations).toBe(0);
+    expect(cost.doRpcs).toBe(0);
+    // Bounded against the decision budget rather than a new key: a lift request is an approval request, and
+    // inventing a second number for it would be a number with no separate measurement behind it.
+    expect(cost.subrequests).toBeLessThanOrEqual(BUDGETS["approval.decision_max_subrequests"]);
+  });
+
+  it("prices the first approval, which changes nothing about the hold", async () => {
+    const holdId = await heldMailbox();
+    const asked = await requestHoldLift(testEnv, atTime(AUGUST_10 + 1000), ORG, ADMIN, holdId, "matter closed");
+
+    const { env: metered, cost } = metering(testEnv);
+    const first = await decideApproval(metered, atTime(AUGUST_10 + 2000), ORG, ANN, asked.approvalId, "approve");
+    expect(first.holdLifted).toBe(false);
+
+    report("hold-lift/approve-not-final", cost);
+    expect(cost.d1Batches).toBe(1);
+    expect(cost.subrequests).toBeLessThanOrEqual(BUDGETS["approval.decision_max_subrequests"]);
+  });
+
+  it("prices the approval that applies the lift, one read more than a send's", async () => {
+    const holdId = await heldMailbox();
+    const asked = await requestHoldLift(testEnv, atTime(AUGUST_10 + 1000), ORG, ADMIN, holdId, "matter closed");
+    await decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, asked.approvalId, "approve");
+
+    const { env: metered, cost } = metering(testEnv);
+    const closing = await decideApproval(metered, atTime(AUGUST_10 + 3000), ORG, BOB, asked.approvalId, "approve");
+    expect(closing.holdLifted).toBe(true);
+
+    report("hold-lift/approve-final", cost);
+    // Still **one** batch: the audit entries, the decision, the completion and the `UPDATE holds` all ride in
+    // it, which is what makes "the lift and its record are one act" a property of the transaction rather than
+    // a claim. The extra read against a send's figure is the request row, whose reason the `hold.lifted`
+    // entry has to name.
+    expect(cost.d1Batches).toBe(1);
+    expect(cost.subrequests).toBeLessThanOrEqual(BUDGETS["approval.decision_max_subrequests"]);
+    expect(cost.r2Operations).toBe(0);
+    expect(cost.doRpcs).toBe(0);
+  });
+
+  it("costs the coverage check nothing extra now that it tests lifted_at", async () => {
+    // `coveringHolds` grew a clause, not a query. Measured because the hold check sits on the deletion path
+    // and a second read there would be paid by every discard in a held mailbox.
+    const holdId = await heldMailbox();
+    const { env: metered, cost } = metering(testEnv);
+    const { coveringHolds } = await import("../src/holds.ts");
+    expect(await coveringHolds(metered, ORG, MAILBOX, new Date(AUGUST_10).toISOString())).toHaveLength(1);
+    report("hold-lift/coverage-check", cost);
+    expect(cost.d1Executions).toBe(1);
+    expect(holdId.startsWith("hld_")).toBe(true);
   });
 });

@@ -193,26 +193,48 @@ Both bounds are stored as full ISO-8601 instants. A bare `2026-08-31` given as `
 day's last millisecond, because coverage is a string comparison and the un-widened form sorts *below*
 everything that happened during 31 August — an under-hold at exactly the boundary somebody chose deliberately.
 
-### Placing and refusing
+### Placing, refusing and lifting
 
 | Act | Who | Recorded as |
 |---|---|---|
 | Place | one `org.admin`, alone, effective immediately | `hold.placed`, in the same transaction as the row |
 | Refuse a deletion | nobody: the Node does it | `hold.blocked`, standalone — nothing was written |
-| **Lift** | **not built** | — |
+| Request a lift | one `org.admin`, with a **mandatory reason** | `approval.requested`, with the reason in its detail |
+| Lift | **two** distinct `approval.decide` holders on the held mailbox, neither of them the requester | `hold.lifted`, in the same transaction as the `UPDATE holds` |
 
 Placing and lifting are asymmetric because the two acts have opposite risk. Placing only ever preserves; its
 worst case is wasted bytes, and ceremony in front of it is how evidence is lost in the hour after somebody
 realises they need it. Lifting re-permits destruction and is irreversible in effect, so #64 gave it dual
-approval — one stage of two distinct approvers with a mandatory reason — and #61's approval machinery does not
-exist. **So there is no lift path, and `doctor` reports that as a finding** (`legal_hold_lift_path`) rather
-than leaving it to a comment. A hold placed on this build is permanent.
+control: **a hold nobody can lift is an operational trap; a hold one person can lift quietly is not a hold.**
 
-That absence is enforced in two directions rather than described: `DELETE FROM holds` would be an undeclared
-call site and fails the closed world, and an `UPDATE holds` — narrowing a window, which lifts a hold without
-deleting anything — fails a check of its own. The migration also leaves `lifted_at` and `lifted_reason` **out**
-for the same reason: a column nothing writes cannot tell a reader whether `NULL` means "in force" or "never
-built".
+The lift is an approval (`docs/approvals.md`), not a second approval mechanism. The requester is excluded from
+deciding by the same separation-of-duty rule that stops an author approving their own send — reused rather than
+rewritten, because all three of #61's defects were in that race logic. What it cost was one schema decision:
+`approvals` now points at a `(subject_kind, subject_id)` **subject**, and a lift's subject is the request rather
+than the hold, so a refused lift can be asked again without the hold becoming permanent.
+
+Three columns arrive with it, and each says what its `NULL` means: `lifted_at` (NULL = in force),
+`lifted_reason` (a **copy** of the request's reason, taken at the instant of the lift, so a reader of a hold
+meets it without a join and nothing can rewrite what the lift said) and `lift_id` (which request took effect —
+several may cite one hold, because a denied one may be followed by another).
+
+**`lifted_at IS NULL` is part of the coverage predicate**, not a filter a caller applies: `coveringHolds`,
+`anyActiveHold` and the hold report all carry it, because the first of those is the only thing standing between
+a held mailbox and a deletion.
+
+That leaves exactly **one** `UPDATE holds` in the product, and the test that used to require *zero* was
+inverted rather than deleted. It now proves there is one, that it sets `lifted_at`, and that **that
+statement's own SQL** carries both halves of the gate — the approval having reached `approved`, and the hold not
+already being lifted. Against the statement rather than the function around it, because the first version of the
+check read a window of the enclosing function including its comments: the doc comment naming `lifted_at IS NULL`
+satisfied the check for it, and `state = 'approved'` was satisfied by a constant the send branch uses. Both
+mutations passed. A tripwire a comment can satisfy protects the comment. Narrowing a window (`UPDATE holds SET to_date = …`) still fails, because that was always the
+silent lift and building the loud one does not make it safe. `DELETE FROM holds` still fails as an undeclared
+call site.
+
+An organization where fewer than two people hold `approval.decide` on the held mailbox **cannot lift**, and
+that is refused at request time with the shortfall named rather than discovered by an approver. `doctor`
+reports the state before anybody tries, as `legal_hold_unliftable`.
 
 ### What consults it
 
@@ -271,9 +293,14 @@ the sentence rather than on a value.
   draft**: the seal already happened, so the send route reports `draftRetained` rather than failing a message
   that has left.
 - A merge that would delete a held case refuses, all-or-nothing, and nothing is changed.
-- `doctor` reports every hold with its mailbox, window, matter, who placed it and how long ago; a `degraded`
-  finding for any hold whose mailbox no longer exists (a hold enforcing nothing while reporting as active);
-  and the missing lift path.
+- `doctor` reports every hold in force with its mailbox, window, matter, who placed it and how long ago; any
+  **pending lift** with the reason it was asked for; a `degraded` finding for any hold whose mailbox no longer
+  exists (a hold enforcing nothing while reporting as active); and a `degraded` finding for any hold nobody
+  could lift. A lifted hold drops out of all of them — it preserves nothing, so a warning about it would be
+  true and useless.
+- Once the **last** hold is lifted, orphan collection resumes. That is asserted rather than assumed: lifting
+  every hold while collection stayed suppressed would leave a reconciler that never collects again and nothing
+  saying why, which is the inverse of the defect this whole mechanism exists to prevent.
 
 There is deliberately **no UI and no list endpoint**. `doctor` is the read, and a second projection of the same
 rows would be a parity surface to keep honest for no new answer.

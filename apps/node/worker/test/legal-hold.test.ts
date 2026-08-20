@@ -5,11 +5,13 @@ import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
 
+import { decideApproval, pendingApprovals } from "../src/approvals.ts";
+import { verifyChain } from "../src/audit.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { deleteDraft, saveDraft } from "../src/drafts.ts";
 import { runDoctor, withoutDataFindings, type Finding } from "../src/doctor.ts";
 import { putEvidence } from "../src/evidence-store.ts";
-import { anyActiveHold, coveringHolds, placeHold } from "../src/holds.ts";
+import { anyActiveHold, coveringHolds, placeHold, requestHoldLift } from "../src/holds.ts";
 import { mergeConversations } from "../src/merge.ts";
 import { reconcileEvidence, formatReconcile } from "../src/reconcile.ts";
 
@@ -23,13 +25,19 @@ import { reconcileEvidence, formatReconcile } from "../src/reconcile.ts";
  * real rows, real holds, and the refusal actually happening — because a guard called inside an `if` that is
  * never true would satisfy the closed world and protect nothing.
  *
- * ## What it deliberately does not test
+ * ## Lifting, and what it has to prove
  *
- * Lifting, expiry, and "the matter closed" — **none of them exist**. #64 gave lifting dual approval and #61 has
- * now built that machinery, but the lift itself has not been written, so there is no lift path to test and a
- * test that invented one would be asserting a decision this build contradicts. What is tested instead is that `doctor` *says* the path is
- * missing, and that nothing in `src/` can quietly remove a hold (see the closed-world file, which fails on an
- * undeclared `DELETE FROM holds` and on any `UPDATE holds`).
+ * The lift exists now, and the assertions that matter are the ones about what a lift *changes*: one person
+ * cannot do it, the requester cannot decide it, a blank reason is refused, and a lifted hold **stops
+ * covering** — proved through `deleteDraft` and through orphan collection rather than against
+ * `coveringHolds` alone, because those two are the observable consequences and a predicate that returned the
+ * right array while the deletion path kept refusing would be a passing test over a broken product.
+ *
+ * ## What it still deliberately does not test
+ *
+ * Expiry, and "the matter closed". Neither exists: #62 owns expiry, and there are no matters (#63 is charted,
+ * not built), so a test for either would be asserting a decision this build has not taken. `doctor`'s header
+ * records why the matter-closed finding is still absent.
  */
 
 const testEnv = env as unknown as Env;
@@ -38,6 +46,8 @@ const HELD_MAILBOX = "mbx_held";
 const FREE_MAILBOX = "mbx_free";
 const ADMIN = "usr_admin_h";
 const ANA = "usr_ana_h";
+/** The second approver. A lift needs two people who are not the requester, so the fixture has to have two. */
+const BEN = "usr_ben_h";
 
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
@@ -95,9 +105,34 @@ async function auditRows(action: string): Promise<Array<{ subject: string | null
   return results;
 }
 
+/** What a lift is asked for. One reason string, reused, so a test asserting on it reads as one fact. */
+const REASON = "matter 41 closed; custodian mail no longer responsive";
+
+/** A hold, then a lift requested by the administrator and approved by two other people. */
+async function liftedHold(mailboxId: string = HELD_MAILBOX): Promise<{
+  id: string; liftId: string; approvalId: string;
+}> {
+  const ctx = atTime(AUGUST_10);
+  const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId });
+  const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+  await decideApproval(testEnv, ctx, ORG, ANA, lift.approvalId, "approve");
+  const closing = await decideApproval(testEnv, ctx, ORG, BEN, lift.approvalId, "approve");
+  // Asserted in the helper rather than in every caller: a helper that quietly failed to lift would make the
+  // tests below pass for the wrong reason, which is the vacuous green this suite is written against.
+  if (closing.holdLifted !== true) throw new Error("the second approval did not lift the hold");
+  return { id: hold.id, liftId: lift.liftId, approvalId: lift.approvalId };
+}
+
+async function holdRow(id: string) {
+  return testEnv.CATALOG.prepare(
+    "SELECT lifted_at, lifted_reason, lift_id FROM holds WHERE org_id = ? AND id = ?",
+  ).bind(ORG, id).first<{ lifted_at: string | null; lifted_reason: string | null; lift_id: string | null }>();
+}
+
 beforeEach(async () => {
-  for (const table of ["holds", "drafts", "cases", "conversations", "relationship_tuples", "mailboxes",
-                       "audit_entries", "ingress_receipts", "node_claim"]) {
+  for (const table of ["approval_decisions", "approval_stages", "approvals", "hold_lifts",
+                       "holds", "drafts", "cases", "conversations", "relationship_tuples", "mailboxes",
+                       "users", "audit_entries", "ingress_receipts", "node_claim"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const listed = await testEnv.EVIDENCE.list({ prefix: `${ORG}/` });
@@ -108,12 +143,23 @@ beforeEach(async () => {
     await testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
       .bind(id, ORG, name, at).run();
   }
+  // Rows in `users`, because `decidersByMailbox` counts only subjects that are people: a tuple whose subject
+  // is a team id must not satisfy dual control on its own, so a tuple with no user behind it is nobody.
+  for (const user of [ADMIN, ANA, BEN]) {
+    await testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(user, ORG, `${user}@local.invalid`, at).run();
+  }
   await tuple(ADMIN, "org.admin", "organization", ORG);
   for (const user of [ADMIN, ANA]) {
     for (const mailbox of [HELD_MAILBOX, FREE_MAILBOX]) {
       await tuple(user, "mailbox.content.read", "mailbox", mailbox);
       await tuple(user, "send.propose", "mailbox", mailbox);
     }
+  }
+  // Two approvers who are not the administrator who places and requests. Without them every hold here would
+  // be unliftable — which is a real state and has its own test, but not the baseline one.
+  for (const user of [ANA, BEN]) {
+    for (const mailbox of [HELD_MAILBOX, FREE_MAILBOX]) await tuple(user, "approval.decide", "mailbox", mailbox);
   }
   // Claimed, so `doctor` has an organization whose holds it can report.
   await testEnv.CATALOG.prepare(
@@ -260,7 +306,10 @@ describe("a draft in a held mailbox cannot be destroyed", () => {
     expect(message).toContain(hold.id);
     expect(message).toContain(HELD_MAILBOX);
     expect(message).toContain("hold.blocked");
-    expect(message).toContain("#61");
+    // The remedy, which now exists: the endpoint that asks for a lift, and the decision that says nobody
+    // does it alone. This read "#61" while the honest fix was "there is no lift yet".
+    expect(message).toContain("/lift");
+    expect(message).toContain("#64");
   });
 
   it("deletes a draft in a mailbox no hold covers", async () => {
@@ -344,6 +393,272 @@ describe("merging away a held case", () => {
   });
 });
 
+
+describe("lifting a hold takes two people, a reason, and somebody who did not ask", () => {
+  const composition = {
+    mailboxId: HELD_MAILBOX,
+    to: ["customer@example.net"],
+    subject: "Container MSKU4471203",
+    body: "half a sentence",
+  };
+
+  it("refuses an empty reason, and writes nothing at all", async () => {
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    for (const blank of ["", "   "]) {
+      await expect(requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ADMIN, hold.id, blank))
+        .rejects.toThrow(/E_HOLD_LIFT_REASON_REQUIRED/);
+    }
+    // A whitespace reason is the case NOT NULL cannot catch, which is why the refusal is in the code and
+    // this test uses both. Nothing written: no request, no approval, no entry.
+    const lifts = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM hold_lifts").first<{ n: number }>();
+    expect(lifts?.n).toBe(0);
+    const approvals = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM approvals").first<{ n: number }>();
+    expect(approvals?.n).toBe(0);
+    expect(await auditRows("approval.requested")).toHaveLength(0);
+  });
+
+  it("refuses anybody who does not hold org.admin", async () => {
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    await expect(requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ANA, hold.id, REASON))
+      .rejects.toThrow(/E_NOT_AN_ADMINISTRATOR/);
+  });
+
+  it("opens one stage of two, and one approval is not enough", async () => {
+    const ctx = atTime(AUGUST_10);
+    const saved = await saveDraft(testEnv, ctx, ORG, ANA, null, composition);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+    expect(lift.stages).toEqual([2]);
+    // Two of the three people on this mailbox hold approval.decide, and the requester is not one of them.
+    expect(lift.eligible).toBe(2);
+
+    const first = await decideApproval(testEnv, ctx, ORG, ANA, lift.approvalId, "approve");
+    expect(first.completed).toBe(false);
+    expect(first.holdLifted).toBe(false);
+    expect(first.openStage).toBe(1);
+
+    // **The hold is still in force**, which is the whole assertion: one person cannot lift it, and the proof
+    // is the deletion still being refused rather than the approval row still saying pending.
+    expect(await coveringHolds(testEnv, ORG, HELD_MAILBOX, new Date(AUGUST_10).toISOString()))
+      .toHaveLength(1);
+    await expect(deleteDraft(testEnv, ctx, ORG, ANA, saved.id)).rejects.toThrow(/E_LEGAL_HOLD/);
+    expect((await holdRow(hold.id))?.lifted_at).toBeNull();
+    expect(await auditRows("hold.lifted")).toHaveLength(0);
+  });
+
+  it("refuses the requester's own decision, so no administrator lifts a hold alone", async () => {
+    const ctx = atTime(AUGUST_10);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    // The administrator holds approval.decide on this mailbox as well, so nothing but the actor exclusion
+    // stands between them and lifting their own request — which is exactly the case #64 cares about.
+    await tuple(ADMIN, "approval.decide", "mailbox", HELD_MAILBOX);
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+
+    await expect(decideApproval(testEnv, ctx, ORG, ADMIN, lift.approvalId, "approve"))
+      .rejects.toThrow(/E_APPROVER_IS_ACTOR/);
+    // And a denial is refused too: the requester does not get to record a judgement on their own request in
+    // either direction.
+    await expect(decideApproval(testEnv, ctx, ORG, ADMIN, lift.approvalId, "deny"))
+      .rejects.toThrow(/E_APPROVER_IS_ACTOR/);
+    expect((await holdRow(hold.id))?.lifted_at).toBeNull();
+  });
+
+  it("refuses a lift when fewer than two other people could approve it", async () => {
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ? AND relation = 'approval.decide'",
+    ).bind(ORG, BEN).run();
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+
+    const error = await requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ADMIN, hold.id, REASON)
+      .catch((caught: unknown) => caught);
+    // Asserted to have thrown *before* reading the message, so a request that was wrongly accepted fails with
+    // "a lift was opened that nobody could complete" rather than with a complaint about `undefined`.
+    expect(error, "a lift was opened that nobody could complete").toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("E_HOLD_LIFT_UNSATISFIABLE");
+    // The shortfall, named: which stage, how many short, and how many are eligible. An agent can act on this.
+    expect(message).toContain("stage 1 needs 2 distinct approver(s)");
+    expect(message).toContain("approval.decide");
+    // Refused before anything is written, so there is no request sitting in a queue nobody can clear.
+    const lifts = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM hold_lifts").first<{ n: number }>();
+    expect(lifts?.n).toBe(0);
+  });
+
+  it("lifts on the second approval, and the refused deletion then succeeds", async () => {
+    const ctx = atTime(AUGUST_10);
+    const saved = await saveDraft(testEnv, ctx, ORG, ANA, null, composition);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+
+    // Before: refused. This is the observable the whole mechanism exists for, so it is the observable the
+    // lift is measured against — not `coveringHolds` returning a shorter array.
+    await expect(deleteDraft(testEnv, ctx, ORG, ANA, saved.id)).rejects.toThrow(/E_LEGAL_HOLD/);
+
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+    await decideApproval(testEnv, ctx, ORG, ANA, lift.approvalId, "approve");
+    const closing = await decideApproval(testEnv, ctx, ORG, BEN, lift.approvalId, "approve");
+    expect(closing.completed).toBe(true);
+    expect(closing.holdLifted).toBe(true);
+    expect(closing.subjectKind).toBe("hold_lift");
+    // A lift has no manifest, so the field that would name one is absent rather than filled with a word that
+    // is not true of it.
+    expect(closing.manifestState).toBeUndefined();
+
+    // After: the predicate stops covering, and the deletion goes through.
+    expect(await coveringHolds(testEnv, ORG, HELD_MAILBOX, new Date(AUGUST_10).toISOString()))
+      .toHaveLength(0);
+    expect(await deleteDraft(testEnv, ctx, ORG, ANA, saved.id)).toBe(true);
+
+    // The row says what happened and why, without a join: lifted, with the reason and the request that did it.
+    const row = await holdRow(hold.id);
+    expect(row?.lifted_at).not.toBeNull();
+    expect(row?.lifted_reason).toBe(REASON);
+    expect(row?.lift_id).toBe(lift.liftId);
+  });
+
+  it("records hold.lifted with the reason and both approvers, in the same transaction as the row", async () => {
+    const lifted = await liftedHold();
+    const entries = await auditRows("hold.lifted");
+    expect(entries).toHaveLength(1);
+    // The hold is the subject, so `hold.placed` and `hold.lifted` line up for a reader filtering one hold.
+    expect(entries[0]!.subject).toBe(lifted.id);
+    expect(entries[0]!.outcome).toBe("ok");
+    const detail = JSON.parse(entries[0]!.detail!) as Record<string, unknown>;
+    expect(detail.reason).toBe(REASON);
+    expect(detail.requestedBy).toBe(ADMIN);
+    expect(detail.liftId).toBe(lifted.liftId);
+    expect(detail.approvalId).toBe(lifted.approvalId);
+    // Dual control is only evidence if the trail says who the two were. The eligible set is live and cannot
+    // be reconstructed from the tuples as they stand later.
+    expect(detail.approvedBy).toEqual([ANA, BEN]);
+
+    // Two entries in one batch — `approval.decided` and `hold.lifted` — chain to each other rather than both
+    // to the tip, and verification is the only real check of that.
+    expect(await verifyChain(testEnv, ORG)).toMatchObject({ intact: true, brokenAt: null });
+  });
+
+  it("shows the approvers the reason before they decide, in the queue they read", async () => {
+    const ctx = atTime(AUGUST_10);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+
+    const queue = await pendingApprovals(testEnv, ORG, ANA);
+    expect(queue).toHaveLength(1);
+    expect(queue[0]!.subjectKind).toBe("hold_lift");
+    expect(queue[0]!.subjectId).toBe(lift.liftId);
+    // The reason where a reader meets it. Somebody asked to re-permit destruction has to see what they are
+    // agreeing to, and the audit trail is where a decision is accounted for afterwards rather than before.
+    expect(queue[0]!.reason).toBe(REASON);
+    expect(queue[0]!.stages).toEqual([2]);
+
+    // And not in the requester's own queue, because they cannot decide it.
+    expect(await pendingApprovals(testEnv, ORG, ADMIN)).toEqual([]);
+  });
+
+  it("keeps the hold when the lift is denied, and lets a fresh request be made", async () => {
+    const ctx = atTime(AUGUST_10);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const first = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, "wrong mailbox, I think");
+    const denial = await decideApproval(testEnv, ctx, ORG, ANA, first.approvalId, "deny");
+    expect(denial.approvalState).toBe("denied");
+    expect((await holdRow(hold.id))?.lifted_at, "a denied lift leaves the hold exactly as it was").toBeNull();
+    expect(await auditRows("hold.lifted")).toHaveLength(0);
+
+    // Asking again is possible, which is why the subject of a lift approval is the request and not the hold:
+    // a denial that made a hold permanent would be #64's trap arriving through the schema.
+    const second = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+    expect(second.liftId).not.toBe(first.liftId);
+    await decideApproval(testEnv, ctx, ORG, ANA, second.approvalId, "approve");
+    await decideApproval(testEnv, ctx, ORG, BEN, second.approvalId, "approve");
+    expect((await holdRow(hold.id))?.lift_id).toBe(second.liftId);
+  });
+
+  it("allows one open question per hold, and refuses a second while it stands", async () => {
+    const ctx = atTime(AUGUST_10);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+
+    const error = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, "another reason")
+      .catch((caught: unknown) => caught);
+    expect(error, "a second lift request was accepted on a hold that already has one").toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("E_HOLD_LIFT_PENDING");
+    // Enforced by the predicate every statement carries rather than by a read beforehand, so this exercises
+    // the thing that also settles two simultaneous requests.
+    const lifts = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM hold_lifts").first<{ n: number }>();
+    expect(lifts?.n).toBe(1);
+  });
+
+  it("refuses a lift of a hold that is already lifted", async () => {
+    const lifted = await liftedHold();
+    const error = await requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ADMIN, lifted.id, REASON)
+      .catch((caught: unknown) => caught);
+    expect(error, "a lift was opened on a hold that is already lifted").toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("E_HOLD_ALREADY_LIFTED");
+    // One lift, one entry: nothing lifted this hold twice.
+    expect(await auditRows("hold.lifted")).toHaveLength(1);
+  });
+
+  it("refuses a lift of a hold that does not exist", async () => {
+    await expect(requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ADMIN, "hld_nope", REASON))
+      .rejects.toThrow(/E_NO_HOLD/);
+  });
+
+  it("lifts one hold and leaves another over the same mailbox covering", async () => {
+    // Two holds, two matters, one mailbox — the ordinary shape when a second matter arrives. Lifting one must
+    // not release the mail, which is what makes coverage a question about the *set* of holds.
+    const ctx = atTime(AUGUST_10);
+    const saved = await saveDraft(testEnv, ctx, ORG, ANA, null, composition);
+    const first = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX, matterId: "mat_a" });
+    await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX, matterId: "mat_b" });
+
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, first.id, REASON);
+    await decideApproval(testEnv, ctx, ORG, ANA, lift.approvalId, "approve");
+    await decideApproval(testEnv, ctx, ORG, BEN, lift.approvalId, "approve");
+
+    expect(await coveringHolds(testEnv, ORG, HELD_MAILBOX, new Date(AUGUST_10).toISOString()))
+      .toHaveLength(1);
+    await expect(deleteDraft(testEnv, ctx, ORG, ANA, saved.id)).rejects.toThrow(/E_LEGAL_HOLD/);
+  });
+
+  it("refuses the completing decision when the hold went out from under it, recording nothing", async () => {
+    /*
+     * `E_HOLD_LIFT_RACED` is the one refusal in this module that is a decision **not recorded**, and the
+     * asymmetry is deliberate: `auditedBatchMany` gates a batch rather than an entry, so under the ordinary
+     * `pending` predicate this transaction would insert a `hold.lifted` entry for a lift that did not happen —
+     * a false statement in the one place that is supposed to be checkable.
+     *
+     * The interleaving inside the product is not constructible from a single isolate. This is the *other* way
+     * into the same state, and it is the one that is actually reachable: a hold lifted outside the product,
+     * through `wrangler d1 execute` or the dashboard, which this module's header already names as the boundary
+     * the whole hold mechanism has. So the refusal is exercised rather than declared and left to a comment.
+     */
+    const ctx = atTime(AUGUST_10);
+    const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
+    await decideApproval(testEnv, ctx, ORG, ANA, lift.approvalId, "approve");
+
+    await testEnv.CATALOG.prepare("UPDATE holds SET lifted_at = ? WHERE org_id = ? AND id = ?")
+      .bind(new Date(AUGUST_10).toISOString(), ORG, hold.id).run();
+
+    const error = await decideApproval(testEnv, ctx, ORG, BEN, lift.approvalId, "approve")
+      .catch((caught: unknown) => caught);
+    // Asserted to have thrown before the message is read, so a decision that was wrongly recorded fails with
+    // the sentence below rather than with a complaint about `undefined`.
+    expect(error, "the completing decision was accepted against a hold that had already gone").toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("E_HOLD_LIFT_RACED");
+
+    // Nothing recorded, which is the whole point: no `hold.lifted` claiming a lift this decision did not
+    // perform, and no second `approval.decided` either — they share one gate, so they are one act.
+    expect(await auditRows("hold.lifted")).toHaveLength(0);
+    expect(await auditRows("approval.decided")).toHaveLength(1);
+    const decisions = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM approval_decisions WHERE approval_id = ?",
+    ).bind(lift.approvalId).first<{ n: number }>();
+    expect(decisions?.n, "a decision row was written for a refused decision").toBe(1);
+    // And the chain is still contiguous, because a skipped insert consumes no sequence number.
+    expect(await verifyChain(testEnv, ORG)).toMatchObject({ intact: true, brokenAt: null });
+  });
+});
+
 describe("orphan collection is suppressed org-wide while any hold stands", () => {
   /** Past the grace window, so a delivery mid-write is not what is being judged. */
   function afterTheGraceWindow(): Ctx {
@@ -400,6 +715,37 @@ describe("orphan collection is suppressed org-wide while any hold stands", () =>
     expect(await testEnv.EVIDENCE.head(key)).not.toBeNull();
   });
 
+  it("collects again once the last hold is lifted, which is the inverse of #64's own defect", async () => {
+    // **A lift is not a delete, and this is the assertion that says so.** Lifting every hold while collection
+    // stayed suppressed would leave a reconciler that never collects again and nothing saying why — the
+    // mirror image of the defect #64 was written to prevent, and invisible without this test, because a
+    // suppressed pass and a clean pass both report "0 deleted" until you look at `collection`.
+    const ctx = afterTheGraceWindow();
+    const key = await anOrphan();
+    const lifted = await liftedHold();
+
+    expect(await anyActiveHold(testEnv, ORG), "the last hold is lifted, so nothing is active").toBe(false);
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.collection).toEqual({ requested: true, suppressed: false });
+    expect(report.orphansDeleted).toBe(1);
+    expect(await testEnv.EVIDENCE.head(key), "the bytes a lifted hold no longer protects").toBeNull();
+    // And the row is still there: what was preserved, and why it stopped being, is not destroyed by lifting.
+    expect((await holdRow(lifted.id))?.lifted_reason).toBe(REASON);
+  });
+
+  it("stays suppressed while one of two holds is lifted", async () => {
+    // Org-wide means the *set*: lifting one hold does not answer the question the other one is asking.
+    const ctx = afterTheGraceWindow();
+    const key = await anOrphan();
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: FREE_MAILBOX });
+    await liftedHold();
+
+    expect(await anyActiveHold(testEnv, ORG)).toBe(true);
+    const report = await reconcileEvidence(testEnv, ctx, ORG, { collect: true });
+    expect(report.collection).toEqual({ requested: true, suppressed: true });
+    expect(await testEnv.EVIDENCE.head(key)).not.toBeNull();
+  });
+
   it("spends no query on holds when collection was not requested, which is doctor's mode", async () => {
     const ctx = afterTheGraceWindow();
     await anOrphan();
@@ -435,7 +781,7 @@ describe("orphan collection is suppressed org-wide while any hold stands", () =>
   });
 });
 
-describe("doctor reports what is held, and names the lift path it does not have", () => {
+describe("doctor reports what is held, and whether anybody could lift it", () => {
   it("gives every hold's scope and age, without degrading the verdict", async () => {
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, {
       mailboxId: HELD_MAILBOX, matterId: "mat_acme", fromDate: "2026-08-01",
@@ -454,6 +800,11 @@ describe("doctor reports what is held, and names the lift path it does not have"
     // And it says why collection stopped, because suppression that cannot be seen is indistinguishable from
     // a reconciler that has stopped working.
     expect(finding.detail).toContain("suppressed");
+    // Two people hold approval.decide here, so the hold is liftable and no hold finding degrades anything.
+    // The *verdict* is not asserted: this fixture has no signing key, so the run is already `degraded` for a
+    // reason that has nothing to do with holds — and a test that pinned it would be asserting that.
+    expect(report.findings.some((f) => f.check === "legal_hold_unliftable")).toBe(false);
+    expect(report.findings.filter((f) => !f.ok).map((f) => f.check)).not.toContain("legal_hold_unliftable");
   });
 
   it("says plainly when nothing is held", async () => {
@@ -462,31 +813,89 @@ describe("doctor reports what is held, and names the lift path it does not have"
     expect(finding.detail).toContain("No legal hold is in force");
   });
 
-  it("names the missing lift path on every Node, held or not", async () => {
-    for (const label of ["no hold", "one hold"]) {
-      if (label === "one hold") {
-        await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
-      }
-      const finding = find((await runDoctor(testEnv, atTime(AUGUST_10))).findings, "legal_hold_lift_path");
-      expect(finding.detail, label).toContain("no way to lift");
-      expect(finding.detail, label).toContain("#61");
-      // `report` and `ok`, exactly like `workers_paid_plan`: a real gap that no operator action closes. As
-      // `degraded` it would be a permanent WARN on every Node, and a check that always fails gets muted —
-      // the failure mode this file's `DELIVERY_SILENCE_MS` comment names.
-      expect(finding.severity, label).toBe("report");
-      expect(finding.ok, label).toBe(true);
-      // It must not vary with the hold count: it survives into the unauthenticated reduced report, so text
-      // that moved when a hold was placed would leak that a hold exists.
-      expect(JSON.stringify(finding), label).not.toContain(HELD_MAILBOX);
-    }
+  it("stops reporting a hold once it is lifted, and says nothing is held", async () => {
+    const hold = await liftedHold();
+    const finding = find((await runDoctor(testEnv, atTime(AUGUST_10))).findings, "legal_holds_active");
+    expect(finding.detail).toContain("No legal hold is in force");
+    expect(JSON.stringify(finding)).not.toContain(hold.id);
   });
 
-  it("keeps the lift-path gap in the reduced report and every mailbox id out of it", async () => {
+  it("names a pending lift, with the reason it was asked for", async () => {
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    await requestHoldLift(testEnv, atTime(AUGUST_10), ORG, ADMIN, hold.id, "matter 41 closed on 9 August");
+
+    const report = await runDoctor(testEnv, atTime(AUGUST_10));
+    const finding = find(report.findings, "legal_hold_lift_pending");
+    expect(finding.severity, "being asked to decide is not a fault").toBe("report");
+    expect(finding.ok).toBe(true);
+    expect(finding.detail).toContain(hold.id);
+    // The reason, in the report. An operator reading doctor should not have to open the audit trail to find
+    // out why somebody wants preservation to stop.
+    expect(finding.detail).toContain("matter 41 closed on 9 August");
+    expect(finding.detail).toContain(ADMIN);
+    // And the hold is still in force while the request is open, which is the sentence that stops a reader
+    // treating a pending lift as a lifted one.
+    expect(finding.detail).toContain("still in force");
+    expect(find(report.findings, "legal_holds_active").detail).toContain("1 legal hold(s) in force");
+  });
+
+  it("raises no pending-lift finding when nobody has asked", async () => {
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const report = await runDoctor(testEnv, atTime(AUGUST_10));
+    expect(report.findings.some((f) => f.check === "legal_hold_lift_pending")).toBe(false);
+  });
+
+  it("degrades on a hold nobody could lift, which is #64's operational trap made visible", async () => {
+    // One approver is not two, and the requester is excluded — so this hold is permanent until somebody is
+    // granted the relation. Reported *before* an administrator discovers it by being refused.
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ? AND relation = 'approval.decide'",
+    ).bind(ORG, BEN).run();
+    const hold = await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+
+    const report = await runDoctor(testEnv, atTime(AUGUST_10));
+    const finding = find(report.findings, "legal_hold_unliftable");
+    expect(finding.severity).toBe("degraded");
+    expect(finding.ok).toBe(false);
+    expect(finding.detail).toContain(hold.id);
+    expect(finding.detail).toContain("1 person(s) hold approval.decide");
+    // Not a preservation failure, and it says so: the failure direction is over-holding.
+    expect(finding.detail).toContain("Preservation is unaffected");
+    // A fix somebody can run, which is what separates this from a permanent WARN nobody can clear.
+    expect(finding.fix).toContain("approval.decide");
+    expect(report.verdict).toBe("degraded");
+  });
+
+  it("raises no unliftable finding for a lifted hold, because there is nothing left to lift", async () => {
+    // Lifted while two people could approve, and one of them revoked afterwards. A finding here would be a
+    // warning that a hold enforcing nothing cannot be released — true, and useless.
+    await liftedHold();
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ? AND relation = 'approval.decide'",
+    ).bind(ORG, BEN).run();
+    const report = await runDoctor(testEnv, atTime(AUGUST_10));
+    expect(report.findings.some((f) => f.check === "legal_hold_unliftable")).toBe(false);
+  });
+
+  it("has dropped the lift-path gap, because the gap is closed", async () => {
+    // The finding said "there is no way to lift a legal hold on this Node". That sentence is now false, and a
+    // check kept alive by rewriting it into "lifting works" would be a check that always passes and tells an
+    // operator nothing. This asserts the *absence* deliberately, so nobody reinstates it by copying the old
+    // test — and `test/node/doctor-check-names.test.ts` catches any `fix:` still pointing at the name.
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const report = await runDoctor(testEnv, atTime(AUGUST_10));
+    expect(report.findings.some((f) => f.check === "legal_hold_lift_path")).toBe(false);
+    expect(JSON.stringify(report)).not.toContain("no way to lift");
+  });
+
+  it("keeps every mailbox id out of the reduced report, which now carries no hold finding at all", async () => {
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
     const reduced = withoutDataFindings(await runDoctor(testEnv, atTime(AUGUST_10)));
 
-    expect(reduced.findings.some((f) => f.check === "legal_hold_lift_path")).toBe(true);
-    expect(reduced.findings.some((f) => f.check === "legal_holds_active")).toBe(false);
+    // Every hold finding discloses `data` now that the one `infrastructure` one is gone, so an
+    // unauthenticated reader learns nothing about holds — including whether any exist, which is the property
+    // the old finding had to be written carefully to preserve.
+    expect(reduced.findings.some((f) => f.check.startsWith("legal_hold"))).toBe(false);
     expect(JSON.stringify(reduced)).not.toContain(HELD_MAILBOX);
   });
 
@@ -502,7 +911,9 @@ describe("doctor reports what is held, and names the lift path it does not have"
     expect(finding.severity).toBe("degraded");
     expect(finding.ok).toBe(false);
     expect(finding.detail).toContain("enforce nothing");
-    expect(finding.fix).toContain("legal_hold_lift_path");
+    // The fix used to point at the lift path that did not exist. It now points at the finding that says
+    // whether this hold can be lifted at all, which is the next thing a reader needs.
+    expect(finding.fix).toContain("legal_hold_unliftable");
     expect(report.verdict).toBe("degraded");
   });
 
@@ -512,9 +923,15 @@ describe("doctor reports what is held, and names the lift path it does not have"
     expect(report.findings.some((f) => f.check === "legal_hold_mailbox_missing")).toBe(false);
   });
 
-  it("costs one fixed query, not one per hold", async () => {
+  it("costs the same for three holds as for one, which is the per-run/per-row distinction", async () => {
     // The distinction `doctor-check-cost.md`'s `stale_when` cares about. Three holds, and the run costs what
     // one hold costs — which is what makes `doctor.max_subrequests_per_run` still mean something.
+    //
+    // **One hold versus three, not zero versus three**, and the change is deliberate: the eligibility query
+    // behind `legal_hold_unliftable` is spent only when a hold is in force, so a Node with no holds pays one
+    // query less. Comparing against zero would have made this test fail for the right reason with the wrong
+    // message — and its own name always said "one".
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX, matterId: "mat_first" });
     const one = await runDoctor(testEnv, atTime(AUGUST_10));
     for (const matter of ["mat_a", "mat_b", "mat_c"]) {
       await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX, matterId: matter });
@@ -522,5 +939,15 @@ describe("doctor reports what is held, and names the lift path it does not have"
     const three = await runDoctor(testEnv, atTime(AUGUST_10));
     expect(three.cost.d1Queries).toBe(one.cost.d1Queries);
     expect(three.cost.subrequests).toBeLessThanOrEqual(BUDGETS["doctor.max_subrequests_per_run"]);
+  });
+
+  it("spends nothing on eligibility when no hold is in force", async () => {
+    // The other half of the same sizing claim, and the reason the comparison above starts at one hold: a
+    // clean Node does not pay for a question about holds it does not have. Measured off the run rather than
+    // argued, the way `doctor-check-cost.md`'s corrections are taken.
+    const clean = await runDoctor(testEnv, atTime(AUGUST_10));
+    await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
+    const held = await runDoctor(testEnv, atTime(AUGUST_10));
+    expect(held.cost.d1Queries).toBe(clean.cost.d1Queries + 1);
   });
 });

@@ -14,6 +14,49 @@ values:
   approval.decision_max_subrequests: 10
 ---
 
+## Correction, 20 August 2026: the `stale_when` fired — the approvals table gained a column a decision reads
+
+The clause **"the approvals tables gain a column a decision has to read"** is true. #64's legal-hold lift is
+this mechanism's second caller, and it does not fit a table keyed on a manifest, so `migrations/0021_hold_lift.sql`
+renamed `manifest_id` to `subject_id`, added `subject_kind`, and renamed `author_user_id` to `actor_user_id`.
+Every decision now reads `subject_kind` — it is in `APPROVAL_COLUMNS` and it decides which completion statements
+run — so the clause names exactly what happened.
+
+**No value moved, and the measured figures for a send are unchanged: 1 for eligibility, 6 for every decision
+shape.** A column in a `SELECT` that was already being issued costs nothing, which is the distinction this
+receipt's own *"a column a decision has to read"* clause exists to have checked rather than assumed. Re-measured
+the same way, in the same file, on 20 August 2026.
+
+### What a lift costs
+
+Same instrument, same file, same run — `metering()` from `src/cost-meter.ts`, counting executions, pricing a
+`batch()` as the one round trip it is:
+
+| Scenario | Subrequests | D1 executions | batches | R2 ops | DO RPCs |
+|:--|--:|--:|--:|--:|--:|
+| request a lift (`requestHoldLift`) | **5** | 5 | 1 | 0 | 0 |
+| approve a lift, stage still open | **6** | 6 | 1 | 0 | 0 |
+| the approval that **applies** the lift | **7** | 7 | 1 | 0 | 0 |
+| the coverage check on the deletion path (`coveringHolds`) | **1** | 1 | 0 | 0 | 0 |
+
+The request is five: the administrator check, the hold row, the eligible set, the audit chain's tip, and **one**
+`batch()` carrying the `approval.requested` entry, the `hold_lifts` row, the `approvals` row and its stage.
+
+The completing decision is **one more than a send's 6**, and the one is the `hold_lifts` row — read because the
+`hold.lifted` entry has to name the reason the lift was asked for, and an investigator should not have to join
+two tables to learn why destruction was re-permitted. Everything else is free for the reason the section below
+gives about the seal: the second audit entry and the `UPDATE holds` ride in the `batch()` the decision was
+already making. That is what makes *"the lift and its record are one act"* a property of the transaction rather
+than a claim.
+
+**Both are bounded against `approval.decision_max_subrequests = 10`, and no new budget key was minted.** A lift
+request is an approval request; a separate key would be a number with no separate measurement behind it, and
+`budget-plan-scope.test.ts` would have had to classify a key that means the same thing as one that exists.
+Headroom against the measured 7 is 3.
+
+**Miniflare, not a deployed Node** — the same boundary the section at the end of this file states, for the same
+reason.
+
 **Measured:** `apps/node/worker/test/approval-cost.measure.test.ts`, in the real `workerd` runtime against a
 real D1 and R2, using `src/cost-meter.ts` — which counts **executions** rather than `prepare`, prices a
 `batch()` as the one round trip it is, and sees Durable Object RPCs. Not counted by reading: this repository has

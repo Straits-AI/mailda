@@ -1,11 +1,55 @@
 # Approvals
 
-How a send that a policy will not let out on its own gets decided: what an approval is, who may decide it,
-what happens when two people act at once, and what is deliberately absent.
+How an act that this Node will not perform on one person's word gets decided: what an approval is, who may
+decide it, what happens when two people act at once, and what is deliberately absent.
 
-Implemented by `apps/node/worker/src/approvals.ts` and `migrations/0020_approvals.sql`, on top of the policy
-object in `src/policy.ts` (`0019_policy.sql`). Decision record: [#61][61], with [#60][60] for the policy
-outcomes it hangs off.
+Implemented by `apps/node/worker/src/approvals.ts` with `migrations/0020_approvals.sql` and
+`0021_hold_lift.sql`, on top of the policy object in `src/policy.ts` (`0019_policy.sql`) and the eligible-set
+query in `src/deciders.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
+approval hangs off and [#64][64] for the legal-hold lift.
+
+## Two subjects, one mechanism
+
+An approval decides on a **subject**: `(subject_kind, subject_id)`, unique over the pair.
+
+| Kind | The subject is | Completion does | Stages come from |
+|:--|:--|:--|:--|
+| `send_manifest` | a `send_manifests` row | releases the send to `held` | the fold over every matching `require_approval` policy version |
+| `hold_lift` | a `hold_lifts` row — one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's |
+
+It shipped manifest-shaped — `manifest_id TEXT NOT NULL`, `UNIQUE (manifest_id)` — and the lift was the second
+caller, which found that on its first day. The two alternatives lose for the same reason in two directions: a
+nullable `hold_id` beside `manifest_id` starts a column per subject kind and makes *which subject* a question
+nothing validates, and a separate `hold_lift_approvals` table duplicates the fold, the eligible set and the
+conditional completion — **and all three of [#61][61]'s defects were in that last one**, so a second copy is a
+second place for them.
+
+**A lift's subject is the request, not the hold**, and that is what keeps the index a full `UNIQUE` rather than
+a partial one over pending rows. Asking again has to have a representation: a send re-seals and mints a new
+manifest id, a refused lift mints a new `hold_lifts` row. Had the subject been the hold id, one denial would
+have made that hold unliftable for ever — [#64][64]'s operational trap arriving through the schema.
+
+Two columns carry across both kinds, checked rather than assumed:
+
+- **`mailbox_id`** keeps its name and meaning. For a send it is the mailbox the message is from; for a lift it
+  is the *held* mailbox. In both cases it answers one question: who holds `approval.decide` here.
+- **`actor_user_id`** was `author_user_id`. It always meant *the person whose act this approval gates, and
+  therefore the one person who may never decide it* — the author of the send, the requester of the lift. A lift
+  has no author, and a name that overclaims by one word is how a reader is handed a landmine.
+
+One caller-visible consequence: the refusal for deciding your own is `E_APPROVER_IS_ACTOR`, renamed from
+`E_APPROVER_IS_AUTHOR`, and its `what` is per subject kind — *"you composed this send"* against
+*"you requested this hold lift"*. A `Record` keyed on the kind means a new subject is a compile error rather
+than a sentence about the wrong act.
+
+A future subject kind with **no mailbox at all** — §18 names domain and routing changes — is a real question
+and it is not answered: a nullable `mailbox_id` would make eligibility a question nothing validates. That kind
+either names a mailbox or brings a second source for its eligible set.
+
+`subject_kind` carries **no CHECK constraint**, and that is stated rather than implied: SQLite cannot add one
+with `ALTER TABLE`, and no trigger can exist in this tree because the Node applies migrations by splitting on
+semicolons. The constraint is `APPROVAL_SUBJECT_KINDS` in `src/approvals.ts` plus a closed-world test that
+requires one writer for the table and every subject-kind literal in `src/` to be a declared one.
 
 ## The shape
 
@@ -30,8 +74,8 @@ form.
 ## Who may decide
 
 ```
-eligible(approval) = approval.decide holders on the manifest's mailbox
-                   − the manifest's author
+eligible(approval) = approval.decide holders on the approval's mailbox
+                   − the actor: the send's author, or the lift's requester
                    − everybody who has already decided in this approval
 ```
 
@@ -44,8 +88,8 @@ administrator an approver, and the second would make every author an approver of
 *tuples* while a decider is a *person*. One person in two teams that both hold `approval.decide` would satisfy
 a count of 2 if the count were taken at the tuple layer. Two things stop it:
 
-- `decidersByMailbox` resolves team-held tuples to their members, requires a row in `users` (a tuple's subject
-  may be a team), and de-duplicates on the person;
+- `decidersByMailbox` (`src/deciders.ts`) resolves team-held tuples to their members, requires a row in `users`
+  (a tuple's subject may be a team), and de-duplicates on the person;
 - `apd_one_per_person`, a UNIQUE index on `(approval_id, decider_user_id)`, which is the half that holds when
   two decisions race.
 
@@ -157,15 +201,48 @@ carry a different gate: *this call's own withdrawal landed*, keyed on its `withd
 unconditional, and a withdrawal that lost to a completing approval rewrote the recipients of a released send to
 `withheld`.
 
+**A withdrawal racing the approval that completes a lift** is the one place the answer differs, and it differs
+deliberately. That decision carries two audit entries — `approval.decided` and `hold.lifted` — and
+`auditedBatchMany` gates a batch rather than an entry, so under the ordinary `pending` predicate a lost race
+would insert a `hold.lifted` entry for a lift that did not happen: a false statement in the one place that is
+supposed to be checkable. So that decision carries a **stronger** predicate — the approval is pending, *this*
+decision closes every stage, and the hold is not already lifted — and a lost race records nothing and answers
+`E_HOLD_LIFT_RACED`. A send keeps its decision because it still counts toward its stage whatever else happened;
+the lift's completing decision and the lift itself are one act that must either both be true or both be absent.
+
+The interleaving inside the product cannot be constructed from one isolate, so the refusal is exercised through
+the other door into the same state — a hold lifted outside the product, which is the boundary the hold mechanism
+has anyway (`wrangler d1 execute`, the dashboard). `test/legal-hold.test.ts` drives it and asserts that nothing
+was recorded: no `hold.lifted`, no second `approval.decided`, no decision row, and a chain still contiguous.
+Stated because a refusal nothing reaches is a refusal nobody has read.
+
+**Two administrators asking for the same lift at once.** Every statement of a request carries *the hold exists,
+is not lifted, and has no open lift other than this one*, so one request lands and the other is refused with
+`E_HOLD_LIFT_PENDING`. There is no read beforehand that could disagree with it. The clause *"other than this
+one"* is load-bearing rather than defensive: without it the batch invalidated its own predicate — the
+`approvals` row goes in as `pending`, so the stage inserts that followed were silently skipped and the first
+approver met an approval with an empty stage set.
+
 ## What is audited
 
-Three actions, all in the same transaction as the rows they describe (`auditedBatch`):
+Four actions, all in the same transaction as the rows they describe (`auditedBatch`, `auditedBatchMany`):
 
 | Action | Subject | Says |
 |:--|:--|:--|
-| `approval.requested` | the approval | a policy required approval; the stages and how many people were eligible |
+| `approval.requested` | the approval | why it was asked — a policy, or an administrator's stated reason for a lift — with the stages and how many people were eligible |
 | `approval.decided` | the approval | who approved or denied, at which stage; a denial records `outcome: refused` |
 | `approval.withdrawn` | the approval | who took their own approval back, and whether that left the request unsatisfiable |
+| `hold.lifted` | the **hold** | the lift took effect: the reason it was asked for, who asked, and **both** approvers by name |
+
+The first three cover every subject kind, which is the return on generalising the table: a lift is requested,
+decided and withdrawn by the same three acts. Only its *effect* earned a fourth, and its subject is the hold
+rather than the approval, so `hold.placed` and `hold.lifted` line up for a reader filtering one hold. There is
+deliberately no `hold.lift_requested`: `approval.requested` already records that act, in the same transaction as
+the request row, and a second entry would make *"who asked to lift this hold"* answerable from two places that
+can disagree.
+
+`hold.lifted` names both approvers because dual control is only evidence if the trail says who the two were —
+the eligible set is live and cannot be reconstructed from the tuples as they stand later.
 
 `approval.requested` rides in the **same transaction as the seal**, alongside `send.sealed`, through
 `auditedBatchMany` — two entries chained to each other, consecutive sequence numbers, one `batch()`. So a gated
@@ -180,14 +257,22 @@ Measured, not counted: `docs/receipts/approval-decision-cost.md`.
 | Operation | Subrequests |
 |:--|--:|
 | eligibility check on one mailbox | 1 |
-| any decision — approve, final approve, deny | 6 |
+| any decision on a send — approve, final approve, deny | 6 |
 | any withdrawal | 6 |
 | seal gated by a hold | 11 |
 | seal gated by an approval | 13 |
+| requesting a legal-hold lift | 5 |
+| approving a lift, stage still open | 6 |
+| the approval that **applies** a lift | 7 |
 
 The approval path adds **two** operations to a seal, and only there: a seal that no policy gated, or that a
 hold gated, pays nothing for this mechanism. The `approvals` row, its stage rows and the second audit entry are
 free, because they ride in the `batch()` the seal was already making.
+
+A lift costs one operation more than a send's decision, and exactly one: the request row, whose reason the
+`hold.lifted` entry has to name. Everything else — the second audit entry and the `UPDATE holds` itself — is
+free for the same reason, because it rides in the batch the decision was already making. That is what makes
+*"the lift and its record are one act"* a property of the transaction rather than a claim.
 
 ## Named absent
 
@@ -214,19 +299,27 @@ free, because they ride in the `batch()` the seal was already making.
 ## Surface
 
 ```
-GET  /api/approvals                  what is waiting on you: stages, which stage is open, whether you decided
+GET  /api/approvals                  what is waiting on you: subject, stages, which stage is open, the reason
 POST /api/approvals/:id/decide       { "decision": "approve" | "deny" } — no default, deliberately
 POST /api/approvals/:id/withdraw     take back your own approval while the request is incomplete
+
+POST /api/holds/:id/lift             { "reason": "..." } — org.admin asks; these three endpoints decide
 ```
 
-Scoped to the mailboxes the caller holds `approval.decide` on, and excluding their own authored sends: a queue
-that lists work nobody can do is a queue people learn to ignore. There is deliberately no UI — the shell is
-Layer 1–3's surface — but the outbox already shows the consequence, because it renders `awaiting` and
-`withheld` with the reason beside them.
+Scoped to the mailboxes the caller holds `approval.decide` on, and excluding approvals of their own acts: a
+queue that lists work nobody can do is a queue people learn to ignore. There is deliberately no UI — the shell
+is Layer 1–3's surface — but the outbox already shows a send's consequence, because it renders `awaiting` and
+`withheld` with the reason beside them, and `doctor` reports a pending lift beside the hold it would release.
+
+**A lift is decided through the approvals endpoints, not through a second hold endpoint.** That is the whole
+point of the subject: an approver's queue, a decision, a withdrawal and the trail behind them were never about
+sends. `GET /api/approvals` carries the lift's `reason`, because somebody asked to re-permit destruction has to
+see what they are agreeing to *before* they decide — a trail is where a decision is accounted for afterwards.
 
 [9]: https://github.com/Straits-AI/mailda/issues/9
 [60]: https://github.com/Straits-AI/mailda/issues/60
 [61]: https://github.com/Straits-AI/mailda/issues/61
 [62]: https://github.com/Straits-AI/mailda/issues/62
 [63]: https://github.com/Straits-AI/mailda/issues/63
+[64]: https://github.com/Straits-AI/mailda/issues/64
 [73]: https://github.com/Straits-AI/mailda/issues/73

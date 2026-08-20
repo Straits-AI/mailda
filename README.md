@@ -353,12 +353,28 @@ derives every `DELETE FROM` and `EVIDENCE.delete` in `src/` and `migrations/` fr
 nobody classified, and for the three that carry content **asserts the guard is called in the same function** as
 the statement that destroys. Migrations are held to zero, because a migration is raw SQL inside `batch()` and
 no code can stand between its statements and a hold. Its blind spots — dynamic SQL, `wrangler d1 execute`, the
-dashboard — are declared in the test, since a tripwire that hides its boundary is the thing it replaces. Two
-consequences stated rather than discovered: orphan collection stops for the **whole organization** while any
-hold stands, because an orphan is unattributable *by definition* and nothing can prove one is not responsive;
-and **there is no way to lift a hold**, because lifting takes two approvers and that machinery does not exist
-yet — so `doctor` reports the missing path as a finding instead of leaving it silent, and a check fails on any
-code that would quietly narrow a hold's window.
+dashboard — are declared in the test, since a tripwire that hides its boundary is the thing it replaces. One
+consequence stated rather than discovered: orphan collection stops for the **whole organization** while any
+hold stands, because an orphan is unattributable *by definition* and nothing can prove one is not responsive.
+
+**A hold nobody can lift is an operational trap; a hold one person can lift quietly is not a hold.** So the
+lift is the exact mirror of placing: an administrator asks, with a **mandatory reason**, and two *other* people
+holding `approval.decide` on the held mailbox have to agree. The requester is excluded from deciding by the same
+separation-of-duty rule that stops an author approving their own send — reused, not rewritten, because all three
+defects the approval machinery shipped with were in that race logic and a second copy is a second place for
+them. Reusing it cost one schema decision, taken on the day the second caller appeared rather than the day it
+hurt: `approvals` pointed at a manifest and nothing else, so it now points at a **subject** — a kind and an id,
+with a unique index over the pair — and a lift's subject is the request itself. That is why a denied lift does
+not make a hold permanent: asking again mints a new request, exactly as re-sealing mints a new manifest. The
+tripwire that guarded the absent lift was **inverted rather than deleted**, which is the part worth copying:
+there is now exactly *one* `UPDATE holds` allowed in the product, a test proves it is the one that sets
+`lifted_at` and that **that statement's own SQL** carries both halves of the gate — read from its string
+literal with its `${}` holes resolved, because the first version of this check read a window of the enclosing
+function *including its comments* and passed with either half deleted — and narrowing a hold's window
+still fails — because that was always the silent lift, and building the loud one does not make it safe.
+`doctor` dropped the finding that said lifting was impossible, since that sentence became false, and gained the
+one that matters instead: a hold over a mailbox where fewer than two people hold `approval.decide` **cannot be
+lifted by anybody**, and it says so before an administrator finds out by being refused.
 
 **A policy that cannot be expressed is a policy that never fires, and so is one that can.** The blueprint
 lists thirteen policy dimensions and six outcomes. This Node ships **five conditions and four outcomes**, and

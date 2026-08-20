@@ -18,6 +18,7 @@ import m0017 from "../migrations/0017_first_response_clock.sql";
 import m0018 from "../migrations/0018_legal_hold.sql";
 import m0019 from "../migrations/0019_policy.sql";
 import m0020 from "../migrations/0020_approvals.sql";
+import m0021 from "../migrations/0021_hold_lift.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -92,6 +93,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0018_legal_hold.sql", sql: m0018 },
   { name: "0019_policy.sql", sql: m0019 },
   { name: "0020_approvals.sql", sql: m0020 },
+  { name: "0021_hold_lift.sql", sql: m0021 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

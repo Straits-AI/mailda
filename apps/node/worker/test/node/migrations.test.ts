@@ -91,4 +91,42 @@ describe("migration SQL stays splittable", () => {
     const imported = [...source.matchAll(/from "\.\.\/migrations\/([^"]+)"/g)].map((m) => m[1]!).sort();
     expect(imported).toEqual(files());
   });
+
+  it("registers each import in MIGRATIONS, under its own name, in order", () => {
+    /*
+     * Importing a migration is half of bundling it. The other half is the `MIGRATIONS` array, and until this
+     * test existed nothing checked it: deleting the `{ name: "0021_hold_lift.sql", sql: m0021 }` line left the
+     * check above green, because the import was still there. What caught it was eslint's `no-unused-vars`
+     * noticing the orphaned binding — a real check, doing this job by accident, and one that a `void m0021`
+     * or a second use of the same import would silence.
+     *
+     * So the pairing is asserted directly, in both directions and in order:
+     *
+     *   - every imported file appears in `MIGRATIONS`, and nothing else does;
+     *   - each entry's `sql` is **that file's own** binding, so `{ name: "0021…", sql: m0020 }` fails rather
+     *     than silently applying 0020 twice and 0021 never;
+     *   - the order is the file order, because these run in sequence and a reordered pair is a schema that
+     *     depends on which Node applied it.
+     */
+    const source = readFileSync(resolve(here, "../../src/migrate.ts"), "utf8");
+    const bindingOf = new Map(
+      [...source.matchAll(/import\s+(\w+)\s+from\s+"\.\.\/migrations\/([^"]+)"/g)]
+        .map((match) => [match[2]!, match[1]!] as const),
+    );
+    // Anti-vacuity: an import syntax this stopped recognising would make every comparison below empty.
+    expect(bindingOf.size).toBe(files().length);
+
+    const registered = [...source.matchAll(/\{\s*name:\s*"([^"]+)",\s*sql:\s*(\w+)\s*\}/g)]
+      .map((match) => ({ name: match[1]!, binding: match[2]! }));
+
+    expect(
+      registered.map((entry) => entry.name),
+      "MIGRATIONS must register every bundled migration exactly once, in file order — an imported migration "
+        + "missing from this array is never applied, and only an unused-import lint rule would notice",
+    ).toEqual(files());
+    expect(
+      registered.filter((entry) => bindingOf.get(entry.name) !== entry.binding),
+      "a MIGRATIONS entry whose sql is not the binding its own name was imported as",
+    ).toEqual([]);
+  });
 });

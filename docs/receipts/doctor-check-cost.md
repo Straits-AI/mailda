@@ -15,6 +15,40 @@ values:
   doctor.max_subrequests_per_run: 220
 ---
 
+## Correction, 20 August 2026: the hold check gained a query, and it is conditional on a hold existing (#64)
+
+The clause **"including any new fixed-cost check"** is the one a reader will reach for, and this time it fires
+only *partly* — which is the whole content of the measurement, so it is recorded rather than left to be
+rediscovered.
+
+`doctor` lost a check and gained two. **Gone:** `legal_hold_lift_path`, whose entire content was the sentence
+*"there is no way to lift a legal hold on this Node"* — now false, since #64's lift is built. It cost nothing:
+it was a literal. **New:** `legal_hold_lift_pending`, built from columns `holdsForReport` already joins, and
+`legal_hold_unliftable`, which asks `decidersByMailbox` who could approve a lift — **one query, for the whole
+organization, and only when a hold is in force.**
+
+**Locally measured, on a claimed Node with an empty catalog: 13 → 13 subrequests** (10 D1 / 3 R2, unchanged),
+findings 13 → 13. **With one hold in force: 14** (11 D1 / 3 R2). **With three holds: 14** — the same, which is
+the per-run-versus-per-row distinction this clause exists to separate, and it is asserted rather than stated
+(`test/legal-hold.test.ts`, "costs the same for three holds as for one"). On an **unclaimed** Node the figure
+does not move at all: 6 both ways, the same shape `draft_bodies_stranded` has, because the check returns before
+it spends anything.
+
+Method, identical to the corrections below so the figures are comparable: `runDoctor` reading `report.cost` off
+the run itself under `vitest-pool-workers` (`pnpm vitest run`), on 20 August 2026, taken at four catalog states
+rather than two — no organization, claimed and empty, one hold, three holds — because the delta this time is
+*conditional* and a two-point measurement would have reported it as either zero or one and been wrong either
+way.
+
+The conditionality is deliberate and asserted in the same file ("spends nothing on eligibility when no hold is
+in force"): a clean Node must not pay for a question about holds it does not have. It is also why that
+neighbouring test now compares **one** hold against three rather than zero against three — its name always said
+one, and against zero it would have failed for the right reason with the wrong message.
+
+`doctor.max_subrequests_per_run = 220` still holds with room to spare, and `values:` is untouched: every number
+in it is a deployed-Node measurement, and 13 → 14 was taken against miniflare — a different D1, a different R2,
+a different catalog. **Only the delta transfers**, because it is one extra call on a fixed path.
+
 ## Correction, 13 August 2026: this receipt shipped stale
 
 `doctor.max_subrequests` — since 19 August 2026 `doctor.paid.max_subrequests`, see the correction below headed

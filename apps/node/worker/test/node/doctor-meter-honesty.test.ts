@@ -61,6 +61,12 @@ const DOCTOR_PATH = [
   // case, since the call has no dot before `batch`. Worth knowing, because that is the shape a real batch on
   // this path would hide behind.
   "holds.ts",
+  // Added with #64's lift: `legal_hold_unliftable` asks who could approve one, which is
+  // `decidersByMailbox` — one prepare, one execution, no write. It lives in a file of its own **because** of
+  // this guard: the same function used to sit in `approvals.ts`, which binds prepared statements to names in
+  // functions `runDoctor` never calls, so listing that module here would have meant either a false failure or
+  // a widened guard. `src/deciders.ts` carries that argument in its header.
+  "deciders.ts",
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

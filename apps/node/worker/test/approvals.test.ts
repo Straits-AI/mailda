@@ -6,9 +6,10 @@ import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { revoke } from "../src/access.ts";
 import { verifyChain } from "../src/audit.ts";
 import {
-  APPROVAL_REASONS, decideApproval, decidersOf, openStage, pendingApprovals, shortfallFor,
+  APPROVAL_REASONS, decideApproval, openStage, pendingApprovals, shortfallFor,
   stagesOfApproval, withdrawApproval, type Decision, type Stages,
 } from "../src/approvals.ts";
+import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { login } from "../src/auth/session.ts";
 import deliveryScript from "../src/client/delivery.client.js";
@@ -111,8 +112,11 @@ async function manifestRow(id: string) {
 }
 
 async function approvalRow(manifestId: string) {
+  // `subject_kind` is pinned rather than left to the id's prefix, exactly as `approvalOfManifest` does: a
+  // query that found a send's approval by id alone would keep passing if the column stopped being written.
   return testEnv.CATALOG.prepare(
-    "SELECT id, state, resolved_at FROM approvals WHERE org_id = ? AND manifest_id = ?",
+    `SELECT id, state, resolved_at FROM approvals
+      WHERE org_id = ? AND subject_kind = 'send_manifest' AND subject_id = ?`,
   ).bind(ORG, manifestId).first<{ id: string; state: string; resolved_at: string | null }>();
 }
 
@@ -323,12 +327,12 @@ describe("the author is never eligible", () => {
 
     await expect(
       decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, AUTHOR, approval.id, "approve"),
-    ).rejects.toThrow(/E_APPROVER_IS_AUTHOR/);
+    ).rejects.toThrow(/E_APPROVER_IS_ACTOR/);
     // Denying your own send is refused too: cancelling is the author's own act and does not put their name in
     // the trail as somebody else's reviewer.
     await expect(
       decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, AUTHOR, approval.id, "deny"),
-    ).rejects.toThrow(/E_APPROVER_IS_AUTHOR/);
+    ).rejects.toThrow(/E_APPROVER_IS_ACTOR/);
     expect(await decisionRows(approval.id)).toEqual([]);
   });
 
@@ -796,7 +800,8 @@ describe("the trail", () => {
     const detail = JSON.parse(entries.results[1]!.detail) as Record<string, unknown>;
     expect(detail.stages).toEqual([1]);
     expect(detail.eligible).toBe(1);
-    expect(detail.manifestId).toBe(sealed.id);
+    expect(detail.subjectKind).toBe("send_manifest");
+    expect(detail.subjectId).toBe(sealed.id);
 
     // Two entries in one batch chain to each other rather than both to the tip, which verification is the
     // only real check of: two entries claiming one sequence number, or the second carrying the tip's hash,
@@ -872,10 +877,17 @@ describe("an approver can reach this from outside the process", () => {
     });
     expect(listed.status).toBe(200);
     const { approvals } = await listed.json() as {
-      approvals: Array<{ id: string; manifestId: string; stages: number[]; openStage: number }>;
+      approvals: Array<{
+        id: string; subjectKind: string; subjectId: string; reason: string | null;
+        stages: number[]; openStage: number;
+      }>;
     };
     expect(approvals).toHaveLength(1);
-    expect(approvals[0]!.manifestId).toBe(sealed.id);
+    expect(approvals[0]!.subjectKind).toBe("send_manifest");
+    expect(approvals[0]!.subjectId).toBe(sealed.id);
+    // A send carries no requester's reason: the reason it is being reviewed is the policy that matched, which
+    // the outbox already shows beside the send. `null` here rather than an invented sentence.
+    expect(approvals[0]!.reason).toBeNull();
     expect(approvals[0]!.stages).toEqual([2]);
 
     const approvalId = approvals[0]!.id;

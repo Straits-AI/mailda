@@ -3,8 +3,9 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
 import {
-  decidersByMailbox, describeShortfall, IMPLICIT_STAGES, shortfallFor, type Stages,
+  describeShortfall, IMPLICIT_STAGES, shortfallFor, type Stages,
 } from "./approvals.ts";
+import { decidersByMailbox } from "./deciders.ts";
 import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 
 /**

@@ -7,6 +7,11 @@ import { describe, expect, it } from "vitest";
  * A closed world over every call site in this Worker that can destroy content — and, for the ones that can,
  * an assertion that the legal hold is consulted **in the same function** (#64).
  *
+ * It also owns the two writes that decide whether a hold means anything: the single `UPDATE holds` that lifts
+ * one, and the single `INSERT INTO approvals` that says what an approval is about. Both live here rather than
+ * beside the feature because both are *closed-world* claims — "there is exactly one of these, and it is the
+ * one that carries the guard" — which is the shape this file exists for.
+ *
  * ## Why the tripwire is worth more than the mechanism
  *
  * `src/holds.ts` refuses a deletion when a hold covers it. That is only as good as the set of call sites that
@@ -257,6 +262,46 @@ function keyOf(site: { file: string; target: string }): string {
   return `${site.file} -> ${site.target}`;
 }
 
+/**
+ * The SQL of the statement on one line, with its `${…}` holes filled in — and nothing else around it.
+ *
+ * Written because the alternative was measured and found vacuous: a check made against a *window of the
+ * enclosing function* is satisfied by that function's own comments and by constants its other branches use,
+ * so `expect(body).toContain("lifted_at IS NULL")` passed with the clause deleted from the statement. A
+ * tripwire that a doc comment can satisfy protects the comment.
+ *
+ * The statement is the string literal the match sits inside — backtick or double-quoted, found by walking
+ * out from the match to the nearest delimiter on each side. A `${ident}` hole is replaced by the string
+ * `const ident = "…"` assigns in the same file; a hole naming something this cannot resolve is left in place,
+ * which fails the caller's `toContain` rather than passing it. That direction is the point: a predicate
+ * assembled from something the scan cannot read is one it cannot vouch for.
+ */
+function resolvedStatementAt(source: string, lineNumber: number, pattern: RegExp): string {
+  const lines = source.split("\n");
+  const offset = lines.slice(0, lineNumber - 1).reduce((total, line) => total + line.length + 1, 0);
+  const column = pattern.exec(lines[lineNumber - 1] ?? "")?.index ?? -1;
+  if (column < 0) return "";
+  const at = offset + column;
+
+  const open = Math.max(source.lastIndexOf("`", at), source.lastIndexOf('"', at));
+  if (open < 0) return "";
+  const delimiter = source[open]!;
+  const close = source.indexOf(delimiter, at);
+  if (close < 0) return "";
+  const raw = source.slice(open + 1, close);
+
+  return raw.replaceAll(/\$\{(\w+)\}/g, (whole, name: string) => {
+    // One alternative per delimiter rather than a back-referenced character class, because the SQL these
+    // constants hold contains the *other* quote — `state = 'approved'` inside a double-quoted string — and a
+    // class excluding all three stopped at it and resolved to nothing. Which is how a hole that could not be
+    // read would have read as satisfied if this returned "" instead of leaving the hole in place.
+    const declared = new RegExp(
+      `\\b(?:const|let)\\s+${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|\`([^\`]*)\`)`,
+    ).exec(source);
+    return declared === null ? whole : (declared[1] ?? declared[2] ?? declared[3] ?? whole);
+  });
+}
+
 describe("the closed world over content-destroying call sites", () => {
   it("finds the sites, so nothing below can pass by scanning nothing", () => {
     // The vacuous-green failure mode `placeholder-columns.test.ts` names. If the scanner broke, every
@@ -362,23 +407,140 @@ describe("the closed world over content-destroying call sites", () => {
     expect(odd).toEqual([]);
   });
 
-  it("has no lift path, silent or otherwise", () => {
-    // #64 decided lifting takes dual approval; #61 built that machinery and the lift itself is still unbuilt, so
-    // this build has no lift —
-    // which is a decision that can be undone in two ways. Removing a hold row is one, and the classification
-    // test above already fails on it: `DELETE FROM holds` would be an undeclared call site. **Editing** a
-    // hold's bounds is the quieter one — an `UPDATE holds SET to_date = …` lifts a hold without deleting
-    // anything and without an audit action existing to record it. That is what this catches.
-    const offenders = sourceFiles("src")
-      .filter((file) => /\bUPDATE\s+holds\b/i.test(readFileSync(join(workerDir, file), "utf8")))
-      .map((file) => `${file} writes to an existing hold row`);
+  it("has exactly one lift path, and it is the gated one", () => {
+    /*
+     * **This test was inverted, not deleted, and that distinction is the whole point.**
+     *
+     * It used to require *zero* `UPDATE holds` in `src/`, because there was no lift and the quiet way to
+     * undo that decision was to edit a hold's bounds: an `UPDATE holds SET to_date = …` releases mail from
+     * a hold without deleting anything, without two approvers and without an audit action existing to
+     * record it. #64 has now built the loud lift — dual control, a mandatory reason, `hold.lifted` — and
+     * **the silent one is exactly as available as it was before**. Deleting the guard because the feature
+     * arrived is how the guard's point is lost.
+     *
+     * So the rule is now "one, and it is that one" rather than "none":
+     *
+     *   - exactly one `UPDATE holds` in the whole of `src/`;
+     *   - it sets `lifted_at`, which is what makes it the lift rather than a window edit;
+     *   - **that statement's own SQL** carries the approval gate, so no lift lands without two distinct
+     *     people having approved (`state = 'approved'`) and without the hold being unlifted.
+     *
+     * ## The assertions are made against the statement, not against the function around it
+     *
+     * That is the correction of a live defect in this test, and it is worth stating rather than fixing
+     * quietly. The three checks below used to read a window of the enclosing function *including its
+     * comments* — so the doc comment above the statement, which names `lifted_at IS NULL` while explaining
+     * why it is there, satisfied the check for `lifted_at IS NULL`; and `state = 'approved'` was satisfied
+     * by the `const approved = …` the **send** branch of the same function uses. Both mutations were run:
+     * deleting `AND EXISTS (${approved})` from the lift, and deleting `AND lifted_at IS NULL` from it, and
+     * this test passed for both. A guard a comment can satisfy is the exact defect this repository keeps
+     * finding, and it is worse in a tripwire than anywhere else, because a tripwire is the thing nobody
+     * re-derives.
+     *
+     * So the statement's SQL is extracted from its own string literal and its `${…}` holes are resolved
+     * against the `const` they name — an unresolvable hole fails rather than passes, because a predicate
+     * assembled from something this scan cannot read is a predicate it cannot vouch for.
+     *
+     * Lexical, with the same boundary as the guard check above: it reads the source, not the behaviour.
+     * `test/legal-hold.test.ts` is the behavioural half — a deletion refused under a hold, the hold lifted
+     * by two people, the same deletion succeeding.
+     */
+    const writes = sourceFiles("src")
+      .flatMap((file) => readFileSync(join(workerDir, file), "utf8").split("\n")
+        .map((text, index) => ({ file, line: index + 1, text }))
+        .filter((row) => !isProse(row.text) && /\bUPDATE\s+holds\b/i.test(row.text)));
+
     expect(
-      offenders.length === 0 ? null
-        : `${offenders.join(", ")} — narrowing a hold's window is a lift, and #64 requires two distinct `
-          + "approvers plus a mandatory reason for one. If lifting is being built, it goes through #61's "
-          + "approvals — one stage of {count: 2} — plus a `hold.lifted` audit action and the "
-          + "lifted_at/lifted_reason columns migration 0018 deliberately left out",
+      writes.length === 1 ? null
+        : `${writes.length} UPDATE holds statement(s) in src/ `
+          + `(${writes.map((row) => `${row.file}:${row.line}`).join(", ") || "none"}). There must be exactly `
+          + "one and it must be the lift: narrowing a hold's window is a silent lift, and #64 requires two "
+          + "distinct approvers plus a mandatory reason. If a second write to this table is genuinely "
+          + "needed, it is a #64 decision — not a line added quietly",
     ).toBeNull();
+
+    const site = writes[0]!;
+    const source = readFileSync(join(workerDir, site.file), "utf8");
+    const lines = source.split("\n");
+    const enclosing = enclosingFunction(lines, site.line);
+    expect(enclosing, `${site.file}:${site.line} is not inside a top-level function`).not.toBeNull();
+
+    const sql = resolvedStatementAt(source, site.line, /\bUPDATE\s+holds\b/i);
+    // Anti-vacuity: an extractor that returned "" or lost the statement would pass every check below. This
+    // is the assertion that the thing being scanned is the statement.
+    expect(sql, `the SQL of ${site.file}:${site.line} could not be read`).toMatch(/\bUPDATE\s+holds\b/i);
+
+    // The statement is the lift. A statement that touched any other column would be the silent lift wearing
+    // the one write this test allows.
+    expect(sql, `${site.file}:${site.line} writes to a hold without setting lifted_at`)
+      .toMatch(/lifted_at\s*=/);
+    // And it is gated, in its own predicate. Both halves: two distinct people approved (the approval reached
+    // `approved`, which only the completion predicate can do), and the hold has not already been lifted.
+    expect(sql, `${site.file}:${site.line} lifts a hold without requiring an approved approval`)
+      .toContain("state = 'approved'");
+    expect(sql, `${site.file}:${site.line} could lift an already-lifted hold`)
+      .toContain("lifted_at IS NULL");
+  });
+
+  it("writes an approval from one place, and only with a subject kind it declares", () => {
+    /*
+     * The same argument as the `INSERT INTO holds` guard below, for the column that decides which subject an
+     * approval is about.
+     *
+     * `approvals.subject_kind` carries **no CHECK constraint** — SQLite cannot add one with `ALTER TABLE`,
+     * and a trigger cannot exist in this tree because `src/migrate.ts` splits migrations on semicolons — so
+     * migration 0021 had to give it a `DEFAULT 'send_manifest'` to satisfy the grammar. That default is the
+     * hazard: an INSERT that forgot the column would silently classify a hold lift as a send approval, and
+     * the lift would be an approval nothing knows how to complete.
+     *
+     * Two assertions close it. One writer, so there is one place to read; and every subject-kind literal in
+     * `src/` is one `APPROVAL_SUBJECT_KINDS` declares, so a third kind cannot arrive without the union that
+     * `decideApproval` switches on learning about it.
+     */
+    const writers = sourceFiles("src").filter(
+      (file) => /\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+approvals\b/i.test(readFileSync(join(workerDir, file), "utf8")),
+    );
+    expect(
+      writers.join(", ") === "src/approvals.ts" ? null
+        : `approvals is written from ${writers.length === 0 ? "nowhere" : writers.join(", ")}, and it must be `
+          + "written only from src/approvals.ts: subject_kind has a column default, so a writer that omitted "
+          + "it would file its approval under the wrong kind and nothing would notice",
+    ).toBeNull();
+
+    const source = readFileSync(join(workerDir, "src", "approvals.ts"), "utf8");
+
+    // The one INSERT names the column. This is the assertion the `DEFAULT 'send_manifest'` in migration 0021
+    // rests on: a writer that omitted `subject_kind` would file a hold lift as a send approval, silently, and
+    // the lift would be an approval nothing knows how to complete. The default exists because SQLite cannot
+    // add a NOT NULL column without one, not to classify anything.
+    const insert = /INSERT INTO approvals\s*\(([^)]*)\)/.exec(source);
+    expect(insert, "the INSERT INTO approvals column list could not be read").not.toBeNull();
+    expect(
+      insert?.[1],
+      "the one INSERT INTO approvals must name subject_kind — otherwise the column default decides, and a "
+        + "default is not a classification",
+    ).toContain("subject_kind");
+
+    const declared = [...(/APPROVAL_SUBJECT_KINDS = \[([^\]]*)\]/.exec(source)?.[1] ?? "")
+      .matchAll(/"([a-z_]+)"/g)].map((match) => match[1]!);
+    // Anti-vacuity: if the extractor stops finding the union, every check below passes against an empty set.
+    expect(declared).toContain("send_manifest");
+    expect(declared).toContain("hold_lift");
+
+    const used = new Set<string>();
+    for (const file of sourceFiles("src")) {
+      const text = readFileSync(join(workerDir, file), "utf8");
+      for (const match of text.matchAll(/subject_kind\s*=\s*'([a-z_]+)'/g)) used.add(match[1]!);
+      for (const match of text.matchAll(/subjectKind:\s*"([a-z_]+)"/g)) used.add(match[1]!);
+    }
+    // Anti-vacuity again: the SQL form appears in `approvals.ts` and `dispatch.ts`, the object form in
+    // `manifest.ts` and `holds.ts`. An empty set here would mean the scan, not the source, changed.
+    expect(used.size).toBeGreaterThanOrEqual(2);
+    expect(
+      [...used].filter((kind) => !declared.includes(kind)),
+      "a subject kind used in src/ that APPROVAL_SUBJECT_KINDS does not declare — nothing in the database "
+        + "constrains this column, so this test is the constraint",
+    ).toEqual([]);
   });
 
   it("is written from one place, which is what makes the lexical comparison sound", () => {
