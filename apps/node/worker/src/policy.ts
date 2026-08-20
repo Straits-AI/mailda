@@ -2,6 +2,9 @@ import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
+import {
+  decidersByMailbox, describeShortfall, IMPLICIT_STAGES, shortfallFor, type Stages,
+} from "./approvals.ts";
 import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 
 /**
@@ -140,6 +143,95 @@ export const STATE_FOR: Record<Outcome, { state: "held" | "awaiting" | "withheld
  */
 export const POLICY_REASONS: readonly string[] =
   Object.values(STATE_FOR).map((mapped) => mapped.reason).filter((reason): reason is string => reason !== null);
+
+/* ---- approval stages, which are part of a require_approval version's content ----------------- */
+
+/**
+ * The stages of a `require_approval` version: how many distinct decisions each takes, in review order (#61).
+ *
+ * Stored as one row per stage in `policy_stages`, and **part of the version's frozen content** — covered by
+ * `canonical_sha256`, so a publish that changes only the stage counts is a real change rather than a no-op
+ * refused as identical.
+ *
+ * ## One representation, so two spellings of one rule cannot both exist
+ *
+ * A `require_approval` version with **no stage rows** means one stage of count 1: one decision by somebody
+ * other than the author, which is the least the words can mean, and which is what every version published
+ * before migration 0020 means. Writing `[1]` explicitly is the same rule, so it is **normalised to no rows** on
+ * the way in and canonicalises to the same bytes. Two stored spellings of one rule is how a no-op publish
+ * becomes publishable, and how two policies that gate identically compare as different.
+ *
+ * A stage set on any other outcome is refused. A stage list on an `allow` is a rule nothing reads, which is the
+ * same silent-inertness failure as a condition backed by no data — #60's governing principle, applied to the
+ * shape #61 adds.
+ */
+function normaliseStages(outcome: Outcome, stages: Stages | undefined): number[] {
+  if (stages === undefined || stages.length === 0) return [];
+  if (outcome !== "require_approval") {
+    throw unprocessable("E_STAGES_WITHOUT_APPROVAL", {
+      what: `a ${outcome} policy was given ${stages.length} approval stage(s)`,
+      why: "stages are only read when a policy requires approval, so on any other outcome they would be a "
+        + "rule that silently never fires — the failure #60's five conditions exist to prevent",
+      fix: "set the outcome to require_approval, or leave the stages out",
+    });
+  }
+  for (const count of stages) {
+    if (!Number.isInteger(count) || count < 1) {
+      throw unprocessable("E_BAD_APPROVAL_STAGE", {
+        what: `${count} is not a number of approvals a stage can require`,
+        why: "a stage of 0 is a stage nobody has to satisfy, which is an unconditional pass written to look "
+          + "like a review step",
+        fix: "use a whole number of distinct approvers at or above 1 for each stage, in review order",
+      });
+    }
+  }
+  // The implicit default, spelled explicitly. Normalised away so the stored form is unique.
+  if (stages.length === IMPLICIT_STAGES.length && stages.every((n, i) => n === IMPLICIT_STAGES[i])) return [];
+  return [...stages];
+}
+
+/** The stage set a version actually asks for: its rows, or the implicit single stage when it has none. */
+export async function stagesOfVersion(env: Env, versionId: string): Promise<number[]> {
+  const { results } = await env.CATALOG.prepare(
+    "SELECT required_count FROM policy_stages WHERE policy_version_id = ? ORDER BY ordinal",
+  ).bind(versionId).all<{ required_count: number }>();
+  return results.length === 0 ? [...IMPLICIT_STAGES] : results.map((row) => row.required_count);
+}
+
+/**
+ * The stage set a *seal* faces, folded over every matching `require_approval` version.
+ *
+ * **`max` per ordinal**, which is #60's own conflict resolution reused rather than a second rule invented for
+ * stages: two policies requiring approval of one send are both in force, so stage 2 requires whichever of them
+ * asks for more, and the chain is as long as the longest. The fold is therefore narrowing in the same direction
+ * the outcome order is — it can only ever demand more, never fewer, which is what keeps §18's "stricter fails
+ * closed" true of the stages as well as of the outcome.
+ *
+ * One query for every matching version. Versions with no rows contribute the implicit single stage, which is
+ * why a version id set with nothing in `policy_stages` still returns `[1]` rather than `[]` — an empty stage set
+ * would be an approval satisfied by nobody.
+ */
+export async function requiredStages(env: Env, versionIds: readonly string[]): Promise<number[]> {
+  if (versionIds.length === 0) return [];
+  const placeholders = versionIds.map(() => "?").join(", ");
+  const { results } = await env.CATALOG.prepare(
+    `SELECT policy_version_id, ordinal, required_count FROM policy_stages
+      WHERE policy_version_id IN (${placeholders}) ORDER BY policy_version_id, ordinal`,
+  ).bind(...versionIds).all<{ policy_version_id: string; ordinal: number; required_count: number }>();
+
+  const perVersion = new Map<string, number[]>();
+  for (const versionId of versionIds) perVersion.set(versionId, []);
+  for (const row of results) perVersion.get(row.policy_version_id)?.push(row.required_count);
+
+  const folded: number[] = [];
+  for (const stages of perVersion.values()) {
+    const effective = stages.length === 0 ? IMPLICIT_STAGES : stages;
+    effective.forEach((count, index) => {
+      folded[index] = Math.max(folded[index] ?? 0, count);
+    });
+  }
+  return folded;
+}
 
 /* ---- conditions ----------------------------------------------------------------------------- */
 
@@ -335,8 +427,18 @@ async function orgDailyVolume(env: Env, ctx: Ctx, orgId: string): Promise<number
  *
  * `null` and absent serialize identically, because they mean the same thing — unconstrained — and a publish
  * that changed `undefined` to `null` changing nothing must therefore be refused.
+ *
+ * **The stage set is appended, and the default appends nothing** (#61). Stages are part of a version's content,
+ * so changing a count is a change worth publishing; and because the implicit single stage normalises to no
+ * rows, the default contributes the empty string — which keeps every hash written before migration 0020 valid
+ * rather than needing a backfill to stay comparable. The separator is a character no field can contain, so a
+ * stage set cannot be confused with the tail of a condition.
  */
-export function canonicalConditions(outcome: Outcome, conditions: PolicyConditions): string {
+export function canonicalConditions(
+  outcome: Outcome,
+  conditions: PolicyConditions,
+  stages?: Stages,
+): string {
   const bit = (value: boolean | null | undefined): string =>
     value === null || value === undefined ? "" : value ? "1" : "0";
   const text = (value: string | null | undefined): string => value ?? "";
@@ -349,6 +451,7 @@ export function canonicalConditions(outcome: Outcome, conditions: PolicyConditio
     bit(conditions.recipientExternal),
     bit(conditions.isReply),
     num(conditions.orgDailyVolumeMin),
+    stages === undefined || stages.length === 0 ? "" : `|${stages.join(",")}`,
   ].join("");
 }
 
@@ -362,6 +465,11 @@ export interface DraftRecord {
   versionId: string;
   outcome: Outcome;
   conditions: PolicyConditions;
+  /**
+   * The stage set as stored: empty means the implicit single stage, and only a `require_approval` draft can
+   * carry any. See `normaliseStages` for why one rule has exactly one stored spelling.
+   */
+  stages: number[];
 }
 
 function requireAdminOrThrow(actorUserId: string): CallerError {
@@ -373,7 +481,11 @@ function requireAdminOrThrow(actorUserId: string): CallerError {
   });
 }
 
-function validate(outcome: string, conditions: PolicyConditions): Outcome {
+function validate(
+  outcome: string,
+  conditions: PolicyConditions,
+  stages: Stages | undefined,
+): { outcome: Outcome; stages: number[] } {
   if (!isOutcome(outcome)) {
     throw unprocessable("E_BAD_POLICY_OUTCOME", {
       what: `${JSON.stringify(outcome)} is not a policy outcome`,
@@ -394,7 +506,7 @@ function validate(outcome: string, conditions: PolicyConditions): Outcome {
       fix: "use a whole number of sends at or above 1, or omit the condition entirely",
     });
   }
-  return outcome;
+  return { outcome, stages: normaliseStages(outcome, stages) };
 }
 
 /**
@@ -408,12 +520,12 @@ export async function createPolicyDraft(
   ctx: Ctx,
   orgId: string,
   actorUserId: string,
-  input: { name: string; outcome: string; conditions?: PolicyConditions },
+  input: { name: string; outcome: string; conditions?: PolicyConditions; stages?: Stages },
 ): Promise<DraftRecord> {
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
   const conditions = input.conditions ?? {};
-  const outcome = validate(input.outcome, conditions);
+  const { outcome, stages } = validate(input.outcome, conditions, input.stages);
   const name = input.name.trim();
   if (name.length === 0) {
     throw unprocessable("E_POLICY_NEEDS_A_NAME", {
@@ -442,40 +554,42 @@ export async function createPolicyDraft(
   const policyId = ctx.id("pol");
   const versionId = ctx.id("plv");
   const at = new Date(ctx.now()).toISOString();
-  const hash = await sha256Hex(canonicalConditions(outcome, conditions));
+  const hash = await sha256Hex(canonicalConditions(outcome, conditions, stages));
 
   await auditedBatch<never>(
     env, ctx, orgId,
     {
       action: "policy.drafted", outcome: "ok", actorUserId, subject: policyId,
-      detail: { name, policyOutcome: outcome, versionId },
+      detail: { name, policyOutcome: outcome, versionId, stages },
     },
     (entry) => [
       env.CATALOG.prepare(
         "INSERT INTO policies (id, org_id, name, created_by, created_at) VALUES (?,?,?,?,?)",
       ).bind(policyId, orgId, name, actorUserId, at),
-      draftInsert(env, orgId, policyId, versionId, outcome, conditions, hash, actorUserId, at),
+      ...draftInsert(env, ctx, orgId, policyId, versionId, outcome, conditions, stages, hash, actorUserId, at),
       entry,
     ],
   );
 
-  return { policyId, versionId, outcome, conditions };
+  return { policyId, versionId, outcome, conditions, stages };
 }
 
 function draftInsert(
   env: Env,
+  ctx: Ctx,
   orgId: string,
   policyId: string,
   versionId: string,
   outcome: Outcome,
   conditions: PolicyConditions,
+  stages: readonly number[],
   hash: string,
   actorUserId: string,
   at: string,
-): D1PreparedStatement {
+): D1PreparedStatement[] {
   const bit = (value: boolean | null | undefined): number | null =>
     value === null || value === undefined ? null : value ? 1 : 0;
-  return env.CATALOG.prepare(
+  const version = env.CATALOG.prepare(
     `INSERT INTO policy_versions
        (id, org_id, policy_id, version, state, outcome,
         when_mailbox_id, when_actor_user_id, when_recipient_external, when_is_reply,
@@ -491,6 +605,16 @@ function draftInsert(
     conditions.orgDailyVolumeMin ?? null,
     hash, actorUserId, at,
   );
+  // The version and its stages are one draft, so they are one list of statements handed to one transaction.
+  // A draft whose stages committed without it, or the reverse, would be a rule whose review chain and whose
+  // conditions came from different edits.
+  return [
+    version,
+    ...stages.map((required, index) => env.CATALOG.prepare(
+      `INSERT INTO policy_stages (id, org_id, policy_version_id, ordinal, required_count, created_at)
+       VALUES (?,?,?,?,?,?)`,
+    ).bind(ctx.id("pst"), orgId, versionId, index + 1, required, at)),
+  ];
 }
 
 /**
@@ -506,12 +630,12 @@ export async function editPolicyDraft(
   orgId: string,
   actorUserId: string,
   policyId: string,
-  input: { outcome: string; conditions?: PolicyConditions },
+  input: { outcome: string; conditions?: PolicyConditions; stages?: Stages },
 ): Promise<DraftRecord> {
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
   const conditions = input.conditions ?? {};
-  const outcome = validate(input.outcome, conditions);
+  const { outcome, stages } = validate(input.outcome, conditions, input.stages);
 
   const policy = await env.CATALOG.prepare(
     "SELECT id FROM policies WHERE org_id = ? AND id = ? LIMIT 1",
@@ -526,27 +650,36 @@ export async function editPolicyDraft(
 
   const versionId = ctx.id("plv");
   const at = new Date(ctx.now()).toISOString();
-  const hash = await sha256Hex(canonicalConditions(outcome, conditions));
+  const hash = await sha256Hex(canonicalConditions(outcome, conditions, stages));
 
   // The old draft goes and the new one arrives in one transaction, because `pv_one_draft` permits exactly
   // one — so a delete that committed without its insert would leave a policy that is published-only and an
   // edit that vanished.
+  //
+  // The old draft's stages go with it, and the delete is written as a subquery on the draft rather than on a
+  // version id this function happens to know: `pst_ordinal` is unique per version, so a stage row left behind
+  // would belong to a version that no longer exists — invisible to every read here and waiting to be counted by
+  // whatever joins those tables next.
   await auditedBatch<never>(
     env, ctx, orgId,
     {
       action: "policy.drafted", outcome: "ok", actorUserId, subject: policyId,
-      detail: { policyOutcome: outcome, versionId, replacedDraft: true },
+      detail: { policyOutcome: outcome, versionId, stages, replacedDraft: true },
     },
     (entry) => [
       env.CATALOG.prepare(
+        `DELETE FROM policy_stages WHERE org_id = ? AND policy_version_id IN (
+           SELECT id FROM policy_versions WHERE org_id = ? AND policy_id = ? AND state = 'draft')`,
+      ).bind(orgId, orgId, policyId),
+      env.CATALOG.prepare(
         "DELETE FROM policy_versions WHERE org_id = ? AND policy_id = ? AND state = 'draft'",
       ).bind(orgId, policyId),
-      draftInsert(env, orgId, policyId, versionId, outcome, conditions, hash, actorUserId, at),
+      ...draftInsert(env, ctx, orgId, policyId, versionId, outcome, conditions, stages, hash, actorUserId, at),
       entry,
     ],
   );
 
-  return { policyId, versionId, outcome, conditions };
+  return { policyId, versionId, outcome, conditions, stages };
 }
 
 export interface PublishedVersion {
@@ -555,6 +688,66 @@ export interface PublishedVersion {
   version: number;
   outcome: Outcome;
   supersededVersionId: string | null;
+}
+
+/**
+ * Refuses a `require_approval` publication whose stages nobody can satisfy (#61).
+ *
+ * ## Which mailboxes are checked, and why it is all of them
+ *
+ * A policy with `when_mailbox_id` applies to that mailbox. A policy **without** one applies to every send from
+ * every mailbox, so it is checked against every mailbox in the organization and refused if *any* of them is
+ * short. That is the fail-closed reading: the alternative — refusing only when no mailbox at all could satisfy
+ * it — publishes a rule that silently parks every send from the one mailbox with no approvers, which is the
+ * exact outcome this check exists to prevent, reached by being lenient in the one place it mattered.
+ *
+ * An organization with no mailboxes has nothing to gate, so nothing is refused. Not a special case worth a
+ * branch: the loop simply has no rows.
+ *
+ * ## What publication cannot know, and why the second check is not redundant
+ *
+ * **The author.** The eligible set at evaluation is the holders *minus the author*, and there is no author at
+ * publication — so this checks the strictly weaker condition "enough people hold the relation at all". A policy
+ * that passes here can still be unsatisfiable for one particular author who happens to be one of the approvers,
+ * which is exactly what the check at seal catches. Grants also change afterwards, which is the other half.
+ *
+ * Both halves are why publication-only was rejected: revoking `approval.decide` would otherwise make a live
+ * policy unsatisfiable in silence.
+ */
+async function assertApprovable(
+  env: Env,
+  orgId: string,
+  policyId: string,
+  versionId: string,
+  whenMailboxId: string | null,
+): Promise<void> {
+  const stages = await stagesOfVersion(env, versionId);
+  const byMailbox = await decidersByMailbox(env, orgId, whenMailboxId ?? undefined);
+
+  let mailboxes: string[];
+  if (whenMailboxId !== null) {
+    mailboxes = [whenMailboxId];
+  } else {
+    const { results } = await env.CATALOG.prepare(
+      "SELECT id FROM mailboxes WHERE org_id = ? ORDER BY id",
+    ).bind(orgId).all<{ id: string }>();
+    mailboxes = results.map((row) => row.id);
+  }
+
+  for (const mailboxId of mailboxes) {
+    const eligible = byMailbox.get(mailboxId)?.size ?? 0;
+    const shortfall = shortfallFor(stages, eligible);
+    if (shortfall === null) continue;
+    throw conflict("E_APPROVAL_UNSATISFIABLE", {
+      what: `policy ${policyId} would require an approval nobody can give: ${describeShortfall(shortfall, mailboxId)}`,
+      why: "a rule that gates a send on a review no eligible person can perform does not govern the send, it "
+        + "parks it — and a policy that reads as governance and fires never is worse than one that does not "
+        + "exist (#60)",
+      fix: `grant approval.decide on mailbox ${mailboxId} to ${shortfall.short} more person(s), or lower the `
+        + "stage counts. Note that the author of a send is never eligible to approve it, so an approval needs "
+        + "one more holder than the counts alone suggest whenever the author is also an approver",
+    });
+  }
 }
 
 /**
@@ -568,6 +761,11 @@ export interface PublishedVersion {
  * The refusal matters beyond tidiness. A version is what a send binds, so a no-op publish would mint a
  * version whose only distinguishing property is its id, and #62's `max(current) > max(bound)` comparison
  * would then be answering questions about an object that represents no decision anybody made.
+ *
+ * **A `require_approval` version whose stages cannot be satisfied is refused here** (#61), naming which stage
+ * and how many short. The eligible set is knowable at publication, so this is feedback at the moment somebody
+ * is looking at the rule — rather than a send parking in `awaiting` a week later with nothing having failed.
+ * See `assertApprovable` for what publication can and cannot know.
  */
 export async function publishPolicy(
   env: Env,
@@ -579,9 +777,11 @@ export async function publishPolicy(
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
   const draft = await env.CATALOG.prepare(
-    `SELECT id, outcome, canonical_sha256 FROM policy_versions
+    `SELECT id, outcome, canonical_sha256, when_mailbox_id FROM policy_versions
       WHERE org_id = ? AND policy_id = ? AND state = 'draft' LIMIT 1`,
-  ).bind(orgId, policyId).first<{ id: string; outcome: string; canonical_sha256: string }>();
+  ).bind(orgId, policyId).first<{
+    id: string; outcome: string; canonical_sha256: string; when_mailbox_id: string | null;
+  }>();
 
   if (draft === null) {
     throw conflict("E_NO_POLICY_DRAFT", {
@@ -613,6 +813,12 @@ export async function publishPolicy(
       why: "the stored value is outside the four outcomes, so it cannot be ranked",
       fix: "re-create the draft with a valid outcome",
     });
+  }
+
+  // Before anything is written: a rule that gates a send on a review nobody can perform is worse than no rule,
+  // for the reason every absent condition in this file is absent.
+  if (draft.outcome === "require_approval") {
+    await assertApprovable(env, orgId, policyId, draft.id, draft.when_mailbox_id);
   }
 
   // Supersede first, then promote. `pv_version` is UNIQUE on (policy_id, version), so two concurrent

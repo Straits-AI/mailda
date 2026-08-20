@@ -139,6 +139,17 @@ const SITES: Site[] = [
       "clause in the SQL is what makes that a property rather than a promise.",
   },
   {
+    file: "src/policy.ts",
+    target: "policy_stages",
+    content: false,
+    why:
+      "The stages of the **draft** being replaced, deleted in the same transaction that inserts the new "
+      + "draft's — the delete is bounded by a subquery on `state = 'draft'`, exactly like the "
+      + "`policy_versions` delete above it and for the same reason. A stage row is an ordinal and a count of "
+      + "required approvers: no mail, no message, and not consulted by evaluation. A published version's "
+      + "stages are what an approval freezes a copy of, and nothing in this Worker deletes those.",
+  },
+  {
     file: "src/merge.ts",
     target: "cases",
     content: true,
@@ -352,7 +363,8 @@ describe("the closed world over content-destroying call sites", () => {
   });
 
   it("has no lift path, silent or otherwise", () => {
-    // #64 decided lifting takes dual approval and #61's machinery does not exist, so this build has no lift —
+    // #64 decided lifting takes dual approval; #61 built that machinery and the lift itself is still unbuilt, so
+    // this build has no lift —
     // which is a decision that can be undone in two ways. Removing a hold row is one, and the classification
     // test above already fails on it: `DELETE FROM holds` would be an undeclared call site. **Editing** a
     // hold's bounds is the quieter one — an `UPDATE holds SET to_date = …` lifts a hold without deleting
@@ -363,9 +375,9 @@ describe("the closed world over content-destroying call sites", () => {
     expect(
       offenders.length === 0 ? null
         : `${offenders.join(", ")} — narrowing a hold's window is a lift, and #64 requires two distinct `
-          + "approvers plus a mandatory reason for one. If lifting is being built, it needs #61's approval "
-          + "stage, a `hold.lifted` audit action, and the lifted_at/lifted_reason columns migration 0018 "
-          + "deliberately left out",
+          + "approvers plus a mandatory reason for one. If lifting is being built, it goes through #61's "
+          + "approvals — one stage of {count: 2} — plus a `hold.lifted` audit action and the "
+          + "lifted_at/lifted_reason columns migration 0018 deliberately left out",
     ).toBeNull();
   });
 

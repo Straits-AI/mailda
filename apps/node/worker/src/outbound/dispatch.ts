@@ -15,7 +15,8 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  *   held             sealed, undispatched, still cancellable
  *   awaiting         a policy gate somebody can clear; `state_reason` says which gate (#60)
  *   cancelled        stopped during the hold window by a person
- *   withheld         this Node declined; `state_reason` says why — `authority_lost` or `policy_denied`
+ *   withheld         this Node declined; `state_reason` says why — `authority_lost`, `policy_denied`,
+ *                    `approval_denied` or `approval_unsatisfiable`
  *   throttled        rate-limited — provably never left
  *   refused          rejected at the API boundary — provably never left
  *   suppressed       on the suppression list — will never arrive, and that is knowable now
@@ -31,11 +32,18 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  * `awaiting` is neither, so a gated send cannot leave — there is no guard to forget, because the predicate
  * that lets a send out never admitted it. `test/policy.test.ts` asserts that rather than trusting it.
  *
- * **What #60 does not build: the release path.** A hold is cleared by any `send.propose` holder and an
- * approval by an `approval.decide` holder, and neither act exists yet — #61 owns the approval machinery and
- * #62 owns the dispatch-time recheck. So today an `awaiting` send drains in exactly one way: its author
- * **cancels** it, which `cancelSend` now permits for that reason. Said plainly rather than left to be
- * discovered, because a queue with no drain is the failure `deny` was kept out of `awaiting` to avoid.
+ * **How an `awaiting` send drains, and which half is still missing.** An approval-gated send is released by
+ * `decideApproval` in `src/approvals.ts` (#61): the decision that closes the last stage puts the manifest back
+ * to `held` in the same transaction, and from there the ordinary hold window and this sweep take it. A denial
+ * puts it in `withheld` with `approval_denied`, and a withdrawal that leaves too few eligible approvers puts it
+ * in `withheld` with `approval_unsatisfiable`.
+ *
+ * **A `policy_hold` still has no release act.** #60 gave it to any `send.propose` holder and nobody built it,
+ * so a held-by-policy send drains in exactly one way: its author **cancels** it, which `cancelSend` permits for
+ * that reason. Said plainly rather than left to be discovered, because a queue with no drain is the failure
+ * `deny` was kept out of `awaiting` to avoid — and it is now one gate rather than two.
+ *
+ * The dispatch-time recheck of an approved send is #62's, not built here.
  *
  * ## Retry is permitted only where the send provably never left
  *
@@ -56,12 +64,16 @@ export type SendState =
 /**
  * The two states a person may still stop.
  *
- * `awaiting` belongs here for a reason sharper than convenience: nothing else in this build clears it, so
- * without cancellation a policy-gated send would be **unstoppable** — accumulating in a state that reads as
- * pending with no act that resolves it. That is precisely the argument #60's `deny` mapping uses against
- * parking denials in `awaiting`, and it applies to gates too until #61 ships the release act. Cancelling is
- * already the author's own authority (`send.propose`, the same relation sealing took), so this widens no
- * permission.
+ * `awaiting` belongs here for a reason sharper than convenience: a `policy_hold` has no release act in this
+ * build, so without cancellation a held-by-policy send would be **unstoppable** — accumulating in a state that
+ * reads as pending with no act that resolves it. That is precisely the argument #60's `deny` mapping uses
+ * against parking denials in `awaiting`. #61 gave the *approval* gate its release, and left the hold's alone.
+ *
+ * It also stays here for the approval gate, and that is a decision rather than an oversight: an author may
+ * cancel their own send while an approval is pending, because it is their message and cancelling is their own
+ * authority (`send.propose`, the same relation sealing took). What they may not do is decide it — see
+ * `decideApproval`'s refusal of an author. The pending request goes with the send, in the same transaction:
+ * see `cancelSend`.
  */
 const STOPPABLE: ReadonlySet<SendState> = new Set<SendState>(["held", "awaiting"]);
 
@@ -83,6 +95,18 @@ export interface DispatchResult {
  *
  * The predicate is built from `STOPPABLE` rather than written out, so the set and the SQL cannot disagree —
  * a second literal list is how `awaiting` would have been added to one and not the other.
+ *
+ * **A pending approval is settled in the same transaction** (#61). Cancelling is the drain `awaiting` has, so a
+ * send gated on an approval can be cancelled out from under the people asked to decide it, and the request has
+ * to go with it for two reasons rather than for tidiness:
+ *
+ *   - it is the whole of what stops `decideApproval` reporting a released send that is in fact cancelled. That
+ *     function's completion transition is conditional on the approval being `pending`, and its manifest update
+ *     is conditional on the send being `awaiting` — so without this, approving a cancelled send closed the
+ *     approval, moved nothing, and returned `manifestState: "held"` for a manifest that says `cancelled`;
+ *   - `apr_pending` is described as holding exactly the outstanding set, and an approver's queue is built from
+ *     it. A request whose send no longer exists is dead work nobody can clear, which is the state
+ *     `src/approvals.ts` refuses to create at the seal and must therefore not create here either.
  */
 export async function cancelSend(
   env: Env,
@@ -112,6 +136,14 @@ export async function cancelSend(
       env.CATALOG.prepare(
         `UPDATE send_recipients SET submission_state = 'cancelled', submission_state_at = ?
           WHERE org_id = ? AND manifest_id = ?`,
+      ).bind(new Date(ctx.now()).toISOString(), orgId, manifestId),
+      // The approval of a cancelled send, settled with it (#61). Unconditional for the same reason as the
+      // recipients above, and free: one more statement in a `batch()` this call was already making. `state`
+      // rather than a deletion, because "somebody was asked and then the send was withdrawn" is a fact the
+      // trail's `send.cancelled` entry points at and `approval_decisions` still holds the answers to.
+      env.CATALOG.prepare(
+        `UPDATE approvals SET state = 'cancelled', resolved_at = ?
+          WHERE org_id = ? AND manifest_id = ? AND state = 'pending'`,
       ).bind(new Date(ctx.now()).toISOString(), orgId, manifestId),
     ],
     {

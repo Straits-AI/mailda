@@ -49,6 +49,8 @@ const MAILBOX = "mbx_policycost";
 const ADDRESS = "support@acme.example";
 const ADMIN = "usr_admin_pc";
 const AUTHOR = "usr_author_pc";
+/** #61: a `require_approval` policy cannot be published unless somebody can decide it. */
+const APPROVER = "usr_approver_pc";
 
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
@@ -98,6 +100,12 @@ beforeEach(async () => {
       .bind(ADMIN, ORG, "admin@local.invalid", at),
     testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
       .bind(AUTHOR, ORG, "author@local.invalid", at),
+    testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(APPROVER, ORG, "approver@local.invalid", at),
+    testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'approval.decide','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, APPROVER, MAILBOX, at),
     testEnv.CATALOG.prepare(
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
@@ -185,7 +193,7 @@ describe("what policy evaluation costs (#60's owed receipt)", () => {
     expect(cost.d1Executions).toBe(1);
   });
 
-  it("adds one to a seal in the ordinary case, and three at the worst case", async () => {
+  it("adds one to a seal in the ordinary case, and four more when the gate is an approval", async () => {
     // The figure that actually matters, because `mail.send.propose` is the most expensive Butler node and
     // `butler-step-cost.md` divides the per-instance budget by its bound.
     const bare = metering(testEnv);
@@ -206,9 +214,12 @@ describe("what policy evaluation costs (#60's owed receipt)", () => {
     expect(sealed.state).toBe("awaiting");
     report("seal/both-derived-conditions", gated.cost);
 
-    // Exactly two more operations than the bare seal: the domain set and the counter. The published-set read
-    // is in both, because a seal always evaluates.
-    expect(gated.cost.subrequests - bare.cost.subrequests).toBe(2);
+    // Four more operations than the bare seal, and the split is worth naming because two of them are not #60's.
+    // The domain set and today's counter are policy evaluation's two derived inputs. The other two are #61's:
+    // the stage set of every matching require_approval version, and the eligible approvers on the mailbox — both
+    // spent **only** on the require_approval path, which is the same laziness the derived inputs use. A seal
+    // gated by a hold, or not gated at all, still pays nothing for the approval machinery.
+    expect(gated.cost.subrequests - bare.cost.subrequests).toBe(4);
     // And the whole seal still fits inside the bound `butler-step-cost.md`'s loop arithmetic divides by.
     expect(gated.cost.subrequests).toBeLessThanOrEqual(BUDGETS["butler.step_cost_max_send_propose"]);
   });

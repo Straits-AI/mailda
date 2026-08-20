@@ -85,10 +85,11 @@ export const AUDIT_ACTIONS = {
   "send.outcome_unknown": { says: "Hand-over neither succeeded nor failed observably." },
 
   /*
-   * Layer 5: legal hold (#64). `hold.lifted` is deliberately absent — there is no lift path in this build,
-   * and #64 decided lifting takes dual approval that #61 has not built. A declared action nothing emits is
-   * a category of one, which is exactly what the catalogue exists to prevent, and `audit-coverage.test.ts`
-   * fails on an action no table claims.
+   * Layer 5: legal hold (#64). `hold.lifted` is deliberately absent — there is no lift path in this build.
+   * #61's dual-approval machinery now exists, so what is missing is the lift itself: the columns 0018 left
+   * out, and an approval whose target is a hold rather than a send. A declared action nothing emits is a
+   * category of one, which is exactly what the catalogue exists to prevent, and `audit-coverage.test.ts`
+   * fails on an action no table claims — so this action arrives with the act, not before it.
    */
   "hold.placed": {
     says: "An administrator placed a legal hold over a mailbox and a date window; placing only preserves.",
@@ -113,6 +114,34 @@ export const AUDIT_ACTIONS = {
   },
   "policy.published": {
     says: "An administrator made a policy version live; the previous version froze and was superseded.",
+  },
+
+  /*
+   * Layer 5: approvals (#61). Three actions, one per act, and none of them is `standalone` — every one
+   * accompanies rows in `approvals` or `approval_decisions`, so the compiler routes all three through
+   * `auditedBatch` rather than trusting anybody to pick the atomic form.
+   *
+   * `approval.requested` is audited even though the seal that causes it is already audited, and the boundary
+   * that exempts an ordinary claim is what argues for it. `send.sealed` records a fact about a *send*: which
+   * rules matched and what state it landed in. This records a fact about a **person**: that they are being
+   * asked to decide, at which stage, and how many of them the request needs. Its subject is the approval id
+   * rather than the manifest id, and an approver later asking "when was I asked, and what was asked of me"
+   * cannot answer it from `send.sealed`. An object whose two mutations are audited and whose creation is not
+   * has a trail that starts mid-story.
+   *
+   * There is no `approval.unsatisfiable`, and that is a decision rather than an omission. A stage set that
+   * cannot be filled is not an act somebody took: at seal it is recorded in `send.sealed`'s detail with the
+   * shortfall, and after a withdrawal it is the consequence of `approval.withdrawn`, whose detail names it. An
+   * action for it would be an entry with no actor, and `send.withheld` already exists for the send's half.
+   */
+  "approval.requested": {
+    says: "A policy required approval, so this Node asked for one; the stages and counts asked for are named.",
+  },
+  "approval.decided": {
+    says: "An eligible person approved or denied a send; a denial is terminal and a completed approval releases it.",
+  },
+  "approval.withdrawn": {
+    says: "An approver took back their own approval while the request was still incomplete.",
   },
 
   /**
@@ -310,58 +339,74 @@ export interface AuditGate {
 }
 
 /**
- * Builds the row and the statement that inserts it, against the chain as it stands right now.
+ * Builds the rows and the statements that insert them, against the chain as it stands right now.
  *
- * Separated from execution because the statement has to be handed to a caller's `batch()` — see
- * `auditedBatch`. The hash is computed here, so it is bound to the tip that was read here; if another
- * writer wins the slot in between, the insert fails on `UNIQUE(org_id, seq)` rather than producing a
+ * Separated from execution because the statements have to be handed to a caller's `batch()` — see
+ * `auditedBatch`. The hashes are computed here, so they are bound to the tip that was read here; if another
+ * writer wins the slot in between, the first insert fails on `UNIQUE(org_id, seq)` rather than producing a
  * second entry claiming the same position.
+ *
+ * **Several events chain to each other, not each to the tip.** Two acts that must not disagree land in one
+ * `batch()` (a seal that requests an approval is the first — #61), and each entry takes the next sequence
+ * number with the previous entry's hash as its predecessor. Reading the tip once and giving both entries
+ * `seq = tip + 1` would be a UNIQUE violation against itself; giving the second one the tip's hash would break
+ * verification at the second link. The whole batch is one transaction, so the chain stays contiguous whether
+ * it commits or not.
  */
-async function buildEntry(
+async function buildEntries(
   env: Env,
   ctx: Ctx,
   orgId: string,
-  event: AuditEvent,
+  events: readonly AuditEvent[],
   gate?: AuditGate,
-): Promise<{ statement: D1PreparedStatement; entry: AppendedEntry }> {
+): Promise<{ statements: D1PreparedStatement[]; entries: AppendedEntry[] }> {
   const tip = await env.CATALOG.prepare(
     "SELECT seq, hash FROM audit_entries WHERE org_id = ? ORDER BY seq DESC LIMIT 1",
   )
     .bind(orgId)
     .first<{ seq: number; hash: string }>();
 
-  const seq = (tip?.seq ?? 0) + 1;
-  const prevHash = tip?.hash ?? GENESIS;
   const at = new Date(ctx.now()).toISOString();
-  const actorKind: ActorKind = event.actorKind ?? (event.actorUserId != null ? "user" : "node");
-  const detail = boundedDetail(event.detail);
-
-  const fields = {
-    seq, at,
-    actorUserId: event.actorUserId ?? null,
-    actorKind,
-    action: event.action,
-    subject: event.subject ?? null,
-    outcome: event.outcome,
-    detail,
-  };
-  const hash = await sha256Hex(prevHash + canonical(fields));
-  const id = ctx.id("aud");
-
   const columns =
     "(id, org_id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, prev_hash, hash)";
-  const values = [id, orgId, seq, at, fields.actorUserId, actorKind, event.action, fields.subject,
-    event.outcome, detail, prevHash, hash];
 
-  const statement = gate === undefined
-    ? env.CATALOG.prepare(`INSERT INTO audit_entries ${columns} VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .bind(...values)
-    : env.CATALOG.prepare(
-        `INSERT INTO audit_entries ${columns}
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (${gate.sql})`,
-      ).bind(...values, ...gate.params);
+  const statements: D1PreparedStatement[] = [];
+  const entries: AppendedEntry[] = [];
+  let seq = tip?.seq ?? 0;
+  let prevHash = tip?.hash ?? GENESIS;
 
-  return { statement, entry: { id, seq, hash } };
+  for (const event of events) {
+    seq += 1;
+    const actorKind: ActorKind = event.actorKind ?? (event.actorUserId != null ? "user" : "node");
+    const detail = boundedDetail(event.detail);
+
+    const fields = {
+      seq, at,
+      actorUserId: event.actorUserId ?? null,
+      actorKind,
+      action: event.action,
+      subject: event.subject ?? null,
+      outcome: event.outcome,
+      detail,
+    };
+    const hash = await sha256Hex(prevHash + canonical(fields));
+    const id = ctx.id("aud");
+
+    const values = [id, orgId, seq, at, fields.actorUserId, actorKind, event.action, fields.subject,
+      event.outcome, detail, prevHash, hash];
+
+    statements.push(gate === undefined
+      ? env.CATALOG.prepare(`INSERT INTO audit_entries ${columns} VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .bind(...values)
+      : env.CATALOG.prepare(
+          `INSERT INTO audit_entries ${columns}
+           SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (${gate.sql})`,
+        ).bind(...values, ...gate.params));
+    entries.push({ id, seq, hash });
+    prevHash = hash;
+  }
+
+  return { statements, entries };
 }
 
 /**
@@ -397,12 +442,42 @@ export async function auditedBatch<T = unknown>(
   /** Makes the entry conditional. See `AuditGate` — the entry must precede what changes the predicate. */
   gate?: AuditGate,
 ): Promise<{ entry: AppendedEntry; results: D1Result<T>[] }> {
+  const { entries, results } = await auditedBatchMany<T>(
+    env, ctx, orgId, [event], (statements) => build(statements[0]!), gate,
+  );
+  return { entry: entries[0]!, results };
+}
+
+/**
+ * The same contract for **two or more** acts that must not disagree, in one transaction.
+ *
+ * The case that needed it: a policy requiring approval means sealing a manifest and requesting an approval are
+ * one indivisible act, and both are answerable — `send.sealed` says what the send is, `approval.requested` says
+ * who is being asked what. Splitting them across two transactions would admit a gated send with no request to
+ * decide, which is the state #60 refused to let `deny` occupy: waiting on something nobody can clear.
+ *
+ * The entries chain to each other (see `buildEntries`), take consecutive sequence numbers, and share one gate
+ * if there is one — all of them insert or none does, which is what "one act" has to mean in the trail as well
+ * as in the tables.
+ *
+ * `auditedBatch` is the one-event case and delegates here, so there is a single append-and-retry path rather
+ * than two that could drift.
+ */
+export async function auditedBatchMany<T = unknown>(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  events: readonly AuditEvent[],
+  /** Receives the audit inserts in order; returns the full batch with them placed where they belong. */
+  build: (auditEntries: D1PreparedStatement[]) => D1PreparedStatement[],
+  gate?: AuditGate,
+): Promise<{ entries: AppendedEntry[]; results: D1Result<T>[] }> {
   let lastError: unknown;
   for (let attempt = 0; attempt < APPEND_ATTEMPTS; attempt++) {
-    const { statement, entry } = await buildEntry(env, ctx, orgId, event, gate);
+    const { statements, entries } = await buildEntries(env, ctx, orgId, events, gate);
     try {
-      const results = await env.CATALOG.batch<T>(build(statement));
-      return { entry, results };
+      const results = await env.CATALOG.batch<T>(build(statements));
+      return { entries, results };
     } catch (error) {
       lastError = error;
       // Somebody else took this sequence number. Nothing committed — that is what the transaction is

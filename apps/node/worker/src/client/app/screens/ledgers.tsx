@@ -184,9 +184,10 @@ export function Outbox() {
                     <td className="num mono dim">{clock(send.state_at)}</td>
                     <td className="num">
                       {send.state === "held" || send.state === "awaiting" ? (
-                        // `awaiting` too, and not as a convenience: nothing else in this build clears a
-                        // policy gate (#61 owns the release act), so without this the only thing a person
-                        // could do with a gated send is watch it. `cancelSend` bounds the authority.
+                        // `awaiting` too, and not as a convenience. An approval-gated send is now cleared by
+                        // an approver (#61), but a `policy_hold` still has no release act — and either way the
+                        // author may stop their own message, which is what this is. `cancelSend` bounds the
+                        // authority to the one they already hold.
                         <button type="button" className="linkish" onClick={() => void stop(send.id)}>
                           stop
                         </button>

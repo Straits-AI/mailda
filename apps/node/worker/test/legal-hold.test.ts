@@ -25,9 +25,9 @@ import { reconcileEvidence, formatReconcile } from "../src/reconcile.ts";
  *
  * ## What it deliberately does not test
  *
- * Lifting, expiry, and "the matter closed" — **none of them exist**. #64 gave lifting dual approval and #61's
- * approval machinery is not built, so there is no lift path to test, and a test that invented one would be
- * asserting a decision this build contradicts. What is tested instead is that `doctor` *says* the path is
+ * Lifting, expiry, and "the matter closed" — **none of them exist**. #64 gave lifting dual approval and #61 has
+ * now built that machinery, but the lift itself has not been written, so there is no lift path to test and a
+ * test that invented one would be asserting a decision this build contradicts. What is tested instead is that `doctor` *says* the path is
  * missing, and that nothing in `src/` can quietly remove a hold (see the closed-world file, which fails on an
  * undeclared `DELETE FROM holds` and on any `UPDATE holds`).
  */

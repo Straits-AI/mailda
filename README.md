@@ -121,8 +121,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,586 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 30 receipts in [`docs/receipts/`](./docs/receipts/) generating 169 verified constants |
-| **Code** | A measurement harness and one Worker. 488 tests, checked on every push. Not a product. |
+| **Measurements** | 32 receipts in [`docs/receipts/`](./docs/receipts/) generating 178 verified constants |
+| **Code** | A measurement harness and one Worker. 687 tests across two runtimes, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -397,6 +397,66 @@ drain, because the argument above applies to gates too until the approval act ex
 own gated send, and until they can, "waiting for somebody to clear this" and "unstoppable" would have rendered
 identically.
 
+**Approvals are ordered stages with a count, which is one mechanism where the contract asked for three.** The
+blueprint wants sequential, parallel and dual review. They are not three features: parallel is one stage of
+count 2, sequential is two stages of count 1, and dual control is whichever of those an organization means. The
+order is on the **stages**, not on the people — which is what makes an order expressible at all, because a set
+defined by a relation has no natural sequence and naming people in a policy would widen authority. Each stage's
+membership stays derived from the `approval.decide` relation on the mailbox, minus the author, minus everybody
+who has already decided.
+
+**Distinctness is measured on the person, and that is the subtle one.** A principal authorizes as themselves
+*plus every team they belong to*, so a relation can be held through a team — which means the holder set is a set
+of tuples while a decider is a human being. One person in two teams that both hold `approval.decide` would
+satisfy a count of 2 if the count were taken at the tuple layer: dual control defeated by something that looks
+exactly like working code. It is measured on `user_id`, and twice — the eligible-set query resolves teams to
+people and de-duplicates, and a UNIQUE index on `(approval, decider)` is what holds when two decisions race. The
+test for it constructs that person on purpose. Break the resolution and the suite reports
+`expected [ 'tm_appr_a', 'tm_appr_b', …(1) ] to deeply equal [ 'usr_appr_dual' ]` — team ids where people
+should be, which is the bug in one line.
+
+**Refused at publication, and re-checked at evaluation, because one check would have been silent.** A policy
+requiring two approvers on a mailbox where one person holds the relation is refused when somebody tries to
+publish it, naming the mailbox, the stage and how many short. It is then checked *again* at the seal — and that
+second check is the point rather than belt-and-braces: publication cannot know who will write the message, and
+an author is never eligible to approve their own send, so a policy that passes publication can still be
+unsatisfiable for one particular person. More importantly, revoking `approval.decide` afterwards would otherwise
+make a live policy unsatisfiable in **silence**, with gated sends collecting in a state that reads as waiting for
+somebody. Unsatisfiable now means `withheld` with a reason naming the shortfall, which is a refusal a person can
+act on. What is *not* covered is named in `docs/approvals.md` rather than implied: a send already waiting when
+the last approver loses the relation is not re-checked, because nothing sweeps that state yet.
+
+**Withdrawing is allowed and denying is final, and the asymmetry is the design.** An approver who learns
+something after approving can take their approval back while the request is incomplete. Without that, their only
+remedy is persuading a colleague to deny — which records *somebody else's judgement* as the reason a message was
+stopped, in a trail whose entire value is that it does not do that. A denial needs no counterpart, because
+composing again mints a new manifest and a fresh approval. Withdrawal is terminal for the withdrawer, so the
+eligible set only ever shrinks and no amount of withdraw-then-approve lets one person fill two slots.
+
+**Cancelling the send settles the request it was waiting on, in the same transaction.** Cancelling is the drain
+a waiting send has, and the author may use it while other people are being asked — so the request has to go with
+it. Not for tidiness: the queue an approver reads is built from open requests, and one whose send no longer
+exists is work nobody can clear; and every refusal on the decision path keys on the request's state, so leaving
+it open let an approval of a cancelled send close the request, move nothing, and still report the send as
+released. A request already answered is left alone.
+
+**The withdraw-versus-final-approval race is a conditional UPDATE, and its zero is read carefully.** Completion
+is *"every stage satisfied and nothing withdrawn"*, evaluated inside the database at the instant of the write.
+`changes = 0` there does **not** mean somebody withdrew — every non-final approval leaves it zero, legitimately,
+which is why writing that down would have been a claim the code contradicts on its most ordinary path. The signal
+is "this decision should have closed the last stage and did not", and *that* means a withdrawal, because a
+competing finalisation is refused by the predicate every statement in a decision shares rather than recorded.
+
+**One constraint was cut, with the reason recorded rather than a column added for it.** A stage was meant to be
+able to say "a member of team T". `team_members` turns out to be read-only in the whole product — three SELECTs,
+nothing writes it — and there is no `teams` table at all, so a team has no name and no existence of its own. A
+team-scoped stage would be **expressible and unusable**: no team can be created through any surface, and
+publication could not check that a named team exists, only that it currently has members. That is the same
+failure as a condition backed by no data, and a nullable `team_id` that is always NULL is that failure wearing a
+column. So the constraint is named absent, what would have to exist first is filed as an issue, and what it
+actually costs is said plainly: the team *labels* on a chain, not the chain — ordered stages of count 1 still
+give sequential review by two distinct people in a fixed order.
+
 **The cost was owed as a receipt and came back one third of the estimate.** The resolution counted "at most
 three queries" by reading the source, and said so in as many words — *"counted by reading, not measured, and
 that is a hypothesis."* Measured with `src/cost-meter.ts` against real D1 in `workerd`: three is the ceiling
@@ -617,6 +677,7 @@ AGENTS.md                              how we work; read before contributing
 docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
+docs/approvals.md                      stages, eligibility, the races, and what is absent
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

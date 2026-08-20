@@ -190,6 +190,8 @@ const EXPECTED_TABLES = [
   "holds",
   // Migration 0019 (Layer 5: the policy object).
   "policies", "policy_versions",
+  // Migration 0020 (Layer 5: approvals).
+  "policy_stages", "approvals", "approval_stages", "approval_decisions",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -1001,9 +1003,11 @@ async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Fin
     ok: true,
     detail:
       "There is no way to lift a legal hold on this Node. #64 decided lifting takes dual approval — one " +
-      "stage of two distinct approvers with a mandatory reason — and #61's approval machinery is not built, " +
-      "so a hold placed here is permanent until a lift ships. Placing is deliberately the easy half: it " +
-      "only ever preserves. Nothing here should grow a single-admin lift, which would contradict #64.",
+      "stage of two distinct approvers with a mandatory reason — and #61's approval machinery now exists, so " +
+      "what is missing is the lift itself: a hold.lifted action, the lifted_at and lifted_reason columns 0018 " +
+      "left out, and a call into approvals. Until that ships a hold placed here is permanent. Placing is " +
+      "deliberately the easy half: it only ever preserves. Nothing here should grow a single-admin lift, " +
+      "which would contradict #64.",
   };
 
   if (orgId === null) {

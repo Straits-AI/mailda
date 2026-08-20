@@ -21,9 +21,12 @@ import { conflict, notFound, unprocessable } from "./errors.ts";
  *
  * There is **no lift path in this build**, and that is not an omission to be tidied up by whoever reads this
  * next. #64 decided lifting takes dual approval — one stage of `{count: 2}`, distinct on `user_id`, plus a
- * mandatory reason — and #61's approval machinery does not exist. A single-admin lift would contradict that
- * decision, so there is none, and the table has no `lifted_at` for the same reason: a column nothing writes
- * cannot tell a reader whether `NULL` means "still in force" or "lifting was never built".
+ * mandatory reason. That machinery now exists (`src/approvals.ts`, #61) and the lift still does not: what it
+ * needs is a `hold.lifted` audit action, the `lifted_at` and `lifted_reason` columns migration 0018
+ * deliberately left out, and an approval requested against the hold rather than against a send manifest —
+ * which is a shape #61 built for one target and did not generalise. A single-admin lift would contradict #64,
+ * so there is none, and the table has no `lifted_at` for the same reason: a column nothing writes cannot tell
+ * a reader whether `NULL` means "still in force" or "lifting was never built".
  *
  * That is why `anyActiveHold` does not overclaim by using the word *active*: the active set and the whole
  * table are the same set today, and the moment a lift lands this file is where the difference appears.
@@ -203,8 +206,9 @@ export async function assertNotHeld(
     what: `this ${target.kind} is covered by legal hold ${named} on mailbox ${target.mailboxId}, so it was not deleted`,
     why: "a hold preserves what a matter may need, evaluated at the moment of the act rather than from a "
       + "list, and the attempt has been recorded as hold.blocked",
-    fix: "nothing in this build can lift a hold: #64 requires two distinct approvers and #61's approval "
-      + "machinery is not built. Until it is, work with the copy rather than destroying it — an "
+    fix: "nothing in this build can lift a hold: #64 requires two distinct approvers, and while #61's "
+      + "approval machinery now exists the lift itself does not — it still needs a hold.lifted action and the "
+      + "lifted_at columns 0018 left out. Until then, work with the copy rather than destroying it — an "
       + "administrator can see every hold and its scope in mailda doctor",
   });
 }

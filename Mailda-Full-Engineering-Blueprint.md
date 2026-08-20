@@ -1754,6 +1754,48 @@ Mail approval is a specialized single-use effect envelope that additionally bind
 
 Any material edit invalidates approval. Separation-of-duty policies prevent self-approval and support sequential/parallel/dual review.
 
+### Separation of duty, and the shape Layer 5 fixes
+
+Amended 20 August 2026 (#61). The sentence above names three review shapes; this subsection is the contract,
+because the implementation expresses them with **one** mechanism and is narrower in one specific way that must
+not be left to disagree with the prose.
+
+**Ordered stages with a count.** A `require_approval` policy version carries stages: an ordinal and a count of
+distinct decisions. Parallel review is one stage of count 2; sequential review is two stages of count 1; dual
+control is whichever of those an organization means. The order is on the **stages**, not on the people — which
+is what makes an order expressible over authority defined by a relation, since each stage's membership stays
+derived from the relation while only the stages are sequenced. A version with no stages means one stage of
+count 1.
+
+**The eligible set** for a stage is the `approval.decide` holders on the manifest's mailbox, minus the
+manifest's author, minus everybody who has already decided in that approval. `approval.decide` is a relation on
+the mailbox and is implied by nothing: not by `org.admin`, not by `send.propose`.
+
+**Distinctness is on the user, not on the relation tuple.** A principal authorizes as themselves plus every
+team they belong to, so a relation may be held through a team and the holder set is a set of tuples while a
+decider is a person. One person in two holding teams must not satisfy a count of 2. Enforced twice: the
+eligible-set query resolves teams to people and de-duplicates, and a UNIQUE index on
+`(approval, decider)` holds under concurrency.
+
+**Checked at publication and again at evaluation.** A policy whose stages cannot be satisfied is refused at
+publication, naming the mailbox, the stage and the shortfall; a policy with no mailbox condition is checked
+against every mailbox. It is re-checked at the seal, where an unsatisfiable stage set produces **`withheld`**
+with a reason naming which stage and how many short. Both checks are required: publication does not know the
+author, and a grant revoked afterwards would otherwise make a live policy unsatisfiable in silence.
+
+**Withdrawable while incomplete; a denial is terminal.** An approver may take back their own approval while any
+stage remains unsatisfied, because the only other remedy — persuading a colleague to deny — records somebody
+else's judgement as the reason a message was stopped. A denial lands in `withheld` and is not reversible;
+re-sealing is the remedy, which is the invalidation mechanism §29's revision binding already rests on.
+Withdrawal is terminal for the withdrawer, so no oscillation lets one person fill two slots.
+
+**A team-scoped stage is absent, with its reason.** `{count: 1, team: finance}` is the constraint separation of
+*duty* actually wants, and it is not built: `team_members` is read-only in this implementation and there is no
+`teams` object at all, so a team-scoped stage would be expressible and unusable and publication could not
+verify that a named team exists. It becomes available with team creation and membership administration (§28,
+tracked as #73). What ships without it is sequential review by distinct people in a fixed order — the sequence
+and the distinctness, not the duty labels.
+
 ### The policy object, and the shape Layer 5 fixes
 
 Amended 20 August 2026 (#60). The outcome list and dimension list above describe the target; this subsection is

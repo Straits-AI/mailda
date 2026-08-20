@@ -232,3 +232,35 @@ than per recipient.
 
 **The loop arithmetic above is unaffected**, both rows, because it divides the bound rather than the measured
 figure and the bound did not move. `test/butler-step-cost.measure.test.ts` still asserts 500 and 50.
+
+## Correction — 20 August 2026 (#61)
+
+The `stale_when` fired on its first clause — *"a node's implementation gains or loses an I/O operation"* — for
+`mail.send.propose`, and only on the path where a policy requires approval. Re-measured with the same
+instrument in the same runtime (`test/policy-cost.measure.test.ts`, `test/approval-cost.measure.test.ts`):
+
+| Path | 18 August | Now |
+|:--|--:|--:|
+| `mail.send.propose`, new thread, no policies | 11 | **11** |
+| `mail.send.propose`, new thread, gated by a hold | 11 | **11** |
+| `mail.send.propose`, new thread, gated by an approval | 13 | **15** with both derived conditions, **13** without |
+| `mail.send.propose`, reply, worst realistic policy set | 17 | **19** |
+
+The two extra operations are #61's: the stage set of the matching `require_approval` versions, and the eligible
+approvers on the mailbox. They are lazy — a seal that no policy gated, or that a hold gated, pays nothing.
+
+**`butler.step_cost_max_send_propose` stays at 20, and the headroom is now 1.** Said plainly rather than
+smoothed over: the worst realistic seal measures 19 against a bound of 20, so this bound has stopped being a
+tripwire *past where any good widget goes* and is now one operation above the widget. That is deliberate for
+exactly as long as it takes somebody to add the next operation to the send path, and here is what they should do
+when the assertion fails:
+
+- **Do not raise the number to make a test pass.** Re-measure, then decide.
+- Raising it changes the loop arithmetic above, and that arithmetic is what a publication-time refusal on a
+  Butler `foreach` would divide. On Paid, 10,000 / 20 = 500 sends per run; at 24 it is 416, at 30 it is 333.
+- The alternative to raising it is making a send cheaper, and the largest single item is still the **two
+  uncached vault key fetches** this receipt already names as the most promising thing to change.
+
+Choosing between those needs the AST checker that divides this bound, and it does not exist — so the honest
+state is the measurement recorded, the headroom named, and the decision left in the open for whoever trips it.
+That is the same shape this receipt already uses for the Free-versus-Paid row.

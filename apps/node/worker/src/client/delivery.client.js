@@ -253,14 +253,29 @@ export const SEND_REASONS = {
       "The author's authority to send as this mailbox was withdrawn before hand-over, so this Node declined " +
       "to hand it over.",
   },
+  approval_denied: {
+    label: "approval denied",
+    note:
+      "An approver denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
+      "service was never asked. A denial is final — there is no act that reverses one, because approval is " +
+      "bound to these exact bytes. Compose again and the new message gets its own approval.",
+  },
+  approval_unsatisfiable: {
+    label: "approval impossible",
+    note:
+      "A policy required an approval that nobody can give: too few people hold approval.decide on this " +
+      "mailbox for the stages the policy asks for, and the author of a send is never eligible to approve it. " +
+      "This is not waiting for somebody — nobody can clear it. An administrator has to grant approval.decide " +
+      "to enough distinct people, and then the message has to be composed again.",
+  },
 };
 
 /**
  * The words for a reason, or `null` when the row carries none.
  *
  * An unrecognised reason returns the raw token as its label rather than nothing, for the same reason
- * `describeSend` falls back on the raw state: the tokens #61 and #62 add will arrive before this map does,
- * and showing a person `approval_revoked` is worse than a blank only in the sense that a blank is worse.
+ * `describeSend` falls back on the raw state: #62's five remaining tokens will arrive before this map does, and
+ * showing a person `approval_revoked` is worse than a blank only in the sense that a blank is worse.
  */
 export function describeReason(send) {
   const reason = send?.state_reason;

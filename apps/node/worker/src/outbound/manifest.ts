@@ -2,11 +2,12 @@ import { type Bytes, utf8 } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { auditedBatch } from "../audit.ts";
+import { type AuditEvent, auditedBatchMany } from "../audit.ts";
+import { decidersOf, describeShortfall, planApproval, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
-import { evaluate, STATE_FOR, type Outcome } from "../policy.ts";
+import { evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
@@ -53,6 +54,18 @@ import { getEvidence } from "../evidence-store.ts";
  * dispatch uses the **current** policy, because that is what honours §18's "stricter policy fails closed".
  * `evaluate()` plus `isStricter()` is the whole of what that recheck needs, and it belongs in `dispatchOne`
  * beside ADR 39's authority re-check. Nothing here should be copied there.
+ *
+ * ## `require_approval` requests the approval here, in the same transaction (#61)
+ *
+ * A gated manifest with no request to decide would be a send waiting on something nobody can clear, which is
+ * the state #60 refused to let `deny` occupy. So the `approvals` row, its frozen stage set and **both** audit
+ * entries — `send.sealed` and `approval.requested` — ride in this function's one `batch()`. A seal that exists
+ * without its approval is therefore not unlikely, it is unrepresentable.
+ *
+ * And if the stages cannot be satisfied — too few `approval.decide` holders on the mailbox once the author is
+ * removed — the send is **withheld** with `approval_unsatisfiable` and no approval row is written at all. There
+ * is nothing to decide, so a pending request would be a queue of dead work; the shortfall goes into the seal's
+ * audit detail and into `last_error`, naming which stage and how many short.
  */
 
 const REFERENCES_MAX = BUDGETS["send.references_emitted_max"];
@@ -107,6 +120,14 @@ export interface SealedManifest {
    * sentence is how the authoritative one becomes whichever file the reader opened.
    */
   stateReason: string | null;
+  /**
+   * The approval this send is waiting on, or null. Null for three different reasons — no policy required one,
+   * a policy denied the send outright, or the stages could not be satisfied — and `stateReason` is what
+   * distinguishes them, which is the whole reason that column carries a token rather than a boolean.
+   */
+  approvalId: string | null;
+  /** Why no approval could be requested, when that is why this send is `withheld` (#61). */
+  approvalShortfall: Shortfall | null;
 }
 
 /**
@@ -354,7 +375,47 @@ export async function sealManifest(
     recipients: [...to, ...cc, ...bcc],
     isReply: composition.inReplyToMessageId !== undefined,
   });
-  const { state: sealedState, reason: stateReason } = STATE_FOR[decision.outcome];
+  let { state: sealedState, reason: stateReason } = STATE_FOR[decision.outcome];
+
+  /**
+   * The approval (#61), planned before anything is persisted because it can change the state this manifest is
+   * sealed with.
+   *
+   * Costs two queries and **only on the `require_approval` path**, which is the same laziness `evaluate` uses
+   * for its two derived inputs: a send no policy gated pays nothing for a mechanism it does not touch
+   * (receipt: `approval-decision-cost.md`).
+   *
+   * The stage set is folded over every matching `require_approval` version — `max` per ordinal, which is #60's
+   * own conflict resolution rather than a second rule — because two policies requiring approval of one send are
+   * both in force.
+   */
+  let approvalId: string | null = null;
+  let approvalShortfall: Shortfall | null = null;
+  let approvalStatements: D1PreparedStatement[] = [];
+  let approvalEvent: AuditEvent | null = null;
+  if (decision.outcome === "require_approval") {
+    const stages = await requiredStages(
+      env,
+      decision.matched.filter((match) => match.outcome === "require_approval").map((match) => match.versionId),
+    );
+    const deciders = await decidersOf(env, orgId, composition.mailboxId);
+    const planned = planApproval(env, ctx, orgId, {
+      manifestId, mailboxId: composition.mailboxId, authorUserId: composition.authorUserId, stages,
+    }, deciders);
+
+    if (planned.satisfiable) {
+      approvalId = planned.plan.approvalId;
+      approvalStatements = planned.plan.statements;
+      approvalEvent = planned.plan.event;
+    } else {
+      // Withheld rather than parked. The gate exists and nobody can clear it, so `awaiting` would be a state
+      // that reads as pending forever — the argument #60 made for keeping `deny` out of it, reached from the
+      // other side. Terminal, and the remedy is an administrator's grant plus a re-seal.
+      approvalShortfall = planned.shortfall;
+      sealedState = "withheld";
+      stateReason = "approval_unsatisfiable";
+    }
+  }
 
   const normalized = normalizeBody(composition.bodyTyped);
 
@@ -381,7 +442,7 @@ export async function sealManifest(
         submitted_key, submitted_sha256,
         sealed_at, release_at, state, state_at, transport_message_id, last_error, attempts,
         policy_outcome, policy_versions, state_reason)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,NULL,0,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,?,0,?,?,?)`,
   )
     .bind(
       manifestId, orgId, composition.mailboxId, composition.authorUserId,
@@ -397,6 +458,11 @@ export async function sealManifest(
       typedStored.blobKey, typedStored.plaintextSha256,
       normalizedStored.blobKey, normalizedStored.plaintextSha256,
       at, releaseAt, sealedState, at,
+      // Prose for a person, beside the machine token in `state_reason`. The two are not redundant: the token is
+      // what #62's vocabulary is built from, and this is the sentence that says which stage was short.
+      approvalShortfall === null
+        ? null
+        : describeShortfall(approvalShortfall, composition.mailboxId),
       decision.outcome,
       JSON.stringify(decision.matched.map((match) => match.versionId)),
       stateReason,
@@ -440,7 +506,7 @@ export async function sealManifest(
   // The manifest row and the entry recording the seal commit together. §12's invariant is that the
   // approved bytes are what gets sent; a manifest with no record of who sealed it, or a record of a
   // seal with no manifest, both break the account of that.
-  await auditedBatch(env, ctx, orgId, {
+  const sealEvent: AuditEvent = {
     action: "send.sealed",
     outcome: "ok",
     actorUserId: composition.authorUserId,
@@ -460,8 +526,21 @@ export async function sealManifest(
       policyVersions: decision.matched.map((match) => `${match.policyName}@${match.version}:${match.versionId}`),
       state: sealedState,
       stateReason,
+      // Which approval was asked for, or why none could be. Both belong in the entry for the act that produced
+      // them: an approval nobody could be asked for is not a later event, it is what this seal decided.
+      approvalId,
+      ...(approvalShortfall === null ? {} : { approvalShortfall }),
     },
-  }, (entry) => [manifestRow, ...recipientRows, entry]);
+  };
+
+  // Two entries, one transaction. `approval.requested` is a fact about the people being asked — its subject is
+  // the approval id and its detail is the stage set — which `send.sealed` cannot carry without becoming an entry
+  // about two different things. See `auditedBatchMany`.
+  await auditedBatchMany(
+    env, ctx, orgId,
+    approvalEvent === null ? [sealEvent] : [sealEvent, approvalEvent],
+    (entries) => [manifestRow, ...recipientRows, ...approvalStatements, ...entries],
+  );
 
   return {
     id: manifestId,
@@ -472,6 +551,8 @@ export async function sealManifest(
     policyOutcome: decision.outcome,
     policyVersionIds: decision.matched.map((match) => match.versionId),
     stateReason,
+    approvalId,
+    approvalShortfall,
   };
 }
 

@@ -353,6 +353,15 @@ const FIGURES: Record<string, Classification> = {
     "auth.access_token_refresh_margin_seconds", "auth.max_failed_logins_per_15min",
   ),
 
+  // docs/receipts/approval-decision-cost.md
+  ...mailda(
+    // Not plan-scoped, for the reason the policy figures below are not: these count operations Mailda's own
+    // code performs. The plan changes the size of the pot they spend from, never how many of them the code
+    // performs, and the pot is plan-named where the division happens (butler-step-cost.md).
+    "the D1 operations Mailda's own eligibility check and approval decisions perform, measured in workerd",
+    "approval.eligibility_max_subrequests", "approval.decision_max_subrequests",
+  ),
+
   // docs/receipts/policy-evaluation-cost.md
   ...mailda(
     // Not plan-scoped, and worth saying why rather than defaulting: these count operations Mailda's own code

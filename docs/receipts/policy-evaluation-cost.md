@@ -114,3 +114,30 @@ with no new storage. There is no number to measure there — which is why it is 
 receipt's `stale_when` instead. If that platform behaviour changes, the condition silently starts
 mis-classifying internal mail as external, in the *restrictive* direction, and nothing in this Node could
 detect it.
+
+## Correction — 20 August 2026 (#61)
+
+The `stale_when` above fired on its last clause: **the seal gained two I/O operations on the
+`require_approval` path.** `evaluate()` itself is unchanged — still 1 operation typically and 3 at the worst
+case, and every `evaluate` row in the table above was re-measured and is still exact. What changed is what a
+*seal* does after evaluation, because #61 made a `require_approval` outcome request an approval.
+
+Re-measured in the same test, same instrument, same runtime:
+
+| Scenario | Was | Now |
+|:--|--:|--:|
+| `sealManifest`, new thread, no policies | 11 | **11** |
+| `sealManifest`, new thread, both derived conditions (`require_approval` + `hold`) | 13 | **15** |
+| `sealManifest`, reply, both derived conditions (`require_approval` + `hold`) | 17 | **19** |
+| `sealManifest`, gated by a `hold` only | — | **11** |
+| `sealManifest`, gated by an approval | — | **13** |
+
+The two new operations are the stage set of every matching `require_approval` version and the eligible
+approvers on the mailbox, and they are spent **only on that path** — a hold-gated seal is still 11, measured,
+which is the same laziness this receipt already records for the two derived conditions. The `approvals` row, its
+stage rows and the second audit entry are free, because they ride in the `batch()` the seal was already making.
+Detail in `approval-decision-cost.md`.
+
+**No value in this file changed.** `policy.evaluate_max_subrequests` bounds `evaluate`, which did not move, and
+the seal figures were never budget values here — they are the reason `butler-step-cost.md` exists, and that
+receipt has its own dated correction for the new worst case.

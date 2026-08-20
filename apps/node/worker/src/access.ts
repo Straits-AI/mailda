@@ -35,10 +35,17 @@ import { CallerError, notFound, unprocessable } from "./errors.ts";
 /**
  * Everything grantable, and the object type each belongs to. A relation not named here cannot be granted.
  *
- * Three of the blueprint's eleven mailbox relations (`:697`), which is layering rather than divergence — but
+ * Four of the blueprint's eleven mailbox relations (`:697`), which is layering rather than divergence — but
  * `mailbox.metadata.read` was **not** a deferral, it was a hole. The queue is gated on `send.propose` and
  * returns subject lines and sender addresses, so until it existed a responder read the metadata of every
  * message in the mailbox with no relation permitting it. See `mayReadMetadata`.
+ *
+ * The bar a relation has to clear to appear here is that **something reads it**. `approval.decide` cleared it
+ * the day #61 landed and not before: it is named in §18, in §21's *"`approval.decide` is the sole decision
+ * permission"*, and in #60's argument for ordering the two gates — and until an approval existed for somebody
+ * to decide, granting it would have been a relation that conferred nothing, which is the mirror image of the
+ * hole `mailbox.metadata.read` was. A grantable relation nothing checks and a checked relation nobody can hold
+ * are the same defect from opposite ends.
  */
 const GRANTABLE = {
   // Subject lines and sender addresses. Weaker than content.read on purpose: somebody triaging or working a
@@ -46,6 +53,22 @@ const GRANTABLE = {
   "mailbox.metadata.read": "mailbox",
   "mailbox.content.read": "mailbox",
   "send.propose": "mailbox",
+  /**
+   * Deciding an approval on this mailbox's outbound mail (#61, §18, §21).
+   *
+   * On the **mailbox**, not on the manifest or the case: an approver is somebody trusted with what leaves an
+   * identity, and a per-send grant would have to be minted by the same act that requests the approval, which
+   * is the delegation this file refuses. §21's *"approval assignment does not grant whole-mailbox access"*
+   * still holds, and it holds because this relation is not a read relation — holding it lets somebody decide,
+   * and it does not let them open the mailbox. Whether an approver can read the bytes they are deciding on is
+   * §18's approval-evidence-snapshot question, which is not built and is named absent in `src/approvals.ts`.
+   *
+   * Not implied by `org.admin` and not implied by `send.propose`. The first would make every administrator an
+   * approver, defeating separation of duty in the one organization shape where it matters least — a small one,
+   * where the administrator is also the author. The second would make every author an approver of their own
+   * mailbox, which is self-approval reached through a relation instead of directly.
+   */
+  "approval.decide": "mailbox",
   "org.admin": "organization",
 } as const;
 

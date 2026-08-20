@@ -44,6 +44,15 @@ const OTHER_ADDRESS = "billing@acme-billing.example";
 const ADMIN = "usr_admin_p";
 const AUTHOR = "usr_author_p";
 const OTHER_AUTHOR = "usr_other_p";
+/**
+ * Somebody who can decide an approval, on both mailboxes.
+ *
+ * Added by #61 rather than by choice: publishing a `require_approval` policy is now refused when nobody holds
+ * `approval.decide` on a mailbox it applies to, so every `require_approval` fixture in this file would
+ * otherwise fail at publication. That refusal is the subject of `test/approvals.test.ts`; here it is a
+ * precondition, and one approver is enough because none of these stages asks for more than the default 1.
+ */
+const APPROVER = "usr_approver_p";
 
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
@@ -128,8 +137,13 @@ beforeEach(async () => {
       .bind(ADMIN, ORG, "admin@local.invalid", at),
     testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
       .bind(AUTHOR, ORG, "author@local.invalid", at),
+    testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(APPROVER, ORG, "approver@local.invalid", at),
   ]);
   await tuple(ADMIN, "org.admin", "organization", ORG);
+  // A row in `users` as well as the tuple: `decidersByMailbox` counts only subjects that are people, because a
+  // tuple's subject may be a team.
+  for (const mailbox of [MAILBOX, OTHER_MAILBOX]) await tuple(APPROVER, "approval.decide", "mailbox", mailbox);
   for (const mailbox of [MAILBOX, OTHER_MAILBOX]) {
     for (const relation of ["send.propose", "mailbox.content.read"]) {
       await tuple(AUTHOR, relation, "mailbox", mailbox);

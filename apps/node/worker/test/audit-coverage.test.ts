@@ -105,8 +105,9 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // repeated on every table a future call site protects.
     //
     // There is no `hold.lifted`, and that is the decision rather than an omission: #64 gave lifting dual
-    // approval, #61's machinery does not exist, and a declared action nothing emits is a category of one —
-    // which the last assertion in this file fails on.
+    // approval, and while #61's machinery now exists the lift itself does not — it needs the columns 0018 left
+    // out and an approval targeting a hold. A declared action nothing emits is a category of one, which the
+    // last assertion in this file fails on, so the action lands with the act.
     actions: ["hold.placed", "hold.blocked"],
   },
   policies: {
@@ -131,6 +132,44 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // #60 builds draft and publish and nothing else, and a declared action nothing emits is a category of
     // one — which the last assertion in this file fails on.
     actions: ["policy.drafted", "policy.published"],
+  },
+  policy_stages: {
+    exempt:
+      "The stages of a policy version, written and replaced only by the same two transactions that write the "
+      + "version itself — `policy.drafted` and `policy.published` already record those acts, and the stages are "
+      + "part of the version's frozen content rather than an object with its own lifecycle. A third entry "
+      + "saying the same edit happened would make \"who changed the review chain\" answerable from two places "
+      + "that could disagree, which is the reasoning that exempts `policies` one table up.",
+  },
+  approvals: {
+    // Every act on this table is audited, and the boundary is the one `case.claim_taken` established:
+    // frequency and answerability. An approval decision is at the far end of that scale — rare, consequential,
+    // and about somebody else's judgement.
+    //
+    // `approval.requested` is here even though the seal that causes it is already audited, because its subject
+    // is the approval and its detail is the stage set: it records that *people are being asked*, which
+    // `send.sealed` cannot say without becoming an entry about two things. See src/audit.ts.
+    //
+    // There is no `approval.expired` and no `approval.revoked` — #62 owns both reasons and neither act exists,
+    // and a declared action nothing emits is a category of one, which the last assertion in this file fails on.
+    //
+    // `send.cancelled` is here because `cancelSend` settles a pending approval in the same transaction as the
+    // manifest it cancels. No fourth action: cancelling is one act with one record, and a second entry saying
+    // the request went with the send would make "why is this request closed" answerable from two places.
+    actions: ["approval.requested", "approval.decided", "approval.withdrawn", "send.cancelled"],
+  },
+  approval_stages: {
+    exempt:
+      "The stage set frozen at request time, written in the same transaction as the `approvals` row it belongs "
+      + "to and never touched again. `approval.requested` records the act and names the counts in its detail, "
+      + "so auditing these rows separately would put one entry per stage behind one request — the same "
+      + "per-row-versus-per-act reasoning that exempts `send_recipients`.",
+  },
+  approval_decisions: {
+    // Both writes to this table are acts by a person: taking a decision, and taking one back. Deciding is
+    // audited as `approval.decided` and withdrawing as `approval.withdrawn`, each in the same transaction as
+    // the row.
+    actions: ["approval.decided", "approval.withdrawn"],
   },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },

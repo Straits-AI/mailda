@@ -86,6 +86,14 @@ beforeEach(async () => {
     `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
      VALUES (?,?,?,?,?,?,?)`,
   ).bind(ctx.id("rt"), ORG, ADMIN, "org.admin", "organization", ORG, at).run();
+
+  // #61: publishing a `require_approval` policy is refused unless somebody holds `approval.decide` on a mailbox
+  // it applies to. ADMIN is the approver here and ANA is the author, which is also the shape the seal needs —
+  // an author is never eligible to approve their own send.
+  await testEnv.CATALOG.prepare(
+    `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+     VALUES (?,?,?,'approval.decide','mailbox',?,?)`,
+  ).bind(ctx.id("rt"), ORG, ADMIN, MAILBOX, at).run();
 });
 
 describe("the policy plane is reachable, and only by an administrator", () => {
@@ -207,6 +215,37 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     expect(policies.map((row) => [row.state, row.version])).toEqual([
       ["draft", null], ["published", 2], ["superseded", 1],
     ]);
+  });
+});
+
+describe("approval stages travel through the API (#61)", () => {
+  it("stores the counts a caller sent, coerced, and refuses a publish nobody could satisfy", async () => {
+    // `stagesFrom` is the only reader of this field, and without a test through the route it would be code
+    // nothing exercises — the same reason `conditionsFrom` has one. Coercion matters for the same reason it
+    // matters there: JSON from a form carries "2", and `normaliseStages` demands an integer.
+    const token = await sessionFor(ADMIN);
+    const created = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "two then one",
+      outcome: "require_approval",
+      conditions: { mailboxId: MAILBOX },
+      stages: [2, "1"],
+    }));
+    expect(created.status).toBe(200);
+    const { policy } = await created.json() as { policy: { policyId: string; versionId: string } };
+
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT ordinal, required_count FROM policy_stages WHERE policy_version_id = ? ORDER BY ordinal",
+    ).bind(policy.versionId).all<{ ordinal: number; required_count: number }>();
+    expect(rows.results).toEqual([{ ordinal: 1, required_count: 2 }, { ordinal: 2, required_count: 1 }]);
+
+    // Three distinct approvers would be needed and only ADMIN holds the relation, so publication is refused
+    // with the four-part message rather than storing a rule that parks every send it matches.
+    const response = await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
+    expect(response.status).toBe(409);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("E_APPROVAL_UNSATISFIABLE");
+    expect(body.message).toContain("stage 1 needs 2 distinct approver");
+    expect(body.message).toContain("fix");
   });
 });
 

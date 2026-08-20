@@ -17,6 +17,7 @@ import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.t
 import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { placeHold } from "./holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
+import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
 import { mergeConversations } from "./merge.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
 import { setResponseTarget } from "./mailbox-policy.ts";
@@ -586,9 +587,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      *
      * The minimal surface, and it exists because **a hold nobody can place is dead code**: the enforcement
      * this ticket is about is only real if the table can be written by somebody other than a test. There is
-     * deliberately no UI yet, and deliberately no lift — #64 gave lifting dual approval and #61's machinery
-     * does not exist, so an endpoint that removed a hold would contradict a decision rather than implement
-     * one.
+     * deliberately no UI yet, and deliberately no lift. #64 gave lifting dual approval and #61's machinery now
+     * exists, but the lift does not: it needs a `hold.lifted` action and the columns 0018 left out, and an
+     * approval whose target is a hold. An endpoint that removed a hold today would contradict a decision
+     * rather than implement one.
      *
      * There is also **no list endpoint**, and that is not an oversight: `doctor` reports every active hold
      * with its scope, its age and whether its mailbox still exists, which is the read a person needs and the
@@ -653,6 +655,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           name: String(body.name ?? ""),
           outcome: String(body.outcome ?? ""),
           conditions: conditionsFrom(body.conditions),
+          stages: stagesFrom(body.stages),
         }),
       });
     }
@@ -666,6 +669,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         policy: await editPolicyDraft(env, clock, who.orgId, who.userId, policyDraft[1]!, {
           outcome: String(body.outcome ?? ""),
           conditions: conditionsFrom(body.conditions),
+          stages: stagesFrom(body.stages),
         }),
       });
     }
@@ -700,6 +704,70 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           ORDER BY p.name, v.version IS NULL DESC, v.version DESC`,
       ).bind(who.orgId).all<Record<string, unknown>>();
       return Response.json({ policies: rows.results });
+    }
+
+    /**
+     * Deciding an approval (#61, Layer 5). `approval.decide` on the mailbox, and never your own send.
+     *
+     * Three calls, and the argument for their existing at all is the one the policy and hold endpoints make:
+     * **an approval nobody can decide is dead code**, and worse than dead — a policy that gates a send on a
+     * review no channel can perform parks the send while reading as governance, which is the failure #60's
+     * governing principle names.
+     *
+     * `GET  /api/approvals`               what is waiting on you, with the stage set and which stage is open
+     * `POST /api/approvals/:id/decide`    approve or deny; a denial is terminal
+     * `POST /api/approvals/:id/withdraw`  take back your own approval while the request is incomplete
+     *
+     * **There is deliberately no UI**, for the same reason as the policy plane: the shell is Layer 1-3's
+     * surface, and an approver's queue is a design question this ticket does not settle. What the shell does
+     * show is the consequence — the outbox renders `awaiting` and `withheld` with the reason beside them.
+     *
+     * **There is deliberately no notification.** Every act here is something a person is waiting on, and #63
+     * owns the mechanism: a row is the obligation and an existing cron delivers it. Inventing a second one here
+     * is the thing that would have to be undone.
+     *
+     * The list needs no admin and no §5C dance: it is scoped to the mailboxes the caller holds
+     * `approval.decide` on, so a caller with no such mailbox gets an empty list rather than a refusal — there
+     * is nothing to hide about the absence of your own work.
+     */
+    if (url.pathname === "/api/approvals" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({ approvals: await pendingApprovals(env, who.orgId, who.userId) });
+    }
+
+    const approvalDecide = /^\/api\/approvals\/([^/]+)\/decide$/.exec(url.pathname);
+    if (approvalDecide && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const decision = String(body.decision ?? "");
+      if (decision !== "approve" && decision !== "deny") {
+        // Refused rather than defaulted. A missing `decision` defaulting to either value would be this Node
+        // deciding somebody else's approval for them, which is the one thing this endpoint must never do.
+        return Response.json(
+          {
+            error: "E_BAD_DECISION",
+            message: "E_BAD_DECISION  decision must be approve or deny\n"
+              + "  why      an absent decision cannot be defaulted: either default would record a judgement "
+              + "nobody made\n"
+              + "  fix      send {\"decision\":\"approve\"} or {\"decision\":\"deny\"}",
+          },
+          { status: 422 },
+        );
+      }
+      return Response.json({
+        decided: await decideApproval(env, clock, who.orgId, who.userId, approvalDecide[1]!, decision),
+      });
+    }
+
+    const approvalWithdraw = /^\/api\/approvals\/([^/]+)\/withdraw$/.exec(url.pathname);
+    if (approvalWithdraw && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({
+        withdrawn: await withdrawApproval(env, clock, who.orgId, who.userId, approvalWithdraw[1]!),
+      });
     }
 
     if (url.pathname === "/api/sends" && request.method === "POST") {
@@ -1268,6 +1336,23 @@ function conditionsFrom(raw: unknown): PolicyConditions {
     isReply: flag(source.isReply),
     orgDailyVolumeMin: count(source.orgDailyVolumeMin),
   };
+}
+
+/**
+ * A policy's approval stages out of a JSON body: the count each stage requires, in review order (#61).
+ *
+ * An array of numbers, because the position **is** the ordinal — `[1, 1]` is sequential review by two people,
+ * `[2]` is parallel dual control. Coerced rather than trusted, for the reason `conditionsFrom` coerces its
+ * volume floor: JSON from a form carries `"2"`, and `normaliseStages` demands an integer, so an uncoerced
+ * value would be refused with a message about its own value being unusable.
+ *
+ * `undefined` and `[]` both mean the default, which is one stage of count 1. Anything that is not an array is
+ * `undefined` rather than an error here: `normaliseStages` refuses what it cannot use, and one refusal beats
+ * two.
+ */
+function stagesFrom(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.map((value) => Number(value));
 }
 
 /** The claimed organization, or null on an unclaimed Node. */
