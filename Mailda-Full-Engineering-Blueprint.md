@@ -1861,6 +1861,59 @@ and the result, for the record. The *decision* immediately before execution uses
 is what makes "stricter policy fails closed" above operative — and stricter is computable rather than a
 judgement, because the outcomes are totally ordered: `max(current) > max(bound)`.
 
+### The recheck before execution, and which envelope members exist
+
+Amended 20 August 2026 (#62). *"Every approval binds a canonical effect envelope"* and *"immediately before
+execution, Mailda rechecks …"* above describe the target. This subsection is the contract, because the
+implementation is **more specific** in three ways that would otherwise be left to disagree with the prose.
+
+**The recheck runs on the approved path only, and that is deliberate.** An approved send gets the whole of it —
+approval validity and revocation, current actor authority, approver eligibility, policy re-evaluated, and every
+bound object hash. An **unapproved** send keeps the authority re-read §7 and §28 already require, and nothing
+else. An approval is a request for assurance and is what pays for the assurance: the recheck is a **measured
+8 subrequests**, 9 on a Node running the shipped adapter, which is a 50% increase on what a dispatch costs
+(`docs/receipts/dispatch-recheck-cost.md`). Spending it on every send buys a guarantee nobody asked for. The
+two paths are therefore contract, not an optimisation somebody may unify later.
+
+**Failing closed is `withheld` plus a reason, symmetric with `awaiting`.** *"Stricter policy, lost authority or
+changed evidence fails closed"* does not say into what. It is `withheld` — *this Node declined; nobody
+cancelled it and the mail service was never asked* — with a machine reason: `authority_lost`,
+`approval_revoked`, `approver_ineligible`, `policy_stricter`, `approval_expired`, `evidence_changed`. That
+keeps the state machine's two halves symmetric — **gates are `awaiting` plus a reason, refusals are `withheld`
+plus a reason** — so §5C's distinctness lives in the reason rather than in five new states.
+
+**`evidence_changed` additionally raises**, and it is the one reason that is not the system working. The others
+are a decision or a deadline; a hash mismatch means the archive differs from its own record, which is
+corruption or tampering. It gets an operational log entry and a `doctor` finding as well as an outbox row.
+
+**An expired approval is terminal.** Re-sealing is the invalidation mechanism, so the author composes again and
+gets a new manifest and a fresh approval. Returning an expired send to `awaiting` would make expiry mean
+nothing — the same manifest could be re-approved indefinitely — and would create a queue that never drains.
+Expiry is a duration constant with a receipt rather than a per-policy field: the policy object has no expiry
+condition, and adding one would be a governance dimension backed by no interface, which is the failure the
+five-condition list above exists to avoid. Per-policy expiry is a named refinement, folded by minimum.
+
+**Every member of the exact-content list above is either bound from a column that already carries it or named
+absent with the reason it cannot be bound. Nothing is stubbed.** Bound: the
+manifest id as target resource, expected version *and* idempotency key, because the manifest **is** the
+revision and §29's effect key is already that id; From/To/Cc/Bcc and subject; both body hashes; the actor; the
+policy version set and result; the approver, expiry and idempotency key; the allowed header set, which is fixed
+and enumerable — From, Subject, Message-ID, Date, MIME-Version, Content-Type, plus To and Cc when present and
+In-Reply-To and References on a reply; and the adapter's capability.
+
+Absent, each with the reason recorded in code and carried on the envelope itself: **rendered HTML** (only a
+typed body exists), **attachment hashes and filenames** (no attachment representation in the outbound path),
+**template and prompt versions** (neither object exists), **Butler version** (Layer 4), **delegator** (no
+delegation), **DLP results** (no DLP), and the adapter's **version** (the binding exposes none, so the honest
+binding is its name plus the date the capability was verified). The code's own list is `ENVELOPE_ABSENT` in
+`src/outbound/recheck.ts`, which enumerates the same absences plus `submitted_sha256` from the paragraph below,
+and carries the adapter's missing version on the field rather than as a member of its own.
+
+**Only two of the three body hashes can be re-verified, and that is structural rather than a gap.**
+`submitted_sha256` is written *during* dispatch, immediately before the transport is asked, so at recheck time
+it does not exist. The submitted bytes are derived from the normalized body, so verifying the input verifies
+what the output is built from. Recorded because *"every bound object hash"* reads as three and is two.
+
 ### Circuit breakers
 
 - Per-user/mailbox/Butler/domain/org volume limits.

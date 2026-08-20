@@ -232,6 +232,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkOutbox(env, ctx)),
     ...evidence.findings,
     ...strandedDraftBodyFindings(evidence.draftBodies),
+    ...(await checkEvidenceChanged(env, claim?.org_id ?? null)),
     ...(await checkHolds(env, ctx, claim?.org_id ?? null)),
     planCheck(),
   );
@@ -950,6 +951,98 @@ function strandedDraftBodyFindings(scan: DraftBodyScan | null): Finding[] {
         "this prefix by hand: that is the same deletion performed without the hold check",
     }),
     receipt: "docs/receipts/evidence-lifecycle.md",
+  }];
+}
+
+/**
+ * Sends this Node refused because their stored body no longer hashed to what the manifest recorded (#62).
+ *
+ * ## Why this exists at all, when the outbox already shows the send
+ *
+ * Five of the six reasons a dispatch can withhold a send are the system working: authority was withdrawn, a
+ * policy tightened, an approval lapsed. The person who wrote the message reads their own outbox row and knows
+ * what to do. `evidence_changed` is not that. It means **the archive differs from its own record** —
+ * corruption, or tampering — and the person who needs to know is whoever runs the Node, not whoever wrote the
+ * message. #62 required a log entry *and* a finding for exactly that reason, and before this there was nothing
+ * for `doctor` to read.
+ *
+ * It is the same claim `evidence_present` makes about inbound mail — a receipt pointing at bytes that are not
+ * there — arriving from the other direction: a manifest pointing at bytes that are not the ones it sealed.
+ *
+ * ## `degraded`, not `refuse`
+ *
+ * The precedent is `evidence_present`, and the argument is the one this file's header gives: taking a whole
+ * mail system offline over damaged evidence helps nobody and does not undamage it. What the Node must not do
+ * is *send* those bytes, and it did not — that is the state this finding reads.
+ *
+ * ## One query, and it costs nothing on a healthy Node
+ *
+ * `sm_evidence_changed` (migration 0022) is partial on this reason, so on a Node where nothing has ever
+ * mismatched the index is empty and this is a seek into nothing rather than a scan of every send the
+ * organization has made. That matters because `doctor.max_subrequests_per_run` exists to catch exactly the
+ * check that has quietly become proportional to mail volume.
+ *
+ * Bounded at ten manifests in the detail, and the count is the whole count: an operator needs to know how bad
+ * it is and needs enough ids to start, not every id in a paragraph.
+ */
+async function checkEvidenceChanged(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "send_evidence_changed",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so nothing has been sealed and no evidence can have changed.",
+    }];
+  }
+
+  const affected = await env.CATALOG.prepare(
+    // One statement, prepared and executed once: `test/node/doctor-meter-honesty.test.ts` requires that of
+    // everything on this path, because the meter here counts prepares rather than executions.
+    `SELECT id, state_at, last_error FROM send_manifests
+      WHERE org_id = ? AND state_reason = 'evidence_changed' ORDER BY state_at DESC`,
+  ).bind(orgId).all<{ id: string; state_at: string; last_error: string | null }>().catch(() => null);
+
+  if (affected === null) {
+    return [{
+      check: "send_evidence_changed",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read the send manifests, so this report cannot say whether stored evidence has "
+        + "changed under a send.",
+      fix: "check the migrations_applied finding first — a Node that cannot read send_manifests cannot "
+        + "dispatch either",
+    }];
+  }
+
+  if (affected.results.length === 0) {
+    return [{
+      check: "send_evidence_changed",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No send has been withheld for changed evidence. Every approved send that reached hand-over "
+        + "had both stored bodies re-hashed against the manifest first.",
+    }];
+  }
+
+  const shown = affected.results.slice(0, 10);
+  return [{
+    check: "send_evidence_changed",
+    severity: "degraded",
+    discloses: "data",
+    ok: false,
+    detail: `${affected.results.length} send(s) were withheld because a stored body no longer hashed to what `
+      + `the manifest recorded. This is not a policy decision: the archive disagrees with its own record, `
+      + `which is corruption or tampering. `
+      + shown.map((row) => `${row.id} at ${row.state_at}: ${row.last_error ?? "no reason recorded"}`)
+        .join("; ")
+      + (affected.results.length > shown.length ? `; and ${affected.results.length - shown.length} more.` : "."),
+    fix: "read the send.evidence_changed entries in the operational log for the blob keys and the two hashes, "
+      + "then compare the R2 objects against the backup that predates the mismatch. Do not re-dispatch and do "
+      + "not overwrite the recorded hash — the manifest is the evidence, and the bytes are what is in doubt",
+    receipt: "docs/receipts/dispatch-recheck-cost.md",
   }];
 }
 

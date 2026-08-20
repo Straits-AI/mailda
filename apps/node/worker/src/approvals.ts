@@ -1,4 +1,5 @@
 import type { Ctx } from "@mailda/runtime";
+import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, type AuditGate, auditedBatch, auditedBatchMany } from "./audit.ts";
 import { decidersByMailbox, decidersOf } from "./deciders.ts";
@@ -73,11 +74,16 @@ import { conflict, notFound } from "./errors.ts";
  *
  * **What the second check still does not cover, stated because a half-closed world described as closed is what
  * this repository keeps finding defects in:** a send *already* `awaiting` when the last approver loses the
- * relation is not re-checked. Nothing sweeps `awaiting` — it is never dispatched, so #62's dispatch-time
- * recheck cannot see it either — and the drain that exists is the author's own cancel. The one live case this
+ * relation is not re-checked. Nothing sweeps `awaiting` — it is never dispatched, so the dispatch-time recheck
+ * cannot see it either — and the drain that exists is the author's own cancel. The one live case this
  * module does close is a **withdrawal** that leaves too few eligible people, because that path is already
  * holding the eligible set when it happens (`withdrawApproval`). Closing the revoke case needs a pass over
  * `awaiting` sends, which is a cron branch of the kind #63's notification obligation is already shaped for.
+ *
+ * **What #62 did close is the other end of the same window.** An eligibility loss between the *approval* and the
+ * hand-over is caught: `src/outbound/recheck.ts` re-reads the holders before the transport is asked and withholds
+ * with `approver_ineligible`. So the uncovered case is now precisely one — a send still waiting to be decided —
+ * rather than the whole span from seal to hand-over.
  *
  * ## The one thing that settles an approval from outside this module
  *
@@ -119,8 +125,31 @@ import { conflict, notFound } from "./errors.ts";
  *   without being able to open the bytes — which is §21's rule about approval not granting ambient access, and
  *   also means this build does not yet give them what §18 says they must see. Naming it here rather than
  *   granting a read as a shortcut, which is what §21 explicitly forbids.
- * - **Expiry.** #62 owns `approval_expired`, and an expiry column nothing sweeps would be a deadline that never
- *   passes.
+ *
+ * ## Expiry, added by #62, and the two things it deliberately is not
+ *
+ * `approvals.expires_at` (migration 0022) is written at request time from `approval.send_expiry_seconds`, and
+ * it is compared in exactly one place: the dispatch-time recheck in `src/outbound/recheck.ts`. Two properties
+ * of that are decisions rather than accidents.
+ *
+ * **It is not per-policy.** #60's policy object has no expiry column, and adding one now would invent a
+ * governance dimension no ticket has decided — which is #60's own governing failure, a condition backed by no
+ * interface. A constant with a receipt is honest and reversible. If somebody asks for per-policy deadlines,
+ * the refinement is a `policy_versions` column folded the way the stages already are (`max` per ordinal
+ * becomes `min` over the deadline, because narrowing has to run one way), and the constant becomes the
+ * default.
+ *
+ * **It is not swept.** Nothing here moves a lapsed request out of `pending`, so an approver can still decide
+ * one, and their decision lands: the send returns to `held` and the recheck then withholds it with
+ * `approval_expired`. That is one enforcement point rather than two, which is the same argument #62 makes for
+ * the reason vocabulary — and a second one here would need its own release act and its own state. What it
+ * costs is a decision somebody takes on a request that will not send, so `expires_at` travels on
+ * `GET /api/approvals` and on every `ApprovalRow`: the deadline is visible to the person being asked, before
+ * they answer, rather than discoverable afterwards.
+ *
+ * A `hold_lift` approval gets **no** deadline, and `EXPIRES_AFTER_SECONDS` below makes that a total map over
+ * the subject kinds so a third kind has to decide rather than inherit. Nothing rechecks a lift, so a deadline
+ * on one would be a limit no code compares — the defect this file's other absences exist to avoid.
  */
 
 /* ---- the reason tokens this module writes ---------------------------------------------------- */
@@ -168,6 +197,35 @@ const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
   send_manifest: "you composed this send, so you cannot decide its approval",
   hold_lift: "you requested this hold lift, so you cannot be one of the two people who approve it",
 };
+
+/**
+ * How long each kind of approval is good for, in seconds, or `null` for a kind with no deadline (#62).
+ *
+ * A `Record` keyed on the type, like `ACTOR_DID` above, so a third subject kind is a compile error here rather
+ * than a row that silently inherits a deadline nothing compares.
+ *
+ * `send_manifest` gets the constant; `hold_lift` gets `null` and stores NULL. The asymmetry is not a gap: the
+ * only code that reads `expires_at` is the recheck in `dispatchOne`, which dispatches sends. A deadline on a
+ * lift would be a limit written into a column with no reader, and this repository's most-repeated defect is a
+ * bound field nothing populates — its mirror image is a populated field nothing reads.
+ */
+const EXPIRES_AFTER_SECONDS: Record<ApprovalSubjectKind, number | null> = {
+  send_manifest: BUDGETS["approval.send_expiry_seconds"],
+  hold_lift: null,
+};
+
+/**
+ * The deadline an approval of this kind requested now would carry, or null when the kind has none.
+ *
+ * Exported so the recheck's own tests and `docs/receipts/dispatch-recheck-cost.md` can state the same
+ * arithmetic this module writes, rather than a second copy of `requested_at + constant` that could disagree
+ * with it. The deadline is **stored**, not derived at read time, for the reason 0022 gives: changing the
+ * constant must not move the deadline of a request somebody is already deciding.
+ */
+export function expiryFor(kind: ApprovalSubjectKind, requestedAtMillis: number): string | null {
+  const seconds = EXPIRES_AFTER_SECONDS[kind];
+  return seconds === null ? null : new Date(requestedAtMillis + seconds * 1000).toISOString();
+}
 
 /* ---- stages, and the arithmetic of a shortfall ----------------------------------------------- */
 
@@ -350,9 +408,16 @@ export function planApproval(
   const statements = [
     gated(
       `INSERT INTO approvals
-         (id, org_id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at)`,
+         (id, org_id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at,
+          expires_at)`,
       [approvalId, orgId, facts.subjectKind, facts.subjectId, facts.mailboxId, facts.actorUserId,
-        "pending", at, null],
+        "pending", at, null,
+        // Derived from `at` rather than from a second `ctx.now()`, so the deadline is exactly
+        // `requested_at` plus the constant. A Worker's clock advances across I/O and `ctx.now()` is not
+        // required to be stable, so two calls would put the deadline a few milliseconds off the request it
+        // belongs to — the same defect `submitPerRecipient` records for `submission_state_at`, where it
+        // silently counted a three-recipient send as one.
+        expiryFor(facts.subjectKind, Date.parse(at))],
     ),
     ...facts.stages.map((required, index) => gated(
       "INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count)",
@@ -404,6 +469,14 @@ export interface ApprovalRow {
   state: ApprovalState;
   requestedAt: string;
   resolvedAt: string | null;
+  /**
+   * When this approval stops being good enough to dispatch on (#62), or null when no deadline is recorded.
+   *
+   * Null means one of exactly two things, both of them answers rather than gaps: the request predates
+   * migration 0022, or its subject kind is one no recheck reads — see `EXPIRES_AFTER_SECONDS` and 0022's
+   * column comment. Neither is treated as expired, because a deadline nobody set has not passed.
+   */
+  expiresAt: string | null;
 }
 
 interface RawApproval {
@@ -415,6 +488,7 @@ interface RawApproval {
   state: ApprovalState;
   requested_at: string;
   resolved_at: string | null;
+  expires_at: string | null;
 }
 
 function approvalOf(row: RawApproval): ApprovalRow {
@@ -427,11 +501,20 @@ function approvalOf(row: RawApproval): ApprovalRow {
     state: row.state,
     requestedAt: row.requested_at,
     resolvedAt: row.resolved_at,
+    expiresAt: row.expires_at,
   };
 }
 
+/**
+ * Every column every reader of this table needs, in one list.
+ *
+ * `expires_at` joined it with #62 and costs nothing: a column added to a `SELECT` that was already being
+ * issued is free, which is the distinction `docs/receipts/approval-decision-cost.md`'s *"the approvals tables
+ * gain a column a decision has to read"* clause exists to have checked rather than assumed. It was re-measured
+ * when that clause fired.
+ */
 const APPROVAL_COLUMNS =
-  "id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at";
+  "id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at, expires_at";
 
 async function readApproval(env: Env, orgId: string, approvalId: string): Promise<ApprovalRow | null> {
   const row = await env.CATALOG.prepare(
@@ -480,6 +563,39 @@ async function decisionsOf(env: Env, approvalId: string): Promise<DecisionRow[]>
        FROM approval_decisions WHERE approval_id = ? ORDER BY decided_at, id`,
   ).bind(approvalId).all<DecisionRow>();
   return results;
+}
+
+/**
+ * Who approved this, and who took it back — the two questions #62's recheck asks of one read.
+ *
+ * Exported so the recheck does not write its own `SELECT` over `approval_decisions`. That is the instruction
+ * this module's header leaves for #62: the recheck re-reads live state, and it must re-read it *through the
+ * definitions that wrote it*, or there are two spellings of "whose approval still stands" and the one that
+ * counts is whichever file the reader opened.
+ *
+ * `withdrawn` is what makes revocation visible. On a `pending` approval a withdrawal is ordinary and is
+ * already accounted for by the stage counts; on an **approved** one it cannot be produced by any path in this
+ * Node — `withdrawApproval` refuses a settled request, which is exactly what is supposed to make an approved
+ * send safe to dispatch — so a non-empty `withdrawn` there means the row moved outside the product. The
+ * recheck treats it as `approval_revoked` rather than trusting the state column, because the whole point of
+ * re-reading is to not trust what the manifest's own state implies.
+ *
+ * One query, shared: the eligibility check needs the same rows to know who to re-check.
+ */
+export async function decisionsOfApproval(
+  env: Env,
+  approvalId: string,
+): Promise<{ approvers: string[]; withdrawn: string[]; denied: string[] }> {
+  const rows = await decisionsOf(env, approvalId);
+  return {
+    approvers: rows
+      .filter((row) => row.decision === "approve" && row.withdrawn_at === null)
+      .map((row) => row.decider_user_id),
+    withdrawn: rows
+      .filter((row) => row.decision === "approve" && row.withdrawn_at !== null)
+      .map((row) => row.decider_user_id),
+    denied: rows.filter((row) => row.decision === "deny").map((row) => row.decider_user_id),
+  };
 }
 
 /** Standing approvals per stage. The only count any predicate here is built on. */

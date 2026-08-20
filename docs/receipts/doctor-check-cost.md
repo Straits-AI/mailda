@@ -15,6 +15,33 @@ values:
   doctor.max_subrequests_per_run: 220
 ---
 
+## Correction, 20 August 2026: one new fixed-cost check, `send_evidence_changed` (#62)
+
+The clause **"including any new fixed-cost check"** fires, and this time it fires plainly rather than partly.
+#62 gives `doctor` a finding it did not have: sends this Node withheld because a stored body no longer hashed to
+what its manifest recorded. Before it, the mechanism had no observable — a hash mismatch produced an outbox row
+and a log line, and nothing an operator runs would surface it.
+
+**Measured on the same claimed-and-empty Node, before and after the check existed: 13 → 14 subrequests**
+(10 → 11 D1, R2 unchanged at 3), findings 13 → 14. On an **unclaimed** Node the figure does not move at all:
+**6 both ways**, because the check returns a literal before spending anything — the shape
+`draft_bodies_stranded` and `legal_holds_active` already use.
+
+**Per run, not per row: 14 with one mismatched send and 14 with none.** One query, whichever it finds, and it is
+a *seek into an empty index* on a healthy Node — `sm_evidence_changed` (migration 0022) is partial on
+`state_reason = 'evidence_changed'`, so nothing has to be scanned to learn that nothing is wrong. That is the
+property this receipt's own clause about "a check that costs a subrequest per row" is watching for, and it is
+read from the query plan in `test/outbound-recheck.test.ts` rather than asserted here.
+
+Method as in the corrections below: `runDoctor` reading `report.cost` off the run itself under
+`vitest-pool-workers`, on 20 August 2026, taken at three catalog states — unclaimed, claimed and clean, claimed
+with one withheld send — because a two-point measurement could not have separated the per-run cost from the
+per-row one.
+
+`doctor.max_subrequests_per_run = 220` still holds with room to spare and `values:` is untouched, for the reason
+the correction below gives: the numbers in it are deployed-Node measurements, and 13 → 14 was taken against
+miniflare. **Only the delta transfers**, because it is one extra call on a fixed path.
+
 ## Correction, 20 August 2026: the hold check gained a query, and it is conditional on a hold existing (#64)
 
 The clause **"including any new fixed-cost check"** is the one a reader will reach for, and this time it fires

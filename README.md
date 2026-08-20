@@ -485,6 +485,54 @@ that carries the decision went from 10 subrequests to 11, and to 17 at the worst
 published bound of 20 — so the receipt that divides that bound got a dated correction saying the headroom
 narrowed from 6 to 3 rather than a quietly raised number.
 
+**An approval now buys verification, and the assurance is what pays for it.** The contract says a Node rechecks
+approval validity, authority, approver eligibility, policy and every bound hash *immediately before* the effect
+runs. An approved send gets all of it, one instruction before the transport is asked. An unapproved send gets the
+authority re-read it always got and nothing else — and that asymmetry is the design, not an optimisation
+somebody may tidy up later. Measured: the recheck is **8 subrequests** against a 16-subrequest dispatch, so
+making it universal would add half again to every message this Node sends to buy a guarantee nobody requested.
+The tripwire is deliberately on the *cheap* path: a bound of 20 against a measured 16, which a unified path
+blows through immediately. Six ways it can fail closed, all of them `withheld` with a machine reason — because
+this state machine already had one convention for that and a second would read as an accident — and every one of
+the six is produced through the real dispatcher in the tests, not by calling a predicate. Changed evidence is
+produced by writing **different bytes**, because editing the recorded hash would have tested the comparison and
+left nobody able to tell the difference afterwards.
+
+**One of the six is not the system working, and it is the only one that raises.** Authority withdrawn, policy
+tightened, a deadline passed, an approver who lost the relation — those are decisions and deadlines, and the
+person who needs to know is the one reading their own outbox. A body that no longer hashes to what its manifest
+recorded is different in kind: the archive disagrees with its own record, which is corruption or tampering. So it
+writes an operational log line and `mailda doctor` grew a finding for it, reading a partial index that is
+**empty on a healthy Node** — the query plan is asserted, not assumed, because this repository has already
+shipped one index that was written on reasoning and earned nothing when the plan was finally read.
+
+**The prediction the whole design rested on was wrong in both directions, and it is written down.** The ticket
+estimated the recheck at "~6 extra subrequests" and that making it universal would take a Butler's send step
+"from 10 to about 16". The magnitude is 8, and 9 on a Node that can actually send: the estimate priced two body
+hashes at six operations when they are four, and its own cost table disagreed with its own prose by roughly a
+factor of two. The *location* was wrong too — the recheck runs at dispatch, which is a separate invocation with
+its own budget, so it never touches a Butler step's pot at all and the receipt that owns that arithmetic now says
+so. The decision the estimate was drawn for survives on the measurement instead, which is the only reason to
+have measured it. Four times this month a number counted by reading has been wrong; this is the fourth.
+
+**An approval expires, and the deadline is a constant rather than a policy field.** Four days: long enough that
+an approver working across a weekend and a public holiday is not defeated, short enough that an approval is not a
+standing permission. That is sized, not measured, and the receipt says so in those words rather than dressing a
+preference as a measurement. A per-policy deadline was refused for now with the reason recorded — the policy
+object has no expiry condition, and inventing one here would be a governance dimension backed by no interface,
+which is the exact failure that list of five conditions exists to avoid — and the refinement is named for
+whoever asks, including which way the fold has to run. Expiry is terminal: re-sealing is the invalidation
+mechanism, so the author composes again. Returning a lapsed send to "waiting" would make the deadline mean
+nothing and build a queue that never drains.
+
+That is not the same call as the one above about case claims, where an expiry was refused outright as "a policy
+guess". A claim's age is a fact anybody can read and act on, and nothing downstream depends on the claim still
+being true. An approval is a *statement about exact bytes* that a later act relies on, and the contract binds an
+expiry into the envelope precisely so that reliance has an edge. Nothing sweeps it either way: a lapsed request
+still shows in an approver's queue with its deadline beside it, and deciding it is honest work whose send is then
+withheld — one enforcement point rather than two, and the deadline visible before somebody answers rather than
+after.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.
@@ -693,7 +741,7 @@ AGENTS.md                              how we work; read before contributing
 docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
-docs/approvals.md                      stages, eligibility, the races, and what is absent
+docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

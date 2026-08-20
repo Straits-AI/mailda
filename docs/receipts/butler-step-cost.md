@@ -193,6 +193,19 @@ Paid one is measured twice from two directions, the Free one is documented and e
 `test/butler-step-cost.measure.test.ts` asserts both rows, so the arithmetic here cannot fall out of step with
 the budgets it divides, and `test/node/budget-plan-scope.test.ts` fails if either key stops naming its plan.
 
+### Note, 20 August 2026: #62's recheck shipped and did **not** land on this path
+
+The section above names *"#62's dispatch-time recheck landing on the same path"* as one of three things that
+would force `butler.step_cost_max_send_propose` up. It shipped, and it did not: the recheck is in `dispatchOne`,
+which runs from the `OutboxSweeper` alarm or from `POST /api/sends/dispatch` — a **separate Worker invocation
+with its own subrequest budget** — while `mail.send.propose` is `sealManifest`. So no figure here moves, no bound
+moves, and the conditional is resolved rather than left open for the next reader to re-check.
+
+Measured where it does land: `dispatch-recheck-cost.md`, which records **8** extra subrequests on the approved
+dispatch path and 9 on a Node running the shipped adapter. That receipt also records that #62's own prediction
+of *"~6, taking `mail.send.propose` from 10 to 16"* was wrong in both magnitude and location, which is worth
+knowing here because this is the receipt that arithmetic was borrowed from.
+
 ### Correction, 20 August 2026: the `stale_when` fired — `mail.send.propose` now evaluates policy (#60)
 
 **No value in this receipt moves.** The four bounds are unchanged and all four still hold. What moved is the

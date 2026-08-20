@@ -1,0 +1,90 @@
+-- The dispatch-time recheck of an approved send (#62, Layer 5, blueprint 18). Additive (#10
+-- expand/contract): one new column and one new index. No DROP, no column rewrite, no new table, no bookmark
+-- gate.
+--
+-- ## What #62 needs to read, and why almost none of it is new
+--
+-- Blueprint 18 requires that immediately before the effect runs, an approved send is rechecked: approval
+-- validity and revocation, current actor and sender authority, approver eligibility, policy, and every bound
+-- object hash. Five of those six subjects are answerable from columns that already exist, and the sixth is
+-- the one column below:
+--
+--   approval valid and unrevoked   approvals.state, plus approval_decisions.withdrawn_at
+--   current actor authority        relationship_tuples, through maySend -- ADR 39 already re-reads it
+--   approver still eligible        approval_decisions.decider_user_id against the approval.decide holders
+--   policy re-evaluated            policy_versions (current) against send_manifests.policy_outcome (bound)
+--   both pre-existing body hashes  send_manifests.body_typed_sha256 and body_normalized_sha256
+--   the approval's deadline        expires_at, below -- 0020 shipped without one and 0021 did not add one
+--
+-- ## This completes the state_reason vocabulary 0019 opened
+--
+-- 0019_policy.sql put four values in send_manifests.state_reason and named the five it left for #62:
+-- approval_revoked, approver_ineligible, policy_stricter, approval_expired and evidence_changed. All five are
+-- now written, by src/outbound/recheck.ts, and with authority_lost they are the six a dispatch can produce --
+-- DISPATCH_REASONS in that file, derived from the map that writes them rather than listed a second time. The
+-- words for every one of them are in src/client/delivery.client.js, and a test reads the two against each other
+-- in both directions, so neither a token with no sentence nor a sentence for a token nothing mints can ship.
+--
+-- ## No second idempotency mechanism, checked before adding one
+--
+-- Blueprint 18's envelope binds an idempotency key, and this migration adds no column for it: ADR 9's effect
+-- key **is** the manifest id, which 0007_outbound.sql says on the column itself -- "snd_<ulid>; this IS the
+-- effect key". A second identifier that has to correspond to the first is a correspondence somebody
+-- eventually gets wrong, and the failure is a duplicate the recipient keeps for ever. So the envelope binds
+-- send_manifests.id twice, once as the target resource and once as the idempotency key, and that is the
+-- honest binding rather than a new column that would have to be kept equal to it.
+--
+-- Likewise no approver column: the approvers are approval_decisions rows, one per person, with the stage each
+-- of them satisfied. Copying them onto the approval would be a second spelling of a set the decision path
+-- already writes -- and it is the spelling that goes stale when somebody withdraws.
+
+-- The deadline an approval was requested with. NULL means no deadline is recorded, for one of exactly two
+-- reasons, and neither of them is "we forgot":
+--
+--   * the approval was requested **before this migration**, so nothing set one. It is not treated as expired
+--     and it is not given a deadline computed from requested_at: both would be a migration making a claim
+--     about a decision somebody already took under a rule that had no deadline in it, and the honest reading
+--     of "no deadline was recorded" is that none passed. The population is bounded -- an approved send leaves
+--     within its hold window -- and it shrinks to nothing.
+--   * the subject kind is one whose deadline **nothing enforces**. The recheck that reads this column runs in
+--     dispatchOne, which only ever dispatches a send, so a hold_lift approval gets NULL rather than a
+--     deadline no code would ever compare. A column populated with a limit nothing enforces is the defect
+--     this repository keeps finding, and src/approvals.ts makes the choice a total map over the subject kinds
+--     so a third kind has to decide rather than inherit.
+--
+-- Written at request time rather than derived at read time, because two readers deriving the same deadline
+-- from requested_at plus a constant is two places for that arithmetic to disagree -- and because the constant
+-- can be changed, which must not silently move the deadline of a request somebody is already deciding.
+-- src/approvals.ts sets it from approval.send_expiry_seconds (receipt: docs/receipts/dispatch-recheck-cost.md,
+-- sized rather than measured, with the trade-off written down).
+ALTER TABLE approvals ADD COLUMN expires_at TEXT;
+
+-- **No index on expires_at, and that is a decision rather than an omission.** Nothing sweeps for expired
+-- approvals: expiry is evaluated by the recheck, on the one approval of the one manifest it is already
+-- reading through apr_subject, so the deadline arrives on a row the query has in hand. An index would serve
+-- a query nobody writes, which is the same argument 0019 makes for not indexing a policy condition and 0020
+-- makes for not indexing team_members.
+--
+-- What would need one: a cron that expires pending approvals on a schedule. That is not built, because
+-- expiry is terminal at the recheck and an approver deciding a lapsed request still lands a real decision --
+-- the send is then withheld with approval_expired rather than handed over. src/approvals.ts says so where
+-- the queue is built, and GET /api/approvals carries expires_at so nobody has to discover it.
+
+-- Sends whose stored body no longer hashes to what the manifest recorded (#62's evidence_changed).
+--
+-- Partial, the shape #11 established for the authorization path and 0019 and 0020 both reuse: on a healthy
+-- Node this index is **empty**, so doctor's question costs a seek into nothing rather than a scan of every
+-- send the organization has ever made. That is the whole reason it exists -- the finding it feeds runs on
+-- every doctor run, and a diagnostic whose cost grows with mail volume is the failure
+-- doctor.max_subrequests_per_run exists to catch.
+--
+-- org_id is the only indexed column because it is the only one the query binds: the reason is pinned by the
+-- WHERE clause here, so it does not need to be in the key as well. test/outbound-recheck.test.ts reads the
+-- query plan rather than trusting this comment.
+--
+-- Only this one reason is indexed, out of the nine a send can carry. The other eight are ordinary outcomes a
+-- person reads off their own outbox row -- an authority withdrawn, a policy tightened, a deadline passed --
+-- and nothing asks the database for all of them at once. A hash mismatch is the one that says the archive
+-- disagrees with its own record, which is corruption or tampering, and it is the only one doctor has to be
+-- able to find without being told where to look.
+CREATE INDEX sm_evidence_changed ON send_manifests (org_id) WHERE state_reason = 'evidence_changed';

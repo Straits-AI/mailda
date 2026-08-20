@@ -56,19 +56,21 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
  * gate. That is not the intuitive reading and it is the correct one, which is why it is written down beside
  * the ranks rather than left to be inferred from them.
  *
- * ## Where this runs, and the seam #62 owns
+ * ## Where this runs, and where the second evaluation lives
  *
  * Evaluation happens at **seal** (`sealManifest`), because the outcome determines the state and the state
  * has to exist when the manifest does. §18 places the policy decision between authorization and the effect
  * intent, which is exactly where sealing sits.
  *
- * Re-evaluation happens at **dispatch**, and it is **not built here**. An in-flight send *binds* the version
- * it was evaluated under — the record — while the *decision* at dispatch uses the **current** policy, which
- * is what honours §18's "stricter policy fails closed". Stricter is computable rather than a judgement
- * because the outcomes are totally ordered: `max(current) > max(bound)`. That comparison belongs to
- * [#62's recheck](https://github.com/Straits-AI/mailda/issues/62), inside `dispatchOne`, beside ADR 39's
- * existing authority re-check. `evaluate()` below is the whole of what that recheck needs; nothing here
- * should be duplicated there.
+ * Re-evaluation happens at **dispatch**, and it is **not here**: it is `src/outbound/recheck.ts`, called from
+ * `dispatchOne` beside ADR 39's authority re-read, and only for a send an approval released (#62). An in-flight
+ * send *binds* the version it was evaluated under — the record — while the *decision* at dispatch uses the
+ * **current** policy, which is what honours §18's "stricter policy fails closed". Stricter is computable rather
+ * than a judgement because the outcomes are totally ordered: `max(current) > max(bound)`.
+ *
+ * `evaluate()` and `isStricter()` below are the whole of what that recheck uses, and it uses them rather than
+ * containing a condition of its own — which is the property that keeps *one* definition of what a policy says
+ * about a send. If a sixth condition is ever added, the recheck inherits it by calling this.
  */
 
 /* ---- the total order ------------------------------------------------------------------------- */

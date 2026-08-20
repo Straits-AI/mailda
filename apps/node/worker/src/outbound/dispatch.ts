@@ -5,6 +5,10 @@ import { stopClockForConversation } from "../response-clock.ts";
 import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
+import {
+  authorityLost, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow, envelopeRecord,
+  recheckApproved, requiresApproval, type Withholding,
+} from "./recheck.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
 
 /**
@@ -15,8 +19,9 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  *   held             sealed, undispatched, still cancellable
  *   awaiting         a policy gate somebody can clear; `state_reason` says which gate (#60)
  *   cancelled        stopped during the hold window by a person
- *   withheld         this Node declined; `state_reason` says why — `authority_lost`, `policy_denied`,
- *                    `approval_denied` or `approval_unsatisfiable`
+ *   withheld         this Node declined; `state_reason` says why — `policy_denied`, `approval_denied` and
+ *                    `approval_unsatisfiable` from the seal and the approval, and the six a dispatch can
+ *                    write, which are `DISPATCH_REASONS` in `./recheck.ts`
  *   throttled        rate-limited — provably never left
  *   refused          rejected at the API boundary — provably never left
  *   suppressed       on the suppression list — will never arrive, and that is knowable now
@@ -43,7 +48,16 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  * that reason. Said plainly rather than left to be discovered, because a queue with no drain is the failure
  * `deny` was kept out of `awaiting` to avoid — and it is now one gate rather than two.
  *
- * The dispatch-time recheck of an approved send is #62's, not built here.
+ * ## The recheck of an approved send, and the asymmetry a future reader must not tidy away
+ *
+ * An **approved** send gets the full §18 recheck before the transport is asked — approval valid and unrevoked,
+ * current actor authority, approver still eligible, policy re-evaluated, and both pre-existing body hashes
+ * re-verified. An **unapproved** send gets ADR 39's authority re-read and nothing else (#62).
+ *
+ * The two paths differ deliberately. `./recheck.ts` carries the argument and the measured figures; what
+ * belongs here is the shape: `dispatchOne` reads one widened manifest row, runs the authority check on both
+ * paths, and enters the expensive path only when `requiresApproval` says so — which is a column already in
+ * hand, not a query. One branch, one withholding writer, six reasons.
  *
  * ## Retry is permitted only where the send provably never left
  *
@@ -244,34 +258,69 @@ export async function dispatchOne(
   // manifest to `outcome_unknown`, so checking afterwards would spend an attempt and park a
   // never-submitted message in the one state that means "we do not know whether it left". It did not
   // leave, and we do know. Blurring those is precisely what this layer must not do.
-  const author = await env.CATALOG.prepare(
-    "SELECT author_user_id, mailbox_id FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
+  // One widened read, both paths. `ENVELOPE_COLUMNS` is what `./recheck.ts` needs and this is the row ADR 39
+  // already had to fetch, so the approved path's envelope costs no extra read of `send_manifests` — and the
+  // unapproved path pays nothing for columns it does not look at, because widening a `SELECT` already being
+  // issued is free while a second read of the same row would not be.
+  const manifest = await env.CATALOG.prepare(
+    `SELECT ${ENVELOPE_COLUMNS} FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1`,
   )
     .bind(manifestId, orgId)
-    .first<{ author_user_id: string; mailbox_id: string }>();
+    .first<EnvelopeRow>();
 
-  if (author !== null && !(await maySend(env, { orgId, userId: author.author_user_id }, author.mailbox_id))) {
+  /**
+   * The two paths, in one place, so the asymmetry is visible rather than incidental (#62).
+   *
+   * **Both:** ADR 39's authority re-read. It is the cheapest check and the one every send needs, so it runs
+   * first and short-circuits the rest — an unauthorized send must not pay for five more checks to be refused.
+   *
+   * **Approved only:** the §18 recheck. `requiresApproval` is a column comparison on the row above, so
+   * deciding which path a send is on costs nothing at all.
+   *
+   * If you are here to simplify this into one path: don't. The measured figures are in
+   * `docs/receipts/dispatch-recheck-cost.md` — making the recheck universal takes a dispatch from a measured 16
+   * subrequests to 24, half again, on every send instead of on the ones somebody asked for assurance about. The
+   * bound that catches that is on **this** path, `send.dispatch_unapproved_max_subrequests`, because the cheap
+   * path is the one a tidying refactor makes expensive.
+   */
+  let withholding: Withholding | null = null;
+  let envelope: EffectEnvelope | null = null;
+  if (manifest !== null) {
+    if (!(await maySend(env, { orgId, userId: manifest.author_user_id }, manifest.mailbox_id))) {
+      withholding = authorityLost(manifest.author_user_id, manifest.mailbox_id);
+    } else if (requiresApproval(manifest)) {
+      const rechecked = await recheckApproved(env, ctx, orgId, manifestId, manifest, transport);
+      envelope = rechecked.envelope;
+      withholding = rechecked.withholding;
+    }
+  }
+
+  if (withholding !== null) {
     // Conditional on still being held, for the same reason cancellation is: a dispatcher that already
     // claimed this must not have its work overwritten.
     const { results } = await auditedBatch<never>(
       env, ctx, orgId,
       {
         action: "send.withheld", outcome: "refused", subject: manifestId,
-        detail: { authorUserId: author.author_user_id, mailboxId: author.mailbox_id },
+        detail: {
+          // The machine token first, because it is what a filter over the trail keys on.
+          reason: withholding.reason,
+          ...withholding.evidence,
+          // The envelope §18 says every approval binds, on the record of the act that refused it. Absent on
+          // the unapproved path because there is no approval there to bind one — an envelope built for a send
+          // nobody asked for assurance about would be a record of a recheck that did not happen.
+          ...(envelope === null ? {} : { envelope: envelopeRecord(envelope) }),
+        },
       },
       (entry) => [
         entry,
         env.CATALOG.prepare(
           // `state_reason` is set here as well as `last_error`, and the two are not redundant: `last_error`
-          // is prose for a person and this is the machine token #62's vocabulary is built from. Populated
-          // now rather than left NULL because this is the one existing writer of `withheld` and the reason
-          // is known — a column NULL exactly where its meaning is known is the placeholder shape this
-          // repository keeps finding defects in. #62 adds the other five reasons.
-          `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?,
-                  state_reason = 'authority_lost'
+          // is prose for a person and this is the machine token the reason vocabulary is built from. Bound
+          // rather than interpolated, so no reason can reach this SQL as text.
+          `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?, state_reason = ?
             WHERE id = ? AND org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
-        ).bind(at, "The author's authority to send as this mailbox was withdrawn before hand-over.",
-          manifestId, orgId, at),
+        ).bind(at, withholding.lastError, withholding.reason, manifestId, orgId, at),
         // The recipients follow, in the same transaction. A withheld send whose recipients still read
         // `held` would show a person a message that is simultaneously stopped and pending.
         env.CATALOG.prepare(
@@ -286,11 +335,30 @@ export async function dispatchOne(
       },
     );
     if ((results[1]?.meta.changes ?? 0) > 0) {
-      return {
-        manifestId,
-        state: "withheld",
-        detail: "This message was not sent: the author's authority to send as this mailbox was withdrawn.",
-      };
+      /*
+       * `evidence_changed` is the one reason that also raises, and it is the one member of the six that is not
+       * the system working: every other reason is a decision or a deadline, while a hash mismatch means the
+       * archive differs from its own record — corruption, or tampering.
+       *
+       * So it gets an operational log line here as well as the outbox row and the audit entry, and
+       * `doctor`'s `send_evidence_changed` finding reads the manifests the state left behind. Written *after*
+       * the state, and outside its transaction, deliberately: `log` swallows its own failure by contract
+       * (it is the last resort and cannot log a failure to log), so putting it in the batch would let a
+       * logging failure roll back a refusal that has already been decided. The state is the important write;
+       * this is the alarm beside it.
+       */
+      if (withholding.raises) {
+        await log(env, ctx, {
+          level: "error",
+          event: "send.evidence_changed",
+          message:
+            "A send was withheld because stored evidence no longer matches the hash its manifest recorded. "
+            + "This is corruption or tampering rather than a policy decision.",
+          orgId,
+          detail: { manifestId, ...withholding.evidence },
+        });
+      }
+      return { manifestId, state: "withheld", detail: withholding.lastError };
     }
     // Somebody else moved it first; fall through and report what it actually is.
   }

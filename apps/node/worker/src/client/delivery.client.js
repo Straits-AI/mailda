@@ -175,9 +175,9 @@ export const SEND_STATES = {
   withheld: {
     label: "withheld",
     note:
-      "Not sent. This Node declined to hand it over — either the author's authority to send as this mailbox " +
-      "was withdrawn during the hold window, or a policy denied it. The reason beside it says which. Nobody " +
-      "cancelled it and the mail service was never asked.",
+      "Not sent. This Node declined to hand it over, and the reason beside it says why — a policy denied it, " +
+      "an approver denied it, or something it was approved on had changed by the time it was due to go. " +
+      "Nobody cancelled it and the mail service was never asked.",
   },
   throttled: { label: "throttled", note: "Rate-limited by the mail service. It has not left, and will be retried." },
   refused: { label: "refused", note: "The mail service would not accept it. It never left." },
@@ -213,10 +213,14 @@ export const NEVER_SUBMITTED = {
  *
  * ## Why the reasons are here and not beside the code that writes them
  *
- * `src/policy.ts` mints the tokens; this module owns the sentences. One place for the prose, because two
- * copies of the same claim means the authoritative one is whichever file the reader opened — and because
- * this is the module a test can evaluate as the exact bytes a browser is served. The same argument that
- * moved `SEND_STATES` here in the first place.
+ * `src/policy.ts`, `src/approvals.ts` and `src/outbound/recheck.ts` mint the tokens; this module owns the
+ * sentences. One place for the prose, because two copies of the same claim means the authoritative one is
+ * whichever file the reader opened — and because this is the module a test can evaluate as the exact bytes a
+ * browser is served. The same argument that moved `SEND_STATES` here in the first place.
+ *
+ * The correspondence is enforced in both directions: every token those modules declare must have an entry
+ * here, and every entry here must be a token one of them declares. A one-way check would have let a sentence
+ * for a renamed reason sit here for ever, reading as the explanation for something nothing writes.
  *
  * ## Why a reason at all, rather than more states
  *
@@ -251,7 +255,44 @@ export const SEND_REASONS = {
     label: "authority lost",
     note:
       "The author's authority to send as this mailbox was withdrawn before hand-over, so this Node declined " +
-      "to hand it over.",
+      "to hand it over. Whoever revoked it can grant send.propose again, and the message has to be " +
+      "composed again — a sealed send is never edited.",
+  },
+  approval_revoked: {
+    label: "approval revoked",
+    note:
+      "The approval this send was released on no longer stands: it is not recorded as approved any more, or " +
+      "somebody's approval was taken back. No path in this Node produces that after an approval completes, " +
+      "so an administrator should look at how the record changed. Compose again to get a fresh approval.",
+  },
+  approver_ineligible: {
+    label: "approver no longer eligible",
+    note:
+      "Somebody whose approval released this send no longer holds approval.decide on this mailbox, so this " +
+      "Node will not act on their approval. Separation of duty is evaluated live, not trusted from when the " +
+      "decision was taken. Grant the relation again, or compose again so eligible approvers can decide it.",
+  },
+  policy_stricter: {
+    label: "policy is stricter now",
+    note:
+      "Policy changed between the approval and the hand-over, and it is stricter than what this send was " +
+      "approved under — so it fails closed rather than going out under a rule that no longer applies. " +
+      "Compose again and it will be judged, and approved if needed, under the policy in force now.",
+  },
+  approval_expired: {
+    label: "approval expired",
+    note:
+      "The approval for this send passed its deadline before it was handed over. That is final: an approval " +
+      "is bound to these exact bytes, and one that could be revived indefinitely would be a standing " +
+      "permission rather than a decision. Compose again and the new message gets its own approval.",
+  },
+  evidence_changed: {
+    label: "evidence changed",
+    note:
+      "The stored body of this send no longer matches the hash its own record holds, so this Node refused to " +
+      "send bytes it cannot vouch for. This one is not a decision anybody took — it means the archive " +
+      "disagrees with its own record, which is corruption or tampering. It is in the operational log and " +
+      "mailda doctor reports it; do not compose again until somebody has looked at it.",
   },
   approval_denied: {
     label: "approval denied",
@@ -274,8 +315,9 @@ export const SEND_REASONS = {
  * The words for a reason, or `null` when the row carries none.
  *
  * An unrecognised reason returns the raw token as its label rather than nothing, for the same reason
- * `describeSend` falls back on the raw state: #62's five remaining tokens will arrive before this map does, and
- * showing a person `approval_revoked` is worse than a blank only in the sense that a blank is worse.
+ * `describeSend` falls back on the raw state: showing somebody `approval_revoked` is poor, and showing them a
+ * blank where a reason exists is worse. The fallback is a floor, not a plan — the closed-world test over the
+ * token lists is what keeps it unreachable.
  */
 export function describeReason(send) {
   const reason = send?.state_reason;

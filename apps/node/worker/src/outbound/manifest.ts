@@ -50,11 +50,11 @@ import { getEvidence } from "../evidence-store.ts";
  * approval, `withheld` when it denied. See `STATE_FOR` in `src/policy.ts` for the mapping and the argument
  * for `deny` landing in `withheld` rather than in `awaiting`.
  *
- * **Re-evaluation at dispatch is #62's, and the seam is named rather than filled.** The manifest *binds* the
- * version set it was decided under (`policy_versions`) and the result (`policy_outcome`); the decision at
- * dispatch uses the **current** policy, because that is what honours §18's "stricter policy fails closed".
- * `evaluate()` plus `isStricter()` is the whole of what that recheck needs, and it belongs in `dispatchOne`
- * beside ADR 39's authority re-check. Nothing here should be copied there.
+ * **Re-evaluation at dispatch is built, in `src/outbound/recheck.ts`** (#62). The manifest *binds* the version
+ * set it was decided under (`policy_versions`) and the result (`policy_outcome`); the decision at dispatch uses
+ * the **current** policy, because that is what honours §18's "stricter policy fails closed". `policy_outcome`
+ * is also what tells `dispatchOne` which path a send is on, at no cost — which is why it is written once here
+ * and never rewritten, not even when an approval releases the send.
  *
  * ## `require_approval` requests the approval here, in the same transaction (#61)
  *

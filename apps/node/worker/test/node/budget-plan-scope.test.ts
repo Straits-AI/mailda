@@ -373,6 +373,25 @@ const FIGURES: Record<string, Classification> = {
     "policy.evaluate_max_subrequests", "policy.publish_max_subrequests",
   ),
 
+  // docs/receipts/dispatch-recheck-cost.md
+  ...mailda(
+    // Not plan-scoped, for the same reason as the two groups above and below: these count operations Mailda's
+    // own dispatcher performs. The plan changes the size of the pot — 1,000 subrequests per invocation on Free
+    // against 10,000 on Paid, which `doctor.{free,paid}.max_subrequests` already names — never how many
+    // operations the code performs. The one place the division shows up is that receipt's paragraph on how many
+    // sends one sweep can carry, and it names both plans there rather than in either figure's name.
+    "the operations one dispatch performs, with and without #62's approved-path recheck, measured in workerd",
+    "send.dispatch_approved_max_subrequests", "send.dispatch_unapproved_max_subrequests",
+  ),
+  ...mailda(
+    // Emphatically not plan-scoped: it is a duration, and it is Mailda's own governance preference about how
+    // long a human approval stays good — the same kind of figure as `send.hold_window_default_seconds`, which
+    // `cloudflare-email-sending.md` records as having no measurement behind it either. No Cloudflare plan
+    // changes how long an approver's weekend is.
+    "how long an approval of a send stays good for; Mailda's own policy, sized rather than measured",
+    "approval.send_expiry_seconds",
+  ),
+
   // docs/receipts/queue-provisioning.md
   ...bothPlans(
     "which queue and subscription operations exist and by what path; capability facts, not plan-scaled quantities",

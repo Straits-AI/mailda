@@ -14,6 +14,22 @@ values:
   approval.decision_max_subrequests: 10
 ---
 
+## Correction, 20 August 2026: the same clause fired again — `expires_at` (#62)
+
+The clause **"the approvals tables gain a column a decision has to read"** fired a second time on the same day,
+and for the same structural reason as the first: #62 added `approvals.expires_at` (migration 0022), which is in
+`APPROVAL_COLUMNS` and therefore in every `SELECT` `readApproval` and `pendingApprovals` issue.
+
+**No value moves and no measured figure moves: eligibility 1, every decision shape 6, every withdrawal 6, a
+gated seal 13, a hold-gated seal 11, a lift request 5, a lift's completing decision 7.** Re-measured the same
+way in the same file on 20 August 2026, after the column existed. A column added to a `SELECT` that was already
+being issued is free — which is exactly the distinction this clause exists to have *checked* rather than
+assumed, and it is the second time checking it has been the whole content of a correction.
+
+**Where the deadline does cost something is the dispatch, not the decision.** `expires_at` is compared by #62's
+recheck in `dispatchOne`, whose figures are in `dispatch-recheck-cost.md`. Recorded here so a reader following
+the column does not conclude the cost of expiry is missing: it is 0 on this path and part of the 8 on that one.
+
 ## Correction, 20 August 2026: the `stale_when` fired — the approvals table gained a column a decision reads
 
 The clause **"the approvals tables gain a column a decision has to read"** is true. #64's legal-hold lift is

@@ -3,10 +3,12 @@
 How an act that this Node will not perform on one person's word gets decided: what an approval is, who may
 decide it, what happens when two people act at once, and what is deliberately absent.
 
-Implemented by `apps/node/worker/src/approvals.ts` with `migrations/0020_approvals.sql` and
-`0021_hold_lift.sql`, on top of the policy object in `src/policy.ts` (`0019_policy.sql`) and the eligible-set
-query in `src/deciders.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
-approval hangs off and [#64][64] for the legal-hold lift.
+Implemented by `apps/node/worker/src/approvals.ts` with `migrations/0020_approvals.sql`,
+`0021_hold_lift.sql` and `0022_approval_expiry.sql`, on top of the policy object in `src/policy.ts`
+(`0019_policy.sql`) and the eligible-set query in `src/deciders.ts`; the dispatch-time recheck an approved send
+gets is `src/outbound/recheck.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
+approval hangs off, [#64][64] for the legal-hold lift and [#62][62] for the recheck, the effect envelope and
+expiry.
 
 ## Two subjects, one mechanism
 
@@ -125,7 +127,12 @@ seal, outcome = require_approval
         │                          approval pending
         │                              │
         │                              ├── every stage satisfied ──► approval approved
-        │                              │                            manifest held  (dispatches normally)
+        │                              │                            manifest held
+        │                              │                                │
+        │                              │                                └── dispatch rechecks it (#62)
+        │                              │                                      ├── all six pass ► handed_over
+        │                              │                                      └── any fails ──► withheld
+        │                              │                                                        + the reason
         │                              │
         │                              ├── one denial ────────────► approval denied
         │                              │                            manifest withheld / approval_denied
@@ -155,6 +162,113 @@ served.
 An approved send goes back to `held`, with `state_reason` cleared: the gate is gone, so it is an ordinary send
 waiting out whatever remains of its hold window. The record that it was gated and approved is in
 `policy_outcome`, in the `approvals` row, and in the trail — not in a stale reason on a released row.
+
+## The recheck before hand-over, and why only approved sends get it
+
+Implemented by `apps/node/worker/src/outbound/recheck.ts`, called from `dispatchOne` beside the authority
+re-read that has been there since ADR 39. Decision record: [#62][62].
+
+§18 requires that *immediately before execution* a Node rechecks approval validity and revocation, current
+actor authority, approver eligibility, policy, and every bound object hash. An **approved** send gets all of
+it. An **unapproved** send gets the authority re-read and nothing else.
+
+| Subject | Cost | Reason token when it fails |
+|:--|--:|:--|
+| current actor authority (both paths, ADR 39) | 0 extra | `authority_lost` |
+| the approval is `approved`, nobody withdrew, somebody's approval stands | 2 | `approval_revoked` |
+| the deadline has not passed | 0 — same row | `approval_expired` |
+| every approver still holds `approval.decide`, and is not the author | 1 | `approver_ineligible` |
+| `max(current policy) > max(bound policy)` | 1–3 | `policy_stricter` |
+| both stored bodies still hash to what the manifest recorded | 4 | `evidence_changed` |
+| the transport's capability | 1 on a Node that can send | recorded, not a gate |
+
+**The two paths differ deliberately, and a future reader must not unify them.** The recheck is a measured
+**8** subrequests — 9 with the shipped adapter — against a 16-subrequest dispatch, so making it universal is a
+50% increase in what every send costs to buy a guarantee nobody asked for. `docs/receipts/dispatch-recheck-cost.md`
+carries the figures, and the tripwire is on the *unapproved* path: a bound of 20 against a measured 16, which a
+unified path would blow through. Deciding which path a send is on costs nothing — it is
+`policy_outcome = 'require_approval'` on a row `dispatchOne` had already read.
+
+**The checks run cheapest-first, so a refusal costs 6 rather than 24** and never touches R2 or the vault. The
+consequence, stated because it is observable: when two things are wrong at once the *earlier* reason is
+recorded. That is the first answer rather than the worst one, on purpose — reporting a hash mismatch on a send
+whose approval had already lapsed would raise a corruption alarm about a message nobody was going to send.
+
+**`evidence_changed` is the one reason that also raises.** Every other reason is the system working: authority
+withdrawn, policy tightened, a deadline passed, and the person who wrote the message reads their own outbox row.
+A hash mismatch means the archive differs from its own record — corruption, or tampering — so it writes an
+operational log entry (`send.evidence_changed`, carrying the blob key and both hashes) and `doctor` reports it
+as `send_evidence_changed`, which is `degraded`. An unreadable or missing object is the same reason with a
+different detail: it is the same claim about the same object, and §24's worst failure.
+
+**Two of the three body hashes, and that is structural.** `submitted_sha256` is written *during* dispatch,
+immediately before the transport is asked, so at recheck time it does not exist. The submitted bytes are derived
+from the normalized body, so verifying the input verifies what the output is built from.
+
+`approval_revoked` is the one reason **no path in this Node produces**: `withdrawApproval` refuses a settled
+request, which is exactly what makes an approved send safe to dispatch. It is checked anyway, because the point
+of re-reading is not to trust what the manifest's state implies — and it is the layer that holds if that ever
+stops being true. `test/outbound-recheck.test.ts` asserts the refusal as part of producing the state, so the
+distinction is in the test rather than in a comment.
+
+## The effect envelope
+
+§18 makes every approval bind a canonical effect envelope, and the recheck is performed *against* it rather than
+producing it as a by-product. It is built from the manifest row plus the approval, and recorded in the
+`send.withheld` audit entry when a check refuses — **1,372 bytes** against the 2,048-byte detail cap, measured,
+because an over-cap detail is replaced wholesale and would take the reason with it.
+
+**Bound:** the manifest id as target resource, expected version *and* idempotency key — the manifest is the
+revision and [ADR 9][9]'s effect key is already that id, so no second identifier was invented that would have to
+be kept equal to it; From, To, Cc, Bcc and subject; both body hashes; the author as actor; the mailbox; the
+policy outcome and version set as bound at the seal; the approval with its state, deadline, standing approvers
+and withdrawals; the emitted header set; and the adapter's capability.
+
+The header set is fixed and enumerable — From, To, Cc, Subject, Message-ID, Date, MIME-Version, Content-Type,
+plus In-Reply-To and References on a reply, with To and Cc present only when they have recipients. `Bcc` is
+absent, which is what Bcc means. It is derived from the same columns `renderRfc822` derives it from, and the
+test renders real bytes and reads the names back out of them rather than trusting the list.
+
+Two members are **recorded rather than checked**: the header set, because a manifest is immutable so what it
+implies cannot have moved; and the capability, because the transport's own refusal is already the gate on it and
+a seventh withholding reason is not something [#62][62] decided.
+
+**Absent, each with its reason, carried on the envelope and recorded on every refusal:** rendered HTML (only a
+typed body exists; `packages/contract`'s optional `bodyHtml` is a contract-versus-implementation gap),
+attachment hashes and filenames (no attachment representation in the outbound path at all), template and prompt
+versions (neither object exists), Butler version (Layer 4), delegator (no delegation mechanism), DLP results (no
+DLP), and `submitted_sha256` (for the structural reason above).
+
+## Expiry
+
+`approvals.expires_at`, written at request time from `approval.send_expiry_seconds` — **four days**, sized rather
+than measured, with the trade-off in `docs/receipts/dispatch-recheck-cost.md`: long enough that an approver
+working across a weekend plus a public holiday is not defeated, short enough that an approval is not a standing
+permission.
+
+Three properties are decisions rather than accidents.
+
+**It is a constant, not a per-policy field.** The policy object has no expiry column, and adding one would
+invent a governance dimension no ticket has decided — [#60][60]'s own governing failure, a condition backed by no
+interface. The named refinement if somebody asks for it: a nullable column on `policy_versions`, folded by
+**minimum** over the matching versions rather than by maximum, because narrowing runs one way and the shorter
+deadline is the stricter rule. The constant becomes the default.
+
+**Nothing sweeps it.** A deadline passing is not an event; it is a fact the recheck reads. So an approver can
+still decide a lapsed request and their decision lands — the send returns to `held`, and the recheck then
+withholds it with `approval_expired`. One enforcement point rather than two, which is the same argument [#62][62]
+makes for the reason vocabulary; a second would need its own release act and its own state. What that costs is a
+decision taken on a request that will not send, so `expires_at` travels on `GET /api/approvals` and on every
+`ApprovalRow`: the deadline is visible to the person being asked, before they answer.
+
+**A `hold_lift` approval has no deadline**, and `EXPIRES_AFTER_SECONDS` is a total map over the subject kinds so
+a third kind has to decide rather than inherit. Nothing rechecks a lift, so a deadline on one would be a limit no
+code compares — the mirror image of a bound field nothing populates.
+
+**NULL means no deadline is recorded**, for one of exactly two reasons: the request predates migration 0022, or
+its kind has none. Neither is treated as expired. A migration inventing a deadline for a decision somebody
+already took would be a false statement about the past, and the pre-0022 population is bounded by the hold
+window and shrinks to nothing.
 
 ## Withdrawal and denial are asymmetric, deliberately
 
@@ -265,9 +379,24 @@ Measured, not counted: `docs/receipts/approval-decision-cost.md`.
 | approving a lift, stage still open | 6 |
 | the approval that **applies** a lift | 7 |
 
+And the dispatch, measured in `docs/receipts/dispatch-recheck-cost.md`:
+
+| Operation | Subrequests |
+|:--|--:|
+| dispatching an **unapproved** send, hand-over included | 16 |
+| dispatching an **approved** send, every check passing | 24, or 25 with the shipped adapter |
+| an approved send refused at the first check | 6 |
+
 The approval path adds **two** operations to a seal, and only there: a seal that no policy gated, or that a
 hold gated, pays nothing for this mechanism. The `approvals` row, its stage rows and the second audit entry are
-free, because they ride in the `batch()` the seal was already making.
+free, because they ride in the `batch()` the seal was already making. `expires_at` is free on every read of an
+approval, for the same reason: a column added to a `SELECT` already being issued costs nothing, which is what
+that receipt's *"the approvals tables gain a column a decision has to read"* clause exists to have checked.
+
+The recheck's 8 is spent in the **dispatch** invocation, not in a Butler step — [#62][62] predicted it would
+land on `mail.send.propose` and it does not, because dispatch runs from the sweeper's alarm with its own
+subrequest budget. Both halves of that prediction were wrong and the receipt says so at length; the decision it
+was drawn for stands on the measurement instead.
 
 A lift costs one operation more than a send's decision, and exactly one: the request row, whose reason the
 `hold.lifted` entry has to name. Everything else — the second audit entry and the `UPDATE holds` itself — is
@@ -291,15 +420,21 @@ free for the same reason, because it rides in the batch the decision was already
   on the mailbox can decide without being able to open the bytes. That is §21's rule about approval not
   granting ambient access — and it also means this build does not yet give an approver what §18 says they must
   see. Named here rather than closed by granting a read as a shortcut, which §21 explicitly forbids.
-- **Expiry.** [#62][62] owns `approval_expired`, and an expiry column nothing sweeps would be a deadline that
-  never passes.
+- **A sweep for lapsed approvals.** Expiry is built — see the section above — and it is enforced at the
+  dispatch rather than by a pass over `pending` requests. So a lapsed request stays in an approver's queue with
+  its deadline shown, and deciding it is honest work whose send is then withheld. What is absent is the cron
+  that would resolve it without anybody looking, which is the same shape [#63][63]'s notification obligation
+  wants and belongs with it.
+- **Per-policy expiry.** A constant with a receipt rather than a policy condition, for the reason the section
+  above gives, with the fold named for whoever asks.
 - **A release act for a `policy_hold`.** [#60][60] gave it to any `send.propose` holder and nobody has built
   it. An approval-gated send now has its release; a hold-gated one still drains only by its author cancelling.
 
 ## Surface
 
 ```
-GET  /api/approvals                  what is waiting on you: subject, stages, which stage is open, the reason
+GET  /api/approvals                  what is waiting on you: subject, stages, which stage is open, the reason,
+                                     and the deadline — because nothing sweeps it, so it has to be visible
 POST /api/approvals/:id/decide       { "decision": "approve" | "deny" } — no default, deliberately
 POST /api/approvals/:id/withdraw     take back your own approval while the request is incomplete
 

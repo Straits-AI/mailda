@@ -10,6 +10,7 @@ import {
 } from "../src/policy.ts";
 import deliveryScript from "../src/client/delivery.client.js";
 import { cancelSend, dispatchDue, type SendState } from "../src/outbound/dispatch.ts";
+import { DISPATCH_REASONS } from "../src/outbound/recheck.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
@@ -593,12 +594,14 @@ describe("the state a decision produces (#60's mapping)", () => {
     // workerd. That is the stronger check anyway: what is asserted is what a browser gets.
     //
     // `POLICY_REASONS` is derived from `STATE_FOR`, so a fifth outcome or a renamed token arrives here
-    // automatically instead of needing this list edited. `authority_lost` is added by hand and named,
-    // because its writer is `dispatchOne` rather than this mapping — #62's remaining five reasons are that
-    // ticket's to add here as it adds them there.
+    // automatically instead of needing this list edited. The dispatch's own reasons come from
+    // `DISPATCH_REASONS` for exactly the same reason: this line was a hand-written `"authority_lost"` until
+    // #62 added the other five, and a hand-written list beside a derived one is the half that goes stale.
+    // `test/outbound-recheck.test.ts` checks the other direction — that nothing in the client explains a
+    // token no module mints.
     expect([...POLICY_REASONS].sort())
       .toEqual(["policy_approval_required", "policy_denied", "policy_hold"]);
-    for (const reason of [...POLICY_REASONS, "authority_lost"]) {
+    for (const reason of [...POLICY_REASONS, ...DISPATCH_REASONS]) {
       expect(deliveryScript, `no words for ${reason}`).toContain(`\n  ${reason}: {`);
     }
   });
