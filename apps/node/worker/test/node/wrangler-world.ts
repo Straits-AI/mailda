@@ -16,10 +16,11 @@ import { parse as parseJsonc } from "jsonc-parser";
  * suffixes plus six exact names, in a file that already knew `workflows` was a binding block (it types
  * the field and reads it for the schedules guard) and still left it out of its own coverage check.
  *
- * Neither would have noticed a `[[workflows]]` block. Layer 4 chose Workflows as the Butler engine, so
- * that is very likely the next block this config gains: a Workflow step touching an unclassified binding
- * would have been priced as free, and its provisioning question never asked. Two guards over one property
- * with two different incomplete rules is how both come to be trusted and neither is sufficient.
+ * Neither would have noticed a `[[workflows]]` block. Layer 4 chose Workflows as the Butler engine, and #50
+ * landed it — so the block this module was widened for is now declared, which is the outcome that makes the
+ * widening worth having rather than the one that made it necessary: a Workflow step touching an unclassified
+ * binding would have been priced as free, and its provisioning question never asked. Two guards over one
+ * property with two different incomplete rules is how both come to be trusted and neither is sufficient.
  *
  * They remain two files because they ask different questions of the same world:
  *
@@ -43,8 +44,8 @@ import { parse as parseJsonc } from "jsonc-parser";
  * block was the same hole one level down.
  *
  * Counted on 19 August 2026 by parsing the file with `jsonc-parser` and grouping its keys against
- * `BINDING_BLOCKS` below: **15** top-level keys, 5 binding blocks and 10 non-binding fields; `env.test`
- * declares 5 keys, all 5 of them binding blocks. Those totals are **not enforced anywhere and should not
+ * `BINDING_BLOCKS` below: **16** top-level keys, 6 binding blocks and 10 non-binding fields; `env.test`
+ * declares 6 keys, all 6 of them binding blocks. Those totals are **not enforced anywhere and should not
  * be** — the tests read the file, and a hardcoded total would fail on a legitimate new non-binding field
  * without telling anyone anything the closed world does not already say. They are here so a reader can
  * tell at a glance whether this module has fallen behind the config.
@@ -129,7 +130,9 @@ export const BINDING_BLOCKS: Record<string, BindingBlock> = {
     nameKey: "binding",
     // An entry carries `binding`, `name` and `class_name` and no resource id
     // (docs/receipts/workflow-provisioning.md); `binding` is the one that lands on `env`.
-    note: "not declared yet. Layer 4's Butler engine, so the next block this config is likely to gain.",
+    note: "declared: BUTLER_RUNS, one generic ButlerRun for every Butler on the Node (#50). No resource "
+      + "id, and no schedules — #48 established that this Node declares none, so the wrangler 4.97.0 floor "
+      + "never binds.",
   },
   kv_namespaces: { entries: arrayOfEntries, nameKey: "binding", note: "not declared. Nothing needs it yet." },
   secrets_store_secrets: {

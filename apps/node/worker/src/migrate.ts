@@ -25,6 +25,7 @@ import m0024 from "../migrations/0024_supervised_acts_and_notices.sql";
 import m0025 from "../migrations/0025_ediscovery_export.sql";
 import m0026 from "../migrations/0026_send_breakers.sql";
 import m0027 from "../migrations/0027_butlers.sql";
+import m0028 from "../migrations/0028_butler_runs.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -106,6 +107,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0025_ediscovery_export.sql", sql: m0025 },
   { name: "0026_send_breakers.sql", sql: m0026 },
   { name: "0027_butlers.sql", sql: m0027 },
+  { name: "0028_butler_runs.sql", sql: m0028 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

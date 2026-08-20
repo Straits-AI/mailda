@@ -29,6 +29,42 @@
   },
 
 
+  // The Butler engine (#50, Layer 4). **One** workflow for the whole Node, forever: `ButlerRun` is a single
+  // generic interpreter that reads whatever `ast_json` a published Butler version holds, so publishing,
+  // retiring or deleting a Butler creates and destroys no account resource. That is what makes a Butler
+  // runtime data — which #49's draft-then-publish lifecycle requires — and it is also the whole answer to
+  // the residue `workflow-provisioning.md` found: deleting the Worker leaves the workflow behind and it
+  // takes `wrangler workflows delete` to remove it, so a per-Butler class would have left one orphan per
+  // published Butler. There is exactly one, and a teardown has to name it once.
+  //
+  // No resource id, like D1, R2 and the Durable Objects: `wrangler deploy` creates the workflow from the
+  // binding (workflow.provisioned_by_deploy), and the **Deploy button's** own Workers Builds token can too
+  // (workflow.provisioned_by_button) — measured through a real click, which is the case §11A's one-click
+  // equivalence claim rests on. Creating a workflow rides on `Workers Scripts:Edit`; the token carries no
+  // Workflows scope at all, so the scope list could not have predicted it.
+  //
+  // **`name` is required and names an account-level resource, which is #72's hazard and cannot be dodged
+  // here.** A `[[workflows]]` entry without `name` is refused by the config parser, and wrangler
+  // substitutes nothing into config values — so the queue's fix (declare the binding, let the deploy derive
+  // the name) is unavailable. What is done instead: the name is the Worker's own name plus a suffix, held
+  // to that by `test/node/deployability.test.ts`, so renaming the Worker renames the workflow in the same
+  // edit. The residual is stated rather than hidden: Workers Builds pins its own Worker name and overrides
+  // this file, so a second install into one account gets a different *Worker* name and the same *workflow*
+  // name. What happens then is **unmeasured** — the queue case collided silently, and this one is not known
+  // to. It is the one thing about this block a second Node in one account should be checked against.
+  //
+  // No `schedules`, and that is #48's decision rather than an omission: schedules are deploy-time config
+  // while Butlers are published at runtime, so scheduling multiplexes through `triggers.crons` above. A
+  // consequence worth keeping — the wrangler 4.97.0 floor never binds, and the conditional tripwire in
+  // deployability.test.ts stays correct while never firing.
+  //
+  // No `limits.steps` either: the ceiling that binds a Butler is the per-**instance** subrequest pot, which
+  // `packages/butler-ast/src/cost.ts` divides at publication. A step ceiling written here would be a number
+  // with no receipt behind it.
+  "workflows": [
+    { "binding": "BUTLER_RUNS", "name": "mailda-butler-runs", "class_name": "ButlerRun" }
+  ],
+
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["OutboxSweeper"] },
     { "tag": "v2", "new_sqlite_classes": ["KeyVault"] }
@@ -132,6 +168,13 @@
           { "name": "KEY_VAULT", "class_name": "KeyVault" }
         ]
       },
+      // The Butler engine, duplicated for the reason every block here is: named environments inherit
+      // nothing. Same name and same class as the top level — the drift check compares which blocks each
+      // scope declares, and deployability.test.ts walks every key path in every environment, so a workflow
+      // name that stopped matching the Worker's name would fail there wherever it appeared.
+      "workflows": [
+        { "binding": "BUTLER_RUNS", "name": "mailda-butler-runs", "class_name": "ButlerRun" }
+      ],
       // No queue name and no consumers block, for the reasons given at the top level — and duplicated
       // rather than inherited because named environments inherit nothing. What holds this copy to the one
       // above is not the drift check, which compares only *which* binding blocks each scope declares: it is

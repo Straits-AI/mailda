@@ -7,6 +7,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import { decideApproval, expiryFor, pendingApprovals, withdrawApproval } from "../src/approvals.ts";
 import { BREAKER_REASONS } from "../src/breakers.ts";
+import { BUTLER_REASONS } from "../src/butler/gate.ts";
 import { runDoctor } from "../src/doctor.ts";
 import { placeHold, requestHoldLift } from "../src/holds.ts";
 import { metering } from "../src/cost-meter.ts";
@@ -761,7 +762,7 @@ describe("the reason vocabulary is closed in both directions", () => {
     expect(block, "SEND_REASONS not found in the served delivery module").not.toBeNull();
     const worded = [...block![1]!.matchAll(/^ {2}([a-z_]+): \{$/gm)].map((match) => match[1]!);
     // Anti-vacuity: an extractor that stopped matching would make every comparison below trivially pass.
-    expect(worded.length).toBeGreaterThanOrEqual(13);
+    expect(worded.length).toBeGreaterThanOrEqual(14);
 
     for (const reason of [...DISPATCH_REASONS, ...BREAKER_REASONS]) {
       expect(worded, `no words for ${reason}`).toContain(reason);
@@ -775,6 +776,10 @@ describe("the reason vocabulary is closed in both directions", () => {
       // #66's three rate gates, imported from the map that mints them rather than listed here — a second
       // literal list of the same tokens is exactly the drift this closed world exists to catch.
       ...BREAKER_REASONS,
+      // #50's human-release gate, imported from the module that mints it rather than spelled again here. It
+      // is the one `awaiting` reason that neither a policy nor a breaker produces: a program wrote the
+      // message and no person has seen it.
+      ...BUTLER_REASONS,
     ]);
     expect(worded.filter((reason) => !minted.has(reason))).toEqual([]);
   });

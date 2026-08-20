@@ -1698,10 +1698,39 @@ declared graph is a DAG and every cycle in it is a mistake.
 **Identifiers are `btl_` and `btv_`**, typed-prefix ULIDs, from a registry both the contract and the runtime
 read.
 
-**Nothing executes a Butler yet**, and `mailda doctor` says so as a first-class check rather than leaving an
-operator to infer it from an absence. Two guarantees in the list below are also unbuilt and named here
-rather than implied: static taint tracking, and the capability ceiling computed at publication. The
-**cost** ceiling at publication is built; the **capability** ceiling is the one still owed.
+**A Butler executes**, on Cloudflare Workflows, and the shape is more specific than the prose above so it is
+written down here rather than left to be inferred (#50; `docs/butler-engine.md` carries the argument).
+
+- **One generic `ButlerRun extends WorkflowEntrypoint`** interprets whatever `ast_json` it reads, so a
+  Butler stays runtime data and publishing one needs no deploy. A class per Butler would also have left one
+  orphaned account-level workflow per published Butler, because a workflow outlives the Worker that declared
+  it (measured).
+- **The run's id is `<butlerVersion>-<triggerKey>`**, so the same delivery cannot start two runs and §16's
+  `forbid` overlap policy is free: `create({ id })` throws on a duplicate. The run id is **not** an effect
+  key — it dedups the trigger, and every sending step still mints its own. The dedup window is 30 days,
+  being the instance retention.
+- **A Butler's principal is the Butler**, a `btl_` id holding only the relations an administrator granted to
+  it, re-read per call. Its audit entries carry `actor_kind = butler`. This is the *runtime* identity and is
+  a different question from `metadata.owner`, whose six ownership kinds are still unbuilt.
+- **A Butler cannot put mail on the wire.** Every send it proposes is sealed `awaiting` with
+  `butler_release_required` and the run parks on `step.waitForEvent`; a person holding `send.propose` on the
+  mailbox releases it. That gate ranks between the policy gates and the rate gate in §18's total order: below
+  `require_approval`, which is already a human gate, and above a rate gate, which needs time rather than a
+  person.
+- **`wait` is `step.sleep`.** The Node declares no `workflows[].schedules`: schedules are deploy-time config
+  while Butlers are published at runtime, so scheduling multiplexes through the Node's own cron.
+- **Expressions resolve `event.*`, `steps.<binding>.*` and `butler.*`**, with `==`, `!=` and `contains` and
+  nothing else. The example below is §16's original and predates the shipped node set: `llm.extract` and
+  `mail.template.render` are reserved, so `steps.<id>.output.<field>` has no shipped node that produces it —
+  a shipped node binds its result directly under its own `as`.
+- **Step state lives in the Workflow and the run record is separate D1** (`butler_runs`,
+  `butler_run_effects`), because instance state is retained 3 days Free / 30 Paid and is therefore not a
+  record. That record is deliberately *not* the run ledger: complete provenance and the four replay modes
+  below are still owed.
+
+Still unbuilt and named here rather than implied: static taint tracking, the **capability** ceiling at
+publication (the **cost** ceiling is built), the run ledger and its four replay modes, simulation, and every
+trigger except `mail.received`.
 
 ### DSL example
 

@@ -254,18 +254,25 @@ describe("doctor", () => {
     expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("sending_events_consumer");
   });
 
-  it("says a Butler can be published here and cannot be run (#49)", async () => {
-    // Migration 0027 gives this Node two Butler tables, so `migrations_applied` reports them present — and
-    // a reader is entitled to read that as "the feature works". It does not: #50 owns the engine and this
-    // bundle declares no Workflow binding. An operator who publishes a Butler and waits is owed the reason
-    // nothing happened, which is the same argument `workers_paid_plan` and `sending_events_consumer` make.
+  it("says Butlers run here, on whose authority, and what is still not built (#50)", async () => {
+    // This assertion used to be the opposite: until #50 the detail said no Butler ran, because 0027 shipped
+    // the store and the checker with no engine — and `migrations_applied` reporting both tables present is
+    // exactly the thing a reader would otherwise read as "the feature works". The engine landed, so the
+    // sentence was rewritten and this test with it; `test/node/butler-execution-world.test.ts` is what made
+    // that a failure rather than a permanently-true paragraph nobody re-read.
     const report = await runDoctor(testEnv, createSystemCtx());
     const finding = find(report.findings, "butler_execution");
 
     expect(finding.severity).toBe("report");
     expect(finding.ok).toBe(true);
     expect(report.verdict).not.toBe("refuse");
-    expect(finding.detail).toContain("none of them runs");
+    expect(finding.detail).toContain("Butlers run on this Node");
+    expect(finding.detail).not.toContain("none of them runs");
+    // The two facts an operator most needs about a *running* Butler, both of which are decisions rather
+    // than implementation detail: whose authority its effects are performed on, and that it cannot put mail
+    // on the wire without a person.
+    expect(finding.detail).toContain("actor_kind=butler");
+    expect(finding.detail).toContain("awaiting a human release");
     // The two things a publisher most needs to know beyond that: what is frozen, and what is refused.
     expect(finding.detail).toContain("frozen");
     expect(finding.detail).toContain("Reserved nodes");

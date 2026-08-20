@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 
+import { triggerButlers } from "./butler/trigger.ts";
 import { materialiseReceipt } from "./materialise.ts";
 import type { OutboxEvent } from "./outbox.ts";
 
@@ -55,11 +56,24 @@ export const nothingToDoYet: Handler = async () => {};
 export const HANDLERS: Record<string, Handler> = {
   /**
    * A message was accepted and its evidence is stored (§13). Materialises its metadata and its
-   * delivery into a mailbox (#27).
+   * delivery into a mailbox (#27), then starts every Butler listening on the mailbox it landed in (#50).
    *
    * Still deferred to later layers: threading messages into shared conversations across an
    * organization (#30 needs it, and a reply cannot be threaded before there is something to reply
-   * to), body extraction (#28 owns the parser decision), and Butler events at Layer 4.
+   * to), and body extraction (#28 owns the parser decision).
+   *
+   * ## The Butler trigger is here, and it fires on a redelivery too
+   *
+   * This is the "Butler events at Layer 4" this comment used to defer, and the shape it takes is decided by
+   * the two sentences above it. Delivery is **at-least-once**, so this handler sees the same event twice and
+   * must not care — and `materialiseReceipt` answers `already_present` the second time, having written
+   * nothing. So the trigger is called on *both* outcomes, with whatever `messageId` came back, and its
+   * idempotency comes from the Workflow instance id rather than from this branch: `create({ id })` refuses a
+   * duplicate, so a redelivery starts no second run. Triggering only on `created` would have left a crash
+   * between the message batch and this line as a delivery with no run and no way to notice.
+   *
+   * The trigger's own cost is charged to **this** invocation — the sweeper's — and not to any Butler's pot,
+   * which is why `docs/receipts/butler-run-cost.md` measures it separately.
    */
   "mail.ingress.accepted": async (env, ctx, event) => {
     const payload = JSON.parse(event.payload) as { receiptId?: string };
@@ -70,7 +84,15 @@ export const HANDLERS: Record<string, Handler> = {
           "  fix      ingress.ts writes this payload; a change there without a change here is the cause",
       );
     }
-    await materialiseReceipt(env, ctx, payload.receiptId);
+    const outcome = await materialiseReceipt(env, ctx, payload.receiptId);
+    if (outcome.messageId === undefined) return;
+    // `orgId` comes off the row rather than from the event: the payload carries a receipt id and nothing
+    // else, and an outbox handler has no principal to infer an organization from.
+    const owner = await env.CATALOG.prepare(
+      "SELECT org_id FROM messages WHERE id = ? LIMIT 1",
+    ).bind(outcome.messageId).first<{ org_id: string }>();
+    if (owner === null) return;
+    await triggerButlers(env, ctx, owner.org_id, outcome.messageId);
   },
 };
 

@@ -14,6 +14,16 @@
 -- `test/node/butler-execution-world.test.ts` fails the day a Workflow binding appears -- which is what
 -- stops that sentence outliving its truth.
 --
+-- **Amended 21 August 2026 (#50): the paragraph above described this migration's day and no longer describes
+-- the Node.** A Butler runs. `wrangler.jsonc` declares one `[[workflows]]` binding, `src/butler/run.ts` is
+-- the entrypoint, and 0028 adds the run record. Nothing in *this* migration changed -- the tables, the
+-- indexes and both triggers are exactly what shipped -- which is why the text is amended rather than
+-- rewritten: a migration is history, and history that has been edited to look prescient is worth less than
+-- history with a date on it. What the sentence got right is the part that survived: an AST that nothing
+-- executed was still the thing #50 was written against, and the engine reads these columns unchanged.
+-- `butler-execution-world.test.ts` did fail the day the binding appeared, and the claim it guarded was
+-- rewritten rather than deleted -- which is the whole return on having written it.
+--
 -- ## Two tables, split the way `policies` / `policy_versions` is split
 --
 -- The name is the durable identity; the versions carry the program. #60 chose that split for a policy and

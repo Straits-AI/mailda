@@ -42,15 +42,20 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
  *
  * ## What this file does not do, stated rather than implied
  *
- * **Nothing here runs anything.** #50 owns the engine — one generic `ButlerRun extends WorkflowEntrypoint`
- * interpreting whatever `ast_json` it reads — and this Node declares no Workflow binding. A Butler that can
- * be published and not run is the correct end state for this piece, and `doctor`'s `butler_execution` check
- * says so out loud rather than leaving a reader to infer it from an absence.
+ * **Nothing here runs anything, and since #50 something else does.** The engine is `src/butler/`: one
+ * generic `ButlerRun extends WorkflowEntrypoint` interpreting whatever `ast_json` this file wrote. The
+ * separation is the point rather than an accident of ordering — publication is a *store* operation and a run
+ * is an *execution*, and the only thing they share is the row. What that buys is visible in the engine: a
+ * run binds a **version**, so a run started under v3 goes on reading v3's frozen AST while v4 is live.
  *
- * **Nothing here is reachable over HTTP.** There is deliberately no route, no CLI verb and no UI. AGENTS.md
- * calls a capability present in one channel and absent from another a parity bug; zero channels is parity,
- * and an authoring surface for a program nothing executes would advertise a capability that cannot act.
- * The channels arrive with the engine.
+ * **Nothing here is reachable over HTTP.** There is deliberately no authoring route, no CLI verb and no UI —
+ * so a Butler is written by whoever can write the row, which today means a migration or a test. AGENTS.md
+ * calls a capability present in one channel and absent from another a parity bug; zero channels is parity.
+ * That is now the **one** thing standing between this layer and an operator using it, and it is stated here
+ * rather than in a ticket because a reader of this file is exactly the person who will look for the route.
+ * The engine's own two read routes and its release route exist (`/api/butler-runs`,
+ * `POST /api/sends/:id/release`) because a run that nobody can see and a gate that nobody can clear are both
+ * worse than no feature.
  *
  * **A Butler's effects pass through Layer 5, and none of that is duplicated here.** `mail.send.propose`
  * seals a manifest, which is where `policy.ts` decides, `approvals.ts` gates and `breakers.ts` trips.
@@ -403,9 +408,16 @@ export async function publishButler(
       detail: {
         versionId: draft.id, version, astSha256: draft.ast_sha256,
         supersededVersionId: current?.id ?? null,
-        // Said in the trail rather than only in a comment: publication here mints a version and nothing
-        // executes it, so a reader of the audit log is not left to wonder why nothing happened next.
-        runnable: false,
+        /*
+         * What will fire it, in the entry for the act that made it live.
+         *
+         * This field was `runnable: false` until #50, which was true and is now a lie in the one table that
+         * must not hold one. The honest replacement is not `runnable: true` — a field whose only value is
+         * `true` is the placeholder shape `placeholder-columns.test.ts` exists to catch, one layer along —
+         * but the *trigger*, which is what a reader of the trail actually wants next: this version is live,
+         * and here is the mail that will start it.
+         */
+        trigger: { event: rechecked.ast.trigger.event, mailbox: rechecked.ast.trigger.mailbox },
       },
     },
     (entry) => [

@@ -1,4 +1,4 @@
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { unavailable } from "./errors.ts";
@@ -36,7 +36,17 @@ const VERIFY_BATCH = BUDGETS["audit.verify_batch"];
 /** The genesis predecessor. A chain has to start somewhere, and it starts somewhere stated. */
 const GENESIS = "0".repeat(64);
 
-export type ActorKind = "user" | "node" | "installer";
+/**
+ * Who acted. Four kinds, and `butler` is #50's.
+ *
+ * `actor_user_id` holds a `btl_<ulid>` on a Butler's entries, and the column's name is one migration 0008
+ * cannot change — so this is the field that stops that being an overclaim. The pair says *"the actor is a
+ * Butler, and here is which one"*, which is the axis the column was added for: `node` already means *"an
+ * alarm, a sweeper"*, with no program behind it and nothing to name. A Butler is a specific published
+ * program somebody wrote, so collapsing it into `node` would make *"which Butler did this"* unanswerable —
+ * the exact question §23 exists to answer. The argument in full is in `src/butler/principal.ts`.
+ */
+export type ActorKind = "user" | "node" | "installer" | "butler";
 export type Outcome = "ok" | "refused" | "failed";
 
 /**
@@ -78,6 +88,28 @@ export const AUDIT_ACTIONS = {
   "send.withheld": {
     says: "A held send was stopped by the Node because the author's send authority was withdrawn.",
   },
+  /*
+   * #50's release act, and it is the **first** act in this Node that clears a gate without settling an
+   * approval.
+   *
+   * A Butler-proposed send is sealed `awaiting` with `butler_release_required`, which `movableNow` refuses
+   * to move, and a person holding `send.propose` on the mailbox puts it back to `held`. That is an act
+   * somebody could plainly be asked about — a program wrote a message and a named human decided it could go
+   * — so it is audited, and the entry's actor is the *person*, never the Butler: the whole value of the gate
+   * is that the trail names who agreed.
+   *
+   * It is not `approval.decided`. That action means an eligible approver settled a stage of a request, with
+   * a decision row behind it and separation of duty evaluated live; this is one person clearing a default
+   * that exists because nobody had looked. Filing it under the stronger name would make "how often is dual
+   * control being exercised" unanswerable from the trail.
+   *
+   * Deliberately named for the act rather than for the Butler, because the other gate with no release act
+   * is `policy_hold` — #60 gave it to any `send.propose` holder and nobody built it. When it is built it
+   * emits this, with a different reason in the detail, rather than a second action saying the same thing.
+   */
+  "send.released": {
+    says: "A person released a send that was waiting for one; the reason it was waiting is recorded with it.",
+  },
   // The terminal states of dispatch. Each is recorded, including the successful one — see `audit`.
   "send.held": { says: "A send is waiting out its hold window." },
   "send.throttled": { says: "The transport declined for rate reasons; the system may retry." },
@@ -98,8 +130,15 @@ export const AUDIT_ACTIONS = {
    * from two places that can disagree. `detail.replacedDraft` distinguishes the two cases inside one action,
    * which is the shape `cancelSend` set.
    *
-   * And no `butler.ran`: nothing runs a Butler yet. A declared action nothing emits is a category of one —
-   * exactly what `test/audit-coverage.test.ts` fails on — so the run actions arrive with the engine (#50).
+   * And **still** no `butler.ran`, now that #50 runs one — which is a decision rather than an omission and
+   * needed re-arguing when the engine landed rather than inheriting the old reason. Every act inside a run
+   * that somebody could be asked about is audited where it happens: a Butler's send appends `send.sealed`
+   * with the Butler as actor and `actor_kind = butler`, and a person releasing one appends `send.released`
+   * naming them. What a run action would add is *execution state* — started, parked, finished, what it
+   * spent — which is nobody's act, and it would put one untrimmable entry per delivery per published Butler
+   * behind a fact `butler_runs` already carries. That is the same per-row-versus-per-act reasoning that
+   * exempts `send_recipients` and an export's pages. Faults and refusals go to `log_entries`, which is
+   * bounded and trimmed and is where "why did this behave oddly" belongs.
    */
   "butler.drafted": {
     says: "An administrator wrote or replaced a Butler's draft; the AST digest and node count are recorded.",
@@ -440,6 +479,28 @@ export interface AuditEvent<A extends AuditAction = AuditAction> {
   detail?: Record<string, unknown>;
 }
 
+/**
+ * What kind of thing an actor id names, when the caller did not say.
+ *
+ * **Derived from the id's own typed prefix**, which is the argument `0001_init.sql` makes for having no
+ * `subject_type` column at all: identifiers are typed-prefix ULIDs, so a `btl_` already carries its type and
+ * a second field can only disagree with it. `actor_kind` exists anyway because `node` and `installer` have
+ * **no id** — nothing to derive a kind from — and that is the only reason it is a column.
+ *
+ * This is what makes a Butler's attribution structural rather than remembered (#50). Every audit entry a
+ * Butler causes goes through a Layer 5 function that takes an `actorUserId` and knows nothing about
+ * Butlers — `sealManifest` is the one that matters — so a design where each call site had to pass
+ * `actorKind: "butler"` would be correct on the day it was written and wrong the first time a new effect
+ * node called a fifth function. `test/butler-run.test.ts` asserts a real seal comes back `butler`.
+ *
+ * An explicit `actorKind` still wins, because two cases need one: a refusal recorded against no actor at
+ * all, and the installer.
+ */
+function kindOfActor(actorUserId: string | null): ActorKind {
+  if (actorUserId === null) return "node";
+  return idPattern(ID_PREFIXES.butler).test(actorUserId) ? "butler" : "user";
+}
+
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -636,7 +697,7 @@ async function buildEntries(
 
   for (const event of events) {
     seq += 1;
-    const actorKind: ActorKind = event.actorKind ?? (event.actorUserId != null ? "user" : "node");
+    const actorKind: ActorKind = event.actorKind ?? kindOfActor(event.actorUserId ?? null);
     const detail = boundedDetail(event.detail);
 
     const fields = {

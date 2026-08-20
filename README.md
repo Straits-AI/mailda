@@ -118,11 +118,11 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,916 lines specifying the target state, with 41 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,967 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 31 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 37 receipts in [`docs/receipts/`](./docs/receipts/) generating 199 verified constants |
-| **Code** | A measurement harness and one Worker. 985 tests across two runtimes, checked on every push. Not a product. |
+| **Measurements** | 38 receipts in [`docs/receipts/`](./docs/receipts/) generating 206 verified constants |
+| **Code** | A measurement harness and one Worker. 1,132 tests across two runtimes, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -809,8 +809,7 @@ detection is excluded one layer down for the same reason: a breaker needs a deno
 per-run outcomes at all. What shipped is not diminished by it — the three rates are the ones that stop a
 runaway *sending*, and a domain pause is a human act that needs no Butler.
 
-**A Butler can now be written down, checked and frozen — and nothing runs it, which the Node says out
-loud.** The node set is closed over storage that exists today, drawn by looking rather than by taste:
+**A Butler can now be written down, checked and frozen.** The node set is closed over storage that exists today, drawn by looking rather than by taste:
 fourteen nodes ship, and fifteen more are *representable in the AST and refused at publication with a reason
 naming what is missing*. That distinction is the point. `llm.classify` parses and is refused with "there is
 no LLM control plane"; an author who writes tomorrow's node gets an answer rather than a parse error.
@@ -903,6 +902,94 @@ built *from* the ULID alphabet rather than beside it, and a closed-world test th
 identifier pattern anywhere in the repository. That test found a second divergence the day it was written: a
 field validating a sender identity against the **send manifest's** prefix, for an object that has no table
 at all.
+
+**And a Butler now runs.** Mail arrives, and every published Butler whose trigger names that mailbox starts —
+one generic Workflow class interpreting whatever `ast_json` it reads, so publishing one still needs no deploy.
+That genericity is not tidiness: a workflow **outlives the Worker that declared it** (measured — deleting the
+script left it behind, and it took `wrangler workflows delete` to remove), so a class per Butler would have
+left one orphaned account-level resource per published Butler, for ever, invisible to the Worker. There is
+exactly one, whatever comes and goes. Full account in [`docs/butler-engine.md`](./docs/butler-engine.md).
+
+**The instance id is the Butler version plus the delivery, and that makes §16's `forbid` free.** `create({ id })`
+throws on a duplicate, so the same message cannot start two runs and the refusal comes from the platform
+rather than from a check we wrote — the same conflict-is-the-signal shape already carrying the audit sequence
+and the claim CAS. It matters because the trigger hangs off an at-least-once pipeline that will see the same
+delivery twice. Three things kept separate because each is easy to conflate: the run id is **not** an ADR 9
+effect key (it dedups the *trigger*; every send still mints its own), the dedup window is **30 days** because
+that is the instance retention rather than our design, and `createBatch` is refused outright — it silently
+skips a duplicate id and drops it from the returned array, measured at 4 requested and 1 returned with no
+error.
+
+**A Butler's principal is the Butler, and this is the decision with the most reach in the layer.** Not the
+administrator who published it. Four reasons, and the fourth is the one that turns a constraint into a
+feature: borrowing the publisher's identity would grant the program everything that person can ever do,
+put their name on mail they never saw, silently remove them from the approver pool for every send it
+proposes — and make it **impossible to write a policy about a Butler at all**, because the `actor` condition
+compares an id. As itself, a Butler holds only the tuples an administrator granted to its `btl_` id, which
+means a freshly published one can do *nothing* until somebody says otherwise and revoking stops it on the
+next node. It cost the schema nothing: identifiers are typed-prefix ULIDs, so `actor_kind = butler` is
+**derived from the id** rather than passed by each call site — which is what stops attribution being a thing
+every future effect node has to remember.
+
+**A Butler cannot put mail on the wire.** Every send it proposes is sealed `awaiting` a human release, and
+both halves of that are necessary: without the D1 state the outbox sweeper hands the bytes over the moment
+the hold window elapses, and without the parked `waitForEvent` a release cannot resume the program. So the
+gate is in the database and the waiting is in the Workflow — which costs no concurrency, so ten thousand
+proposed sends are ten thousand sleeping instances and no capacity. A send therefore stays releasable after
+its *run* has expired, because instance state lasts 30 days and a manifest lasts for ever. A timeout ends the
+run and never the send. The release takes `send.propose` — the authority composing it would have needed — and
+the trail names the **person**, while the seal names the Butler.
+
+**Being refused is the system working, so it is an outcome rather than an error.** A policy denial, a paused
+domain, an approval nobody can give, a case somebody else is holding, a relation that was never granted: each
+is recorded against the node that met it and the run carries on. Three of those are tested against the real
+machinery rather than a stub — a real published `deny` policy, a real two-administrator domain pause, a real
+stage set whose approvers were revoked. What that costs is stated rather than glossed: the shipped AST has no
+failure edge, so a Butler cannot say *"if the send was denied, assign it to a human instead"*. It can only be
+read afterwards.
+
+**The one thing a Butler must not have is a path a person does not have.** So `case.assign` is `claim`,
+`case.close` is `close`, `draft` is `saveDraft` and `mail.send.propose` is `sealManifest` — not copies. Which
+means `case.close` closes only a case the Butler is *holding*, exactly as it does for a human, and the shipped
+way to reach that is to assign it to `${butler.id}` first. Widening `close` for the program's convenience
+would have changed what closing means for everybody. The engine's own additions are three: resolve the
+expressions, record what happened, and check **the Butler's** authority where the function checks somebody
+else's — which is the gap that mattered, because `claim` verifies the *assignee* and a Butler holding nothing
+anywhere could otherwise have assigned any case in the organization to anybody who may work it.
+
+**A stored AST is data, and data can be edited by whoever holds the database.** So the checker runs **again**
+at run start, for free, and a reserved node written straight into the row makes the run refuse itself before
+any effect — with the checker's own sentence, *"there is no LLM control plane"*, in the reason and the log.
+Not a crash and not silently skipped. The same pass catches the other three things a hand edit could
+introduce: a cycle, a dangling edge, and a graph that cannot afford itself.
+
+**Measuring a run against the checker's prediction for the same AST found them disagreeing, and that is worth
+more than either number.** #54 prices the *functions* a node calls; a run costs the *nodes*, and a node is the
+function plus the Butler's own authority check plus its record row. Four of the five fit inside the headroom
+those bounds already carry. The fifth does not: `mail.send.propose` measures **23** against a bound of **20**,
+because the node reads the draft back before sealing it. At two nodes that is a rounding error — 32 against a
+predicted 30. At loop scale it is not: a `foreach` of 500 sends prices at exactly the Paid pot and really
+costs 11,503, so the instance dies at about item 434 **having already sealed 434 manifests**, which is
+precisely the failure the publication-time refusal exists to prevent.
+
+**So #54's arithmetic was left alone and the engine was given a live meter instead.** Editing a closed
+ticket's figures from inside another ticket's work is how a receipt stops describing what it says it measured
+— its numbers are correct measurements of the functions they name. What changed is that the run now **counts
+its own spend**, carries the total across invocations on its record, and refuses an effect it cannot afford
+*before* performing it, with the budget, the limit, the ask and the receipt in the operational log. The
+500-send loop stops at item 357 with something a person can read. Three numbers, and the distance between the
+first and the last is the whole finding: **500** admitted at publication, **434** actually affordable, **357**
+permitted by the guard. The guard being strictest is the right direction — refusing one send too early costs a
+run that could have finished, and refusing one too late means it has already gone.
+
+**What is still not enforced is said rather than implied.** A loop whose body performs no I/O costs nothing,
+so it is affordable at a billion — true in subrequests, the only currency with a measurement behind it — and
+the engine does not refuse it either: it runs until the platform's CPU limit kills the step. And a workflow's
+name is account-scoped and **cannot be omitted**, so #72's fix for the queue is unavailable here; what is
+enforced instead is that the name derives from the Worker's own, which makes a rename one edit. The residual
+is named: Workers Builds overrides the Worker's name, so a second install into one account gets a different
+Worker and the same workflow name, and what happens then is unmeasured. The queue case collided silently;
+this one is not known to.
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -1128,6 +1215,7 @@ docs/supervised-access.md              matters, the time-boxed grant, per-act re
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
 docs/butler-ast.md                     the node set, what the checker refuses, how a version freezes
+docs/butler-engine.md                  what runs a Butler: the principal, the release gate, the budget
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
@@ -1139,6 +1227,7 @@ packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
                                        authorization, auth, outbox sweeper, interface
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
+apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate
 apps/node/worker/src/client            browser scripts, served as real .js files
 apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made

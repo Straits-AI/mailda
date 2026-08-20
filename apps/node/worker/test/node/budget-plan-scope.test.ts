@@ -177,6 +177,22 @@ const FIGURES: Record<string, Classification> = {
     "butler.step_cost_max_lookup",
   ),
 
+  // docs/receipts/butler-run-cost.md
+  ...mailda(
+    // Not plan-scoped, for exactly the reason `butler-step-cost.md`'s five are not, and it needed checking
+    // rather than inheriting because this receipt's whole subject is a *division* into a plan-scoped pot:
+    // these count operations Mailda's own engine performs around each node, and no Cloudflare plan changes
+    // how many statements `interpret` runs. The plan lives in the pot's name —
+    // `workflow.paid.subrequest_budget_per_instance` — and in the one place the division happens, which is
+    // the runtime guard in `src/butler/interpret.ts` and the arithmetic in `packages/butler-ast/src/cost.ts`.
+    // `butler.run_cost_engine_fixed` is the same kind of figure one level smaller: a count of three
+    // statements in one file.
+    "what Mailda's own Butler engine costs per node and per run, measured with metering() in workerd; the "
+      + "plan changes the size of the pot these spend from, never how many operations the engine performs",
+    "butler.run_cost_max_draft", "butler.run_cost_max_send_propose", "butler.run_cost_max_case_assign",
+    "butler.run_cost_max_case_close", "butler.run_cost_max_lookup", "butler.run_cost_engine_fixed",
+  ),
+
   // docs/receipts/cloudflare-email-sending.md
   "send.included_per_month": {
     ground: "plan_scoped",

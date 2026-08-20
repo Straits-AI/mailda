@@ -43,6 +43,8 @@ import {
   type IssuedSession,
 } from "./auth/session.ts";
 import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
+import { releaseButlerSend } from "./butler/release.ts";
+import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { cloudflareTransport } from "./outbound/transport.ts";
@@ -53,6 +55,12 @@ import { clientScript, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
 export { KeyVault } from "./keyvault.ts";
+/**
+ * The Butler engine (#50). One generic `WorkflowEntrypoint` for every Butler on this Node, exported here
+ * because `wrangler.jsonc`'s `[[workflows]]` block names it by `class_name` and the platform resolves it off
+ * the bundle's entry module — exactly as it does the two Durable Objects above.
+ */
+export { ButlerRun } from "./butler/run.ts";
 
 /**
  * The Mailda Node. One Worker (ADR 18).
@@ -1274,6 +1282,72 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
 
       const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!);
       return Response.json(outcome, { status: outcome.cancelled ? 200 : 409 });
+    }
+
+    /**
+     * Releasing a Butler-proposed send (#50).
+     *
+     * Beside `cancel` because it is the same shape of act on the same object with the same authority:
+     * `send.propose` on the mailbox, which is what composing the message would have taken. #60 gave a policy
+     * hold's release to any holder of that relation and this follows it — the gate exists because no person
+     * had *seen* the message, not because a stricter authority is owed. `approval.decide` would have made
+     * this the approval machinery with none of its guarantees.
+     *
+     * Answers 409 with the same body for every refusal, exactly as `cancel` does: a manifest that does not
+     * exist, one in another organization, one this caller may not send as, and one gated by a **policy**
+     * rather than by this Node's Butler gate all answer alike. Otherwise the route is a way to enumerate
+     * which sends are waiting on which gate (§5C).
+     *
+     * `resumed` says whether the parked run was told. A send whose run's retention has expired is still
+     * released — the manifest is the gate and it is kept for ever, while instance state is 3 days on Free
+     * and 30 on Paid — so `false` here is a fact about the *program*, never about the mail.
+     */
+    // `releaseSend` rather than `release`, because `release` is already the case-release function imported
+    // from `./cases.ts` — and shadowing it here would compile in this block and be a different function
+    // three hundred lines away.
+    const releaseSend = /^\/api\/sends\/([^/]+)\/release$/.exec(url.pathname);
+    if (releaseSend && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const outcome = await releaseButlerSend(env, clock, who.orgId, who.userId, releaseSend[1]!);
+      return Response.json(outcome, { status: outcome.released ? 200 : 409 });
+    }
+
+    /**
+     * What Butlers have done here (#50).
+     *
+     * `GET /api/butler-runs`        the newest runs: which Butler, which version, which delivery, how it ended
+     * `GET /api/butler-runs/:id`    one run and every effect it performed, in order
+     *
+     * **`org.admin`, not `send.propose`**, and that is the same authority `src/butlers.ts` requires to author
+     * one. A run's effect list names case ids, draft ids and manifest ids across every mailbox the Butler
+     * touched, so bounding it per mailbox would mean either a partial answer that reads as complete or a
+     * query joining four tables to decide visibility row by row. A Butler is governance — the person who may
+     * write one is the person who may read what it did.
+     *
+     * There is deliberately no route that *creates* a run: a run comes from a delivery, and a Butler that
+     * could be fired by a request would be an automation with a manual override nobody governed.
+     */
+    if (url.pathname === "/api/butler-runs" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const limit = Number(url.searchParams.get("limit") ?? "25");
+      return Response.json({ runs: await recentRuns(env, who.orgId, Number.isFinite(limit) ? limit : 25) });
+    }
+
+    const oneRun = /^\/api\/butler-runs\/([^/]+)$/.exec(url.pathname);
+    if (oneRun && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const run = await runRow(env, who.orgId, oneRun[1]!);
+      if (run === null) return Response.json({ error: "not_found" }, { status: 404 });
+      return Response.json({ run, effects: await runEffects(env, who.orgId, oneRun[1]!) });
     }
 
     if (url.pathname === "/api/sends" && request.method === "GET") {

@@ -43,6 +43,12 @@
  *
  * `OUTBOX_SWEEPER` is metered rather than excluded even though nothing priced reaches it today, because
  * "nothing reaches it today" is exactly the assumption that expired for the transport.
+ *
+ * `BUTLER_RUNS` is #50's, and #55 left the decision here by name: it classified its throwaway probe binding
+ * as free and said that a **real** Butler binding must be metered, because `create()` on a workflow is a
+ * subrequest and a fan-out of instances is the whole reason the per-instance step budget exists. It is
+ * metered, and the note on it says where the cost lands — in the *caller's* invocation, never in the run's
+ * own pot.
  */
 
 export interface Cost {
@@ -57,6 +63,15 @@ export interface Cost {
   transportSends: number;
   /** Queue publishes. `sendBatch` is one, like `batch()`, because it is one round trip. */
   queuePublishes: number;
+  /**
+   * Workflow instances created, and events sent to one. **Not** what a Butler run itself spends.
+   *
+   * This counts what the *trigger* and the *release* do — `create()` and `sendEvent()` — which happen in
+   * whatever invocation called them (an outbox handler, an HTTP request), never inside the run's own pot. A
+   * fan-out of instances is the whole reason the per-instance step budget exists, so the one thing this must
+   * not be is invisible.
+   */
+  workflowCalls: number;
   /** The sum, which is what the platform budget is spent in. */
   subrequests: number;
 }
@@ -64,7 +79,7 @@ export interface Cost {
 export function emptyCost(): Cost {
   return {
     d1Executions: 0, d1Batches: 0, r2Operations: 0, doRpcs: 0, transportSends: 0,
-    queuePublishes: 0, subrequests: 0,
+    queuePublishes: 0, workflowCalls: 0, subrequests: 0,
   };
 }
 
@@ -213,6 +228,55 @@ export function metering(env: Env): { env: Env; cost: Cost } {
     });
 
   /**
+   * The Butler engine's workflow binding (#50, #55).
+   *
+   * **Metered, and that is a new decision rather than an inherited one.** #55 classified its throwaway probe
+   * binding as FREE and said explicitly that a *real* Butler binding would be a decision that must be
+   * metered — because `create()` on a workflow **is a subrequest**, and a fan-out of instances is the whole
+   * reason the per-instance step budget exists. That note was left for whoever landed the engine; this is it.
+   *
+   * What is counted, and where it lands: `create()` and an instance's `sendEvent()` each spend one, in the
+   * invocation that made the call. `get()` resolves a handle — the Durable Object shape one level along, so
+   * it is metered the same way `KEY_VAULT` is: resolving costs nothing and every method called *on* the
+   * handle is an RPC.
+   *
+   * **A run's own spend is not here.** A `ButlerRun` instance's pot is charged by the D1, R2 and vault
+   * operations its steps perform, which the proxies above already count. Counting the `create` against the
+   * run as well would double-charge the one subrequest that is genuinely the *caller's*.
+   */
+  const workflows = <T extends object>(namespace: T): T => new Proxy(namespace, {
+    get(target, property) {
+      if (property === "create" || property === "createBatch") {
+        return (...args: unknown[]) => {
+          cost.workflowCalls += 1;
+          cost.subrequests += 1;
+          return (Reflect.get(target, property) as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      }
+      if (property === "get") {
+        return async (...args: unknown[]) => {
+          const handle = await (Reflect.get(target, property) as (...a: unknown[]) => Promise<unknown>)
+            .apply(target, args);
+          if (typeof handle !== "object" || handle === null) return handle;
+          return new Proxy(handle as object, {
+            get(instance, method) {
+              const value = Reflect.get(instance, method) as unknown;
+              if (typeof value !== "function") return value;
+              return (...callArgs: unknown[]) => {
+                cost.workflowCalls += 1;
+                cost.subrequests += 1;
+                const methods = instance as unknown as Record<string, (...a: unknown[]) => unknown>;
+                return methods[method as string]!(...callArgs);
+              };
+            },
+          });
+        };
+      }
+      return passthrough(target, property);
+    },
+  });
+
+  /**
    * Every binding, classified — and reading an unclassified one **throws**.
    *
    * This is what makes the instrument's coverage a property rather than a claim. A binding added to
@@ -224,6 +288,7 @@ export function metering(env: Env): { env: Env; cost: Cost } {
     EVIDENCE: evidence,
     KEY_VAULT: durableNamespace(env.KEY_VAULT),
     OUTBOX_SWEEPER: durableNamespace(env.OUTBOX_SWEEPER),
+    BUTLER_RUNS: workflows(env.BUTLER_RUNS),
     ...(email === undefined ? {} : { EMAIL: email }),
     ...(sendingEvents === undefined ? {} : { SENDING_EVENTS: sendingEvents }),
   };

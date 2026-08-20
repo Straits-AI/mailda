@@ -403,3 +403,37 @@ an author, which is why the refusal computes the subtraction instead of quoting 
 **A per-node check would have missed the shape this rule exists for**, and it now has a fixture: 3,334
 `case.close` nodes in a chain, no loop and no single node costing more than 3, summing to 10,002 and refused.
 3,333 of them publish.
+
+
+---
+
+## Cross-reference, 21 August 2026 (#50): these figures price the **functions**, and a node costs more
+
+**No value here moves and no `stale_when` clause has fired.** What has changed is that an engine now exists
+to call these functions, so the difference between a function and a *node* is measurable — and it was
+measured, in `docs/receipts/butler-run-cost.md`.
+
+| node | this receipt (the function) | measured as a node |
+|:--|--:|--:|
+| `draft` | 10 | 6 |
+| `case.assign` | 8 | 7 |
+| `case.close` | 3 | 2 |
+| `lookup` | 4 | 2 |
+| `mail.send.propose` | **20** | **23** |
+
+Four of the five fit inside the headroom the bounds above already carry. The fifth does not, and this receipt
+predicted exactly that: *"One figure has no headroom left and that is worth saying twice… It is one operation
+away from being permissive."* It was three operations away, and **the operations are not in the seal** —
+`sealManifest` is unchanged. They are the engine's, around it: the node reads the draft back through
+`readDraft` before sealing it, and records what it did.
+
+So the sentence to carry away is the one that governs how these figures may be used: **they are correct for
+the functions they name, and the whole-graph total `packages/butler-ast/src/cost.ts` builds from them is a
+floor rather than a total for a run.** A `foreach` of 500 sends prices at exactly the Paid pot here and really
+costs 11,503. The engine closes that at runtime by metering itself against `butler-run-cost.md`'s figures and
+refusing an effect it cannot afford; what is *not* done is a quiet edit of the five values above, because they
+measure what they say they measure and the sizing argument attached to each is still the right one.
+
+Whoever re-measures this receipt should read that one first, and should decide deliberately whether these
+figures stay per-function or become per-node — because if they become per-node, `cost.ts` gains an exact
+publication-time refusal and this cross-reference and its counterpart both get deleted.

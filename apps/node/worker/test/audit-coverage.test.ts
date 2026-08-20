@@ -48,6 +48,21 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
        * have aged out of the window before anybody reads this. Un-audited, the trip never happened.
        */
       "send.rate_limited",
+      /*
+       * #50's release act, and it is the first thing in this Node that clears a gate without settling an
+       * approval: a Butler-proposed send is sealed `awaiting` with `butler_release_required`, and a person
+       * holding `send.propose` on the mailbox puts it back to `held`.
+       *
+       * Audited because it is plainly answerable — a program wrote a message and a named human decided it
+       * could go — and the entry's actor is the **person**, never the Butler. That asymmetry is the whole
+       * value of the gate: `send.sealed` already records the Butler as actor with `actor_kind = butler`, and
+       * this records who agreed.
+       *
+       * Not `approval.decided`, which means an eligible approver settled a stage of a request with a decision
+       * row behind it and separation of duty evaluated live. Filing this under the stronger name would make
+       * "how often is dual control being exercised" unanswerable from the trail.
+       */
+      "send.released",
     ],
   },
 
@@ -117,6 +132,28 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // here rather than exempted, because "created by whom" is a question about the Butler and not about a
     // version of it, and `butler.drafted`'s subject is the Butler id for exactly that reason.
     actions: ["butler.drafted"],
+  },
+  /* ---- Layer 4: the Butler engine (#50) ---- */
+  butler_runs: {
+    exempt:
+      "The run record **is** the record of the run, and every act inside it that a person could be asked "
+      + "about is audited where it happens: a Butler's send appends `send.sealed` with the Butler as actor "
+      + "and `actor_kind = butler`, and a person releasing one appends `send.released` naming them. What "
+      + "this table adds is execution state — started, parked, finished, refused, what it spent — which is "
+      + "nobody's act. A `butler.ran` action would put one untrimmable entry per delivery per published "
+      + "Butler behind a fact this row already carries, falsifying audit-and-log-retention.md's 'a handful "
+      + "per message' sizing exactly as an entry per claim or per export page would. Faults and refusals go "
+      + "to `log_entries`, which is bounded and trimmed and is where 'why did this behave oddly' belongs.",
+  },
+  butler_run_effects: {
+    exempt:
+      "One row per effect a run performed, and per refusal. Same reasoning as `send_recipients`, reached "
+      + "from the automation side: these rows are **derived from** acts that are audited elsewhere — the "
+      + "manifest, the draft, the case — and an audit entry per row would put up to butler.fanout worth of "
+      + "entries behind one delivery. The unaudited effects here are `case.assign` and `case.close`, and "
+      + "they are unaudited for people too: `cases` names only `case.claim_taken`, because claiming is "
+      + "frequent and only taking work off a *named colleague* is answerable. A Butler's claim is an "
+      + "ordinary claim by a non-human principal, and this table is where it is answerable.",
   },
   butler_versions: {
     // Auditable for a reason the other frozen-history table shares: a published version is the program a

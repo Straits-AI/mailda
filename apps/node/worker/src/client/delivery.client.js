@@ -350,6 +350,15 @@ export const SEND_REASONS = {
       "This is not waiting for somebody — nobody can clear it. An administrator has to grant approval.decide " +
       "to enough distinct people, and then the message has to be composed again.",
   },
+  butler_release_required: {
+    label: "waiting for a person",
+    note:
+      "A Butler wrote this send and no person has seen it yet, so this Node will not hand it over. It has " +
+      "not left and it is not lost. Anybody who may send as this mailbox can release it — the same authority " +
+      "that composed it would have needed — and releasing it puts it back in the ordinary hold window, where " +
+      "it can still be cancelled. Nothing releases it on its own: a Butler is a program, and the whole point " +
+      "of this gate is that a program does not get to decide that a person agreed.",
+  },
 };
 
 /**

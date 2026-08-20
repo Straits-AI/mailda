@@ -9,6 +9,7 @@ import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
+import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
 import { domainOf, evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
 import { domainPaused } from "./recheck.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
@@ -99,11 +100,28 @@ export interface Composition {
   /** Exactly what the author typed. Stored unchanged. */
   bodyTyped: string;
   fidelity: Fidelity;
+  /**
+   * True when the author is a program with no person present, so the send needs a human release (#50).
+   *
+   * Set by the Butler engine and by nothing else. It is a parameter here rather than a second write by the
+   * caller for the reason the policy decision moved into this function: **the outcome determines the state,
+   * and the state has to exist when the manifest does.** A manifest sealed `held` and gated a moment later
+   * has a window in which it reads as sendable — and `dispatchDue`'s sweeper reads exactly that column, so
+   * the window is not theoretical.
+   *
+   * Named for the property rather than for the caller (`proposedByButler` would be a name that goes stale
+   * the first time anything else proposes a send without a person). Its rank in the order below, and the
+   * argument for it, are in `src/butler/gate.ts`.
+   */
+  releaseRequired?: boolean;
 }
 
 export interface SealedManifest {
   id: string;
-  /** `held` when policy allowed, `awaiting` when it gated, `withheld` when it denied (#60). */
+  /**
+   * `held` when policy allowed, `awaiting` when it gated, `withheld` when it denied (#60) — and `awaiting`
+   * with `butler_release_required` when a program proposed it and no person has released it yet (#50).
+   */
   state: "held" | "awaiting" | "withheld";
   releaseAt: string;
   rfcMessageId: string;
@@ -468,7 +486,11 @@ export async function sealManifest(
    * #60 gave four outcomes a total order so that conflict resolution is one comparison. Two breakers join
    * that order, and both ends are decided rather than incidental:
    *
-   *     policy deny  >  domain pause  >  require_approval  >  policy hold  >  rate gate  >  allow
+   *     policy deny  >  domain pause  >  require_approval  >  policy hold  >  butler release  >  rate gate  >  allow
+   *
+   * **The butler release gate is #50's, and it is above the rate gate for the reason stated three
+   * paragraphs down**: a rate gate needs time and a release needs a person. `src/butler/gate.ts` carries the
+   * full argument, including why a Butler send does not simply require an approval instead.
    *
    * **A policy denial keeps its reason** even on a paused domain, because a denial is the older and more
    * specific decision — somebody wrote a rule about this send — and overwriting it would hide it. **A pause
@@ -501,6 +523,27 @@ export async function sealManifest(
     sealedState = "withheld";
     stateReason = refusal.reason;
     breakerError = refusal.lastError;
+  } else if (composition.releaseRequired === true && sealedState === "held") {
+    /*
+     * The Butler gate (#50), ranked between the pause and the rate gate.
+     *
+     * Above the rate gate deliberately, on this function's own rule: a rate gate needs *time* and this
+     * needs a *person*, so when both apply the reason a reader must act on is the human one. A Butler send
+     * carrying `over_rate` would tell somebody "nothing has to be cleared by anybody and it goes on its
+     * own", which is false of it. The rate is re-asked at dispatch after the release, exactly as it is
+     * after an approval.
+     *
+     * Below every policy gate, because `sealedState === "held"` is the guard: a policy hold or an approval
+     * keeps its own reason, and a `withheld` send is not re-opened into a queue somebody could clear.
+     * `require_approval` is already a human gate, so a second ask on top would mean two people clearing one
+     * send for one reason — and when an administrator wants that rule they write it as a policy naming the
+     * Butler as actor, which outranks this.
+     *
+     * No `last_error`: there is nothing wrong. `state_reason` is the whole answer and the words for it live
+     * in `src/client/delivery.client.js` with every other send reason.
+     */
+    sealedState = "awaiting";
+    stateReason = BUTLER_RELEASE_REASON;
   } else if (breakers.gate !== null && sealedState === "held") {
     breakerGate = breakers.gate;
     breakerError = describeTrip(breakers.gate);

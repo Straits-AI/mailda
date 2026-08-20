@@ -207,9 +207,11 @@ const EXPECTED_TABLES = [
   // are a windowed COUNT(*) over rows that already exist — so this one row is the whole of what the latched
   // breaker needed.
   "domain_pauses",
-  // Migration 0027 (Layer 4: the Butler object). A Butler can be published and not run — see
-  // `butlerExecutionCheck` below, which says so rather than leaving a reader to infer it.
+  // Migration 0027 (Layer 4: the Butler object).
   "butlers", "butler_versions",
+  // Migration 0028 (Layer 4: the Butler engine, #50). The run record and one row per effect. Not the run
+  // ledger — #53 owns the four replay modes and adds to these two rather than replacing them.
+  "butler_runs", "butler_run_effects",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -418,53 +420,62 @@ function sendingEventsConsumerCheck(): Finding {
 }
 
 /**
- * Says out loud that a Butler can be published here and cannot be run.
+ * Says what a Butler can do here, which since #50 includes **running**.
  *
- * ## Why this is a check and not a paragraph in a document
+ * ## What this check was, and why the sentence had to change rather than stay
  *
- * Migration 0027 gives this Node two Butler tables, a canonical AST, a structural checker and a
- * draft-publish lifecycle, and **no engine**: #50 chose one generic `ButlerRun extends WorkflowEntrypoint`
- * and nothing in this bundle declares a Workflow binding. An operator who publishes a Butler and waits is
- * owed the reason nothing happened, and the alternative to saying it here is leaving them to infer it from
- * an absence — which is the failure mode this whole file exists for. `migrations_applied` will happily
- * report that both tables are present, and a reader is entitled to read that as "the feature works".
+ * It used to say that a Butler could be published and could not run, because migration 0027 shipped the
+ * store and the checker with no engine. `test/node/butler-execution-world.test.ts` existed to make that
+ * sentence fail the day an engine landed — the hazard in a permanently-true `detail` is that it stays in the
+ * file long after it stops describing the code, and *nothing looks wrong*: the check still runs, still
+ * passes, still reads as verified. The engine has landed, so the sentence is rewritten and that test now
+ * asserts the opposite absence: that the binding and the class are both present, and that this text no
+ * longer claims otherwise.
  *
- * ## `report`, `ok: true`, always — and what stops that becoming a lie
+ * ## Still `report`, still `ok: true`, and still costing nothing
  *
- * It is a fact about how far this layer is built rather than a fault, and it varies with nothing an
- * organization has stored, so it fails on no Node and carries no severity — `sendingEventsConsumerCheck` is
- * the precedent and its argument is the same one: a finding that fails on every Node forever is one
- * somebody mutes.
+ * It reports how far this layer is built rather than a fault, so it fails on no Node — `sendingEventsConsumer`
+ * is the precedent and the argument is the same: a finding that fails on every Node forever is one somebody
+ * mutes. And it asks this Node's tables nothing, so it adds no subrequest to `doctor.max_subrequests_per_run`,
+ * whose receipt names exactly that as a staleness clause. A count of runs would be evidence and would also be
+ * a new fixed-cost query on every run of `doctor`; the gap being reported is a property of the bundle.
  *
- * The hazard in a permanently-true `detail` is that it stays true in the file long after it stops being
- * true of the code. `test/node/butler-execution-world.test.ts` closes that: it fails the moment
- * `wrangler.jsonc` declares a workflow or a `WorkflowEntrypoint` appears in `src/`, so the sentence cannot
- * outlive the absence it describes. That is the #70 lesson — an identifier reads as though it is being
- * checked, and nothing was checking it — applied to a claim rather than to a name.
+ * ## What is still not built, named here because an operator is entitled to the list
  *
- * Costs no subrequest: it asks this table nothing. A count of published Butlers would be evidence, and it
- * would also be a new fixed-cost query inside `doctor.max_subrequests_per_run`, whose receipt names exactly
- * that as a staleness clause. The gap being reported is a property of the bundle, not of the data.
+ * The capability ceiling at publication, static taint tracking (#52), the run ledger and its four replay
+ * modes (#53), simulation, and every trigger except `mail.received`. Two of those are §16 guarantees this
+ * Node does not yet keep, and saying so in the report is the difference between a layer that is honest about
+ * its edges and one that lets an absence read as a feature.
  */
 function butlerExecutionCheck(): Finding {
   return {
     check: "butler_execution",
     severity: "report",
-    // The shape of the bundle and the name of a ticket. Both public, no organization content, so this
-    // survives into the reduced report an unauthenticated locked-out operator sees.
+    // The shape of the bundle and the names of tickets. No organization content, so this survives into the
+    // reduced report an unauthenticated locked-out operator sees.
     discloses: "infrastructure",
     ok: true,
     detail:
-      "Butlers can be authored, checked, drafted and published on this Node, and none of them runs: there " +
-      "is no run engine in this bundle and no Workflow binding for one. Publication is still the versioning " +
-      "event — a published version's AST and source text are frozen, enforced by database triggers — so a " +
-      "Butler published now is the exact program a later engine will execute. Reserved nodes (llm.*, " +
-      "label, route, archive, quarantine, case.upsert, case.task, case.note, connector.*, " +
-      "approval.request, template.render) parse and are refused at publication with a reason naming the " +
-      "node. A Butler that could not afford to run is also refused: the whole graph is priced against one " +
-      "Workflow instance's subrequest pot, which this Node divides at the Workers Paid figure of 10,000 " +
-      "because it cannot detect its own plan and ADR 25 requires Paid. On Workers Free the pot is 1,000 and " +
-      "every such refusal prints that row too. What is still not checked is the capability ceiling.",
+      "Butlers run on this Node. A published Butler fires when mail arrives at the mailbox its trigger " +
+      "names: one generic Workflow interprets the version's frozen AST, and the run's id is the Butler " +
+      "version plus the delivery, so the same message cannot start two runs — the platform refuses the " +
+      "duplicate. Every effect goes through the same code a person's does, with the **Butler itself** as " +
+      "the principal: it holds only the relations an administrator granted to its btl_ id, revoking one " +
+      "stops it on the next node, and audit entries name it with actor_kind=butler. A send a Butler " +
+      "proposes is sealed awaiting a human release and will not be handed over until somebody who may " +
+      "send as that mailbox releases it. Every run leaves a record in butler_runs with one row per effect " +
+      "and per refusal. Reserved nodes (llm.*, label, route, archive, quarantine, case.upsert, case.task, " +
+      "case.note, connector.*, approval.request, template.render) are refused at publication and refused " +
+      "again at run start, so a hand-edited AST cannot execute one. A published version's AST and source " +
+      "text are frozen, enforced by database triggers, so the Butler that runs is the exact program that " +
+      "was published. A Butler that could not afford to run is also refused: the whole graph is priced " +
+      "against one Workflow instance's subrequest pot, which this Node divides at the Workers Paid figure " +
+      "of 10,000 because it cannot detect its own plan and ADR 25 requires Paid. On Workers Free the pot " +
+      "is 1,000 and every such refusal prints that row too — and the engine re-prices the graph at run " +
+      "start with its own overhead added, then meters itself and refuses an effect it cannot afford rather " +
+      "than being killed mid-loop. What is still not built: the capability ceiling at publication, static " +
+      "taint tracking (#52), the run ledger and its four replay modes (#53), simulation, and every trigger " +
+      "except mail.received.",
   };
 }
 

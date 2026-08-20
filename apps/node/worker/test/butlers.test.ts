@@ -562,7 +562,7 @@ describe("what never reaches the store", () => {
 });
 
 describe("the audit trail", () => {
-  it("records the draft and the publication, and says the publication is not runnable", async () => {
+  it("records the draft and the publication, and says what will fire the published version", async () => {
     const ctx = atTime(AUGUST_20);
     const draft = await createButlerDraft(testEnv, ctx, ORG, ADMIN, {
       name: "sales-enquiries", source: source(),
@@ -575,9 +575,18 @@ describe("the audit trail", () => {
 
     expect(results.map((row) => row.action)).toEqual(["butler.drafted", "butler.published"]);
     for (const row of results) expect(row.subject).toBe(draft.butlerId);
-    const published = JSON.parse(results[1]!.detail) as { runnable: boolean; version: number };
+    const published = JSON.parse(results[1]!.detail) as {
+      version: number; trigger: { event: string; mailbox: string };
+    };
     expect(published.version).toBe(1);
-    // Said in the trail, not only in a comment: publication mints a version and nothing executes it.
-    expect(published.runnable).toBe(false);
+    /*
+     * Said in the trail, not only in a comment: what will fire this version.
+     *
+     * This assertion was `runnable: false` until #50 landed the engine, at which point the field became a
+     * lie in the one table that must not hold one. The replacement is deliberately not `runnable: true` — a
+     * field whose only value is `true` says nothing — but the trigger, which is the question a reader of
+     * the entry asks next.
+     */
+    expect(published.trigger).toEqual({ event: "mail.received", mailbox: "enquiries@example.com" });
   });
 });

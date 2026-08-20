@@ -4,15 +4,17 @@ What a Butler *is* as a document, what the checker refuses and why, how a versio
 guarantees deliberately live somewhere else. Decided in
 [#49](https://github.com/Straits-AI/mailda/issues/49) and its correction; Layer 4; blueprint §16.
 
-**A Butler can be published on this Node and cannot be run.** The engine is
-[#50](https://github.com/Straits-AI/mailda/issues/50)'s — one generic `ButlerRun extends
-WorkflowEntrypoint` interpreting whatever `ast_json` it reads — and no Workflow binding exists in this
-bundle. That is the intended end state for this piece rather than a gap: an AST that nothing executes is
-still what the run ledger, the taint checker and simulation are all written against, and shipping the store
-and the checker first gives each of them something to be checked against. `mailda doctor` reports it as
-`butler_execution` so an operator who publishes a Butler and waits is told why nothing happened, and
-`test/node/butler-execution-world.test.ts` fails the day a Workflow binding or a `WorkflowEntrypoint`
-appears — which is what stops that sentence outliving its truth.
+**A Butler can be published on this Node, and since [#50](https://github.com/Straits-AI/mailda/issues/50) it
+runs.** This document stops at the document: what an AST *is*, what the checker refuses, and how a version
+freezes. What executes one — the interpreter, the Butler's own principal, the human-release gate on a
+proposed send, the run record, and where a real run's cost disagrees with this package's prediction of it —
+is [`butler-engine.md`](./butler-engine.md).
+
+Two things decided here that the engine leans on hardest, so they are worth naming before you leave: an
+`Expr` is an **opaque non-empty string** to this package and the engine is what evaluates it, and a
+**reserved node parses and is refused with a reason**. The engine re-runs `checkButler` at the start of every
+run, at no subrequest cost, because a stored AST is data and data can be edited by whoever holds the
+database — so the refusals below are enforced twice, at publication and again before any effect.
 
 ---
 

@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { BUDGETS } from "@mailda/budgets";
 
 import {
-  BINDING_BLOCKS, bindingBlocksIn, CONFIG_PATH, readWranglerConfig, unclassifiedKeys, WORKER_DIR,
-  type ConfigScope,
+  BINDING_BLOCKS, bindingBlocksIn, blocksWithUnreadableShape, CONFIG_PATH, readWranglerConfig,
+  unclassifiedKeys, WORKER_DIR, type ConfigScope,
 } from "./wrangler-world";
 
 /**
@@ -45,8 +45,9 @@ const repoRoot = resolve(WORKER_DIR, "../../..");
  */
 type WranglerConfig = ConfigScope & {
   main?: string;
-  /** Not declared yet. Typed so the schedules guard below reads the real shape rather than `any`. */
-  workflows?: Record<string, unknown>[];
+  name?: string;
+  /** #50's Butler engine. Typed so the guards below read the real shape rather than `any`. */
+  workflows?: { binding?: string; name?: string; class_name?: string; schedules?: unknown }[];
   env?: Record<string, WranglerConfig>;
 };
 
@@ -57,18 +58,17 @@ const config = readWranglerConfig() as WranglerConfig;
  *
  * Deliberately keyed by *declared* block rather than by every block `wrangler-world.ts` recognises. Each
  * entry is a measured claim about somebody's first five minutes, and a block nothing declares has no
- * measurement behind it: `workflow-provisioning.md` provisioned a Workflow with a Super Administrator
- * OAuth token and says in as many words that this must not be read as "provisioned by the button", since
- * whether a Workers Builds auto-generated token has the scope is untested. Writing an entry now would
- * make that unmeasured claim. The test below fails the moment `[[workflows]]` is declared, which is when
- * somebody has the context to measure it.
+ * measurement behind it.
+ *
+ * The `workflows` entry was written **before** the block was declared, which is unusual here and was the
+ * right call: #55 measured the question that would otherwise have been asked at the worst moment, and #50
+ * then declared the block. Both halves are now real.
  */
 const BINDING_KINDS = {
   /*
-   * Classified ahead of being declared, which is unusual here and deliberate.
+   * Declared since #50: one `ButlerRun` workflow for every Butler on the Node.
    *
-   * Layer 4 chose Workflows as the Butler engine, so this block is the next one this config is likely to
-   * gain, and #55 measured the question that would otherwise be asked at the worst moment: whether a
+   * #55 measured the question that would otherwise have been asked at the worst moment: whether a
    * customer's install can provision one. It can. The measurement is in `workflow-provisioning.md` and the
    * value below is `workflow.provisioned_by_button`, so this entry moves if that figure ever does.
    *
@@ -282,6 +282,72 @@ describe("what a customer's deploy can provision", () => {
           + "be unique within an account is as install-breaking as a committed id: the second Node in one "
           + "account collides with the first, and a queue producer silently attaches to the queue that is "
           + "already there (#72). Declare the binding and let the deploy derive the name",
+    ).toBeNull();
+  });
+
+  /**
+   * A workflow's `name` is an account-level resource name, and it is **required** — so #72's rule cannot be
+   * applied to it the way it was applied to the queue.
+   *
+   * That fix was *declare the binding and let the deploy derive the name*, which worked because a queue
+   * producer's `queue` field is omissible (`queues.producer_queue_name_omissible`, measured). A
+   * `[[workflows]]` entry without `name` is refused by the config parser outright — it is in `required`
+   * alongside `binding` and `class_name` — and wrangler substitutes nothing into config *values*, so
+   * `--var` and `--define` are no route either. The name has to be committed.
+   *
+   * What is enforced instead is the next best property: the workflow's name is the **Worker's own name**
+   * plus a suffix. That makes renaming the Worker rename the workflow in the same edit, so this file can
+   * never commit an account-scoped name that has drifted away from the one it already commits.
+   *
+   * **The residual is real and is stated rather than hidden.** Workers Builds pins its own Worker name and
+   * overrides this file, so a second install into one account gets a different *Worker* name and the same
+   * *workflow* name. What happens then is **unmeasured**: the queue case collided silently (#72), and this
+   * one is not known to. It is the first thing to check when a second Node goes into an account, and the
+   * comment in `wrangler.jsonc` says so where an installer reads it.
+   */
+  it("names every workflow after the Worker, since a workflow name is account-scoped and required", () => {
+    const scopes: Array<[string, WranglerConfig]> = [
+      ["wrangler.jsonc", config],
+      ...Object.entries(config.env ?? {}).map(([name, scope]) => [`env.${name}`, scope] as [string, WranglerConfig]),
+    ];
+    const worker = config.name;
+    expect(worker, "the Worker has no name to derive from").toBeTypeOf("string");
+
+    const offenders = scopes.flatMap(([where, scope]) =>
+      (scope.workflows ?? []).flatMap((entry) => {
+        const name = entry.name;
+        return typeof name === "string" && name.startsWith(`${String(worker)}-`)
+          ? []
+          : [`${where}: ${JSON.stringify(name)}`];
+      }));
+
+    expect(
+      offenders.length === 0 ? null
+        : `${offenders.join(", ")} — a workflow's name is an account-level resource name and cannot be `
+          + `omitted, so it must be derived by hand from the Worker's own name (${String(worker)}) and `
+          + "checked here. See the comment above and wrangler.jsonc's [[workflows]] block",
+    ).toBeNull();
+
+    // Non-vacuity: the rule fires on a name that does not derive from the Worker's, without editing config.
+    const strangers = [{ binding: "X", name: "butler-runs", class_name: "X" }]
+      .filter((entry) => !entry.name.startsWith(`${String(worker)}-`));
+    expect(strangers, "the derivation rule accepted a name unrelated to the Worker's").toHaveLength(1);
+  });
+
+  it("declares a workflow whose block the shared world can read, and no schedules on it", () => {
+    // Both halves in one place because they are one question about the same block. #48 established that
+    // this Node declares no `schedules` — they are deploy-time config while Butlers are published at
+    // runtime, so scheduling multiplexes through `triggers.crons` — and the guard at the bottom of this
+    // file is therefore correct while never firing. Asserted here so "never fires" is a fact about the
+    // config rather than an assumption about it.
+    expect(bindingBlocksIn(config)).toContain("workflows");
+    expect(blocksWithUnreadableShape(config)).toEqual([]);
+    const withSchedules = (config.workflows ?? []).filter((entry) => "schedules" in entry);
+    expect(
+      withSchedules.length === 0 ? null
+        : "wrangler.jsonc declares workflows[].schedules. #48 decided this Node never does — schedules are "
+          + "deploy-time config and a Butler is published at runtime — so scheduling goes through "
+          + "triggers.crons. If that decision has been reopened, the wrangler floor below now binds",
     ).toBeNull();
   });
 
