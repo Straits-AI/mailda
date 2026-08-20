@@ -38,8 +38,9 @@ import type { Butler } from "./ast.ts";
  *
  * 1. **Object keys are sorted** by UTF-16 code unit. Deterministic and independent of construction order.
  * 2. **Arrays keep their order.** An array in this AST is a sequence with meaning — `switch.cases` is
- *    evaluated in order, `draft.to` is a recipient list, `nodes` is a list. Sorting one would erase a
- *    semantic difference, which is the opposite failure from the one above and a worse one.
+ *    evaluated in order and `nodes` is a list. Sorting one would erase a semantic difference, which is the
+ *    opposite failure from the one above and a worse one. (`draft.to` used to be the third example and is
+ *    gone: a Butler names no recipients — #52.)
  * 3. **`null` and `undefined` are dropped**, so absent and null-valued keys serialize identically. They
  *    mean the same thing in this AST — `next: null` and no `next` are both "the run ends here" — and #60
  *    settled that a publish which changed `undefined` to `null` changed nothing.

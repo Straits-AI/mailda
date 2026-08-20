@@ -9,7 +9,7 @@ import { grant } from "../src/access.ts";
 import { metering } from "../src/cost-meter.ts";
 import { interpret, type RunSteps } from "../src/butler/interpret.ts";
 import { placeButlerPause } from "../src/butler/pause-acts.ts";
-import { triggerButlers } from "../src/butler/trigger.ts";
+import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, publishButler } from "../src/butlers.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { putEvidence } from "../src/evidence-store.ts";
@@ -95,7 +95,7 @@ async function aDelivery(ctx: Ctx, inReplyTo: string | null = null): Promise<str
 
 const ACKNOWLEDGE = [
   {
-    id: "reply", type: "draft", mailboxId: "${event.mailbox_id}", to: ["${event.from}"],
+    id: "reply", type: "draft", mailboxId: "${event.mailbox_id}",
     subject: "Re: ${event.subject}", body: "Thanks.", inReplyTo: "${event.message_id}",
     as: "ack", next: "propose",
   },
@@ -115,20 +115,11 @@ async function published(ctx: Ctx, name: string): Promise<{ butlerId: string; ve
 }
 
 async function factsFor(messageId: string): Promise<Record<string, unknown>> {
-  const row = await testEnv.CATALOG.prepare(
-    `SELECT m.id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
-            a.mailbox_id, a.address AS mailbox_address
-       FROM messages m
-       JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
-       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-      WHERE m.org_id = ? AND m.id = ? LIMIT 1`,
-  ).bind(ORG, messageId).first<Record<string, unknown>>();
-  return {
-    message_id: row!.id, conversation_id: row!.conversation_id, case_id: null,
-    mailbox_id: row!.mailbox_id, mailbox_address: row!.mailbox_address,
-    subject: row!.subject ?? "", from: row!.from_addr ?? "",
-    received_at: row!.received_at, parse_error: row!.parse_error,
-  };
+  // The production function. A copy of its statement is a fixture that stops matching the fact set the
+  // moment it grows — which is what #52 found in all four of these files when `return_path` arrived.
+  const facts = await deliveryFacts(testEnv, ORG, messageId);
+  if (facts === null) throw new Error(`no delivery facts for ${messageId}`);
+  return facts;
 }
 
 /** Runs the Butler over one delivery and returns the Message-ID its proposed send carries. */

@@ -37,7 +37,7 @@ export function leadIntake(): Record<string, unknown> {
         id: "acknowledge",
         type: "draft",
         mailboxId: "${event.mailbox_id}",
-        to: ["${event.from}"],
+        // No `to`. The Node addresses a Butler's reply from the delivery that triggered it (#52).
         subject: "Re: ${event.subject}",
         body: "Thanks — we have your enquiry and somebody will reply.",
         inReplyTo: "${event.message_id}",

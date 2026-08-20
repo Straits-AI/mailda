@@ -1720,6 +1720,26 @@ written down here rather than left to be inferred (#50; `docs/butler-engine.md` 
 - **A Butler's principal is the Butler**, a `btl_` id holding only the relations an administrator granted to
   it, re-read per call. Its audit entries carry `actor_kind = butler`. This is the *runtime* identity and is
   a different question from `metadata.owner`, whose six ownership kinds are still unbuilt.
+- **A Butler cannot choose who mail goes to.** No shipped node has a `to`, `cc` or `bcc` parameter, and the
+  node set is closed and strict, so an undeclared parameter under any spelling is refused at publication.
+  The Node derives a Butler's recipients from the **parent delivery** — the envelope sender of the message
+  that triggered the run, RFC 5321's return path — and a delivery with a null reverse path (`MAIL FROM:<>`)
+  is refused rather than defaulted, per RFC 3834 — as is a return path equal to the address the delivery
+  arrived at, which is a one-hop mail loop and is what RFC 3834 §2 forbids by name. The `From:` and
+  `Reply-To:` headers are deliberately not used: a header is content, so honouring one would be the sink
+  under another name. This is the sink sentence
+  above closed **by construction** rather than by analysis, for the reason in the next bullet, and it costs
+  something real: **a Butler cannot CC a colleague, add a supervisor, or forward.** Each of those needs a
+  trusted recipient, and no contacts, allowlist or suppression store exists. It also does not make the
+  envelope sender trustworthy — a spoofed reverse path aims a reply at whoever it names, which the release
+  gate below bounds and the missing store is what would close (#52).
+- **Static taint tracking is deferred to the layer that has a sink, and that reverses part of Layer 4's
+  shape.** With no shipped node exposing one of the eleven sinks, a dataflow checker at this layer would have
+  nothing to refuse, so no test could prove it refuses — a green suite would establish only that the analysis
+  never fired. What is built instead is structural and testable today: reserved nodes are refused by name, a
+  parameter no node declares is refused, and a tripwire pins the whole parameter surface of the shipped set so
+  a sink parameter cannot be added without a test failing and naming this sentence. The analysis lands with
+  `connector.*` or `llm.*`, both Layer 6, where there is something to refuse (#52).
 - **A Butler cannot put mail on the wire.** Every send it proposes is sealed `awaiting` with
   `butler_release_required` and the run parks on `step.waitForEvent`; a person holding `send.propose` on the
   mailbox releases it. That gate ranks between the policy gates and the rate gate in §18's total order: below
@@ -1743,9 +1763,10 @@ written down here rather than left to be inferred (#50; `docs/butler-engine.md` 
   Butler's own run sealed, which the run record and `send_manifests.rfc_message_id` make a join. §18 carries
   the breaker's half of it.
 
-Still unbuilt and named here rather than implied: static taint tracking, the **capability** ceiling at
-publication (the **cost** ceiling is built), the run ledger and its four replay modes, simulation, and every
-trigger except `mail.received`.
+Still unbuilt and named here rather than implied: the **capability** ceiling at publication (the **cost**
+ceiling is built), the run ledger and its four replay modes, simulation, and every trigger except
+`mail.received`. Static taint tracking is not on that list and was not built — see the bullet above for the
+reversal and what stands in for it.
 
 ### DSL example
 
@@ -1800,6 +1821,10 @@ steps:
     type: mail.send.propose
     message: "${steps.acknowledgement.message}"
 ```
+
+The send node above carries `message:` and no `to`, and that was already true of this example before anybody
+noticed it was load-bearing: a Butler names no recipients (#52). Read it as the shape rather than as an
+omission.
 
 ### Compiler and runtime guarantees
 
@@ -2688,7 +2713,7 @@ Teams can build in parallel after contracts and invariants are ratified. Product
 - Browser CSRF/login-CSRF, malicious Origin/CORS, session-fixation, clickjacking/CSP and cached-content revocation tests.
 - OpenAPI contract tests shared by UI, CLI, SDK and MCP.
 - Butler compiler tests for types, taint, capabilities, cycles, budgets and dependency locks.
-- Adversarial taint tests for recipient/forward redirection, attachment exfiltration, connector/CRM/ERP target mutation and secret/model-profile selection.
+- Adversarial taint tests for recipient/forward redirection, attachment exfiltration, connector/CRM/ERP target mutation and secret/model-profile selection. **Recipient redirection is tested against the shipped node set today** and the test is not a dataflow test, because there is no dataflow to test: a message arrives with a spoofed `From:` and an address in its subject, and the reply reaches the envelope sender and nobody else (`test/butler-run.test.ts`), while a tripwire pins the parameter surface so a recipient parameter cannot return (`packages/butler-ast/test/sinks.test.ts`). The rest of this line waits on the nodes that have those sinks — all Layer 6.
 - Extension isolation tests for sandbox escape, SSRF/DNS rebinding, secret/binding probing and CPU/memory exhaustion.
 - Frozen-clock deterministic simulation/replay.
 - MIME corpus: Gmail, Outlook, Apple, Exchange, Unicode, nested MIME, TNEF, signed/encrypted, invites, malformed and large messages.

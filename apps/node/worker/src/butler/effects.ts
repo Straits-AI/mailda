@@ -8,6 +8,7 @@ import { sealManifest } from "../outbound/manifest.ts";
 import { caseMailboxHeldBy, notAnId, readEntity } from "./authority.ts";
 import { BUTLER_RELEASE_REASON } from "./gate.ts";
 import { evaluate, type RunState } from "./expr.ts";
+import { parentDelivery, replyRecipients, type RunTrigger } from "./parent.ts";
 import type { EffectOutcome } from "./record.ts";
 import type { ButlerPrincipal } from "./principal.ts";
 
@@ -22,9 +23,14 @@ import type { ButlerPrincipal } from "./principal.ts";
  * same function ran, with a different principal. `test/butler-step-cost.measure.test.ts` priced those four
  * functions before this engine existed *on that basis*, and the figures only mean anything while it holds.
  *
- * What this file adds around each call is three things and nothing else: it resolves the node's expressions,
- * it checks **the Butler's own** authority where the function checks somebody else's, and it turns the
- * answer into a row of the run record.
+ * What this file adds around each call is four things and nothing else: it resolves the node's expressions,
+ * it checks **the Butler's own** authority where the function checks somebody else's, it turns the answer
+ * into a row of the run record, and — for `draft` — it **supplies the recipients the node does not carry.**
+ *
+ * That last one is #52. `draft` has no `to`, `cc` or `bcc`: §16 forbids untrusted content selecting or
+ * constructing them, and an `Expr` reads `event.*`, which is the inbound message. So the address comes from
+ * the delivery that triggered the run (`parent.ts`) and a program cannot influence it. The cost is real and
+ * stated where authors meet it: a Butler cannot CC a colleague, add a supervisor, or forward.
  *
  * ## Being refused is a first-class outcome, not an error
  *
@@ -45,7 +51,7 @@ import type { ButlerPrincipal } from "./principal.ts";
  * |:--|:--|:--|
  * | `case.assign` | the **assignee**'s `send.propose` (`claim`) | the Butler's `send.propose` on the case's mailbox |
  * | `case.close` | that the closer **holds** the case (`close`) | the Butler's `send.propose` on the case's mailbox |
- * | `draft` | the author's `send.propose` (`assertMaySend`) | nothing — the author *is* the Butler |
+ * | `draft` | the author's `send.propose` (`assertMaySend`) | nothing — the author *is* the Butler. It does supply the recipients, which the node cannot name (#52) |
  * | `mail.send.propose` | the author's `send.propose` (`maySend`) | nothing — same reason |
  * | `lookup` | nothing: it is a row read | the Butler's read relation, folded into the statement |
  *
@@ -195,17 +201,33 @@ export async function closeCase(
   });
 }
 
-/** `draft`: `saveDraft`, authored by the Butler. */
+/**
+ * `draft`: `saveDraft`, authored by the Butler, **addressed by the Node** (#52).
+ *
+ * The node has no recipient parameter — §16 forbids untrusted content selecting To/CC/BCC, and an `Expr`
+ * reads `event.*`, which is the inbound message. So the recipients come from `parentDelivery`, which reads
+ * the envelope sender of the delivery that triggered this run, and a delivery with no return path faults
+ * rather than defaulting. `src/butler/parent.ts` carries the choice of the envelope over the `From:` and
+ * `Reply-To:` headers, and says what it does and does not buy.
+ *
+ * Derived **before** `refusable`, deliberately: this is a fault about the run's own inputs, in the same
+ * family as an unresolvable path, and turning it into a governed refusal would make "there is nobody to
+ * reply to" indistinguishable from "a policy said no".
+ *
+ * No `cc` and no `bcc` are passed at all, rather than empty arrays — a Butler cannot copy anybody, and an
+ * absent argument is one fewer place for that to change quietly.
+ */
 export async function writeDraft(
   env: Env,
   ctx: Ctx,
   butler: ButlerPrincipal,
   node: Extract<ButlerNode, { type: "draft" }>,
   state: RunState,
+  trigger: RunTrigger,
 ): Promise<EffectResult> {
   const mailboxId = text(evaluate(node.mailboxId, state, node.id));
   if (mailboxId === null) throw notAnId(node.id, "mailbox", mailboxId);
-  const to = node.to.map((address) => String(evaluate(address, state, node.id)));
+  const to = replyRecipients(parentDelivery(trigger, node.id));
   const subject = String(evaluate(node.subject, state, node.id));
   const body = String(evaluate(node.body, state, node.id));
   const inReplyTo = node.inReplyTo === undefined

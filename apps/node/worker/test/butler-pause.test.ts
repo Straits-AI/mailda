@@ -10,7 +10,7 @@ import { interpret, type RunSteps } from "../src/butler/interpret.ts";
 import { isPauseReason, loopReading } from "../src/butler/pause.ts";
 import { placeButlerPause, resumeButlerPause } from "../src/butler/pause-acts.ts";
 import { runRow } from "../src/butler/record.ts";
-import { triggerButlers } from "../src/butler/trigger.ts";
+import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, editButlerDraft, publishButler } from "../src/butlers.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { runDoctor } from "../src/doctor.ts";
@@ -153,7 +153,6 @@ const ACKNOWLEDGE = [
     id: "reply",
     type: "draft",
     mailboxId: "${event.mailbox_id}",
-    to: ["${event.from}"],
     subject: "Re: ${event.subject}",
     body: "Thanks for your message. Someone will reply shortly.",
     inReplyTo: "${event.message_id}",
@@ -205,35 +204,16 @@ async function run(
 }
 
 /**
- * The `event.*` root, in the shape `deliveryFacts` builds it.
+ * The `event.*` root — from **the production function**, not a copy of its statement.
  *
- * Written out rather than read straight out of SQL, because the column names and the fact names differ —
- * `from_addr` is `event.from` — and a fixture that fed the raw row would give every expression an `undefined`
- * and fault the run. Found by doing exactly that.
+ * It was a copy, and the comment above it claimed a fixture that fed the raw row would fault the run. True,
+ * and not enough: #52 added `return_path`, the copy did not have it, and the fact a Butler's recipients are
+ * derived from would have been absent in every test here. One reader of one statement.
  */
 async function factsFor(messageId: string): Promise<Record<string, unknown>> {
-  const row = await testEnv.CATALOG.prepare(
-    `SELECT m.id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
-            a.mailbox_id, a.address AS mailbox_address
-       FROM messages m
-       JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
-       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-      WHERE m.org_id = ? AND m.id = ? LIMIT 1`,
-  ).bind(ORG, messageId).first<{
-    id: string; conversation_id: string | null; subject: string | null; from_addr: string | null;
-    received_at: string; parse_error: string | null; mailbox_id: string; mailbox_address: string;
-  }>();
-  return {
-    message_id: row!.id,
-    conversation_id: row!.conversation_id,
-    case_id: null,
-    mailbox_id: row!.mailbox_id,
-    mailbox_address: row!.mailbox_address,
-    subject: row!.subject ?? "",
-    from: row!.from_addr ?? "",
-    received_at: row!.received_at,
-    parse_error: row!.parse_error,
-  };
+  const facts = await deliveryFacts(testEnv, ORG, messageId);
+  if (facts === null) throw new Error(`no delivery facts for ${messageId}`);
+  return facts;
 }
 
 /** The `Message-ID` the run's proposed send actually carries, read off the manifest the effect row names. */

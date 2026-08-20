@@ -96,6 +96,87 @@ let `mail.send.propse` read as a future feature, which is the worse of the two f
 
 ---
 
+## No node takes a recipient (#52)
+
+§16's sink sentence names eleven things untrusted content may not select or construct: *"policy, sender
+identity, To/CC/BCC or forwarding destination, attachment, integration/egress URL, connector
+operation/target record, financial/account identifier, secret reference, model profile or permission."*
+
+Exactly one of them landed on a real parameter of a shipped node. `draft` took `to: z.array(expr).min(1)`, an
+`Expr` may read `event.*`, and `event.*` **is** the inbound message. So a published Butler could send to an
+address chosen by the mail it was answering — §16's redirection sink, open. Nothing objected, because the
+guard that would have objected is the tripwire #52 asked for and it did not exist yet: the absent guard and
+the open sink were one omission.
+
+**The parameter is gone rather than checked.** A check has to stay right for ever; an absent parameter has
+nowhere for a value to arrive. The Node derives a Butler's recipients from the delivery that triggered the
+run — see [the engine doc](butler-engine.md#who-a-butlers-reply-goes-to) for where the address comes from and
+what happens when there is none.
+
+**The cost, stated here rather than in a commit message: a Butler cannot CC a colleague, cannot add a
+supervisor, and cannot forward anything.** Each of those means naming a recipient who is not the
+correspondent, which needs a *trusted* recipient — a contacts table, an allowlist, a suppression list — and
+no such store exists anywhere in the schema. They arrive with that store, not with a parameter that would
+accept whatever an expression produced.
+
+Two things keep the sink closed, and neither knows a forbidden word:
+
+- **A shipped node's shape is strict.** `z.object` *strips* an undeclared key, so removing `to` on its own
+  would have made a Butler naming `to` publish with the field silently discarded — an author certain they had
+  chosen who this Node writes to. `z.strictObject` makes it `E_BUTLER_NODE_UNKNOWN_PARAMETER` instead, and
+  that one refusal covers `to`, `cc`, `bcc`, `recipients`, `escalateTo` and `forwardTo` alike, because none of
+  them is a parameter of anything. A list of forbidden names would be a guard against the spellings whoever
+  wrote it thought of.
+- **The parameter surface is pinned by a test.** `test/sinks.test.ts` asserts two properties: every parameter
+  of every shipped node is built from a *named* schema in `FIELD_KINDS` — so a fresh `z.array(expr)` at a call
+  site fails — and the whole surface equals a written-out list, so **any** new parameter on **any** shipped
+  node fails, whatever it is called. Said plainly: that does not prove a new parameter is safe. No
+  schema-level rule can tell an `Expr` holding a case id from an `Expr` holding an email address, because
+  they are the same type. What it proves is that nobody can add one without being told to answer §16's
+  question about it.
+
+### The other ten sinks, re-verified
+
+The list of "already unreachable" was written before the engine existed, so it was re-read against the code
+rather than trusted. Nine hold. Two need correcting, and one of the corrections matters.
+
+| sink | where it stands |
+|:--|:--|
+| **sender identity** | **Correction.** *"Closed structurally, `From` is derived from `addresses`"* is half the story: `From` is derived from the **mailbox**, and `draft.mailboxId` is an `Expr`, so untrusted content can reach it. Closed by *validation against trusted organization state* — §16's own escape clause — rather than by construction: `saveDraft` and `sealManifest` both bound the choice to mailboxes an administrator granted this Butler `send.propose` on. Asserted in `test/butler-run.test.ts`, both arms. |
+| **policy** | **Correction.** *"Policy has no table"* is out of date — `0019_policy.sql` exists and `recipient_external` and `mailbox_id` are live conditions. So policy *selection* rode on the recipient parameter, and closing that closed this too; what remains is the mailbox, bounded as above. |
+| To/CC/BCC | Closed by construction — no parameter (this section). |
+| forwarding destination | No node, and no forwarding code anywhere in the Worker. |
+| attachment | No attachment field on `DraftInput` or `Composition`; the only attachment concept in the Worker is the audit name for a raw-evidence read. |
+| integration/egress URL | `connector.call` is reserved. `validate`'s inline schema is the only URL-shaped thing a node carries, and `$ref` and `format` are refused by name — nothing fetches. |
+| connector operation / target record | `connector.call` is reserved. |
+| financial/account identifier | No such column in any table. |
+| secret reference | Nothing in `src/butler/` reaches the key vault; encryption picks its own generation. |
+| model profile | Every `llm.*` node is reserved. |
+| permission | `grant`/`revoke` are `org.admin` HTTP routes no node calls. `case.assign`'s assignee is validated by `claim` against the assignee's own tuples, which is the escape clause again. |
+
+Two smaller things found in the same pass, recorded because they are easy to mistake for holes. `is_reply` is
+a policy condition and `inReplyTo` is an expression, so content can in principle select it — but only by
+naming a message id it would have to guess *and* that the Butler may read, and a miss is `E_NO_SUCH_PARENT`
+rather than a silent flip. And a Butler on a **multi-address mailbox cannot send at all**: `senderAddress` is
+not a node parameter, so `sealManifest` refuses with `E_SENDER_AMBIGUOUS` rather than picking one. That is the
+sender-identity sink closed by refusal, and it predates this ticket.
+
+**`inReplyTo` stays an author's expression, and that is a decision.** Threading is not one of the eleven, and
+it is already bounded by authority: `sealManifest` refuses a parent the author cannot read
+(`E_NO_SUCH_PARENT`), which is the check the reply-parent hole was closed with. So a Butler may thread a reply
+onto any message in a mailbox it may read — exactly what a person may do — while the addressing still comes
+from the trigger. Where the two disagree the addressing wins, because the trigger is the delivery the run is
+provably about.
+
+**The human path is untouched, and that was verified rather than assumed.** `saveDraft` stores the caller's
+recipient list and derives nothing from `inReplyToMessageId`; the API hands it `body.to` straight from the
+request. A person may still reply to a colleague, CC records, and thread it onto a customer's message.
+`test/drafts.test.ts` pins that, so a later change that made the store derive recipients would fail there —
+and would silently hand every Butler a recipient again, since a Butler's draft goes through the same
+function.
+
+---
+
 ## The document
 
 ```json
@@ -109,7 +190,7 @@ let `mail.send.propse` read as a future feature, which is the worse of the two f
     { "id": "assign",      "type": "case.assign",       "caseId": "${event.case_id}",
       "assignee": "${org.rota.on_call}", "next": "acknowledge" },
     { "id": "acknowledge", "type": "draft",             "mailboxId": "${event.mailbox_id}",
-      "to": ["${event.from}"], "subject": "Re: ${event.subject}",
+      "subject": "Re: ${event.subject}",
       "body": "Thanks — somebody will reply.", "as": "reply", "next": "propose" },
     { "id": "propose",     "type": "mail.send.propose", "draft": "${steps.reply.draft_id}",
       "next": null }
@@ -322,7 +403,8 @@ version that states plainly that the program did not move.
 Three rules:
 
 1. **Object keys are sorted** by UTF-16 code unit.
-2. **Arrays keep their order** — `switch.cases` is evaluated in order, `draft.to` is a recipient list.
+2. **Arrays keep their order** — `switch.cases` is evaluated in order, `nodes` is a list. (`draft.to` was
+   the third example here and is gone: a Butler names no recipients — see the section above.)
 3. **`null` and `undefined` are dropped**, so absent and null-valued keys serialize identically. They mean
    the same thing here (`next: null` and no `next` are both "the run ends"), and #60 settled that a publish
    changing `undefined` to `null` changed nothing.
@@ -460,6 +542,7 @@ direct write to a draft row reaches it.
 | `E_BUTLER_NODE_RESERVED` | a reserved node, named, with `because` as the reason |
 | `E_BUTLER_LOOP_UNBOUNDED` | a loop whose `maxItems` is absent or not an integer ≥ 1 |
 | `E_BUTLER_NODE_MALFORMED` | a shipped node that does not match its declared shape |
+| `E_BUTLER_NODE_UNKNOWN_PARAMETER` | a parameter the node's kind does not declare — which is how "no node takes a recipient" is enforced against every spelling (#52) |
 | `E_BUTLER_DUPLICATE_NODE_ID` | two nodes with one id, which makes every edge ambiguous |
 | `E_BUTLER_NO_ENTRY` | an `entry` that names nothing |
 | `E_BUTLER_EDGE_DANGLING` | an edge pointing at nothing |
@@ -480,9 +563,14 @@ dangerous half.
 
 ### What the checker does not do
 
-- **The taint rules.** §16's *"untrusted content cannot select or construct policy, sender identity, To/CC/BCC…"*
-  is [#52](https://github.com/Straits-AI/mailda/issues/52). It needs the inside of an expression, which this
-  package does not parse.
+- **Dataflow analysis.** §16's *"untrusted content cannot select or construct policy, sender identity,
+  To/CC/BCC…"* is [#52](https://github.com/Straits-AI/mailda/issues/52), and #52 **reversed** the plan to
+  build a checker for it at this layer. The reason is stated in "No node takes a recipient" above: with the
+  sink closed by construction there is nothing a dataflow checker could refuse, so a green suite would prove
+  only that the analysis never fired — a shape this repository was bitten by three times in one day. What
+  this package does instead is refuse a parameter no node declares, which is testable today because it is a
+  property of the node schema rather than of a dataflow. The analysis arrives with the first node that has a
+  real sink: `connector.*` or `llm.*`, both Layer 6.
 - **The capability ceiling.** §16's *"capability ceiling computed at publication"* is
   [#51](https://github.com/Straits-AI/mailda/issues/51), and #54 already noted that the three-term
   intersection it needs would **invalidate** `authz.check.max_queries` rather than fit inside it.

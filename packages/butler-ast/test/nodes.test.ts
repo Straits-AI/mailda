@@ -153,7 +153,7 @@ function payloadFor(kind: NodeKind): Record<string, unknown> {
     case "case.assign": return { caseId: "x", assignee: "y", next: null };
     case "case.close": return { caseId: "x", next: null };
     case "draft":
-      return { mailboxId: "m", to: ["a"], subject: "s", body: "b", as: "d", next: null };
+      return { mailboxId: "m", subject: "s", body: "b", as: "d", next: null };
     case "mail.send.propose": return { draft: "d", next: null };
     default: return {};
   }

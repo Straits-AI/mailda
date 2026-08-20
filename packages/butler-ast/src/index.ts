@@ -1,8 +1,11 @@
 export {
   butler, butlerEnvelope, butlerId, butlerJsonSchema, butlerMetadata, butlerNode, butlerTrigger,
-  butlerVersionId, expr, LOOKUP_ENTITIES, maxItems, NODE_CATALOGUE, nodeId, ref, schemaFor,
+  butlerVersionId, expr, FIELD_KIND_NAMES, LOOKUP_ENTITIES, maxItems, NODE_CATALOGUE, nodeId, ref,
+  schemaFor, shippedParameterSurface,
 } from "./ast.ts";
-export type { Butler, ButlerEnvelope, ButlerNode } from "./ast.ts";
+export type {
+  Butler, ButlerEnvelope, ButlerNode, FieldKindName, ShippedParameter,
+} from "./ast.ts";
 
 export {
   isLoopKind, isNodeKind, isShipped, LOOP_KINDS, NODE_KIND_NAMES, NODE_KINDS, RESERVED_KINDS,

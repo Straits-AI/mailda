@@ -62,7 +62,7 @@ function leadIntake(overrides?: Record<string, unknown>): Record<string, unknown
         assignee: "${org.rota.on_call}", next: "acknowledge",
       },
       {
-        id: "acknowledge", type: "draft", mailboxId: "${event.mailbox_id}", to: ["${event.from}"],
+        id: "acknowledge", type: "draft", mailboxId: "${event.mailbox_id}",
         subject: "Re: ${event.subject}", body: "Thanks — somebody will reply.", as: "reply",
         next: "propose",
       },
@@ -435,6 +435,32 @@ describe("what never reaches the store", () => {
     })).rejects.toThrow(/E_BUTLER_DOES_NOT_CHECK[\s\S]*E_BUTLER_NODE_RESERVED[\s\S]*classify/);
 
     // And nothing was stored, which is what makes "the store holds only programs that check" true.
+    const { results } = await testEnv.CATALOG.prepare("SELECT id FROM butlers WHERE org_id = ?")
+      .bind(ORG).all();
+    expect(results).toEqual([]);
+  });
+
+  it("refuses a Butler that names a recipient, whatever it calls it (#52)", async () => {
+    /*
+     * §16: untrusted content cannot select or construct To/CC/BCC. No shipped node has a recipient
+     * parameter, so this is refused at the *store*, which is the boundary that matters — a version that
+     * reached `butler_versions` would be frozen and immutable with a recipient in it.
+     *
+     * Six spellings, one rule. There is no list of forbidden words behind this: a shipped node's shape is
+     * strict, so every one of these is simply a parameter no node declares. A guard that knew the word `to`
+     * would pass `escalateTo` straight through, which is how the sink shipped in the first place.
+     */
+    for (const spelling of ["to", "cc", "bcc", "recipients", "escalateTo", "forwardTo"]) {
+      const ast = leadIntake();
+      (ast["nodes"] as Array<Record<string, unknown>>)
+        .find((node) => node["id"] === "acknowledge")![spelling] = ["attacker@evil.example"];
+      await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+        name: `recipient-${spelling}`, source: source(ast),
+      }), spelling).rejects.toThrow(
+        new RegExp(`E_BUTLER_NODE_UNKNOWN_PARAMETER[\\s\\S]*"${spelling}"[\\s\\S]*To/CC/BCC`),
+      );
+    }
+
     const { results } = await testEnv.CATALOG.prepare("SELECT id FROM butlers WHERE org_id = ?")
       .bind(ORG).all();
     expect(results).toEqual([]);

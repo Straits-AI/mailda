@@ -158,6 +158,30 @@ describe("replying twice resumes rather than forking", () => {
     ).rejects.toThrow();
   });
 
+  it("takes a person's recipients from the person, even on a reply (#52)", async () => {
+    /*
+     * The other side of #52, asserted here so the constraint stays where it was put. **A Butler cannot name
+     * recipients; a person can** — including a reply addressed somewhere other than the message being replied
+     * to, which is an ordinary thing to do and which no Butler may do.
+     *
+     * `saveDraft` derives nothing from `inReplyToMessageId`: it stores the caller's list, and the API hands it
+     * `body.to` straight from the request (`src/index.ts`). A change that made this function look up the
+     * parent and address the reply itself would fail here — and it would also silently give every Butler a
+     * recipient again, because a Butler's draft goes through this same function.
+     */
+    const saved = await saveDraft(testEnv, atTime(3_200_000_250_000), ORG, AUTHOR, null, {
+      ...composition,
+      inReplyToMessageId: "<from-a-customer@example.net>",
+      to: ["colleague@acme.example", "supervisor@acme.example"],
+      cc: ["records@acme.example"],
+    });
+    expect(saved.to).toEqual(["colleague@acme.example", "supervisor@acme.example"]);
+    expect(saved.cc).toEqual(["records@acme.example"]);
+    const reloaded = await readDraft(testEnv, ORG, AUTHOR, saved.id);
+    expect(reloaded?.to).toEqual(["colleague@acme.example", "supervisor@acme.example"]);
+    expect(reloaded?.inReplyToMessageId).toBe("<from-a-customer@example.net>");
+  });
+
   it("allows as many unrelated new messages as somebody likes", async () => {
     // The index is partial for this reason: SQLite treats every NULL as distinct, so a new message is not
     // constrained by it. A person with three half-written new messages is not making a mistake.

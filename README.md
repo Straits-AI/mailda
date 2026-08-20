@@ -1045,6 +1045,71 @@ reads the query plan from the planner rather than trusting a comment, in the sam
 later. It leads on the Message-ID instead, and is UNIQUE, so two manifests cannot claim one — which would have
 let a single reply attribute to two sends and counted a chain that never happened.
 
+**A Butler can no longer choose who mail goes to, and the reason that had to change is worth reading twice.**
+§16 has always said untrusted content must not select or construct To/CC/BCC. The node set charted before that
+was settled gave `draft` a `to` list of *expressions*, an expression may read `event.*`, and `event.*` is the
+inbound message — so a published Butler could send to an address chosen by the mail it was answering. Nothing
+objected, because the thing that would have objected was the tripwire the same ticket asked for and had not
+built. **The absent guard and the open sink were one omission**, which is the shape this repository has now
+paid for four times.
+
+**So the parameter is gone rather than guarded.** A guard has to stay right for ever; an absent parameter has
+nowhere for a value to arrive. The Node addresses a Butler's reply itself, from the **parent delivery** — the
+envelope sender of the message that triggered the run, which is RFC 5321's return path and what RFC 3834
+requires an automatic responder to answer. Not the `From:` header and not `Reply-To:`, and that is the whole
+point rather than a detail: a header is content, so honouring one would be the same sink wearing a different
+name. A message forged to say `From: finance@victim.example` gets its reply at the address that actually sent
+it, and there is a test that sends exactly that message. A bounce — `MAIL FROM:<>`, no return path at all — is
+**refused**, because every available default is worse: the header reopens the sink, the mailbox is a loop, and
+a manifest with no recipients is not a send.
+
+**And the loop in that sentence turned out to be reachable, which is why driving a thing beats reading it.**
+Nothing stopped the derived recipient from being the address the delivery arrived at — a message whose reverse
+path is `support@acme.example`, delivered to `support@acme.example`, sealed a reply from that address to that
+address, which comes back in and does it again, and forging `MAIL FROM` is all it takes to start one. The
+sentence had been a reason not to default to the mailbox; it was not a rule anything enforced. It is one now,
+and the honest limit is stated with it: the check compares one address against one address, so a loop that runs
+through a second mailbox or between two Nodes still passes. Breaking those needs `Auto-Submitted`, which
+nothing in this repository emits or reads.
+
+**What it costs is real and is written where authors meet it: a Butler cannot CC a colleague, add a supervisor,
+or forward anything.** All three mean naming somebody who is not the correspondent, which needs a *trusted*
+recipient, and there is no contacts table, allowlist or suppression list anywhere in the schema. They arrive
+with that store rather than with a parameter that would accept whatever an expression produced. **A person is
+not constrained by any of it** — the draft store takes the recipients the request gives it and derives nothing,
+which was verified rather than assumed and is now pinned by a test, because a change that made the store clever
+would hand every Butler a recipient back through the same function.
+
+**And the checker that was planned for this became a tripwire instead, which is a reversal recorded rather than
+made quietly.** A dataflow checker at this layer would have had nothing to refuse — the sink is closed by
+construction — so no test could prove it refuses, and a green suite would have established only that the
+analysis never fired. That is the exact shape of three defects found here in one day. What is built instead is
+structural and fails today if broken: a shipped node's parameters are **closed and strict**, so `to`, `cc`,
+`recipients`, `escalateTo` and `forwardTo` are all refused at publication by one rule that knows none of their
+names — and a test pins the entire parameter surface of the node set, so a recipient cannot come back without
+something failing and naming §16. Both halves were proved by putting `to` back and watching them fail. The
+dataflow checker lands with `connector.*` and `llm.*`, at Layer 6, where there will be something to refuse.
+
+**Re-verifying the other ten sinks corrected two entries, and one of the corrections matters.** *"Sender
+identity is closed structurally"* was half true: `From` is the mailbox's address, and the mailbox is chosen by
+an **expression**, so untrusted content can reach it. It is closed by *validation against trusted organization
+state* — §16's own escape clause — rather than by construction, and the asymmetry with the recipient is exactly
+why the two are handled differently: a recipient had nothing to be validated against, while a mailbox has the
+tuple table, which only an administrator writes. Both arms are now asserted: content naming a mailbox the
+Butler was not granted is refused, and content naming one it *was* granted works, which is the residual stated
+rather than implied by silence. The other correction is smaller and was simply stale — policy *does* have a
+table now, and recipient externality is one of its conditions, so policy selection had been riding on the
+recipient parameter all along and closing that closed this too. A third thing fell out of the same pass:
+a Butler on a **multi-address mailbox cannot send at all**, because it has no way to name which address it
+sends as and nothing will let a `created_at` decide what every recipient sees.
+
+**One thing is stated and not fixed.** Deriving the recipient closes the *selection* — nothing an author wrote
+and nothing in the message decides who receives it — and it does not make the envelope sender trustworthy. A
+spoofed reverse path aims a reply at whoever it names. What stands between that and an unattended exfiltration
+path today is the human release gate on every Butler send, which is the gate the pause work already flagged as
+one that may later be outranked. The proper answer is the same missing trusted-recipient store, and saying so
+is better than a paragraph implying the problem is closed.
+
 **What is still not enforced is said rather than implied.** A loop whose body performs no I/O costs nothing,
 so it is affordable at a billion — true in subrequests, the only currency with a measurement behind it — and
 the engine does not refuse it either: it runs until the platform's CPU limit kills the step. And a workflow's
@@ -1292,7 +1357,7 @@ apps/node/worker                       the single Worker (ADR 18): inbound mail,
                                        authorization, auth, outbox sweeper, interface
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
 apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate,
-                                       the latched pause and its two write acts
+                                       recipient derivation, the latched pause and its two write acts
 apps/node/worker/src/client            browser scripts, served as real .js files
 apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made

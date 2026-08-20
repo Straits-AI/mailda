@@ -143,7 +143,8 @@ They are recorded per effect and the run carries on, because **being refused is 
 ## The expression language, in full
 
 Three forms and nothing else. Small enough to be analysable matters more here than expressive enough to be
-convenient, because #52's taint checker has to understand the inside of one.
+convenient — which #52 then made a stronger argument for rather than a weaker one: with no sink for an
+expression to reach, the language's smallness is what keeps it that way as nodes are added.
 
 | form | example | result |
 |:--|:--|:--|
@@ -159,6 +160,12 @@ evaluate as a string comparison.
 Three roots: `event` (what the trigger carried), `steps` (what `as` bound), `butler` (`id`, `versionId`,
 `name` — which is how a `case.assign` names the Butler itself). **A path that does not resolve throws**,
 because the alternative is `"undefined"` interpolated into a subject line and sent.
+
+A `mail.received` run's `event` carries exactly: `message_id`, `conversation_id`, `case_id`, `mailbox_id`,
+`mailbox_address`, `subject`, `from`, `return_path`, `received_at`, `parse_error`. Two of those name a sender
+and the distinction is load-bearing — `from` is the `From:` **header**, content the sender chose, readable so
+a guard can match on it; `return_path` is the **envelope** sender, and it is the only one anything addresses
+mail with. See "Who a Butler's reply goes to" below.
 
 `validate` honours `type`, `enum`, `const`, `required`, `properties`, `additionalProperties`, `items`,
 `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum` — and **refuses a schema using
@@ -185,15 +192,15 @@ breaker, every authority check and every audit entry happens because the same fu
 principal. `test/butler-step-cost.measure.test.ts` priced those four functions before this engine existed *on
 that basis*, and the figures only mean anything while it holds.
 
-What the engine adds around each call is three things: it resolves the node's expressions, it checks **the
-Butler's own** authority where the function checks somebody else's, and it turns the answer into a row of the
-run record.
+What the engine adds around each call is four things: it resolves the node's expressions, it checks **the
+Butler's own** authority where the function checks somebody else's, it turns the answer into a row of the
+run record, and — for `draft` — it **supplies the recipients the node does not carry** (below).
 
 | node | who the Layer 5 function checks | so the engine checks |
 |:--|:--|:--|
 | `case.assign` | the **assignee**'s `send.propose` | the Butler's `send.propose` on the case's mailbox |
 | `case.close` | that the closer **holds** the case | the Butler's `send.propose` on the case's mailbox |
-| `draft` | the author's `send.propose` | nothing — the author *is* the Butler |
+| `draft` | the author's `send.propose` | nothing — the author *is* the Butler. It does supply the recipients, which the node cannot name |
 | `mail.send.propose` | the author's `send.propose` | nothing — same reason |
 | `lookup` | nothing: it is a row read | the Butler's read relation, folded into the statement |
 
@@ -215,6 +222,107 @@ construction.
 first, so the record reads refusal-then-fault and a person meets the reason before the symptom. The shipped
 AST has no failure edge for a node to branch on, which is what makes this the only available answer short of
 substituting a value. A second edge is a change to #49's node shapes.
+
+---
+
+## Who a Butler's reply goes to
+
+**A Butler does not name recipients. The Node derives them from the parent delivery** (#52). `draft` has no
+`to`, and no `cc` or `bcc` either: §16 forbids untrusted content selecting or constructing them, an `Expr` may
+read `event.*`, and `event.*` **is** the inbound message. So the parameter is gone rather than checked, and
+`src/butler/parent.ts` is what replaced it. [The AST doc](butler-ast.md#no-node-takes-a-recipient-52) carries
+why the parameter is absent instead of guarded, and what that costs.
+
+### The parent delivery, and which of its three addresses is used
+
+A Butler is triggered by `mail.received`: one message, delivered into one mailbox, carrying an SMTP envelope.
+The parent delivery is that message, and a reply to it is addressed to its **return path** — the envelope
+sender, `ingress_receipts.envelope_from`, RFC 5321's reverse path. Three addresses were available and the
+choice is written down rather than left to the next reader:
+
+| candidate | what it is | |
+|:--|:--|:--|
+| the `Reply-To:` header | content | **Refused.** A header is content, so honouring it is the sink under another name: `Reply-To: victim@example.com` would aim this Node's reply at a third party. |
+| the `From:` header (`messages.from_addr`) | content | **Refused**, same reason. It is what a *person's* mail client offers, and a person is a check on it; a program running unattended is not. |
+| the envelope sender | transport | **Used.** The address the transport itself treats as the return path, the one SPF authenticates, and the one RFC 3834 requires an automatic responder to answer. |
+
+Both facts are in the run's state under different names, because they are different things: `event.from` is
+the header, readable so a guard can *match* on it, and `event.return_path` is the envelope, which is what the
+reply is addressed to. Nothing addresses mail with `event.from`.
+
+**What this buys and what it does not, without dressing it up.** It closes the sink: no value an author wrote
+and no part of the message can decide who the mail goes to. It does **not** make the envelope sender
+trustworthy — a spoofed reverse path aims a reply at whoever it names, which is ordinary backscatter and a
+property of email rather than of this design. What bounds that today is the human release gate every Butler
+send carries; what will bound it properly is the trusted-recipient store that CC, forward and
+supervisor-notify are also waiting on. Not claimed as closed, because it is not.
+
+### A delivery with no return path is refused, never defaulted
+
+A bounce arrives with a null reverse path — `MAIL FROM:<>` — and RFC 3834 forbids answering one
+automatically. There is no honest default: the `From:` header would reopen the sink, the mailbox itself would
+be a loop, and a manifest with no recipients is not a send. So the `draft` node **faults**, the run ends
+`failed` with `E_BUTLER_PARENT_HAS_NO_RETURN_PATH`, and no draft and no manifest are written. An author who
+expects such deliveries guards on `event.return_path` before drafting, which is why that fact is in the run's
+state and why the refusal's `fix` line says so.
+
+The same fault covers a run with **no parent at all**, and neither shape is hypothetical:
+
+- **A trigger that is not a delivery.** The trigger enum has one member and #49 says it will grow. The day a
+  schedule fires a Butler there is no correspondent, and `E_BUTLER_NO_PARENT_DELIVERY` says that rather than
+  inventing one.
+- **A run started before this Node was upgraded.** Workflow instances outlive a deploy — a `wait` reaches 365
+  days — so a payload created before `return_path` existed does not carry one. Its `draft` refuses, which is
+  the safe direction: the alternative is guessing a recipient for mail that leaves the building.
+
+### A reply to the address the delivery arrived at is refused, because it is a loop
+
+The sentence above gives "the mailbox itself would be a loop" as a reason not to default to it. Nothing
+enforced that, and driving the derivation adversarially rather than reading it found the case where it
+happens: a message whose reverse path **is** `support@acme.example`, delivered to `support@acme.example`,
+sealed a manifest with that address in `From:` and in `To:`. That is delivered back into the same mailbox,
+fires the same Butler, and does it again. Forging `MAIL FROM` is all it takes, so it starts from outside.
+
+So `parentDelivery` refuses it: `E_BUTLER_REPLY_WOULD_LOOP`, before a draft is written, comparing the derived
+return path against `event.mailbox_address` case-insensitively. RFC 3834 §2 states the same rule — an
+automatic responder must not answer its own address. A trigger carrying no `mailbox_address` refuses under the
+same code, because a check that switches itself off when its input is missing is absent on exactly the runs
+nobody tested. An author can pre-empt it: `when: event.return_path == event.mailbox_address` is a comparison
+of two bare paths, which the expression language resolves, so the guard the refusal recommends is one this
+engine can run.
+
+**It compares one address against one address, and what that does not catch is in "What is unenforced" below.**
+
+### The one sink that is still an expression
+
+`draft.mailboxId` is an `Expr`, so untrusted content *can* reach it — and the mailbox decides two of §16's
+eleven: `From` is the mailbox's address (ADR 36) and `mailbox_id` is a policy condition. Found by re-verifying
+the other ten rather than trusting the list, and recorded because *"sender identity is closed structurally"*
+was only half true.
+
+It is closed by **validation against trusted organization state**, which is §16's own escape clause, and the
+asymmetry with the recipient is the reason the two are handled differently: a recipient had nothing to be
+validated against, while a mailbox has `relationship_tuples`, which only an administrator writes. `saveDraft`
+and `sealManifest` both bound the choice to mailboxes this Butler was granted `send.propose` on, and the test
+asserts **both** arms — content naming a mailbox the Butler does not hold is refused, and content naming one it
+does hold works, which is the residual stated rather than implied.
+
+A related consequence, verified rather than reasoned: `senderAddress` is not a node parameter either, so a
+Butler on a **multi-address mailbox cannot send at all** — `sealManifest` refuses with `E_SENDER_AMBIGUOUS`
+rather than letting a `created_at` decide what every recipient sees.
+
+### The cost
+
+**A Butler cannot CC a colleague, cannot add a supervisor, and cannot forward anything.** Every one of those
+means naming a recipient who is not the correspondent, which needs a *trusted* recipient, and there is no
+contacts table, allowlist or suppression list anywhere in the schema. `effects.ts` passes no `cc` or `bcc` to
+`saveDraft` at all rather than passing empty arrays, so there is no field there for a later edit to start
+filling in quietly.
+
+**A person is not constrained by any of this.** `saveDraft` stores the caller's recipient list and derives
+nothing from the message being replied to; the API hands it `body.to` from the request. The composer's reply
+button prefills the envelope sender *in the browser*, as a suggestion the person can change — which is the
+difference between a default and a derivation.
 
 ---
 
@@ -617,6 +725,30 @@ queue case collided silently, and this one is not known to.
 **No failure edge.** A node carries one `next`, so a Butler cannot say *"if the send was denied, assign the
 case to a human instead"*. What it can do is read the outcome from the run record afterwards.
 
+**A spoofed envelope sender.** Recipients are derived from the parent delivery's return path (above), which
+closes the sink — nothing an author wrote and nothing in the message can *select* a recipient — and does not
+make the return path itself trustworthy. A message forged to claim a third party as its reverse path gets a
+reply aimed at that third party. This Node does not authenticate the envelope sender and does not claim to;
+what stands between that and an unattended exfiltration path is the human release gate every Butler send
+carries, which #75's resolution named as a gate that may later be outranked. The proper answer is the
+trusted-recipient store, and it is the same missing store that CC, forward and supervisor-notify wait on.
+
+**A mail loop with more than one hop in it.** The refusal above compares the derived recipient against the
+address the delivery arrived at, which breaks the one-hop loop and nothing longer. A reply that lands in a
+*second* mailbox on this Node whose Butler answers it, or two Nodes answering each other, is not caught: each
+hop passes its own check. The standard answer is `Auto-Submitted: auto-replied` on what a Butler sends plus a
+rule about what ingress does with one, and **neither exists anywhere in this repository** — nothing emits that
+header, and nothing reads it. Until they do, a Butler's send carries no marker saying a program wrote it, and
+what bounds a multi-hop loop is the human release gate on each send and the latched self-provoked-run pause,
+which counts a Butler's runs rather than the loop's hops.
+
 **Still fog, unchanged from #50's resolution.** `queue_one` and `parallel_bounded` (they need a different id
 shape), the full §16 schedule semantics, the trigger catalogue beyond `mail.received`, the capability ceiling
-at publication, static taint tracking (#52), the run ledger and its four replay modes (#53), and simulation.
+at publication, the run ledger and its four replay modes (#53), and simulation.
+
+**Static taint tracking is no longer on that list, and it is not because it was built.** #52 reversed it for
+this layer: with the one reachable sink closed by construction there is nothing a dataflow checker could
+refuse, so its tests could only prove that the analysis never fired. The structural guard that replaced it —
+no shipped node exposes a sink parameter — is testable today because it is a property of the node schema.
+The dataflow checker arrives with `connector.*` or `llm.*`, both Layer 6, and arrives with something to
+refuse.

@@ -93,7 +93,26 @@ export type DeliveryFacts = {
   readonly mailbox_id: string;
   readonly mailbox_address: string;
   readonly subject: string;
+  /**
+   * The `From:` header, as the sender wrote it. **Content**, and readable for that reason only.
+   *
+   * A guard may match on it — *"is this from a supplier"* — and nothing addresses mail with it. What a reply
+   * goes to is `return_path` below, and the distinction is #52's whole subject: a header is chosen by
+   * whoever sent the message.
+   */
   readonly from: string;
+  /**
+   * The envelope sender of this delivery — RFC 5321's reverse path, `ingress_receipts.envelope_from`.
+   *
+   * **This is what a Butler's reply is addressed to** (`src/butler/parent.ts`), which is why it is a fact of
+   * the delivery rather than a parameter of a node. Empty when the message arrived with a null reverse path
+   * (`MAIL FROM:<>`) — a bounce — and a `draft` in that run refuses rather than guessing. An author who
+   * expects such deliveries guards on this before drafting.
+   *
+   * Not called `reply_to`: the `Reply-To:` header is a different thing, it is content, and honouring it
+   * would be the sink under another name. The name says which of the two this is.
+   */
+  readonly return_path: string;
   readonly received_at: string;
   /** Non-null when the message's headers could not be read. §24 keeps such a message, visibly unparsed. */
   readonly parse_error: string | null;
@@ -158,11 +177,22 @@ function isDuplicate(error: unknown): boolean {
  * that says where a message actually landed — `messages` carries no mailbox column, and organization
  * membership is a different question. The case is joined on `(conversation, mailbox)` because that is the key
  * `caseForDelivery` files it under.
+ *
+ * **Exported for the tests, and that is a fix rather than a convenience.** Four test files each carried a
+ * hand-written copy of this statement, one of them under the comment *"the same facts `trigger.ts` assembles,
+ * read the same way, so a test cannot drift from production"* — a claim a copy cannot enforce, and #52 caught
+ * all four of them missing `return_path` the moment the fact set grew. Since a Butler's recipients are now
+ * derived from these facts, a test fixture that disagreed with production would be a test of a delivery this
+ * Node never produces.
  */
-async function deliveryFacts(env: Env, orgId: string, messageId: string): Promise<DeliveryFacts | null> {
+export async function deliveryFacts(
+  env: Env,
+  orgId: string,
+  messageId: string,
+): Promise<DeliveryFacts | null> {
   const row = await env.CATALOG.prepare(
     `SELECT m.id AS message_id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
-            a.mailbox_id, a.address AS mailbox_address, k.id AS case_id
+            r.envelope_from, a.mailbox_id, a.address AS mailbox_address, k.id AS case_id
        FROM messages m
        JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
@@ -171,8 +201,8 @@ async function deliveryFacts(env: Env, orgId: string, messageId: string): Promis
       WHERE m.org_id = ? AND m.id = ? LIMIT 1`,
   ).bind(orgId, messageId).first<{
     message_id: string; conversation_id: string | null; subject: string | null; from_addr: string | null;
-    received_at: string; parse_error: string | null; mailbox_id: string; mailbox_address: string;
-    case_id: string | null;
+    envelope_from: string | null; received_at: string; parse_error: string | null; mailbox_id: string;
+    mailbox_address: string; case_id: string | null;
   }>();
   if (row === null) return null;
   return {
@@ -185,6 +215,11 @@ async function deliveryFacts(env: Env, orgId: string, messageId: string): Promis
     // unreadable or absent Subject genuinely has none. `parse_error` is what says which of the two it was.
     subject: row.subject ?? "",
     from: row.from_addr ?? "",
+    // `envelope_from` is NOT NULL in `ingress_receipts`, so the coalesce is not a defended NULL: it is the
+    // null reverse path, which providers hand over as an empty string. Kept as the empty string rather than
+    // rewritten to something friendlier, because `parent.ts` reads exactly this to decide that there is
+    // nobody to reply to.
+    return_path: row.envelope_from ?? "",
     received_at: row.received_at,
     parse_error: row.parse_error,
   };

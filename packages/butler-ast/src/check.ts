@@ -25,6 +25,7 @@ import {
  * | every loop declares a well-formed `maxItems` | whether the stored bytes fit a row — `src/butlers.ts` |
  * | every edge names a node that exists | |
  * | every node's payload matches its declared shape | |
+ * | **no node carries a parameter its kind does not declare** — which is how "a Butler cannot name a recipient" is enforced against every spelling of the word (#52) | |
  * | **the whole graph is affordable against one run's subrequest pot** | |
  *
  * **#54 filled the seam #49 pinned.** The affordability pass sums the fixed cost of every non-loop node,
@@ -194,14 +195,17 @@ export function checkButler(input: unknown): CheckResult {
 
     const parsed = schemaFor(kind).safeParse(node);
     if (!parsed.success) {
-      findings.push({
-        code: "E_BUTLER_NODE_MALFORMED",
-        node: node.id,
-        what: `node ${node.id} is not a well-formed ${kind}: ${issuesOf(parsed.error)}`,
-        why: "each node type has a declared shape, and a field the engine will read has to be there before "
-          + "the Butler is frozen — a published version cannot be edited",
-        fix: `correct ${node.id} against the ${kind} schema`,
-      });
+      const unknown = unrecognizedKeys(parsed.error);
+      findings.push(unknown.length > 0
+        ? unknownParameter(node.id, kind, unknown)
+        : {
+          code: "E_BUTLER_NODE_MALFORMED",
+          node: node.id,
+          what: `node ${node.id} is not a well-formed ${kind}: ${issuesOf(parsed.error)}`,
+          why: "each node type has a declared shape, and a field the engine will read has to be there before "
+            + "the Butler is frozen — a published version cannot be edited",
+          fix: `correct ${node.id} against the ${kind} schema`,
+        });
       continue;
     }
     checkable.push(parsed.data as ButlerNode);
@@ -313,6 +317,46 @@ export function checkButler(input: unknown): CheckResult {
   }
 
   return { ok: true, ast: whole.data, cost, findings: [] };
+}
+
+/** Keys a strict node schema refused, across every issue. Empty when the failure was something else. */
+function unrecognizedKeys(error: z.ZodError): string[] {
+  return error.issues.flatMap((issue) =>
+    issue.code === "unrecognized_keys" ? issue.keys : []);
+}
+
+/**
+ * The refusal for a parameter no shipped node declares — **the guard that closes §16's sink (#52).**
+ *
+ * It knows no forbidden words, and that is the point. `to`, `cc`, `bcc`, `recipients`, `escalateTo`,
+ * `notify` and `forwardTo` are refused by one rule that has never heard of any of them: they are keys the
+ * node's shape does not declare, and a shipped node's shape is strict. A list of names would be a guard
+ * against the spellings whoever wrote it thought of — which is precisely how a `to` parameter came to ship
+ * while the sink it opens was written down in the blueprint.
+ *
+ * §16 is named in `why` because the most likely reason an author is reading this is that they tried to
+ * choose a recipient, and *"unrecognized key"* would tell them the validator's opinion instead of the rule.
+ * AGENTS.md §3: the reader is an agent fixing its own mistake, and it can act on *"recipients are derived
+ * from the delivery that triggered this run"*.
+ */
+function unknownParameter(node: string, kind: NodeKind, keys: readonly string[]): Finding {
+  const declared = Object.keys(
+    (schemaFor(kind) as unknown as { shape: Record<string, unknown> }).shape,
+  ).filter((field) => field !== "id" && field !== "type");
+  return {
+    code: "E_BUTLER_NODE_UNKNOWN_PARAMETER",
+    node,
+    what: `node ${node} is a ${kind} and carries ${keys.map((key) => JSON.stringify(key)).join(", ")}, `
+      + `which ${keys.length === 1 ? "is not a parameter" : "are not parameters"} of a ${kind}`,
+    why: "a shipped node's parameters are closed, so an unknown one is refused rather than silently "
+      + "dropped — a dropped field is an author who believes they configured something they did not. "
+      + "In particular **no node takes a recipient**: §16 forbids untrusted content selecting or "
+      + "constructing To/CC/BCC, and a Butler's recipients are derived from the delivery that triggered "
+      + "the run rather than named by the program (#52)",
+    fix: `remove ${keys.map((key) => JSON.stringify(key)).join(", ")} from ${node}. A ${kind} takes: `
+      + `${declared.join(", ")}. To reply to somebody other than the correspondent, or to copy a colleague, `
+      + "a trusted-recipient store has to exist first; none does",
+  };
 }
 
 /**

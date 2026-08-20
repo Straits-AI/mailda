@@ -15,7 +15,7 @@ import { interpret, RELEASE_EVENT, type RunSteps } from "../src/butler/interpret
 import { actingAs, BUTLER_ACTOR_KIND, type ButlerPrincipal } from "../src/butler/principal.ts";
 import { releaseButlerSend } from "../src/butler/release.ts";
 import { runEffects, runRow } from "../src/butler/record.ts";
-import { triggerButlers } from "../src/butler/trigger.ts";
+import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, publishButler } from "../src/butlers.ts";
 import { claim } from "../src/cases.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
@@ -111,12 +111,25 @@ interface Delivery {
   receiptId: string;
 }
 
-/** A real delivery: evidence in R2, a receipt, a message, a conversation and a case. */
-async function aDelivery(ctx: Ctx, subject = "Invoice 4021 query"): Promise<Delivery> {
+/**
+ * A real delivery: evidence in R2, a receipt, a message, a conversation and a case.
+ *
+ * `envelopeFrom` and `headerFrom` default to the same address and are **separable on purpose** (#52). A
+ * Butler's recipients are derived from the envelope sender; the `From:` header is content the sender chose.
+ * A fixture that could not tell the two apart could not tell whether the derivation reads the right one, and
+ * every test in this file used to be exactly that fixture.
+ */
+async function aDelivery(
+  ctx: Ctx,
+  subject = "Invoice 4021 query",
+  who: { envelopeFrom?: string; headerFrom?: string } = {},
+): Promise<Delivery> {
+  const envelopeFrom = who.envelopeFrom ?? "customer@example.net";
+  const headerFrom = who.headerFrom ?? "customer@example.net";
   const at = new Date(ctx.now()).toISOString();
   const raw = utf8(
     `Message-ID: <${ctx.id("x")}@example.net>\r\nSubject: ${subject}\r\n`
-    + "From: customer@example.net\r\n\r\nWhere is my invoice?\r\n",
+    + `From: ${headerFrom}\r\n\r\nWhere is my invoice?\r\n`,
   );
   const stored = await putEvidence(testEnv, `${ORG}/raw/${ctx.id("k")}.eml`, raw);
   const receiptId = ctx.id("ir");
@@ -124,7 +137,7 @@ async function aDelivery(ctx: Ctx, subject = "Invoice 4021 query"): Promise<Deli
     `INSERT INTO ingress_receipts (id, org_id, envelope_from, envelope_to, raw_bytes, accepted_at,
                                    blob_key, blob_sha256, provider_event_id)
      VALUES (?,?,?,?,?,?,?,?,?)`,
-  ).bind(receiptId, ORG, "customer@example.net", ADDRESS, raw.byteLength, at,
+  ).bind(receiptId, ORG, envelopeFrom, ADDRESS, raw.byteLength, at,
     stored.blobKey, stored.plaintextSha256, ctx.id("pe")).run();
 
   const conversationId = await conversationForDelivery(testEnv, ctx, ORG, `<root-${ctx.id("r")}@example.net>`);
@@ -135,7 +148,7 @@ async function aDelivery(ctx: Ctx, subject = "Invoice 4021 query"): Promise<Deli
                            created_at, conversation_id, parse_error)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`,
   ).bind(messageId, ORG, "2026-08", stored.blobKey, stored.plaintextSha256, raw.byteLength,
-    `<in-${messageId}@example.net>`, ctx.id("thr"), subject, "customer@example.net", at, at, receiptId, at,
+    `<in-${messageId}@example.net>`, ctx.id("thr"), subject, headerFrom, at, at, receiptId, at,
     conversationId).run();
 
   const caseId = ctx.id("cas");
@@ -184,7 +197,6 @@ const ACKNOWLEDGE = [
     id: "reply",
     type: "draft",
     mailboxId: "${event.mailbox_id}",
-    to: ["${event.from}"],
     subject: "Re: ${event.subject}",
     body: "Thanks for your message. Someone will reply shortly.",
     inReplyTo: "${event.message_id}",
@@ -341,7 +353,7 @@ async function run(
   steps: RunSteps,
   now = T0 + 1000,
 ): ReturnType<typeof interpret> {
-  const facts = await deliveryFacts(delivery);
+  const facts = await factsOf(delivery);
   return await interpret(
     testEnv,
     atTime(now),
@@ -356,22 +368,18 @@ async function run(
   );
 }
 
-/** The same facts `trigger.ts` assembles, read the same way, so a test cannot drift from production. */
-async function deliveryFacts(delivery: Delivery): Promise<Record<string, unknown>> {
-  const row = await testEnv.CATALOG.prepare(
-    `SELECT m.id AS message_id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
-            a.mailbox_id, a.address AS mailbox_address
-       FROM messages m
-       JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
-       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-      WHERE m.id = ? LIMIT 1`,
-  ).bind(delivery.messageId).first<Record<string, unknown>>();
-  return {
-    ...row,
-    subject: row?.subject ?? "",
-    from: row?.from_addr ?? "",
-    case_id: delivery.caseId,
-  };
+/**
+ * The facts `trigger.ts` assembles — **the production function**, not a copy of its statement.
+ *
+ * It used to be a copy, under a comment claiming a test could not drift from production. It could and it did:
+ * #52 added `return_path` to the fact set and the copy went on producing deliveries with no envelope sender,
+ * which is now the fact a Butler's recipients are derived from. A hand-written fixture here would be a test
+ * of a delivery this Node never produces.
+ */
+async function factsOf(delivery: Delivery): Promise<Record<string, unknown>> {
+  const facts = await deliveryFacts(testEnv, ORG, delivery.messageId);
+  if (facts === null) throw new Error(`no delivery facts for ${delivery.messageId}`);
+  return facts;
 }
 
 /* ------------------------------------------------------------------ a real walk ------------------- */
@@ -444,6 +452,340 @@ describe("a run walks a real AST and produces a real draft", () => {
     expect(outcome.reason).toBe("the message could not be parsed, so nothing is answered");
     expect(steps.performed).toEqual(["load"]);
     expect(outcome.effects).toEqual([]);
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+  });
+});
+
+/* ------------------------------------------------------------------ recipients (#52) ------------- */
+
+/**
+ * Who a Butler's reply goes to, and who decides (#52, §16).
+ *
+ * §16 forbids untrusted content selecting or constructing To/CC/BCC. `draft` used to take a `to` list of
+ * expressions and an expression reads `event.*`, so a published Butler could send to an address the inbound
+ * message had chosen. The parameter is gone and the Node derives the recipient from the parent delivery's
+ * envelope sender. These tests are what makes that a property rather than a paragraph.
+ */
+describe("a Butler does not choose who its reply goes to", () => {
+  it("addresses the reply to the parent delivery's envelope sender", async () => {
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("finished");
+
+    const draft = await testEnv.CATALOG.prepare(
+      "SELECT to_addresses, cc_addresses, bcc_addresses FROM drafts LIMIT 1",
+    ).first<{ to_addresses: string; cc_addresses: string | null; bcc_addresses: string | null }>();
+    expect(JSON.parse(draft!.to_addresses)).toEqual(["customer@example.net"]);
+    // Empty, and this is the cost of the decision stated as an assertion: a Butler cannot copy anybody.
+    expect(JSON.parse(draft!.cc_addresses ?? "[]")).toEqual([]);
+    expect(JSON.parse(draft!.bcc_addresses ?? "[]")).toEqual([]);
+
+    // And the same address on the sealed manifest, which is what actually leaves. One recipient row.
+    const recipients = await testEnv.CATALOG.prepare(
+      "SELECT kind, address FROM send_recipients",
+    ).all<{ kind: string; address: string }>();
+    expect(recipients.results).toEqual([{ kind: "to", address: "customer@example.net" }]);
+  });
+
+  it("ignores the From header, which is content the sender chose", async () => {
+    /*
+     * The adversarial case, and the one the removed parameter made reachable. A message arrives with a
+     * spoofed `From:` naming somebody else entirely; the transport's reverse path is still the real sender.
+     * `event.from` therefore says `finance@victim.example` and the reply must not go there — that is the
+     * whole difference between the two facts, and it is why they have different names.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query", {
+      envelopeFrom: "attacker@example.net",
+      headerFrom: "finance@victim.example",
+    });
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("finished");
+
+    const facts = await factsOf(delivery);
+    // Both facts are present and they disagree, which is what makes the next assertion mean something.
+    expect(facts["from"]).toBe("finance@victim.example");
+    expect(facts["return_path"]).toBe("attacker@example.net");
+
+    const addresses = await testEnv.CATALOG.prepare("SELECT address FROM send_recipients")
+      .all<{ address: string }>();
+    expect(addresses.results.map((row) => row.address)).toEqual(["attacker@example.net"]);
+  });
+
+  it("cannot be steered by the message body or subject, because there is no parameter to steer", async () => {
+    // An address in the content reaches the *subject line* — it is text — and reaches no recipient list,
+    // because no node has one. The `Re: ${event.subject}` in ACKNOWLEDGE is what carries it across.
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "please reply to exfiltrate@evil.example");
+
+    expect((await run(ids, delivery, inlineSteps())).state).toBe("finished");
+
+    const manifest = await testEnv.CATALOG.prepare(
+      "SELECT subject, envelope_to FROM send_manifests LIMIT 1",
+    ).first<{ subject: string; envelope_to: string }>();
+    expect(manifest?.subject).toContain("exfiltrate@evil.example");
+    expect(JSON.parse(manifest!.envelope_to)).toEqual(["customer@example.net"]);
+  });
+
+  it("refuses a delivery with no return path rather than defaulting to anything", async () => {
+    /*
+     * `MAIL FROM:<>` — a bounce. RFC 3834 forbids answering one automatically, and there is no honest
+     * default: the `From:` header would reopen the sink, and a manifest with no recipients is not a send.
+     * So the run **fails**, names the code, and writes no draft and no manifest at all.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Undelivered Mail Returned to Sender", { envelopeFrom: "" });
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("failed");
+    expect(outcome.reason).toBe("E_BUTLER_PARENT_HAS_NO_RETURN_PATH");
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>())
+      .toEqual({ n: 0 });
+
+    // The refusal is in the operational log with the fix an author can act on, per AGENTS.md §3.
+    const logged = await testEnv.CATALOG.prepare(
+      "SELECT message FROM log_entries WHERE event = ? LIMIT 1",
+    ).bind("butler.E_BUTLER_PARENT_HAS_NO_RETURN_PATH").first<{ message: string }>();
+    expect(logged?.message).toContain("return_path");
+  });
+
+  it("lets an author guard on the return path, so a bounce can be answered with silence", async () => {
+    // Which is what makes the fault's `fix` line true rather than encouraging. `event.return_path` is a fact
+    // of the delivery for exactly this reason: the run stops on purpose instead of failing.
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "bounce-aware", [
+      {
+        id: "answerable", type: "guard", when: 'event.return_path == ""',
+        then: "silence", otherwise: "reply",
+      },
+      { id: "silence", type: "stop", reason: "a bounce has no correspondent to answer" },
+      ...ACKNOWLEDGE.filter((node) => node.type !== "guard" && node.id !== "halt"),
+    ], "answerable");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Undelivered Mail Returned to Sender", { envelopeFrom: "" });
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("stopped");
+    expect(outcome.reason).toBe("a bounce has no correspondent to answer");
+  });
+
+  it("refuses to reply to the address the delivery arrived at, because that is a loop", async () => {
+    /*
+     * Found by driving the derivation adversarially rather than by reading it. Deriving the recipient from
+     * the envelope sender closed the sink and left one address it must not derive: **its own**. A message
+     * whose reverse path is `support@acme.example`, delivered to `support@acme.example`, sealed a manifest
+     * with that address in From *and* To — which is delivered back into the same mailbox, fires the same
+     * Butler, and does it again. Forging `MAIL FROM` is all it takes, so it starts from outside.
+     *
+     * `parent.ts` already called replying to the mailbox itself "a loop", as a reason not to default to it.
+     * That was a reason nothing enforced. RFC 3834 §2 states the rule this now enforces: an automatic
+     * responder must not answer its own address.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "loop", { envelopeFrom: ADDRESS, headerFrom: ADDRESS });
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("failed");
+    expect(outcome.reason).toBe("E_BUTLER_REPLY_WOULD_LOOP");
+    // Nothing written, so there is no draft for a person to release into the loop by hand either.
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>())
+      .toEqual({ n: 0 });
+
+    // Case-insensitively, because an envelope sender is not required to match the stored address byte for
+    // byte and a guard that a capital letter walks past is not a guard.
+    const shouted = await aDelivery(ctx, "loop", { envelopeFrom: ADDRESS.toUpperCase() });
+    expect((await run(ids, shouted, inlineSteps(), T0 + 2000)).reason).toBe("E_BUTLER_REPLY_WOULD_LOOP");
+
+    // And the refusal carries the guard an author can write, per AGENTS.md §3.
+    const logged = await testEnv.CATALOG.prepare(
+      "SELECT message FROM log_entries WHERE event = ? LIMIT 1",
+    ).bind("butler.E_BUTLER_REPLY_WOULD_LOOP").first<{ message: string }>();
+    expect(logged?.message).toContain("event.return_path == event.mailbox_address");
+  });
+
+  it("refuses when it cannot tell whether a reply would loop, rather than skipping the check", async () => {
+    // The pre-upgrade payload again, from the other side: a trigger with no `mailbox_address` cannot answer
+    // "would this come straight back?". A check that turns itself off when its input is missing is a check
+    // that is absent on exactly the runs nobody tested.
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx);
+
+    const facts = { ...(await factsOf(delivery)) };
+    delete facts["mailbox_address"];
+    const outcome = await interpret(
+      testEnv, atTime(T0 + 1000),
+      {
+        orgId: ORG, butlerId: ids.butlerId, butlerVersionId: ids.versionId,
+        trigger: { event: "mail.received", key: delivery.messageId, facts },
+      },
+      inlineSteps(), `${ids.versionId}-no-delivered-to`,
+    );
+    expect(outcome.state).toBe("failed");
+    expect(outcome.reason).toBe("E_BUTLER_REPLY_WOULD_LOOP");
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+  });
+
+  it("lets an author guard the loop away, which is what makes the fix line true", async () => {
+    // Both sides of the comparison are bare paths, which the expression language resolves — so the guard the
+    // refusal tells an author to write is a guard this engine can actually run.
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "loop-aware", [
+      {
+        id: "answerable", type: "guard", when: "event.return_path == event.mailbox_address",
+        then: "silence", otherwise: "reply",
+      },
+      { id: "silence", type: "stop", reason: "a message from this mailbox is not answered by it" },
+      ...ACKNOWLEDGE.filter((node) => node.type !== "guard" && node.id !== "halt"),
+    ], "answerable");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "loop", { envelopeFrom: ADDRESS });
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("stopped");
+    expect(outcome.reason).toBe("a message from this mailbox is not answered by it");
+  });
+
+  it("bounds the one sink that is still an expression — the mailbox — by the grant rather than by the AST", async () => {
+    /*
+     * Found by re-verifying §16's other ten sinks rather than trusting the list (#52).
+     *
+     * **`draft.mailboxId` is an `Expr`,** so untrusted content *can* reach it — and the mailbox decides two
+     * of the eleven: `From` is the mailbox's address (ADR 36), and `mailbox_id` is a policy condition. #52's
+     * note that "sender identity is closed structurally" is half the story: `From` is derived from the
+     * mailbox, and the mailbox is an expression.
+     *
+     * It is closed by **validation against trusted organization state**, which is §16's own escape clause
+     * and is the honest difference from the recipient: a recipient had nothing to be validated against — no
+     * contacts table, no allowlist — while a mailbox has `relationship_tuples`, which an administrator
+     * writes. So this is asserted rather than described: content naming a mailbox this Butler was not
+     * granted is refused, and content naming one it *was* granted works, which is the residual stated as a
+     * fact rather than implied by silence.
+     */
+    const ctx = atTime(T0);
+    const at = new Date(ctx.now()).toISOString();
+    const other = "mbx_elsewhere";
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(other, ORG, "Elsewhere", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("addr"), ORG, "elsewhere@acme.example", other, at),
+    ]);
+
+    const ids = await published(ctx, "content-picks-the-mailbox", [
+      {
+        id: "reply", type: "draft", mailboxId: "${event.subject}",
+        subject: "Re:", body: "Thanks.", as: "ack", next: null,
+      },
+    ], "reply");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+
+    // The subject *is* the other mailbox's id, which is the strongest form of the attack available: the
+    // content names a real mailbox in the same organization.
+    const elsewhere = await aDelivery(ctx, other);
+    const refused = await run(ids, elsewhere, inlineSteps());
+    expect(refused.effects.map((effect) => [effect.outcome, effect.reason]))
+      .toEqual([["refused", "E_MAY_NOT_SEND_AS_MAILBOX"]]);
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+
+    // And the boundary is the grant, not the guess: the same expression works for the mailbox an
+    // administrator did grant. That is the residual, and it is bounded by trusted state on purpose.
+    const granted = await aDelivery(ctx, MAILBOX);
+    const allowed = await run(ids, granted, inlineSteps());
+    expect(allowed.effects.map((effect) => [effect.nodeType, effect.outcome]))
+      .toEqual([["draft", "ok"]]);
+  });
+
+  it("cannot pick which of a mailbox's addresses it sends as, so a second address refuses the send", async () => {
+    /*
+     * The sender-identity sink from the other side, verified rather than asserted in a doc. `senderAddress`
+     * is not a node parameter, so a Butler cannot name one — and `sealManifest` refuses to pick when a
+     * mailbox has more than one, because that choice is what every recipient sees and a timestamp must not
+     * make it.
+     *
+     * **So a Butler on a multi-address mailbox cannot send.** That predates this ticket and is the honest
+     * consequence of the parameter being absent: the fix is a node parameter validated against the mailbox's
+     * own addresses, which is trusted state, and it belongs with whoever wants the feature.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind(ctx.id("addr"), ORG, "billing@acme.example", MAILBOX, new Date(ctx.now()).toISOString()).run();
+
+    const outcome = await run(ids, await aDelivery(ctx), inlineSteps());
+    expect(outcome.effects.map((effect) => [effect.nodeType, effect.outcome, effect.reason])).toEqual([
+      ["draft", "ok", null],
+      ["mail.send.propose", "refused", "E_SENDER_AMBIGUOUS"],
+    ]);
+  });
+
+  it("refuses to draft in a run with no parent delivery at all", async () => {
+    /*
+     * Two shapes at once, because they are one cause. A trigger that is not a delivery — #49 says the trigger
+     * enum will grow — and a run created by a *previous version of this Node*, whose payload carries facts
+     * that predate `return_path`. Workflow instances outlive a deploy, so the second is not hypothetical.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    const delivery = await aDelivery(ctx);
+
+    const notADelivery = await interpret(
+      testEnv, atTime(T0 + 1000),
+      {
+        orgId: ORG, butlerId: ids.butlerId, butlerVersionId: ids.versionId,
+        trigger: { event: "schedule.fired", key: "sch_1", facts: await factsOf(delivery) },
+      },
+      inlineSteps(), `${ids.versionId}-not-a-delivery`,
+    );
+    expect(notADelivery.state).toBe("failed");
+    expect(notADelivery.reason).toBe("E_BUTLER_NO_PARENT_DELIVERY");
+
+    const preUpgrade = { ...(await factsOf(delivery)) };
+    delete preUpgrade["return_path"];
+    const older = await interpret(
+      testEnv, atTime(T0 + 2000),
+      {
+        orgId: ORG, butlerId: ids.butlerId, butlerVersionId: ids.versionId,
+        trigger: { event: "mail.received", key: delivery.messageId, facts: preUpgrade },
+      },
+      inlineSteps(), `${ids.versionId}-pre-upgrade`,
+    );
+    expect(older.state).toBe("failed");
+    expect(older.reason).toBe("E_BUTLER_PARENT_HAS_NO_RETURN_PATH");
     expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
       .toEqual({ n: 0 });
   });
@@ -992,7 +1334,7 @@ describe("the rest of the shipped node set", () => {
     ];
     const ids = await published(ctx, "fan", nodes, "listed");
     const delivery = await aDelivery(ctx);
-    const facts = { ...(await deliveryFacts(delivery)), recipients: ["a", "b", "c"] };
+    const facts = { ...(await factsOf(delivery)), recipients: ["a", "b", "c"] };
 
     const outcome = await interpret(
       testEnv, atTime(T0 + 1000),
@@ -1022,7 +1364,7 @@ describe("the rest of the shipped node set", () => {
         orgId: ORG, butlerId: within.butlerId, butlerVersionId: within.versionId,
         trigger: {
           event: "mail.received", key: second.messageId,
-          facts: { ...(await deliveryFacts(second)), recipients: ["a", "b", "c"] },
+          facts: { ...(await factsOf(second)), recipients: ["a", "b", "c"] },
         },
       },
       inlineSteps(), `${within.versionId}-${second.messageId}`,
@@ -1048,7 +1390,7 @@ describe("the rest of the shipped node set", () => {
     ];
     const ids = await published(ctx, "collect", nodes, "listed");
     const delivery = await aDelivery(ctx);
-    const facts = { ...(await deliveryFacts(delivery)), recipients: ["a", "b"] };
+    const facts = { ...(await factsOf(delivery)), recipients: ["a", "b"] };
 
     const outcome = await interpret(
       testEnv, atTime(T0 + 1000),
@@ -1093,7 +1435,7 @@ describe("the rest of the shipped node set", () => {
         orgId: ORG, butlerId: ids.butlerId, butlerVersionId: ids.versionId,
         trigger: {
           event: "mail.received", key: delivery.messageId,
-          facts: { ...(await deliveryFacts(delivery)), recipients: ["a"] },
+          facts: { ...(await factsOf(delivery)), recipients: ["a"] },
         },
       },
       inlineSteps(), `${ids.versionId}-${delivery.messageId}`,
@@ -1170,6 +1512,61 @@ describe("a stored AST is data, so the engine re-checks it", () => {
     ).first<{ message: string }>();
     expect(logged?.message).toContain("E_BUTLER_NODE_RESERVED");
     expect(logged?.message).toContain("There is no LLM control plane");
+  });
+
+  it("refuses a version already published with a recipient parameter, rather than running it", async () => {
+    /*
+     * The question #52 leaves behind and nothing else answers: **what happens to the Butlers that were
+     * already published while `draft` took a `to`?** Their `ast_json` is frozen — a published version cannot
+     * be edited — so the row on a live Node still names recipients an inbound message chose.
+     *
+     * The engine re-checks the stored AST on every run, so the answer falls out of the same guard: a version
+     * carrying `to` no longer checks, the run is refused before any effect, and nothing is sent. Asserted
+     * because "fail-closed" is a claim about a path, and the direction matters — a version that ran with the
+     * field *ignored* would silently send to a recipient its author picked and no longer controls.
+     *
+     * The row is written directly for the reason the test above is: this Butler cannot be published any more,
+     * which is the whole point, so the only way to have one is to be a Node that already did.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx);
+
+    const legacy = JSON.stringify({
+      apiVersion: "mailda/v1", kind: "Butler",
+      metadata: { name: "acknowledge", owner: "team:support" },
+      trigger: { event: "mail.received", mailbox: ADDRESS },
+      entry: "reply",
+      nodes: ACKNOWLEDGE
+        .filter((node) => node.type === "draft" || node.type === "mail.send.propose")
+        // Exactly what `main` shipped: a recipient list of expressions, reading the inbound message.
+        .map((node) => (node.type === "draft" ? { ...node, to: ["${event.from}"] } : node)),
+    });
+    await testEnv.CATALOG.prepare("DELETE FROM butler_versions WHERE id = ?").bind(ids.versionId).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO butler_versions
+         (id, org_id, butler_id, version, state, ast_json, source_text, ast_sha256, source_sha256,
+          created_by, created_at, published_by, published_at, superseded_at)
+       VALUES (?,?,?,1,'published',?,?,'x','y',?,?,?,?,NULL)`,
+    ).bind(ids.versionId, ORG, ids.butlerId, legacy, legacy, ADMIN,
+      new Date(ctx.now()).toISOString(), ADMIN, new Date(ctx.now()).toISOString()).run();
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.state).toBe("refused");
+    expect(outcome.reason).toBe("ast_does_not_check");
+    expect(outcome.effects).toEqual([]);
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>())
+      .toEqual({ n: 0 });
+
+    const logged = await testEnv.CATALOG.prepare(
+      "SELECT message FROM log_entries WHERE event = 'butler.ast_does_not_check' LIMIT 1",
+    ).first<{ message: string }>();
+    expect(logged?.message).toContain("E_BUTLER_NODE_UNKNOWN_PARAMETER");
+    expect(logged?.message).toContain("To/CC/BCC");
   });
 
   it("refuses a run whose version is no longer published", async () => {

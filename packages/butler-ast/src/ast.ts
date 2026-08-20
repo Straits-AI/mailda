@@ -2,7 +2,7 @@ import * as z from "zod";
 
 import { ID_PREFIXES, idPattern } from "@mailda/runtime";
 
-import { NODE_KIND_NAMES, NODE_KINDS, type NodeKind } from "./nodes.ts";
+import { NODE_KIND_NAMES, NODE_KINDS, SHIPPED_KINDS, type NodeKind, type ShippedKind } from "./nodes.ts";
 
 /**
  * The AST schema: Zod 4 in a package, emitting JSON Schema draft-2020-12 (#49, ADR 3).
@@ -14,6 +14,28 @@ import { NODE_KIND_NAMES, NODE_KINDS, type NodeKind } from "./nodes.ts";
  * second schema technology would be a second thing to keep in step. The constraint inherited from #3 comes
  * with it: **no `z.date()`**, because it is unrepresentable in JSON Schema, so any timestamp is an ISO
  * string with a `format`.
+ *
+ * ## No shipped node has a recipient parameter (#52)
+ *
+ * §16 says untrusted content may not select or construct *"policy, sender identity, To/CC/BCC or forwarding
+ * destination, attachment, integration/egress URL, connector operation/target record, financial/account
+ * identifier, secret reference, model profile or permission"*. Ten of those eleven land on no parameter of
+ * any shipped node — they belong to reserved nodes, or to storage and routes no node reaches. The eleventh
+ * did: `draft` took `to: z.array(expr).min(1)`, an `Expr` reaches `event.*`, and `event.*` is the inbound
+ * message. So a published Butler could send to an address the message it was replying to had chosen.
+ *
+ * That parameter is **gone**, and #52's reason for removing it rather than checking it is that a check has to
+ * be right for ever while an absent parameter has nowhere for a value to arrive. The Node derives a Butler's
+ * recipients from the delivery that triggered the run — `apps/node/worker/src/butler/parent.ts`. The cost is
+ * stated where a reader meets it, on `draft` below: **a Butler cannot CC a colleague, add a supervisor, or
+ * forward anything.**
+ *
+ * Two things keep it gone. **A shipped node's shape is strict** (see `shipped()`), so an author who writes
+ * `to:`, `recipients:` or `escalateTo:` on any node is refused at publication by
+ * `E_BUTLER_NODE_UNKNOWN_PARAMETER`, which names §16 — one refusal covering every spelling rather than a list
+ * of forbidden words. And `shippedParameterSurface()` below exposes the whole parameter surface so
+ * `test/sinks.test.ts` can pin it: the day somebody adds a recipient back to a node schema, that test fails
+ * and names the rule.
  *
  * ## What is deliberately not in the schema, and where each guarantee actually lives
  *
@@ -54,6 +76,12 @@ export const bindingName = nodeId;
 export const expr = z.string().min(1, "an expression cannot be empty");
 
 /**
+ * An expression a node may leave out. One instance, so `optionalExpr` is a *registered field kind* rather
+ * than a fresh anonymous wrapper — see `FIELD_KINDS`.
+ */
+export const optionalExpr = expr.optional();
+
+/**
  * A successor edge. `null` and absent both mean "the run ends here", and they canonicalize identically —
  * the same rule #60's `canonicalConditions` applies to an unconstrained condition, for the same reason: a
  * publish that changed `undefined` to `null` changed nothing and must be refused.
@@ -81,10 +109,41 @@ export const LOOKUP_ENTITIES = ["message", "conversation", "case", "mailbox", "d
 export const lookupEntity = z.enum(LOOKUP_ENTITIES);
 
 /** A JSON Schema, carried inline by `validate`. Not interpreted here; the engine hands it to a validator. */
-const inlineJsonSchema = z.record(z.string(), z.unknown());
+export const inlineJsonSchema = z.record(z.string(), z.unknown());
 
 /**
- * A shipped node: the envelope every node carries, plus its own fields.
+ * The branches of a `switch`, named rather than written inline.
+ *
+ * Named for `FIELD_KINDS`' sake: an anonymous `z.array(z.object({…}))` inside a node's shape is a fresh
+ * schema instance that no registry can recognise, which is exactly the shape `to: z.array(expr).min(1)` had.
+ * Requiring every composite to be *named here* is what makes "every shipped parameter is built from a
+ * registered field kind" a check rather than a hope.
+ */
+export const switchCases = z.array(z.object({ equals: z.string(), next: ref })).min(1);
+
+/** How long a `wait` waits. `1` needs no receipt — it means "one second". */
+export const waitSeconds = z.int().min(1);
+
+/** Why a `stop` stopped. Free text an operator reads in the run record. */
+export const stopReason = z.string().min(1);
+
+/**
+ * A shipped node: the envelope every node carries, plus its own fields. **Strict.**
+ *
+ * ## Why strict, which is the author-facing half of #52
+ *
+ * `z.object` *strips* a key it does not declare. So removing `to` from `draft` without this would have made
+ * a Butler naming `to` publish successfully and silently drop the field — the recipient list gone, no
+ * refusal, and an author convinced they had chosen who the mail goes to. Silently discarding the one thing
+ * §16 says untrusted content must not select is a worse outcome than the parameter we removed.
+ *
+ * Strict makes it a refusal instead, and the refusal is **spelling-blind**: `to`, `cc`, `bcc`, `recipients`,
+ * `escalateTo` and `notify` are all simply keys no shipped node declares, so all six are refused by one rule
+ * that knows none of their names. A list of forbidden words would be a guard against whichever spellings its
+ * author thought of, which is how the hole this closes was shipped in the first place.
+ *
+ * Reserved nodes stay `looseObject` — see below. They are a *record of what an author asked for* and must
+ * carry their own fields into the refusal.
  *
  * **The shape may not declare `id` or `type`, and that is a compile error rather than a convention.** The
  * spread puts a node's own fields *after* the envelope's, so a shape declaring `id` silently replaces the
@@ -114,7 +173,7 @@ function shipped<K extends NodeKind, S extends z.ZodRawShape>(
     : [aNodeShapeMayNotDeclare: EnvelopeKeysIn<S>]
 ) {
   void guard;
-  return z.object({ id: nodeId, type: z.literal(kind), ...shape });
+  return z.strictObject({ id: nodeId, type: z.literal(kind), ...shape });
 }
 
 /**
@@ -137,11 +196,7 @@ function reserved<K extends NodeKind>(kind: K) {
 const NODE_SCHEMAS = {
   /* ---- control flow ---- */
   guard: shipped("guard", { when: expr, then: ref, otherwise: ref }),
-  switch: shipped("switch", {
-    on: expr,
-    cases: z.array(z.object({ equals: z.string(), next: ref })).min(1),
-    default: ref,
-  }),
+  switch: shipped("switch", { on: expr, cases: switchCases, default: ref }),
   map: shipped("map", { over: expr, as: bindingName, maxItems, body: nodeId, collectAs: bindingName, next: ref }),
   foreach: shipped("foreach", { over: expr, as: bindingName, maxItems, body: nodeId, next: ref }),
   /**
@@ -157,8 +212,8 @@ const NODE_SCHEMAS = {
    * one branch is ever live, and claiming this waits for several would be a name overclaiming what runs.
    */
   join: shipped("join", { next: ref }),
-  wait: shipped("wait", { seconds: z.int().min(1), next: ref }),
-  stop: shipped("stop", { reason: z.string().min(1) }),
+  wait: shipped("wait", { seconds: waitSeconds, next: ref }),
+  stop: shipped("stop", { reason: stopReason }),
 
   /* ---- data ---- */
   transform: shipped("transform", { as: bindingName, value: expr, next: ref }),
@@ -172,12 +227,33 @@ const NODE_SCHEMAS = {
   /* ---- effects ---- */
   "case.assign": shipped("case.assign", { caseId: expr, assignee: expr, next: ref }),
   "case.close": shipped("case.close", { caseId: expr, next: ref }),
+  /**
+   * A reply, composed by the program and addressed by the Node.
+   *
+   * **There is no `to`, and no `cc` or `bcc` either (#52).** A Butler says what to write; it does not say
+   * who receives it. The recipient is derived from the delivery that triggered the run — the envelope
+   * sender of the message being replied to — by `apps/node/worker/src/butler/parent.ts`, and a delivery with
+   * no return path is refused rather than defaulted. §16's sink sentence forbids untrusted content selecting
+   * To/CC/BCC, and this parameter was the one place in the shipped node set where such content could land:
+   * an `Expr` reads `event.*`, and `event.*` is the inbound message.
+   *
+   * **The cost, stated here because this is where a reader meets it:** a Butler cannot CC a colleague,
+   * cannot add a supervisor, and cannot forward. Each of those needs a *trusted* recipient — an allowlist,
+   * a contacts table, a suppression list — and no such store exists anywhere in the schema. They arrive with
+   * that store, not with a parameter that would accept whatever an expression produced.
+   *
+   * `inReplyTo` **stays** an author's expression, and that is a decision rather than an oversight. Threading
+   * is not one of §16's eleven sinks, and it is already bounded by authority: `sealManifest` refuses a parent
+   * the author cannot read (`E_NO_SUCH_PARENT`), which is the check the reply-parent hole was closed with. So
+   * a Butler may thread a reply onto any message in a mailbox it may read — exactly what a person may do —
+   * while the *addressing* still comes from the trigger. Where the two disagree, the addressing wins, because
+   * the trigger is the delivery this run is provably about.
+   */
   draft: shipped("draft", {
     mailboxId: expr,
-    to: z.array(expr).min(1),
     subject: expr,
     body: expr,
-    inReplyTo: expr.optional(),
+    inReplyTo: optionalExpr,
     as: bindingName,
     next: ref,
   }),
@@ -292,6 +368,80 @@ export type ButlerEnvelope = z.infer<typeof butlerEnvelope>;
 /** The payload schema for one declared kind. Exported for the checker; not a second source of truth. */
 export function schemaFor(kind: NodeKind): z.ZodType {
   return NODE_SCHEMAS[kind];
+}
+
+/* ------------------------------------------------------- the parameter surface (#52) ---------------- */
+
+/**
+ * Every schema a shipped node's parameter may be built from, by **identity**.
+ *
+ * This is the developer-facing half of #52, and the reason it is identity rather than structure is the
+ * defect it exists to catch. `to: z.array(expr).min(1)` and `cases: z.array(z.object({…})).min(1)` are the
+ * same *kind* of construction; what distinguishes them is that one of them was thought about and named here
+ * and the other was written inline at a call site. So a parameter counts as registered only when its schema
+ * is one of these exact objects — a fresh `z.array(...)`, `z.string()` or `.optional()` anywhere in
+ * `NODE_SCHEMAS` resolves to `null` and `test/sinks.test.ts` fails.
+ *
+ * There is deliberately **no field kind here that could carry an address, a URL, a secret reference or a
+ * model profile.** That is the whole content of the rule: a future parameter that wanted one would have
+ * nothing to be typed as, so adding it means adding an entry here, which is a diff in the one file whose
+ * header states §16's sink sentence.
+ *
+ * `bindingName` is absent because it *is* `nodeId` — one schema, two readings — so a `map`'s `as` resolves
+ * to `nodeId`. Recorded rather than papered over with a duplicate regex, which would be two spellings of one
+ * rule and therefore the correspondence problem this package keeps refusing.
+ */
+const FIELD_KINDS = {
+  nodeId,
+  expr,
+  optionalExpr,
+  ref,
+  maxItems,
+  lookupEntity,
+  inlineJsonSchema,
+  switchCases,
+  waitSeconds,
+  stopReason,
+} as const satisfies Record<string, z.ZodType>;
+
+export type FieldKindName = keyof typeof FIELD_KINDS;
+
+/** The registered field kinds, for anything that wants to assert the registry itself has not grown. */
+export const FIELD_KIND_NAMES = Object.keys(FIELD_KINDS) as FieldKindName[];
+
+/** One parameter of one shipped node. */
+export interface ShippedParameter {
+  readonly type: ShippedKind;
+  readonly field: string;
+  /** The registered field kind it is built from, or `null` when it is built from something unregistered. */
+  readonly kind: FieldKindName | null;
+}
+
+/**
+ * The complete parameter surface of the shipped node set, sorted, derived from the schemas themselves.
+ *
+ * `id` and `type` are excluded: they are the envelope every node carries, `shipped()` already refuses a node
+ * that redeclares either, and including them would put two rows in front of a reviewer that can never be the
+ * thing they are looking for.
+ *
+ * Sorted rather than left in declaration order so that reordering fields in this file does not fail the
+ * tripwire — a tripwire a good change touches is a tripwire somebody mutes.
+ */
+export function shippedParameterSurface(): ShippedParameter[] {
+  const surface = SHIPPED_KINDS.flatMap((type): ShippedParameter[] => {
+    const { shape } = NODE_SCHEMAS[type] as unknown as { shape: Record<string, z.ZodType> };
+    return Object.keys(shape)
+      .filter((field) => field !== "id" && field !== "type")
+      .map((field) => ({
+        type,
+        field,
+        kind: FIELD_KIND_NAMES.find((name) => FIELD_KINDS[name] === shape[field]) ?? null,
+      }));
+  });
+  return surface.sort((left, right) =>
+    left.type === right.type
+      ? left.field.localeCompare(right.field)
+      : left.type.localeCompare(right.type));
 }
 
 /**

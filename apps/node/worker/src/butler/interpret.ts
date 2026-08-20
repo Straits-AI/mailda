@@ -646,7 +646,13 @@ export async function interpret(
 
         case "draft": {
           if (!affordable(node)) return await exhausted(node);
-          const result = await perform(node, step, async () => await writeDraft(env, ctx, butler, node, state));
+          // `payload.trigger`, not `state.event`, and the difference is not stylistic: deriving recipients
+          // from the parent delivery (#52) needs to know *which trigger fired*, and `RunState` carries only
+          // the facts and not the trigger's name. A `draft` in a run started by something other than a
+          // delivery has no correspondent, and that has to be a refusal rather than a missing key — so the
+          // thing passed is the whole trigger, which is the only value that can answer it.
+          const result = await perform(node, step, async () =>
+            await writeDraft(env, ctx, butler, node, state, payload.trigger));
           if (result.bind !== undefined) state.steps[node.as] = result.bind;
           cursor = node.next;
           break;
