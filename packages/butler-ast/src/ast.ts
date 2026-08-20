@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import { ID_PREFIXES, idPattern } from "@mailda/runtime";
 
+import { CAPABILITY_ACTIONS } from "./capability.ts";
 import { NODE_KIND_NAMES, NODE_KINDS, SHIPPED_KINDS, type NodeKind, type ShippedKind } from "./nodes.ts";
 
 /**
@@ -330,15 +331,47 @@ export const butlerMetadata = z.object({
 });
 
 /**
+ * One declared capability: an action, and the resource it may be exercised on (#51, §16).
+ *
+ * **Strict, for `shipped()`'s reason one level up.** `z.object` strips what it does not declare, so a
+ * capability written `{ action, mailbox: "…" }` — the spelling anybody would try first — would parse with
+ * its resource silently absent, and a resource that vanished is a ceiling naming *no* mailbox for an action
+ * the author believed they had bounded. The refusal is spelling-blind and costs nothing.
+ *
+ * The `resource` is validated only as a non-empty string here, and its **grain** is classified in
+ * `check.ts`. A regex would refuse `case_type:sales_lead` with a pattern mismatch; the checker refuses it
+ * with §16's own sentence about grains that name objects which do not exist, which is the difference between
+ * telling an author what a validator wanted and telling them what the rule is.
+ */
+export const capability = z.strictObject({
+  action: z.enum(CAPABILITY_ACTIONS),
+  resource: z.string().min(1, "a capability's resource cannot be empty"),
+});
+
+/**
  * A Butler, as the AST.
  *
  * `apiVersion` and `kind` are §16's own envelope, kept verbatim so the text a person writes and the object
  * a machine reads are the same document.
+ *
+ * **`strictObject` at the top level, which changed with `capabilities` and changed because of it.** A
+ * stripped top-level key is how a document acquires a ceiling that is not there: `capabilites:` (one letter
+ * short) would have been discarded in silence, and while the *missing* `capabilities` would then be caught
+ * by this schema, the author's diagnosis would be "I wrote it and it says I did not". The house rule is
+ * `strictObject` wherever discarding silently would be worse, and the key that bounds a program's authority
+ * is the clearest case of it in this package.
+ *
+ * `capabilities` may be **empty** and may not be **absent**. Empty is a real and useful Butler — a guard and
+ * a `stop` decide something and touch nothing — while absent would have to mean either "unbounded", which is
+ * the permissive reading of an omission, or "empty", which lets a forgotten key look like a decision.
+ * Requiring it makes the ceiling a thing an author states.
  */
-export const butler = z.object({
+export const butler = z.strictObject({
   apiVersion: z.literal("mailda/v1"),
   kind: z.literal("Butler"),
   metadata: butlerMetadata,
+  /** The pinned ceiling. `check.ts` proves its action set is exactly what `nodes` needs. */
+  capabilities: z.array(capability),
   trigger: butlerTrigger,
   /** Where the run starts. Must name one of `nodes`; `check.ts` enforces that. */
   entry: nodeId,
@@ -354,10 +387,11 @@ export type Butler = z.infer<typeof butler>;
  * payload. Without this stage a reserved node's diagnostic would be Zod's `invalid_union_discriminator`,
  * which names the seventy-nine alternatives it is not and none of the reasons anybody cares about.
  */
-export const butlerEnvelope = z.object({
+export const butlerEnvelope = z.strictObject({
   apiVersion: z.literal("mailda/v1"),
   kind: z.literal("Butler"),
   metadata: butlerMetadata,
+  capabilities: z.array(capability),
   trigger: butlerTrigger,
   entry: nodeId,
   nodes: z.array(z.looseObject({ id: nodeId, type: z.string().min(1) })).min(1),

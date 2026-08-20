@@ -238,3 +238,51 @@ derived table and a `supervised.query` append. It stays two queries when nothing
 when something is, by the same decomposition, and it lives under `authz.list.max_rows_read = 1000`
 against a worst observed 136. A supervised reader listing a mailbox is bounded by the same `LIMIT 50`
 every other reader is.
+
+## Correction — 21 August 2026: a Butler's check has three terms, and it is still two queries (#51)
+
+`stale_when` names *"a check names more than two relations at once"* and does **not** name a check over more
+than one *subject set*. #51 built exactly that: a Butler's effective authority is
+
+    effective(step) = pinned ceiling ∩ live tuples of the Butler ∩ live tuples of the sponsor
+
+which is one relation set and **two** subject sets. The clause did not fire, and the figures were re-measured
+anyway, because *"the clause did not name it"* is not evidence about a number.
+
+**`authz.check.max_queries = 2` is unchanged, and it is unchanged for a reason rather than by luck.** The
+three terms decompose into two round trips:
+
+1. **The ceiling is free.** It is the `capabilities:` of the frozen AST the run has already loaded, so the
+   term costs no query — only a sub-select over `addresses`, which is UNIQUE on `(org_id, address)`.
+2. **The sponsor's subjects: one query**, `readableSubjects`, the same statement every human check makes.
+3. **Both tuple terms in one statement.** The Butler needs no team expansion (`team_members.user_id` holds
+   users and a Butler's subject is a `btl_`), so the second query carries the ceiling arm and both subject
+   sets.
+
+**Measured** with `metering()` in `workerd`, in `test/butler-run-cost.measure.test.ts` — the send node's
+decomposition, where the intersection appears as its own term and is asserted as an **equality**:
+
+| what | D1 executions |
+|:--|--:|
+| the three-term intersection, standalone (`effectiveOnMailbox`) | **2** |
+| the same intersection folded into a node's own read (`lookup`, `case.*`) | **1** extra, plus the sponsor query = **2** |
+| the ceiling term alone, when it refuses | **0** |
+
+That last row is not a rounding: an action the ceiling never declared is refused in memory, before any
+statement is prepared, which is why the reason it produces (`capability_not_declared`) is the cheapest answer
+in the system as well as the only one whose remedy is a republish.
+
+**The OR-versus-AND subtlety, recorded here because it is a property of the query rather than of the code
+around it.** An `IN` list over subjects answers *"does any of these hold it"*, which is an OR, while the
+intersection needs an AND. The standalone shape selects `DISTINCT subject_id` rather than `1`, so the query
+returns *which* subjects hold the relation and the AND is evaluated on the result; the folded shape uses two
+`EXISTS` clauses joined by SQL's own `AND`, with the OR living inside the sponsor's clause where it belongs.
+`test/butler-capability.test.ts` walks all eight combinations of the three terms and asserts the two shapes
+answer alike — the two combinations where exactly one subject holds the relation are the ones a single flat
+`IN` list would get wrong, and they are the whole defect.
+
+**What is not measured here, and is not claimed.** `rows_read` for the Butler shape was not isolated. The
+figures above are D1 *executions*, which is what `authz.check.max_queries` bounds; the row cost is bounded by
+the same index prefix as every other check in this file — one relation, one `object_id`, a handful of
+subjects — and no scan is possible against `rt_unique` with `org_id`, `object_type`, `relation` and
+`object_id` all constrained. Saying so rather than printing a number nobody produced.

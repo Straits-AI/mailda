@@ -15,6 +15,7 @@ import { createButlerDraft, editButlerDraft, publishButler } from "../src/butler
 import { conversationForDelivery } from "../src/conversations.ts";
 import { runDoctor } from "../src/doctor.ts";
 import { putEvidence } from "../src/evidence-store.ts";
+import { capabilitiesFor } from "./butler-capabilities.ts";
 
 /**
  * The Butler pause and the loop that places it (#75), end to end.
@@ -167,6 +168,7 @@ function sourceFor(name: string, nodes: unknown[], mailbox = ADDRESS, note = "")
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name, owner: "team:support", ...(note === "" ? {} : { description: note }) },
+    capabilities: capabilitiesFor(nodes, mailbox),
     trigger: { event: "mail.received", mailbox },
     entry: nodes[0] === undefined ? "stop" : (nodes[0] as { id: string }).id,
     nodes,
@@ -276,6 +278,19 @@ beforeEach(async () => {
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, user, ORG, at)),
+    /*
+     * The **sponsor's** own relations on the mailbox (#51).
+     *
+     * `publishButler` records the publisher as `published_by`, and that is the sponsor whose live authority
+     * caps every version they publish — so a Butler cannot reach a mailbox its publisher cannot reach. An
+     * administrator who publishes a Butler that sends from a mailbox holds `send.propose` on it, which is
+     * what this seeds. Tests that are *about* the sponsor term revoke it and watch the Butler stop.
+     */
+    ...(["send.propose", "mailbox.content.read", "mailbox.metadata.read"] as const).map((relation) =>
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, ADMIN, relation, MAILBOX, at)),
   ]);
 });
 

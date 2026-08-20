@@ -1,4 +1,5 @@
 import type { Principal } from "../authz-read.ts";
+import type { ButlerCeiling } from "./ceiling.ts";
 
 /**
  * What a Butler *is* to every part of Layer 5 that takes a principal (#50, §16, §23).
@@ -93,6 +94,19 @@ export interface ButlerPrincipal {
   readonly versionId: string;
   /** The Butler's name, so a refusal can say which program was refused. */
   readonly name: string;
+  /**
+   * The version's pinned capability ceiling and the sponsor it is capped against (#51).
+   *
+   * **Here rather than beside this, because it is a property of the version and `versionId` is already
+   * here.** A Butler's authority is not the tuples naming its `btl_` alone — that sentence was true when
+   * #50 wrote it and is now one term of three — so a principal that carried only the subject would be a
+   * shape every call site had to remember to bound. `src/butler/ceiling.ts` carries who the sponsor is and
+   * why capping is safe where #50 found identifying was not.
+   *
+   * Frozen with the version in both halves: the ceiling is inside `ast_json` and the sponsor is
+   * `published_by`, and `btv_frozen` refuses an UPDATE to either (0027, 0031).
+   */
+  readonly ceiling: ButlerCeiling;
 }
 
 /**

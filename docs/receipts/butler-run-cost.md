@@ -211,3 +211,88 @@ incidentally at **30** for the acknowledgement graph in `test/butler-run.test.ts
 `butler_runs.subrequests_spent`, which is written at the last effect and so excludes the terminal write — and
 not recorded as a value, because it is the same code under a different caller and the two agreeing is what
 that test asserts rather than what this receipt measures.
+
+## Correction — 21 August 2026: the three-term intersection joined every node's authority check (#51)
+
+`stale_when`'s first clause — *"a node's implementation gains or loses an I/O operation"* — **fired**. #51's
+decision 4 makes a Butler's effective authority
+
+    effective(step) = pinned ceiling ∩ live tuples of the Butler ∩ live tuples of the sponsor
+
+where before there was one term, the Butler's own tuples, folded into a statement each node was already
+issuing. So every node that touches a mailbox now pays for two more terms, and the clause said to re-measure
+rather than to reason. It was re-measured before anything shipped.
+
+**Every value above is unchanged, and that is the finding rather than a relief.** Each node's measurement
+went up by exactly the two round trips #51 derived, and every one of them was already inside its bound. The
+frontmatter is therefore untouched — the idiom this file already uses for a clause that fired and was
+answered without moving a number — and the clause a future reader needs is the one that is already there,
+read with this correction beside it: **a node's I/O count now includes the intersection**, so re-measure the
+day `effective(step)` gains or loses a term as well as the day a node gains an operation.
+
+**Measured:** `test/butler-run-cost.measure.test.ts`, unchanged instrument — `src/cost-meter.ts` in the real
+`workerd` runtime against real D1, R2 and KeyVault, driving the real `interpret` over real published
+`butler_versions` rows.
+
+| node | before #51 | measured now | bound | headroom |
+|:--|--:|--:|--:|--:|
+| `lookup` (a message) | 2 | **3** | 4 | 1 |
+| `case.close` | 2 | **3** | 4 | 1 |
+| `case.assign` | 7 | **8** | 10 | 2 |
+| `draft` | 6 | **8** | 10 | 2 |
+| `mail.send.propose` (a reply) | 23 | **25** | 28 | 3 |
+| engine fixed (a `stop`-only Butler) | 3 | **3** | 3 | pinned |
+| the trigger, per delivery, one published Butler | 3 | **3** | — | — |
+
+Whole-run figures, against the checker's own prediction for the same AST:
+
+| AST | prediction | before #51 | measured now |
+|:--|--:|--:|--:|
+| `draft` → `mail.send.propose` (a reply) | 30 | 32 | **36** |
+| `transform` → `case.assign` → `case.close` | 11 | 12 | **14** |
+| `lookup` alone | 4 | 5 | **6** |
+
+### Why some nodes grew by one and others by two, which is the part worth reading
+
+The intersection is **two queries** — #51 derived it and this measured it — but only the second is always
+new:
+
+1. **The sponsor's subjects**, through `readableSubjects`. One query, every check, no exceptions.
+2. **The ceiling and both tuple terms in one statement.** For `lookup`, `case.assign` and `case.close` that
+   statement is the one the node was already issuing, with a sub-select and a second `EXISTS` folded in — so
+   those nodes grew by **one**, not two. For `draft` and `mail.send.propose` the mailbox is named rather than
+   discovered, so the check is a statement of its own and they grew by **two**.
+
+**The ceiling itself costs nothing**, which is the first half of #51's derivation and is what the equality on
+`butler.run_cost_engine_fixed = 3` proves: it lives on the version row the run already loaded to get its AST,
+and the addresses it declares are resolved by a sub-select inside a statement that was already being made.
+The three statements that figure counts are the same three.
+
+### The decomposition of the send node, re-measured
+
+| part | subrequests |
+|:--|--:|
+| `readDraft` — a row read, an authority re-check at 2, an R2 get, a vault opening key | **5** |
+| **the three-term intersection (#51)** | **2** |
+| `sealManifest`, a reply, no policy published | **16** |
+| the record batch: effect row + accumulated spend + park, one round trip | **1** |
+| un-parking the run when the release arrives | **1** |
+
+The 2 is asserted as an equality rather than a bound in that test, because #51 derived two round trips and a
+third arriving here is the N+1 `authz.check.max_queries` exists to catch.
+
+### What this does to a sending loop, stated because it is the only figure that moved for a user
+
+A `foreach` of sends is bounded by the runtime guard, which reserves `butler.run_cost_max_send_propose = 28`
+and is **unchanged**, so the guard still permits **357**. What moved is the arithmetic beside it: the
+affordable count at the measured figure falls from 434 to **399**, because a send now costs 25 rather than 23.
+Publication still admits 500 — the floor is still a floor, and the gap it names is now wider by 35 sends,
+which is the direction that matters least because the runtime guard is what actually stops the run.
+
+### What is deliberately not re-sized
+
+Nothing. Every bound already carried enough headroom for the growth, and raising one because the measurement
+moved *inside* it would be widening a tripwire nothing touched. `butler.run_cost_max_case_close` and
+`butler.run_cost_max_lookup` now sit one above their measurement, which is the thinnest margin in this file
+and is recorded here rather than quietly absorbed: the next operation added to either of those nodes lands on
+the bound, and the honest response then is to re-measure and re-size rather than to discover it at a refusal.

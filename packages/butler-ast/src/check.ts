@@ -4,6 +4,10 @@ import {
   butler, butlerEnvelope, schemaFor, type Butler, type ButlerNode,
 } from "./ast.ts";
 import {
+  CAPABILITY_ACTIONS, CAPABILITY_RESOURCE_PREFIX, mailboxAddressOf, requirementsOf,
+  type Capability, type CapabilityAction, type Requirement,
+} from "./capability.ts";
+import {
   affordableMaxItems, describeCost, priceButler, RUN_BUDGET, RUN_BUDGET_FREE, RUN_BUDGET_FREE_NAME,
   type ButlerCost,
 } from "./cost.ts";
@@ -291,6 +295,20 @@ export function checkButler(input: unknown): CheckResult {
    */
   if (findings.length > 0) return { ok: false, findings };
 
+  /*
+   * ---- the capability ceiling (#51) ----
+   *
+   * Here rather than higher up, for the reason the affordability pass gives about a fabricated number: every
+   * finding above describes a graph whose *required* action set is not defined. A node that failed its own
+   * schema is absent from `checkable`, so an `E_BUTLER_CAPABILITY_UNUSED` computed over the survivors would
+   * accuse an author of over-declaring a capability for a node they did write — a second, **wrong** finding
+   * caused by the first. On a clean graph the required set is total, and both halves of the equality mean
+   * what they say.
+   */
+  findings.push(...capabilityFindings(raw.capabilities, checkable));
+
+  if (findings.length > 0) return { ok: false, findings };
+
   const cost = priceButler(checkable);
   if (cost.total > RUN_BUDGET) findings.push(unaffordable(cost));
 
@@ -317,6 +335,127 @@ export function checkButler(input: unknown): CheckResult {
   }
 
   return { ok: true, ast: whole.data, cost, findings: [] };
+}
+
+/**
+ * The pinned ceiling, checked against the graph it bounds (#51, §16, blueprint:702).
+ *
+ * Three refusals, and between them the ceiling's **action set is exactly the action set the graph needs**.
+ * That equality is the whole of what publication can prove, and it is why the ceiling is not decoration:
+ *
+ *   `E_BUTLER_CAPABILITY_RESOURCE_UNKNOWN`  a grain this Node cannot interpret
+ *   `E_BUTLER_CAPABILITY_NOT_DECLARED`      a node needs an action the ceiling does not declare
+ *   `E_BUTLER_CAPABILITY_UNUSED`            the ceiling declares an action no node needs
+ *
+ * **What is deliberately not refused here: a capability nobody has granted.** #51 settled it — a Butler may
+ * be published declaring `send.propose` on a mailbox no administrator has granted it, because the ceiling
+ * records what it *may* use and the runtime intersection decides what it *can*. Refusing publication would
+ * make the order of two acts significant: publish-then-grant would fail and grant-then-publish would work,
+ * for one program. This package could not implement that refusal anyway — it has no database — and that is a
+ * consequence of the decision rather than the reason for it.
+ *
+ * **And the resource half is not checked at all**, because a node's mailbox is an `Expr` and this package
+ * does not parse expressions. It is enforced at runtime, per step, in the statement that already asks about
+ * tuples (`apps/node/worker/src/butler/authority.ts`).
+ */
+function capabilityFindings(
+  capabilities: readonly Capability[],
+  nodes: readonly ButlerNode[],
+): Finding[] {
+  const findings: Finding[] = [];
+
+  /* ---- the grain: `mailbox:` and nothing else ---- */
+  for (const capability of capabilities) {
+    if (mailboxAddressOf(capability.resource) !== null) continue;
+    findings.push({
+      code: "E_BUTLER_CAPABILITY_RESOURCE_UNKNOWN",
+      what: `capability ${JSON.stringify(capability.action)} names resource `
+        + `${JSON.stringify(capability.resource)}, whose grain this Node cannot interpret`,
+      why: "§16 sketches three resource grains and two of them — case_type: and llm_profile: — name objects "
+        + "that do not exist in this schema (#51). A ceiling entry naming one would publish and bound "
+        + "nothing, which is the failure a ceiling exists to prevent rather than an inconvenience",
+      fix: `write ${JSON.stringify(`${CAPABILITY_RESOURCE_PREFIX}someone@example.com`)}. The resource is `
+        + "the mailbox an address routes to (ADR 36); a per-sender grain is deferred knowingly, not diverged "
+        + "from silently",
+    });
+  }
+
+  /*
+   * ---- under-declaration ----
+   *
+   * Grouped by requirement rather than reported per node, so a Butler with forty `case.close` nodes and no
+   * `send.propose` in its ceiling produces **one** finding naming the first node and the count, instead of
+   * forty findings an author has to read to learn one thing.
+   */
+  const declared = new Set(capabilities.map((capability) => capability.action));
+  const needed = new Set<CapabilityAction>();
+  const missing = new Map<string, { actions: Requirement; nodes: string[] }>();
+
+  for (const node of nodes) {
+    for (const requirement of requirementsOf(node)) {
+      const satisfying = requirement.filter((action) => declared.has(action));
+      if (satisfying.length > 0) {
+        /*
+         * **Every declared member of a satisfied requirement counts as used**, and the alternative was
+         * considered and is wrong. A `lookup` of a case accepts metadata **or** content, so an author who
+         * declares both has declared two actions either of which genuinely answers this node — calling the
+         * second one "unused" would refuse a Butler that reads a case's metadata in one place and its
+         * content in another, since this pass sees requirements and not which mailbox each is for. What is
+         * *not* marked is an action no requirement of any node names at all, which is the padding the
+         * over-declaration check exists to catch.
+         */
+        for (const action of satisfying) needed.add(action);
+        continue;
+      }
+      const key = requirement.join("|");
+      const seen = missing.get(key) ?? { actions: requirement, nodes: [] };
+      seen.nodes.push(node.id);
+      missing.set(key, seen);
+    }
+  }
+
+  for (const [, gap] of missing) {
+    const [first] = gap.nodes;
+    findings.push({
+      code: "E_BUTLER_CAPABILITY_NOT_DECLARED",
+      node: first,
+      what: (gap.nodes.length === 1
+        ? `node ${first} needs `
+        : `${gap.nodes.length} nodes (${gap.nodes.join(", ")}) need `)
+        + `${gap.actions.length === 1 ? gap.actions[0] : `one of ${gap.actions.join(" or ")}`}`
+        + ", and this Butler's capabilities declare none of it",
+      why: "a published version's capability ceiling is frozen with its AST, and the runtime intersects it "
+        + "with the live tuples of the Butler and of its sponsor — so an action the ceiling does not name is "
+        + "an action no later grant can ever supply (§7, blueprint:2769). A node needing one would publish "
+        + "and be refused on every run",
+      fix: `add { "action": "${gap.actions[0]}", "resource": "${CAPABILITY_RESOURCE_PREFIX}<address>" } to `
+        + "capabilities, naming the mailbox this node acts on",
+    });
+  }
+
+  /*
+   * ---- over-declaration ----
+   *
+   * A ceiling padded *just in case* is a ceiling that does not bind: declaring `mailbox.content.read` for a
+   * Butler that reads nothing is a pre-authorisation for a node the author has not written, and adding that
+   * node later is exactly the moment republication exists to make deliberate.
+   *
+   * Reported per action rather than per entry, because two entries of one action differ only in their
+   * mailbox and the resource half is not what is wrong.
+   */
+  for (const action of CAPABILITY_ACTIONS) {
+    if (!declared.has(action) || needed.has(action)) continue;
+    findings.push({
+      code: "E_BUTLER_CAPABILITY_UNUSED",
+      what: `this Butler declares ${action} and no node needs it`,
+      why: "the ceiling's action set is derivable from the node types, so a declared action nothing uses is "
+        + "the two-places-must-agree problem this AST refuses elsewhere (join carries no `of` list for the "
+        + "same reason). Publication proves the two agree, which is the check `join` could never have",
+      fix: `remove the ${action} entries from capabilities, or add the node that needs it`,
+    });
+  }
+
+  return findings;
 }
 
 /** Keys a strict node schema refused, across every issue. Empty when the failure was something else. */

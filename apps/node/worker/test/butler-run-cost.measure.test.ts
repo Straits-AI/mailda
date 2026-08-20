@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { BUDGETS } from "@mailda/budgets";
-import { checkButler, RUN_BUDGET, SHIPPED_NODE_COST } from "@mailda/butler-ast";
+import { checkButler, RUN_BUDGET, SHIPPED_NODE_COST, type Butler } from "@mailda/butler-ast";
 import { utf8 } from "@mailda/evidence";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
@@ -16,6 +16,9 @@ import { createButlerDraft, publishButler } from "../src/butlers.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { metering } from "../src/cost-meter.ts";
 import { putEvidence } from "../src/evidence-store.ts";
+import { ceilingOf } from "../src/butler/ceiling.ts";
+import type { ButlerPrincipal } from "../src/butler/principal.ts";
+import { capabilitiesFor } from "./butler-capabilities.ts";
 
 /**
  * What a whole Butler **run** costs, measured — and what the affordability checker predicted for the same
@@ -117,6 +120,7 @@ async function publish(ctx: Ctx, name: string, nodes: unknown[], entry: string):
   const source = JSON.stringify({
     apiVersion: "mailda/v1", kind: "Butler",
     metadata: { name, owner: "team:support" },
+    capabilities: capabilitiesFor(nodes, ADDRESS),
     trigger: { event: "mail.received", mailbox: ADDRESS },
     entry, nodes,
   });
@@ -138,6 +142,7 @@ function predicted(nodes: unknown[], entry: string): number {
   const checked = checkButler({
     apiVersion: "mailda/v1", kind: "Butler",
     metadata: { name: "priced", owner: "team:support" },
+    capabilities: capabilitiesFor(nodes, ADDRESS),
     trigger: { event: "mail.received", mailbox: ADDRESS },
     entry, nodes,
   });
@@ -189,6 +194,19 @@ beforeEach(async () => {
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at),
+    /*
+     * The **sponsor's** own relations on the mailbox (#51).
+     *
+     * `publishButler` records the publisher as `published_by`, and that is the sponsor whose live authority
+     * caps every version they publish — so a Butler cannot reach a mailbox its publisher cannot reach. An
+     * administrator who publishes a Butler that sends from a mailbox holds `send.propose` on it, which is
+     * what this seeds. Tests that are *about* the sponsor term revoke it and watch the Butler stop.
+     */
+    ...(["send.propose", "mailbox.content.read", "mailbox.metadata.read"] as const).map((relation) =>
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, ADMIN, relation, MAILBOX, at)),
   ]);
 });
 
@@ -369,8 +387,13 @@ describe("what a whole Butler run costs (#50)", () => {
     const ids = await publish(ctx, "acknowledge", REPLY, "reply");
     await armed(ctx, ids.butlerId);
     const delivery = await aDelivery(ctx);
-    const butler = {
+    const butler: ButlerPrincipal = {
       orgId: ORG, butlerId: ids.butlerId, versionId: ids.versionId, name: "acknowledge",
+      // The same ceiling the published version carries, so the decomposition prices the real check rather
+      // than one that short-circuits (#51). `publishButler` records ADMIN as the sponsor.
+      ceiling: ceilingOf(
+        { capabilities: capabilitiesFor(REPLY, ADDRESS) } as Butler, ADMIN,
+      ),
     };
 
     // A draft for the Butler to send, written outside the meter.
@@ -407,12 +430,18 @@ describe("what a whole Butler run costs (#50)", () => {
       + `  node=${effect.cost.subrequests + 2}`,
     );
     /*
-     * The whole 23, attributed rather than asserted:
+     * The whole 25, attributed rather than asserted:
      *
      *   5   readDraft — a row read, an authority re-check at 2, an R2 get and a vault opening key
+     *   2   the three-term intersection (#51): the sponsor's subjects, then the ceiling and both tuple
+     *       terms in one compound statement
      *  16   sealManifest, a reply, with no policy published
      *   1   the record batch: the effect row, the accumulated spend and the park, in one round trip
      *   1   un-parking the run when the release arrives
+     *
+     * **It was 23 before #51 and the two it grew by are the ceiling term, measured rather than predicted.**
+     * That is the whole return on re-measuring: #51's derivation says the intersection is two round trips
+     * and this is the two, in the real runtime, against real D1 — not the arithmetic repeated.
      *
      * The last one is the release gate rather than the send, and the subtraction above attributes it to
      * this node because this node is what parks. Worth having measured: `readDraft` is the largest single
@@ -421,9 +450,12 @@ describe("what a whole Butler run costs (#50)", () => {
      * from either — that receipt measured a reply with no policy plane consulted twice, and this Node's
      * seal has since grown the recheck and the breaker query it records in its own corrections.
      */
-    expect(effect.cost.subrequests + 2).toBe(23);
+    expect(effect.cost.subrequests + 2).toBe(25);
     expect(read.cost.subrequests).toBe(5);
-    expect(effect.cost.subrequests).toBe(read.cost.subrequests + seal.cost.subrequests);
+    // The intersection is the difference between the two functions this node calls and the node itself, and
+    // it is asserted as **exactly two** rather than as "at most": #51 derived two queries, `authority.ts`
+    // issues two, and a third arriving here is the N+1 `authz.check.max_queries` exists to catch.
+    expect(effect.cost.subrequests - read.cost.subrequests - seal.cost.subrequests).toBe(2);
   });
 
   it("prices case.assign and case.close together, on the path that costs the most", async () => {
@@ -502,17 +534,20 @@ describe("what a whole Butler run costs (#50)", () => {
      * a Butler a run it could have finished, and refusing one too late means it has already been sent.
      */
     const bySeal = Math.floor(RUN_BUDGET / SHIPPED_NODE_COST["mail.send.propose"]);
-    const measuredNode = 23;
+    // 25 since #51, and it was 23 before: the send node now also pays the two round trips of the three-term
+    // intersection. Written here as the figure the receipt records rather than read from a budget, because
+    // the whole point of this comparison is the gap between what is *measured* and what is *bounded*.
+    const measuredNode = 25;
     const byMeasurement = Math.floor((RUN_BUDGET - BUDGETS["butler.run_cost_engine_fixed"]) / measuredNode);
     const byGuard = Math.floor(
       (RUN_BUDGET - BUDGETS["butler.run_cost_engine_fixed"]) / BUDGETS["butler.run_cost_max_send_propose"],
     );
     console.log(
       `MEASURE sending_loop_bound  pot=${RUN_BUDGET}  admitted_at_publication=${bySeal}`
-      + `  affordable_at_measured_23=${byMeasurement}  permitted_by_runtime_guard=${byGuard}`,
+      + `  affordable_at_measured_${measuredNode}=${byMeasurement}  permitted_by_runtime_guard=${byGuard}`,
     );
     expect(bySeal).toBe(500);
-    expect(byMeasurement).toBe(434);
+    expect(byMeasurement).toBe(399);
     expect(byGuard).toBe(357);
     // The publication-time refusal admits more than a run can afford. Asserted so that closing the gap is a
     // test failure rather than a silent improvement nobody notices.

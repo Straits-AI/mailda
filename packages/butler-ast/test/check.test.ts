@@ -306,6 +306,13 @@ describe("a Butler that cannot afford itself is refused, naming the arithmetic (
     // Four nested loops of a million multiply past what a double represents exactly. A silently rounded
     // total would be wrong in whichever direction the rounding fell.
     const ast = loopOfPureTransforms(1_000_000);
+    // The body stops being a pure transform below, so the ceiling has to say so: `case.close` takes
+    // `send.propose`, and a Butler whose graph needs an action it did not declare is refused before it is
+    // ever priced (#51). Declared here rather than in the fixture, because the fixture's whole point is a
+    // loop that touches nothing.
+    (ast["capabilities"] as unknown[]).push({
+      action: "send.propose", resource: "mailbox:enquiries@example.com",
+    });
     const nodes = nodesOf(ast);
     (nodes.find((node) => node["id"] === "note_one")!)["type"] = "case.close";
     delete (nodes.find((node) => node["id"] === "note_one")!)["as"];

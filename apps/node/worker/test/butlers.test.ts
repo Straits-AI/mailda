@@ -49,6 +49,7 @@ function leadIntake(overrides?: Record<string, unknown>): Record<string, unknown
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "sales-enquiries", owner: "team:sales" },
+    capabilities: [{ action: "send.propose", resource: "mailbox:enquiries@example.com" }],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "shape",
     nodes: [

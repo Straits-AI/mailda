@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { utf8 } from "@mailda/evidence";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
-import { LOOKUP_ENTITIES, priceButler, checkButler } from "@mailda/butler-ast";
+import {
+  LOOKUP_ENTITIES, priceButler, checkButler, type Butler, type CapabilityAction,
+} from "@mailda/butler-ast";
 
 import { grant, revoke } from "../src/access.ts";
 import { maySend } from "../src/authz-read.ts";
@@ -17,6 +19,8 @@ import { releaseButlerSend } from "../src/butler/release.ts";
 import { runEffects, runRow } from "../src/butler/record.ts";
 import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, publishButler } from "../src/butlers.ts";
+import { ceilingOf } from "../src/butler/ceiling.ts";
+import { capabilitiesFor } from "./butler-capabilities.ts";
 import { claim } from "../src/cases.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { putEvidence } from "../src/evidence-store.ts";
@@ -161,14 +165,23 @@ async function aDelivery(
   return { messageId, conversationId, caseId, receiptId };
 }
 
-/** Publishes a Butler through the real authoring path, so the AST is checked and frozen. */
-async function published(ctx: Ctx, name: string, nodes: unknown[], entry: string): Promise<{
-  butlerId: string; versionId: string;
-}> {
+/**
+ * Publishes a Butler through the real authoring path, so the AST is checked and frozen.
+ *
+ * `capabilities` defaults to what the graph needs on `ADDRESS`. It is overridable because a ceiling is only
+ * interesting when it disagrees with the grants — see `test/butler-capabilities.ts`.
+ */
+async function published(
+  ctx: Ctx, name: string, nodes: unknown[], entry: string, capabilities?: unknown[],
+): Promise<{ butlerId: string; versionId: string }> {
   const source = JSON.stringify({
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name, owner: "team:support" },
+    // Derived from the graph, because publication refuses a ceiling whose action set is not exactly what the
+    // nodes need (#51). See `test/butler-capabilities.ts` for why deriving it here is right and where the
+    // hand-written ceilings live.
+    capabilities: capabilities ?? capabilitiesFor(nodes, ADDRESS),
     trigger: { event: "mail.received", mailbox: ADDRESS },
     entry,
     nodes,
@@ -178,8 +191,29 @@ async function published(ctx: Ctx, name: string, nodes: unknown[], entry: string
   return { butlerId: draft.butlerId, versionId: version.versionId };
 }
 
-function principal(ids: { butlerId: string; versionId: string }, name = "acknowledge"): ButlerPrincipal {
-  return { orgId: ORG, butlerId: ids.butlerId, versionId: ids.versionId, name };
+/**
+ * A principal for calling one authority function directly, with a ceiling written **by hand**.
+ *
+ * The ceiling and the sponsor are half of what a Butler's authority now is (#51), so a principal without one
+ * is not a Butler — and every one of these calls goes through the three-term intersection. The actions are
+ * stated per call rather than derived from the published AST, because the tests that use this are testing
+ * what happens when the ceiling and the tuples disagree, and a ceiling computed from the program under test
+ * could never disagree with it.
+ *
+ * The sponsor is `ADMIN`, who is who `publishButler` records — see `src/butler/ceiling.ts`.
+ */
+function principal(
+  ids: { butlerId: string; versionId: string },
+  actions: readonly CapabilityAction[] = ["send.propose"],
+  name = "acknowledge",
+): ButlerPrincipal {
+  return {
+    orgId: ORG, butlerId: ids.butlerId, versionId: ids.versionId, name,
+    ceiling: ceilingOf(
+      { capabilities: actions.map((action) => ({ action, resource: `mailbox:${ADDRESS}` })) } as Butler,
+      ADMIN,
+    ),
+  };
 }
 
 /** The acknowledgement Butler used by most of these tests: a guard, a draft and a proposed send. */
@@ -236,6 +270,19 @@ beforeEach(async () => {
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at),
+    /*
+     * The **sponsor's** own relations on the mailbox (#51).
+     *
+     * `publishButler` records the publisher as `published_by`, and that is the sponsor whose live authority
+     * caps every version they publish — so a Butler cannot reach a mailbox its publisher cannot reach. An
+     * administrator who publishes a Butler that sends from a mailbox holds `send.propose` on it, which is
+     * what this seeds. Tests that are *about* the sponsor term revoke it and watch the Butler stop.
+     */
+    ...(["send.propose", "mailbox.content.read", "mailbox.metadata.read"] as const).map((relation) =>
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, ADMIN, relation, MAILBOX, at)),
   ]);
 });
 
@@ -260,11 +307,19 @@ describe("a Butler's principal is the Butler", () => {
     expect(await maySend(testEnv, actingAs(butler), MAILBOX)).toBe(false);
   });
 
-  it("is checked by the same tuples `hasAnyRelation` reads, which is why the one-query form is safe", async () => {
-    // `caseMailboxHeldBy` folds the tuple check into its statement rather than calling `maySend`, to save a
-    // subrequest a Butler can never match (`team_members.user_id` holds users). That is a claim about
-    // agreement between two code paths, so it is checked rather than argued: both answer alike before and
-    // after a grant, and after a revocation.
+  it("is checked by the same tuples `hasAnyRelation` reads, which is why the folded form is safe", async () => {
+    /*
+     * `caseMailboxHeldBy` folds its tuple checks into the statement that finds the case rather than calling
+     * `maySend`, to save a subrequest a Butler can never match (`team_members.user_id` holds users). That is
+     * a claim about agreement between two code paths, so it is checked rather than argued: both answer alike
+     * before and after a grant, and after a revocation.
+     *
+     * **Alike on the Butler's own term only, since #51**, and the fixture is what makes that a fair
+     * comparison: `principal()` gives this Butler a ceiling naming `ADDRESS`, and the sponsor holds
+     * `send.propose` on `MAILBOX` from `beforeEach`, so the two terms `maySend` knows nothing about are both
+     * satisfied throughout and the only thing moving is the Butler's tuple. Where they *disagree* is the
+     * subject of `test/butler-capability.test.ts`, which walks all eight combinations.
+     */
     const ctx = atTime(T0);
     const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
     const butler = principal(ids);
@@ -674,7 +729,7 @@ describe("a Butler does not choose who its reply goes to", () => {
     expect(outcome.reason).toBe("a message from this mailbox is not answered by it");
   });
 
-  it("bounds the one sink that is still an expression — the mailbox — by the grant rather than by the AST", async () => {
+  it("bounds the one sink that is still an expression — the mailbox — by the ceiling and then by the grant", async () => {
     /*
      * Found by re-verifying §16's other ten sinks rather than trusting the list (#52).
      *
@@ -689,6 +744,14 @@ describe("a Butler does not choose who its reply goes to", () => {
      * writes. So this is asserted rather than described: content naming a mailbox this Butler was not
      * granted is refused, and content naming one it *was* granted works, which is the residual stated as a
      * fact rather than implied by silence.
+     *
+     * **#51 put a second bound in front of that one, and this test now walks both.** The pinned ceiling is
+     * frozen in the AST, so a mailbox the *program* never declared is refused before any tuple is read at
+     * all — which is strictly stronger than the grant check, because a grant can be written next month and a
+     * published ceiling cannot. The grant check is still what decides for a mailbox the ceiling *does*
+     * declare, and the second half below is a Butler whose ceiling names both mailboxes and whose grants
+     * name one. Two layers, two refusals, and the title says both because the earlier version of it named
+     * only the grant and would have passed with the ceiling deleted.
      */
     const ctx = atTime(T0);
     const at = new Date(ctx.now()).toISOString();
@@ -713,8 +776,32 @@ describe("a Butler does not choose who its reply goes to", () => {
     // content names a real mailbox in the same organization.
     const elsewhere = await aDelivery(ctx, other);
     const refused = await run(ids, elsewhere, inlineSteps());
+    // The ceiling answers first, and it answers with the reason whose remedy is a republish rather than a
+    // grant. No query was issued to reach it: the ceiling is frozen data the run already holds.
     expect(refused.effects.map((effect) => [effect.outcome, effect.reason]))
-      .toEqual([["refused", "E_MAY_NOT_SEND_AS_MAILBOX"]]);
+      .toEqual([["refused", "capability_not_declared"]]);
+    expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
+      .toEqual({ n: 0 });
+
+    /*
+     * And with the ceiling widened to name both mailboxes, the **grant** is what refuses — which is what
+     * makes the assertion above a statement about the ceiling rather than about anything else. A version of
+     * this file with the ceiling term deleted passes the first half and fails this one, and a version with
+     * the grant term deleted passes this one and fails the first.
+     */
+    const bothDeclared = await published(ctx, "content-picks-either", [
+      {
+        id: "reply", type: "draft", mailboxId: "${event.subject}",
+        subject: "Re:", body: "Thanks.", as: "ack", next: null,
+      },
+    ], "reply", [
+      { action: "send.propose", resource: `mailbox:${ADDRESS}` },
+      { action: "send.propose", resource: "mailbox:elsewhere@acme.example" },
+    ]);
+    await grantTo(ctx, bothDeclared.butlerId, "send.propose");
+    const stillRefused = await run(bothDeclared, elsewhere, inlineSteps());
+    expect(stillRefused.effects.map((effect) => [effect.outcome, effect.reason]))
+      .toEqual([["refused", "butler_not_granted"]]);
     expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
       .toEqual({ n: 0 });
 
@@ -845,6 +932,7 @@ describe("through the real Workflow binding", () => {
     const source = JSON.stringify({
       apiVersion: "mailda/v1", kind: "Butler",
       metadata: { name: "elsewhere", owner: "team:sales" },
+      capabilities: [],
       trigger: { event: "mail.received", mailbox: "sales@acme.example" },
       entry: "halt",
       nodes: [{ id: "halt", type: "stop", reason: "not for me" }],
@@ -1312,7 +1400,8 @@ describe("the rest of the shipped node set", () => {
 
     // And the projection: a lookup must not put an internal storage key where an expression can interpolate
     // it into a subject line.
-    const row = await readEntity(testEnv, principal(ids), "message", delivery.messageId);
+    const row = await readEntity(
+      testEnv, principal(ids, ["mailbox.content.read"]), "message", delivery.messageId);
     expect(row).not.toBeNull();
     expect(Object.keys(row!)).not.toContain("blob_key");
     expect(Object.keys(row!)).not.toContain("blob_sha256");
@@ -1483,6 +1572,7 @@ describe("a stored AST is data, so the engine re-checks it", () => {
     const hostile = JSON.stringify({
       apiVersion: "mailda/v1", kind: "Butler",
       metadata: { name: "acknowledge", owner: "team:support" },
+      capabilities: capabilitiesFor(ACKNOWLEDGE, ADDRESS),
       trigger: { event: "mail.received", mailbox: ADDRESS },
       entry: "classify",
       nodes: [
@@ -1537,6 +1627,7 @@ describe("a stored AST is data, so the engine re-checks it", () => {
     const legacy = JSON.stringify({
       apiVersion: "mailda/v1", kind: "Butler",
       metadata: { name: "acknowledge", owner: "team:support" },
+      capabilities: capabilitiesFor(ACKNOWLEDGE, ADDRESS),
       trigger: { event: "mail.received", mailbox: ADDRESS },
       entry: "reply",
       nodes: ACKNOWLEDGE
@@ -1619,7 +1710,7 @@ describe("a stored AST is data, so the engine re-checks it", () => {
 /* ------------------------------------------------------------------ the vocabulary --------------- */
 
 describe("the engine's own refusal vocabulary is closed", () => {
-  it("declares exactly the six #50 settled on, plus #53's two replay tokens", () => {
+  it("declares exactly the six #50 settled on, plus #53's two replay tokens and #51's three", () => {
     // `replay_identical_content` is the seventh member and the only one that is not a refusal: a replay found
     // it was about to seal a send identical to one the replayed run already made, so it reused that send's
     // effect key and sealed nothing. It lives in this list because the run record's `reason` column carries
@@ -1629,9 +1720,16 @@ describe("the engine's own refusal vocabulary is closed", () => {
     // `replay_send_decided` is the eighth and is that token's pair: the same key reuse, on an incumbent that
     // is `cancelled` or `withheld` — a decision **against** this message, so nothing is on its way and `ok`
     // would report a success that did not happen.
+    //
+    // The last three are #51's, and there are three of them because §5C requires three: *"you never declared
+    // it"*, *"you declared it and nobody granted it to this Butler"* and *"it was granted and the sponsor no
+    // longer holds it"* have three different remedies, and collapsing them into "not permitted" is the same
+    // failure as collapsing empty with forbidden.
     expect([...EFFECT_REASONS].sort()).toEqual([
-      "assignee_may_not_work_it", "case_closed", "case_held", "case_not_actionable",
+      "assignee_may_not_work_it", "butler_not_granted", "capability_not_declared",
+      "case_closed", "case_held", "case_not_actionable",
       "case_not_held_by_butler", "not_readable", "replay_identical_content", "replay_send_decided",
+      "sponsor_lacks_it",
     ]);
   });
 
@@ -1642,6 +1740,7 @@ describe("the engine's own refusal vocabulary is closed", () => {
     const checked = checkButler({
       apiVersion: "mailda/v1", kind: "Butler",
       metadata: { name: "acknowledge", owner: "team:support" },
+      capabilities: capabilitiesFor(ACKNOWLEDGE, ADDRESS),
       trigger: { event: "mail.received", mailbox: ADDRESS },
       entry: "security_guard", nodes: ACKNOWLEDGE,
     });

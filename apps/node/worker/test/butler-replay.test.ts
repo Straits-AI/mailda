@@ -22,6 +22,7 @@ import {
 } from "../src/outbound/retry.ts";
 import { type SendState } from "../src/outbound/dispatch.ts";
 import { type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
+import { capabilitiesFor } from "./butler-capabilities.ts";
 
 /**
  * The run ledger and the four replay modes (#53), end to end.
@@ -142,6 +143,7 @@ async function published(ctx: Ctx, name: string, nodes: unknown[], entry: string
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name, owner: "team:support" },
+    capabilities: capabilitiesFor(nodes, ADDRESS),
     trigger: { event: "mail.received", mailbox: ADDRESS },
     entry,
     nodes,

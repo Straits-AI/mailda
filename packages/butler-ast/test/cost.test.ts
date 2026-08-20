@@ -77,6 +77,14 @@ describe("a lookup is priced, which nothing noticed until it was not", () => {
   /** The worked example with a chain of `count` lookups spliced in ahead of the guard. */
   function withLookups(count: number): Record<string, unknown> {
     const ast = leadIntake();
+    if (count > 0) {
+      // A `lookup` of a case reads queue metadata, so the ceiling has to declare metadata or content (#51).
+      // Conditional on `count`, because declaring an action no node needs is refused just as firmly as
+      // omitting one a node needs — which is what makes the ceiling's action set exactly the graph's.
+      (ast["capabilities"] as unknown[]).push({
+        action: "mailbox.metadata.read", resource: "mailbox:enquiries@example.com",
+      });
+    }
     const nodes = ast["nodes"] as Array<Record<string, unknown>>;
     for (let index = 0; index < count; index++) {
       nodes.push({

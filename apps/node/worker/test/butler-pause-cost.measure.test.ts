@@ -13,6 +13,7 @@ import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
 import { createButlerDraft, publishButler } from "../src/butlers.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { putEvidence } from "../src/evidence-store.ts";
+import { capabilitiesFor } from "./butler-capabilities.ts";
 
 /**
  * What asking the Butler pause costs, **measured** (#75) — `docs/receipts/butler-pause.md`.
@@ -106,6 +107,7 @@ async function published(ctx: Ctx, name: string): Promise<{ butlerId: string; ve
   const source = JSON.stringify({
     apiVersion: "mailda/v1", kind: "Butler",
     metadata: { name, owner: "team:support" },
+    capabilities: capabilitiesFor(ACKNOWLEDGE, ADDRESS),
     trigger: { event: "mail.received", mailbox: ADDRESS },
     entry: "reply", nodes: ACKNOWLEDGE,
   });
@@ -162,6 +164,19 @@ beforeEach(async () => {
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at),
+    /*
+     * The **sponsor's** own relations on the mailbox (#51).
+     *
+     * `publishButler` records the publisher as `published_by`, and that is the sponsor whose live authority
+     * caps every version they publish — so a Butler cannot reach a mailbox its publisher cannot reach. An
+     * administrator who publishes a Butler that sends from a mailbox holds `send.propose` on it, which is
+     * what this seeds. Tests that are *about* the sponsor term revoke it and watch the Butler stop.
+     */
+    ...(["send.propose", "mailbox.content.read", "mailbox.metadata.read"] as const).map((relation) =>
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, ADMIN, relation, MAILBOX, at)),
   ]);
 });
 
@@ -252,6 +267,7 @@ describe("what the Butler pause costs the ingress path", () => {
     const ctx = atTime(T0);
     const source = JSON.stringify({
       apiVersion: "mailda/v1", kind: "Butler", metadata: { name: "halt", owner: "team:support" },
+      capabilities: [],
       trigger: { event: "mail.received", mailbox: ADDRESS },
       entry: "halt", nodes: [{ id: "halt", type: "stop", reason: "nothing to do" }],
     });

@@ -1178,6 +1178,39 @@ nothing else. The fix is the index's own sentence: on a replay the draft is resu
 the argument against upserting on the ordinary path survives untouched because the lookup is bound to the
 Butler's own author id, so the widest thing it can find is a draft the same program wrote.
 
+**A published Butler now says what it may ever do, and its authority is capped by the person who published
+it.** Layer 4's shape says a step's effective authority is `pinned ceiling ∩ live tuples of the Butler ∩ live
+tuples of the sponsor`, and until now only the middle term existed — so a Butler was exactly as powerful as
+the list of tuples naming it, and an administrator granting one a mailbox next month silently widened a
+program published in June. The ceiling is `capabilities:` **inside the AST**, which is where §16 always put
+it and which is what makes "frozen with the version" cost nothing: the trigger that already refuses to move a
+published program refuses to move its ceiling, and the digest that already fingerprints the program
+fingerprints its authority bound. Publication proves the ceiling's **action set is exactly what the graph
+needs** — an action a node needs and the ceiling omits is refused, and so is an action the ceiling declares
+that no node needs, because a ceiling padded *just in case* is a ceiling that does not bind. What publication
+cannot prove is *which mailbox*, because a node's mailbox is an expression and the AST package does not parse
+expressions; that half is enforced per step, in the statement that was already asking about tuples.
+
+**The sponsor is the publisher, and that is not the identity #50 rejected.** #50 refused the publisher as a
+Butler's *principal* on four counts, and every one of them is about identity: whose name is on the mail, who
+is excluded from approving it, what a policy can tell apart. An intersection can only ever **subtract**. So
+capping a Butler against its publisher's live authority grants it nothing — it still needs its own tuple —
+while making a mailbox the publisher cannot reach unreachable to the program they published, which is the
+direction §7 asks for. Revoking the sponsor's relation stops the Butler on its next node, visibly: the effect
+row says `sponsor_lacks_it` and names them, because a ceiling that quietly empties and a Butler that quietly
+does nothing look identical from outside. Migration 0031 froze `published_by`, closing a one-statement hole
+the freeze trigger did not know it had — a swappable sponsor is a ceiling that is not pinned, and swapping it
+left the AST untouched and every digest matching.
+
+**Three terms, two queries, and one line that must not be simplified.** The ceiling is free — it rides on the
+version row the run already loaded — the sponsor's teams are one query, and both tuple terms come back from
+one more. The trap is that `subject_id IN (butler, sponsor, …teams)` answers *"does any of these hold it"*,
+which is an **OR**, while the intersection needs an **AND**: written that way, a Butler holds whatever its
+sponsor holds and nothing notices. What converts one into the other is selecting `DISTINCT subject_id` rather
+than `1`, so the query returns *which* subjects hold the relation and the conjunction is evaluated on the
+result. Measured rather than inherited: every node grew by exactly the round trips that derivation predicts —
+a send from 23 to 25, a lookup from 2 to 3 — and every bound already had the headroom, so no number moved.
+
 **What is still not enforced is said rather than implied.** A loop whose body performs no I/O costs nothing,
 so it is affordable at a billion — true in subrequests, the only currency with a measurement behind it — and
 the engine does not refuse it either: it runs until the platform's CPU limit kills the step. And a workflow's
@@ -1411,6 +1444,8 @@ docs/supervised-access.md              matters, the time-boxed grant, per-act re
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
 docs/butler-ast.md                     the node set, what the checker refuses, how a version freezes
+docs/butler-capability-ceiling.md      the pinned ceiling, who the sponsor is, the three-term
+                                       intersection in two queries, and what it does not reach
 docs/butler-engine.md                  what runs a Butler: the principal, the release gate, the budget,
                                        the pause and the loop that places it, the run ledger and the
                                        four replay modes

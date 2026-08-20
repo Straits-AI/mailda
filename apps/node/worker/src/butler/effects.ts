@@ -11,7 +11,7 @@ import {
   contentIdentity, normalizeBody, sealManifest, type ReplayIncumbents,
 } from "../outbound/manifest.ts";
 import { incumbentStands } from "../outbound/retry.ts";
-import { caseMailboxHeldBy, notAnId, readEntity } from "./authority.ts";
+import { caseMailboxHeldBy, effectiveOnMailbox, notAnId, readEntity } from "./authority.ts";
 import { BUTLER_RELEASE_REASON } from "./gate.ts";
 import { evaluate, type RunState } from "./expr.ts";
 import { parentDelivery, replyRecipients, type RunTrigger } from "./parent.ts";
@@ -53,18 +53,32 @@ import type { ButlerPrincipal } from "./principal.ts";
  *
  * ## Where the Butler's own authority is checked, and where it is not
  *
+ * Every row below is the **three-term intersection** of #51 — the version's pinned ceiling, the Butler's
+ * live tuples and the sponsor's live tuples — in two queries, never a bare tuple check. What differs per
+ * node is *which* shape asks it, and that follows from whether the step names its mailbox or discovers it:
+ *
  * | node | who the Layer 5 function checks | so this file checks |
  * |:--|:--|:--|
- * | `case.assign` | the **assignee**'s `send.propose` (`claim`) | the Butler's `send.propose` on the case's mailbox |
- * | `case.close` | that the closer **holds** the case (`close`) | the Butler's `send.propose` on the case's mailbox |
- * | `draft` | the author's `send.propose` (`assertMaySend`) | nothing — the author *is* the Butler. It does supply the recipients, which the node cannot name (#52) |
- * | `mail.send.propose` | the author's `send.propose` (`maySend`) | nothing — same reason |
- * | `lookup` | nothing: it is a row read | the Butler's read relation, folded into the statement |
+ * | `case.assign` | the **assignee**'s `send.propose` (`claim`) | the intersection for `send.propose` on the case's mailbox, folded into the case read (`caseMailboxHeldBy`) |
+ * | `case.close` | that the closer **holds** the case (`close`) | the same |
+ * | `draft` | the author's `send.propose` (`assertMaySend`) | the whole intersection on the node's own `mailboxId`, **before** anything is written (`effectiveOnMailbox`) |
+ * | `mail.send.propose` | the author's `send.propose` (`maySend`, inside `readDraft`) | the whole intersection on the **draft's** mailbox — but *after* the draft is read, because that is where the mailbox comes from |
+ * | `lookup` | nothing: it is a row read | the intersection for the entity's read relation, folded into the statement (`readEntity`) |
  *
- * The first row is the one that matters. `claim` checks whether the **assignee** may work the case, which is
- * exactly right for a human clicking Reply and exactly not enough for a program: without the extra check a
- * Butler holding nothing anywhere could assign any case in the organization to anybody who may work it.
- * That is the permissive direction, and it is the reason `caseMailboxHeldBy` exists.
+ * Two rows carry an argument.
+ *
+ * **`case.assign`.** `claim` checks whether the **assignee** may work the case, which is exactly right for a
+ * human clicking Reply and exactly not enough for a program: without the extra check a Butler holding
+ * nothing anywhere could assign any case in the organization to anybody who may work it. That is the
+ * permissive direction, and it is the reason `caseMailboxHeldBy` exists.
+ *
+ * **`mail.send.propose` is the one node whose refusals are in two vocabularies, and it is because of the
+ * order.** Its mailbox is the *draft's*, which is unknown until `readDraft` has run — and `readDraft`
+ * re-checks `send.propose` itself, so a Butler holding no tuple is refused there, with Layer 2's
+ * `E_MAY_NOT_SEND_AS_MAILBOX`, before the intersection is asked. So that node records
+ * `capability_not_declared` and `sponsor_lacks_it` but never `butler_not_granted`. Every other node names
+ * its mailbox up front and produces all three. Stated because a reader who found `butler_not_granted`
+ * missing from a send refusal would otherwise look for a bug.
  */
 
 /** What one effect node did, as the interpreter needs it. */
@@ -85,7 +99,8 @@ export interface EffectResult {
  * from a `CallerError`.
  *
  * Enumerated because a reason nobody can list is a reason nobody can filter on, and because the run
- * listing shows them. `test/butler-run.test.ts` pins the set so a seventh cannot arrive without a decision.
+ * listing shows them. `test/butler-run.test.ts` pins the set by name, so another cannot arrive without a
+ * decision — which is what the three #51 added had to pass through.
  */
 export const EFFECT_REASONS = [
   /** The case does not exist, or this Butler holds nothing on the mailbox it is in. §5C keeps them alike. */
@@ -100,6 +115,29 @@ export const EFFECT_REASONS = [
   "case_not_held_by_butler",
   /** The lookup resolved to nothing this Butler may read. Absent and forbidden answer alike (§5C). */
   "not_readable",
+  /**
+   * The version's pinned capability ceiling does not declare this action on this mailbox (#51).
+   *
+   * *"You never declared it"* — the first of §5C's three reasons, and the only one whose remedy is a
+   * **republish** rather than a grant. Reachable only where the step names its own mailbox, because a read
+   * that discovers its mailbox cannot separate this from `not_readable` without a second query and without
+   * telling a Butler which ids exist.
+   */
+  "capability_not_declared",
+  /**
+   * The ceiling declares it and no tuple grants it to this Butler (#51).
+   *
+   * *"You declared it and nobody granted it to this Butler"*. The remedy is an administrator, not an edit.
+   */
+  "butler_not_granted",
+  /**
+   * It was granted to the Butler, and the **sponsor** no longer holds it (#51).
+   *
+   * The third reason, and the one that will confuse people: nothing about the Butler changed. So the
+   * operational log names the sponsor — `src/butler/ceiling.ts` explains why the version's publisher is who
+   * that is, and why capping against them is safe where #50 found identifying as them was not.
+   */
+  "sponsor_lacks_it",
   /**
    * A replay was about to seal a send whose content is identical to one the replayed run already made, so it
    * **reused that send's effect key and sealed nothing** (#53).
@@ -288,6 +326,17 @@ export async function writeDraft(
 
   return await refusable(async () => {
     /*
+     * The three-term intersection, before anything is written (#51).
+     *
+     * `saveDraft` checks `send.propose` for the author, which for a Butler is the **Butler's own** tuple —
+     * one of the three terms. This adds the other two, and it goes first because it is the only place a
+     * `draft` node's mailbox is known before any work is done: the id came off the node, so all three of
+     * §5C's reasons are separable here and the refusal can say which. Two queries, per #51's derivation.
+     */
+    const effective = await effectiveOnMailbox(env, butler, mailboxId, ["send.propose"]);
+    if (!effective.allowed) return refused(effective.reason, mailboxId);
+
+    /*
      * `null` for the draft id on an ordinary run: a Butler writes a new draft rather than editing one. An
      * upsert would let a run overwrite a draft a person is typing into, and `saveDraft`'s own author filter is
      * what makes that impossible — but only because the author is the Butler, which is a property of this call
@@ -393,6 +442,23 @@ export async function proposeSend(
       // alike so a Butler cannot be used to discover which draft ids exist.
       return refused("not_readable", draftId);
     }
+
+    /*
+     * The ceiling and the sponsor, on the mailbox the draft is addressed from (#51).
+     *
+     * **Placed after `readDraft` and not before, because the mailbox is the draft's rather than the node's.**
+     * `node.draft` is an expression, so a `mail.send.propose` can name a draft written by an earlier run of
+     * the same Butler addressed from a different mailbox — which is exactly the case a ceiling has to catch,
+     * and it cannot be caught until the row is read.
+     *
+     * **The Butler term has already been answered by then**, and that is said plainly rather than left to be
+     * inferred: `readDraft` re-checks `send.propose` through the same `maySend` a person's send path uses,
+     * and throws `E_MAY_NOT_SEND_AS_MAILBOX` when the Butler holds nothing. So this node's refusal for a
+     * missing Butler tuple carries that code and never `butler_not_granted`, and what this call adds is the
+     * two terms Layer 2 knows nothing about. One fact, two vocabularies, named where a reader meets it.
+     */
+    const effective = await effectiveOnMailbox(env, butler, draft.mailboxId, ["send.propose"]);
+    if (!effective.allowed) return refused(effective.reason, draftId);
 
     if (replay !== null) {
       /*

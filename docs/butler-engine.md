@@ -93,6 +93,31 @@ function a Butler calls takes an `actorUserId` and knows nothing about Butlers.
 string. This is the *runtime* identity — whose tuples are checked and who the effects are attributed to —
 which is a different question from who owns the program.
 
+### The principal is one term of three, since #51
+
+*"A Butler is exactly as powerful as the list of tuples naming it"* was true when it was written and is now
+one third of the answer. Layer 4's shape decision 4 makes a Butler's effective authority
+
+```text
+effective(step) = pinned ceiling ∩ live tuples of the Butler ∩ live tuples of the sponsor
+```
+
+and the **sponsor** is `butler_versions.published_by`, which is the publisher — the identity this section
+rejects two paragraphs above. That is not a reversal, and the distinction is the whole point: all four
+objections there are about *identity*, and an intersection is **monotone downward**. Capping a Butler against
+the publisher's live authority grants it nothing (it still needs its own tuple), puts nobody's name on any
+mail, excludes nobody from any approval pool, and leaves every policy comparing the `btl_`. Identity is a
+claim that can be false; a ceiling can only subtract.
+
+The ceiling itself is `capabilities:` inside the frozen AST, so it is frozen by the trigger that already
+freezes the program and fingerprinted by the digest that already fingerprints it. Migration 0031 froze
+`published_by` for the same reason, closing a one-statement hole 0027 did not know it had: a swappable
+sponsor is a ceiling that is not pinned.
+
+**Two queries, not three**, and the OR-versus-AND conversion that makes it work, are in
+`docs/butler-capability-ceiling.md` — including which nodes can name all three refusal reasons and which
+cannot, and the four things the ceiling does not reach.
+
 ---
 
 ## The interpreter, in the order it runs
@@ -198,13 +223,17 @@ What the engine adds around each call is four things: it resolves the node's exp
 Butler's own** authority where the function checks somebody else's, it turns the answer into a row of the
 run record, and — for `draft` — it **supplies the recipients the node does not carry** (below).
 
+Every row below is the **three-term intersection** of #51 — the pinned ceiling, the Butler's live tuples and
+the sponsor's live tuples — in two queries, never a bare tuple check. What differs per node is which shape
+asks it, and that follows from whether the step *names* its mailbox or *discovers* it:
+
 | node | who the Layer 5 function checks | so the engine checks |
 |:--|:--|:--|
-| `case.assign` | the **assignee**'s `send.propose` | the Butler's `send.propose` on the case's mailbox |
-| `case.close` | that the closer **holds** the case | the Butler's `send.propose` on the case's mailbox |
-| `draft` | the author's `send.propose` | nothing — the author *is* the Butler. It does supply the recipients, which the node cannot name |
-| `mail.send.propose` | the author's `send.propose` | nothing — same reason |
-| `lookup` | nothing: it is a row read | the Butler's read relation, folded into the statement |
+| `case.assign` | the **assignee**'s `send.propose` | the intersection for `send.propose` on the case's mailbox, folded into the case read |
+| `case.close` | that the closer **holds** the case | the same |
+| `draft` | the author's `send.propose` | the intersection on the node's own `mailboxId`, before anything is written. It also supplies the recipients, which the node cannot name |
+| `mail.send.propose` | the author's `send.propose` | the intersection on the **draft's** mailbox, after the draft is read — because that is where the mailbox comes from |
+| `lookup` | nothing: it is a row read | the intersection for the entity's read relation, folded into the statement |
 
 The first row is the one that matters. `claim` checks whether the **assignee** may work the case, which is
 right for a human clicking Reply and not enough for a program: without the extra check a Butler holding
@@ -219,6 +248,12 @@ path a human does not have.
 run's state, where `"${steps.m.blob_key}"` interpolates an internal storage key into a subject line and sends
 it. Each entity declares the fields its expressions may name, exhaustively over `LOOKUP_ENTITIES` by
 construction.
+
+**`mail.send.propose` is the one node whose refusals come in two vocabularies**, and it is the order rather
+than a design: its mailbox is the draft's, which is unknown until `readDraft` has run, and `readDraft`
+re-checks `send.propose` itself — so a Butler holding no tuple is refused there with Layer 2's
+`E_MAY_NOT_SEND_AS_MAILBOX`, before the intersection is asked. That node records `capability_not_declared`
+and `sponsor_lacks_it` but never `butler_not_granted`.
 
 **A refused lookup binds nothing, so a later expression reading it faults the run.** The refusal is recorded
 first, so the record reads refusal-then-fault and a person meets the reason before the symptom. The shipped
@@ -974,15 +1009,20 @@ what bounds a multi-hop loop is the human release gate on each send and the latc
 which counts a Butler's runs rather than the loop's hops.
 
 **Still fog.** `queue_one` and `parallel_bounded` (they need a different id shape), the full §16 schedule
-semantics, the trigger catalogue beyond `mail.received`, the capability ceiling at publication,
-`simulate-recorded` and simulation generally — and **how long a run ledger is kept**.
+semantics, the trigger catalogue beyond `mail.received`, `simulate-recorded` and simulation generally, the
+**capability preview** — the surface that would show an author the three refusal reasons before a run rather
+than after one, which waits on there being an authoring channel at all — and **how long a run ledger is
+kept**.
 
 That last one is #53's own open question and it stays open rather than being defaulted. Audit entries are never
 trimmed and `log_entries` are bounded; a run ledger is neither, and the honest answer needs
 `audit-and-log-retention.md`'s row-size arithmetic against D1's 10 GB per-database ceiling. What #53 changed
 about it is only the size of the row: `trigger_facts` is the one column that grows it measurably.
 
-**The run ledger and its four replay modes are no longer on that list** — see the replay section above.
+**The run ledger and its four replay modes are no longer on that list** — see the replay section above. Nor is
+the **capability ceiling at publication**: it is `capabilities:` in the document, its action set is proved
+exactly equal to what the graph needs, and the runtime intersects it with the Butler's and the sponsor's live
+tuples in two queries (`docs/butler-capability-ceiling.md`).
 
 **Static taint tracking is no longer on that list, and it is not because it was built.** #52 reversed it for
 this layer: with the one reachable sink closed by construction there is nothing a dataflow checker could

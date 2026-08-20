@@ -15,6 +15,11 @@ export function leadIntake(): Record<string, unknown> {
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "sales-enquiries", owner: "team:sales" },
+    // The pinned ceiling (#51). Exactly the actions this graph needs — `case.assign`, `draft` and
+    // `mail.send.propose` each take `send.propose` — because publication refuses both halves of the
+    // inequality: an action a node needs and the ceiling omits, and an action the ceiling declares and no
+    // node needs.
+    capabilities: [{ action: "send.propose", resource: "mailbox:enquiries@example.com" }],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "security_guard",
     nodes: [
@@ -100,6 +105,9 @@ export function loopOfPureTransforms(maxItems: unknown): Record<string, unknown>
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "count-them", owner: "team:sales" },
+    // Empty, and legitimately so: a loop and a transform touch no storage, so this Butler needs no
+    // authority at all. Empty is a real ceiling; absent is not representable.
+    capabilities: [],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "fan_out",
     nodes: [
@@ -130,6 +138,7 @@ export function manyCheapNodes(count: number): Record<string, unknown> {
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "tidy-up", owner: "team:sales" },
+    capabilities: [{ action: "send.propose", resource: "mailbox:enquiries@example.com" }],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "close_0",
     nodes,
@@ -157,6 +166,7 @@ export function assignChain(count: number): Record<string, unknown> {
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "hand-it-around", owner: "team:sales" },
+    capabilities: [{ action: "send.propose", resource: "mailbox:enquiries@example.com" }],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "assign_0",
     nodes,
@@ -185,6 +195,7 @@ export function nestedLoops(depth: number, maxItems: number): Record<string, unk
     apiVersion: "mailda/v1",
     kind: "Butler",
     metadata: { name: "all-the-way-down", owner: "team:sales" },
+    capabilities: [{ action: "send.propose", resource: "mailbox:enquiries@example.com" }],
     trigger: { event: "mail.received", mailbox: "enquiries@example.com" },
     entry: "loop_0",
     nodes,

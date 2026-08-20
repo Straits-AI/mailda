@@ -9,6 +9,7 @@ import { log } from "../audit.ts";
 import { metering, type Cost } from "../cost-meter.ts";
 import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectResult } from "./effects.ts";
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
+import { ceilingOf } from "./ceiling.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
 import { describePause, pausedFrom, PAUSE_COLUMNS_FOR_RUN } from "./pause.ts";
 import { contentIdentity, type IncumbentSend, type ReplayIncumbents } from "../outbound/manifest.ts";
@@ -225,6 +226,17 @@ export const RUN_NODE_COST: { [K in ShippedKind]: number } = Object.fromEntries(
 interface VersionFacts {
   astJson: string;
   butlerName: string;
+  /**
+   * `butler_versions.published_by` — **the sponsor** whose live authority caps this version (#51).
+   *
+   * Read here rather than asked for separately because it is a column of the row the run was already
+   * loading, which is the first half of #51's *"the pinned ceiling is free"*: the ceiling and the person it
+   * is capped against arrive together, in the statement that fetches the program, for no extra subrequest.
+   *
+   * Nullable in the schema because a draft has no publisher. A published row with a NULL here is
+   * unreachable through `publishButler` and is refused below rather than defaulted to anybody.
+   */
+  sponsorUserId: string | null;
 }
 
 /**
@@ -254,7 +266,7 @@ export async function interpret(
   const facts = await steps.do("load", async (): Promise<VersionFacts | null> => {
     const results = await env.CATALOG.batch([
       env.CATALOG.prepare(
-        `SELECT v.ast_json AS ast_json, b.name AS butler_name
+        `SELECT v.ast_json AS ast_json, v.published_by AS sponsor_user_id, b.name AS butler_name
            FROM butler_versions v JOIN butlers b ON b.org_id = v.org_id AND b.id = v.butler_id
           WHERE v.org_id = ? AND v.id = ? AND v.state = 'published' LIMIT 1`,
       ).bind(orgId, payload.butlerVersionId),
@@ -273,8 +285,11 @@ export async function interpret(
         ...(payload.replay === undefined ? {} : { replay: payload.replay }),
       }),
     ]);
-    const row = (results[0]?.results?.[0] ?? null) as { ast_json: string; butler_name: string } | null;
-    return row === null ? null : { astJson: row.ast_json, butlerName: row.butler_name };
+    const row = (results[0]?.results?.[0] ?? null) as
+      { ast_json: string; butler_name: string; sponsor_user_id: string | null } | null;
+    return row === null
+      ? null
+      : { astJson: row.ast_json, butlerName: row.butler_name, sponsorUserId: row.sponsor_user_id };
   });
 
   const counts = { nodesExecuted: 0, effects: 0, refusals: 0 };
@@ -295,9 +310,37 @@ export async function interpret(
     });
   }
 
-  const butler: ButlerPrincipal = {
+  /*
+   * The principal, with an **empty** ceiling until the AST checks out, and then with the real one.
+   *
+   * `let` rather than two names, because everything below this line takes one principal and a second name
+   * for the same Butler is a second thing a later reader has to know which of to pass. The empty ceiling is
+   * not a permissive default — an empty ceiling denies everything — and nothing between here and the
+   * assignment below performs an authority check; the only use of `butler` in that stretch is `complain`,
+   * which reads the ids and the name so a refusal can say which program was refused.
+   */
+  let butler: ButlerPrincipal = {
     orgId, butlerId: payload.butlerId, versionId: payload.butlerVersionId, name: facts.butlerName,
+    ceiling: { sponsorUserId: facts.sponsorUserId ?? "", byAction: new Map() },
   };
+
+  /*
+   * A published version with no publisher.
+   *
+   * Unreachable through `publishButler`, which writes `published_by` in the same statement that promotes the
+   * row, and unwritable afterwards since 0031 froze the column. Refused rather than defaulted, because every
+   * default available is wrong: an empty sponsor would make the sponsor term match nothing and read as a
+   * revocation, and treating the absence as *"no sponsor term"* would delete a term of §7's intersection for
+   * exactly the row that could not account for itself.
+   */
+  if (facts.sponsorUserId === null) {
+    await complain(env, ctx, orgId, runId, butler, "sponsor_unknown",
+      `published version ${payload.butlerVersionId} records no publisher, so there is no sponsor whose live `
+      + "authority this run's capability ceiling can be capped against (#51). Republish the Butler");
+    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+      state: "refused", reason: "sponsor_unknown",
+    });
+  }
 
   /*
    * The re-check. Zero subrequests, and it re-establishes everything publication established — because a
@@ -486,6 +529,21 @@ export async function interpret(
   }
 
   const ast: Butler = checked.ast;
+
+  /*
+   * The pinned ceiling, from the AST that has just been re-checked (#51).
+   *
+   * **After the re-check and not before**, which is what makes the ceiling a property of a program this
+   * engine agrees is a program. A ceiling read out of an unchecked blob would be a bound taken from bytes
+   * whose node set, edges and affordability nobody has verified — and `checkButler` is also what proved the
+   * ceiling's action set is exactly what these nodes need, which is the claim the runtime intersection then
+   * relies on.
+   *
+   * It costs no subrequest: the addresses it names are resolved by a sub-select inside the statement each
+   * check was already issuing. See `ceiling.ts`.
+   */
+  butler = { ...butler, ceiling: ceilingOf(ast, facts.sponsorUserId) };
+
   const byId = new Map(ast.nodes.map((node) => [node.id, node]));
   const state: RunState = {
     event: payload.trigger.facts,

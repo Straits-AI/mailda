@@ -1,11 +1,17 @@
 export {
   butler, butlerEnvelope, butlerId, butlerJsonSchema, butlerMetadata, butlerNode, butlerTrigger,
-  butlerVersionId, expr, FIELD_KIND_NAMES, LOOKUP_ENTITIES, maxItems, NODE_CATALOGUE, nodeId, ref,
-  schemaFor, shippedParameterSurface,
+  butlerVersionId, capability, expr, FIELD_KIND_NAMES, LOOKUP_ENTITIES, maxItems, NODE_CATALOGUE, nodeId,
+  ref, schemaFor, shippedParameterSurface,
 } from "./ast.ts";
 export type {
   Butler, ButlerEnvelope, ButlerNode, FieldKindName, ShippedParameter,
 } from "./ast.ts";
+
+export {
+  CAPABILITY_ACTIONS, CAPABILITY_RESOURCE_PREFIX, ceilingByAction, isCapabilityAction, mailboxAddressOf,
+  requirementsOf,
+} from "./capability.ts";
+export type { Capability, CapabilityAction, Requirement } from "./capability.ts";
 
 export {
   isLoopKind, isNodeKind, isShipped, LOOP_KINDS, NODE_KIND_NAMES, NODE_KINDS, RESERVED_KINDS,

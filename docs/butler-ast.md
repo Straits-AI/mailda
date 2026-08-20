@@ -184,6 +184,9 @@ function.
   "apiVersion": "mailda/v1",
   "kind": "Butler",
   "metadata": { "name": "sales-enquiries", "owner": "team:sales" },
+  "capabilities": [
+    { "action": "send.propose", "resource": "mailbox:enquiries@example.com" }
+  ],
   "trigger":  { "event": "mail.received", "mailbox": "enquiries@example.com" },
   "entry": "assign",
   "nodes": [
@@ -204,6 +207,33 @@ cycle detection over a list is a check about nothing.
 **`mail.received` is the only trigger.** §16 lists nine trigger families; one is representable, because it
 is what `ingress.ts` already produces. A trigger enum admitting `mail.bounced` today would be a Butler that
 publishes and never fires — the same failure `policy.ts` refuses for a condition backed by no data.
+
+**`capabilities` is the pinned ceiling, and it is required** ([#51](https://github.com/Straits-AI/mailda/issues/51)).
+It may be empty — a guard and a `stop` decide something and touch nothing — and it may not be absent, because
+an omission would have to mean either "unbounded", which is the permissive reading, or "empty", which lets a
+forgotten key look like a decision. Publication proves its **action set is exactly what the nodes need**: an
+action a node needs and the ceiling omits is `E_BUTLER_CAPABILITY_NOT_DECLARED`, an action the ceiling
+declares and no node needs is `E_BUTLER_CAPABILITY_UNUSED`. What it cannot prove is the *resource*, because a
+node's mailbox is an `Expr` and this package does not parse expressions; that half is enforced per step at
+runtime. `docs/butler-capability-ceiling.md` carries the whole argument, including why the resource is the
+mailbox rather than §16's `sender:` and why the declaration is not the correspondence problem it looks like.
+
+**The document is `strictObject`, and it became so because of that key.** `z.object` strips what it does not
+declare, so `capabilties` — one letter short — would have been discarded in silence, and the author would
+have been told only that `capabilities` was missing with their own line visible on the screen. The key that
+bounds a program's authority is the clearest case in this package for the house rule about discarding
+silently.
+
+**Requiring it is a breaking change to every AST already stored, and that is stated rather than left to be
+discovered.** A version published before #51 has no `capabilities` key, so `checkButler` refuses it with
+`E_BUTLER_MALFORMED` — and `interpret` re-checks the stored AST on every run, so such a version refuses with
+`ast_does_not_check` and the checker's own finding in the operational log. It cannot be repaired in place:
+`btv_frozen` makes `ast_json` and `source_text` unwritable, which is the property the ceiling depends on. The
+remedy is the one publication already is — **republish**, which mints a new version whose author states the
+ceiling. This is not a migration and has no expand/contract paperwork, because no column moved; it is a
+change to what a stored document must contain, and the failure is loud, fail-closed and per-run rather than
+silent. Named here because the next person to add a required top-level key needs to have read this sentence
+first: an AST is stored data, and this package's schema is that data's only contract.
 
 **`metadata.owner` is an opaque string.** §16's ownership table has six kinds and three of them name objects
 that do not exist: there is no `teams` table, no agent delegation, no service identity. Calling it an enum
@@ -547,6 +577,9 @@ direct write to a draft row reaches it.
 | `E_BUTLER_NO_ENTRY` | an `entry` that names nothing |
 | `E_BUTLER_EDGE_DANGLING` | an edge pointing at nothing |
 | `E_BUTLER_CYCLE` | a cycle, with the path |
+| `E_BUTLER_CAPABILITY_NOT_DECLARED` | a node needs an action the pinned ceiling does not declare (#51) |
+| `E_BUTLER_CAPABILITY_UNUSED` | the ceiling declares an action no node needs — a padded ceiling does not bind |
+| `E_BUTLER_CAPABILITY_RESOURCE_UNKNOWN` | a resource grain this Node cannot interpret: `case_type:` and `llm_profile:` name objects that do not exist |
 | `E_BUTLER_UNAFFORDABLE` | a graph whose whole-run cost exceeds one Workflow instance's subrequest pot, with the arithmetic |
 | `E_BUTLER_SCHEMA_DIVERGED` | every node checked and the document did not — a bug in this package |
 
@@ -571,9 +604,17 @@ dangerous half.
   this package does instead is refuse a parameter no node declares, which is testable today because it is a
   property of the node schema rather than of a dataflow. The analysis arrives with the first node that has a
   real sink: `connector.*` or `llm.*`, both Layer 6.
-- **The capability ceiling.** §16's *"capability ceiling computed at publication"* is
-  [#51](https://github.com/Straits-AI/mailda/issues/51), and #54 already noted that the three-term
-  intersection it needs would **invalidate** `authz.check.max_queries` rather than fit inside it.
+- **The capability ceiling's *resource* half.** The action half is checked — see the three findings above —
+  and it is checked in both directions, so the ceiling's action set is proved exactly equal to what the node
+  types require. Which **mailbox** each node acts on is not checkable here, because a node's `mailboxId` is
+  an `Expr` and this package does not parse expressions; that half is enforced per step by the engine.
+  `docs/butler-capability-ceiling.md`.
+
+  **And #54's worry did not survive contact.** It noted that the three-term intersection would *invalidate*
+  `authz.check.max_queries` rather than fit inside it. [#51](https://github.com/Straits-AI/mailda/issues/51)
+  derived that it fits in two round trips — the ceiling rides on the version row the run already loaded — and
+  #51's derivation was then re-measured rather than inherited, because it predated Layer 5 and the engine.
+  It holds: `docs/receipts/butler-run-cost.md`, corrected 21 August 2026, with no budget moved.
 - **CPU.** Unmeterable from inside a Worker, so which of CPU and subrequests binds first is unestablished
   and this package claims nothing about it. See the affordability section.
 - **Fixtures and simulation.** Still fog.
