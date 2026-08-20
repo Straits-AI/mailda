@@ -21,6 +21,7 @@ import m0020 from "../migrations/0020_approvals.sql";
 import m0021 from "../migrations/0021_hold_lift.sql";
 import m0022 from "../migrations/0022_approval_expiry.sql";
 import m0023 from "../migrations/0023_supervised_read.sql";
+import m0024 from "../migrations/0024_supervised_acts_and_notices.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -98,6 +99,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0021_hold_lift.sql", sql: m0021 },
   { name: "0022_approval_expiry.sql", sql: m0022 },
   { name: "0023_supervised_read.sql", sql: m0023 },
+  { name: "0024_supervised_acts_and_notices.sql", sql: m0024 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

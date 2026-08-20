@@ -9,7 +9,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 
 import { APP_ROUTES } from "../../app-routes.ts";
-import { InstrumentBar, Rail } from "./chrome.tsx";
+import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
 import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
@@ -44,6 +44,9 @@ const rootRoute = createRootRoute({
           it is exactly the structural defect axe exists to catch — found by reading the tree of the
           running shell, not by thinking about it. */}
       <div className="app-main">
+        {/* Above whatever screen a person came for, because §7's notice is one they must actually meet —
+            and on every route rather than one, because there is no route somebody must visit to be told. */}
+        <Notices />
         <Outlet />
       </div>
       <InstrumentBar />

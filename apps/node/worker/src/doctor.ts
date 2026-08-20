@@ -6,6 +6,7 @@ import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { decidersByMailbox } from "./deciders.ts";
 import { holdsForReport } from "./holds.ts";
+import { noticeState } from "./notifications.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "./reconcile.ts";
 import { pendingReseal } from "./reseal.ts";
 
@@ -197,6 +198,8 @@ const EXPECTED_TABLES = [
   "hold_lifts",
   // Migration 0023 (Layer 5: matters and supervised reading).
   "matters", "supervised_grants",
+  // Migration 0024 (Layer 5: per-act recording and the employee notice).
+  "notifications",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -237,6 +240,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkEvidenceChanged(env, claim?.org_id ?? null)),
     ...(await checkHolds(env, ctx, claim?.org_id ?? null)),
     ...(await checkSelfGrants(env, claim?.org_id ?? null)),
+    ...(await checkSupervisionNotices(env, ctx, claim?.org_id ?? null)),
     planCheck(),
   );
 
@@ -1368,6 +1372,135 @@ async function checkSelfGrants(env: Env, orgId: string | null): Promise<Finding[
         + "the next request",
     }),
   }];
+}
+
+/**
+ * Is this Node discharging §7's notification obligation? (#63 part B.)
+ *
+ * ## This is the check the whole mechanism was chosen for
+ *
+ * #63 rejected a Workflow instance and a Durable Object alarm for the notice, and the deciding argument was
+ * about *this function*: **`doctor` can count rows and cannot see inside a sleeping instance.** An instance
+ * culled by retention and one patiently waiting look identical from outside, so a report built on one could
+ * only ever say "we started something". A row that is due and undelivered is a number.
+ *
+ * Two findings, from **one** statement — `doctor-meter-honesty.test.ts` requires every `prepare` on this path
+ * to be executed exactly once, because the meter in this file counts prepares.
+ *
+ * ## `supervision_notices_overdue` is `degraded`, unlike `self_granted_access`
+ *
+ * The hard call one function up went the other way, and the difference is what makes both defensible. A
+ * self-grant can be the **correct** act in a two-person organization, so faulting it would be the permanent
+ * WARN this file avoids elsewhere. An overdue notice cannot be correct: the row says the obligation fell due
+ * and the scan has not discharged it, which means the cron is not running, or it is failing, and both are
+ * things an operator must fix. The `fix` names the log event the scan writes when it fails.
+ *
+ * ## `supervision_notice_missing` is the one that makes suppression loud
+ *
+ * Every notice row was inserted in the same transaction as the `supervised.granted` entry that records the
+ * grant taking effect. So the two counts agree unless somebody removed one of them — and the audit side is
+ * hash-linked, so removing *that* half breaks `verifyChain` at a nameable point. Deleting the row instead
+ * shows up here. **Neither half can be removed quietly**, which is the property §7's "cannot be disabled by
+ * the investigator" needs and which no timer can offer.
+ *
+ * It is deliberately a comparison of counts rather than a per-grant join. A join would name which grant lost
+ * its notice, and would cost a query proportional to grants rather than a scalar; the count answers the
+ * question the finding exists to ask — *has anything been removed* — and the trail answers the next one.
+ * `refuse` would be wrong too: a Node in this state still refuses unauthorized reads, and refusing to start
+ * over a governance discrepancy would take mail down for a records problem.
+ *
+ * ## `supervision_notice_stranded` is the third, and it exists because the pair above has a blind spot
+ *
+ * Both checks above are about a row being **removed**. Neither can see a row that is present and *inert*: a
+ * notice with no due date whose matter has already closed is one nothing will ever deliver, and it passes the
+ * missing-notice count (the row is there) and the overdue count (which is `due_at IS NOT NULL` by
+ * construction). That was a real, reachable state until `noticeOwedByGrant` grew its already-closed arm —
+ * reached by closing a matter while the grant citing it was still waiting for its second approver, which the
+ * investigator can arrange for themselves — so the check is here to keep the repair honest rather than to
+ * describe a hypothesis.
+ */
+async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "supervision_notices_overdue",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so nobody's mail can have been read under supervision.",
+    }];
+  }
+
+  const state = await noticeState(env, ctx, orgId);
+  if (state === null) {
+    return [{
+      check: "supervision_notices_overdue",
+      // The same condition `legal_holds_active` degrades on, for the same reason: a Node that cannot read the
+      // table cannot deliver from it either, and this must not read as "nothing is owed".
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read the notifications table, so this report cannot say whether §7's notices to the "
+        + "people whose mail was read have been delivered.",
+      fix: "check the migrations_applied finding first — a Node that cannot read notifications cannot deliver "
+        + "one either, and the obligation does not lapse because the table is unreachable",
+    }];
+  }
+
+  const findings: Finding[] = [{
+    check: "supervision_notices_overdue",
+    severity: "degraded",
+    discloses: "data",
+    ok: state.overdue === 0,
+    detail: state.overdue === 0
+      ? "No notification is due and undelivered. §7's notices to the people whose mail was read are dated "
+        + "when the matter closes — or when the grant expires, if it cited no matter — and delivered by the "
+        + "one-minute cron into those people's own interface."
+      : `${state.overdue} notification(s) fell due and have not been delivered, the oldest at `
+        + `${state.oldestOverdueDueAt ?? "an unrecorded instant"}. Each one is a person who has not been told `
+        + `their mail was read, or somebody who has not been told they are being asked to decide something.`,
+    ...(state.overdue === 0 ? {} : {
+      fix: "the delivering scan runs on this Worker's scheduled trigger every minute. Check GET /api/log for "
+        + "notifications.scan_failed, and confirm the cron trigger exists on this Worker — a Node deployed "
+        + "without one accrues these silently and this finding is the only thing that says so",
+    }),
+    receipt: "docs/receipts/supervised-notice-scan.md",
+  }];
+
+  if (state.stranded > 0) {
+    findings.push({
+      check: "supervision_notice_stranded",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `${state.stranded} notification(s) have no due date and cite a matter that has already closed, `
+        + "so they can never fall due and nobody will be told their mail was read. This Node writes a due "
+        + "date on both orderings — when the matter closes, and when a grant takes effect under a matter that "
+        + "is already closed — so it cannot produce this state.",
+      fix: "read the supervised.granted entries for the grants these notices name (GET /api/audit) — they "
+        + "carry the mailbox, the scope, the matter and the deadline. Do not clear the rows: a notice that "
+        + "cannot fall due is an obligation this Node still owes, and deleting it removes the only evidence "
+        + "that it does",
+    });
+  }
+
+  if (state.noticesOwed < state.grantsRecorded) {
+    findings.push({
+      check: "supervision_notice_missing",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: `The trail records ${state.grantsRecorded} supervised grant(s) taking effect and this Node holds `
+        + `${state.noticesOwed} notification(s) for them. Every notice is written in the same transaction as `
+        + `the grant, so this Node cannot produce that difference: ${state.grantsRecorded - state.noticesOwed} `
+        + `row(s) were removed outside the product.`,
+      fix: "do not re-create the rows by hand — a notice minted now would carry a due date nobody decided. "
+        + "Run the audit verification (GET /api/audit) to see whether the trail itself was edited too, then "
+        + "read the supervised.granted entries: they name the grant, the mailbox, the scope, the matter and "
+        + "the deadline, which is what the missing notices were going to say",
+    });
+  }
+
+  return findings;
 }
 
 /**

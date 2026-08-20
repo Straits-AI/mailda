@@ -169,6 +169,40 @@ export interface DoctorReport {
   findings: DoctorFinding[];
 }
 
+/**
+ * One delivered notice (#63 part B, §7).
+ *
+ * `body` is `unknown` on purpose. It is written by the Node at delivery and **frozen**, so a notice
+ * delivered by an older version of this Node carries an older shape — and a client that declared the shape
+ * as a type would render a field that is not there rather than saying it cannot read it. The component
+ * narrows what it needs and shows the rest as absent.
+ */
+export interface NotificationRow {
+  id: string;
+  kind: "supervised_read" | "approval_request";
+  subjectId: string;
+  mailboxId: string | null;
+  matterId: string | null;
+  dueAt: string | null;
+  deliveredAt: string | null;
+  body: unknown;
+}
+
+/**
+ * The signed-in person's notices.
+ *
+ * Authorization-sensitive like everything else here: the audience for a §7 notice is resolved live from
+ * the standing relations on the mailbox, so a cache would be a decision about visibility held on the client
+ * — which ADR 11 puts on the server on every request.
+ */
+export function useNotifications(): UseQueryResult<{ notifications: NotificationRow[] }, Error> {
+  return useQuery({
+    queryKey: ["notifications"],
+    queryFn: () => read<{ notifications: NotificationRow[] }>("/api/notifications"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useMe(): UseQueryResult<Me, Error> {
   return useQuery({ queryKey: ["me"], queryFn: () => read<Me>("/api/me"), ...AUTHORIZATION_SENSITIVE });
 }

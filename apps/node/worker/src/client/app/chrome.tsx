@@ -2,7 +2,8 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
 
-import { useDoctor, useMailboxes, useMessages, useSends } from "./api.ts";
+import { useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow }
+  from "./api.ts";
 
 /**
  * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
@@ -256,5 +257,78 @@ export function Nothing({ kind, detail }: { kind: "empty" | "failed" | "loading"
       {detail ?? "Nothing here yet."}{" "}
       <span className="dim">An empty ledger. Not a filtered one: nothing has been hidden from you.</span>
     </p>
+  );
+}
+
+/**
+ * The notices this person has been delivered (#63 part B, §7).
+ *
+ * ## Why this is a band above the stage rather than a screen
+ *
+ * §7 requires that the person whose mail was read be told, and this project's argument is that an unusable
+ * record is not a record. A notice behind a route is one nobody opens; a notice above whatever they came here
+ * to do is one they read. It is also why there is **no dismiss control**: §7 requires the notification not be
+ * disableable by the investigator, and the cheapest way to hold that is for the interface to have no way to
+ * clear one — there is no endpoint behind a button that does not exist.
+ *
+ * ## Why the text is assembled here and the facts are not
+ *
+ * The Node freezes the *facts* at delivery — who read, how much, for how long, under what matter, and what
+ * they actually did — and this turns them into a sentence. The split matters: the record must say the same
+ * thing for ever, and the wording is allowed to improve. What this must not do is add a fact the Node did not
+ * record, which is why every value below comes out of `body` and nothing is inferred.
+ *
+ * Absent fields render as absent rather than as a guess. A notice delivered by an older Node carries an older
+ * shape, and "an unrecorded instant" is a truthful thing to print where a fabricated one is not.
+ */
+function noticeText(notice: NotificationRow): { headline: string; meta: string } {
+  const body = (notice.body ?? {}) as Record<string, unknown>;
+  const text = (key: string): string | null => typeof body[key] === "string" ? body[key] : null;
+
+  if (notice.kind === "approval_request") {
+    return {
+      headline: `You were asked to decide an approval (${text("subjectKind") ?? "an act"}).`,
+      meta: `request ${text("approvalId") ?? notice.subjectId} · asked by ${text("requestedBy") ?? "somebody"}`
+        + ` · ${text("requestedAt") ?? "an unrecorded instant"}`,
+    };
+  }
+
+  const acts = (body.acts ?? {}) as Record<string, number>;
+  const count = (key: string): number => typeof acts[key] === "number" ? acts[key] : 0;
+  const reader = text("readerEmail") ?? text("readerId") ?? "somebody";
+  const mailbox = text("mailboxName") ?? text("mailboxId") ?? "a mailbox";
+  return {
+    headline: `${reader} was granted a supervised ${text("scope") ?? "read"} of ${mailbox}, `
+      + `${text("grantedAt") ?? "at an unrecorded instant"} to ${text("expiresAt") ?? "an unrecorded instant"}.`,
+    // The counts are the part that makes this actionable rather than ceremonial: the difference between a
+    // grant nobody used and one under which everything was opened.
+    meta: `${count("queries")} quer${count("queries") === 1 ? "y" : "ies"} listing ${count("listed")} `
+      + `message(s) · ${count("opened")} opened · ${count("attachments")} raw message(s) read`
+      + ` · matter ${text("matterId") ?? "none cited"}`
+      + `${text("matterType") === null ? "" : ` (${text("matterType")})`}`
+      + ` · grant ${text("grantId") ?? notice.subjectId}`,
+  };
+}
+
+export function Notices() {
+  const notices = useNotifications();
+  // Nothing while it is loading and nothing on a failure: this band is an addition to whatever screen a
+  // person is on, and a failure banner above every screen would be the loudest thing in the product for a
+  // read that is not the one they asked for. The failure is visible where notices are the subject.
+  if (!notices.isSuccess || notices.data.notifications.length === 0) return null;
+
+  return (
+    <section className="notices" aria-label="Notifications">
+      {notices.data.notifications.map((notice) => {
+        const { headline, meta } = noticeText(notice);
+        return (
+          <p key={notice.id} className="notice told">
+            {headline}
+            {" "}
+            <span className="told-meta mono">{meta}</span>
+          </p>
+        );
+      })}
+    </section>
   );
 }

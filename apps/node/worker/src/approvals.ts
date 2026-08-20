@@ -4,6 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { type AuditEvent, type AuditGate, auditedBatch, auditedBatchMany } from "./audit.ts";
 import { decidersByMailbox, decidersOf } from "./deciders.ts";
 import { conflict, notFound } from "./errors.ts";
+import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts";
 
 /**
  * Approvals: ordered stages with a count, decided by distinct people (#61, §18, Layer 5).
@@ -424,7 +425,8 @@ export function planApproval(
   deciders: ReadonlySet<string>,
   gate?: AuditGate,
 ): ApprovalPlanned {
-  const eligible = [...deciders].filter((userId) => userId !== facts.actorUserId).length;
+  const asked = [...deciders].filter((userId) => userId !== facts.actorUserId);
+  const eligible = asked.length;
   const shortfall = shortfallFor(facts.stages, eligible);
   if (shortfall !== null) return { satisfiable: false, shortfall, eligible };
 
@@ -465,6 +467,22 @@ export function planApproval(
       "INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count)",
       [ctx.id("ast"), orgId, approvalId, index + 1, required],
     )),
+    /*
+     * #61's notification, wired into #63 part B's mechanism rather than invented beside it (#61's resolution
+     * deferred it here explicitly, and asked for a row in the same table with `due_at` now, delivered by the
+     * same scan).
+     *
+     * In this batch, so an approval that exists and nobody was told about is not representable — the same
+     * property the §7 notice gets one function over, from the same table. One row per person **asked**, which
+     * is `deciders` minus the actor: §18's separation of duty is applied once, here, so a notice can no more
+     * reach the person whose act this gates than a decision can.
+     *
+     * The set is frozen rather than resolved at read time, and that is the difference from the §7 notice: who
+     * *was asked* is a fact about an instant, and it is the same fact `approval.requested`'s `eligible` count
+     * exists to record. Eligibility is live, so re-deriving it later would silently re-address a request that
+     * had already been answered.
+     */
+    ...noticesForApprovalRequest(env, ctx, orgId, approvalId, facts.mailboxId, asked, at, gate),
   ];
 
   return {
@@ -917,7 +935,7 @@ export async function decideApproval(
   if (effectEvent !== null) events.push(effectEvent);
 
   const statements = decision === "approve"
-    ? approveStatements(env, orgId, approval, at)
+    ? approveStatements(env, ctx, orgId, approval, at)
     : denyStatements(env, orgId, approval, at);
 
   const { results } = await auditedBatchMany<never>(
@@ -1047,6 +1065,7 @@ function settled(approval: ApprovalRow): Error {
  */
 function approveStatements(
   env: Env,
+  ctx: Ctx,
   orgId: string,
   approval: ApprovalRow,
   at: string,
@@ -1121,6 +1140,21 @@ function approveStatements(
         `UPDATE supervised_grants SET granted_at = ?
           WHERE org_id = ? AND id = ? AND granted_at IS NULL AND EXISTS (${approved})`,
       ).bind(at, orgId, approval.subjectId, approvalId, orgId),
+      /*
+       * §7's notice to the person whose mail is about to be read, **in the same transaction as the grant**
+       * (#63 part B).
+       *
+       * This placement is the whole property: D1 runs a batch as one transaction, so a live grant with no
+       * notice owed is not a state this Node can reach. Not "unlikely" — unrepresentable. Suppressing the
+       * notice therefore means deleting a row whose creation rode with an audit entry in a hash-linked
+       * chain, and `doctor`'s `supervision_notice_missing` compares the two counts.
+       *
+       * It carries the same `EXISTS (approved)` gate as the UPDATE above, so a decision that did not
+       * complete the approval writes neither, and it is ordered **after** the UPDATE deliberately: the
+       * notice's `due_at` reads the grant, and the grant is what this transaction is making live.
+       */
+      noticeOwedByGrant(env, ctx, orgId, approval.subjectId, approval.mailboxId, at,
+        { sql: approved, params: [approvalId, orgId] }),
     ];
   }
 

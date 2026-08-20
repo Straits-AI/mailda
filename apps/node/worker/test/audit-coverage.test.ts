@@ -206,7 +206,33 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // There is no `supervised.denied` and no `supervised.expired`: a denial is `approval.decided` with
     // `outcome: "refused"`, and an expiry is not an act anybody took — the read path simply stops matching.
     // A declared action nothing emits is a category of one, which the last assertion in this file fails on.
-    actions: ["approval.requested", "supervised.granted"],
+    // The three supervised **acts** are here too, and they are the `hold.blocked` shape: they write nothing.
+    // They are classified against this table because it is the table they are *about* — each entry's subject
+    // is the grant id, which is what makes "everything done under grant G" one filter — and hanging them off
+    // `ingress_receipts` or `messages` instead would make two exempt tables audited for acts that never touch
+    // them, and would have to be repeated on every table a future read path discloses from.
+    //
+    // Unlike `hold.blocked` they are **not** `standalone`: a refusal that cannot be recorded still refuses,
+    // and that is the safe direction; a *disclosure* that cannot be recorded must not happen at all. See the
+    // `disclosure` classification in src/audit.ts and the assertion below.
+    actions: [
+      "approval.requested", "supervised.granted",
+      "supervised.query", "supervised.opened", "supervised.attachment",
+    ],
+  },
+  notifications: {
+    // The obligation to tell somebody something (#63 part B, #61). Both writes ride with an act that is
+    // already audited and cannot be separated from it: the §7 notice is inserted in the same transaction as
+    // the `UPDATE supervised_grants` that `supervised.granted` records, and #61's approval-request notices in
+    // the same transaction as `approval.requested`. **That is the point of the table**, not an economy — a
+    // grant without its notice, or a request nobody was told about, is not a state this Node can reach.
+    //
+    // A `notification.delivered` action would be the one thing that could be added and is deliberately not:
+    // the cron delivers, so the actor is the Node, and `delivered_at` on the row already says when. An entry
+    // per delivery would put one audit row behind every notice for a fact the row itself carries — the
+    // per-row-versus-per-act reasoning that exempts `send_recipients`, and it would be an entry with no
+    // person to answer for it.
+    actions: ["supervised.granted", "approval.requested"],
   },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
@@ -278,6 +304,26 @@ describe("audit coverage", () => {
       .sort();
 
     expect(standalone).toEqual(["auth.locked_out", "hold.blocked"]);
+  });
+
+  it("keeps the set of disclosure actions to the ones deliberately chosen", () => {
+    /*
+     * The third classification (#63 part B), pinned for the same reason `standalone` is.
+     *
+     * `disclosure: true` means *this act writes nothing and must not happen unless it is recorded* — the
+     * opposite failure direction from `standalone`, and the one a read needs. `recordDisclosure` throws where
+     * `audit` swallows, so a Node that cannot append does not hand over the bytes.
+     *
+     * If a new action appears below, the question to answer is whether it really is a disclosure with no
+     * accompanying write. If it has a write, it belongs in `auditedBatch`; if it is a refusal that changes
+     * nothing, it belongs in `standalone`, where a Node that cannot record still refuses.
+     */
+    const disclosure = Object.entries(AUDIT_ACTIONS)
+      .filter(([, meta]) => "disclosure" in meta && meta.disclosure)
+      .map(([action]) => action)
+      .sort();
+
+    expect(disclosure).toEqual(["supervised.attachment", "supervised.opened", "supervised.query"]);
   });
 
   it("gives every exemption a reason long enough to have needed thought", () => {

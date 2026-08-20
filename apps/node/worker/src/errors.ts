@@ -37,3 +37,15 @@ export function notFound(code: string, detail: { what: string; why: string; fix:
 export function conflict(code: string, detail: { what: string; why: string; fix: string }): CallerError {
   return new CallerError(code, 409, detail);
 }
+
+/**
+ * 503: the request was fine and **this Node** could not carry it out; the same request will work later.
+ *
+ * Not a 500, and the difference is the one AGENTS.md principle 3 is about. A 500 says "a bug", which sends a
+ * reader to the stack trace; this says "a component the request depends on did not answer", which sends them
+ * to the operational log and to `doctor`. Its first use is a supervised read refusing itself because the audit
+ * append failed — the read is legitimate, the Node just cannot record it, and it must not proceed unrecorded.
+ */
+export function unavailable(code: string, detail: { what: string; why: string; fix: string }): CallerError {
+  return new CallerError(code, 503, detail);
+}

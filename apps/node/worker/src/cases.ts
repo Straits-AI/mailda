@@ -1,7 +1,8 @@
 import type { Ctx } from "@mailda/runtime";
 
-import { auditedBatch } from "./audit.ts";
+import { auditedBatch, recordDisclosure } from "./audit.ts";
 import { mayReadMetadata, maySend, readableSubjects } from "./authz-read.ts";
+import { buildSupervisedQuery } from "./supervised.ts";
 
 /**
  * The case: the unit of work somebody claims, and the claim protocol around it.
@@ -331,7 +332,16 @@ export async function queueFor(
    * member working this queue, and should not appear to be one.
    */
   if (!(await maySend(env, who, mailboxId))) return [];
-  const maySeeContent = await mayReadMetadata(env, ctx, who, mailboxId);
+  /*
+   * The metadata check now says **how** it was satisfied, because a supervised grant owes §7 a record and a
+   * standing relation does not (#63 part B). It cannot record for itself: the cases it is about to disclose do
+   * not exist yet at the moment of the check, and an entry that could not name them would understate what was
+   * seen — which is the whole reason a query entry carries ids. So the record is written below, once the rows
+   * are in hand, and `recordDisclosure` throws rather than swallowing, so a queue this Node cannot record is a
+   * queue it does not return.
+   */
+  const metadata = await mayReadMetadata(env, ctx, who, mailboxId);
+  const maySeeContent = metadata.allowed;
 
   // One template with one substitution, so the two variants cannot drift into selecting different case
   // columns. The literal NULLs keep the result shape identical, which is what lets the row type stay one type.
@@ -358,6 +368,15 @@ export async function queueFor(
   )
     .bind(orgId, mailboxId)
     .all<Omit<QueueEntry, "content_restricted">>();
+
+  // A supervised reader saw these subject lines and senders, so §7 wants the ids. The case ids are what this
+  // listing returned, so they are what the entry names — the same `buildSupervisedQuery` the message listing
+  // uses, so one act cannot be recorded two ways.
+  if (metadata.grantId !== null) {
+    await recordDisclosure(env, ctx, orgId, buildSupervisedQuery(
+      metadata.grantId, userId, mailboxId, results.map((row) => row.id),
+    ));
+  }
 
   // Set here rather than selected as a SQL literal, because it is a fact about the caller and not about the
   // row, and putting it in the query would make it look like something the database decided.

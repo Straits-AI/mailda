@@ -67,6 +67,11 @@ const DOCTOR_PATH = [
   // functions `runDoctor` never calls, so listing that module here would have meant either a false failure or
   // a widened guard. `src/deciders.ts` carries that argument in its header.
   "deciders.ts",
+  // Added with #63 part B's `supervision_notices_overdue`: `noticeState` is one prepare and one execution,
+  // three scalar sub-selects in a single statement. `src/notice-delivery.ts` is a separate file **because of
+  // this guard** — the delivering scan needs a `batch()` and named statements, neither of which may appear on
+  // this path, and `deciders.ts` set the precedent for moving the function rather than widening the check.
+  "notifications.ts",
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

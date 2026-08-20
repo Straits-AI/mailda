@@ -1,10 +1,11 @@
 import type { Ctx } from "@mailda/runtime";
 import type { MailboxRelation } from "./access.ts";
+import { recordDisclosure } from "./audit.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 import {
-  liveGrantMailboxes, liveGrantOnMailbox, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA,
-  type SupervisedScope,
+  buildSupervisedQuery, liveGrantsBySubject, liveGrantOnMailbox, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA,
+  supervisedActEvent, type SupervisedAct, type SupervisedScope,
 } from "./supervised.ts";
 
 /**
@@ -43,10 +44,14 @@ import {
  *
  * **`mayReadMetadata`'s only call site is gated on `send.propose` first**, so a supervised grant does not by
  * itself put a mailbox in anybody's queue. That is deliberate — a supervised reader is not a member of the
- * queue and should not appear to be working it — and it means the supervised arm of that function is
- * unreachable through `queueFor` today. It is there anyway, because the alternative is two functions
- * disagreeing about whether one person may see one mailbox's subject lines, and the one that would be wrong is
- * whichever a later caller happened to pick. `listMessages` is where the metadata scope is reachable.
+ * queue and should not appear to be working it.
+ *
+ * Part A called the supervised arm of that function *unreachable* on that basis, and **that was one relation
+ * too strong**: `send.propose` and `mailbox.content.read` are separate relations, so a drafter who may propose
+ * sends from a mailbox they may not read is expressible, and for that person a grant is exactly what puts
+ * subject lines on the screen. So the arm is live, it owes a record, and `mayReadMetadata` returns the grant
+ * rather than a boolean so its caller can write one. Corrected here rather than left standing, because "this
+ * cannot happen" is the sentence that stops anybody checking.
  *
  * ## The cost of the supervised arm, and why it is a `UNION ALL` rather than a second query
  *
@@ -56,11 +61,51 @@ import {
  * `granted_at IS NOT NULL`, so on a Node where nobody holds supervised access the extra arm seeks an empty
  * index. Measured both ways in `test/authz.measure.test.ts`, because "by construction" is what the full-table
  * scan #11 found also looked like.
+ *
+ * ## Recording lives inside the decision, and that is the point of the extra parameter (#63 part B)
+ *
+ * §7 requires a record of every supervised query, result opened and attachment read, and a supervised read
+ * that is not recorded is the whole defect the mechanism exists to prevent. So the record is not a call a
+ * caller makes afterwards — it is **a parameter a caller cannot omit**. `mayRead` takes a `SupervisedAct`,
+ * appends the entry inside itself when it is a *grant* that authorized, and only then returns `true`. A read
+ * path added next year gets both or neither, enforced by the compiler rather than by review.
+ *
+ * Two consequences worth naming, because each is a decision:
+ *
+ * - **A standing relation records nothing.** `UNION ALL … LIMIT 1` stops at the tuple arm, so somebody who
+ *   holds the ordinary relation never reaches the grant arm and never produces a supervised entry. That is
+ *   correct — they are not reading under supervision — and it is also free.
+ * - **The append can refuse the read.** `recordDisclosure` throws where `audit` would swallow, so a Node that
+ *   cannot write its trail does not hand over the bytes. Failing closed is the only direction that makes the
+ *   record mean anything.
+ *
+ * `listMessages` cannot use that shape, and the reason is real rather than a shortcut: its authorization
+ * precedes its result, so an entry written at the check would be written blind and could not name the ids §7
+ * asks for. It records after the rows come back, and what keeps that structural is that the grant ids come
+ * only from `liveGrantsBySubject` — one builder, whose callers `test/node/matter-and-scope-world.test.ts`
+ * requires to emit `supervised.query` before they return.
  */
 
 export interface Principal {
   orgId: string;
   userId: string;
+}
+
+/**
+ * The answer to *"may this principal read this"*, and **how** — because the two answers owe different things.
+ *
+ * A boolean was enough while nothing had to be recorded. §7's per-act record is owed by a supervised read and
+ * not by an ordinary one, so the check has to say which authority answered; a `true` that could not
+ * distinguish them would make every read path guess, and the guess that hides is the one that decides an
+ * unrecorded supervised read was ordinary.
+ *
+ * `grantId` is null on both a refusal and a standing relation, which is why `allowed` is a separate field
+ * rather than being read off the id. Two facts, two fields.
+ */
+export interface Authority {
+  allowed: boolean;
+  /** The grant that answered, or null when a standing relation did — or when nothing did. */
+  grantId: string | null;
 }
 
 /**
@@ -124,7 +169,7 @@ async function hasAnyRelation(
    * keeps `maySend` and the merge gate exactly as expensive as they were.
    */
   supervised: { scopes: readonly SupervisedScope[]; at: string } | null,
-): Promise<boolean> {
+): Promise<Authority> {
   const teams = await env.CATALOG.prepare(
     "SELECT team_id FROM team_members WHERE org_id = ? AND user_id = ?",
   )
@@ -135,7 +180,11 @@ async function hasAnyRelation(
   const placeholders = subjects.map(() => "?").join(", ");
   const relationPlaceholders = relations.map(() => "?").join(", ");
 
-  const standing = `SELECT 1 FROM relationship_tuples
+  // `NULL AS grant_id` rather than `1`, so both arms have one column of the same name and the row that comes
+  // back says **which** arm answered. A standing relation is not a grant, and the difference decides whether
+  // an entry is owed — conflating them would either record an ordinary read as supervised or fail to record a
+  // supervised one, and only the second is a defect that hides.
+  const standing = `SELECT NULL AS grant_id FROM relationship_tuples
       WHERE org_id = ? AND subject_id IN (${placeholders})
         AND object_type = 'mailbox' AND relation IN (${relationPlaceholders}) AND object_id = ?`;
   const standingParams = [who.orgId, ...subjects, ...relations, mailboxId];
@@ -146,13 +195,14 @@ async function hasAnyRelation(
     ? null
     : liveGrantOnMailbox(who.orgId, who.userId, mailboxId, supervised.at, supervised.scopes);
 
-  const tuple = await env.CATALOG.prepare(
+  const row = await env.CATALOG.prepare(
     grant === null ? `${standing} LIMIT 1` : `${standing} UNION ALL ${grant.sql} LIMIT 1`,
   )
     .bind(...standingParams, ...(grant === null ? [] : grant.params))
-    .first();
+    .first<{ grant_id: string | null }>();
 
-  return tuple !== null;
+  if (row === null) return { allowed: false, grantId: null };
+  return { allowed: true, grantId: row.grant_id };
 }
 
 /**
@@ -219,11 +269,28 @@ export async function mayRead(
   ctx: Ctx,
   who: Principal,
   mailboxId: string,
+  /**
+   * What is about to be disclosed if this answers yes. **Not optional, and that is the mechanism.**
+   *
+   * §7 requires every supervised result opened and attachment read to be recorded, and the only way to make
+   * that structural rather than remembered is to put the record where the authorization decision is made. A
+   * caller cannot obtain this authority without naming the act, because the parameter is required; and when
+   * a grant is what authorized, the entry is appended **before** this returns `true`.
+   */
+  act: SupervisedAct,
 ): Promise<boolean> {
-  return hasAnyRelation(env, who, ["mailbox.content.read"], mailboxId, {
+  const authority = await hasAnyRelation(env, who, ["mailbox.content.read"], mailboxId, {
     scopes: SCOPES_FOR_CONTENT,
     at: new Date(ctx.now()).toISOString(),
   });
+  if (!authority.allowed) return false;
+  // Null means a standing relation answered: an ordinary read of a mailbox this person holds, which §7 does
+  // not ask to be recorded per act and `audit-and-log-retention.md` sizes on the assumption it is not.
+  if (authority.grantId === null) return true;
+  // Throws if it cannot append, so the caller never reaches the bytes. See `recordDisclosure`.
+  await recordDisclosure(env, ctx, who.orgId,
+    [supervisedActEvent(act, authority.grantId, who.userId, mailboxId)]);
+  return true;
 }
 
 /**
@@ -241,7 +308,7 @@ export async function holdsStandingRead(
   who: Principal,
   mailboxId: string,
 ): Promise<boolean> {
-  return hasAnyRelation(env, who, ["mailbox.content.read"], mailboxId, null);
+  return (await hasAnyRelation(env, who, ["mailbox.content.read"], mailboxId, null)).allowed;
 }
 
 /**
@@ -264,14 +331,21 @@ export async function holdsStandingRead(
  *
  * A supervised grant of **either** scope satisfies it, by the same asymmetry on the other structure. Its only
  * call site is gated on `send.propose` first, so this does not put a supervised reader's mailbox in their
- * queue — see this module's header for why the arm is here regardless.
+ * queue — but it is **not** unreachable, which part A said and which is worth correcting here: a person
+ * holding `send.propose` and no read relation is expressible (a drafter on a mailbox they may not read), and
+ * a supervised grant is what would then show them subject lines.
+ *
+ * **So this returns the grant, and the caller owes an entry.** It cannot record for itself the way `mayRead`
+ * does: this authorizes a *listing*, and the rows it discloses do not exist yet at the moment of the check, so
+ * an entry written here would say a supervised reader saw a queue and be unable to say which cases — which is
+ * the understatement §7's ids requirement exists to refuse. `queueFor` records after its rows come back.
  */
 export async function mayReadMetadata(
   env: Env,
   ctx: Ctx,
   who: Principal,
   mailboxId: string,
-): Promise<boolean> {
+): Promise<Authority> {
   return hasAnyRelation(env, who, ["mailbox.metadata.read", "mailbox.content.read"], mailboxId, {
     scopes: SCOPES_FOR_METADATA,
     at: new Date(ctx.now()).toISOString(),
@@ -296,7 +370,7 @@ export async function maySend(env: Env, who: Principal, mailboxId: string): Prom
   // No supervised arm, and it is the clearest of the six decisions: §7's supervised access is a **read**.
   // Being allowed to examine somebody's mail for a matter is not authority to write as them, and a grant that
   // conferred it would let an investigator send from the mailbox they are investigating.
-  return hasAnyRelation(env, who, ["send.propose"], mailboxId, null);
+  return (await hasAnyRelation(env, who, ["send.propose"], mailboxId, null)).allowed;
 }
 
 type Authorized = { ok: true; blobKey: string } | { ok: false; response: Response };
@@ -308,7 +382,21 @@ type Authorized = { ok: true; blobKey: string } | { ok: false; response: Respons
  * message and an absent one both return 404 with the same body, deliberately — the
  * distinction is visible in audit, never to the caller.
  */
-export async function authorize(env: Env, ctx: Ctx, request: Request, receiptId: string): Promise<Authorized> {
+export async function authorize(
+  env: Env,
+  ctx: Ctx,
+  request: Request,
+  receiptId: string,
+  /**
+   * Which supervised act this read is, if a grant is what authorizes it.
+   *
+   * Two routes reach this function and they disclose different amounts: `/body` renders one message's text
+   * (`supervised.opened`) and `/raw` streams the original `.eml`, which carries **every attachment**
+   * (`supervised.attachment`). One action for both would make §7's *attachment read* unanswerable from the
+   * trail, so the route names which it is — required, for `mayRead`'s reason.
+   */
+  action: SupervisedAct["action"],
+): Promise<Authorized> {
   const notFound = {
     ok: false as const,
     response: Response.json(
@@ -344,7 +432,7 @@ export async function authorize(env: Env, ctx: Ctx, request: Request, receiptId:
   // supervised grant's expiry a hard stop with no mechanism behind it. Nothing presigns and nothing streams,
   // so there is no capability that outlives this call for an expiry to have to revoke (§7's enumeration came
   // back empty). `test/supervised-read.test.ts` proves the stop through this function.
-  if (!(await mayRead(env, ctx, who, row.mailbox_id))) return notFound;
+  if (!(await mayRead(env, ctx, who, row.mailbox_id, { action, subject: receiptId }))) return notFound;
   return { ok: true, blobKey: row.blob_key };
 }
 
@@ -357,15 +445,35 @@ export async function authorize(env: Env, ctx: Ctx, request: Request, receiptId:
  * nothing, which is the failure this repository keeps finding. Either scope satisfies it: the columns returned
  * are subject line, sender address and size, which is what `mailbox.metadata.read` covers.
  *
- * The supervised arm is a `UNION` inside the same mailbox sub-select, so this is still two queries and stays
- * inside `authz.list.max_rows_read`. `UNION` rather than `UNION ALL` here, unlike the single-mailbox check:
- * the result feeds an `IN`, and a mailbox somebody holds both a relation and a grant on would otherwise appear
- * twice for the planner to de-duplicate anyway.
+ * The supervised arm is a `LEFT JOIN` on to a derived table of this person's live grants, and the mailbox
+ * predicate accepts either arm — a standing relation, or a grant. Still **two queries**, which is what keeps
+ * this inside `authz.list.max_rows_read`, and the join is what part B needed: an `IN (…)` could say a mailbox
+ * was reachable and could not say **which grant** made it so, and an entry that cannot name its grant cannot
+ * be filtered by the access it belongs to.
  *
- * **What this listing does not yet do is record itself.** §7 requires a `supervised.query` entry naming the ids
- * it returned, and #63 part B owns it — see `src/audit.ts`, where the three actions are named and deliberately
- * not declared. So a supervised reader listing a mailbox today leaves the grant in the trail and the query
- * outside it. That is a real gap in §7's contract, stated here because this is the function it is about.
+ * ## The query records itself, and what the entry says (#63 part B, §7)
+ *
+ * §7 lists *query* first among the acts that must be recorded, and #63 settled that a query entry carries
+ * **the ids it returned** rather than only a count: a result list renders subject and sender, so "a query
+ * matched 40 things" understates what a person saw by forty subjects. One entry per grant per query, split
+ * into continuation entries if the id list would not fit `audit.max_detail_bytes` — never truncated, because
+ * a truncated list records a prefix and understates the exposure.
+ *
+ * **The entry is appended before the response is built**, and `recordDisclosure` throws, so a listing this
+ * Node cannot record is a listing it does not return.
+ *
+ * **A row is attributed to a grant whenever a live grant covers its mailbox**, without asking whether a
+ * standing relation would also have sufficed. That over-records the person who holds both — and the direction
+ * is chosen: an unrecorded supervised query is the defect §7 exists to prevent, and a redundant entry about a
+ * reader who could have read anyway is a line in a trail. Testing the tuple side per row would cost a second
+ * seek on every row of every listing, for that.
+ *
+ * **A listing that matched nothing records nothing, and that is a stated weakening rather than an oversight.**
+ * The grant is learned from the rows, so with no rows there is no grant to attribute. Nothing was disclosed,
+ * so no exposure goes unrecorded; what goes unrecorded is the *attempt*, and a notice's `acts.queries`
+ * therefore counts fruitful queries rather than all of them. Closing it means asking which grants are live on
+ * every listing whether or not one answered — a second query on the hot read path, for a record of having seen
+ * nothing. `docs/supervised-access.md` names it under "Still not built".
  */
 export async function listMessages(env: Env, ctx: Ctx, request: Request): Promise<Response> {
   const who = await principalFor(env, ctx, request);
@@ -384,7 +492,7 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
 
   const subjects = [who.userId, ...teams.results.map((r) => r.team_id)];
   const placeholders = subjects.map(() => "?").join(", ");
-  const supervised = liveGrantMailboxes(
+  const supervised = liveGrantsBySubject(
     who.orgId, who.userId, new Date(ctx.now()).toISOString(), SCOPES_FOR_METADATA,
   );
 
@@ -398,28 +506,55 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     // Correlated on the delivery's own mailbox, so it is the case in *this* queue — a conversation reaching
     // two mailboxes has a case in each, and the one that matters is the one belonging to the mailbox this
     // reader is looking at.
+    //
+    // `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
+    // one join rather than from a second question. It is stripped from the response below: the row shape is a
+    // client contract (`MessageRow`), and an undeclared column is a field somebody starts depending on.
     `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
             a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
-            m.conversation_id,
+            m.conversation_id, sg.grant_id AS supervised_grant_id,
             (SELECT c.id FROM cases c
               WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
                 AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
        LEFT JOIN messages m ON m.ingress_receipt_id = r.id
+       LEFT JOIN (${supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
       WHERE r.org_id = ?
-        AND a.mailbox_id IN (
-          SELECT object_id FROM relationship_tuples
-           WHERE org_id = ? AND subject_id IN (${placeholders})
-             AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
-          UNION
-          ${supervised.sql}
-        )
+        AND (sg.grant_id IS NOT NULL
+             OR a.mailbox_id IN (
+               SELECT object_id FROM relationship_tuples
+                WHERE org_id = ? AND subject_id IN (${placeholders})
+                  AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+             ))
       ORDER BY r.accepted_at DESC
       LIMIT 50`,
   )
-    .bind(who.orgId, who.orgId, ...subjects, ...supervised.params)
-    .all();
+    .bind(...supervised.params, who.orgId, who.orgId, ...subjects)
+    .all<{ id: string; mailbox_id: string; supervised_grant_id: string | null }>();
 
-  return Response.json({ messages: rows.results });
+  /*
+   * The record, before the response exists.
+   *
+   * Grouped by grant rather than by row: §7 records **acts**, and this listing is one act. A reader holding
+   * two live grants produces two entries, which is what makes the trail answer "what was seen under grant G"
+   * — the question the notice and the investigation both ask.
+   */
+  const byGrant = new Map<string, { mailboxId: string; ids: string[] }>();
+  for (const row of rows.results) {
+    if (row.supervised_grant_id === null) continue;
+    const seen = byGrant.get(row.supervised_grant_id)
+      ?? { mailboxId: row.mailbox_id, ids: [] };
+    seen.ids.push(row.id);
+    byGrant.set(row.supervised_grant_id, seen);
+  }
+  if (byGrant.size > 0) {
+    await recordDisclosure(env, ctx, who.orgId, [...byGrant].flatMap(
+      ([grantId, seen]) => buildSupervisedQuery(grantId, who.userId, seen.mailboxId, seen.ids),
+    ));
+  }
+
+  return Response.json({
+    messages: rows.results.map(({ supervised_grant_id: _grant, ...row }) => row),
+  });
 }

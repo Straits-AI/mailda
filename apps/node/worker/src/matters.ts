@@ -3,6 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { isAdmin } from "./access.ts";
 import { auditedBatch } from "./audit.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
+import { noticesDueOnMatterClose } from "./notifications.ts";
 
 /**
  * Matters: the purpose a supervised read is for, as an object with a lifecycle (#63, §7, Layer 5).
@@ -25,16 +26,18 @@ import { conflict, notFound, unprocessable } from "./errors.ts";
  * made the same call in 0018 and #64 left it alone for the same reason. Requiring a matter would produce
  * matters named "unknown" within a week, which is free text again with a table around it.
  *
- * ## What closing does **not** do yet, said plainly
+ * ## What closing does, now that part B has built the other half
  *
- * §7 requires the person whose mail was read to be notified after the matter closes, and #63 settled the
- * mechanism: the obligation is a row, written in the same transaction as the grant, delivered by the
- * one-minute cron that already exists, with `doctor` counting the overdue ones. **None of that is built
- * here.** `closeMatter` closes the matter and records `matter.closed`; nothing is notified. That is #63 part
- * B's work, and this paragraph is the seam it attaches to rather than a claim that closing is sufficient.
+ * §7 requires the person whose mail was read to be notified after the matter closes, and the obligation is a
+ * row in `notifications` written in the same transaction as the grant. Closing is what **dates** it: the
+ * notices this matter was holding get `due_at = max(closed_at, the grant's own expires_at)`, in the close's
+ * own transaction, and the one-minute cron delivers them from there.
  *
- * The seam is named here because leaving it implicit is how a half-closed world gets described as closed: a
- * reader who finds a `closed_at` column and an audit action could reasonably assume the notice went out.
+ * That `max` is the resolution of the collision below. A close can precede the reading it describes — because
+ * closing does not revoke a live grant, and deliberately so — which would have let a notice tell somebody
+ * their mail *was* read while it still was. Holding the notice until the last grant citing the matter has
+ * expired makes "after the matter closes" mean *after the reading stopped*. `src/notifications.ts` carries the
+ * argument, including what refusing the close instead would have cost.
  */
 
 /**
@@ -248,16 +251,20 @@ export async function openMatter(
  * can close it would put the obligation entirely in the hands of the one party it exists to constrain. An
  * administrator can close somebody else's matter, and the trail says who did.
  *
- * Nothing here notifies anybody. See this module's header: the obligation is #63 part B, and closing a matter
- * today is a state change and an audit entry, no more.
- *
- * ## Closing does not revoke a live grant, and that is not a gap
+ * ## Closing does not revoke a live grant, and the notice is what absorbs that
  *
  * A grant's authority ends at its own `expires_at` and nowhere else. Cascading revocation from a closed matter
  * would be a second expiry mechanism — a second place for "may this person still read" to be answered — and
  * `authz-read.ts` re-reads the grant on every request, so the honest single answer is the grant's own deadline.
  * What a closed matter *does* change is that no new grant may cite it (`src/supervised.ts` refuses), so the
  * matter cannot be reused to open fresh access after it has been declared over.
+ *
+ * The consequence part A left open: a close can therefore land while the reading is still going on, and §7
+ * hangs its notice on the close. Rather than making the close wait — which would hand the investigator, the
+ * one person with a reason to delay it, a way to do so — the **notice** waits: its `due_at` is
+ * `max(closed_at, the grant's own expires_at)`, written by the statement in this function's own batch. So
+ * closing stays available to anybody entitled to close, and nobody is ever told their mail *was* read while it
+ * still is.
  */
 export async function closeMatter(
   env: Env,
@@ -317,6 +324,18 @@ export async function closeMatter(
         `UPDATE matters SET closed_at = ?, closed_by = ?
           WHERE id = ? AND org_id = ? AND closed_at IS NULL`,
       ).bind(at, actorUserId, matterId, orgId),
+      /*
+       * §7's notices become due here, and **after** the close, in the same transaction (#63 part B).
+       *
+       * The order is load-bearing in both directions. It runs after the `UPDATE matters` so that it can read
+       * the `closed_at` that update wrote — one instant, from the row, rather than a second copy of `at` that
+       * could disagree with it — and it is inside the same transaction so a matter that closes without dating
+       * the notices it was holding is not representable.
+       *
+       * What it computes is the F-A resolution: `max(closed_at, the grant's own expires_at)`, so "after the
+       * matter closes" means after the reading actually stopped. See `noticesDueOnMatterClose`.
+       */
+      noticesDueOnMatterClose(env, orgId, matterId),
     ],
     gate,
   );

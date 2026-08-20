@@ -282,8 +282,15 @@ describe("supervised reading's effect on the authorization path (#63)", () => {
    * executions and cannot see D1's `meta`. */
   async function readQueries(userId: string, mailboxId: string): Promise<{ allowed: boolean; queries: number }> {
     const meter = metering(env as unknown as Env);
+    /*
+     * The act is required (#63 part B), and passing a real one is what makes this measurement the one that
+     * matters: when the grant arm answers, `mayRead` appends the entry **before** it returns, so the figure
+     * below prices the check *and its record* together. A measurement that skipped the record would be
+     * pricing a function this product does not have.
+     */
     const allowed = await mayRead(
       meter.env, createSystemCtx(), { orgId: corpus.orgId, userId }, mailboxId,
+      { action: "supervised.attachment", subject: "rcpt_measure" },
     );
     return { allowed, queries: meter.cost.d1Executions };
   }
@@ -328,16 +335,39 @@ describe("supervised reading's effect on the authorization path (#63)", () => {
     expect(supervisedHit.allowed).toBe(true);
     expect(bystander.allowed).toBe(false);
 
+    /*
+     * Two budgets, because there are two costs and collapsing them would hide the interesting one.
+     *
+     * Every scenario where a **standing relation or a denial** answers is bounded by
+     * `authz.check.max_queries = 2` — the figure #11 established, unchanged, and the one that covers every
+     * read this product performs outside a supervised session. `UNION ALL … LIMIT 1` stops at the tuple arm,
+     * so those callers never reach the grant arm and never owe an entry.
+     *
+     * The scenario where a **grant** answers is bounded by `authz.supervised_read.max_queries = 4`, which is
+     * that same 2 plus the audit append: `buildEntries` reading the chain tip, and one `batch()` carrying the
+     * entry. #63 part B put the recording inside the authorization decision precisely so a caller cannot get
+     * one without the other, and the honest consequence is that the priced thing is now the pair.
+     */
     for (const [label, measured] of [
-      ["absent.hit", cleanHit], ["absent.miss", cleanMiss],
-      ["present.hit", supervisedHit], ["present.bystander", bystander],
+      ["absent.hit", cleanHit], ["absent.miss", cleanMiss], ["present.bystander", bystander],
     ] as const) {
       console.log(`MEASURE mayRead.${label}  queries=${measured.queries}  allowed=${measured.allowed}`);
       assertWithinBudget("authz.check.max_queries", measured.queries, { scenario: label });
-      // The whole point: the supervised arm rides in a statement that was already being issued, so a
-      // supervised read is not a third round trip. This is the assertion a second query would fail.
+      // The supervised arm rides in a statement that was already being issued, so somebody else's grant is
+      // not a third round trip for anybody. This is the assertion a second query would fail.
       expect(measured.queries).toBe(2);
     }
+
+    console.log(`MEASURE mayRead.present.hit  queries=${supervisedHit.queries}  allowed=true`);
+    assertWithinBudget("authz.supervised_read.max_queries", supervisedHit.queries, { scenario: "present.hit" });
+    // Exact, and the decomposition is the reason it can be: 2 check + 1 tip read + 1 batch, none of which
+    // scales with anything. A `toBeLessThanOrEqual` here would let a second append through.
+    expect(supervisedHit.queries).toBe(4);
+    // And the record it paid for actually exists — otherwise this measures a function that returned early.
+    const recorded = await env.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'supervised.attachment'",
+    ).bind(corpus.orgId).first<{ n: number }>();
+    expect(recorded?.n).toBe(1);
   });
 
   it("adds an index seek rather than a scan, in rows_read", async () => {

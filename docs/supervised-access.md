@@ -1,8 +1,12 @@
-# Supervised access — matters, the time-boxed grant, and the door that stays open
+# Supervised access — matters, the time-boxed grant, the record, and the notice
 
-What §7 asks for, what this Node builds, and the part of §7 that is **not built yet and is named rather
-than implied**. Issue #63, Layer 5. Read `docs/approvals.md` first: a supervised read is an approval
-subject, and everything about stages, eligibility and the races lives there.
+What §7 asks for and what this Node builds. Issue #63, Layer 5, both parts. Read `docs/approvals.md`
+first: a supervised read is an approval subject, and everything about stages, eligibility and the races
+lives there.
+
+Part A built the **authority**: a matter that can close, a time-boxed dual-approved grant that cites one,
+and an expiry that is a hard stop. Part B builds the two things it named absent — **what the reader then
+read**, and **the person whose mail it was being told** — and resolves the collision between them.
 
 ---
 
@@ -76,7 +80,8 @@ a reason to leave a matter open for ever.
 
 **Closing does not revoke a live grant**, and that is not a gap. A grant's authority ends at its own
 `expires_at` and nowhere else; cascading revocation would be a second place for *"may this person still
-read"* to be answered. What a closed matter changes is that no new grant may cite it.
+read"* to be answered. What a closed matter changes is that no new grant may cite it — and that it
+**dates** the notices it was holding. See *The collision, and which way it was resolved* below.
 
 ---
 
@@ -120,7 +125,8 @@ POST /api/approvals/:id/decide {decision}                                      -
 GET  /api/supervised                                                           -> org.admin: who has been let in
 POST /api/matters             {type, description}
 GET  /api/matters                                                              -> org.admin: all; anybody: their own
-POST /api/matters/:id/close
+POST /api/matters/:id/close                                                    -> dates the notices it held
+GET  /api/notifications                                        -> your own notices, delivered by the cron
 ```
 
 **`GET /api/matters` is filtered, and that is the disclosure boundary rather than a convenience.** A
@@ -228,53 +234,281 @@ was re-measured before anything shipped. The correction is dated in that file; t
 
 ---
 
-## What is not built, named rather than implied
+## Recording is per act, and it is structural
 
-This is part A of #63. Two things §7 requires are **deliberately absent**, and both are owed to more than
-one ticket.
+§7 requires a record of every supervised **query**, **result opened**, **preview** and **attachment
+read**. Three actions carry it, and every one is keyed on the **grant**, like `supervised.granted`, so
+everything done under one access is one filter:
 
-**Per-act recording.** §7 requires a record of every query, result opened, preview and attachment read. #63
-settled the design — three actions (`supervised.query`, `supervised.opened`, `supervised.attachment`), per
-**act** rather than per row, with a query entry carrying the ids it returned — and a later correction to
-that ticket worked out the real bound: **59 ids**, not "a page", because Mailda ids are typed-prefix ULIDs
-of 31 characters and `boundedDetail` would silently truncate an oversized list into a *prefix* of what was
-exposed. None of the three actions is declared in `AUDIT_ACTIONS`, because a declared action nothing emits
-is a category of one and `audit-coverage.test.ts` fails on it. They arrive with the code that emits them.
+| action | emitted by | says |
+|---|---|---|
+| `supervised.query` | `listMessages`, `queueFor` | a listing, **with the ids it returned** |
+| `supervised.opened` | `GET /api/messages/:id/body` | one result's content |
+| `supervised.attachment` | `GET /api/messages/:id/raw`, `GET /api/sends/:id/submitted` | raw evidence — the `.eml`, which carries every attachment |
 
-So today this Node records **who was granted access to what, by whom, under which matter, until when** — and
-not what they then read. `listMessages`'s own docblock says so, at the function it is about.
+**Per act, not per row.** A search matching 5,000 messages is **one** entry, which is what keeps
+`audit-and-log-retention.md`'s "a handful per message" sizing true of a real investigation: tens of
+entries in a session, not thousands. An act spanning two live grants is recorded against each, because
+the trail is filtered by grant and one entry naming two would answer that filter from neither.
 
-**The notification.** §7 requires the person whose mail was read to be told after the matter closes, and
-that it be a durable job the investigator cannot disable. #63 settled the mechanism: the obligation is a
-**row** written in the same transaction as the grant, delivered by the `*/1 * * * *` cron that
-`wrangler.jsonc` already declares, with `doctor` counting the overdue ones — chosen over a Workflow instance
-because `workflow-provisioning.md` records that an instance is not a durable record, and over a DO alarm
-because that mechanism's failure state is *stop re-arming and nothing external notices*. **No row, no cron
-branch, no count.** #61 deferred its own notification to #63 explicitly, so part B owes that answer to two
-tickets.
+### Making it impossible to read without recording
 
-`closeMatter` closes the matter and records `matter.closed`; nothing is notified. That seam is named in
-`src/matters.ts`'s header, in `src/supervised.ts`'s, and here — because leaving it implicit is how a
-half-closed world gets described as closed, and a reader who found a `closed_at` column and an audit action
-could reasonably assume the notice went out.
+A supervised read that is not recorded is the defect this whole ticket exists to prevent, so the record is
+not a call anybody has to remember. **It is a parameter they cannot omit.**
 
-**Also absent, and smaller:** no UI (the shell is Layer 1–3's surface), no step-up authentication and no
-`maximum_session` from §7's config block (both are authentication-strength questions this ticket does not
-settle), and no `read_reason_required` beyond the matter's own description.
+`mayRead` takes a `SupervisedAct`, and when a *grant* is what authorized, it appends the entry **inside
+itself, before it returns `true`**. A read path added next year gets the authority and the record together
+or gets neither, and the compiler is what says so. `hasAnyRelation` returns the grant id rather than a
+boolean so the two authorities can be told apart: `UNION ALL … LIMIT 1` stops at the tuple arm, so somebody
+holding the ordinary relation never reaches the grant arm and never produces an entry — correct, and free.
+
+**A listing cannot use that shape**, and the reason is real rather than a shortcut: its authorization
+precedes its result, so an entry written at the check would be written blind and could not name the ids §7
+asks for. `listMessages` and `queueFor` record after their rows come back, and what keeps *that* structural
+is that a grant id reaches them from exactly one place — `liveGrantsBySubject` and `mayReadMetadata` —
+so `test/node/matter-and-scope-world.test.ts` requires every caller of either to emit `supervised.query`
+before it returns. A second listing path that forgot would fail at the moment it was written.
+
+**Both fail closed.** `recordDisclosure` throws where `audit` swallows, and the difference is the whole
+contract: `audit` records something that already happened and must not fail its own request, while a
+disclosure has *not* happened yet and must not happen unrecorded. A Node that cannot append answers
+`E_SUPERVISED_UNRECORDABLE` (503) and hands over nothing. That is a third audit classification alongside
+`standalone`, and `audit-coverage.test.ts` pins both sets exactly.
+
+**Part A said the supervised arm of `mayReadMetadata` was unreachable. That was one relation too strong**
+and is corrected: `send.propose` and `mailbox.content.read` are separate, so a drafter who may propose
+sends from a mailbox they may not read is expressible, and for that person a grant is exactly what puts
+subject lines on the screen. The arm is live, it owes a record, and `queueFor` writes one.
+
+### The id list is bounded, and it is never truncated
+
+A query entry carries **which ids it returned**, not just how many — a result list renders subject and
+sender, so *"a query matched 40 things"* understates what a person saw by forty subjects.
+
+#63's correction worked out the bound: a Mailda id is a typed-prefix ULID of **31 characters**, 34 as a
+JSON array element, so about **59** fit inside `audit.max_detail_bytes`. Measured on the shape that
+shipped it is **57** — the sibling set differs — and that number is *printed rather than asserted*,
+because the design deliberately does not rest on it:
+
+- `buildSupervisedQuery` asks `detailFits`, which is `boundedDetail`'s **own** measurement exported for
+  that one caller, so the bound cannot be restated and drift;
+- an oversized list is **split** into continuation entries carrying `part`/`of`, in one transaction, so a
+  half-recorded query is not representable;
+- it is never handed to `boundedDetail`, which would replace it with `{truncated, bytes, head}` — a
+  **prefix** of the ids, a record that understates the exposure, which is the exact failure per-act
+  recording was chosen to avoid.
+
+What *is* asserted is that the listing's real page (`LIMIT 50`) fits in one entry, with 57 the measured
+margin above it. A sibling field added tomorrow lowers the fill and breaks nothing.
+
+---
+
+## The notice, and the collision it had to resolve first
+
+### The collision, and which way it was resolved
+
+§7 makes the notice due **after the matter closes**. Part A decided — correctly — that closing a matter
+does **not** revoke a live grant, because a cascade would be a second answer to *"may this person still
+read"* and the design has exactly one. Those two collide: **the close can precede the reading it
+describes**, so a notice could tell somebody their mail *was* read while it still was.
+
+Two shapes were available.
+
+**Refuse the close while a grant citing the matter is live.** Rejected, and the argument is not about
+tidiness. Closing is the act the notice hangs on, and `closeMatter` deliberately lets an `org.admin` close
+somebody else's matter *because the investigator is the one party with a reason to delay it*. A block that
+any live grant could hold open hands that delay straight back — to the person who asked for the grant, and
+who chooses its duration, which nothing caps. There is no revocation path by design, so the block could
+not even be cleared: the only remedy would be waiting out a deadline nobody may move. It would also push
+people toward never closing matters at all, and **a notice that never becomes due is worse than a late
+one.**
+
+**Hold the notice.** Taken. `due_at` is never earlier than the instant the reading stopped:
+
+```
+no matter cited          due_at = the grant's own expires_at   (known when the grant takes effect)
+a matter still open      due_at = NULL until the close, then
+                                  max(matter.closed_at, grant.expires_at)
+a matter already closed  due_at = max(matter.closed_at, grant.expires_at), written when the grant
+                                  takes effect
+```
+
+"After the matter closes" therefore means *after the reading actually stopped*, which is what the sentence
+was for. The `max` is computed in the close's own transaction, and the close instant is read off the row
+the close just wrote rather than passed in — with an `EXISTS` on `closed_at IS NOT NULL`, so a close that
+lost its race dates nothing.
+
+**The third arm is not symmetry; it is the hole that made the whole mechanism suppressible.** The close's
+statement runs in the close's transaction, so it can only date notices that already exist — and a grant is
+asked for at one instant and takes effect two approvals later, with nothing refusing a close in between.
+`requestSupervisedRead` refuses a *new* request citing a closed matter, which looked like the whole
+defence and is not: the request that matters was made while the matter was open.
+
+So the order **request, close, approve** left `due_at` NULL with nothing that would ever write it. No
+second close is permitted; the cron delivers only what is due; `supervision_notices_overdue` is
+`due_at IS NOT NULL` by construction; and `supervision_notice_missing` counts rows, and the row was there.
+The reader then read, every act was recorded, and the person whose mail it was was never told — **without
+an audited row being deleted**, arranged by the investigator, who opened the matter and may therefore
+close it. Both orderings now write the same instant from the same expression
+(`whenTheReadingStopped` in `src/notifications.ts`), and `supervision_notice_stranded` counts what would be
+left if that ever stopped being true.
+
+**The residual, stated rather than left to be found:** a matter left open indefinitely defers its notices
+indefinitely. That is §7's own shape rather than a gap in this one — pre-close confidentiality is what
+makes the notice meaningful — and the control that exists is that closing is not the investigator's
+privilege: any `org.admin` can close somebody else's matter, for exactly this reason.
+
+### It is a row, not a Workflow
+
+`workflow-provisioning.md` settled that before preference could: a Workflow instance is **not a durable
+record** (state retained 3 days on Free, 30 on Paid, configurable) and a matter can stay open for months.
+A DO alarm is worse — `wrangler.jsonc` records its absorbing failure state, *stop re-arming and nothing
+external notices, ever*.
+
+The deciding property: **`doctor` can count rows and cannot see inside a sleeping instance.**
+
+- The row is written in the **same `batch()`** as the `UPDATE supervised_grants SET granted_at` that makes
+  the grant live, carrying the same `EXISTS (approved)` gate. A live grant with no notice owed is not
+  unlikely, it is unrepresentable.
+- The one-minute cron `wrangler.jsonc` already declares delivers it — a branch in a trigger that already
+  runs. Cron's measured weakness is lateness (`cron-lateness.md`, p99 **8.1 s**), irrelevant to a notice
+  measured in days, and the scan is idempotent so a missed run costs a minute. **The wiring is tested
+  through the exported `scheduled` handler**, not by calling the scan: a scan nothing calls is a row that
+  sits, and deleting the one call would otherwise have left every notice owed with the suite green.
+- **Suppressing a notice requires deleting an audited row.** `supervision_notice_missing` compares the
+  count of `supervised.granted` entries in the hash-linked trail against the rows in `notifications`, so
+  removing the row shows up in `doctor` and removing the entry instead breaks `verifyChain` at a nameable
+  point. Neither half goes quietly. The product has **no** delete, dismiss or mark-read — a world test
+  forbids `DELETE FROM notifications` anywhere in `src/`, because a product that can clear one makes a
+  missing row ordinary and the finding meaningless.
+- **And deletion is not the only way to suppress one**, which the first version of this mechanism proved:
+  a row that is present and can never fall due is just as suppressed and passes both checks above.
+  `supervision_notice_stranded` counts undated notices whose matter has already closed. It should never
+  fire — the F-A section says why the state is no longer reachable — and it is measured rather than
+  asserted, at no extra cost, because it is a fifth scalar sub-select in the same statement.
+
+### Delivery is in-product, and that follows rather than being chosen
+
+`transport.ts` already has to catch Cloudflare's *destination address is not a verified address*, so a
+legal obligation carried by outbound mail is one defeated by a mail-routing setting. `GET
+/api/notifications` has no such dependency, and the shell renders it as a band above every screen.
+
+*"Cannot be switched off by the investigator"* holds **structurally**. A §7 notice is addressed to the
+**mailbox** (`user_id` NULL) and its audience is resolved live from `relationship_tuples`; a supervised
+grant is a `supervised_grants` row and never a tuple, so the investigator can never appear in that set.
+Addressing it to the mailbox rather than freezing a person is also the right answer on its own terms: a
+Mailda mailbox is shared by construction and has no owner column, and freezing the set would tell somebody
+who has since left and stay silent to whoever took the mailbox over.
+
+### What the notice says, and why
+
+§7 requires the employee be told; it does not say what. Both ends are wrong. *"Your mailbox was accessed
+under matter M-19"* is compliance theatre, and this project's argument is that an unusable record is not a
+record. A transcript of every query hands somebody a restatement of their own mail in a table with
+different access rules from the mail.
+
+So it errs toward **enough to act on**:
+
+| told | why |
+|---|---|
+| **who read it**, by name and address | the first question anybody asks; a notice that withholds it invites them to find out by other means, and §7's own record names the supervisor |
+| the **scope**, in the product's two words | "how much of it" has a real answer |
+| `granted_at` → `expires_at` | "for how long", from the row the two approvers agreed to |
+| **what they did**: queries run, messages those queries listed, contents opened, raw messages read | the part that makes it actionable — the difference between a grant nobody used and one under which four hundred messages were opened |
+| the matter's **id and type**, and when it closed | enough to ask about, without publishing the accusation |
+
+And deliberately **not**:
+
+- **the matter's description.** `listMatters` already treats it as confidential — an org-wide listing would
+  hand *"suspected exfiltration by Dana"* to Dana — and closing a matter is not a finding. The Node cannot
+  vouch for that sentence, and publishing it as a system notice would overclaim in exactly the way
+  AGENTS.md §4 forbids.
+- **the ids themselves.** They are in the audit trail, where a record of *what* was read belongs and where
+  whoever may audit can read them. A notice restating them would put an unbounded list in a row rendered
+  to a person, and a second copy of a fact free to disagree with the first.
+
+The counts come **from the trail** rather than being maintained beside it, so they cannot drift from the
+entries they describe; and they are frozen into the row at delivery, so a notice says the same thing for
+ever and reading the feed never re-aggregates a table that is never trimmed.
+
+### #61 inherits the mechanism
+
+#61's resolution deferred its own notification here and asked for a row in the same table with `due_at`
+now, delivered by the same scan. That is what it is: `planApproval` emits one `approval_request` row per
+person **asked**, in the request's own transaction, so an approval waiting on people nobody told is not a
+state this Node can reach. The set is frozen rather than resolved live — *who was asked, at the instant of
+asking* is the same fact `approval.requested`'s `eligible` count records — and §18's separation of duty is
+applied once, in `planApproval`, so the requester is out of the notified set for the same reason they are
+out of the eligible one.
+
+### What it costs
+
+Two receipts, both measured rather than reasoned.
+
+- **The read path** (`authz-check-rows-read.md`, correction of 20 August). An ordinary read still costs
+  **2** D1 executions — the record is owed only when a grant answered, and `LIMIT 1` stops at the tuple arm
+  for everybody else. A supervised read costs **4**: the same 2, plus the append's chain-tip read and one
+  `batch()`. `authz.supervised_read.max_queries = 4`, exactly and with no headroom, because every term is
+  fixed. `sgr_live` gained `id` as a trailing key column (migration 0024) so the arm stays **covering**
+  while returning the grant — printed in `test/explain.test.ts`.
+- **The scan** (`supervised-notice-scan.md`). `notify.scan_batch = 50`: a full batch is `2 × 50 + 2 = 102`
+  subrequests against 1,000 on Workers Free. An idle tick costs **one** query, because `ntf_due` is partial
+  on `delivered_at IS NULL` and a delivered notice leaves the index for ever.
+  `notify.overdue_grace_seconds = 3600` is derived from `cron.propagation_ceiling_seconds` (900 s) plus the
+  schedule and the measured p99 lateness; without it, #61's immediately-due requests would have made every
+  healthy Node report `degraded`, which is how a check gets muted.
+- **`doctor`** gained **one** D1 query (15 → 16 subrequests), which is a fixed cost that does not grow with
+  mailboxes, matters, grants or the age of the trail.
+
+---
+
+## Still not built, named rather than implied
+
+**No step-up authentication and no `maximum_session`** from §7's config block; both are
+authentication-strength questions this ticket does not settle. **No `read_reason_required`** beyond the
+matter's own description. **No export** — #65 owns eDiscovery, and it is a supervised act that will need a
+fourth action and a finer scope than the mailbox.
+
+**A matter left open never dates its notices**, which is §7's own shape and is argued above rather than
+hidden. **`doctor` counts the missing notices but does not name them**: a per-grant join would say *which*
+grant lost its row and would cost a query proportional to grants, where the count answers the question the
+finding exists to ask — *has anything been removed* — and the trail answers the next one.
+
+**A supervised query that returned nothing leaves no entry**, and this is stated because it is a real
+weakening of *"every query is recorded"* rather than an oversight. Both listings learn which grant answered
+**from the rows themselves** — `listMessages` from a `LEFT JOIN`, `queueFor` from a check whose subject is
+the mailbox and not the result — so a listing that matched nothing has no grant to attribute and produces
+no entry. Nothing was disclosed, so no *exposure* goes unrecorded; what goes unrecorded is the **attempt**,
+and a notice's `acts.queries` therefore counts fruitful queries rather than all of them. Closing it means
+asking which grants are live on every listing, whether or not one answered — a second query on the hot read
+path for a record of having seen nothing — and that trade was refused rather than missed.
 
 ---
 
 ## Where things are
 
 ```
-migrations/0023_supervised_read.sql   matters, supervised_grants, sgr_live
-src/matters.ts                        MATTER_TYPES, open, close, list
-src/supervised.ts                     SUPERVISED_SCOPES, LIVE_SUPERVISED_GRANT, the request, the report
+migrations/0023_supervised_read.sql            matters, supervised_grants, sgr_live
+migrations/0024_supervised_acts_and_notices.sql notifications; sgr_live widened to carry the grant id
+src/matters.ts                        MATTER_TYPES, open, close (which dates the notices), list
+src/supervised.ts                     SUPERVISED_SCOPES, LIVE_SUPERVISED_GRANT, the request, the report,
+                                      SupervisedAct and buildSupervisedQuery
+src/notifications.ts                  NOTIFICATION_KINDS, the statements that owe a notice, the feed,
+                                      noticeState for doctor
+src/notice-delivery.ts                the cron scan and what a notice says
+src/audit.ts                          the three disclosure actions, DisclosureAction, recordDisclosure
 src/access.ts                         supervised.read in GRANTABLE; Grantable derived so it is not admin-grantable
-src/authz-read.ts                     which read paths accept a grant, and holdsStandingRead
-src/approvals.ts                      supervised_read as a subject kind; COMPLETING_EFFECT; the granting UPDATE
-src/doctor.ts                         self_granted_access
-test/supervised-read.test.ts          the behaviour, including the expiry stop and the two doors
-test/node/matter-and-scope-world.test.ts   the enums, the writers, the one grantor, the one live predicate
-test/authz.measure.test.ts            what the arm costs, both instruments
+src/authz-read.ts                     which read paths accept a grant, holdsStandingRead, and where the
+                                      recording lives
+src/approvals.ts                      supervised_read as a subject kind; COMPLETING_EFFECT; the granting
+                                      UPDATE and the notice beside it; #61's request notices
+src/doctor.ts                         self_granted_access, supervision_notices_overdue,
+                                      supervision_notice_missing, supervision_notice_stranded
+src/client/app/chrome.tsx             the notice band, and the sentence it renders
+test/supervised-read.test.ts          part A's behaviour: the expiry stop and the two doors
+test/supervised-recording.test.ts     part B's: the acts, the id bound, the notice, the suppression
+test/node/matter-and-scope-world.test.ts   the enums, the writers, the one grantor, the one live predicate,
+                                      and that no listing discloses without recording
+test/authz.measure.test.ts            what the arm and the record cost, both instruments
+test/notifications.measure.test.ts    what the scan costs
 ```

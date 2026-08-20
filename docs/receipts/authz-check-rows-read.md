@@ -6,12 +6,14 @@ stale_when: >
   the relationship_tuples or team_members index definitions change; a team-membership
   model beyond user->team->object is introduced; a check names more than two relations at
   once, since the two-relation figure below is one extra index seek and not a general
-  claim about widening; or ABAC/policy conditions begin reading additional rows on the
-  request path
+  claim about widening; ABAC/policy conditions begin reading additional rows on the
+  request path; or the audit append stops costing one tip read plus one batch, which is
+  the term the supervised figure adds to the check
 values:
   authz.check.max_rows_read: 200
   authz.list.max_rows_read: 1000
   authz.check.max_queries: 2
+  authz.supervised_read.max_queries: 4
 ---
 
 **Measured:** `apps/node/workers/state/test/authz.measure.test.ts`, run under
@@ -190,3 +192,49 @@ inside `authz.check.max_rows_read = 200` by more than an order of magnitude.
 sub-select and is not separately priced here; it stays two queries by construction, and the list
 budget it lives under is `authz.list.max_rows_read = 1000` against a worst observed 136. A
 supervised reader listing a mailbox is bounded by the same `LIMIT 50` every other reader is.
+
+## Correction — 20 August 2026: the record joined the read path, and it costs two more
+
+#63 part B put §7's per-act recording **inside** the authorization decision: `mayRead` takes the act it
+is about to authorize and appends the entry before it returns, so a read path cannot obtain the
+authority without producing the record. That puts an audit append on the hot path, which is exactly
+the thing this receipt exists to price, so it was priced rather than reasoned about.
+
+**One new value, `authz.supervised_read.max_queries = 4`.** The other three are unchanged, and that is
+the finding rather than an aside: **an ordinary read still costs two round trips.** The record is owed
+only when a *grant* answered, and `UNION ALL … LIMIT 1` stops at the tuple arm for everybody holding a
+standing relation — so the append is unreachable for every read this product performs today outside a
+supervised session.
+
+**Measured** with `metering()` through `mayRead` itself, in the same describe block as the correction
+above:
+
+| Scenario | D1 executions |
+|---|---:|
+| No supervised grant anywhere, tuple hit | 2 |
+| No supervised grant anywhere, deny | 2 |
+| A bystander, while somebody else holds a grant | 2 |
+| **The grant holder, grant answers** | **4** |
+
+The 4 decomposes exactly, which is what makes it a figure rather than an observation: **2** for the
+check — team resolution, then the one compound statement, unchanged — plus **2** for the append, which
+is `buildEntries` reading the chain tip and one `batch()` carrying the entry. That second pair is
+inherent to hash-linking and is already what `audit-and-log-retention.md` describes; it is not a new
+mechanism, it is this path now using one.
+
+**Sized:** 4, exactly, and deliberately with no headroom. Every term is fixed — none of the four scales
+with the corpus, the organization or the number of grants — so a tripwire that allowed 6 would be one
+that permitted a third check query or a second append without saying so. This is a *test-time* bound
+(`assertWithinBudget` is called from the measure test, never from `mayRead`), so the one thing that
+could legitimately exceed it — `auditedBatchMany` retrying after losing the sequence race, at +2 an
+attempt — cannot reach it: the measurement is uncontended by construction.
+
+**Cost if wrong:** too low and the tripwire fires on a legitimate shape and gets raised without being
+read. Too high and the recording grows a round trip on the read path unnoticed — which is the failure
+`authz.check.max_queries` was written for, one function along.
+
+**What is still not separately priced:** `listMessages`, which gained a `LEFT JOIN` on to the grant
+derived table and a `supervised.query` append. It stays two queries when nothing is granted and four
+when something is, by the same decomposition, and it lives under `authz.list.max_rows_read = 1000`
+against a worst observed 136. A supervised reader listing a mailbox is bounded by the same `LIMIT 50`
+every other reader is.

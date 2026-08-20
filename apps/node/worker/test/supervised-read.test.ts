@@ -133,6 +133,15 @@ async function sessionFor(userId: string): Promise<string> {
   return outcome.session.accessToken;
 }
 
+/**
+ * The act every content check has to name (#63 part B).
+ *
+ * A constant rather than a literal at each call site, because what these tests are about is the
+ * authorization, and the act is the thing `mayRead` will not compile without. Where the *entry* is the
+ * subject of the test, the act is written out inline so the reader can see which of the three it is.
+ */
+const OPENED = { action: "supervised.opened", subject: RECEIPT } as const;
+
 function requestAs(token: string, path = "/api/messages"): Request {
   return new Request(`https://node.example${path}`, { headers: { authorization: `Bearer ${token}` } });
 }
@@ -184,13 +193,13 @@ function find(findings: Finding[], check: string): Finding {
 
 describe("a supervised grant reaches a mailbox its holder holds nothing on", () => {
   it("denies the read before the grant and allows it after", async () => {
-    const before = await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX);
+    const before = await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED);
     // The premise of every test in this file. Without it a passing grant test would prove nothing, because
     // the investigator might have been able to read all along.
     expect(before).toBe(false);
 
     const requested = await approvedGrant();
-    const after = await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX);
+    const after = await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED);
     expect(after).toBe(true);
 
     // And the grant carries what §7 binds it to, on the row rather than only in the answer.
@@ -202,13 +211,13 @@ describe("a supervised grant reaches a mailbox its holder holds nothing on", () 
 
   it("authorizes the raw-evidence read, which is the path a person actually takes", async () => {
     const token = await sessionFor(INVESTIGATOR);
-    const denied = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT);
+    const denied = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT, "supervised.attachment");
     // §5C: an unauthorized message and an absent one answer alike, so the observable is a 404 rather than a
     // 403. That is what makes this assertion about authorization and not about the message existing.
     expect(denied.ok).toBe(false);
 
     await approvedGrant();
-    const allowed = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT);
+    const allowed = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT, "supervised.attachment");
     expect(allowed.ok).toBe(true);
     if (allowed.ok) expect(allowed.blobKey).toBe(`${ORG}/raw/${RECEIPT}`);
   });
@@ -234,7 +243,7 @@ describe("expiry is a hard stop, and no mechanism enforces it", () => {
     const token = await sessionFor(INVESTIGATOR);
     const requested = await approvedGrant({ durationSeconds: 60 });
 
-    const during = await authorize(testEnv, atTime(AUGUST_20 + 30_000), requestAs(token), RECEIPT);
+    const during = await authorize(testEnv, atTime(AUGUST_20 + 30_000), requestAs(token), RECEIPT, "supervised.attachment");
     expect(during.ok).toBe(true);
 
     /*
@@ -246,7 +255,7 @@ describe("expiry is a hard stop, and no mechanism enforces it", () => {
      * `LIVE_SUPERVISED_GRANT` leaves every other test in this file green and fails only here. That is the
      * shape of the defect this test exists for — an expiry that reads as enforced and is not.
      */
-    const after = await authorize(testEnv, atTime(AUGUST_20 + 60_001), requestAs(token), RECEIPT);
+    const after = await authorize(testEnv, atTime(AUGUST_20 + 60_001), requestAs(token), RECEIPT, "supervised.attachment");
     expect(after.ok).toBe(false);
     // The row is untouched: an expired grant is the record of an access that happened, not an absence.
     expect((await grantRow(requested.grantId))?.granted_at).not.toBeNull();
@@ -270,18 +279,18 @@ describe("dual approval, and the requester is never one of the two", () => {
     });
     // Requested is not granted. This is the assertion that `granted_at` is authority rather than decoration.
     expect((await grantRow(requested.grantId))?.granted_at).toBeNull();
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX)).toBe(false);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED)).toBe(false);
 
     const first = await decideApproval(testEnv, ctx, ORG, ANA, requested.approvalId, "approve");
     expect(first.completed).toBe(false);
     expect(first.supervisedGranted).toBe(false);
     expect((await grantRow(requested.grantId))?.granted_at).toBeNull();
     // The read is still refused after one approver, which is the observable the count exists for.
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX)).toBe(false);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED)).toBe(false);
 
     const second = await decideApproval(testEnv, ctx, ORG, BEN, requested.approvalId, "approve");
     expect(second.supervisedGranted).toBe(true);
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX)).toBe(true);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED)).toBe(true);
   });
 
   it("refuses the requester's own decision, even to deny it", async () => {
@@ -424,7 +433,7 @@ describe("dual approval, and the requester is never one of the two", () => {
     // is a request and not a person-and-mailbox pair (#64's trap, arriving through the schema).
     const second = await approvedGrant();
     expect(second.grantId).not.toBe(first.grantId);
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX)).toBe(true);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED)).toBe(true);
   });
 
   it("refuses a second request while one is still pending", async () => {
@@ -503,9 +512,9 @@ describe("a read grant authorizes reading and nothing else", () => {
     expect((listed as { messages: unknown[] }).messages).toHaveLength(1);
     // Content is strictly the stronger authority, so the weaker scope must not reach the bytes. A scope that
     // reached everything would make the enum a label rather than a bound.
-    const raw = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT);
+    const raw = await authorize(testEnv, atTime(AUGUST_20), requestAs(token), RECEIPT, "supervised.attachment");
     expect(raw.ok).toBe(false);
-    expect(await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX))
+    expect(await mayRead(testEnv, atTime(AUGUST_20), { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED))
       .toBe(false);
   });
 
@@ -605,7 +614,7 @@ describe("a matter is an object with a lifecycle, because free text cannot close
      * and the honest single answer is the grant's own `expires_at`. What a closed matter does change is that
      * no new grant may cite it, which the test above proves.
      */
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX)).toBe(true);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: INVESTIGATOR }, MAILBOX, OPENED)).toBe(true);
   });
 
   it("refuses a scope it does not recognise and a duration that is not a positive whole number", async () => {
@@ -638,7 +647,7 @@ describe("the self-grant stays possible and becomes conspicuous", () => {
       subjectId: ADMIN, relation: "mailbox.content.read", objectId: MAILBOX,
     });
     expect(outcome.granted).toBe(true);
-    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: ADMIN }, MAILBOX)).toBe(true);
+    expect(await mayRead(testEnv, ctx, { orgId: ORG, userId: ADMIN }, MAILBOX, OPENED)).toBe(true);
   });
 
   it("produces the doctor finding, and an ordinary grant does not", async () => {

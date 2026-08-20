@@ -17,6 +17,8 @@ import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.t
 import { conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
 import { closeMatter, listMatters, openMatter } from "./matters.ts";
 import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
+import { notificationsFor } from "./notifications.ts";
+import { deliverDueNotifications } from "./notice-delivery.ts";
 import { placeHold, requestHoldLift } from "./holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
@@ -91,11 +93,17 @@ export default {
   },
 
   /**
-   * The cron sweep (#41). One job today: recording first-response breaches.
+   * The cron sweep (#41, #63 part B). Two jobs: recording first-response breaches, and delivering the
+   * notifications that have fallen due.
    *
-   * Deliberately thin, and deliberately a *scan*. Cron documents no retry, so anything here has to be
+   * Deliberately thin, and deliberately two *scans*. Cron documents no retry, so anything here has to be
    * repaired by the next minute's run rather than depending on this one — which a query over due rows is and
    * a cursor would not be.
+   *
+   * **The two jobs are independent and are kept that way.** Each has its own `try`, so a failure in one does
+   * not cost the other a run — a §7 notice is a legal obligation and a first-response breach is a promise to a
+   * customer, and neither is a good reason to drop the other. The alternative, one `try` around both, is how
+   * a scheduled handler quietly stops doing its second job.
    *
    * Errors are logged rather than thrown. A throw here reaches Cloudflare's scheduled-event machinery, which
    * has no retry to offer and no operator watching it; the log is inside the product where `doctor` can see
@@ -104,11 +112,12 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const clock = createSystemCtx();
     ctx.waitUntil((async () => {
+      const orgId = await claimedOrg(env).catch(() => null);
+      // An unclaimed Node has no cases to sweep and nobody to notify. Not an error, and not worth a log line
+      // every minute for the lifetime of an uninstalled Node.
+      if (orgId === null) return;
+
       try {
-        const orgId = await claimedOrg(env);
-        // An unclaimed Node has no cases and nothing to sweep. Not an error, and not worth a log line every
-        // minute for the lifetime of an uninstalled Node.
-        if (orgId === null) return;
         const outcome = await sweepResponseClocks(env, clock, orgId);
         if (outcome.breached.length > 0) {
           await log(env, clock, {
@@ -124,6 +133,31 @@ export default {
           level: "error",
           event: "sla.sweep_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
+        }).catch(() => undefined);
+      }
+
+      try {
+        const notices = await deliverDueNotifications(env, clock, orgId);
+        // Logged only when it did something, so an idle Node writes nothing — and logged at `info` because a
+        // delivered notice is not a fault. `batchWasFull` is the one signal that would tell an operator the
+        // tripwire in `supervised-notice-scan.md` is binding rather than comfortable.
+        if (notices.delivered > 0) {
+          await log(env, clock, {
+            level: "info",
+            event: "notifications.delivered",
+            message: `${notices.delivered} notification(s) delivered.`,
+            orgId,
+            detail: { delivered: notices.delivered, batchWasFull: notices.batchWasFull },
+          });
+        }
+      } catch (error) {
+        // Loud, and `error` rather than `warn`: an undelivered §7 notice is an obligation this Node is not
+        // discharging, and `doctor`'s supervision_notices_overdue counts what this failure leaves behind.
+        await log(env, clock, {
+          level: "error",
+          event: "notifications.scan_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          orgId,
         }).catch(() => undefined);
       }
     })());
@@ -1003,7 +1037,10 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // not read all answer identically. The third case is #45 — this endpoint streams the **submitted
       // bytes**, so it disclosed the whole message rather than a row about it, and it was bounded by
       // organization alone.
-      if (row !== null && !(await mayRead(env, clock, { orgId: who.orgId, userId: who.userId }, row.mailbox_id))) {
+      // The submitted bytes are a whole RFC 5322 message, attachments included, so this is the same act the
+      // raw inbound read is and takes the same action rather than a weaker one.
+      if (row !== null && !(await mayRead(env, clock, { orgId: who.orgId, userId: who.userId }, row.mailbox_id,
+        { action: "supervised.attachment", subject: submitted[1]! }))) {
         return Response.json(
           { error: "not_found", message: "No such send, or you do not have access to it." },
           { status: 404 },
@@ -1363,6 +1400,28 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     /**
+     * The in-product delivery of §7's notice, and of #61's approval requests (#63 part B).
+     *
+     * **In-product rather than by mail**, and that follows rather than being chosen: `outbound/transport.ts`
+     * already has to catch Cloudflare's *destination address is not a verified address*, so a legal
+     * obligation carried by outbound mail is one defeated by a mail-routing setting. This endpoint has no
+     * such dependency.
+     *
+     * There is deliberately **no dismiss, no mark-read and no delete.** A notice a person can clear is a
+     * notice an administrator can clear, and §7 requires the notification not be disableable by the
+     * investigator. The only way one leaves this list is by leaving the table, which is a row whose creation
+     * rode with an audit entry — see `doctor`'s `supervision_notice_missing`.
+     */
+    if (url.pathname === "/api/notifications" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // Subjects are the person plus every team they belong to, which is what every other read here does. A
+      // mailbox read through a team is a mailbox whose notices reach that team's members.
+      const subjects = await readableSubjects(env, who);
+      return Response.json({ notifications: await notificationsFor(env, who, subjects) });
+    }
+
+    /**
      * A message body, extracted and sanitised (ADR 37).
      *
      * The HTML returned here is for a **sandboxed iframe** and nothing else. The client must render it
@@ -1372,7 +1431,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      */
     const body = /^\/api\/messages\/([^/]+)\/body$/.exec(url.pathname);
     if (body && request.method === "GET") {
-      const allowed = await authorize(env, clock, request, body[1]!);
+      // `supervised.opened` — §7's *result opened*. The body is one message's content, which is what
+      // distinguishes it from the raw read below.
+      const allowed = await authorize(env, clock, request, body[1]!, "supervised.opened");
       if (!allowed.ok) return allowed.response;
       const { renderBody } = await import("./render/body.ts");
       return Response.json(await renderBody(await getEvidence(env, allowed.blobKey)));
@@ -1381,7 +1442,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     // Original .eml, streamed frame by frame so a 25 MiB message is never buffered (#16).
     const raw = /^\/api\/messages\/([^/]+)\/raw$/.exec(url.pathname);
     if (raw && request.method === "GET") {
-      const allowed = await authorize(env, clock, request, raw[1]!);
+      // `supervised.attachment` — the original `.eml` carries every attachment, so recording this as an
+      // *opened* result would understate what left the Node by however many files were in it.
+      const allowed = await authorize(env, clock, request, raw[1]!, "supervised.attachment");
       if (!allowed.ok) return allowed.response;
       return new Response(await streamEvidence(env, allowed.blobKey), {
         headers: {

@@ -110,6 +110,29 @@ const FIGURES: Record<string, Classification> = {
   ...mailda(
     "the cost of Mailda's own authorization queries, measured in workerd",
     "authz.check.max_queries", "authz.check.max_rows_read", "authz.list.max_rows_read",
+    // Same receipt, same instrument, and plan-independent for the same reason as its siblings: it is the
+    // check's two round trips plus the audit append's two, all four of them Mailda's own queries against
+    // Mailda's own schema. Nothing Cloudflare publishes per plan appears in the figure — the subrequest
+    // *ceiling* does, but that is `doctor.free.max_subrequests` and this is nowhere near it.
+    "authz.supervised_read.max_queries",
+  ),
+
+  // docs/receipts/supervised-notice-scan.md
+  ...mailda(
+    "how many notices one cron tick delivers, measured with metering() against Mailda's own scan. The Free "
+      + "plan's subrequest ceiling is what it is *sized against*, and that ceiling is recorded as "
+      + "doctor.free.max_subrequests — this figure is the batch Mailda chose under it, not the ceiling",
+    "notify.scan_batch",
+  ),
+  ...derived(
+    "how long a due notice may stay undelivered before doctor calls it overdue: the trigger's propagation "
+      + "ceiling after a deploy, plus the one-minute schedule and the measured p99 dispatch lateness, then "
+      + "sized 3.7x past their sum. Propagation dominates and is the same on both plans "
+      + "(cron-lateness.md records the ceiling without a plan column), so the derived figure is not "
+      + "plan-scoped either — what *is* plan-scoped in that receipt is the per-account trigger count, which "
+      + "does not enter this arithmetic",
+    ["cron.propagation_ceiling_seconds", "cron.observed_lateness_p99_ms"],
+    "notify.overdue_grace_seconds",
   ),
 
   // docs/receipts/binding-relink-on-id-removal.md

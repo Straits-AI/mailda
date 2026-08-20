@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { MATTER_TYPES } from "../../src/matters.ts";
+import { NOTIFICATION_KINDS } from "../../src/notifications.ts";
 import { SUPERVISED_SCOPES } from "../../src/supervised.ts";
 
 /**
@@ -121,6 +122,15 @@ function narrowsBeforeInserting(
   return narrowing < insert ? null
     : `${enclosing} calls ${guard} after its INSERT INTO ${table}, so the column is written before it is `
       + "narrowed";
+}
+
+/** Files that call `name(...)`, excluding the one that declares it. */
+function writersOfCall(name: string): string[] {
+  const declaration = new RegExp(`function ${name}\\b`);
+  return SOURCES.filter((file) => {
+    const code = codeOf(file);
+    return code.includes(`${name}(`) && !declaration.test(code);
+  });
 }
 
 /** Files whose text contains an `INSERT INTO <table>` of any flavour. */
@@ -273,5 +283,126 @@ describe("the supervised scope enum is a constraint rather than a convention", (
     // Anti-vacuity: the constant really does carry both halves, so the scan above is guarding something.
     expect(codeOf("src/supervised.ts"))
       .toContain('LIVE_SUPERVISED_GRANT = "granted_at IS NOT NULL AND expires_at > ?"');
+  });
+});
+
+/* ------------------------------------------------------------------ #63 part B ----------------- */
+
+describe("the notification kind enum is a constraint rather than a convention", () => {
+  const declared = declaredIn("src/notifications.ts", "NOTIFICATION_KINDS");
+
+  it("is extractable and agrees with the exported union", () => {
+    expect(declared.length).toBeGreaterThan(0);
+    expect(declared).toEqual([...NOTIFICATION_KINDS]);
+    // The two obligations this table carries: §7's notice to the person whose mail was read, and #61's
+    // approval request, which deferred its own notification to this mechanism explicitly rather than
+    // inventing a second one.
+    expect(declared).toEqual(["supervised_read", "approval_request"]);
+  });
+
+  it("declares every kind the delivering scan branches on", () => {
+    // Derived from the source rather than listed, so a kind the scan handles and the enum does not declare —
+    // or the reverse, a declared kind the scan silently ignores, which would sit undelivered for ever — is a
+    // failure here rather than a row nobody notices.
+    const scan = codeOf("src/notice-delivery.ts");
+    const used = new Set([...scan.matchAll(/kind === "([a-z_]+)"/g)].map((match) => match[1]!));
+    expect([...used].length).toBeGreaterThan(0);
+    expect([...used].filter((kind) => !declared.includes(kind))).toEqual([]);
+  });
+
+  it("is written from one place", () => {
+    const writers = writersOf("notifications");
+    expect(
+      writers.join(", ") === "src/notifications.ts" ? null
+        : `notifications is written from ${writers.length === 0 ? "nowhere" : writers.join(", ")}, and it `
+          + "must be written only from src/notifications.ts: the kind column has no CHECK, so a second "
+          + "INSERT would be free to store a kind the scan does not branch on — an obligation that is owed, "
+          + "recorded, and never delivered",
+    ).toBeNull();
+  });
+
+  it("has no path that deletes a notice, which is what makes suppression loud", () => {
+    /*
+     * **The property §7's "cannot be disabled by the investigator" rests on.**
+     *
+     * Every notice row is inserted in the same transaction as an audit entry — the §7 one beside
+     * `supervised.granted`, #61's beside `approval.requested` — so a missing row means somebody removed it,
+     * and `doctor`'s `supervision_notice_missing` compares the two counts. That argument only holds while
+     * **the product itself cannot delete one**: a dismiss button, a mark-read, or a tidy-up sweep would each
+     * make a missing row ordinary and the finding meaningless.
+     *
+     * So: no `DELETE FROM notifications` anywhere in `src/`, at all.
+     */
+    const offenders: string[] = [];
+    for (const file of SOURCES) {
+      codeOf(file).split("\n").forEach((line, index) => {
+        if (/\bDELETE\s+FROM\s+notifications\b/i.test(line)) offenders.push(`${file}:${index + 1}`);
+      });
+    }
+    expect(
+      offenders.length === 0 ? null
+        : `a notice can be deleted from ${offenders.join(", ")}. §7 requires the notification not be `
+          + "disableable by the investigator, and doctor's supervision_notice_missing finding reads a "
+          + "missing row as somebody having removed one — which stops being true the moment the product "
+          + "can remove one itself",
+    ).toBeNull();
+  });
+});
+
+describe("a supervised read cannot be authorized without being recorded", () => {
+  /*
+   * §7 requires a record of every supervised query, result opened and attachment read, and part A shipped
+   * none of them. What part B had to add was not the entries — it was the impossibility of getting the
+   * authority without them.
+   *
+   * The **compiler** carries the single-object half: `mayRead` takes a required `SupervisedAct`, so a read
+   * path that wanted authorization and no record would not compile. What a compiler cannot carry is that the
+   * function still *uses* it, and that the listing paths — whose results do not exist at the moment of the
+   * check — record after their rows come back. That is what this block holds.
+   *
+   * Lexical, with the same declared boundary as every other scan in this file: it proves the call is in the
+   * function, not that it is reached on every branch. `test/supervised-recording.test.ts` is the behavioural
+   * half, including a read that is refused because its entry could not be appended.
+   */
+  const authz = codeOf("src/authz-read.ts");
+
+  it("appends the entry inside mayRead, where the decision is made", () => {
+    const start = authz.indexOf("export async function mayRead(");
+    expect(start, "no mayRead in src/authz-read.ts — this scan is guarding nothing").toBeGreaterThan(-1);
+    const body = authz.slice(start, authz.indexOf("export async function", start + 10));
+    // The act is the parameter the compiler enforces; this is the call that makes it mean something.
+    expect(body, "mayRead must take the act it is about to authorize").toContain("act: SupervisedAct");
+    expect(body, "mayRead must append the entry before it returns true").toContain("recordDisclosure(");
+  });
+
+  it("makes every listing that can be answered by a grant record what it returned", () => {
+    /*
+     * The two grant-accepting builders are the seam: a grant id reaches a listing from nowhere else, so a
+     * caller of either owes an entry. `liveGrantsBySubject` is the message listing's, and `mayReadMetadata`
+     * is the queue's — the one part A called unreachable, which was one relation too strong.
+     */
+    const offenders: string[] = [];
+    for (const [builder, callers] of [
+      ["liveGrantsBySubject", writersOfCall("liveGrantsBySubject")],
+      ["mayReadMetadata", writersOfCall("mayReadMetadata")],
+    ] as const) {
+      // Anti-vacuity: a builder nothing calls would pass this loop by having nothing to check.
+      expect(callers.length, `nothing calls ${builder} — this scan is guarding nothing`).toBeGreaterThan(0);
+      for (const file of callers) {
+        const code = codeOf(file);
+        // Searched **from the call**, not from the top of the file: `authz-read.ts` records inside `mayRead`
+        // long before `listMessages` asks the builder anything, and a first-occurrence comparison would have
+        // let the listing off on the strength of a different function's entry.
+        const call = code.indexOf(`${builder}(`);
+        const record = code.indexOf("recordDisclosure(", call);
+        if (record === -1) offenders.push(`${file} calls ${builder}`);
+      }
+    }
+    expect(
+      offenders.length === 0 ? null
+        : `${offenders.join(", ")} without recording what it disclosed. A listing authorized by a supervised `
+          + "grant owes §7 a supervised.query entry naming the ids it returned, and the entry has to be "
+          + "written after the rows come back because the check cannot know them",
+    ).toBeNull();
   });
 });

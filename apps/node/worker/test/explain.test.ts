@@ -79,6 +79,42 @@ describe("query plans", () => {
     );
     await explain(
       /*
+       * The same arm after #63 part B, which selects the **grant id** rather than a bare 1 — because an act
+       * entry cites the grant that authorized it, and a check that answered a bare yes could not be recorded
+       * against anything.
+       *
+       * `sgr_live` gained `id` as a trailing key column in migration 0024 for exactly this, and the claim
+       * that it is still **covering** is what has to be read rather than trusted: without it SQLite reads the
+       * table row to fetch a column the index does not carry, and `authz-check-rows-read.md` says COVERING in
+       * print. Same lesson as the column-order defect the plan above found, one release later.
+       */
+      "supervised arm returning the grant id (#63 part B)",
+      `SELECT NULL AS grant_id FROM relationship_tuples
+       WHERE org_id = ? AND subject_id IN (?, ?, ?)
+         AND object_type = 'mailbox' AND relation IN (?) AND object_id = ?
+       UNION ALL
+       SELECT id FROM supervised_grants
+        WHERE org_id = ? AND subject_id = ? AND mailbox_id = ?
+          AND granted_at IS NOT NULL AND expires_at > ? AND scope IN (?)
+       LIMIT 1`,
+      [corpus.orgId, corpus.typicalUser, "a", "b", "mailbox.content.read", corpus.mailboxes[1]!,
+        corpus.orgId, corpus.typicalUser, corpus.mailboxes[1]!, new Date().toISOString(), "content"],
+    );
+    await explain(
+      /*
+       * The delivering scan's due-row read (#63 part B). `ntf_due` is partial on `delivered_at IS NULL`, so a
+       * delivered notice leaves the index for ever and this seek is into something that empties itself —
+       * which is the whole reason a scan running sixty times an hour costs one query on an idle Node. A plan
+       * naming `SCAN notifications` here would mean the cron's cost grows with everything ever delivered.
+       */
+      "notifications due (partial index on the undelivered ones)",
+      `SELECT id, kind, subject_id, mailbox_id FROM notifications
+        WHERE org_id = ? AND delivered_at IS NULL AND due_at IS NOT NULL AND due_at <= ?
+        ORDER BY due_at LIMIT ?`,
+      [corpus.orgId, new Date().toISOString(), 50],
+    );
+    await explain(
+      /*
        * `doctor`'s self-grant finding, and this plan is why migration 0023 has **no** index for it. It first
        * carried a partial one keyed on the condition itself; SQLite never chose it, and forced with
        * `INDEXED BY` it was worse — usable on `org_id` alone, because SQLite's test for whether a query

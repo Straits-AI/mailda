@@ -349,3 +349,34 @@ Two checks deliberately perform a round trip instead of testing for presence:
   credential KEK that wrapped it has changed.
 
 Presence is not readability, and a diagnostic that tests presence would have passed in both cases.
+
+## Correction — 20 August 2026: the supervision-notice check, and an absolute figure that had drifted
+
+#63 part B added `supervision_notices_overdue` (and, conditionally, `supervision_notice_missing` and
+`supervision_notice_stranded`), which `doctor` computes from **one** statement with five scalar
+sub-selects — one `prepare`, one execution, as
+`test/node/doctor-meter-honesty.test.ts` requires of everything on this path. `src/notice-delivery.ts` is a
+separate file *because of* that guard: the delivering scan needs a `batch()` and named statements, and
+`src/deciders.ts` set the precedent for moving the function rather than widening the check.
+
+**Measured delta: +1 D1 query, no R2.** Same fixture before and after, a claimed Node with the check
+removed and then restored.
+
+**And the absolute figure in this file had drifted, which the measurement found rather than the reader.**
+The same claimed Node reads **15 subrequests before the new check and 16 after** (12 → 13 D1, 3 R2
+unchanged). The last correction here recorded **13**. Nothing regressed: checks have been added since that
+measurement without it being re-run, so the *number* went stale while every *delta* recorded here stayed
+right. Recorded rather than quietly overwritten, because "an unverified number is worse than a blank" cuts
+both ways — the deltas in the sections above are still the evidence, and 16 is now the figure.
+
+`doctor.max_subrequests_per_run = 220` is untouched and still holds by more than an order of magnitude, so
+no `values:` moved and no `stale_when` clause fired: the new check is a fixed cost that does not grow with
+mailbox size, matters, grants or the age of the trail. Its expensive sibling — a per-grant join naming
+*which* notice was removed — was deliberately not built, for exactly that reason.
+
+**Re-measured after `supervision_notice_stranded` was added**, because a fifth sub-select is a change to
+the statement even when it is not a change to the query count: **still 16 subrequests** (13 D1, 3 R2). The
+count of `prepare` calls is what this path is budgeted on, and a sub-select does not add one — which is
+why the guard against an inert notice could be paid for at all. It rides `ntf_pending_matter`, the partial
+index on `due_at IS NULL`, so it seeks into nothing on a Node whose notices are all dated.
+

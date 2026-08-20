@@ -1,6 +1,8 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { unavailable } from "./errors.ts";
+
 /**
  * Hash-linked audit (§23, Layer 5's shape).
  *
@@ -126,14 +128,28 @@ export const AUDIT_ACTIONS = {
    * `supervised.requested`, for the reason `hold.lift_requested` does not exist: requesting **is** requesting
    * an approval, and `approval.requested` records it in the same transaction as the grant row.
    *
-   * **Named absent, and this is the seam #63 part B attaches to.** §7 requires a record of every supervised
-   * *act* — the query, the result opened, the preview, the attachment read — and #63 settled that those are
-   * three further actions (`supervised.query`, `supervised.opened`, `supervised.attachment`), per act rather
-   * than per row, with a query entry carrying the ids it returned. **None of them is declared here**, because
-   * a declared action nothing emits is a category of one and `test/audit-coverage.test.ts` fails on it. They
-   * arrive with the code that emits them, together with the notification obligation §7 makes due after the
-   * matter closes. Until then this Node records **who was granted access and when**, and not what they read;
-   * that is a real gap and it is stated rather than implied by three unused names.
+   * The three below are #63 part B's, and they are the acts themselves rather than the authority: §7 requires
+   * a record of every supervised *query*, *result opened*, *preview* and *attachment read*. **Per act, not per
+   * row** — a search matching 5,000 messages is one entry, which is what keeps `audit-and-log-retention.md`'s
+   * sizing ("a handful per message") true of a real investigation: tens of entries in a session, not thousands.
+   *
+   * Each is keyed on the **grant**, like `supervised.granted`, because §7's question is about the access and
+   * the grant is the id every act under it cites. An act spanning two live grants is recorded against each,
+   * which is a second entry for one query and deliberate: the trail is filtered by grant, and one entry naming
+   * two would answer that filter from neither.
+   *
+   * `supervised.query` carries **the ids it returned**, not just how many. A result list renders subject and
+   * sender — that *is* content exposure, and "a query matched 40 things" understates what a person saw by
+   * forty subjects. The list is bounded by `audit.max_detail_bytes` at about 59 typed-prefix ULIDs, so an
+   * oversized page is split into continuation entries rather than handed to `boundedDetail`, which would
+   * record a *prefix* of the ids and understate the exposure — the exact failure per-act recording was chosen
+   * to avoid. `buildSupervisedQuery` in `src/supervised.ts` does the splitting, measured with this file's own
+   * `detailFits` so the two cannot disagree about the cap.
+   *
+   * `supervised.attachment` is named for §7's *attachment read* and is emitted by the raw-evidence reads —
+   * `GET /api/messages/:id/raw` and the submitted-bytes endpoint. This Node has no per-attachment endpoint to
+   * hang a finer entry on, and the raw `.eml` **is** every attachment, so recording it under the weaker name
+   * would understate what left. Said here rather than left for a reader to notice the absence.
    */
   "matter.opened": {
     says: "Somebody opened a matter: the purpose a supervised read can later cite, with its type and description.",
@@ -144,6 +160,18 @@ export const AUDIT_ACTIONS = {
   "supervised.granted": {
     says: "Two distinct approvers granted somebody a time-boxed read over a mailbox; the scope, the matter and "
       + "the expiry are recorded with it.",
+  },
+  "supervised.query": {
+    says: "A supervised reader ran a query; the entry names the ids it returned, not only how many.",
+    disclosure: true,
+  },
+  "supervised.opened": {
+    says: "A supervised reader opened one result's content.",
+    disclosure: true,
+  },
+  "supervised.attachment": {
+    says: "A supervised reader read raw evidence — the original .eml, which carries every attachment.",
+    disclosure: true,
   },
 
   /*
@@ -239,6 +267,28 @@ export type StandaloneAction = {
   [K in AuditAction]: (typeof AUDIT_ACTIONS)[K] extends { standalone: true } ? K : never;
 }[AuditAction];
 
+/**
+ * The actions that record a **disclosure**: an act that writes nothing and must not happen unless it is
+ * recorded.
+ *
+ * The third classification, and it exists because the two that came before it answer opposite questions and
+ * neither answer fits a read. `standalone` means *there is no accompanying write, so record it and never fail
+ * the request* — right for a lockout and a hold-blocked deletion, both of which are **refusals**, where a Node
+ * that cannot record still refuses and the failure direction is safe. `auditedBatch`'s contract is the
+ * opposite — *if the Node cannot record the act, it does not perform the act* — and that is the contract a
+ * supervised read needs, because a read is a **disclosure**: unrecorded, it is the one thing §7 exists to
+ * prevent. What a read does not have is a state change to be atomic with.
+ *
+ * So this type is `auditedBatch`'s failure direction without `auditedBatch`'s premise, and `recordDisclosure`
+ * below is the only way to append one. `audit` refuses these at compile time (it takes `StandaloneAction`),
+ * which is what stops the never-throwing append being reached for on a read path by habit.
+ *
+ * `test/audit-coverage.test.ts` pins both sets exactly, so a fourth member of either cannot arrive quietly.
+ */
+export type DisclosureAction = {
+  [K in AuditAction]: (typeof AUDIT_ACTIONS)[K] extends { disclosure: true } ? K : never;
+}[AuditAction];
+
 export interface AuditEvent<A extends AuditAction = AuditAction> {
   /** Constrained to the catalogue above: an undeclared action is a type error, not a silent category. */
   action: A;
@@ -320,6 +370,23 @@ function jsonHeadWithinBytes(text: string, budget: number): string {
 function boundedDetail(detail: Record<string, unknown> | undefined): string | null {
   if (detail === undefined) return null;
   return boundedJson(JSON.stringify(detail), MAX_DETAIL);
+}
+
+/**
+ * Would this detail be stored whole, or would `boundedDetail` replace it with a truncation record?
+ *
+ * Exported for exactly one caller — `buildSupervisedQuery` in `src/supervised.ts`, which splits a list of
+ * returned ids across continuation entries so that none of them is ever truncated. Truncation there would
+ * record a **prefix** of what a supervised reader saw and understate the exposure, which is the failure §7's
+ * per-act recording exists to prevent (#63's correction worked the bound out at about 59 typed-prefix ULIDs).
+ *
+ * A predicate rather than the number, and that is the whole point of it being here: the splitter must not
+ * restate the cap or the arithmetic. `34n + overhead <= 2048` is a computed figure in
+ * `audit-and-log-retention.md` and it is right, but a second copy of it in a second file is a second thing to
+ * drift when a sibling field is added to the detail. This asks the function that actually decides.
+ */
+export function detailFits(detail: Record<string, unknown>): boolean {
+  return utf8Bytes(JSON.stringify(detail)) <= MAX_DETAIL;
 }
 
 /**
@@ -573,6 +640,54 @@ export async function audit(
       detail: { action: event.action, subject: event.subject ?? null },
     });
     return null;
+  }
+}
+
+/**
+ * Appends the entries that record a **disclosure**, and refuses the disclosure if it cannot.
+ *
+ * The whole of the contract is in what happens when the append fails: this throws, so the caller does not
+ * return the mail. `audit` would have swallowed it and returned the bytes with nothing in the trail, which is
+ * a supervised read that happened and cannot be shown to have happened — the defect #63 exists to prevent.
+ *
+ * The refusal is a `CallerError` rather than a bare throw so that it reaches the person as the four-part shape
+ * AGENTS.md requires instead of an opaque 500. 503, because it is a statement about the Node rather than about
+ * the request: the same request will work once the trail is writable.
+ *
+ * Several events land in **one** `batch()` and chain to each other, because a query whose id list needed
+ * splitting is one act in several entries and a half-recorded act is worse than none — `auditedBatchMany`
+ * already makes that all-or-nothing.
+ */
+export async function recordDisclosure(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  events: ReadonlyArray<AuditEvent<DisclosureAction>>,
+): Promise<AppendedEntry[]> {
+  if (events.length === 0) return [];
+  try {
+    const { entries } = await auditedBatchMany(env, ctx, orgId, events, (statements) => statements);
+    return entries;
+  } catch (error) {
+    // Not a swallow: the operational log gets the cause, and the caller gets a refusal that names the act it
+    // was refused for. Both halves are needed — one for the operator, one for the person holding the grant.
+    await log(env, ctx, {
+      level: "error",
+      event: "supervised.record_failed",
+      message: `Could not record ${events[0]!.action}: ${(error as Error).message.split("\n")[0]}`,
+      orgId,
+      detail: { action: events[0]!.action, subject: events[0]!.subject ?? null, entries: events.length },
+    });
+    throw unavailable("E_SUPERVISED_UNRECORDABLE", {
+      what: `this Node could not record the ${events[0]!.action} entry for supervised grant `
+        + `${events[0]!.subject ?? "(unnamed)"}, so it did not perform the read`,
+      why: "§7 requires every supervised query, result opened and attachment read to be recorded. A read that "
+        + "is not recorded is the one outcome supervised access exists to prevent, so the read fails with the "
+        + "record rather than proceeding without it",
+      fix: "read the log for supervised.record_failed — GET /api/log — and check the migrations_applied and "
+        + "self_granted_access findings in GET /api/doctor. A Node that cannot append to audit_entries cannot "
+        + "record any act, not only this one",
+    });
   }
 }
 

@@ -1,8 +1,9 @@
 import type { Ctx } from "@mailda/runtime";
+import { BUDGETS } from "@mailda/budgets";
 
 import { assertObject, SUPERVISED_RELATION } from "./access.ts";
 import { describeShortfall, planApproval, type Stages } from "./approvals.ts";
-import { auditedBatch } from "./audit.ts";
+import { auditedBatch, detailFits, type AuditEvent } from "./audit.ts";
 import { decidersOf } from "./deciders.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
 import { readMatter } from "./matters.ts";
@@ -54,18 +55,26 @@ import { readMatter } from "./matters.ts";
  * deliberately no `UPDATE` of `expires_at` anywhere — an editable grant is an audit trail that can be
  * rewritten in place.
  *
+ * ## Recording is per act, and it is structural on the paths that authorize one named object
+ *
+ * §7 requires a record of every supervised query, result opened, preview and attachment read. Part B builds
+ * it, and the shape is decided by *when the thing disclosed becomes known*:
+ *
+ *   the content read      `mayRead` authorizes **one** object, so the check and the disclosure are the same
+ *   the raw-evidence read moment. Both take a mandatory `SupervisedAct` and the entry is appended **inside**
+ *                         the authorization, before `true` is returned. A caller cannot obtain the authority
+ *                         without naming the act, because the parameter is not optional — a compile error
+ *                         rather than a convention.
+ *   the listing           the authorization precedes the result, so a check that recorded would record blind.
+ *                         `listMessages` therefore records after its rows come back, and what makes that
+ *                         structural is that the grant ids come only from `liveGrantsBySubject` — one
+ *                         builder, whose call sites `test/node/matter-and-scope-world.test.ts` requires to
+ *                         emit `supervised.query` between the read and the return.
+ *
+ * Both shapes fail closed: `recordDisclosure` throws, so a Node that cannot append does not disclose.
+ *
  * ## Named absent
  *
- * - **Per-act recording.** §7 requires a record of every query, result opened, preview and attachment read.
- *   `src/audit.ts` names the three actions #63 settled on and declares none of them, because a declared
- *   action nothing emits is a category of one. So this Node records **who was granted access, by whom, over
- *   what, until when** — and not what they then read. That is a real gap in §7's contract and it is #63 part
- *   B's work.
- * - **The notification.** §7 requires the person whose mail was read to be told after the matter closes. #63
- *   settled the mechanism — the obligation is a row written in the same transaction as the grant, delivered by
- *   the `scheduled` handler `wrangler.jsonc` already declares, with `doctor` counting the overdue ones — and
- *   #61 deferred its own notification to this ticket explicitly. **No row, no cron branch, no count.** Both
- *   tickets are owed that answer and neither is paid here.
  * - **A maximum duration.** A request states its own duration and nothing caps it, so an approved 10-year
  *   grant is expressible. That is deliberate rather than overlooked: a cap is a number, AGENTS.md admits three
  *   kinds of number and this is none of them — not a platform limit, not measurable against any corpus, and
@@ -158,7 +167,15 @@ export function liveGrantOnMailbox(
   scopes: readonly SupervisedScope[],
 ): { sql: string; params: unknown[] } {
   return {
-    sql: `SELECT 1 FROM supervised_grants
+    // `id`, not `1`, and that is part B's one change to this statement. The act entry cites the grant that
+    // authorized it, so a check that answered a bare yes could not be recorded against anything. It stays a
+    // **covering** seek because migration 0024 added `id` to `sgr_live`'s key for exactly this — printed
+    // rather than assumed, in `test/explain.test.ts`.
+    //
+    // The tuple arm this is unioned with therefore has to select a placeholder of the same arity, and it
+    // selects NULL: a standing relation is not a grant, and the reader that gets NULL is the one that must
+    // not record. See `hasAnyRelation`.
+    sql: `SELECT id FROM supervised_grants
            WHERE org_id = ? AND subject_id = ? AND mailbox_id = ?
              AND ${LIVE_SUPERVISED_GRANT}
              AND scope IN (${scopes.map(() => "?").join(", ")})`,
@@ -167,30 +184,161 @@ export function liveGrantOnMailbox(
 }
 
 /**
- * The mailboxes a person holds a live supervised grant over, as a sub-select.
+ * The mailboxes a person holds a live supervised grant over, **with the grant that confers each** — as a
+ * derived table for `listMessages` to join.
  *
- * The many-objects form, for `listMessages`, which bounds its query by a set of mailbox ids rather than
- * checking one. A genuinely different question, so a genuinely different statement — but *"still live"* comes
- * from `LIVE_SUPERVISED_GRANT` above, which is the half that must not disagree.
+ * The many-objects form. A genuinely different question from the single-mailbox check, so a genuinely
+ * different statement — but *"still live"* comes from `LIVE_SUPERVISED_GRANT` above, which is the half that
+ * must not disagree.
+ *
+ * **This is the seam that makes the listing's recording structural.** A grant id reaches `listMessages` from
+ * nowhere else, so `test/node/matter-and-scope-world.test.ts` can require every caller of this function to
+ * emit a `supervised.query` entry between its read and its return, and a second listing path that forgot
+ * would fail that test at the moment it was written rather than in an audit years later.
+ *
+ * `MIN(id)` when two live grants cover one mailbox — which is reachable, because §7's *"widening scope
+ * requires a new approval"* is a **second grant citing the same matter** rather than an edit. The entry then
+ * names the older of the two; both are in the trail as `supervised.granted`, and naming one is the honest
+ * bound, where `group_concat` would put an unbounded list inside a bounded `detail`.
  *
  * **Bound to the user id alone, never to a team.** A team-held supervised access would defeat the question the
  * record exists to answer — who read this mailbox, under what matter — because team membership is not part of
  * the record and moves independently of it. So this deliberately does not take the `readableSubjects` list
  * that the tuple side uses.
  */
-export function liveGrantMailboxes(
+export function liveGrantsBySubject(
   orgId: string,
   userId: string,
   at: string,
   scopes: readonly SupervisedScope[],
 ): { sql: string; params: unknown[] } {
   return {
-    sql: `SELECT mailbox_id FROM supervised_grants
+    sql: `SELECT mailbox_id, MIN(id) AS grant_id FROM supervised_grants
            WHERE org_id = ? AND subject_id = ?
              AND ${LIVE_SUPERVISED_GRANT}
-             AND scope IN (${scopes.map(() => "?").join(", ")})`,
+             AND scope IN (${scopes.map(() => "?").join(", ")})
+           GROUP BY mailbox_id`,
     params: [orgId, userId, at, ...scopes],
   };
+}
+
+/* ---- recording the acts ------------------------------------------------------------------------ */
+
+/**
+ * What a supervised read is about to disclose, named by the caller that is about to disclose it.
+ *
+ * The parameter that makes recording structural on the single-object paths: `mayRead` takes one and cannot be
+ * called without it, so a future read path gets the authorization and the entry together or gets neither.
+ * `subject` is the thing being opened — a receipt id — and it rides in the detail; the entry's own subject is
+ * the **grant**, so the trail filters by access rather than by message.
+ *
+ * Two members, and the third action (`supervised.query`) is deliberately not one of them: a query's entry
+ * carries a list that has to be built and possibly split, which is `buildSupervisedQuery` below.
+ */
+export interface SupervisedAct {
+  action: "supervised.opened" | "supervised.attachment";
+  /** What was opened. A receipt id for the raw and body reads, a manifest id for submitted bytes. */
+  subject: string;
+}
+
+/** One act, as the entry that must be appended before the bytes go anywhere. */
+export function supervisedActEvent(
+  act: SupervisedAct,
+  grantId: string,
+  userId: string,
+  mailboxId: string,
+): AuditEvent<"supervised.opened" | "supervised.attachment"> {
+  return {
+    action: act.action,
+    outcome: "ok",
+    actorUserId: userId,
+    // The grant, matching `supervised.granted`, so every entry about one access lines up under one filter.
+    subject: grantId,
+    detail: { grantId, mailboxId, opened: act.subject },
+  };
+}
+
+/** Only ever quoted back in the refusal below. The cap that decides a split is asked of `detailFits`. */
+const MAX_DETAIL = BUDGETS["audit.max_detail_bytes"];
+
+/**
+ * A query's entries: **one act, split across as many entries as its id list needs.**
+ *
+ * §7 wants the ids a query returned, not only the count, because a result list renders subject and sender and
+ * "a query matched 40 things" understates what a person saw by forty subjects. #63's correction worked out the
+ * real bound — a Mailda id is a typed-prefix ULID of **31 characters**, 34 as a JSON array element, so about
+ * **59** fit inside `audit.max_detail_bytes` once the sibling fields share the object.
+ *
+ * **Splitting rather than truncating, and that is the whole reason this function exists.** `boundedDetail`
+ * replaces an over-long detail with `{truncated, bytes, head}` — so an oversized page would record a *prefix*
+ * of the id list, and the record would understate the exposure, which is the exact failure per-act recording
+ * was chosen to avoid. Splitting cannot understate: every id is in some entry, `part`/`of` say how many, and
+ * `recordDisclosure` puts them in one transaction so a half-recorded query is not representable.
+ *
+ * **The bound is asked, never restated.** `detailFits` is `boundedDetail`'s own measurement, so this cannot
+ * drift from the cap by adding a sibling field — which is precisely what would move the 59. The fill is
+ * greedy: ids are added until the next one would not fit, which makes the split depend on the real encoded
+ * bytes rather than on an arithmetic that has to be re-derived whenever the shape changes.
+ *
+ * A single id that cannot fit on its own is impossible today by three orders of magnitude and would be a
+ * `detail` shape nobody could record; it is refused loudly rather than silently dropped, because a dropped id
+ * is the understatement this function exists to prevent.
+ */
+export function buildSupervisedQuery(
+  grantId: string,
+  userId: string,
+  mailboxId: string,
+  ids: readonly string[],
+): Array<AuditEvent<"supervised.query">> {
+  const base = (page: readonly string[], part: number, of: number) => ({
+    grantId,
+    mailboxId,
+    returned: ids.length,
+    ...(of === 1 ? {} : { part, of }),
+    ids: [...page],
+  });
+
+  /*
+   * Greedy fill, measured, and every page is sized against the **widest** `part`/`of` this call could
+   * produce.
+   *
+   * `part` and `of` are fields inside the object being measured, so their digit width is part of the cost.
+   * Sizing against the real values would need the page count before the pages exist; sizing against a guess
+   * is how a bound quietly stops holding. `ids.length` is the arithmetic upper bound on the number of pages
+   * (one id each, the degenerate worst case), so a page that fits with those numbers fits with the real ones,
+   * which have the same digits or fewer. The built detail is therefore never larger than the measured one.
+   */
+  const widest = Math.max(1, ids.length);
+  const pages: string[][] = [];
+  let page: string[] = [];
+  for (const id of ids) {
+    const candidate = [...page, id];
+    if (page.length > 0 && !detailFits(base(candidate, widest, widest))) {
+      pages.push(page);
+      page = [id];
+      continue;
+    }
+    if (page.length === 0 && !detailFits(base(candidate, widest, widest))) {
+      throw unprocessable("E_SUPERVISED_ID_TOO_LONG", {
+        what: `the identifier ${id} does not fit in one audit detail on its own`,
+        why: "a supervised query records the ids it returned, and an id dropped from that list would "
+          + "understate what the reader saw — which is the failure per-act recording exists to prevent",
+        fix: `nothing in this Node mints an id this long: a typed-prefix ULID is 31 characters and `
+          + `audit.max_detail_bytes is ${MAX_DETAIL}. Investigate where this identifier came from`,
+      });
+    }
+    page = candidate;
+  }
+  if (page.length > 0) pages.push(page);
+  if (pages.length === 0) return [];
+
+  return pages.map((entries, index) => ({
+    action: "supervised.query" as const,
+    outcome: "ok" as const,
+    actorUserId: userId,
+    subject: grantId,
+    detail: base(entries, index + 1, pages.length),
+  }));
 }
 
 /* ---- requesting ------------------------------------------------------------------------------- */

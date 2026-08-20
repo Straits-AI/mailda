@@ -165,3 +165,23 @@ Re-hashing a chain is linear, and a Node that has been running for a year has mo
 request can verify inside the CPU limit. `verifyAuditChain` walks 1,000 at a time from a caller-supplied
 position and reports **where** it broke rather than a bare pass/fail, because an investigation needs the
 first bad link, not the news that one exists.
+
+## Note — 20 August 2026: the id-per-entry figure, measured on the shape that shipped
+
+The *Usefulness* section above computes **60 ids bare, about 59 once sibling fields share the object**, and
+#63's correction quoted that figure. #63 part B shipped the entry, so the fill is now measurable rather than
+computed, and it is **57** — printed by `test/supervised-recording.test.ts` as
+`MEASURE supervised.query ids_per_entry=57`.
+
+The two agree. The difference is the sibling set: the estimate assumed a query text, a matter id and a page
+number, and the entry that shipped carries `grantId`, `mailboxId`, `returned` and the continuation pair
+`part`/`of`. Nothing about the cap moved, and no `values:` changed.
+
+**What matters is that the figure is no longer load-bearing.** `buildSupervisedQuery` asks `detailFits` —
+this file's own `boundedDetail` measurement, exported for that one caller — and **splits** an oversized id
+list across continuation entries rather than handing it to truncation. So the record cannot understate what
+a supervised reader saw, whatever the fill turns out to be, and a sibling field added tomorrow lowers 57
+without breaking anything. The listing's page is `LIMIT 50`, comfortably under it, which is asserted; 57 is
+printed rather than asserted, because asserting it would pin a number the design deliberately does not rest
+on.
+

@@ -452,15 +452,75 @@ already happened and a lost race records **nothing** rather than an entry claimi
 became per-kind *data* while the race logic stayed written once. All three defects the approval machinery
 shipped with were in that logic.
 
-**What is not built is named, because two tickets are owed the answer.** §7 also requires a record of every
-query, result opened and attachment read, and a notification the investigator cannot switch off. Neither is
-here. The three audit actions for per-act recording are **not declared**, since a declared action nothing emits
-is a category of one and the coverage tripwire fails on it; the notification obligation has no row, no cron
-branch and no overdue count. So this Node records who was let into whose mailbox, under what matter, until
-when — and not what they then read. That sentence is in `listMessages`'s own docblock, at the function it is
-about, rather than in a changelog: leaving it implicit is how a half-closed world gets described as closed, and
-a reader who found a `closed_at` column and a `matter.closed` action could reasonably assume the notice went
-out.
+**A supervised read that is not recorded is now unrepresentable, and the way that is done is a parameter.**
+§7 wants every query, result opened and attachment read in the trail, and the tempting shape — an `audit`
+call beside each read — is correct on the day it is written and silent the day somebody adds a fourth read
+path. So the record lives **where the authorization decision is made**: `mayRead` takes the act it is about
+to authorize, cannot be called without one, and appends the entry inside itself before it returns `true`.
+The check returns *which* authority answered rather than a boolean, because an ordinary relation owes
+nothing and a grant owes an entry, and the guess that hides is the one that decides an unrecorded supervised
+read was ordinary. A listing cannot use that shape — its rows do not exist at the moment of the check, so an
+entry written there could not name the ids — so it records afterwards, and what keeps *that* structural is
+that a grant id reaches a listing from exactly one builder, whose callers a world test requires to emit the
+entry before they return. All of it fails **closed**: the append throws where `audit` swallows, because a
+record of something that already happened must not fail its request and a disclosure that has not happened
+yet must not proceed without one.
+
+**A query entry names the ids it returned, and the interesting decision was refusing to pick a page size.**
+"A query matched forty things" understates what a person saw by forty subject lines, so the ids go in — and
+the cap that bounds them is about 57 of them, close enough to a real page to matter. Truncating would have
+been the silent version of the same understatement: the detail cap replaces an over-long value with a
+*prefix*, so an oversized list would have recorded the first fifty-seven ids and looked complete. The list
+is **split** across continuation entries instead, sized by asking the cap's own measurement rather than by
+restating its arithmetic — so a sibling field added tomorrow lowers the fill and breaks nothing, and the
+number is printed rather than asserted because the design deliberately does not rest on it.
+
+**The employee's notice is a row, and `doctor` counting rows is the whole reason.** §7 wants a durable job
+the investigator cannot disable. A Workflow instance is not a durable record — retention is 30 days and a
+matter can stay open for months — and a sleeping instance and a culled one look identical from outside,
+which is exactly the question a report has to answer. So the obligation is a row written in the **same
+transaction** as the grant taking effect, delivered by the one-minute cron that already runs, and counted
+when overdue. Suppressing one therefore means deleting an audited row: the count of grants in the
+hash-linked trail is compared against the rows in the table, so removing the row shows up in `doctor` and
+removing the entry instead breaks verification at a nameable point. The product has no delete, no dismiss
+and no mark-read, and a world test forbids `DELETE FROM notifications` anywhere in the source — because a
+product that can clear a notice makes a missing one ordinary and the finding meaningless.
+
+**Closing a matter could tell somebody their mail was read while it still was, and the fix was to hold the
+notice rather than to block the close.** §7 hangs the notice on the close; a closed matter deliberately does
+**not** revoke a live grant. Refusing the close while a grant is live was the other available shape and it
+inverts a control this design already made: closing is open to any administrator *because the investigator
+is the one party with a reason to delay it*, and a block any live grant could hold open hands that delay
+back to the person who asked for the grant and chose its duration. With no revocation path, the block could
+not even be cleared. So the notice waits instead — due at `max(close, the grant's own expiry)` — and "after
+the matter closes" comes to mean after the reading actually stopped. The residual is stated rather than
+hidden: a matter nobody ever closes defers its notices for ever, which is §7's own shape, and the control
+is that closing is not the investigator's to withhold.
+
+**Holding a notice means something has to un-hold it, and the first version of that had a hole the
+investigator could walk through.** The date was written by the close, in the close's own transaction — which
+can only reach notices that already exist, and a grant is asked for at one instant and takes effect two
+approvals later. Close the matter in between and the notice was left undated with nothing that would ever
+date it: no second close is permitted, the cron delivers only what is due, and the overdue count is
+*has a due date* by construction, so the row sat there for ever looking present and correct. The reader
+read, every act was recorded, and nobody was ever told — **without deleting an audited row**, arranged by
+whoever opened the matter, which is usually the investigator. Both orderings now write the same instant
+from the same expression, and `doctor` grew a third finding that counts notices which can never fall due —
+because the two checks it already had are both about a row being *removed*, and neither can see one that is
+present and inert.
+
+**What the notice says is a decision, and "your mailbox was accessed" is not it.** It names the reader, the
+scope, the window, the matter's type — and **what was actually done**: queries run, messages those queries
+listed, contents opened, raw messages read, counted off the trail so they cannot drift from the entries they
+describe. That is the difference between a grant nobody used and one under which four hundred messages were
+opened, and without it the notice is the compliance theatre §7 would otherwise be satisfied by. What it
+withholds is the matter's **description** — free text naming an investigation and often a third party, which
+this Node cannot vouch for and must not publish as a system statement — and the ids themselves, which live
+in the trail where a record of what was read belongs. Delivery is in-product because outbound mail is not a
+dependable carrier for a legal obligation on a platform whose transport refuses unverified destinations, and
+the notice is addressed to the **mailbox**: its audience resolves from standing relations, and a supervised
+grant is never one, so the person who read the mail structurally cannot see the notice about having read
+it.
 
 **A cron expression in a doc comment cost a build, so the comment-hazard tripwire grew a third language.** The
 guard has now been narrower than the hazard twice: it started as backticks in CSS, learned about SQL comments
@@ -838,7 +898,7 @@ docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
 docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
-docs/supervised-access.md              matters, the time-boxed grant, which read paths accept it, what is absent
+docs/supervised-access.md              matters, the time-boxed grant, per-act recording, the notice
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

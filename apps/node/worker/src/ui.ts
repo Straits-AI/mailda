@@ -348,6 +348,21 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .notice.bad { border-left-color: var(--alarm); color: var(--text); }
 .errors:empty { display: none; }
 
+/*
+ * The notice band (#63 part B): blueprint 7's notification, delivered in the product.
+ *
+ * Above the stage rather than in the rail, and it is deliberately not dismissible -- there is no control
+ * here because there is no endpoint behind one. Blueprint 7 requires the notification not be disableable
+ * by the investigator, and the cheapest way to hold that is for nothing in the interface to be able to
+ * clear it.
+ *
+ * No colour of its own: it borrows --signal through .notice.told, so the contrast tokens this stylesheet
+ * is checked against (test/node/contrast.test.ts) are unchanged by it.
+ */
+.notices { display: grid; gap: .4rem; margin: 0 0 1.2rem; }
+.notice.told { border-left-color: var(--signal); color: var(--text); }
+.notice .told-meta { color: var(--dim); }
+
 /* ---- ledger ----------------------------------------------------------------------------- */
 
 .ledger-head {
