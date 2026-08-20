@@ -14,7 +14,15 @@ export {
   astSha256, canonicalButlerBytes, canonicalButlerJson, canonicalJson, sha256Hex, textSha256,
 } from "./canonical.ts";
 
+export { reachableFrom, successorsOf } from "./graph.ts";
+
 export {
-  checkButler, describeFindings, parseButler, RESERVED_WITH_REASONS, successorsOf,
+  affordableMaxItems, costBudgetOf, describeCost, priceButler, RUN_BUDGET, RUN_BUDGET_FREE,
+  RUN_BUDGET_FREE_NAME, RUN_BUDGET_NAME, SHIPPED_NODE_COST,
+} from "./cost.ts";
+export type { ButlerCost, LoopCost, NodeCost } from "./cost.ts";
+
+export {
+  checkButler, describeFindings, parseButler, RESERVED_WITH_REASONS,
 } from "./check.ts";
 export type { CheckResult, Finding } from "./check.ts";

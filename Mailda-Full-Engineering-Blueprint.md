@@ -1665,9 +1665,30 @@ that walks its lifecycle state backwards, which was the two-statement way round 
 **A bound that is exceeded fails; it never truncates.** Every `map`/`foreach` declares `maxItems`, and at
 runtime a collection larger than the declared limit fails the step and processes nothing. *"Replied to 100
 of 340 customers and reported success"* is a system reporting something untrue about work owed to customers.
-Whether a declared bound is **affordable** is a separate pass over the whole graph's cost against a
-plan-scoped whole-run subrequest budget, and it is not built: the checker verifies the bound is present and
-well-formed and encodes no affordability number at all.
+
+**Whether a declared bound is affordable is a second refusal, at publication, over the whole graph.** Built.
+It sums the fixed cost of every non-loop node, adds `maxItems × per-item cost` for each loop, and refuses a
+Butler whose total exceeds **one Workflow instance's subrequest pot** — one pot for the entire run, not one
+per step. Three things about it are decisions rather than mechanics:
+
+- **The pot is plan-scoped and a Node cannot detect its own plan**, so the row is chosen rather than looked
+  up: it divides the **Workers Paid** figure, because on the Free figure a `foreach` of 200 sending items is
+  refused four times over and a limit an ordinary Butler touches is a product limit rather than a tripwire.
+  ADR 25 already requires Workers Paid. Every refusal nonetheless prints both rows and the affordable
+  `maxItems` under each, because the one-click install verifies no plan.
+- **A loop is priced by its body, and a loop's own cost is zero.** So a loop over nodes that perform no I/O
+  is affordable at any bound. That is true of subrequests, which is the only currency here with a
+  measurement; CPU cannot be metered from inside a Worker at all, so which of the two binds first is
+  unestablished and is not claimed.
+- **The two failures are different and both refusals say which is which.** An exceeded `maxItems` fails the
+  step and processes nothing. An overspent pot is the platform killing the invocation wherever it has got
+  to, after the effects it already performed — which is why it has to be refused before the Butler can run
+  rather than handled when it happens.
+
+The refusal names the arithmetic, not just the verdict: which nodes outside a loop, which loop, its bound,
+its per-item cost, the product, and the bound that would have fitted. Costs come from
+`docs/receipts/butler-step-cost.md` through the generated `@mailda/budgets`, so the AST package divides
+measurements rather than literals.
 
 **Cycle detection is a checker pass, not a schema constraint**, because JSON Schema cannot express
 acyclicity and pretending otherwise would put the guarantee somewhere it does not hold. Iteration and
@@ -1679,7 +1700,8 @@ read.
 
 **Nothing executes a Butler yet**, and `mailda doctor` says so as a first-class check rather than leaving an
 operator to infer it from an absence. Two guarantees in the list below are also unbuilt and named here
-rather than implied: static taint tracking, and the capability ceiling computed at publication.
+rather than implied: static taint tracking, and the capability ceiling computed at publication. The
+**cost** ceiling at publication is built; the **capability** ceiling is the one still owed.
 
 ### DSL example
 

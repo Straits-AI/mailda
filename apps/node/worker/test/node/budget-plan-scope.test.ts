@@ -162,9 +162,19 @@ const FIGURES: Record<string, Classification> = {
 
   // docs/receipts/butler-step-cost.md
   ...mailda(
+    // Not plan-scoped, and #54 is the ticket that made the distinction load-bearing rather than tidy: these
+    // five are now *divided into* the plan-scoped pot by `packages/butler-ast/src/cost.ts`, which prices a
+    // whole Butler and refuses to publish one that cannot afford itself. The plan lives in the pot's name —
+    // `workflow.paid.subrequest_budget_per_instance`, the row that pass chose and argues for — and nowhere in
+    // the cost of a node, because no Cloudflare plan changes how many queries `sealManifest` performs.
+    // `butler.step_cost_max_lookup` joined them on 20 August, measured at 1 across all five lookup entities
+    // and bounded at 4 so an authority re-check (`authz.check.max_queries`) would still fit: it was the third
+    // shipped node with no figure, which that receipt's own stale_when named and nothing enforced until the
+    // cost table became exhaustive over the shipped set by construction.
     "what Mailda's own Butler nodes cost in subrequests; the plan does not change what the code does",
     "butler.step_cost_max_case_assign", "butler.step_cost_max_case_close",
     "butler.step_cost_max_draft", "butler.step_cost_max_send_propose",
+    "butler.step_cost_max_lookup",
   ),
 
   // docs/receipts/cloudflare-email-sending.md

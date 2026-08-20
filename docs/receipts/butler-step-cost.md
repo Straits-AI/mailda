@@ -13,6 +13,7 @@ values:
   butler.step_cost_max_case_close: 3
   butler.step_cost_max_draft: 10
   butler.step_cost_max_send_propose: 20
+  butler.step_cost_max_lookup: 4
 ---
 
 **Measured:** `test/butler-step-cost.measure.test.ts`, in the real `workerd` runtime against a real D1 and R2,
@@ -73,7 +74,10 @@ observable at runtime and a bound cannot be selected by looking. ADR 25 refuses 
 `mailda deploy` enforces it with an account token, but `deploy-button-install.md` measured the one-click path
 and it verifies no plan at all, so a Free Node is unsupported rather than impossible.
 
-**Which row a publication-time refusal should use is deferred, not chosen here.** The Paid row admits a
+**Which row a publication-time refusal should use is deferred, not chosen here.** *(No longer true — chosen
+on 20 August 2026, and it is **Workers Paid**. See the #54 correction at the foot of this file for the
+argument and for what the rejected row would have bought. The paragraph is kept because the trade-off it
+states is the one that was decided, and a reader who only meets the answer cannot dispute it.)* The Paid row admits a
 Butler that dies mid-run on Free — permissive, the direction that fails under load. The Free row imposes a
 bound a tenth the size on the supported configuration, which is the failure named below: an unusably small
 bound *"gets raised by whoever hits it, without re-measuring"*. No code holds either bound today — the AST
@@ -277,3 +281,125 @@ when the assertion fails:
 Choosing between those needs the AST checker that divides this bound, and it does not exist — so the honest
 state is the measurement recorded, the headroom named, and the decision left in the open for whoever trips it.
 That is the same shape this receipt already uses for the Free-versus-Paid row.
+
+## Correction — 20 August 2026 (#54): the checker exists, the four bounds were re-measured against it, and the headroom on the send path is now zero
+
+The `stale_when` fired on its first clause again — *"a node's implementation gains or loses an I/O
+operation"* — this time for **#66**, whose breaker evaluation runs inside `sealManifest` unconditionally.
+Every figure below was re-measured on the day with `test/butler-step-cost.measure.test.ts` in `workerd`
+against real D1 and R2 through `src/cost-meter.ts`. **No value in this receipt moves. One is added.**
+
+### Old versus new, all four, and the one that had never been measured at all
+
+| Node | 14 Aug measured | 20 Aug measured | Bound | Holds? |
+|:--|--:|--:|--:|:--|
+| `case.assign` | 5 | **5** | 8 | yes, 3 spare |
+| `case.close` | 1 | **1** | 3 | yes, 2 spare |
+| `draft` | 5 | **5** | 10 | yes, 5 spare |
+| `mail.send.propose`, new thread, no policies | 10 | **12** | 20 | yes, 8 spare |
+| `mail.send.propose`, reply, no policies | 14 | **16** | 20 | yes, 4 spare |
+| `mail.send.propose`, **worst realistic seal** | 14 | **20** | 20 | yes, **0 spare** |
+| `lookup` | never measured | **1** | 4 | new value |
+| `map`, `foreach` | never measured | **0** | — | argued, not measured; see below |
+
+The worst realistic seal is a reply, both derived policy conditions in play, an approval gate open and the
+breaker query — measured by `test/policy-cost.measure.test.ts` as `seal/reply-both-derived-conditions`. It
+was 17 on 18 August, 19 after #61, and **20 now**. The two additions since are #60's and #61's, already
+corrected above, plus #66's one breaker statement, which `send-breakers.md` records as taking the bare seal
+from 11 to 12.
+
+**The three Layer 5 changes since 14 August, and where each landed.** #60 put policy evaluation in
+`sealManifest`: +1, up to +3. #66 put breaker evaluation there: +1, unconditional. #62 put the recheck in
+`dispatchOne`, which is the `OutboxSweeper` alarm — **a separate Worker invocation with its own pot** — so it
+spends nothing from a Butler step and its 8 subrequests are `dispatch-recheck-cost.md`'s, not this file's.
+That was already noted here on 20 August and it is re-verified rather than inherited: nothing on the seal path
+changed because of it.
+
+### `butler.step_cost_max_send_propose` stays at 20, and this is the decision the note above deferred
+
+The note above said the choice *"needs the AST checker that divides this bound, and it does not exist"*. It
+exists now — `packages/butler-ast/src/cost.ts` — so the decision is made here rather than left open again.
+
+**It stays at 20.** Not to make a test pass: 20 is the *measured* worst realistic seal, so the checker that
+prices a `mail.send.propose` at 20 is exactly right about the worst path and over-prices the ordinary one
+(12). Raising it to 24 for comfort would make the checker pessimistic about every Butler and would move a
+published figure — the Paid row goes from 500 sends to 416 — to buy nothing that a measurement asked for.
+
+**What it costs, said plainly rather than smoothed over: the headroom is 0 and this is no longer a tripwire.**
+AGENTS.md defines a tripwire as a limit placed past where any good widget goes, and this one is now exactly
+where the widget is. The next operation added to the seal path breaks
+`test/butler-step-cost.measure.test.ts`, and that is the intended behaviour, not a nuisance. Whoever trips it
+should: re-measure first; then either raise the bound *and* redo the loop arithmetic below (at 24, Paid buys
+416 items and Free 41), or make a send cheaper — the **two uncached vault key fetches** this receipt has named
+as the most promising target since 14 August are still uncached, and removing them would return 2 to 3
+operations on every seal.
+
+### `butler.step_cost_max_lookup = 4` — measured 1, and it closes a clause nothing was enforcing
+
+`lookup` shipped in #49 with its cost declared **unmeasured in its own node declaration**, which named this
+ticket as what would close it. `map` and `foreach` were in the same state. That is precisely this receipt's
+`stale_when` clause *"a node type is added to the shipped set without a measurement here"* — fired, and
+unenforced, for three nodes at once, because nothing read the clause.
+
+Measured: **1 subrequest, for all five of `LOOKUP_ENTITIES`** — `message`, `conversation`, `case`, `mailbox`,
+`draft` — each one indexed row read by id and org, no R2 and no vault RPC. Per entity rather than once,
+because five tables could have had five answers and the maximum is the figure a checker has to price.
+
+Sized at **4** against a measured 1. The headroom is not decoration: `authz.check.max_queries = 2` is what
+re-checking the caller's authority over the looked-up object costs, and a `lookup` that grew one would sit at
+3. 4 is one past that. Asserted in the measurement test as `worst + authz.check.max_queries <= 4`, so the
+headroom is the receipted figure rather than a round number.
+
+**`map` and `foreach` are 0, and that is an argument rather than a measurement — labelled as such.** No engine
+exists to meter a loop, so nothing was run. Two things support the 0 and both are written down elsewhere: a
+loop evaluates an expression already in the run's state and enters an edge, which is the same "no I/O" that
+put `guard` and `switch` in the zero column on 14 August; and `butler-step-budget.md`'s probe measured 30
+steps of 100 queries closing at **exactly 3,000**, so a `step.do` costs no subrequest of its own. What a loop
+costs is its body, priced per item.
+
+**The consequence of that 0, stated because it is the honest boundary of the checker.** A loop of a million
+iterations over a body that performs no I/O is **affordable** and publishes. In subrequests — the only
+currency with a measurement behind it — that is true. CPU is the limit that would bind such a Butler and this
+receipt already records that CPU cannot be metered from inside a Worker and that *"which limit binds first,
+CPU or subrequests, is unestablished"*. `packages/butler-ast/test/check.test.ts` asserts the million-transform
+case publishes, on purpose, so the boundary is a pinned property rather than a surprise.
+
+### The pot the checker divides is **Workers Paid**, and the rejected option is priced
+
+Both this receipt and `butler-step-budget.md` recorded the choice of row as deferred to whoever wrote the
+checker. Chosen: `workflow.paid.subrequest_budget_per_instance = 10000`. The argument is in
+`packages/butler-ast/src/cost.ts`, where the number is used, and it is three points long:
+
+1. On the Free row a **good widget touches the tripwire**. A `foreach` of 200 sending items — the fan-out this
+   repository reaches for elsewhere — costs 4,038 with the graph around it, which 1,000 refuses four times
+   over. AGENTS.md: if a good widget hits a budget, the budget is wrong.
+2. The permissive direction lands only on a configuration ADR 25 already refuses, and `mailda deploy`
+   enforces with an account token. Refusing against Free would impose a bound a tenth the size on every
+   **supported** Node to protect an unsupported one.
+3. An unusably small bound has a named failure mode in this very file: it *"gets raised by whoever hits it,
+   without re-measuring"*.
+
+**What the rejected option would have bought.** A Free Node is unsupported but not impossible —
+`deploy-button-install.md` measured the one-click path and it verifies no plan at all. On such a Node a
+Butler this checker admits can die at item 50 of a 200-send loop, having already sealed 50 manifests. The
+Free row would have prevented exactly that. So the refusal **prints both rows**: it names the Paid pot it
+divided, the Free pot it did not, and the affordable `maxItems` under each.
+
+### The headline arithmetic is 498, not 500, and that is the point of summing the graph
+
+`10,000 / 20 = 500` is what a sending loop costs **alone**. The checker never sees a loop alone. In the
+worked example the guard, the assign, the draft and the propose around the loop have already spent 38, so:
+
+```
+Workers Paid   (10,000 - 38) / 20  =  498 items, and the 499th is over by 18
+Workers Free    (1,000 - 38) / 20  =   48 items
+```
+
+Both numbers are asserted in `packages/butler-ast/test/check.test.ts` — 498 publishes, 499 is refused with
+the arithmetic named — so the two rows above cannot drift from the code that applies them. The `500` and `50`
+rows earlier in this receipt are still correct as *what a loop costs alone*, and are the wrong number to hand
+an author, which is why the refusal computes the subtraction instead of quoting them.
+
+**A per-node check would have missed the shape this rule exists for**, and it now has a fixture: 3,334
+`case.close` nodes in a chain, no loop and no single node costing more than 3, summing to 10,002 and refused.
+3,333 of them publish.

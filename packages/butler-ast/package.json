@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mailda/budgets": "workspace:*",
     "@mailda/runtime": "workspace:*",
     "zod": "^4.1.13"
   },

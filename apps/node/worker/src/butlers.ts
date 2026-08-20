@@ -109,6 +109,20 @@ function refuseFindings(findings: readonly Finding[]): CallerError {
  * `packages/butler-ast`, and a node moving from shipped to reserved — which is exactly what happened to
  * `template.render` — makes a stored draft unpublishable. Failing closed at the second gate is the only
  * behaviour that does not publish a program the current checker refuses.
+ *
+ * **"Prices" now means two things, and both refusals come back through this one path.** `checkButler` prices
+ * the graph against one Workflow instance's subrequest pot (#54) and refuses a Butler that cannot afford to
+ * run; the size bound below prices the *bytes* against the row that stores them. The cost refusal arrives as
+ * an ordinary `Finding`, so it needs no code here — which is what one vocabulary for every refusal buys.
+ *
+ * It applies to a **draft** as well as to a publication, deliberately. AGENTS.md: a developer sees the limit
+ * before they hit it. An author who saves an unaffordable Butler and is told at publication has already
+ * written it; being told at the save is the earlier of the two moments this Node has.
+ *
+ * Both of those are claims about *this* path, so `test/butlers.test.ts` holds them here rather than in
+ * `packages/butler-ast`, which has no store and no draft: a `maxItems` of 499 is refused at
+ * `createButlerDraft` with its arithmetic and its 498, and 498 is stored and published. A checker whose most
+ * expensive refusal never reached a caller would have satisfied every assertion in the package.
  */
 async function checked(source: string): Promise<{ ast: Butler; astJson: string; digests: { ast: string; source: string } }> {
   let parsed: unknown;

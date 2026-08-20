@@ -116,12 +116,13 @@ export const NODE_KINDS = {
   lookup: {
     status: "ships",
     because:
-      "Reads one row of storage that exists, by id, from a closed set of entities. **Its cost is "
-      + "unmeasured**: docs/receipts/butler-step-cost.md prices the four effect nodes and puts the seven "
-      + "pure-control nodes at zero, and `lookup`, `map` and `foreach` appear in neither column. That "
-      + "receipt's own stale_when names the case — a node in the shipped set with no measurement here — "
-      + "and #54 is what closes it. Nothing in this package needs the number, because nothing here prices "
-      + "anything.",
+      "Reads one row of storage that exists, by id, from a closed set of entities. Measured by #54 at **1 "
+      + "subrequest for every one of LOOKUP_ENTITIES** and bounded at butler.step_cost_max_lookup=4, which "
+      + "leaves room for an authority re-check at authz.check.max_queries=2. It was the third shipped node "
+      + "with no figure — `map` and `foreach` were the others, and are zero — which is a stale_when clause "
+      + "docs/receipts/butler-step-cost.md had carried unenforced since 14 August. src/cost.ts is now "
+      + "exhaustive over the shipped set by construction, so the next node that ships without a "
+      + "measurement does not compile.",
   },
 
   /* ---- effects over storage that exists ---- */
@@ -260,12 +261,17 @@ export const RESERVED_KINDS = NODE_KIND_NAMES.filter((kind): kind is ReservedKin
  * owed to customers, and a `run.truncated` flag only helps somebody who reads it while every downstream
  * count stays false about the world.
  *
- * **What this package does not decide: whether a given `maxItems` is affordable.** That is #54's, and its
- * arithmetic moved twice in one week — #68 found the subrequest budget is plan-scoped (10,000 Paid, 1,000
- * Free) and #62 found the recheck runs in a separate invocation. The checker here verifies the bound is
- * *present and well-formed*; the affordability pass sums the fixed cost of every non-loop node, adds
- * `maxItems × per-item cost` for each loop, and compares against a whole-run budget. No number from that
- * arithmetic appears in this package, deliberately.
+ * **Whether a given `maxItems` is affordable is a separate question, and `src/cost.ts` now answers it.**
+ * `check.ts` verifies the bound is *present and well-formed*; the affordability pass sums the fixed cost of
+ * every non-loop node, adds `maxItems × per-item cost` for each loop, and refuses a graph that exceeds one
+ * Workflow instance's subrequest pot. The two failures are different and both refusals say so: an exceeded
+ * bound at runtime fails the step and processes nothing, while an overspent pot kills the invocation
+ * mid-loop, after the effects it already performed.
+ *
+ * A loop's own cost is **zero** — it evaluates an expression already in the run's state and enters an edge,
+ * the same "no I/O" that puts `guard` and `switch` at zero. What a loop costs is its body, per item. So a
+ * loop over a body that performs no I/O is affordable at any bound, which is true of subrequests and is the
+ * stated boundary of that pass rather than a hole in it: CPU cannot be metered from inside a Worker at all.
  */
 export const LOOP_KINDS = ["map", "foreach"] as const satisfies readonly ShippedKind[];
 export type LoopKind = (typeof LOOP_KINDS)[number];

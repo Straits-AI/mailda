@@ -156,6 +156,23 @@ that refusal is out of band: `deploy-button-install.md` measured the one-click p
 R2 from the build's own `wrangler deploy` and verifies no plan at all. So "unsupported" is not the same as
 "cannot exist", which is why the free row is here rather than omitted.
 
+## Note, 20 August 2026: the deferred choice was made, and it is Workers Paid (#54)
+
+**No value in this receipt moves and no `stale_when` clause fired.** The paragraph above ends *"Which figure
+a derived bound should use is deferred, deliberately … the Butler AST checker does not exist yet, so no code
+holds a wrong bound today"*. It exists now — `packages/butler-ast/src/cost.ts` — and it divides
+**`workflow.paid.subrequest_budget_per_instance`**.
+
+The argument is where the number is used rather than restated here, and `butler-step-cost.md`'s #54
+correction carries it in full. In one line: on the Free row a `foreach` of 200 sending items — the fan-out
+this repository reaches for elsewhere — is refused four times over, which makes it a limit a good widget
+touches rather than a tripwire, and the permissive direction lands only on the plan ADR 25 already refuses.
+
+**The free row is not decoration for having lost.** Every refusal the checker emits prints both pots and the
+affordable `maxItems` under each, so an operator who reached a Free Node through the one-click path — which
+`deploy-button-install.md` measured as verifying no plan at all — meets the 1,000 in the refusal rather than
+in a dead Workflow instance. That is the whole reason this receipt carries the row.
+
 **Enforced, not just written down:** `test/node/budget-plan-scope.test.ts` fails if any plan-conditional
 budget key stops naming its plan, and pins these two figures equal to the other three names the same ceiling
 is recorded under (`d1.paid`/`d1.free.max_queries_per_invocation`, `doctor.paid`/`doctor.free.max_subrequests`)

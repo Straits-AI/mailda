@@ -21,7 +21,7 @@ import { NODE_KIND_NAMES, NODE_KINDS, type NodeKind } from "./nodes.ts";
  * |:--|:--|:--|
  * | acyclicity | `check.ts` | JSON Schema cannot express it. Pretending otherwise puts the guarantee where it does not hold. |
  * | reserved-node rejection | `check.ts` | A reserved node must **parse** and then be refused with a reason. |
- * | `maxItems` affordability | #54 | Its arithmetic depends on the whole graph's cost and on a plan-scoped budget. No number from it appears here. |
+ * | `maxItems` affordability | `cost.ts` | Its arithmetic depends on the whole graph's cost, not on one node's shape, so it cannot be a field constraint. No number from it appears here. |
  * | the expression language | #52 / #50 | An `Expr` is an opaque non-empty string. This package does not parse `${event.message_id}`, and inventing a grammar to look thorough would be inventing a language nothing executes. |
  * | stored size | `apps/node/worker/src/butlers.ts` | A row limit is a storage fact, not an AST fact. |
  *
@@ -63,10 +63,11 @@ export const ref = nodeId.nullish();
 /**
  * The bound on a loop: present, an integer, at least one.
  *
- * `1` needs no receipt — it means "one". There is deliberately **no upper bound**: whether a given
- * `maxItems` is affordable is #54's question, it depends on the cost of the rest of the graph, and the
- * budget it divides is plan-scoped. A ceiling written here would be a number with no measurement behind
- * it, in the permissive-looking direction that gets raised by whoever hits it.
+ * `1` needs no receipt — it means "one". There is deliberately **no upper bound here**, and #54 did not add
+ * one: whether a given `maxItems` is affordable depends on the cost of the rest of the graph, so the same
+ * bound is fine in one Butler and refused in another. A ceiling written in this field would be a single
+ * number standing in for that arithmetic, which is how 500 — what a sending loop costs *alone* — would have
+ * been written down when the real answer next to a five-node Butler is 498.
  */
 export const maxItems = z.int().min(1, "a loop's maxItems must be at least 1");
 
@@ -82,7 +83,37 @@ export const lookupEntity = z.enum(LOOKUP_ENTITIES);
 /** A JSON Schema, carried inline by `validate`. Not interpreted here; the engine hands it to a validator. */
 const inlineJsonSchema = z.record(z.string(), z.unknown());
 
-function shipped<K extends NodeKind, S extends z.ZodRawShape>(kind: K, shape: S) {
+/**
+ * A shipped node: the envelope every node carries, plus its own fields.
+ *
+ * **The shape may not declare `id` or `type`, and that is a compile error rather than a convention.** The
+ * spread puts a node's own fields *after* the envelope's, so a shape declaring `id` silently replaces the
+ * node's identifier with its own field. `lookup` did exactly that — `{ entity, id: expr, as, next }` — and
+ * the result was a node with **four** fields instead of five, where one `id` had to serve both as the node's
+ * name in the graph and as the expression naming the row to read. Two consequences, neither of which any
+ * test could see: a `lookup` could not both be pointed at by an edge and say what to look up, and its
+ * identifier escaped the `nodeId` pattern entirely, so `id: "${event.case_id}"` was an accepted node id.
+ *
+ * Found by #54, which needed a `lookup` fixture in order to price one. The field is `entityId` now, and the
+ * `guard` parameter is why the next shape cannot repeat it.
+ *
+ * **Why a phantom rest parameter and not `S extends ZodRawShape & { id?: never }`.** That was tried first and
+ * it compiles — while collapsing `ButlerNode` to `never`, because constraining `S` puts `id?: never` into the
+ * inferred shape and the spread below then infers nothing useful. A type that silently destroys the
+ * discriminated union to enforce a naming rule is a worse landmine than the rule it enforces. This form
+ * leaves `S` untouched: with no forbidden key `guard` is `[]` and every call site is unchanged; with one, the
+ * call fails to compile because it is missing an argument whose label names the offending key.
+ */
+type EnvelopeKeysIn<S> = Extract<keyof S, "id" | "type">;
+
+function shipped<K extends NodeKind, S extends z.ZodRawShape>(
+  kind: K,
+  shape: S,
+  ...guard: EnvelopeKeysIn<S> extends never
+    ? []
+    : [aNodeShapeMayNotDeclare: EnvelopeKeysIn<S>]
+) {
+  void guard;
   return z.object({ id: nodeId, type: z.literal(kind), ...shape });
 }
 
@@ -132,7 +163,11 @@ const NODE_SCHEMAS = {
   /* ---- data ---- */
   transform: shipped("transform", { as: bindingName, value: expr, next: ref }),
   validate: shipped("validate", { value: expr, schema: inlineJsonSchema, next: ref }),
-  lookup: shipped("lookup", { entity: lookupEntity, id: expr, as: bindingName, next: ref }),
+  /**
+   * `entityId`, not `id` — see `shipped()`. The row to read is a different thing from the node reading it,
+   * and one field cannot be both.
+   */
+  lookup: shipped("lookup", { entity: lookupEntity, entityId: expr, as: bindingName, next: ref }),
 
   /* ---- effects ---- */
   "case.assign": shipped("case.assign", { caseId: expr, assignee: expr, next: ref }),

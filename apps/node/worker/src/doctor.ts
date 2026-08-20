@@ -461,7 +461,10 @@ function butlerExecutionCheck(): Finding {
       "Butler published now is the exact program a later engine will execute. Reserved nodes (llm.*, " +
       "label, route, archive, quarantine, case.upsert, case.task, case.note, connector.*, " +
       "approval.request, template.render) parse and are refused at publication with a reason naming the " +
-      "node. Whether a declared maxItems is affordable is not checked at all yet.",
+      "node. A Butler that could not afford to run is also refused: the whole graph is priced against one " +
+      "Workflow instance's subrequest pot, which this Node divides at the Workers Paid figure of 10,000 " +
+      "because it cannot detect its own plan and ADR 25 requires Paid. On Workers Free the pot is 1,000 and " +
+      "every such refusal prints that row too. What is still not checked is the capability ceiling.",
   };
 }
 

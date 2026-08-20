@@ -473,6 +473,47 @@ describe("what never reaches the store", () => {
     })).rejects.toThrow(/E_BUDGET_EXCEEDED[\s\S]*d1\.max_row_bytes/);
   });
 
+  it("refuses a Butler that cannot afford to run, at the draft, with the arithmetic (#54)", async () => {
+    /*
+     * `src/butlers.ts` claims that the affordability refusal *"arrives as an ordinary `Finding`, so it needs
+     * no code here"* and that it *"applies to a draft as well as to a publication, deliberately"*. Both are
+     * claims about this path, and until this test existed nothing enforced either: every affordability
+     * assertion lived in `packages/butler-ast`, which has no store and no draft. A checker whose most
+     * expensive refusal never reached a caller would satisfy all of them.
+     *
+     * Bounded at the boundary rather than at something obviously huge, so the test also pins that the store
+     * accepts the largest loop that fits — a refusal that fired one item early would be invisible to a
+     * fixture of a million.
+     */
+    const unaffordable = leadIntake();
+    (unaffordable["nodes"] as unknown[]).push(
+      { id: "fan_out", type: "foreach", over: "${steps.reply.recipients}", as: "r", maxItems: 499, body: "send_one", next: null },
+      { id: "send_one", type: "mail.send.propose", draft: "${steps.reply.draft_id}", next: null },
+    );
+    (unaffordable["nodes"] as Array<Record<string, unknown>>)[3]!["next"] = "fan_out";
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "too-much", source: source(unaffordable),
+    })).rejects.toThrow(
+      /E_BUTLER_UNAFFORDABLE[\s\S]*10018 subrequests[\s\S]*workflow\.paid\.subrequest_budget_per_instance=10000/,
+    );
+    // The whole point of the sum: the fix names the bound that would have worked, not just the excess.
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "too-much", source: source(unaffordable),
+    })).rejects.toThrow(/lower fan_out's maxItems to 498 or fewer/);
+    // Nothing reached the store, which is what makes "only programs that check" true of this refusal too.
+    const { results } = await testEnv.CATALOG.prepare("SELECT id FROM butlers WHERE org_id = ?")
+      .bind(ORG).all();
+    expect(results).toEqual([]);
+
+    // And one item fewer is stored and publishable, so the refusal is a boundary rather than a wall.
+    (((unaffordable["nodes"] as Array<Record<string, unknown>>)
+      .find((node) => node["id"] === "fan_out"))!)["maxItems"] = 498;
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "just-affordable", source: source(unaffordable),
+    });
+    expect((await publishButler(testEnv, atTime(AUGUST_20), ORG, ADMIN, draft.butlerId)).version).toBe(1);
+  });
+
   it("refuses at publication a draft the current checker no longer admits", async () => {
     // The re-check at publish, proved the only way it can be without a second checker: write a draft
     // through the normal path, corrupt the stored source behind it, then publish. A publish that trusted

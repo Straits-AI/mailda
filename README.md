@@ -839,10 +839,60 @@ forever.
 
 **Every loop declares its own bound, and a bound that is exceeded fails.** It never truncates: *"replied to
 100 of 340 customers and reported success"* is not lost work, it is a system reporting something untrue
-about work owed to customers. The checker verifies a bound is present and well-formed and says **nothing**
-about whether it is affordable — that arithmetic moved twice in one week, it is per whole run rather than per
-step, and it is plan-scoped at 10,000 against 1,000 while nothing inside a Worker can detect the plan. So
-the seam is named and left empty rather than filled with the wrong number in the permissive direction.
+about work owed to customers.
+
+**And a Butler that cannot afford to run is now refused before it can try.** The checker used to verify a
+bound was present and well-formed and say nothing about whether it was affordable, because that arithmetic
+had moved twice in one week and the pot it divides is plan-scoped while nothing inside a Worker can detect
+the plan. The seam was named and left empty rather than filled with the wrong number. It is filled now, and
+four things about the filling are worth more than the feature.
+
+**A loop cannot be priced in isolation, which is why the answer is 498 and not 500.** The receipt's headline
+is `10,000 / 20 = 500` sending items per run. No loop is alone: in the worked example the guard, the assign,
+the draft and the propose around it have already spent 38, so the pot has room for 498 and the 499th is over
+by eighteen. The rule is therefore *sum the graph* — every non-loop node's fixed cost, plus `maxItems ×
+per-item cost` for each loop, with nested loops multiplying. That also catches the shape a per-node check
+would wave through: 3,334 `case.close` nodes, the cheapest effect in the set, no single one of them large,
+and together two subrequests over the pot.
+
+**The figures were re-measured before anything divided them, and one of them has run out of headroom.** All
+four per-node costs were measured on 14 August and three Layer 5 changes had since added I/O to the send
+path, which is the receipt's own first staleness clause. Re-run: `case.assign` 5, `case.close` 1 and `draft`
+5 are unchanged, and `mail.send.propose` went from 10 to **12** on a bare new thread and from 14 to **16** on
+a reply. The **worst realistic seal** — a reply, both derived policy conditions, an approval gate and the
+breaker query — now measures **20** against a bound of **20**. The bound holds and it is left alone; what is
+said plainly instead is that its headroom is zero, so it has stopped being a tripwire past where any good
+widget goes and the next operation added to a send breaks the measurement rather than sneaking past it. That
+is the intended behaviour of a receipt, not a nuisance. A fifth node was measured for the first time:
+`lookup` shipped with *"its cost is unmeasured"* written into its own declaration, at 1 subrequest for all
+five entities, and the price list is now exhaustive over the shipped set **by construction** — the next node
+that ships without a measurement does not compile.
+
+**Which plan's pot to divide was a real choice and it is argued in the code.** The pot is 10,000 subrequests
+per Workflow instance on Workers Paid and 1,000 on Workers Free, and a Node cannot ask which it is on —
+`doctor` reports that gap rather than guessing. Dividing the Free figure would refuse a `foreach` of 200
+sending items, which is the fan-out this repository reaches for elsewhere, so the tripwire would sit *before*
+where a good Butler goes; and the permissive direction lands only on a plan ADR 25 already refuses at
+install. So it divides Paid — and every refusal prints **both** rows and the affordable `maxItems` under
+each, because the one-click install verifies no plan at all and an operator on Free should meet that
+arithmetic in a refusal rather than in a dead run.
+
+**The refusal names the arithmetic, and the boundary of what it can claim is asserted rather than assumed.**
+An author reads which nodes outside a loop, which loop, its bound, its per-item cost, their product, and the
+bound that would have fitted. It also distinguishes the two failures it sits between: an exceeded `maxItems`
+fails the step and processes nothing, while an overspent pot is the platform killing the invocation wherever
+it had got to, after the effects it already performed. And a loop whose body performs no I/O is affordable at
+any bound, including a million — true in subrequests, the only currency with a measurement behind it, since
+CPU cannot be metered from inside a Worker at all. That case is a passing test rather than a footnote, so the
+limit of the claim is pinned in the same place as the claim. Writing an invented per-iteration cost to make
+the million look handled would have been the one thing this whole mechanism exists to prevent.
+
+**One defect fell out of needing a fixture.** Pricing a `lookup` meant writing one, and a `lookup` could not
+be written: its schema declared a field called `id` for the row to read, which the spread quietly put *over*
+the node's own identifier, so the node had four fields where it should have five and one `id` was doing both
+jobs. Its identifier had also escaped the node-id pattern entirely, making `id: "${event.case_id}"` a legal
+node name. The field is `entityId` now, and the collision is a **compile** error rather than a convention —
+no future node's shape can declare `id` or `type` at all.
 
 **One divergence stopped being latent.** The contract required a case id spelled `case_`; the Node minted
 `cas_`. A case id this Node produces could not pass its own contract's validation, and it was invisible only

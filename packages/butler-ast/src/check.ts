@@ -4,29 +4,35 @@ import {
   butler, butlerEnvelope, schemaFor, type Butler, type ButlerNode,
 } from "./ast.ts";
 import {
+  affordableMaxItems, describeCost, priceButler, RUN_BUDGET, RUN_BUDGET_FREE, RUN_BUDGET_FREE_NAME,
+  type ButlerCost,
+} from "./cost.ts";
+import { successorsOf } from "./graph.ts";
+import {
   isLoopKind, isNodeKind, isShipped, NODE_KINDS, RESERVED_KINDS, SHIPPED_KINDS,
-  type NodeKind, type ShippedKind,
+  type NodeKind,
 } from "./nodes.ts";
 
 /**
- * The structural checker: what can be decided about a Butler without running it (#49).
+ * The checker: what can be decided about a Butler without running it (#49, #54).
  *
  * ## What it decides, and what it deliberately leaves to somebody else
  *
  * | Decided here | Left, and to whom |
  * |:--|:--|
  * | a reserved node is refused, by name, with the reason | whether a node's *expression* is safe — #52, the taint checker |
- * | the graph is acyclic | whether the graph is *affordable* — #54 |
- * | every loop declares a well-formed `maxItems` | what a `maxItems` may be — #54 |
- * | every edge names a node that exists | what happens at runtime when a collection exceeds it — #50's engine |
- * | every node's payload matches its declared shape | whether the stored bytes fit a row — `src/butlers.ts` |
+ * | the graph is acyclic | what happens at runtime when a collection exceeds its bound — #50's engine |
+ * | every loop declares a well-formed `maxItems` | whether the stored bytes fit a row — `src/butlers.ts` |
+ * | every edge names a node that exists | |
+ * | every node's payload matches its declared shape | |
+ * | **the whole graph is affordable against one run's subrequest pot** | |
  *
- * **#54's seam, named rather than filled.** The affordability pass sums the fixed cost of every non-loop
- * node, adds `maxItems × per-item cost` for each loop, and refuses publication when the total exceeds a
- * whole-run budget with headroom. Its inputs moved twice in one week — the budget is per *instance* rather
- * than per step (#62's correction to #50), and it is plan-scoped at 10,000 Paid and 1,000 Free (#68) — and
- * the plan is not detectable from inside a Worker. So no number from that arithmetic appears in this file,
- * and the absence is the decision rather than an omission.
+ * **#54 filled the seam #49 pinned.** The affordability pass sums the fixed cost of every non-loop node,
+ * adds `maxItems × per-item cost` for each loop, and refuses publication when the total exceeds the pot. The
+ * arithmetic and the choice of pot are in `cost.ts`; what this file adds is *when* it runs and what the
+ * refusal says. #49 recorded the absence of a number here as a decision, and it was the right one then: the
+ * inputs moved twice that week and the plan-scoped pot had not been chosen. It has now, and it is Workers
+ * Paid — argued in `cost.ts`'s header, where the number lives.
  *
  * ## Why iteration and acyclicity are compatible claims
  *
@@ -59,45 +65,8 @@ export interface Finding {
 }
 
 export type CheckResult =
-  | { ok: true; ast: Butler; findings: [] }
+  | { ok: true; ast: Butler; cost: ButlerCost; findings: [] }
   | { ok: false; findings: Finding[] };
-
-/**
- * Every node id a node names, forward or otherwise. Exhaustive over the shipped kinds by construction:
- * a new shipped kind with no entry here does not compile.
- *
- * Split from `SUCCESSORS` because the two questions are different. `references` answers "does this id
- * exist", which every named id must satisfy. `successors` answers "does control flow go there", which is
- * the only edge set a cycle can be made of. Today the shipped set has no backward reference, so the two
- * coincide — kept separate anyway, because collapsing them would make the first backward reference a
- * silent false cycle.
- */
-const SUCCESSORS: {
-  [K in ShippedKind]: (node: Extract<ButlerNode, { type: K }>) => Array<string | null | undefined>;
-} = {
-  guard: (node) => [node.then, node.otherwise],
-  switch: (node) => [...node.cases.map((branch) => branch.next), node.default],
-  map: (node) => [node.body, node.next],
-  foreach: (node) => [node.body, node.next],
-  join: (node) => [node.next],
-  wait: (node) => [node.next],
-  stop: () => [],
-  transform: (node) => [node.next],
-  validate: (node) => [node.next],
-  lookup: (node) => [node.next],
-  "case.assign": (node) => [node.next],
-  "case.close": (node) => [node.next],
-  draft: (node) => [node.next],
-  "mail.send.propose": (node) => [node.next],
-};
-
-/** The forward edges of one checked node. */
-export function successorsOf(node: ButlerNode): string[] {
-  const kind = node.type as NodeKind;
-  if (!isShipped(kind)) return [];
-  const extract = SUCCESSORS[kind] as (n: ButlerNode) => Array<string | null | undefined>;
-  return extract(node).filter((id): id is string => typeof id === "string");
-}
 
 function issuesOf(error: z.ZodError): string {
   return error.issues
@@ -216,8 +185,8 @@ export function checkButler(input: unknown): CheckResult {
           why: "every loop declares its own bound, and a collection larger than the bound fails the step and "
             + "processes nothing. Truncation was refused: \"replied to 100 of 340 customers and reported "
             + "success\" is a system reporting something untrue about work owed to customers",
-          fix: `give ${node.id} a maxItems of at least 1. Whether a particular bound is affordable is `
-            + "checked separately, against the cost of the whole graph (#54)",
+          fix: `give ${node.id} a maxItems of at least 1. Whether that bound is affordable is then checked `
+            + "against the cost of the whole graph, and E_BUTLER_UNAFFORDABLE names the arithmetic",
         });
         continue;
       }
@@ -303,6 +272,24 @@ export function checkButler(input: unknown): CheckResult {
 
   for (const node of checkable) walk(node.id);
 
+  /*
+   * ---- affordability (#54) ----
+   *
+   * Last, and only on an otherwise clean graph. Every finding above describes a graph whose cost is not
+   * defined: a dangling edge means a node the sum cannot find, an unbounded loop means a `maxItems` there is
+   * nothing to multiply by, a reserved node means an operation nobody has priced. Pricing one of those would
+   * produce a second finding with a fabricated number in it, and a fabricated number in a refusal is worse
+   * than a missing one — it ends the reader's question instead of prompting it.
+   *
+   * The cost is computed either way, because an author who publishes successfully should be able to see what
+   * their Butler costs rather than only hearing about it when it is too much. It is on the ok branch of
+   * `CheckResult`.
+   */
+  if (findings.length > 0) return { ok: false, findings };
+
+  const cost = priceButler(checkable);
+  if (cost.total > RUN_BUDGET) findings.push(unaffordable(cost));
+
   if (findings.length > 0) return { ok: false, findings };
 
   /*
@@ -325,7 +312,72 @@ export function checkButler(input: unknown): CheckResult {
     };
   }
 
-  return { ok: true, ast: whole.data, findings: [] };
+  return { ok: true, ast: whole.data, cost, findings: [] };
+}
+
+/**
+ * The refusal for a Butler that cannot afford itself.
+ *
+ * AGENTS.md §3's four parts, and the third one — *the ask* — is a sum rather than a single number, so it is
+ * spelled out instead of stated: which nodes outside a loop, which loop, its bound, its per-item cost and
+ * their product. A developer who reads only `10018 > 10000` learns that something is too big. One who reads
+ * `foreach fan_out costs maxItems=499 × 20 per item = 9980` knows which line of their Butler to edit and to
+ * what, which is the standard AGENTS.md sets for an agent fixing its own mistake.
+ *
+ * **Both plans appear.** The pot divided is Workers Paid, for the reasons in `cost.ts`; the Free figure is
+ * printed beside it because a Free Node is unsupported rather than impossible, and an operator on one should
+ * meet the arithmetic here rather than in a dead instance.
+ */
+function unaffordable(cost: ButlerCost): Finding {
+  const suggestion = affordableMaxItems(cost);
+  const freeLoop = cost.loops[0];
+  const freeAdvice = freeLoop === undefined || freeLoop.perItem === 0 || freeLoop.nested
+    ? `the whole graph would have to fit inside ${RUN_BUDGET_FREE}`
+    : `${freeLoop.id}'s affordable maxItems there is `
+      + `${Math.max(0, Math.floor((RUN_BUDGET_FREE - (cost.total - freeLoop.total)) / freeLoop.perItem))}`;
+
+  const fix = suggestion === null
+    ? "take work out of the graph — there are fewer, or cheaper, nodes to run — or split it into more than "
+      + "one Butler. Nothing here is a loop bound that could be lowered instead"
+    : `lower ${suggestion.loop.id}'s maxItems to ${suggestion.maxItems} or fewer, which is what is left of `
+      + `the pot after the rest of the graph, or take work out of the loop's body`;
+
+  /*
+   * Which node to name, and when to name none.
+   *
+   * A loop, if there is one that **costs something** — it is the multiplier and therefore the thing to
+   * change. A loop whose body performs no I/O contributes nothing to the total, so naming it sends the author
+   * to the one line in their Butler that is provably not the reason: a `foreach` of a million pure
+   * transforms beside 3,334 `case.close` nodes was blamed for an overspend it contributed 0 to, and the
+   * sentence below told the same author that the run would be killed "mid-loop" when the loop is free and the
+   * chain is what empties the pot. `cost.loops` is sorted dearest first, so the first entry with a non-zero
+   * total is the dearest contributing loop.
+   *
+   * Otherwise the dearest node, but **only if it actually dominates**: a chain of 3,334 identical
+   * `case.close` nodes has a "dearest" that is simply the first one the scan reached, and printing
+   * `node close_0` would send an author to a line that is no more at fault than the other 3,333. A tenth of
+   * the total is the threshold; below it the finding carries no node, and `what` already says how many nodes
+   * there are and what they cost together, which is the true answer.
+   */
+  const costlyLoop = cost.loops.find((loop) => loop.total > 0);
+  const dominant = cost.dearest !== null && cost.dearest.total * 10 > cost.total
+    ? cost.dearest.id
+    : undefined;
+
+  return {
+    code: "E_BUTLER_UNAFFORDABLE",
+    node: costlyLoop?.id ?? dominant,
+    what: `this Butler costs ${describeCost(cost)}`,
+    why: "a Workflow instance has one subrequest pot for the whole run rather than one per step "
+      + "(workflow.budget_unit_is_instance=1, measured), so a run that asks for more does not fail a step and "
+      + `carry on — the invocation is killed wherever it has got to${costlyLoop === undefined ? "" : ", mid-loop"}`
+      + ", after the effects it already performed. A loop bound that is exceeded at runtime fails the step "
+      + "and processes nothing; the platform's ceiling extends no such courtesy, which is why this is refused "
+      + "at publication, the one place it is knowable before any mail moves",
+    fix: `${fix}. This Node prices against Workers Paid because ADR 25 requires it; on Workers Free the pot `
+      + `is ${RUN_BUDGET_FREE_NAME}=${RUN_BUDGET_FREE} and ${freeAdvice}. `
+      + "receipt docs/receipts/butler-step-cost.md",
+  };
 }
 
 /** Renders findings the way AGENTS.md §3 requires, for an error message or a CLI. */

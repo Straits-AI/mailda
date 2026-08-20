@@ -23,7 +23,9 @@ appears — which is what stops that sentence outliving its truth.
 | `packages/butler-ast/src/nodes.ts` | the node set: one declaration of shipped and reserved, read by the schema *and* the checker |
 | `packages/butler-ast/src/ast.ts` | the Zod 4 schema, the generated discriminated union, the emitted JSON Schema |
 | `packages/butler-ast/src/canonical.ts` | canonical serialization, and the two digests a version stores |
-| `packages/butler-ast/src/check.ts` | the structural checker and its findings |
+| `packages/butler-ast/src/graph.ts` | the successor edges and reachability, read by the checker *and* the cost pass |
+| `packages/butler-ast/src/cost.ts` | the price list, the whole-graph arithmetic, and which plan's pot it divides |
+| `packages/butler-ast/src/check.ts` | the checker and its findings |
 | `apps/node/worker/migrations/0027_butlers.sql` | `butlers`, `butler_versions`, and the trigger that freezes a published version |
 | `apps/node/worker/src/butlers.ts` | draft, edit, publish; authorization; the one size bound |
 | `packages/runtime/src/ids.ts` | the identifier-prefix registry — `btl_`, `btv_`, and the `case_`/`cas_` resolution |
@@ -140,6 +142,18 @@ branch is ever live, and claiming it waits for several would be a name overclaim
 discarded its results, or a `foreach` that quietly accumulated them, would be a name overclaiming what the
 node does.
 
+**A node's own fields may not be called `id` or `type`, and that is a compile error.** Found by
+[#54](https://github.com/Straits-AI/mailda/issues/54), which needed a `lookup` fixture in order to price
+one and could not write a usable `lookup`. Its schema was `{ entity, id: expr, as, next }`, and the helper
+that builds a shipped node spreads a node's own fields *after* the envelope's — so that `id` silently
+replaced the node's identifier. The node had **four** fields where it should have five, one `id` doing two
+jobs: a `lookup` could not both be pointed at by an edge and say which row to read, and its identifier had
+escaped the `nodeId` pattern entirely, making `id: "${event.case_id}"` a legal node name that every other
+node type would have refused. The field is `entityId` now, and the helper's signature (`id?: never`) makes
+the collision fail `pnpm typecheck` rather than depending on anyone remembering. `test/nodes.test.ts` also
+asserts at runtime that every node type's `id` is the same `nodeId` schema object, so a shape that shadowed
+it with anything at all — even another `nodeId` — fails twice.
+
 ### No `.max()` anywhere
 
 There is no `maxLength` on a node id, no ceiling on the number of nodes, and no upper bound on `maxItems` or
@@ -169,22 +183,121 @@ every cycle in it is a mistake, and repetition is expressible in exactly one pla
 mandatory. A body node whose `next` points back at its own loop header **is** a cycle and is refused, which
 is the case that would otherwise be an unbounded loop wearing a bounded loop's clothes.
 
-### Affordability is #54's, and no number from it is here
+### Affordability: a second refusal, over the whole graph
 
-The checker verifies that `maxItems` is **present and well-formed**: an integer of at least one. It says
-nothing about whether a particular bound can be afforded, and that absence is the decision rather than an
-omission.
+The checker verifies that `maxItems` is **present and well-formed** — an integer of at least one — and then
+prices the graph. [#54](https://github.com/Straits-AI/mailda/issues/54)'s rule, from
+`docs/receipts/butler-step-cost.md`: *sum the fixed cost of every non-loop node, add `maxItems × per-item
+cost` for each loop, and refuse publication if the total exceeds the budget with headroom.*
 
-[#54](https://github.com/Straits-AI/mailda/issues/54) measured the arithmetic and it moved twice in one
-week. The subrequest budget is **per Workflow instance, not per step** (a correction to #50), so a bounded
-loop spends from the same pot as every other step in the run; and it is **plan-scoped** — 10,000 on Workers
-Paid, 1,000 on Free ([#68](https://github.com/Straits-AI/mailda/issues/68)) — while nothing inside a Worker
-can detect the plan. Of those two figures the Paid one is measured, twice and from two directions; the Free
-one is **documented and not measured**, and `docs/receipts/butler-step-budget.md` carries that label. Both
-are repeated here rather than re-derived, and neither appears in this package's code. The rule #54 arrived at is *sum the fixed cost of every non-loop node, add `maxItems ×
-per-item cost` for each loop, and refuse publication if the total exceeds the budget with headroom*, which
-depends on the whole graph rather than on the loop. Encoding a ceiling here would be a number with no
-measurement behind it, in the permissive-looking direction that gets raised by whoever hits it.
+This section used to say the opposite — that no number from that arithmetic was here, and that the absence
+was the decision. It was, for as long as the arithmetic was moving: the pot is **per Workflow instance, not
+per step** (a correction to #50), so a loop spends from the same pot as every other step in the run, and it
+is **plan-scoped**, 10,000 on Workers Paid and 1,000 on Free
+([#68](https://github.com/Straits-AI/mailda/issues/68)), while nothing inside a Worker can detect the plan.
+Both figures stopped moving and the plan question was answered, so the seam is filled.
+
+**Where the numbers live: `@mailda/budgets`, and that seam was checked rather than assumed.** The costs are
+Worker measurements — `metering()` in `workerd` against real D1 and R2 — and this package cannot import the
+Worker, being a dependency of it. `@mailda/budgets` is generated from `docs/receipts/*.md` and has no
+dependencies of its own, so what `src/cost.ts` imports is the compiled form of the **receipts**, not of the
+Worker. `pnpm receipts:check` fails on any hand edit, and one figure serves both the measurement test that
+produced it and the checker that divides it. The two alternatives are named in that file with what each
+costs: injecting the table as a parameter lets two callers disagree about what a Butler costs and makes the
+pinned tests pin nothing; writing the numbers in this package is the thing AGENTS.md forbids outright.
+
+**The pot divided is Workers Paid, chosen rather than inherited.** A Node cannot ask which plan it is on —
+`doctor`'s check is `severity: "report"`, *"Not checkable from inside a Worker"* — so this is a decision, and
+`src/cost.ts` carries the argument at the point of use. Three reasons: on the Free row a `foreach` of 200
+sending items costs 4,038 and is refused four times over, which puts the limit *before* where a good Butler
+goes and AGENTS.md says that makes the limit wrong rather than the widget; the permissive direction lands only
+on a plan ADR 25 refuses at install and `mailda deploy` enforces with an account token; and an unusably small
+bound has a named failure mode in that receipt — it *"gets raised by whoever hits it, without re-measuring"*.
+
+**What the rejected row would have bought is stated, not glossed.** A Free Node is unsupported but not
+impossible: `deploy-button-install.md` measured the one-click path and it verifies no plan. On one, a Butler
+this pass admits can die at item 50 of a 200-send loop, having already sealed 50 manifests. So every refusal
+prints **both** pots and the affordable `maxItems` under each.
+
+**Headroom is per node and already receipted.** The four cost figures are *"bounds with headroom, not the
+measured figures"* — `case.assign` 8 against a measured 5, `case.close` 3 against 1, `draft` 10 against 5,
+`lookup` 4 against 1 — so summing the bounds over-prices every graph by construction. There is deliberately
+no second global margin, because 80% of a pot would be a literal ceiling with no measurement behind it, in
+the one file whose whole subject is numbers that have one.
+
+**`butler.step_cost_max_send_propose` is the exception and its headroom is zero.** 20, against a worst
+realistic seal measured at 20 — a reply, both derived policy conditions, an approval gate and the breaker
+query. It holds, and it is exactly right for the worst path rather than permissive. It is one operation away
+from being permissive, and the day a send gains one the measurement test fails, which is the intended
+behaviour.
+
+**The price list is exhaustive over the shipped set by construction.** `src/cost.ts` maps every
+`ShippedKind` to a receipt key or an explicit `null`, so a node moving from reserved to shipped with no
+entry does not compile. That is the enforcement behind the receipt's `stale_when` clause *"a node type is
+added to the shipped set without a measurement here"*, which was an unenforced sentence — and already
+violated by `lookup`, `map` and `foreach` at once. `lookup` is measured now at 1 subrequest for every one of
+`LOOKUP_ENTITIES`; `map` and `foreach` are **0**, and that is an argument rather than a measurement, labelled
+as such: a loop evaluates an expression already in the run's state and enters an edge, and
+`butler-step-budget.md`'s probe measured 30 steps of 100 queries closing at exactly 3,000, so a `step.do`
+costs no subrequest of its own.
+
+**So a loop whose body performs no I/O is affordable at any bound, including a million.** In subrequests that
+is true, and subrequests are the only currency here with a measurement behind them: CPU cannot be metered
+from inside a Worker at all, which is why the receipt records *"which limit binds first, CPU or subrequests,
+is unestablished"*. `test/check.test.ts` asserts that case **publishes**, so the boundary of the claim is
+pinned in the same place as the claim. Inventing a per-iteration cost to make a million look handled would
+have been exactly the defect this mechanism exists to prevent.
+
+**The arithmetic an author reads is 498, not 500.** The receipt's headline `10,000 / 20 = 500` is what a
+sending loop costs *alone*, and no loop is alone — the four other nodes of the worked example have already
+spent 38:
+
+```
+E_BUTLER_UNAFFORDABLE  this Butler costs 10018 subrequests per run against
+                       workflow.paid.subrequest_budget_per_instance=10000;
+                       6 node(s) outside a loop cost 38;
+                       foreach fan_out costs maxItems=499 × 20 per item = 9980
+                       (dearest inside it: send_one, a mail.send.propose at
+                        butler.step_cost_max_send_propose=20)
+  node     fan_out
+  why      a Workflow instance has one subrequest pot for the whole run rather than one per step
+           (workflow.budget_unit_is_instance=1, measured), so a run that asks for more does not fail
+           a step and carry on — the invocation is killed wherever it has got to, mid-loop, after the
+           sends it already performed. ...
+  fix      lower fan_out's maxItems to 498 or fewer, which is what is left of the pot after the rest
+           of the graph, or take work out of the loop's body. This Node prices against Workers Paid
+           because ADR 25 requires it; on Workers Free the pot is
+           workflow.free.subrequest_budget_per_instance=1000 and fan_out's affordable maxItems there
+           is 48. receipt docs/receipts/butler-step-cost.md
+```
+
+**The two failures it sits between are different, and the refusal says which is which.** An exceeded
+`maxItems` fails the step and processes nothing. An overspent pot is the platform killing the invocation
+wherever it had got to, after the effects it already performed — which is precisely why this one is a
+publication-time refusal and the other is a runtime one.
+
+**Nested loops multiply.** A node's cost is multiplied by the bounds of every loop whose body reaches it, so
+a loop of 200 inside a loop of 200 is priced at 40,000 iterations rather than 400. Written as a multiplier
+rather than a recursion over bodies because the recursive form has to subtract nested bodies out of their
+parents to avoid double counting, and that subtraction is the arithmetic this repository has been off by one
+in twice. Products saturate at `Number.MAX_SAFE_INTEGER` and the refusal then says *"at least"*, because a
+total that silently lost precision would be a wrong number in whichever direction the rounding fell.
+
+**The breakdown adds up to the total, and the node it names is one that is actually at fault.** Two things
+follow from that and neither is cosmetic. *"Outside a loop"* means **not in any loop's body**, rather than
+"runs once": a `maxItems: 1` loop runs its body once, so pricing by multiplier put that body in the fixed sum
+*and* in the loop's own line, and the parts of the refusal stopped summing to the total printed beside them.
+And a loop that contributes **0** — a `foreach` over pure transforms — is described but never blamed: it is
+not the `node` the finding points at and it does not turn a chain's overspend into a death *"mid-loop"*. That
+is the same rule as the 3,334-`case.close` case, which names no node because the "dearest" of 3,334 identical
+nodes is whichever the scan reached first, applied to the one node that is provably not the reason.
+
+**It runs last, and only on an otherwise clean graph.** A dangling edge means a node the sum cannot find; an
+unbounded loop means a `maxItems` there is nothing to multiply by; a reserved node means an operation nobody
+has priced. A cost computed over any of those is a fabricated number in a refusal, which is worse than a
+missing one — it ends the reader's question instead of prompting it. The cost is still returned on the
+**success** path, so an author who fits can see the bill rather than only hearing about it when it is too
+much.
 
 ---
 
@@ -349,6 +462,7 @@ direct write to a draft row reaches it.
 | `E_BUTLER_NO_ENTRY` | an `entry` that names nothing |
 | `E_BUTLER_EDGE_DANGLING` | an edge pointing at nothing |
 | `E_BUTLER_CYCLE` | a cycle, with the path |
+| `E_BUTLER_UNAFFORDABLE` | a graph whose whole-run cost exceeds one Workflow instance's subrequest pot, with the arithmetic |
 | `E_BUTLER_SCHEMA_DIVERGED` | every node checked and the document did not — a bug in this package |
 
 **Every finding is collected, not thrown.** One call reports every problem a Butler has, because a checker
@@ -370,7 +484,8 @@ dangerous half.
 - **The capability ceiling.** §16's *"capability ceiling computed at publication"* is
   [#51](https://github.com/Straits-AI/mailda/issues/51), and #54 already noted that the three-term
   intersection it needs would **invalidate** `authz.check.max_queries` rather than fit inside it.
-- **Affordability.** #54's, above.
+- **CPU.** Unmeterable from inside a Worker, so which of CPU and subrequests binds first is unestablished
+  and this package claims nothing about it. See the affordability section.
 - **Fixtures and simulation.** Still fog.
 
 ---

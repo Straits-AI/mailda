@@ -4,7 +4,7 @@ import {
   isShipped, LOOP_KINDS, NODE_KIND_NAMES, NODE_KINDS, RESERVED_KINDS, SHIPPED_KINDS,
   type NodeKind,
 } from "../src/nodes.ts";
-import { butlerNode, NODE_CATALOGUE, schemaFor } from "../src/ast.ts";
+import { butlerNode, NODE_CATALOGUE, nodeId, schemaFor } from "../src/ast.ts";
 
 /**
  * The shipped/reserved split is one declaration, and this file is what stops it becoming two.
@@ -32,6 +32,50 @@ type _TemplateIsReserved = Assert<
 >;
 
 void (0 as unknown as [_NodeKindIsClosed, _DraftShips, _LlmIsReserved, _TemplateIsReserved]);
+
+describe("every node's identifier is the node's, not one of its own fields (#54)", () => {
+  /*
+   * The defect this pins, found while #54 was writing a `lookup` fixture in order to price one: `shipped()`
+   * spreads a node's own shape *after* the envelope, so a shape declaring `id` replaces the node's
+   * identifier with its own field. `lookup` was `{ entity, id: expr, as, next }` and therefore had four
+   * fields, not five — one `id` doing two jobs. A lookup could not both be named by an edge and say which
+   * row to read, and its identifier had escaped the `nodeId` pattern, so `id: "${event.case_id}"` parsed.
+   *
+   * `shipped()` now makes the collision a **compile** error (`id?: never`), which no runtime test can
+   * observe. This is the runtime half: every node type's `id` is the same `nodeId` schema object, so a shape
+   * that shadowed it with anything at all — even another `nodeId` — would fail here as well as at typecheck.
+   */
+  it("uses the same nodeId schema for the id of every node type, shipped and reserved", () => {
+    for (const kind of NODE_KIND_NAMES) {
+      const shape = (schemaFor(kind) as unknown as { shape: Record<string, unknown> }).shape;
+      expect(shape["id"], `${kind}'s id`).toBe(nodeId);
+      expect(shape["type"], `${kind}'s type`).toBeDefined();
+    }
+  });
+
+  it("rejects an expression where a node id belongs, for every node type", () => {
+    // The symptom, rather than the mechanism: an id that is not a node id is refused. `lookup` accepted this
+    // exact document before the fix, because its `id` was an `expr`.
+    for (const kind of NODE_KIND_NAMES) {
+      const parsed = schemaFor(kind).safeParse({ id: "${event.case_id}", type: kind });
+      const issues = parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join("."));
+      expect(parsed.success, `${kind} accepted an expression as its node id`).toBe(false);
+      expect(issues, `${kind} must complain about id`).toContain("id");
+    }
+  });
+
+  it("still lets a lookup name the row it reads, which is the field the collision ate", () => {
+    const parsed = schemaFor("lookup").safeParse({
+      id: "read_the_case", type: "lookup", entity: "case", entityId: "${event.case_id}",
+      as: "the_case", next: null,
+    });
+    expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+    // And a lookup with no row to read is refused, so `entityId` is required rather than decorative.
+    expect(schemaFor("lookup").safeParse({
+      id: "read_the_case", type: "lookup", entity: "case", as: "the_case", next: null,
+    }).success).toBe(false);
+  });
+});
 
 describe("the node set (#49)", () => {
   it("ships exactly the fourteen nodes the resolution names, after its own correction", () => {
@@ -105,7 +149,7 @@ function payloadFor(kind: NodeKind): Record<string, unknown> {
     case "stop": return { reason: "done" };
     case "transform": return { as: "v", value: "x", next: null };
     case "validate": return { value: "x", schema: { type: "object" }, next: null };
-    case "lookup": return { entity: "case", id: "x", as: "c", next: null };
+    case "lookup": return { entity: "case", entityId: "${event.case_id}", as: "c", next: null };
     case "case.assign": return { caseId: "x", assignee: "y", next: null };
     case "case.close": return { caseId: "x", next: null };
     case "draft":

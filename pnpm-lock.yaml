@@ -108,6 +108,9 @@ importers:
 
   packages/butler-ast:
     dependencies:
+      '@mailda/budgets':
+        specifier: workspace:*
+        version: link:../budgets
       '@mailda/runtime':
         specifier: workspace:*
         version: link:../runtime

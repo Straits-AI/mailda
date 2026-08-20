@@ -269,8 +269,15 @@ describe("doctor", () => {
     // The two things a publisher most needs to know beyond that: what is frozen, and what is refused.
     expect(finding.detail).toContain("frozen");
     expect(finding.detail).toContain("Reserved nodes");
-    // And the seam left open, stated where the reader meets it.
-    expect(finding.detail).toContain("maxItems");
+    // #54 closed the affordability seam, so the detail now names the refusal *and* the pot it prices
+    // against — including the plan, because an operator on Workers Free is being told a figure that is not
+    // theirs unless the sentence says whose it is.
+    expect(finding.detail).toContain("could not afford to run is also refused");
+    expect(finding.detail).toContain("Workers Paid figure of 10,000");
+    expect(finding.detail).toContain("On Workers Free the pot is 1,000");
+    // And the seam still open, stated where the reader meets it. It is no longer maxItems.
+    expect(finding.detail).toContain("capability ceiling");
+    expect(finding.detail).not.toContain("affordable is not checked");
 
     // Infrastructure: the shape of the bundle and the name of a ticket, both public. So it survives into
     // the report a locked-out operator sees unauthenticated.

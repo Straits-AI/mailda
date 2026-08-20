@@ -204,6 +204,60 @@ describe("what one Butler step costs (#54)", () => {
     expect(many.cost.d1Batches).toBe(one.cost.d1Batches);
   });
 
+  it("prices lookup, the third shipped node that had no measurement (#54)", async () => {
+    /*
+     * `nodes.ts` declares `lookup` as *"reads one row of storage that exists, by id, from a closed set of
+     * entities"* and says in the same breath that **its cost is unmeasured** and that #54 is what closes it.
+     * The affordability pass needs a figure for every shipped kind or the sum under-reports, which is the
+     * permissive direction — so this is the measurement, and it is of the operation the node is defined as
+     * rather than of an implementation, because the engine does not exist to hold one.
+     *
+     * Measured per entity rather than once: five tables, five indexes, and if one of them cost more than a
+     * row read the maximum is the figure the checker has to price, not the average.
+     */
+    const ctx = atTime(2_400_000_000_000);
+    const { caseId, messageId } = await aCase(ctx);
+    const draft = await saveDraft(testEnv, ctx, ORG, ACTOR, null, {
+      mailboxId: MAILBOX, to: ["customer@example.net"], subject: "Re: q", body: "Answered.",
+    });
+    const conversationId = await testEnv.CATALOG.prepare("SELECT conversation_id AS id FROM cases WHERE id = ?")
+      .bind(caseId).first<{ id: string }>();
+
+    const rows: Array<[string, string, string]> = [
+      ["message", "messages", messageId],
+      ["conversation", "conversations", conversationId!.id],
+      ["case", "cases", caseId],
+      ["mailbox", "mailboxes", MAILBOX],
+      ["draft", "drafts", draft.id],
+    ];
+
+    let worst = 0;
+    for (const [entity, table, id] of rows) {
+      const { env: metered, cost } = metering(testEnv);
+      const row = await metered.CATALOG.prepare(`SELECT * FROM ${table} WHERE id = ? AND org_id = ?`)
+        .bind(id, ORG).first();
+      // Non-vacuity: a lookup that read nothing would cost one query and prove nothing about the entity.
+      expect(row, `${entity} must actually resolve, or this measures a miss`).not.toBeNull();
+      console.log(
+        `MEASURE node=lookup entity=${entity}  subrequests=${cost.subrequests}  d1=${cost.d1Executions}`
+        + `  r2=${cost.r2Operations}  do_rpc=${cost.doRpcs}`,
+      );
+      expect(cost.doRpcs, `a ${entity} lookup reads a row, not evidence`).toBe(0);
+      expect(cost.r2Operations, `a ${entity} lookup reads a row, not a body`).toBe(0);
+      worst = Math.max(worst, cost.subrequests);
+    }
+
+    console.log(`MEASURE node=lookup  worst_entity_subrequests=${worst}`);
+    /*
+     * The bound is 4 against a measured 1, and the headroom is not decoration: `authz.check.max_queries = 2`
+     * is what a re-check of the caller's authority over the looked-up object costs, and a `lookup` that grew
+     * one would be at 3. 4 is one past that.
+     */
+    expect(worst).toBeLessThanOrEqual(BUDGETS["butler.step_cost_max_lookup"]);
+    expect(worst + BUDGETS["authz.check.max_queries"])
+      .toBeLessThanOrEqual(BUDGETS["butler.step_cost_max_lookup"]);
+  });
+
   it("states the loop arithmetic the checker has to do, on both plans", () => {
     // Not an assertion about code — an assertion about the budgets, so that a change to any figure fails
     // here and forces the arithmetic to be redone. Two rows, because the pot is plan-conditional and a
