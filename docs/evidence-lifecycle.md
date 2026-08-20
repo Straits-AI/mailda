@@ -194,6 +194,25 @@ lies between the minimum and maximum of that same set by construction. Its state
 beside the claim: a page whose ids span the whole table reads the whole column, so it is never worse than the
 other two and usually far better, and it is not a constant.
 
+**Sizing a bucket, which is the one thing this prefix asks of an operator (#76).** `sent/` is the only term in
+the product that grows monotonically with use and is never collected. Every object here is *referenced* for the
+life of the Node — nothing deletes a manifest row — and the reconciler is not supposed to take them: two of the
+three are the composition evidence §12 invariant 2 calls immutable. Measured, in
+`docs/receipts/evidence-lifecycle.md`: **three objects and about three copies of the message plus its headers
+plus 144 bytes, per send**, linear in sends rather than deliveries, and two objects per send that never hands
+over.
+
+**There is deliberately no runtime gauge, and the absence is the decision rather than an oversight.** A
+`doctor` finding would list a prefix bounded by `reconcile.list_limit` — 150 — so past a Node's first hundred
+and fifty staged objects it could only honestly report a *sample*, and *"at least 150 objects"* is not a growth
+figure. A number on a diagnostic screen reads as a reading, so that is worse than silence. A maintained counter
+would be exact and can drift from the bytes it describes, which is the failure class #66's breakers were
+designed to avoid by deriving from rows instead of keeping a count.
+
+So: multiply your send volume by the figure above. R2 storage is the customer's bill under ADR 2 — they own the
+account — and the honest position is that this Node tells them the rate and does not pretend to know their
+total.
+
 **The hold rule was re-argued rather than inherited, and came out identical.** A `sent/` orphan *looks* more
 attributable than a `raw/` one — it carries a manifest id — so a per-hold check is the tempting move. It is
 unavailable for exactly the reason it is unavailable elsewhere on this pass: the mailbox lives in

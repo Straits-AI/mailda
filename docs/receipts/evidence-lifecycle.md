@@ -313,6 +313,24 @@ accumulates two objects per attempt for ever, `doctor` has no figure that names 
 price stored bytes. Filed as **#76** rather than recorded here as an aside, because a growth term with no
 observable is the same shape of defect as a prefix with no listing.
 
+**#76 is resolved: the growth is stated and deliberately not gauged at runtime.** The two mechanisms were
+weighed and both lose to writing it down.
+
+A `doctor` finding would list a prefix bounded by `reconcile.list_limit`, which is **150** — so on any Node
+past its first hundred and fifty staged objects the figure is a *sample*, and this repository's own honesty
+rule then forces it to say so. *"At least 150 objects"* is not a growth figure. It is worse than silence,
+because a number on a diagnostic screen reads as a reading, and a reader would size a bucket against it. A
+maintained counter would be exact, but it is a cell that can drift from the bytes it claims to describe —
+the failure class this repository has already paid for, and the explicit reason #66's breakers derive their
+numbers from rows rather than keeping a count. It would also add a write to a send path that #60, #62 and
+#66 each widened in the same week.
+
+So the answer is the figure above, in a receipt, reachable by anybody sizing a bucket, and **no runtime
+gauge**. That is a real answer only because it is stated: an operator who wants to know what a year of
+sending costs in R2 multiplies their send volume by *three copies of the message plus its headers plus 144
+bytes*, and the Node does not pretend to know better. What this repository refuses is the third option
+nobody chose — leaving it unstated and unmeasured, which is where it was before #74 looked.
+
 ### A fifth prefix does not fit, and the assertion now says so
 
 `test/evidence-lifecycle.test.ts` used to assert the *next* prefix still fitted, which was true at `n = 3` and
