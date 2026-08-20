@@ -410,3 +410,37 @@ delta above was found to be 2 before it was fixed.
 
 `doctor.max_subrequests_per_run = 220` is untouched and still holds by an order of magnitude, so no `values:`
 moved: both checks are fixed costs that do not grow with mail volume, mailbox count or the age of the trail.
+
+## Correction — 20 August 2026: the reconciler gained a fourth prefix (#74)
+
+The `stale_when` fires on *"the measured cost of a doctor run changes materially"*. No new check: `doctor`'s
+finding count is unchanged at 17. What moved is `checkEvidence`, which performs the reconciler's read-only pass,
+and that pass now lists `${orgId}/sent/` as well as `raw/`, `drafts/` and `exports/` — the repair of #74, which
+was #67's defect in a second place.
+
+**Measured delta on the same claimed-and-empty Node, the scan removed and then restored: 19 → 20
+subrequests** (D1 unchanged at 15, R2 4 → 5, findings unchanged at 17). The added cost on an empty Node is
+**one R2 `list()` and no D1 at all**, because `scanSentObjects` asks its referent table nothing when the
+listing is empty: the minimum of no manifest ids does not exist.
+
+**With one staged object present the same run reads 21** (16 D1, 5 R2), which is the second half of the cost —
+one bounded `SELECT id FROM send_manifests` for the whole page, once, however many objects it contains. So the
+delta this receipt records is **+1 on a Node that has never sent and +2 on one that has**, and both were
+measured rather than one measured and the other inferred.
+
+Method identical to the corrections above: `metered()` inside `runDoctor` on a claimed Node with an empty
+catalog, under `vitest-pool-workers` against **miniflare** — not a deployed Node. The per-prefix figures behind
+it, and the flatness this depends on, are in `evidence-lifecycle.md`'s second 20 August correction and are
+re-run by `test/sent-evidence.test.ts` rather than transcribed.
+
+**What "the scan removed" has to mean, because the obvious reading of it does not reproduce this figure.**
+Dropping `sentPrefix(orgId)` from `scannedPrefixes` leaves the measured cost at **20, not 19**: that function
+builds what the report *names*, and `reconcileEvidence` calls `scanSentObjects` on its own line regardless. The
+19 is the call removed, not the name — checked, because a receipt whose stated method reproduces a different
+number than the one it records is this file's own recurring defect, and the two are only distinguishable by
+running both. The coupling the name-only reading assumes is real but lives elsewhere:
+`test/node/evidence-prefix-world.test.ts` fails the moment the two sets disagree, which is what the dropped
+name actually costs.
+
+`doctor.max_subrequests_per_run = 220` is untouched and still holds by an order of magnitude, so no `values:`
+moved.

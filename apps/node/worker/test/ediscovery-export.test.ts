@@ -815,9 +815,11 @@ describe("an export is held if its source is held", () => {
   it("names the export prefix in what it scanned, so its coverage is visible rather than assumed", async () => {
     const report = await reconcileEvidence(testEnv, atTime(AUGUST), ORG);
     expect(report.scanned.prefixes).toContain(`${ORG}/exports/`);
-    // `${ORG}/sent/` is deliberately absent — filed rather than repaired here — and this is the line that
-    // makes that absence readable in the output instead of absent from it.
-    expect(report.scanned.prefixes).not.toContain(`${ORG}/sent/`);
+    // `${ORG}/sent/` used to be asserted **absent** here, which is how #74 stayed readable in the output
+    // rather than absent from it until somebody repaired it. It is scanned now, and the claim this line makes
+    // is the one that replaced it: the reported set is complete, which
+    // `test/node/evidence-prefix-world.test.ts` derives from `src/` rather than trusting.
+    expect(report.scanned.prefixes).toContain(`${ORG}/sent/`);
   });
 });
 

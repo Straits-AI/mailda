@@ -223,3 +223,105 @@ Same instrument as the 19 August table — `metering()` around one `reconcileEvi
 `SELECT id FROM exports` with no `LIMIT`. Five stranded objects cost exactly what zero cost. The read-only
 pass moved from 5 to 7 — one `list` and one bulk query — which is the +2 the arithmetic above charges for a
 bulk prefix, confirmed rather than assumed.
+
+## Correction, 20 August 2026 (second of the day): a fourth prefix, and the limit does not move (#74)
+
+**No value moved, and that is the whole point of the correction above it.** The #65 section chose 150 over the
+arithmetically permitted 198 *specifically* so a fourth prefix would not force a third re-derivation. The
+fourth prefix has arrived — `${orgId}/sent/` — and the sum goes from 758 to **910**, under the Free ceiling of
+1,000 with 90 to spare, exactly as that paragraph priced it. `reconcile.list_limit: 150` and
+`reconcile.orphan_grace_seconds: 3600` both stand unchanged, and neither was re-derived.
+
+**No `stale_when` clause fired**: `R2Bucket.list()`'s per-call limit did not move, the per-invocation
+subrequest cap did not move, and re-seal is untouched.
+
+#74 is **#67's defect in a second place**: a prefix this Worker wrote and no listing covered, invisible for
+exactly the reason #67 was invisible — nothing reported the gap. That pattern is now closed as a class rather
+than a third time: `test/node/evidence-prefix-world.test.ts` derives every `${orgId}/<segment>/` any writing
+file in `src/` spells and fails if `scannedPrefixes` does not cover it, in both directions. It is what lets
+`formatReconcile` say *"every prefix this Worker writes for this organization"* instead of hedging about
+objects it did not list — a claim about the whole source tree, so a claim that had to be enforced somewhere
+rather than asserted in the sentence itself.
+
+### The fourth referent rule, and the one query shape in this pass that is not a whole-column read
+
+An object here is `${orgId}/sent/${manifestId}/{typed.txt,normalized.txt,submitted.eml}`, so the referent is a
+`send_manifests` row keyed by the id in the key's **second segment**: three objects resolve to one row, and the
+lookup is therefore per manifest rather than per object. Same key shape as `exports/`, deliberately not the
+same argument — nothing in this product deletes a `send_manifests` row, so an object with no row is only
+reachable through a lost transaction, which is the `raw/` story. It takes the **orphan rule**: the grace
+window, and #64's org-wide hold suppression.
+
+`scanDraftBodies` and `scanExportObjects` each read one whole column with no `LIMIT`, justified by what their
+table is — `drafts` is working state deleted at seal, `exports` grows with investigations. **Neither reason
+survives here.** `send_manifests` grows with every message this Node has ever sent, for ever, so the same
+shape would be a table scan that gets slower for the life of the Node. So the referents are bounded by the
+page's own id span, as one `BETWEEN` over the primary key: `WHERE org_id = ? AND id >= ? AND id <= ?` over the
+minimum and maximum manifest id in the listing. One query, flat in the object count, and the completeness
+argument is *stronger* than a whole-column read rather than weaker — every id the page will judge lies between
+the minimum and maximum of that same set by construction, with no dependence on R2 returning keys in order.
+Its stated limit: a page whose ids span the whole table reads the whole column, so it is never worse than the
+other two and usually far better, and it is not a constant.
+
+An empty page asks the referent table **nothing**, because the minimum of no ids does not exist. That is why
+this scan costs 1 subrequest on a Node that has never sent and 2 on one that has.
+
+### Measured
+
+Same instrument and the same boundary as the two tables above — `metering()` from `src/cost-meter.ts` around
+one call under `vitest-pool-workers` (`pnpm vitest run`), against **miniflare**, on 20 August 2026. Re-runnable
+rather than transcribed: `test/sent-evidence.test.ts` — *"what the fourth prefix costs the pass, metered"* —
+prints these and asserts the flatness.
+
+| Pass | Subrequests | D1 | R2 |
+|---|--:|--:|--:|
+| `scanSentObjects`, 0 objects | **1** | 0 | 1 |
+| `scanSentObjects`, 6 objects across 2 manifests | **2** | 1 | 1 |
+| whole pass, empty bucket, read-only | 8 | 4 | 4 |
+| whole pass, empty bucket, `collect` | 9 | 5 | 4 |
+| whole pass, 3 stranded sent objects, read-only | 9 | 5 | 4 |
+| whole pass, 3 stranded sent objects, `collect` | 13 | 6 | 7 |
+
+**Flat, like the other two bulk directions**, and for a bounded query rather than an unbounded one: six objects
+across two manifests cost one referent query, not six and not two. The empty-bucket read-only pass moved from
+**7 to 8** — one `list`, and no D1 at all, because an empty page asks nothing — so the +2 the arithmetic charges
+for a bulk prefix is only spent once the prefix has objects in it. `collect` costs the hold check plus one
+`EVIDENCE.delete` per collected object and nothing else: 9 → 13 for three objects.
+
+### How much `sent/` grows relative to mail sent — the figure nobody had
+
+Measured the same way, on 20 August 2026, in `test/sent-evidence.test.ts` — *"what one send costs under the
+fourth prefix, measured"*, which prints the numbers on every run:
+
+| | |
+|---:|:---|
+| **3** | objects per handed-over send: `typed.txt` and `normalized.txt` at seal, `submitted.eml` at hand-over |
+| **2** | objects per send that never hands over — cancelled, withheld, or still held |
+| **48** | bytes of frame overhead per object, isolated by differencing a 47-byte plaintext against its 95-byte object |
+| **532** | stored bytes for one send of a 47-byte body: 95 + 93 + 344 |
+| **188** | stored bytes a cancelled send of the same body leaves staged |
+
+One object per manifest whatever the recipient count — the same bytes go to every recipient — so this is linear
+in **sends**, not in deliveries. The body is carried three times (typed, normalized, and inside the submitted
+RFC 822 bytes), so the rule of thumb is *three copies of the message plus its headers plus 144 bytes*, per send.
+
+**The growth is unbounded and nothing reports it, and that is a finding rather than a footnote.** Nothing in
+this product deletes a `send_manifests` row, so every one of these objects is **referenced** for the life of
+the Node — the reconciler will never collect them, and it is not supposed to: two of the three are the
+composition evidence §12 invariant 2 calls immutable. A Node that composes heavily and sends rarely still
+accumulates two objects per attempt for ever, `doctor` has no figure that names it, and the cost meter does not
+price stored bytes. Filed as **#76** rather than recorded here as an aside, because a growth term with no
+observable is the same shape of defect as a prefix with no listing.
+
+### A fifth prefix does not fit, and the assertion now says so
+
+`test/evidence-lifecycle.test.ts` used to assert the *next* prefix still fitted, which was true at `n = 3` and
+is false at `n = 4`: `7 × 150 + 12 = 1,062`, over the ceiling. Keeping that shape would have left the test
+claiming headroom it no longer has — a sentence describing a state the code had left, which is the defect #74
+is about. It asserts the negative instead, so whoever adds a fifth prefix re-derives `list_limit` deliberately
+rather than discovering it under load.
+
+**Verified non-vacuous.** Setting `reconcile.list_limit: 140` here and regenerating fails that test with
+*"a fifth prefix at this list_limit is over the Free ceiling — re-derive it, do not widen the scan: expected 992
+to be greater than 1000"*, and setting it back to 150 passes. The main inequality was verified the same way on
+20 August at 200, recorded above.

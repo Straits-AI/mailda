@@ -121,8 +121,8 @@ What exists today:
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,586 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
 | **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 32 receipts in [`docs/receipts/`](./docs/receipts/) generating 178 verified constants |
-| **Code** | A measurement harness and one Worker. 687 tests across two runtimes, checked on every push. Not a product. |
+| **Measurements** | 37 receipts in [`docs/receipts/`](./docs/receipts/) generating 199 verified constants |
+| **Code** | A measurement harness and one Worker. 942 tests across two runtimes, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -305,6 +305,39 @@ since every fixture had exactly one live draft. It is now collected against thre
 What did **not** change is the finding's severity: residue means the collector
 has not run, not that something is broken, and the condition that would justify `degraded` is residue that
 survives a collection run, which nothing records yet and so is named as the missing input rather than guessed.
+
+**The same defect was sitting in a second place, and the class is now closed rather than the instance.** The
+reconciler listed three R2 prefixes and this Worker wrote four: `${orgId}/sent/` holds the typed body, the
+normalized body and the exact bytes handed to the transport, and nothing listed it. Identical to the draft-body
+finding above and invisible for the identical reason — the cost of an unlisted prefix is invisible precisely
+because nothing reports it — and it had been in that state since before that finding landed. It is scanned now,
+under its **own** referent rule rather than a copied one: a `send_manifests` row keyed by the id in the key's
+second segment, so three objects resolve to one row. Nothing deletes a manifest row, so an object with no row
+is only reachable through a lost transaction, which makes this the orphan rule (grace window, org-wide hold
+suppression) rather than the residue rule; and a **cancelled** send keeps its row, so its staged objects are
+referenced and are not residue at all — verified, because that assumption failing would destroy the
+composition evidence §12 calls immutable. The hold decision was re-argued rather than inherited, because a
+`sent/` key *looks* more attributable than a raw orphan: it is not, since the mailbox lives in the row whose
+absence defines the state, so the org-wide rule stands unwidened. The report's sentence changed with it — it
+used to hedge about objects under prefixes it had not listed, and a sentence describing a state the code has
+left is the defect this whole thread is about. **What closes the class is a test, not the repair**: a closed
+world derives every `${orgId}/<segment>/` any writing file in `src/` spells and fails if the reconciler's
+scanned set does not cover it, in both directions, so a fifth prefix cannot arrive unlisted and a listed prefix
+nothing writes cannot report itself clean for ever. The arithmetic needed no re-derivation, which was the
+point of the previous round pricing `reconcile.list_limit` at 150 for a fourth prefix rather than the 198 the
+inequality allowed: the worst case moved 758 → **910** against the Free ceiling of 1,000. The assertion that
+used to claim the *next* prefix would also fit was true at three prefixes and false at four, so it now asserts
+the opposite — a fifth costs 1,062 and has to re-derive the limit deliberately.
+
+**And the growth nobody had measured is a finding of its own.** Three objects per handed-over send, two per
+send that never hands over, linear in sends rather than deliveries, with the body carried three times — so
+`sent/` grows at roughly three copies of every message plus headers plus 144 bytes of framing, measured under
+miniflare rather than read off the source. Every one of those objects is **referenced** for the life of the
+Node, because nothing deletes a manifest row, so the reconciler will never collect them and is not supposed
+to: two of the three are immutable composition evidence. A Node that composes heavily and sends rarely
+accumulates for ever, `doctor` has no figure that names it, and the cost meter prices operations rather than
+stored bytes. Filed as **#76** rather than recorded as an aside, because a growth term with no observable is
+the same shape of defect as a prefix with no listing.
 
 **The lockout report opened for one of the two lockouts.** `doctor` is served unauthenticated, reduced to
 findings whose contents are already public here, when the Node cannot authenticate anyone — and the test for

@@ -4,7 +4,7 @@ import { auditedBatch, log } from "../audit.ts";
 import { stopClockForConversation } from "../response-clock.ts";
 import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
-import { renderRfc822 } from "./manifest.ts";
+import { renderRfc822, sentObjectKey } from "./manifest.ts";
 import { BREAKER_REASONS } from "../breakers.ts";
 import {
   authorityLost, type BreakerRecheck, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow,
@@ -612,7 +612,7 @@ async function submitClaimed(
     //
     // **One object, however many recipients.** The same bytes go to each, so this stays one evidence pair
     // per manifest and §12's invariant is untouched by the loop below.
-    const stored = await putEvidence(env, `${orgId}/sent/${manifestId}/submitted.eml`, rendered.raw);
+    const stored = await putEvidence(env, sentObjectKey(orgId, manifestId, "submitted.eml"), rendered.raw);
     await env.CATALOG.prepare(
       "UPDATE send_manifests SET submitted_key = ?, submitted_sha256 = ? WHERE id = ?",
     )

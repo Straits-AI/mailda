@@ -65,19 +65,22 @@ POST /api/maintenance/reconcile[?collect=1][&format=text]
 ```
 
 The two directions are **not symmetric**, and treating them alike is the mistake to avoid. Direction 1 has
-**two referent rules**, because two prefixes are scanned and a draft body's referent is not a receipt (#67):
+**four referent rules**, one per scanned prefix, because "no receipt" is the test for only one of them:
 
 | Found | Meaning | Action |
 |---|---|---|
-| `raw/` object, no receipt, past grace | A write that lost its transaction | Delete — only when explicitly asked, and only while no legal hold stands anywhere in the organization (#64) |
-| `drafts/` object, no `drafts` row, past grace | The body of a message already sent, or of a draft somebody abandoned | Same: delete only when asked, and never while a hold stands |
-| Either, inside grace | Possibly a write mid-flight — a delivery, or an autosave | Count it, touch nothing |
+| `raw/` object, no `ingress_receipts` row, past grace | A write that lost its transaction | Delete — only when explicitly asked, and only while no legal hold stands anywhere in the organization (#64) |
+| `drafts/` object, no `drafts` row keyed by `body_key`, past grace | The body of a message already sent, or of a draft somebody abandoned | Same: delete only when asked, and never while a hold stands |
+| `exports/` object, no `exports` row for the id in the key's second segment, past grace | Material somebody was authorized to copy, whose record has gone (#65) | Same |
+| `sent/` object, no `send_manifests` row for the id in the key's second segment, past grace | Composition or submission evidence whose manifest is gone — only reachable through a lost transaction (#74) | Same |
+| Any of them, inside grace | Possibly a write mid-flight — a delivery, an autosave, an export page, a seal | Count it, touch nothing |
 | Receipt, no object | **Lost mail** | Enumerate and report. Never repaired |
 
-The two collectable rows are counted and reported **separately and never summed**. An orphan means a
-transaction was lost; a stranded draft body means somebody used the composer. One total would be a number
-nobody could act on, and it would make the orphan finding's "N object(s) have no receipt" false of half its
-own count.
+The four collectable rows are counted and reported **separately and never summed**, each on its own line. An
+orphan means a transaction was lost; a stranded draft body means somebody used the composer; a stranded export
+object means an investigator's copy has lost its record; a stranded `sent/` object means the evidence of what
+this Node sent has lost its manifest. One total would be a number nobody could act on, and it would make the
+orphan finding's "N object(s) have no receipt" false of three quarters of its own count.
 
 Deleting a receipt whose evidence is gone would turn a detectable data loss into an undetectable one.
 It is also the tempting option, because it is the one that makes the report go green.
@@ -88,18 +91,36 @@ safe the deletion looks.
 The grace period is an hour, and it is sized by asymmetry rather than measurement: being slow costs an
 hour of R2 storage for a few kilobytes, being fast destroys mail that was about to be accepted.
 
-### The report names the prefixes it scanned
+### The report names the prefixes it scanned, and the set is now complete
 
 `scanned.prefixes` is in the structured report and in the text form, and it is the loop's own input
 rather than a second description of it. Until it existed the report could not distinguish **"nothing to
 collect"** from **"did not look"** — both printed `0 orphans` — and one prefix made that expensive.
 
-This pass lists `${orgId}/raw/` **and `${orgId}/drafts/`**, and those two listings are the only things its
-`EVIDENCE.delete` ever sees. The second one is #67: **draft bodies live at
-`${orgId}/drafts/{draftId}.txt`**, `deleteDraft` removes only the row, and a draft is deleted when its
-message is *sealed* — the ordinary send path. So for as long as the pass listed one prefix, every message
-ever sent from the composer left an unreferenced copy of its draft behind, and there was no figure anywhere
-that could reveal it: a scan of one prefix printed `0 orphans` exactly as a scan of the whole bucket would.
+This pass lists **four** prefixes, and those four listings are the only things its `EVIDENCE.delete` ever
+sees:
+
+| Prefix | Written by | Referent |
+|---|---|---|
+| `${orgId}/raw/` | `src/ingress.ts` | a row in `ingress_receipts` |
+| `${orgId}/drafts/` | `src/drafts.ts` | a row in `drafts` keyed by `body_key` (#67) |
+| `${orgId}/exports/` | `src/exports.ts` | a row in `exports`, id in the key's second segment (#65) |
+| `${orgId}/sent/` | `src/outbound/manifest.ts` and `src/outbound/dispatch.ts` | a row in `send_manifests`, id in the key's second segment (#74) |
+
+**Those four are every prefix this Worker writes, and that is checked rather than claimed.**
+`test/node/evidence-prefix-world.test.ts` derives the written set from `src/` — every `${orgId}/<segment>/` a
+file containing an evidence write spells — and fails if `scannedPrefixes` does not cover it, in both
+directions. It exists because the same defect happened twice: #67 was `${orgId}/drafts/` and #74 was
+`${orgId}/sent/`, each a prefix this Worker wrote and no listing covered. Neither was found by remembering, so
+the third is prevented by a test instead. It is also what lets the text report say *"every prefix this Worker
+writes for this organization"* instead of hedging about objects it did not list — a claim about the whole
+source tree, and therefore a claim that has to be enforced somewhere other than in the sentence making it.
+
+#67 is the shape both instances have. **Draft bodies live at `${orgId}/drafts/{draftId}.txt`**, `deleteDraft`
+removes only the row, and a draft is deleted when its message is *sealed* — the ordinary send path. So for as
+long as the pass listed one prefix, every message ever sent from the composer left an unreferenced copy of its
+draft behind, and there was no figure anywhere that could reveal it: a scan of one prefix printed `0 orphans`
+exactly as a scan of the whole bucket would.
 
 ### The draft prefix, and why it is here rather than anywhere else
 
@@ -141,6 +162,52 @@ for the same reason as an orphan rather than by analogy: a stranded body has no 
 mailbox to test a hold against, and the key's own prefix is the organization. Enumeration and reporting are
 unaffected. The per-mailbox hold is consulted earlier, in `deleteDraft`, which is the last moment at which
 the mailbox is still known.
+
+### The send prefix, its referent, and the one query in this pass that is bounded (#74)
+
+A send stages three objects under `${orgId}/sent/${manifestId}/`: `typed.txt` and `normalized.txt` written by
+`sealManifest`, and `submitted.eml` written by `dispatchOne` — one object each per manifest, however many
+recipients, because the same bytes go to all of them. All three are spelled through `sentObjectKey` in
+`src/outbound/manifest.ts`, which is the *one* spelling shared with the reconciler; a second one is what makes
+a writer and a listing disagree silently, and it is what the prefix world test above forbids.
+
+The referent is a **`send_manifests` row keyed by the id in the key's second segment**, so the lookup is per
+manifest rather than per object. That is the same key shape as `exports/` and deliberately not the same
+argument:
+
+- **Nothing in this product deletes a `send_manifests` row.** So an object here with no row is only reachable
+  through a lost transaction — `sealManifest` writes both bodies before its `INSERT`, for `ingress.ts`'s
+  reason. That is the `raw/` story rather than the `drafts/` one, which is why this prefix takes the **orphan
+  rule**: the grace window, and the org-wide hold suppression.
+- **A cancelled or withheld send is not residue at all.** `cancelSend` moves `state` and touches neither R2 nor
+  the row's existence, so its staged objects are *referenced* and the scan never reaches them. Asserted in
+  `test/sent-evidence.test.ts` rather than assumed, because it is the assumption whose failure would destroy
+  the composition evidence §12 invariant 2 calls immutable.
+
+**The referent read is bounded, and it is the only one on this pass that is.** `scanDraftBodies` and
+`scanExportObjects` each read a whole column with no `LIMIT`, justified by what their table is — working state
+deleted at seal, and one row per investigation. Neither reason survives for `send_manifests`, which grows with
+every message this Node has ever sent, for ever. So the referents come back as one `BETWEEN` over the smallest
+and largest manifest id in the page: still one query, still flat in the object count, and a *stronger*
+completeness argument than a whole-column read rather than a weaker one, because every id the page will judge
+lies between the minimum and maximum of that same set by construction. Its stated limit is in `reconcile.ts`
+beside the claim: a page whose ids span the whole table reads the whole column, so it is never worse than the
+other two and usually far better, and it is not a constant.
+
+**The hold rule was re-argued rather than inherited, and came out identical.** A `sent/` orphan *looks* more
+attributable than a `raw/` one — it carries a manifest id — so a per-hold check is the tempting move. It is
+unavailable for exactly the reason it is unavailable elsewhere on this pass: the mailbox lives in
+`send_manifests.mailbox_id`, and the absence of that row is the definition of the state, so the id in the key
+names a record that is gone and resolves to no mailbox. #64's org-wide rule stands, neither widened nor
+narrowed.
+
+**How much this prefix grows, measured.** Three objects per handed-over send and two per send that never hands
+over, linear in sends rather than in deliveries; the body is carried three times, so the rule of thumb is three
+copies of the message plus headers plus 144 bytes of framing. Every one of those objects is **referenced** for
+the life of the Node, because nothing deletes a manifest row — so the reconciler will never collect them and is
+not supposed to. The figures and the method are in `docs/receipts/evidence-lifecycle.md`'s second 20 August
+2026 correction; the finding that this growth has no observable anywhere — no `doctor` reading, no meter term —
+is **#76**.
 
 ### What `draft_bodies_stranded` means now
 

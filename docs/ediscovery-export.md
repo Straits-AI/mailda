@@ -251,11 +251,14 @@ mechanisms fight.
   does not exist. None of it is invented here: it is an authentication-subsystem question that supervised
   reading needs too, and it is bigger than this ticket.
 - **`GET /api/sends/:id/submitted`** is a complete `.eml` and is not governed by `message.export`. See above.
-- **`${orgId}/sent/` is unscanned by the reconciler** — #74. Found while putting `exports/` into the scan,
-  filed with its evidence rather than repaired here, because its referent question — a `send_manifests` row,
-  and what a composition-evidence object with no manifest means under §12 invariant 2 — is its own decision.
-  The arithmetic for it is already paid: `reconcile.list_limit` came down to 150 in this change *because* a
-  fourth prefix is known to be coming.
+- ~~**`${orgId}/sent/` is unscanned by the reconciler**~~ — **#74, done.** Filed here rather than repaired,
+  because its referent question was its own decision; it was then taken, and the answer is the one this entry
+  guessed: a `send_manifests` row keyed by the id in the key's second segment, under the *orphan* rule rather
+  than the residue one, because nothing deletes a manifest row. The arithmetic needed no re-derivation, which
+  is what lowering `reconcile.list_limit` to 150 in this change bought: `6 × 150 + 10 = 910`. See
+  `docs/evidence-lifecycle.md` and that receipt's second 20 August correction. Left in this list, struck
+  through, because a "still not built" entry that silently disappears is indistinguishable from one nobody
+  read.
 - **No download entry.** See *What the trail carries*.
 - **No UI.** The shell is Layer 1–3's surface, exactly as for policy, approvals and supervised reading. An
   export is a governance act performed by an investigator with a matter already open.

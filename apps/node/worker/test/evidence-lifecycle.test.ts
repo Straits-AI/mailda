@@ -221,17 +221,22 @@ describe("re-seal (#25)", () => {
 
 describe("reconcile (#25, §24)", () => {
   /**
-   * The worst a collecting pass can cost, checked rather than described (#67, #65).
+   * The worst a collecting pass can cost, checked rather than described (#67, #65, #74).
    *
    * `reconcile.list_limit` was derived when the pass listed **one** prefix: "200 objects + 200 receipts ≈ 400
-   * subrequests plus fixed overhead". #67 gave it a second, #65 a third, and the limit applies **per
-   * prefix** — a consequence no measurement of an ordinary pass would reveal, because an ordinary pass has a
-   * handful of objects and not 450.
+   * subrequests plus fixed overhead". #67 gave it a second, #65 a third, #74 a fourth, and the limit applies
+   * **per prefix** — a consequence no measurement of an ordinary pass would reveal, because an ordinary pass
+   * has a handful of objects and not 600.
    *
    * **This assertion did its job on #65 rather than merely surviving it.** At `list_limit = 200` the third
    * prefix takes the worst case to 1,008, over the Free ceiling of 1,000, and the failure is what re-derived
    * the value down to 150. That is exactly what the 19 August correction said a `stale_when` clause cannot
-   * give and a test can, so the arithmetic below is now written for `n` prefixes instead of for two.
+   * give and a test can, so the arithmetic below is written for `n` prefixes instead of for two.
+   *
+   * **On #74 it repriced itself without moving a value, which is what it was rewritten for.** The 20 August
+   * correction chose 150 over the arithmetically permitted 198 precisely so the fourth prefix would fit, and
+   * the fourth prefix arrived: `n` goes to 4 and the sum goes 758 → 910, still under the ceiling. No
+   * re-derivation, which is the outcome that paragraph was buying.
    *
    * Every term is a measured per-object or per-pass figure from `docs/receipts/evidence-lifecycle.md`, so
    * this is arithmetic over receipts rather than a new number:
@@ -240,7 +245,7 @@ describe("reconcile (#25, §24)", () => {
    * |---|---|---|
    * | listings | `n` | one `R2Bucket.list()` per prefix |
    * | raw referents | `list_limit` | one D1 lookup **per listed object** — it samples by key |
-   * | bulk referents | `n − 1` | one query each for drafts and for exports, measured flat at 0 and at 5 |
+   * | bulk referents | `n − 1` | one query each for drafts, exports and sent, measured flat at 0 and at 5 |
    * | hold check | 1 | `anyActiveHold`, once, and only when collection was requested |
    * | deletes | `n × list_limit` | every prefix drains the same single `EVIDENCE.delete` |
    * | receipt direction | 2 + `list_limit` | count, page, then one R2 `head` per sampled receipt |
@@ -255,9 +260,8 @@ describe("reconcile (#25, §24)", () => {
   it("keeps the worst case a collecting pass can reach inside the ceiling it was derived against", async () => {
     const perPrefix = BUDGETS["reconcile.list_limit"];
     /*
-     * The prefix count comes from `reconcileEvidence`'s own report rather than from a literal, so a fourth
-     * prefix reprices this assertion instead of slipping past it. `${orgId}/sent/` is the one already known
-     * to be missing, and when somebody adds it this line is what tells them what it costs.
+     * The prefix count comes from `reconcileEvidence`'s own report rather than from a literal, so a further
+     * prefix reprices this assertion instead of slipping past it.
      *
      * Read off an empty-bucket pass, which is cheap and needs no fixture: `scanned.prefixes` is built from
      * the same functions the scans are handed, so it cannot name a prefix the pass skipped.
@@ -273,14 +277,26 @@ describe("reconcile (#25, §24)", () => {
     const worstCase =
       listings + rawReferents + bulkReferents + holdCheck + deletes + receiptDirection;
 
-    expect(prefixes, "raw/, drafts/ and exports/ — sent/ is filed, not scanned").toBe(3);
-    expect(worstCase, "(n + 2) × list_limit + (2n + 2), which is 758 at three prefixes and a limit of 150")
+    expect(prefixes, "raw/, drafts/, exports/ and sent/ — every prefix this Worker writes").toBe(4);
+    expect(worstCase, "(n + 2) × list_limit + (2n + 2), which is 910 at four prefixes and a limit of 150")
       .toBe((prefixes + 2) * perPrefix + (2 * prefixes + 2));
     expect(worstCase).toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
-    // The fourth prefix is already known to be coming, which is why the limit is 150 and not the 198 the
-    // inequality above would allow. Asserted so that reasoning is a property rather than a paragraph.
-    expect((prefixes + 3) * perPrefix + (2 * (prefixes + 1) + 2))
-      .toBeLessThan(BUDGETS["doctor.free.max_subrequests"]);
+    /*
+     * **A fifth prefix does not fit, and that is asserted rather than left to be discovered.**
+     *
+     * The 20 August correction sized 150 for `n = 4` and said so; at `n = 5` the sum is 1,062, over the Free
+     * ceiling. The line that used to sit here asserted the *opposite* — that the next prefix still fitted —
+     * because at `n = 3` the next one did. Keeping that shape would have made this test claim headroom it no
+     * longer has, which is the class of defect #74 exists to close.
+     *
+     * The negative is the honest form and it is also the useful one: whoever adds a fifth prefix has to
+     * re-derive `list_limit` deliberately, and `test/node/evidence-prefix-world.test.ts` is what forces them
+     * to come here rather than leaving the prefix unscanned the way #67 and #74 both were.
+     */
+    expect(
+      (prefixes + 3) * perPrefix + (2 * (prefixes + 1) + 2),
+      "a fifth prefix at this list_limit is over the Free ceiling — re-derive it, do not widen the scan",
+    ).toBeGreaterThan(BUDGETS["doctor.free.max_subrequests"]);
   });
 
   it("finds an orphan blob but will not delete it unless asked", async () => {

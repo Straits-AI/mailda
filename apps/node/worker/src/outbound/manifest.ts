@@ -167,6 +167,25 @@ export function normalizeBody(typed: string): string {
     .join("\r\n");
 }
 
+/**
+ * Where one send's staged evidence lives. **One spelling**, shared by the two writers and the reconciler.
+ *
+ * `sealManifest` writes `typed.txt` and `normalized.txt` here; `dispatchOne` writes `submitted.eml` here; and
+ * `reconcile.ts` lists `sentPrefix` to find objects whose `send_manifests` row is gone (#74). Three spellings
+ * would be three things that can disagree, and the disagreement is silent in the worst direction — a
+ * reconciler listing a prefix nothing writes and reporting it clean, which is #67's defect with the roles
+ * reversed. `exportDestination` and `exportsPrefix` in `src/exports.ts` set the shape;
+ * `test/node/evidence-prefix-world.test.ts` is what makes "one spelling" a property rather than a claim.
+ */
+export function sentObjectKey(orgId: string, manifestId: string, name: string): string {
+  return `${sentPrefix(orgId)}${manifestId}/${name}`;
+}
+
+/** The prefix every send in one organization stages under — what the reconciler lists (#74). */
+export function sentPrefix(orgId: string): string {
+  return `${orgId}/sent/`;
+}
+
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -494,10 +513,10 @@ export async function sealManifest(
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
   // state is an orphan blob rather than a manifest pointing at nothing.
   const typedStored = await putEvidence(
-    env, `${orgId}/sent/${manifestId}/typed.txt`, utf8(composition.bodyTyped),
+    env, sentObjectKey(orgId, manifestId, "typed.txt"), utf8(composition.bodyTyped),
   );
   const normalizedStored = await putEvidence(
-    env, `${orgId}/sent/${manifestId}/normalized.txt`, utf8(normalized),
+    env, sentObjectKey(orgId, manifestId, "normalized.txt"), utf8(normalized),
   );
 
   // The Message-ID this Node authors. Derived from the manifest id, so it is stable, unique, and

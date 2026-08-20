@@ -552,9 +552,12 @@ describe("reconcile says what it scanned, and what it could not read", () => {
     await aSealedDraftsResidue("dft_sealed");
 
     const report = await reconcileEvidence(testEnv, ctx, ORG);
-    // Three since #65. `${ORG}/sent/` is deliberately **not** here: it is unscanned, filed as its own
-    // finding, and this assertion is exactly where its absence becomes visible rather than assumed away.
-    expect(report.scanned.prefixes).toEqual([`${ORG}/raw/`, `${ORG}/drafts/`, `${ORG}/exports/`]);
+    // Four since #74, which closed the gap this assertion used to record: `${ORG}/sent/` was named here as
+    // deliberately absent, and its absence being visible is what made it repairable rather than forgotten.
+    // `test/node/evidence-prefix-world.test.ts` is now what stops a fifth prefix repeating the pattern.
+    expect(report.scanned.prefixes).toEqual([
+      `${ORG}/raw/`, `${ORG}/drafts/`, `${ORG}/exports/`, `${ORG}/sent/`,
+    ]);
   });
 
   it("prints them, because a structured field a human never sees is not a disclosure", async () => {
