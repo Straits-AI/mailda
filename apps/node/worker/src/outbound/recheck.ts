@@ -1,9 +1,12 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { type ApprovalState, approvalOfManifest, decisionsOfApproval } from "../approvals.ts";
+import {
+  describeTrip, evaluateBreakers, RATE_BREAKERS, type RateReading,
+} from "../breakers.ts";
 import { decidersOf } from "../deciders.ts";
 import { getEvidence, sha256Hex } from "../evidence-store.ts";
-import { evaluate, isStricter, OUTCOMES, type Outcome } from "../policy.ts";
+import { domainOf, evaluate, isStricter, OUTCOMES, type Outcome } from "../policy.ts";
 import type { TransportAdapter } from "./transport.ts";
 
 /**
@@ -74,7 +77,7 @@ import type { TransportAdapter } from "./transport.ts";
 /* ---- the reason vocabulary ------------------------------------------------------------------- */
 
 /**
- * Why this Node declined to hand a send over. Six reasons, one state.
+ * Why this Node declined to hand a send over. Seven reasons, one state.
  *
  * #62 settled the shape: **gates are `awaiting` plus a reason, refusals are `withheld` plus a reason**, which
  * keeps the state machine's two halves symmetric and puts §5C's distinctness in the reason rather than in five
@@ -82,9 +85,16 @@ import type { TransportAdapter } from "./transport.ts";
  *
  * `authority_lost` is ADR 39's, written before this module existed and still written by `dispatchOne` on both
  * paths. It is declared here anyway, because the list of things that can withhold a send has to be *one* list:
- * the words for all six live in `src/client/delivery.client.js` and `test/outbound-recheck.test.ts` reads this
- * against the exact bytes a browser is served, so a seventh reason with no sentence fails a test rather than
- * showing somebody a raw token.
+ * the words for all seven live in `src/client/delivery.client.js` and `test/outbound-recheck.test.ts` reads
+ * this against the exact bytes a browser is served, so an eighth reason with no sentence fails a test rather
+ * than showing somebody a raw token.
+ *
+ * `domain_paused` is #66's, and it is the second member of this list that neither the approved path nor even
+ * *dispatch* owns exclusively: it is written at the **seal** as well, by `sealManifest`, because a pause in
+ * force must stop a send at the moment it is composed rather than a hold window later. It lives here anyway,
+ * for `authority_lost`'s reason — one list, or the vocabulary has two homes and the closed-world test over the
+ * served sentences can only see one of them. This module's name is about where most of these are decided, not
+ * about who may declare one.
  *
  * `satisfies` rather than an annotation, so the keys stay literal and `DispatchReason` below is the closed set
  * rather than `string`. That is what makes "six reasons" a statement the compiler holds: annotated as
@@ -122,9 +132,17 @@ export const WITHHOLDING = {
     raises: true,
     sentence: "The stored body of this send no longer matches the hash the manifest recorded for it.",
   },
+  domain_paused: {
+    // Not a raise, and the distinction is worth keeping sharp beside `evidence_changed` above: two
+    // administrators deliberately stopped this domain, so the Node is doing exactly what it was told. What
+    // makes it visible is `doctor`, which reports every pause in force with its reason and its age — an
+    // operational state rather than an alarm, because an alarm for a decision somebody took is noise.
+    raises: false,
+    sentence: "Sending from this domain is paused: two administrators stopped it, and one can restart it.",
+  },
 } as const satisfies Record<string, { raises: boolean; sentence: string }>;
 
-/** The six, as a type. A seventh has to be declared above before it can be written anywhere. */
+/** The seven, as a type. An eighth has to be declared above before it can be written anywhere. */
 export type DispatchReason = keyof typeof WITHHOLDING;
 
 /** The tokens `send_manifests.state_reason` can carry from a dispatch, derived from the map that writes them. */
@@ -151,12 +169,34 @@ function withheld(
   return { reason, lastError: `${entry.sentence} ${because}`.slice(0, 500), raises: entry.raises, evidence };
 }
 
-/** ADR 39's refusal, built here so the six reasons and their sentences live in one place. */
+/** ADR 39's refusal, built here so the seven reasons and their sentences live in one place. */
 export function authorityLost(actorUserId: string, mailboxId: string): Withholding {
   return withheld(
     "authority_lost",
     `${actorUserId} no longer holds send.propose on ${mailboxId}.`,
     { actorUserId, mailboxId },
+  );
+}
+
+/**
+ * #66's refusal, built here for the same reason and used from **two** places: the seal and the dispatch.
+ *
+ * The `fix` half of the sentence names the act and who may perform it, because AGENTS.md's rule about
+ * refusals is not only about budgets: a person reading "this domain is paused" needs to know that one
+ * administrator can restart it and where. The pause id is in the evidence rather than in the prose, so the
+ * sentence stays a sentence and the trail keeps the join key.
+ */
+export function domainPaused(
+  domain: string,
+  pause: { pauseId: string; placedAt: string; reason: string },
+): Withholding {
+  return withheld(
+    "domain_paused",
+    `Mail from ${domain} has been stopped since ${pause.placedAt}: "${pause.reason}". This send never left `
+    + "and the mail service was never asked. Any one administrator can restart the domain — "
+    + `POST /api/domain-pauses/${pause.pauseId}/lift — and the message has to be composed again, because a `
+    + "sealed send is never edited.",
+    { domain, pauseId: pause.pauseId, placedAt: pause.placedAt },
   );
 }
 
@@ -464,6 +504,67 @@ export function envelopeRecord(envelope: EffectEnvelope): Record<string, unknown
     // the recheck did not cover.
     absent: Object.keys(envelope.absent),
   };
+}
+
+/* ---- the breaker recheck, which is on BOTH paths ---------------------------------------------- */
+
+export type BreakerRecheck =
+  /** A pause is in force: refuse, `withheld`, and this is terminal for these bytes. */
+  | { kind: "withhold"; withholding: Withholding }
+  /** A rate is over: gate, `awaiting`, and it goes when the window clears. */
+  | { kind: "gate"; rate: RateReading; reason: string; lastError: string }
+  | null;
+
+/**
+ * Asks the breakers about a send that is about to be handed over (#66).
+ *
+ * ## Why this is not inside `recheckApproved`, and not a copy in `dispatch.ts` either
+ *
+ * It lives in this module because this module owns the refusal vocabulary and #66 said the dispatch half
+ * belongs with #62's recheck rather than duplicated beside it. It is a **separate exported function** because
+ * the asymmetry the rest of this file is built on does not apply to it: the §18 recheck is what an approval
+ * pays for, so it runs on the approved path only, while a breaker is a fact about **this Node's own rate and
+ * this Node's own domain** and has nothing to do with whether anybody asked for assurance. A breaker that
+ * fired only on approved sends would be a governance control that a Node with no `require_approval` policy
+ * never had.
+ *
+ * So `dispatchOne` calls this on both paths, after ADR 39's authority read and before the approval recheck:
+ * cheapest first, and a send already refused never pays for the eight that follow. One D1 statement, measured
+ * (`docs/receipts/send-breakers.md`), which is what keeps `send.dispatch_unapproved_max_subrequests` intact.
+ *
+ * ## Fail closed if the answer has become stricter, and what "stricter" means here
+ *
+ * #66 settled evaluation at **both** seal and dispatch: the seal sets the state and produces the error
+ * carrying budget, limit and remedy, and the dispatch re-asks and fails closed. Stricter is not a comparison
+ * against a bound value the way `isStricter` compares policy outcomes, and that is deliberate rather than an
+ * omission — a rate has no bound value to compare against, because *nothing was frozen at the seal*. There is
+ * only the current answer, and the current answer either permits the hand-over or does not. A send that was
+ * sealed while the rate was clear and reaches dispatch while it is over is stopped here, which is exactly what
+ * failing closed means for a question whose answer is always live.
+ */
+export async function recheckBreakers(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  envelopeFrom: string,
+): Promise<BreakerRecheck> {
+  const decision = await evaluateBreakers(env, ctx, orgId, domainOf(envelopeFrom));
+
+  // The pause first, because it is the refusal: a domain that must not send does not send, whatever the
+  // rates say, and reporting a rate gate on a paused domain would tell somebody to wait an hour for a
+  // condition no amount of waiting clears. Same ordering the seal uses, for the same reason.
+  if (decision.pause !== null) {
+    return { kind: "withhold", withholding: domainPaused(decision.pause.domain, decision.pause) };
+  }
+  if (decision.gate !== null) {
+    return {
+      kind: "gate",
+      rate: decision.gate,
+      reason: RATE_BREAKERS[decision.gate.breaker].reason,
+      lastError: describeTrip(decision.gate),
+    };
+  }
+  return null;
 }
 
 /* ---- the recheck ---------------------------------------------------------------------------- */

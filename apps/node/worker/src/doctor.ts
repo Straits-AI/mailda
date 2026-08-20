@@ -4,6 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
+import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { decidersByMailbox } from "./deciders.ts";
 import { holdsForReport } from "./holds.ts";
 import { noticeState } from "./notifications.ts";
@@ -202,6 +203,10 @@ const EXPECTED_TABLES = [
   "notifications",
   // Migration 0025 (Layer 5: eDiscovery export).
   "exports",
+  // Migration 0026 (Layer 5: send circuit breakers). The three *rate* breakers add no table at all — they
+  // are a windowed COUNT(*) over rows that already exist — so this one row is the whole of what the latched
+  // breaker needed.
+  "domain_pauses",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -226,13 +231,22 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
    */
   const evidence = await checkEvidence(env, ctx, claim?.org_id ?? null);
 
+  /*
+   * Hoisted out of the list below because #66's breaker check **reads its answer** rather than recomputing
+   * it: an unarmed rate breaker matters when this Node is sending and hearing nothing back, and is entirely
+   * benign on a Node that has simply not sent much. `delivery_visibility` is exactly that predicate, already
+   * computed, and a second copy of it would be a second definition of "blind" for the two to disagree about.
+   */
+  const delivery = await checkDeliveryVisibility(env, ctx, claim?.org_id ?? null);
+  const blind = delivery.some((finding) => finding.check === "delivery_visibility" && !finding.ok);
+
   findings.push(
     ...(await checkSchema(env)),
     ...(await checkEvidenceBucket(env)),
     // Before the evidence-based one, because it says which question this report cannot answer at all, and a
     // reader meeting a blind Node needs that first. Costs no subrequest: it reads nothing.
     sendingEventsConsumerCheck(),
-    ...(await checkDeliveryVisibility(env, ctx, claim?.org_id ?? null)),
+    ...delivery,
     ...(await checkVault(env)),
     ...(await checkCredentialKek(env)),
     ...(await checkSigningKeys(env, ctx)),
@@ -243,6 +257,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkHolds(env, ctx, claim?.org_id ?? null)),
     ...(await checkSelfGrants(env, claim?.org_id ?? null)),
     ...(await checkSupervisionNotices(env, ctx, claim?.org_id ?? null)),
+    ...(await checkBreakers(env, ctx, claim?.org_id ?? null, blind)),
     planCheck(),
   );
 
@@ -1499,6 +1514,150 @@ async function checkSupervisionNotices(env: Env, ctx: Ctx, orgId: string | null)
         + "Run the audit verification (GET /api/audit) to see whether the trail itself was edited too, then "
         + "read the supervised.granted entries: they name the grant, the mailbox, the scope, the matter and "
         + "the deadline, which is what the missing notices were going to say",
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Can this Node's circuit breakers see anything, and is anything currently stopping mail? (#66)
+ *
+ * ## Why a breaker needs a check at all
+ *
+ * A rate breaker keeps **no state**: it is a windowed `COUNT(*)` re-asked on every send. That is the property
+ * that makes it impossible to leave un-armed by accident, and it is also what makes it **invisible** — there
+ * is no row anywhere saying whether the thing is working, and a tripped breaker nobody can see is the failure
+ * shape this repository has now hit repeatedly. So the readings are reported here, on every claimed run,
+ * whether or not anything is over.
+ *
+ * ## `armed: false, reason: no_observations` rather than a reassuring 0%
+ *
+ * This is the whole reason the check is not one line. A bounce-rate breaker reading **0%** because the
+ * delivery channel is dead is the silent failure the breakers exist to prevent, and `doctor` already computes
+ * that exact predicate one function up: `delivery_visibility` fails when hand-overs old enough to have been
+ * answered have produced no attributed events at all. A Node in that state has a bounce breaker that will
+ * never fire and a report that says everything is fine.
+ *
+ * So an under-observed rate reports `armed: false` with the reason, and the finding is **degraded** rather
+ * than `ok` — not because the Node is broken, but because a governance control that cannot fire is a control
+ * nobody should be relying on, and `report`/`ok: true` is how somebody comes to.
+ *
+ * **Failing closed on no observations was rejected**, and the reason is short: a Node that has never sent
+ * anything has no observations, so failing closed means a new Node refuses to send. That is worse than the
+ * thing it protects against.
+ *
+ * ## Two findings, because they answer different questions
+ *
+ * `send_breakers` is *can this Node see, and is anything over*. `domain_paused` is *is a human decision
+ * currently stopping a customer's mail* — which is not a fault at all, and is `degraded` anyway: mail is not
+ * leaving, somebody has to know, and the pause's own reason and age are what they need. §5C's rule against
+ * collapsing distinct states applies with more force in a diagnostic than anywhere else.
+ *
+ * Costs **one** subrequest on a clean Node and two when a pause exists — the rate statement, plus the pause
+ * listing only when the first said something is paused. `doctor-check-cost.md`'s `stale_when` names "any new
+ * fixed-cost check", and this is one.
+ */
+async function checkBreakers(
+  env: Env,
+  ctx: Ctx,
+  orgId: string | null,
+  blind: boolean,
+): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "send_breakers",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so nothing has been sent and there is nothing to rate.",
+    }];
+  }
+
+  // No domain: `doctor` asks the rate questions and not the pause one, because "is this domain paused" needs
+  // a domain and a report about every domain is the second statement below.
+  const decision = await evaluateBreakers(env, ctx, orgId, null).catch(() => null);
+  if (decision === null) {
+    return [{
+      check: "send_breakers",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "Could not read the tables the send breakers count over, so this Node cannot say whether they "
+        + "would fire.",
+      fix: "check the migrations_applied finding first",
+    }];
+  }
+
+  const unarmed = decision.rates.filter((rate) => !rate.armed);
+  const tripped = decision.rates.filter((rate) => rate.tripped);
+  /*
+   * **When an unarmed breaker is a fault, and when it is just a quiet Node.** This is the line the whole
+   * check turns on, and getting it wrong in either direction is a documented failure of this file.
+   *
+   * `ok: false` on every unarmed breaker would fail on every freshly deployed Node, for ever, until somebody
+   * sent a few hundred messages — and `DELIVERY_SILENCE_MS` names the consequence three hundred lines up: a
+   * finding that fails on every Node forever is one somebody mutes, and a muted check is worse than no check
+   * because it still reads as verified.
+   *
+   * `ok: true` on every unarmed breaker is the opposite failure and the one #66 exists to prevent: a Node
+   * whose event subscription was never created hears nothing, so its bounce breaker has no denominator and
+   * can never fire — and the report would say so in a sentence nobody reads while the verdict stays green.
+   *
+   * The discriminator is `blind`, which is `delivery_visibility`'s own predicate: hand-overs old enough to
+   * have been answered, none of them observed, and **zero attributed events ever**. A Node that is sending
+   * and hearing nothing has breakers that cannot fire; a Node that has not sent has breakers with nothing to
+   * rate yet. Same reading, two different facts, and §5C's rule against collapsing them applies hardest in a
+   * diagnostic.
+   */
+  const cannotFire = blind && unarmed.length > 0;
+  const findings: Finding[] = [{
+    check: "send_breakers",
+    // `degraded` when something is wrong, `report` when the readings are simply a fact worth printing. The
+    // severity moves with the finding rather than being fixed, because a permanent WARN is the muted check.
+    severity: cannotFire || tripped.length > 0 ? "degraded" : "report",
+    discloses: "data",
+    ok: !cannotFire && tripped.length === 0,
+    detail: decision.rates.map((rate) => {
+      const window = `${Math.round(rate.windowSeconds / 60)}m`;
+      if (!rate.armed) {
+        return `${rate.breaker}: armed=false (${rate.unarmedReason}) — ${rate.observations} observation(s) `
+          + `in ${window}, and this breaker needs more before a rate means anything. It is NOT 0%.`;
+      }
+      const at = rate.percent === null ? `${rate.observed}` : `${rate.percent}% of ${rate.observations}`;
+      return `${rate.breaker}: armed=true, at ${at} against ${rate.limit} in ${window}`
+        + (rate.tripped ? " — OVER, sends are gating" : "");
+    }).join(" | "),
+    ...(!cannotFire && tripped.length === 0 ? {} : {
+      fix: tripped.length > 0
+        ? "sends are being gated to awaiting and will go when the window clears — nobody has to clear them. "
+          + "Read the outbox for the exact figure and the time remaining, and find out what is being sent "
+          + `before raising ${tripped.map((rate) => RATE_BREAKERS[rate.breaker].limitBudget).join(", ")}`
+        : "these breakers cannot fire, and the cause is the one delivery_visibility above is reporting: this "
+          + "Node has handed mail over and received no delivery outcome it could attribute, so the rates "
+          + "have no denominator. Fix the event subscription and the consumer — the fix on that finding "
+          + "names both — and these arm themselves as outcomes start arriving. Nothing here needs resetting",
+    }),
+    receipt: "docs/receipts/send-breakers.md",
+  }];
+
+  // The second statement, and only when the first says there is one to describe — `pausedDomains` is a
+  // seventh sub-select on a statement already being issued, so asking costs nothing. A listing on every run
+  // would spend a subrequest on every Node to report nothing on almost all of them.
+  if (decision.pausedDomains > 0) {
+    const paused = await pausesInForce(env, orgId);
+    findings.push({
+      check: "domain_paused",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: paused.map((pause) =>
+        `${pause.domain} has been paused since ${pause.placedAt} (${pause.pauseId}): "${pause.reason}"`,
+      ).join(" | "),
+      fix: "no send from these domains is leaving. Any one administrator can restart a domain alone — "
+        + `POST /api/domain-pauses/${paused[0]!.pauseId}/lift — because the harm of a wrongly paused domain `
+        + "grows every minute it stands. Placing one took two administrators; lifting takes one",
+      receipt: "docs/receipts/send-breakers.md",
     });
   }
 

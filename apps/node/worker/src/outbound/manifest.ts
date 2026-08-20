@@ -8,7 +8,9 @@ import { decidersOf } from "../deciders.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence } from "../evidence-store.ts";
-import { evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
+import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
+import { domainOf, evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
+import { domainPaused } from "./recheck.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
@@ -129,6 +131,20 @@ export interface SealedManifest {
   approvalId: string | null;
   /** Why no approval could be requested, when that is why this send is `withheld` (#61). */
   approvalShortfall: Shortfall | null;
+  /**
+   * The rate breaker that gated this send, or null (#66).
+   *
+   * Returned rather than left to the outbox, because AGENTS.md requires a developer to see the limit at the
+   * moment they hit it: this carries `limit`, `observed`, `observations` and `retryAfterSeconds`, so an agent
+   * composing in a loop can back off by a number rather than by guessing. `GET /api/breakers` answers the
+   * same question **before** the send, which is the other half of that rule.
+   */
+  breaker: RateReading | null;
+  /**
+   * The four-part sentence behind a breaker state, or null. Also written to `send_manifests.last_error`, so
+   * the caller and the outbox row say the same thing rather than two things that could drift.
+   */
+  breakerError: string | null;
 }
 
 /**
@@ -406,7 +422,7 @@ export async function sealManifest(
       // not a classification.
       subjectKind: "send_manifest",
       subjectId: manifestId,
-      mailboxId: composition.mailboxId,
+      scopeId: composition.mailboxId,
       actorUserId: composition.authorUserId,
       stages,
     }, deciders);
@@ -423,6 +439,54 @@ export async function sealManifest(
       sealedState = "withheld";
       stateReason = "approval_unsatisfiable";
     }
+  }
+
+  /**
+   * The circuit breakers (#66), evaluated after the policy and folded into the same state and reason.
+   *
+   * ## Where this sits in the order, and why the order is a total one
+   *
+   * #60 gave four outcomes a total order so that conflict resolution is one comparison. Two breakers join
+   * that order, and both ends are decided rather than incidental:
+   *
+   *     policy deny  >  domain pause  >  require_approval  >  policy hold  >  rate gate  >  allow
+   *
+   * **A policy denial keeps its reason** even on a paused domain, because a denial is the older and more
+   * specific decision — somebody wrote a rule about this send — and overwriting it would hide it. **A pause
+   * outranks both gates**, because a gate says *wait* and a pause says *never*, and telling somebody to wait
+   * for a condition that no amount of waiting clears is the worst of the four wordings available. **A rate
+   * gate ranks below the policy gates**, and that is the load-bearing one: a policy gate needs a *person* to
+   * clear it and a rate gate needs *time*, so if both apply, the reason a reader must act on is the human
+   * one — and the rate is re-asked at dispatch anyway, after the approval releases the send.
+   *
+   * ## The rate gate is only ever written over an `allow`
+   *
+   * `sealedState === "held"` is the guard, and it is not a shortcut for "policy did not gate". It is what
+   * keeps the `awaiting` state machine sound: a rate gate is the **one** `awaiting` reason that clears with
+   * no act by anybody, so `dispatchDue` admits it back into the sweep. If a policy hold could carry a
+   * breaker reason, the sweep would pick up a policy-gated send and hand it over the moment the window
+   * cleared — a rate limiter silently releasing mail a policy stopped. See `dispatch.ts`'s widened predicate,
+   * which names this dependency from the other end.
+   *
+   * Costs **one** D1 statement, unconditionally, on every seal (`docs/receipts/send-breakers.md`). Not lazy
+   * the way `evaluate`'s two derived inputs are, and that is a real difference worth stating: a policy
+   * condition is only asked when some published policy constrains it, while a breaker has no configuration
+   * to be absent — it is always in force, so there is nothing to skip.
+   */
+  const breakers = await evaluateBreakers(env, ctx, orgId, domainOf(address.address));
+  let breakerGate: RateReading | null = null;
+  let breakerError: string | null = null;
+
+  if (breakers.pause !== null && sealedState !== "withheld") {
+    const refusal = domainPaused(domainOf(address.address), breakers.pause);
+    sealedState = "withheld";
+    stateReason = refusal.reason;
+    breakerError = refusal.lastError;
+  } else if (breakers.gate !== null && sealedState === "held") {
+    breakerGate = breakers.gate;
+    breakerError = describeTrip(breakers.gate);
+    sealedState = "awaiting";
+    stateReason = RATE_BREAKERS[breakers.gate.breaker].reason;
   }
 
   const normalized = normalizeBody(composition.bodyTyped);
@@ -466,11 +530,14 @@ export async function sealManifest(
       typedStored.blobKey, typedStored.plaintextSha256,
       normalizedStored.blobKey, normalizedStored.plaintextSha256,
       at, releaseAt, sealedState, at,
-      // Prose for a person, beside the machine token in `state_reason`. The two are not redundant: the token is
-      // what #62's vocabulary is built from, and this is the sentence that says which stage was short.
-      approvalShortfall === null
-        ? null
-        : describeShortfall(approvalShortfall, composition.mailboxId),
+      // Prose for a person, beside the machine token in `state_reason`. The two are not redundant: the token
+      // is what #62's vocabulary is built from, and this is the sentence that says which stage was short —
+      // or, for a breaker, the four parts AGENTS.md requires: the named budget, its limit, the ask and the
+      // way to change it. At most one of the two is ever set, because the state that produced each is
+      // exclusive of the other.
+      approvalShortfall !== null
+        ? describeShortfall(approvalShortfall, composition.mailboxId)
+        : breakerError,
       decision.outcome,
       JSON.stringify(decision.matched.map((match) => match.versionId)),
       stateReason,
@@ -538,6 +605,56 @@ export async function sealManifest(
       // them: an approval nobody could be asked for is not a later event, it is what this seal decided.
       approvalId,
       ...(approvalShortfall === null ? {} : { approvalShortfall }),
+      // What the breakers said, on the entry for the act they decided. Recorded whether or not one fired,
+      // and that is the deliberate half: a breaker whose reading is only written down when it trips leaves
+      // no evidence that it was *asked*, so a breaker silently unarmed for a month looks exactly like a
+      // breaker that nothing tripped. `armed` and `observations` are what tell those two apart, which is the
+      // same distinction `doctor` refuses to blur.
+      breakers: breakers.rates.map((rate) => ({
+        breaker: rate.breaker,
+        armed: rate.armed,
+        observations: rate.observations,
+        observed: rate.observed,
+        percent: rate.percent,
+        tripped: rate.tripped,
+      })),
+      domainPaused: breakers.pause === null ? null : breakers.pause.pauseId,
+    },
+  };
+
+  /*
+   * The trip's own entry (#66). **The only record that a rate breaker fired**, because a rate breaker keeps
+   * no state: the rows it counted will have aged out of the window before anybody reads the trail, so a trip
+   * that is not recorded here never happened.
+   *
+   * It rides in the seal's `batch()` beside `send.sealed`, so a gated manifest with no entry naming the
+   * breaker is not representable — the same property `approval.requested` gets from the same transaction.
+   * Two entries about one act, for `approval.requested`'s reason: `send.sealed` records what happened to the
+   * *send*, and this records that a **threshold** was crossed, which is a fact about the Node and is the
+   * thing somebody filters the trail by when they ask "how often is this firing".
+   */
+  const breakerEvent: AuditEvent | null = breakerGate === null ? null : {
+    action: "send.rate_limited",
+    // `refused` would overclaim in the direction this whole design exists to avoid: nothing was refused. The
+    // send is waiting, and `ok` is what the trail's other gates record.
+    outcome: "ok",
+    actorUserId: composition.authorUserId,
+    subject: manifestId,
+    detail: {
+      breaker: breakerGate.breaker,
+      reason: stateReason,
+      limit: breakerGate.limit,
+      observed: breakerGate.observed,
+      observations: breakerGate.observations,
+      percent: breakerGate.percent,
+      windowSeconds: breakerGate.windowSeconds,
+      retryAfterSeconds: breakerGate.retryAfterSeconds,
+      // Whether the figure above is when it clears or the earliest it can. Recorded rather than left for a
+      // reader to infer from the breaker's name, because the two claims are different and one of them is
+      // weaker.
+      retryAfterExact: breakerGate.retryAfterExact,
+      mailboxId: composition.mailboxId,
+      at: "seal",
     },
   };
 
@@ -546,7 +663,8 @@ export async function sealManifest(
   // about two different things. See `auditedBatchMany`.
   await auditedBatchMany(
     env, ctx, orgId,
-    approvalEvent === null ? [sealEvent] : [sealEvent, approvalEvent],
+    [sealEvent, ...(approvalEvent === null ? [] : [approvalEvent]),
+      ...(breakerEvent === null ? [] : [breakerEvent])],
     (entries) => [manifestRow, ...recipientRows, ...approvalStatements, ...entries],
   );
 
@@ -561,6 +679,8 @@ export async function sealManifest(
     stateReason,
     approvalId,
     approvalShortfall,
+    breaker: breakerGate,
+    breakerError,
   };
 }
 

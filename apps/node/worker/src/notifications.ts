@@ -203,7 +203,16 @@ export function noticesForApprovalRequest(
   ctx: Ctx,
   orgId: string,
   approvalId: string,
-  mailboxId: string,
+  /**
+   * The mailbox this request is about, or **null** when its subject is not about one (#66's domain pause).
+   *
+   * Nullable rather than defaulted to some id, because `notificationsFor`'s second addressing mode joins
+   * this column to `relationship_tuples.object_id` on `object_type = 'mailbox'`: a value that is not a
+   * mailbox would be a join returning nothing, which is the failure nobody notices. These rows are addressed
+   * to a named person anyway — `user_id` is never null here — so the column is context for a reader, and
+   * NULL is the honest rendering of "this request is not about a mailbox".
+   */
+  mailboxId: string | null,
   deciders: readonly string[],
   at: string,
   gate?: AuditGate,

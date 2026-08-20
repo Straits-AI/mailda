@@ -30,6 +30,24 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",
       "send.suppressed", "send.handed_over", "send.outcome_unknown", "send.withheld",
+      /*
+       * #66's rate gate, and it is on this table for the same reason `message.exported` is on
+       * `ingress_receipts`: the entry's subject is the manifest id, so "what happened to this send" stays one
+       * filter.
+       *
+       * **It is not `send.suppressed`**, which is one row above it and was the tempting reuse. That action is
+       * the entry for the `suppressed` *state*, which `dispatch.ts` defines as "on the suppression list —
+       * will never arrive, and that is knowable now". A rate gate claims the opposite on both halves: the
+       * mail **will** arrive, and nothing about the recipient is known to be wrong. Filing a delay under a
+       * name that means permanent non-arrival is the overclaim AGENTS.md §4 forbids — and it would have made
+       * "how much mail did this Node discard" unanswerable from the trail, because the two would be
+       * indistinguishable.
+       *
+       * It also carries a weight the other nine do not: every other send state can be reconstructed from
+       * `send_manifests` itself, while a rate breaker keeps **no state at all** — the rows it counted will
+       * have aged out of the window before anybody reads this. Un-audited, the trip never happened.
+       */
+      "send.rate_limited",
     ],
   },
 
@@ -77,6 +95,21 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "that we heard something, which the row already is; and the events arrive from a queue with no " +
       "actor to attribute them to.",
   },
+  /*
+   * #66's latched breaker, and the pair of actions is the asymmetry rather than a lifecycle.
+   *
+   * `domain.pause_placed` rides beside the one `UPDATE domain_pauses` that sets `placed_at`, inside
+   * `approveStatements` — so a domain whose mail stopped with nothing in the trail is not representable, the
+   * property `hold.lifted` and `supervised.granted` get from the same placement. `domain.pause_lifted` rides
+   * beside the single conditional UPDATE that clears it.
+   *
+   * There is deliberately **no** `domain.pause_requested`, for `hold.lift_requested`'s reason: requesting a
+   * pause **is** requesting an approval, and `approval.requested` records it in the same transaction as the
+   * row, with the domain, the reason, the stages and the eligible count in its detail. A second action for
+   * one transaction would make "who asked to stop this domain" answerable from two places that can disagree.
+   */
+  domain_pauses: { actions: ["domain.pause_placed", "domain.pause_lifted"] },
+
   /* ---- Layer 3 ---- */
   cases: {
     // The only audited case act is having one taken from you. Claiming and releasing are deliberately

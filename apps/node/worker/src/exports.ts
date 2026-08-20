@@ -321,7 +321,7 @@ export async function requestExport(
   const planned = planApproval(env, ctx, orgId, {
     subjectKind: "ediscovery_export",
     subjectId: exportId,
-    mailboxId: input.mailboxId,
+    scopeId: input.mailboxId,
     actorUserId,
     stages: EXPORT_STAGES,
     // What the two approvers are being asked to agree to, in the entry as well as in the queue. The hash

@@ -380,3 +380,33 @@ count of `prepare` calls is what this path is budgeted on, and a sub-select does
 why the guard against an inert notice could be paid for at all. It rides `ntf_pending_matter`, the partial
 index on `due_at IS NULL`, so it seeks into nothing on a Node whose notices are all dated.
 
+
+## Correction — 20 August 2026: two new checks, one new subrequest (#66)
+
+The `stale_when` fired on *"any new fixed-cost check"*. #66 added `send_breakers` — the three windowed rate
+readings — and, conditionally, `domain_paused`.
+
+**Measured delta: +1 D1 query, no R2.** Same fixture, the check removed and then restored: a claimed Node with
+no mail at all reads **18 subrequests without it and 19 with** (14 → 15 D1, 4 R2 unchanged). That absolute is
+from a different fixture than the 16 recorded in the correction above — this one is a bare claimed Node, that
+one had mail — so the two absolutes are not comparable and neither invalidates the other. **The delta is the
+evidence**, measured the way every delta in this file is.
+
+**One query for three breakers, and that is the design rather than a small number.** The volume count, the
+bounce numerator and denominator, the complaint numerator and denominator, whether *this* domain is paused, and
+how many domains are paused at all — seven questions, seven scalar sub-selects, one `prepare`, one execution.
+That is the same shape `checkDeliveryVisibility` and `noticeState` already use, and it is what
+`test/node/doctor-meter-honesty.test.ts` requires of everything on this path: `src/breakers.ts` is listed in
+`DOCTOR_PATH` and satisfies both rules — no `batch()`, and every prepared statement executed exactly once.
+#66's *write* path lives in `src/domain-pause.ts` **because of** that guard, since placing a pause needs a
+transaction. `src/deciders.ts` and `src/notice-delivery.ts` set the precedent for moving the function rather
+than widening the check.
+
+**`domain_paused` costs a second query only when there is a pause to describe.** The seventh sub-select above
+answers *are there any*, so the listing is issued on a Node that has one and skipped on every Node that does
+not. A listing on every run would have been a subrequest spent on every Node to report nothing on almost all
+of them — and it would have made this a **+2** check while the comment beside it claimed +1, which is how the
+delta above was found to be 2 before it was fixed.
+
+`doctor.max_subrequests_per_run = 220` is untouched and still holds by an order of magnitude, so no `values:`
+moved: both checks are fixed costs that do not grow with mail volume, mailbox count or the age of the trail.

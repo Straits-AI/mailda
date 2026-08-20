@@ -213,8 +213,8 @@ export const NEVER_SUBMITTED = {
  *
  * ## Why the reasons are here and not beside the code that writes them
  *
- * `src/policy.ts`, `src/approvals.ts` and `src/outbound/recheck.ts` mint the tokens; this module owns the
- * sentences. One place for the prose, because two copies of the same claim means the authoritative one is
+ * `src/policy.ts`, `src/approvals.ts`, `src/breakers.ts` and `src/outbound/recheck.ts` mint the tokens; this
+ * module owns the sentences. One place for the prose, because two copies of the same claim means the authoritative one is
  * whichever file the reader opened — and because this is the module a test can evaluate as the exact bytes a
  * browser is served. The same argument that moved `SEND_STATES` here in the first place.
  *
@@ -231,6 +231,13 @@ export const NEVER_SUBMITTED = {
  * reads as an accident.
  *
  * Every sentence names **who can act**, because a state a person cannot act on is a complaint.
+ *
+ * #66's four are where that rule earns its keep, because three of them have a genuinely unusual answer:
+ * **nobody**. A rate breaker clears because failures age out of a window, so the honest sentence is *"nothing
+ * has to be cleared by anybody, and it goes on its own"* — and it says so rather than leaving a reader
+ * hunting for the person who has to press something. The fourth, `domain_paused`, has the opposite shape: two
+ * people stopped it and **one** can restart it, which is the asymmetry #66 chose and which a reader has to be
+ * told, because the intuitive reading of a two-person act is that it takes two to undo.
  */
 export const SEND_REASONS = {
   policy_hold: {
@@ -300,6 +307,40 @@ export const SEND_REASONS = {
       "An approver denied this send. This Node declined to hand it over; nobody cancelled it and the mail " +
       "service was never asked. A denial is final — there is no act that reverses one, because approval is " +
       "bound to these exact bytes. Compose again and the new message gets its own approval.",
+  },
+  breaker_volume: {
+    label: "too much, too fast",
+    note:
+      "This Node has handed over more mail in the last hour than its own volume breaker allows, so this one " +
+      "is waiting. It has not left and it is not lost: nothing has to be cleared by anybody, and it goes on " +
+      "its own once the oldest sends fall out of the hour. The exact limit, what this Node is at, and how " +
+      "long until it clears are in the message on the send itself.",
+  },
+  breaker_bounce_rate: {
+    label: "too many addresses refused",
+    note:
+      "Too many of the addresses this Node recently sent to are being refused by their own mail servers, so " +
+      "it stopped sending rather than making the reputation worse. This one has not left and is not lost — " +
+      "it goes once enough of those refusals age out of the window. Nobody has to clear it, but somebody " +
+      "should look at the recipient list: the outbox shows which addresses bounced and what their servers " +
+      "said.",
+  },
+  breaker_complaint_rate: {
+    label: "too many spam reports",
+    note:
+      "Too many recipients marked this Node's recent mail as spam, so it stopped sending. This one has not " +
+      "left and is not lost — it goes once enough of those reports age out of the window. Nobody has to " +
+      "clear it, and nobody should raise the limit without finding out what was sent: a complaint is a " +
+      "person saying they did not want this.",
+  },
+  domain_paused: {
+    label: "domain paused",
+    note:
+      "Two administrators stopped every send from this domain, and the reason they gave is on the message. " +
+      "This Node declined to hand it over; nobody cancelled it and the mail service was never asked. Any " +
+      "one administrator can restart the domain on their own — the harm of a wrongly paused domain grows " +
+      "every minute — and after that the message has to be composed again, because a sealed send is never " +
+      "edited.",
   },
   approval_unsatisfiable: {
     label: "approval impossible",

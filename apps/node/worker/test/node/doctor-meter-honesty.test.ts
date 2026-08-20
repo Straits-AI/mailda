@@ -72,6 +72,13 @@ const DOCTOR_PATH = [
   // this guard** — the delivering scan needs a `batch()` and named statements, neither of which may appear on
   // this path, and `deciders.ts` set the precedent for moving the function rather than widening the check.
   "notifications.ts",
+  // Added with #66's `send_breakers` and `domain_paused` checks: `evaluateBreakers` is one prepare and one
+  // execution — every rate and the pause probe are scalar sub-selects in a single statement — and
+  // `pausesInForce` is a second, run only when the first says there is a pause to describe. `src/breakers.ts`
+  // is a **read-only** module for exactly this guard, and #66's *write* path lives in `src/domain-pause.ts`
+  // because placing a pause needs a `batch()`. That is the same seam `deciders.ts` and `notice-delivery.ts`
+  // were carved out along, and its header says so.
+  "breakers.ts",
   join("auth", "kek.ts"),
   join("auth", "jwt.ts"),
   "keyvault.ts",

@@ -22,6 +22,8 @@ import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
 import { notificationsFor } from "./notifications.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { placeHold, requestHoldLift } from "./holds.ts";
+import { liftDomainPause, requestDomainPause } from "./domain-pause.ts";
+import { evaluateBreakers, pausesInForce } from "./breakers.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
 import { mergeConversations } from "./merge.ts";
@@ -1059,6 +1061,79 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       return Response.json({
         decided: await decideApproval(env, clock, who.orgId, who.userId, approvalDecide[1]!, decision),
+      });
+    }
+
+    /**
+     * Send circuit breakers (#66, Layer 5). Three windowed rates a Node applies to itself, and one latched
+     * pause a person places.
+     *
+     * `GET  /api/breakers`                 what every rate is at right now, armed or not
+     * `POST /api/domain-pauses`            ask two other administrators to stop a domain's mail
+     * `GET  /api/domain-pauses`            every pause in force, with its reason and its age
+     * `POST /api/domain-pauses/:id/lift`   restart a domain. **One** administrator, alone
+     *
+     * ## `GET /api/breakers` exists because of AGENTS.md's third principle, not for a dashboard
+     *
+     * *"A limit developers can hit is a limit they must see"*, and the errors are only half of that: the
+     * refusal on a gated send names the budget, the limit, the ask and how long until it clears, but a client
+     * composing in a loop should be able to read the rate **before** it gates. An agent that can see
+     * `volume: 480 of 500, 900s until the oldest falls out` backs off; an agent that can only see refusals
+     * retries into the wall.
+     *
+     * It needs no administrator and reveals no mail: counts and percentages over the caller's own
+     * organization, which is what `doctor` already reports to any authenticated principal.
+     *
+     * ## Deciding a pause is `POST /api/approvals/:id/decide`, and is not duplicated here
+     *
+     * Same as the hold lift, the supervised read and the export: `domain_pause` is the fifth approval subject
+     * (migration 0026), so the approver's queue, the decision, the withdrawal and the trail behind them all
+     * work for it because they were never about sends. There is deliberately **no endpoint that pauses a
+     * domain outright** — one would contradict #66's whole asymmetry.
+     *
+     * The lift, by contrast, *is* a single endpoint one administrator calls alone, and that asymmetry is the
+     * decision rather than an accident: placing stops a customer's mail and lifting restarts it, so ceremony
+     * belongs in front of the first and nowhere near the second. #64 made the same call in the opposite
+     * direction about legal holds, for the same reason.
+     */
+    if (url.pathname === "/api/breakers" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // No domain, so the pause question is not asked here: the pause listing below is the answer to it, and
+      // it is about every domain rather than about one this endpoint would have to be told.
+      const decision = await evaluateBreakers(env, clock, who.orgId, null);
+      return Response.json({ breakers: decision.rates });
+    }
+
+    if (url.pathname === "/api/domain-pauses" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // Both absent values reach `requestDomainPause` as the empty string and are refused there with the
+      // four-part message, rather than being defaulted — a pause with an invented reason would be this Node
+      // writing a justification for stopping somebody's mail.
+      const requested = await requestDomainPause(
+        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.reason ?? ""),
+      );
+      return Response.json({ pause: requested });
+    }
+
+    if (url.pathname === "/api/domain-pauses" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({ pauses: await pausesInForce(env, who.orgId) });
+    }
+
+    const pauseLift = /^\/api\/domain-pauses\/([^/]+)\/lift$/.exec(url.pathname);
+    if (pauseLift && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // Optional, unlike the reason for placing. Restarting mail is the direction #66 made easy, so a
+      // missing reason is accepted and recorded as absent rather than as a phrase nobody said.
+      const reason = body.reason === undefined || body.reason === null ? null : String(body.reason);
+      return Response.json({
+        lifted: await liftDomainPause(env, clock, who.orgId, who.userId, pauseLift[1]!, reason),
       });
     }
 

@@ -159,3 +159,41 @@ their latency, and not a deployed Node's behaviour. `approval-decision-cost.md`,
 and `doctor-check-cost.md` draw the same line for the same instrument. **No deployed measurement is claimed
 here**, and the one place the harness differs from a deployed Node in *operation count* — the fake transport's
 free capability call — is named above rather than folded into the total.
+
+## Correction — 20 August 2026 (#66)
+
+**Two `stale_when` clauses fired at once, and one of them is the sentence this receipt was proudest of.**
+
+*"a seventh withholding reason"* — `domain_paused` is it. And *"the unapproved path gains any read at all,
+which is the whole asymmetry #62 decided"* — it did.
+
+Re-measured in the same test, same instrument, same runtime:
+
+| Scenario | Was | Now |
+|:--|--:|--:|
+| `dispatchOne`, unapproved, handed over | 16 | **17** |
+| `dispatchOne`, approved, handed over | 24 | **25** |
+| `dispatchOne`, approved, refused at the first check | 7 | **7** |
+| recheck delta | 8 | **8** |
+
+**No value in this file changed.** `send.dispatch_unapproved_max_subrequests` is 20 and
+`send.dispatch_approved_max_subrequests` is 28, so the headroom on the cheap path narrows from 4 to 3 and on
+the expensive path from 4 to 3. Recorded rather than quietly raised, which is what the bound is for.
+
+### Why the asymmetry survives a read landing on the cheap path
+
+#62's asymmetry is about **what an approval pays for**: the eight subrequests of approval validity, approver
+eligibility, live policy and two body hashes are assurance somebody asked for, so they run only where somebody
+asked. A circuit breaker is not assurance about *this send* — it is a fact about **this Node's own rate and
+this Node's own sending domain**, and a breaker that fired only on approved sends would be a governance
+control that a Node with no `require_approval` policy never had. So it runs on both paths, and the asymmetry
+it does not touch is the one that was decided.
+
+The single read is deliberate and measured: every question the breakers ask — the volume count, both bounce
+counts, both complaint counts and whether this domain is paused — is a scalar sub-select inside **one**
+`SELECT`. Four statements would have taken the cheap path to 20 and consumed this receipt's entire headroom in
+one ticket. Detail and the per-scenario figures: `send-breakers.md`.
+
+The recheck delta is unchanged at 8, which is the number this receipt exists to hold: the breaker read sits
+*outside* it, before the branch, so making the recheck universal still costs the same half-again it always
+did.

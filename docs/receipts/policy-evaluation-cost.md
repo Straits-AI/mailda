@@ -141,3 +141,26 @@ Detail in `approval-decision-cost.md`.
 **No value in this file changed.** `policy.evaluate_max_subrequests` bounds `evaluate`, which did not move, and
 the seal figures were never budget values here — they are the reason `butler-step-cost.md` exists, and that
 receipt has its own dated correction for the new worst case.
+
+## Correction — 20 August 2026 (#66)
+
+The `stale_when` fired on its last clause again — **the seal gained one I/O operation** — and it did *not*
+fire on the clause that names #66 by number.
+
+`evaluate()` itself is unchanged: still 1 operation typically and 3 at the worst case, and every `evaluate`
+row in the table above is still exact. What changed is what a *seal* does after evaluation, because #66 asks
+the circuit breakers before deciding the state a manifest is sealed with.
+
+| Scenario | Was | Now |
+|:--|--:|--:|
+| `sealManifest`, new thread, no policies | 11 | **12** |
+
+**The clause that did not fire is worth recording**, because it predicted the wrong mechanism. This receipt
+said it would go stale if *"`send_counters` gains a finer grain than org-and-day (#66), which would add a query
+per grain"*. #66 did not widen `send_counters` and added no query per grain. It refused that table as a
+substrate outright — a maintained cell can drift from the rows it summarises, and a calendar-day grain
+forgives a spike at 23:00 and punishes one at 01:00 — and counts append-only rows inside a sliding window
+instead. One statement, six scalar sub-selects, one subrequest, regardless of how many rates it answers.
+
+**No value in this file changed.** `policy.evaluate_max_subrequests` bounds `evaluate`, which did not move,
+and the seal figures were never budget values here. Detail: `send-breakers.md`.

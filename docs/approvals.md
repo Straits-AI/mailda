@@ -4,20 +4,23 @@ How an act that this Node will not perform on one person's word gets decided: wh
 decide it, what happens when two people act at once, and what is deliberately absent.
 
 Implemented by `apps/node/worker/src/approvals.ts` with `migrations/0020_approvals.sql`,
-`0021_hold_lift.sql` and `0022_approval_expiry.sql`, on top of the policy object in `src/policy.ts`
+`0021_hold_lift.sql`, `0022_approval_expiry.sql` and `0026_send_breakers.sql`, on top of the policy object in `src/policy.ts`
 (`0019_policy.sql`) and the eligible-set query in `src/deciders.ts`; the dispatch-time recheck an approved send
 gets is `src/outbound/recheck.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
 approval hangs off, [#64][64] for the legal-hold lift and [#62][62] for the recheck, the effect envelope and
 expiry.
 
-## Two subjects, one mechanism
+## Five subjects, one mechanism
 
 An approval decides on a **subject**: `(subject_kind, subject_id)`, unique over the pair.
 
-| Kind | The subject is | Completion does | Stages come from |
-|:--|:--|:--|:--|
-| `send_manifest` | a `send_manifests` row | releases the send to `held` | the fold over every matching `require_approval` policy version |
-| `hold_lift` | a `hold_lifts` row — one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's |
+| Kind | The subject is | Completion does | Stages come from | Approvers |
+|:--|:--|:--|:--|:--|
+| `send_manifest` | a `send_manifests` row | releases the send to `held` | the fold over every matching `require_approval` policy version | `approval.decide` on the mailbox |
+| `hold_lift` | a `hold_lifts` row — one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's | `approval.decide` on the held mailbox |
+| `supervised_read` | a `supervised_grants` row | sets `granted_at` and owes §7's notice | `[2]` ([#63][63]) | `approval.decide` on the mailbox being read |
+| `ediscovery_export` | an `exports` row | makes the run permissible | `[2]` ([#65][65]) | `approval.decide` on the mailbox being copied |
+| `domain_pause` | a `domain_pauses` row | sets `placed_at` — **stops every send from a domain** | `[2]` ([#66][66]) | **`org.admin` on the organization** |
 
 It shipped manifest-shaped — `manifest_id TEXT NOT NULL`, `UNIQUE (manifest_id)` — and the lift was the second
 caller, which found that on its first day. The two alternatives lose for the same reason in two directions: a
@@ -31,10 +34,15 @@ a partial one over pending rows. Asking again has to have a representation: a se
 manifest id, a refused lift mints a new `hold_lifts` row. Had the subject been the hold id, one denial would
 have made that hold unliftable for ever — [#64][64]'s operational trap arriving through the schema.
 
-Two columns carry across both kinds, checked rather than assumed:
+Two columns carry across every kind, checked rather than assumed:
 
-- **`mailbox_id`** keeps its name and meaning. For a send it is the mailbox the message is from; for a lift it
-  is the *held* mailbox. In both cases it answers one question: who holds `approval.decide` here.
+- **`scope_id`** was `mailbox_id` until [#66][66], and the rename is the point rather than tidying. It always
+  meant *the object whose relation-holders are eligible to decide* — the mailbox a message is from, the *held*
+  mailbox, the mailbox being read or copied. A domain pause has no mailbox, so it carries the organization
+  instead, and a column named `mailbox_id` holding an organization id is the overclaiming name AGENTS.md calls
+  a landmine: the join to `mailboxes` returns nothing, and a join that returns nothing is the one nobody
+  notices. **Which relation on which object is not a column** — it is `SCOPE_OF`, a total map keyed on the
+  subject-kind union, so a sixth kind is a compile error until it says where its approvers come from.
 - **`actor_user_id`** was `author_user_id`. It always meant *the person whose act this approval gates, and
   therefore the one person who may never decide it* — the author of the send, the requester of the lift. A lift
   has no author, and a name that overclaims by one word is how a reader is handed a landmine.
@@ -44,9 +52,12 @@ One caller-visible consequence: the refusal for deciding your own is `E_APPROVER
 *"you requested this hold lift"*. A `Record` keyed on the kind means a new subject is a compile error rather
 than a sentence about the wrong act.
 
-A future subject kind with **no mailbox at all** — §18 names domain and routing changes — is a real question
-and it is not answered: a nullable `mailbox_id` would make eligibility a question nothing validates. That kind
-either names a mailbox or brings a second source for its eligible set.
+A subject kind with **no mailbox at all** — §18 names domain and routing changes — was left open by 0021 as a
+real question, on exactly these terms: *"that kind either names a mailbox or brings a second source for its
+eligible set, and that is its ticket's work."* [#66][66]'s domain pause is that kind, and it brought the second
+source: `adminsOf` in `src/deciders.ts`, the `org.admin` holders on the organization, resolved through teams
+and de-duplicated on the person. A nullable `scope_id` is still refused, for 0021's reason — eligibility would
+become a question nothing validates.
 
 `subject_kind` carries **no CHECK constraint**, and that is stated rather than implied: SQLite cannot add one
 with `ALTER TABLE`, and no trigger can exist in this tree because the Node applies migrations by splitting on
@@ -457,4 +468,6 @@ see what they are agreeing to *before* they decide — a trail is where a decisi
 [62]: https://github.com/Straits-AI/mailda/issues/62
 [63]: https://github.com/Straits-AI/mailda/issues/63
 [64]: https://github.com/Straits-AI/mailda/issues/64
+[65]: https://github.com/Straits-AI/mailda/issues/65
+[66]: https://github.com/Straits-AI/mailda/issues/66
 [73]: https://github.com/Straits-AI/mailda/issues/73

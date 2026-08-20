@@ -12,13 +12,23 @@
  *
  * The two dishonest ways out were: duplicate the SQL for `doctor` (a second definition of who may decide, which
  * is the copy migration 0021 refused to make of the whole approval mechanism), or widen the guard until it no
- * longer says anything (a guard that cries wolf gets deleted). Moving one leaf query into a leaf module makes
- * the guard's claim true rather than convenient: **this file writes nothing and prepares exactly one
- * statement**, which is the property the meter's figure rests on.
+ * longer says anything (a guard that cries wolf gets deleted). Moving the leaf queries into a leaf module makes
+ * the guard's claim true rather than convenient: **this file writes nothing, and every statement it prepares
+ * it executes exactly once**, which is the property the meter's figure rests on.
  *
  * `authz-read.ts` was the other candidate home. It answers *"what may this principal reach"*; this answers
  * *"who holds this relation on this object"*, which is the many-subjects direction and a different query with a
  * different cost — `approval-decision-cost.md` records that distinction rather than folding the two.
+ *
+ * ## What the guard actually requires, now that this file holds two questions
+ *
+ * This file used to say it *"writes nothing and prepares exactly one statement"*. #66 added `adminsOf` and
+ * that sentence stopped being true, so it is corrected rather than left standing: the property
+ * `test/node/doctor-meter-honesty.test.ts` enforces is **no `batch()`, and every `prepare` chained straight
+ * into one execution**, which is what keeps prepare-count equal to execution-count on `doctor`'s path. Both
+ * functions below satisfy it and neither writes anything. A count of statements was never the property; it
+ * was a convenient way of stating it, and a convenient statement that stops being true is the defect this
+ * repository keeps finding.
  */
 
 /**
@@ -81,4 +91,42 @@ export async function decidersByMailbox(
  */
 export async function decidersOf(env: Env, orgId: string, mailboxId: string): Promise<Set<string>> {
   return (await decidersByMailbox(env, orgId, mailboxId)).get(mailboxId) ?? new Set<string>();
+}
+
+/**
+ * Every person holding `org.admin` on the organization, resolved through teams and de-duplicated.
+ *
+ * The **second source for an eligible set** that migration 0021 said a subject kind with no mailbox would have
+ * to bring, and #66's domain pause is that kind: a pause stops every mailbox sending from a domain, so no
+ * single mailbox's `approval.decide` holders have authority over it and naming one would be picking an
+ * arbitrary mailbox to decide something about all of them.
+ *
+ * `org.admin` is the relation this Node already requires for every act that decides whether other people's
+ * mail may leave — publishing a policy, placing a legal hold — so this widens no authority: it asks the
+ * existing administrators, two of them, for an act one of them could not take alone.
+ *
+ * The SQL is `decidersByMailbox`'s shape with two literals changed, and the three properties it turns on are
+ * the same three: it resolves teams, it de-duplicates on the **person** with `UNION` rather than `UNION ALL`
+ * (which is what dual control rests on — one person in two admin teams is one administrator), and it requires
+ * a row in `users` so a stale team id cannot satisfy dual control on its own. Written out rather than
+ * parameterised on relation and object type, because a query built from a relation name is a query
+ * `test/node/content-deletion-world.test.ts` cannot read table names out of, and because the two callers want
+ * different return shapes — a map per mailbox, and one set.
+ */
+export async function adminsOf(env: Env, orgId: string): Promise<Set<string>> {
+  const { results } = await env.CATALOG.prepare(
+    `SELECT t.subject_id AS user_id
+       FROM relationship_tuples t
+       JOIN users u ON u.org_id = t.org_id AND u.id = t.subject_id
+      WHERE t.org_id = ? AND t.object_type = 'organization' AND t.relation = 'org.admin'
+        AND t.object_id = ?
+     UNION
+     SELECT m.user_id AS user_id
+       FROM relationship_tuples t
+       JOIN team_members m ON m.org_id = t.org_id AND m.team_id = t.subject_id
+       JOIN users u ON u.org_id = m.org_id AND u.id = m.user_id
+      WHERE t.org_id = ? AND t.object_type = 'organization' AND t.relation = 'org.admin'
+        AND t.object_id = ?`,
+  ).bind(orgId, orgId, orgId, orgId).all<{ user_id: string }>();
+  return new Set(results.map((row) => row.user_id));
 }

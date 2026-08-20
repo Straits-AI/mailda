@@ -554,7 +554,7 @@ export async function requestHoldLift(
     subjectKind: "hold_lift",
     subjectId: liftId,
     // The **held** mailbox: who may decide a lift is who holds approval.decide over the mail being preserved.
-    mailboxId: hold.mailbox_id,
+    scopeId: hold.mailbox_id,
     actorUserId,
     stages: LIFT_STAGES,
     detail: { holdId, liftId, reason: stated },

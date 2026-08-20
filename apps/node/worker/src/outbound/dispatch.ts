@@ -5,9 +5,10 @@ import { stopClockForConversation } from "../response-clock.ts";
 import { maySend } from "../authz-read.ts";
 import { getEvidence, putEvidence } from "../evidence-store.ts";
 import { renderRfc822 } from "./manifest.ts";
+import { BREAKER_REASONS } from "../breakers.ts";
 import {
-  authorityLost, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow, envelopeRecord,
-  recheckApproved, requiresApproval, type Withholding,
+  authorityLost, type BreakerRecheck, type EffectEnvelope, ENVELOPE_COLUMNS, type EnvelopeRow,
+  envelopeRecord, recheckApproved, recheckBreakers, requiresApproval, type Withholding,
 } from "./recheck.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "./transport.ts";
 
@@ -31,11 +32,25 @@ import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "
  * `sent` and `delivered` do not exist here and must never be added. §5C forbids claiming an outcome
  * nobody observed, and the transport reports acceptance rather than arrival.
  *
- * ## `awaiting` is never dispatched, and it is never dispatched by *omission* rather than by a check
+ * ## `awaiting` is dispatched for exactly one reason family, and that is a check now rather than an omission
  *
- * Both the sweep and the claim below select `state = 'held' AND release_at <= ?` or `state = 'throttled'`.
- * `awaiting` is neither, so a gated send cannot leave — there is no guard to forget, because the predicate
- * that lets a send out never admitted it. `test/policy.test.ts` asserts that rather than trusting it.
+ * This used to read *"`awaiting` is never dispatched, and it is never dispatched by omission rather than by a
+ * check"* — the sweep and the claim admitted `held`-and-due or `throttled`, and `awaiting` was neither, so a
+ * gated send could not leave because the predicate never admitted it. **#66 changed that and the change is
+ * deliberate**, so the header changes with it rather than leaving a sentence that is no longer true.
+ *
+ * A rate breaker gates an over-rate send to `awaiting` and promises it *"goes when the window clears"*. Nothing
+ * else sweeps `awaiting`, so that promise needed a drain, and the drain is one arm on the predicate:
+ * `state = 'awaiting' AND state_reason IN (BREAKER_REASONS)`. Every predicate that lets a send move is now
+ * built by `movableNow` — one function, three call sites, so the widening could not reach two of them and miss
+ * the third.
+ *
+ * **The policy gates stay closed, twice over.** `BREAKER_REASONS` is derived from `RATE_BREAKERS` in
+ * `src/breakers.ts`, so `policy_hold` and `policy_approval_required` are not in it and could only get there by
+ * somebody declaring a policy outcome to be a rate breaker; and `sealManifest` will not write a breaker reason
+ * over a policy gate at all. `test/policy.test.ts` asserts a policy-gated send still cannot leave, and
+ * `test/breakers.test.ts` asserts a rate-gated one can once the window clears — the two halves of the same
+ * statement, which is what stops the guard being widened by accident later.
  *
  * **How an `awaiting` send drains, and which half is still missing.** An approval-gated send is released by
  * `decideApproval` in `src/approvals.ts` (#61): the decision that closes the last stage puts the manifest back
@@ -93,6 +108,41 @@ const STOPPABLE: ReadonlySet<SendState> = new Set<SendState>(["held", "awaiting"
 
 /** Which states the system may retry on its own. Everything absent here needs a human, or nothing. */
 const AUTO_RETRYABLE: ReadonlySet<SendState> = new Set<SendState>(["throttled"]);
+
+/**
+ * What the sweep, the claim and the refusal all mean by *"this manifest may move now"*, spelled **once**.
+ *
+ * Three places used to write this predicate out, identically, and #66 had to widen all three at once — which
+ * is exactly the correspondence problem that lets one of them be missed. So it is one function, and the
+ * parameters it needs are one instant and one column prefix.
+ *
+ * ## The third arm is #66's, and it is the narrowest widening that makes the design true
+ *
+ * `awaiting` has always been unreachable by the dispatcher **by omission rather than by a check** — the
+ * predicate that lets a send out simply never admitted it — and that is what makes a policy gate a real gate.
+ * A rate breaker breaks the premise: #66 gates an over-rate send to `awaiting`, and says it *"goes when the
+ * window clears"*. Nothing sweeps `awaiting`, so without this arm that sentence would have been false and the
+ * gate would have been a queue with no drain — the exact failure #60 kept `deny` out of `awaiting` to avoid,
+ * arriving through the other door.
+ *
+ * So the sweep admits `awaiting` **only** for a `state_reason` in `BREAKER_REASONS`: the rate gates, which are
+ * the one family of reasons that clears with no act by anybody. `policy_hold` and `policy_approval_required`
+ * are not in that list and never can be — `BREAKER_REASONS` is derived from `RATE_BREAKERS`, so a policy
+ * reason could only get in by somebody declaring a policy outcome as a rate breaker — and
+ * `sealManifest` will not write a breaker reason over a policy gate in the first place. Two independent
+ * reasons the policy gates stay closed, which is what this deserves: a rate limiter that could release
+ * policy-gated mail is a governance bypass with a benign-looking name.
+ */
+function movableNow(prefix: string): string {
+  const reasons = BREAKER_REASONS.map(() => "?").join(", ");
+  return `((${prefix}state = 'held' AND ${prefix}release_at <= ?) OR ${prefix}state = 'throttled'`
+    + ` OR (${prefix}state = 'awaiting' AND ${prefix}state_reason IN (${reasons})))`;
+}
+
+/** The parameters `movableNow` binds, in order: the instant, then the breaker reasons. */
+function movableParams(at: string): unknown[] {
+  return [at, ...BREAKER_REASONS];
+}
 
 export interface DispatchResult {
   manifestId: string;
@@ -222,10 +272,10 @@ export async function dispatchDue(
 
   const due = await env.CATALOG.prepare(
     `SELECT id FROM send_manifests
-      WHERE org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')${restriction}
+      WHERE org_id = ? AND ${movableNow("")}${restriction}
       ORDER BY release_at LIMIT ?`,
   )
-    .bind(orgId, now, ...(mailboxIds ?? []), limit)
+    .bind(orgId, ...movableParams(now), ...(mailboxIds ?? []), limit)
     .all<{ id: string }>();
 
   const results: DispatchResult[] = [];
@@ -285,14 +335,123 @@ export async function dispatchOne(
    */
   let withholding: Withholding | null = null;
   let envelope: EffectEnvelope | null = null;
+  let breaker: BreakerRecheck = null;
   if (manifest !== null) {
     if (!(await maySend(env, { orgId, userId: manifest.author_user_id }, manifest.mailbox_id))) {
       withholding = authorityLost(manifest.author_user_id, manifest.mailbox_id);
-    } else if (requiresApproval(manifest)) {
-      const rechecked = await recheckApproved(env, ctx, orgId, manifestId, manifest, transport);
-      envelope = rechecked.envelope;
-      withholding = rechecked.withholding;
+    } else {
+      /*
+       * The breakers (#66), on **both** paths, second — after the free-ish authority read and before the
+       * eight the approved path pays for.
+       *
+       * Both paths, because a breaker is a fact about this Node's own rate and this Node's own domain and has
+       * nothing to do with whether anybody asked for assurance about this particular send. A breaker that
+       * fired only on approved sends would be a governance control that a Node with no `require_approval`
+       * policy never had — which is the asymmetry #62 built, applied where it does not belong.
+       *
+       * One D1 statement, measured (`send-breakers.md`), so the unapproved path goes 16 → 17 against its bound
+       * of 20 and the approved path 24 → 25 against 28. Second in the order for the reason the recheck's own
+       * checks are ordered cheapest-first: a send the breakers stop never pays for the hashes.
+       */
+      breaker = await recheckBreakers(env, ctx, orgId, manifest.envelope_from);
+      if (breaker?.kind === "withhold") {
+        withholding = breaker.withholding;
+      } else if (breaker === null && requiresApproval(manifest)) {
+        const rechecked = await recheckApproved(env, ctx, orgId, manifestId, manifest, transport);
+        envelope = rechecked.envelope;
+        withholding = rechecked.withholding;
+      }
     }
+  }
+
+  /*
+   * A rate is over: gate to `awaiting` and stop. Not `withheld` — the mail is still wanted (#66).
+   *
+   * **The gate is conditional on this not already being the state**, and that is what keeps the trail
+   * bounded rather than a matter of care: the sweeper revisits a rate-gated send every tick, and an
+   * unconditional write would file one `send.rate_limited` entry per tick — sixty an hour behind one human
+   * action, falsifying `audit-and-log-retention.md`'s "a handful per message" as a side effect. The
+   * `NOT (state = 'awaiting' AND state_reason = ?)` clause is inside the shared gate, so the entry and the
+   * update commit together or neither does, and a re-visit that changes nothing records nothing.
+   *
+   * Placed **before the claim**, like every other refusal here and for the same reason: the claim increments
+   * `attempts` and moves the manifest to `outcome_unknown`, so gating afterwards would spend an attempt and
+   * park a never-submitted message in the one state that means "we do not know whether it left".
+   */
+  if (breaker?.kind === "gate") {
+    const unchanged = `NOT (state = 'awaiting' AND state_reason = ?)`;
+    const gateSql = `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND ${movableNow("")}
+                       AND ${unchanged}`;
+    const gateParams = [manifestId, orgId, ...movableParams(at), breaker.reason];
+    const { results } = await auditedBatch<never>(
+      env, ctx, orgId,
+      {
+        action: "send.rate_limited",
+        // Not `refused`: nothing was refused, and the trail's other gates record `ok`. See `AUDIT_ACTIONS`.
+        outcome: "ok",
+        subject: manifestId,
+        detail: {
+          breaker: breaker.rate.breaker,
+          reason: breaker.reason,
+          limit: breaker.rate.limit,
+          observed: breaker.rate.observed,
+          observations: breaker.rate.observations,
+          percent: breaker.rate.percent,
+          windowSeconds: breaker.rate.windowSeconds,
+          retryAfterSeconds: breaker.rate.retryAfterSeconds,
+          retryAfterExact: breaker.rate.retryAfterExact,
+          mailboxId: manifest?.mailbox_id ?? null,
+          // Which of #66's two evaluation points produced this. The seal's entry says `seal`; a send gated
+          // here was clear when it was composed and is over now, which is the fail-closed half.
+          at: "dispatch",
+        },
+      },
+      (entry) => [
+        entry,
+        env.CATALOG.prepare(
+          `UPDATE send_manifests SET state = 'awaiting', state_at = ?, last_error = ?, state_reason = ?
+            WHERE id = ? AND org_id = ? AND ${movableNow("")} AND ${unchanged}`,
+        ).bind(at, breaker.lastError, breaker.reason, manifestId, orgId, ...movableParams(at),
+          breaker.reason),
+        // The recipients follow the manifest, as they do on every other state change here: a gated send
+        // whose recipients still read `held` shows a person a message that is simultaneously stopped and
+        // pending.
+        env.CATALOG.prepare(
+          `UPDATE send_recipients SET submission_state = 'awaiting', submission_state_at = ?
+            WHERE org_id = ? AND manifest_id = ?`,
+        ).bind(at, orgId, manifestId),
+      ],
+      { sql: gateSql, params: gateParams },
+    );
+    if ((results[1]?.meta.changes ?? 0) > 0) {
+      return { manifestId, state: "awaiting", detail: breaker.lastError };
+    }
+    /*
+     * The gate matched nothing, so neither the entry nor the state was written — and **the two ways that
+     * happens need different answers**, which is why this is a read rather than the unconditional
+     * `state: "awaiting"` that stood here first.
+     *
+     * A **re-visit** is the ordinary one: the sweeper met a send already `awaiting` for this same reason, the
+     * `unchanged` clause held, nothing was recorded, and `awaiting` is exactly what it still is. A **lost
+     * race** is the other: somebody cancelled it, or another dispatcher claimed it, between the sweep's
+     * `SELECT` and this write. Reporting `awaiting` there would tell a caller their send is waiting for a
+     * window when it is `cancelled` — the blurred state §5C exists to prevent, in the one path that had no
+     * fall-through while the withhold path three lines down has had one all along.
+     *
+     * One read, and only on the branch that wrote nothing: a send actually gated pays for none of it.
+     */
+    const current = await env.CATALOG.prepare(
+      "SELECT state FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
+    ).bind(manifestId, orgId).first<{ state: SendState }>();
+    return {
+      manifestId,
+      // Absent means the row is gone, which `cancelled` is this module's word for everywhere else it reads a
+      // state back — see the claim below.
+      state: current?.state ?? "cancelled",
+      detail: current?.state === "awaiting"
+        ? breaker.lastError
+        : "Moved by another dispatcher, or cancelled, before the rate gate could be written.",
+    };
   }
 
   if (withholding !== null) {
@@ -319,8 +478,8 @@ export async function dispatchOne(
           // is prose for a person and this is the machine token the reason vocabulary is built from. Bound
           // rather than interpolated, so no reason can reach this SQL as text.
           `UPDATE send_manifests SET state = 'withheld', state_at = ?, last_error = ?, state_reason = ?
-            WHERE id = ? AND org_id = ? AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
-        ).bind(at, withholding.lastError, withholding.reason, manifestId, orgId, at),
+            WHERE id = ? AND org_id = ? AND ${movableNow("")}`,
+        ).bind(at, withholding.lastError, withholding.reason, manifestId, orgId, ...movableParams(at)),
         // The recipients follow, in the same transaction. A withheld send whose recipients still read
         // `held` would show a person a message that is simultaneously stopped and pending.
         env.CATALOG.prepare(
@@ -329,9 +488,8 @@ export async function dispatchOne(
         ).bind(at, orgId, manifestId),
       ],
       {
-        sql: `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ?
-                AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
-        params: [manifestId, orgId, at],
+        sql: `SELECT 1 FROM send_manifests WHERE id = ? AND org_id = ? AND ${movableNow("")}`,
+        params: [manifestId, orgId, ...movableParams(at)],
       },
     );
     if ((results[1]?.meta.changes ?? 0) > 0) {
@@ -363,14 +521,13 @@ export async function dispatchOne(
     // Somebody else moved it first; fall through and report what it actually is.
   }
 
-  // Claim: only a held-and-due or auto-retryable manifest may move. A concurrent cancel wins here.
+  // Claim: only a movable manifest may move. A concurrent cancel wins here.
   const claimed = await env.CATALOG.prepare(
     `UPDATE send_manifests
         SET state = 'outcome_unknown', state_at = ?, attempts = attempts + 1
-      WHERE id = ? AND org_id = ?
-        AND ((state = 'held' AND release_at <= ?) OR state = 'throttled')`,
+      WHERE id = ? AND org_id = ? AND ${movableNow("")}`,
   )
-    .bind(at, manifestId, orgId, at)
+    .bind(at, manifestId, orgId, ...movableParams(at))
     .run();
 
   if ((claimed.meta.changes ?? 0) === 0) {

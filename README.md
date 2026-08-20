@@ -689,6 +689,93 @@ still shows in an approver's queue with its deadline beside it, and deciding it 
 withheld — one enforcement point rather than two, and the deadline visible before somebody answers rather than
 after.
 
+**Two kinds of circuit breaker, and the split decides every other question about them.** A **rate** breaker
+is not a latch, it is a question re-asked on every send — *too much, too fast, and the mail is still wanted* —
+so volume, bounce rate and complaint rate gate a send to *waiting* with a reason and it goes when the window
+clears. An **abuse** breaker means *this must not be sent at all*, so a domain pause refuses outright and
+stays until a person removes it. Collapsing them fails in a specific way in each direction: all-hold lets a
+runaway build a backlog somebody eventually releases in bulk, which is how a loop finally sends its thousands;
+all-refuse throws away perfectly good invoices on a busy afternoon, and the sender's only remedy is composing
+them again into the same breaker. The classification is written out per breaker rather than inferred from a
+threshold, because that is the one place this design could rot into whatever the last person assumed.
+
+**There is no counter, and that is the strongest property available: nothing is armed, so nothing can fail to
+re-arm.** Each rate is a windowed `COUNT(*)` over rows that already exist — the shape this repository's only
+working rate limiter already had, counting sign-in attempts. Nothing to increment means nothing to contend on,
+no compare-and-swap, and no cell that can drift from the events it claims to summarise: the number is derived,
+not maintained. Recovery happens because failures **age out**, so there is no timer, no cron dependency and no
+open/half-open state machine anybody must keep advancing. A Durable Object was permitted by the contract for
+exactly this and refused anyway: it adds a subrequest to every send, it is opaque to `mailda doctor` in a way
+a table is not, and a timer-based reset would inherit the alarm's documented absorbing failure state — *stop
+re-arming and nothing external notices, ever* — inside the one component whose job is to notice things.
+
+**The trap was in the substrate, and it was found by reading rather than assumed.** The event table a bounce
+rate would naturally count has a **second writer**: an inbound delivery report about *somebody else's* mail
+lands in it with `terminal = 1`, which is indistinguishable from a real failure on any query that does not
+discriminate. A naive count trips this Node's breaker on another system's bounces — the read-a-wrong-number
+inversion a breaker exists to prevent, sitting in the one table a breaker would reach for. It turned out there
+are **two** kinds of foreign row, not one, and each is excluded by a different predicate: forwarded reports by
+the event-type filter, and Cloudflare's own bounce events that this Node could not attribute by
+`manifest_id IS NOT NULL`. That second kind was found by deleting the attribution clause and watching which
+tests still passed — the first version of the test built only the corpus the ticket named, and it passed
+against a breaker with no attribution clause at all.
+
+**A gate that promises to clear itself needs a drain, and `awaiting` did not have one.** Before this, a send
+in that state was unreachable by the dispatcher *by omission* — the predicate that lets a send move simply
+never admitted it, which is what made a policy gate a real gate. A rate gate parks a send there and promises
+it goes when the window clears, so the predicate gained one arm and now lives in one function with three call
+sites rather than three hand-written copies. The policy gates stay closed twice over: the admitted reasons are
+derived from the breaker list, and the seal will not write a breaker reason over a policy gate in the first
+place. Both halves are asserted, because a rate limiter that could release policy-gated mail is a governance
+bypass with a benign-looking name.
+
+**Pausing a domain inverts the legal hold's asymmetry, for the same reason it held there.** Placing a hold is
+one administrator and no justification, because placing only preserves and ceremony in front of it is how
+evidence is lost. Placing a domain pause **stops a customer's mail**, so the safe direction reverses: two
+administrators and a mandatory reason to place, and **one** administrator alone to lift — because the harm of
+a wrongly-paused domain grows every minute it stands, and a lift waiting for a second person to wake up is an
+outage with a governance story attached. Same principle, opposite conclusion, which is what a principle looks
+like when it is real. What was removed from the lift is the ceremony, not the record.
+
+**It is the fifth approval subject, and the first one that is not about a mailbox — which made a column stop
+lying.** Every other subject's approvers are the `approval.decide` holders on some mailbox. A domain pause
+stops every mailbox sending from that domain, so no single mailbox's holders have authority over it. The
+migration that generalised approvals to a subject named this exact case a year of tickets ago and deferred it
+in one sentence: *that kind either names a mailbox or brings a second source for its eligible set*. It brought
+one — the organization's administrators — and `mailbox_id` became `scope_id`, because a column named for a
+mailbox holding an organization id produces a join that returns nothing, and a join that returns nothing is
+the one nobody notices.
+
+**A breaker nobody can see is the failure this repository keeps finding, so the reading is printed whether or
+not anything is wrong — and it is never a reassuring 0%.** A bounce rate over too few observations reports
+`armed: false, reason: no_observations` **and no percentage at all** — the field is blank rather than `0`,
+in the API as well as in the report — because 0% on a Node whose delivery channel is dead looks exactly
+like 0% on a Node whose mail all arrives, and an unverified number is worse than a blank: a blank prompts a
+question and a wrong number ends one. Whether that is a *fault* reads the existing blindness check rather
+than recomputing it: a Node sending and hearing nothing has breakers that cannot fire and gets a warning; a
+Node that simply has not sent much has nothing wrong and gets a figure. Failing closed on no observations was
+refused in one line — a Node that has never sent would refuse to send.
+
+**The thresholds are sized, not measured, and the receipt opens by saying which of its numbers are which.**
+There is no corpus: this Node has never observed a real organization's bounce rate, and `doctor` reports the
+reason it might never have. So eight of the nine figures are tripwires placed by arithmetic, each with what it
+trades off written out, and the first real corpus is the receipt's first staleness clause. The ninth — what
+asking every breaker costs — **is** measured, at one subrequest, because all seven questions are scalar
+sub-selects in a single statement. Four statements would have consumed the entire headroom of the bound that
+exists to stop the cheap dispatch path becoming expensive. The seal went from 11 to 12 and the two dispatch
+paths from 16 and 24 to 17 and 25, all inside their published bounds.
+
+**What is not built is named with the evidence rather than stubbed.** The resolution also specified a pause
+keyed on a Butler id, so that republishing a fixed Butler cannot silently clear a pause the machine placed —
+a good decision about an object that does not exist. `grep "CREATE TABLE" migrations/` returns nothing for
+butler: Layer 4 is unbuilt, so no Butler can be created, no run can be recorded, nothing could ever write such
+a row, and the pause could not be validated against anything. That is the same failure eight policy dimensions
+and one team-scoped approval stage were already named absent for — a condition backed by no data is a policy
+that silently never fires, which reads as governance and is not. Filed as an issue with the evidence. Loop
+detection is excluded one layer down for the same reason: a breaker needs a denominator, and nothing records
+per-run outcomes at all. What shipped is not diminished by it — the three rates are the ones that stop a
+runaway *sending*, and a domain pause is a human act that needs no Butler.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.
@@ -911,6 +998,7 @@ docs/authentication.md                 sign-in, tokens, key rotation, client lif
 docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
 docs/supervised-access.md              matters, the time-boxed grant, per-act recording, the notice
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
+docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

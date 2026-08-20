@@ -561,6 +561,16 @@ The former "or is marked receive-only" escape is withdrawn: ADR 25 requires Work
 3. Recovery requires reconciliation of outcome-unknown effects, root-cause note, policy/definition correction and a bounded test.
 4. Unfreeze is a separate governed command; queued items are re-evaluated rather than released blindly.
 
+**What the domain pause taught this list.** Point 1 reads as one act with four scopes and it is not: pausing a
+*domain* stops a customer's mail outright, so it takes **two** administrators and a mandatory reason, and the
+unfreeze at point 4 takes **one**, alone — the reverse of §22's legal hold, because the harm of a wrongly
+paused domain grows every minute it stands while a wrongly placed hold only preserves. A pause of a *Butler*
+is not built at all, and the reason is recorded rather than left as an unmet bullet: it must key on a Butler id
+so that republishing a fixed Butler cannot silently clear a pause the machine placed, and there is no Butler
+object to key on until Layer 4 exists. Point 4's *re-evaluated rather than released blindly* is what the
+dispatch-time re-ask already gives every gated send: a paused domain's queued sends are refused at the
+hand-over, not released when the pause lifts.
+
 ## 5C. Status, edge-state and responsive UX contract
 
 - **Loading:** preserve usable content during refresh; return long-operation IDs; never announce send/publish/export success before authoritative commit.
@@ -1875,7 +1885,10 @@ manifest is not what the author wrote. *Rate limit* is a circuit breaker.
 answerable from a stored column or one derivation over storage that exists, and every other dimension listed
 above is **absent with its reason** rather than stubbed, because a condition backed by no data is a policy that
 silently never fires — which reads as governance and is not. Volume is org-wide and daily, which is all the
-counter is; per-user, per-mailbox, per-Butler and per-domain volume are circuit-breaker subjects.
+counter is; per-user, per-mailbox, per-Butler and per-domain volume are circuit-breaker subjects, and the
+breakers took the org-wide one on a **sliding window over rows** rather than on that counter — a maintained
+cell can drift from what it summarises, and a calendar day forgives a spike at 23:00 and punishes one at
+01:00.
 
 `recipient_external` is exact rather than heuristic, and its exactness is a **platform** property: Email
 Routing only accepts addresses on domains in the customer's own account, so every domain a Node has an address
@@ -1952,12 +1965,67 @@ what the output is built from. Recorded because *"every bound object hash"* read
 
 ### Circuit breakers
 
-- Per-user/mailbox/Butler/domain/org volume limits.
-- New-recipient/domain throttles.
-- Bounce/complaint/suppression enforcement.
-- Auto-disable offending Butler.
-- Domain-wide send pause.
-- Loop detection using trace headers, causal depth and route history.
+**Two kinds, and the split decides every other question.** A **rate** breaker is not a latch, it is a question
+re-asked on every send — *too much, too fast, and the mail is still wanted* — so it gates to `awaiting` with a
+reason and goes when the window clears. An **abuse** breaker means *this must not be sent at all*, so it
+refuses to `withheld`. Collapsing them either discards mail somebody still wants or queues mail that must
+never leave: all-hold lets a runaway build a backlog somebody releases in bulk, and all-refuse throws away
+good mail whose only remedy is composing it again into the same breaker. **The classification is per breaker
+and explicit in code**, not inferred from a severity or a threshold.
+
+| Breaker | Kind | Substrate | Outcome |
+|:--|:--|:--|:--|
+| Volume, per organization per window | rate | hand-overs in `send_recipients` | `awaiting` + reason |
+| Bounce rate | rate | attributed `send_recipient_events` | `awaiting` + reason |
+| Complaint rate | rate | attributed `send_recipient_events` | `awaiting` + reason |
+| Domain-wide send pause | abuse | `domain_pauses`, dual control | `withheld` + reason |
+
+**The counter is a windowed `COUNT(*)` over rows that already exist**, the shape the sign-in limiter already
+has. Nothing to increment, so nothing to contend on, no compare-and-swap, and no cell that can drift from the
+events it summarises — **the number is derived, not maintained**. A Durable Object is permitted by §12 for
+*"presence, counters, rate state"* and is refused here: it adds a subrequest to every send, it is opaque to
+`doctor` in a way a table is not, and a timer-based reset would inherit the alarm's absorbing failure state
+inside the one component whose job is to notice things.
+
+**Nothing resets, because nothing is armed.** Recovery happens because failures age out of the window, so
+there is no timer, no cron dependency and no state machine anybody must keep advancing. `retryAfter` is
+derived from the oldest row still inside the window — exact for a count, and a **lower bound** for a rate,
+because the denominator ages out with the numerator. Two costs, accepted: a windowed breaker can flap at the
+boundary, which is tolerable for a gate whose effect is a short delay and intolerable for a refusal — which is
+why the pause latches instead; and because nothing persists, **the trip leaves no row**, so it is audited
+explicitly (`send.rate_limited`) or it never happened.
+
+**Every rate counts attributed events only.** `send_recipient_events` has a second writer: an inbound delivery
+report about another system's mail lands there with `terminal = 1` and a NULL manifest id. A naive count trips
+this Node's breaker on somebody else's bounces, which is the read-a-wrong-number inversion a breaker exists to
+prevent. There are two kinds of foreign row and each is excluded by a different predicate — a forwarded report
+by the event-type filter, an unattributable provider event by `manifest_id IS NOT NULL`.
+
+**Evaluated at seal and again at dispatch.** The seal sets the state and produces the error carrying budget,
+limit and remedy; the dispatch re-asks and fails closed. Because `awaiting` is otherwise never dispatched, the
+sweep admits it for **rate-gate reasons only** — the one family of reasons that clears with no act by anybody.
+Policy gates stay closed, and a rate gate is never written over one.
+
+**A domain pause inverts §22's hold asymmetry, for the same reason it holds there.** Placing a hold only
+preserves, so it is one administrator; placing a domain pause **stops a customer's mail**, so it takes **two**
+administrators and a mandatory reason, and **one** administrator lifts it alone — because the harm of a
+wrongly-paused domain grows every minute it stands. It is the fifth approval subject and the first with no
+mailbox: its eligible set is `org.admin` on the organization, and `approvals.scope_id` is named for the object
+whose relation-holders may decide rather than for the mailbox four of the five happen to have.
+
+**`doctor` refuses to arm a breaker with no observations.** A bounce-rate breaker reading 0% because the
+delivery channel is dead is the silent failure this section exists to prevent, so it reports
+`armed: false, reason: no_observations` — and calls that a *fault* only when the Node is sending and hearing
+nothing, which is the blindness predicate `delivery_visibility` already computes. Failing closed on no
+observations is refused: a Node that has never sent would refuse to send.
+
+**Named absent, with the reason rather than stubbed.** *Auto-disabling an offending Butler* and *loop
+detection using trace headers, causal depth and route history* both need a per-Butler-run causal record, and
+nothing records per-run outcomes at all — Layer 4 is unbuilt, and a breaker needs a denominator. A pause keyed
+on a `butler_id` would be expressible and unusable: no Butler can be created, so nothing could ever write the
+row. That is the same failure the eight absent policy dimensions above are absent for. *New-recipient and
+new-domain throttles* need a first-contact record this Node does not keep. *Suppression enforcement* is the
+transport's own list, surfaced as the `suppressed` submission state rather than re-implemented here.
 
 ---
 

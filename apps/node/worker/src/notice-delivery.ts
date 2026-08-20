@@ -220,10 +220,10 @@ async function approvalNoticeBody(
   approvalId: string,
 ): Promise<Record<string, unknown> | null> {
   const row = await env.CATALOG.prepare(
-    `SELECT id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at
+    `SELECT id, subject_kind, subject_id, scope_id, actor_user_id, state, requested_at
        FROM approvals WHERE org_id = ? AND id = ? LIMIT 1`,
   ).bind(orgId, approvalId).first<{
-    id: string; subject_kind: string; subject_id: string; mailbox_id: string;
+    id: string; subject_kind: string; subject_id: string; scope_id: string;
     actor_user_id: string; state: string; requested_at: string;
   }>();
   if (row === null) return null;
@@ -231,7 +231,10 @@ async function approvalNoticeBody(
     approvalId: row.id,
     subjectKind: row.subject_kind,
     subjectId: row.subject_id,
-    mailboxId: row.mailbox_id,
+    // The object whose relation-holders were asked: a mailbox for four kinds, the organization for a domain
+    // pause (migration 0026). Named `scopeId` rather than `mailboxId` for exactly that reason — a notice
+    // body that called an organization id a mailbox would be the overclaim the rename removed.
+    scopeId: row.scope_id,
     requestedBy: row.actor_user_id,
     requestedAt: row.requested_at,
     // The state at the instant of delivery, not a live one. A notice is a record of having been told, and a

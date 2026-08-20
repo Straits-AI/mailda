@@ -2,31 +2,42 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, type AuditGate, auditedBatch, auditedBatchMany } from "./audit.ts";
-import { decidersByMailbox, decidersOf } from "./deciders.ts";
+import { adminsOf, decidersByMailbox, decidersOf } from "./deciders.ts";
 import { conflict, notFound } from "./errors.ts";
 import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts";
 
 /**
  * Approvals: ordered stages with a count, decided by distinct people (#61, §18, Layer 5).
  *
- * ## An approval decides on a **subject**, and there are two kinds
+ * ## An approval decides on a **subject**, and there are five kinds
  *
  * This module shipped manifest-shaped: `approvals.manifest_id TEXT NOT NULL` with `UNIQUE (manifest_id)`.
  * The legal-hold lift (#64) is the second caller and it is not a manifest, so migration 0021 generalised the
  * target to `(subject_kind, subject_id)` — see that file for why a nullable second id column and a second
  * approvals table were both refused. §18 names connector writes, forwarding, export and domain/routing
- * changes as further subjects, and #65's eDiscovery export is already charted as one, so the third caller is
- * known rather than imagined.
+ * changes as further subjects, and every one of them since has arrived without a second approval path.
  *
- *     send_manifest   the subject is a send_manifests row. Completion releases the send to `held`.
- *     hold_lift       the subject is a hold_lifts row. Completion applies the lift: one conditional
- *                     `UPDATE holds` setting `lifted_at`, `lifted_reason` and `lift_id`.
+ *     send_manifest      a send_manifests row. Completion releases the send to `held`.
+ *     hold_lift          a hold_lifts row. Completion applies the lift: one conditional `UPDATE holds`.
+ *     supervised_read    a supervised_grants row. Completion sets `granted_at` and owes §7's notice.
+ *     ediscovery_export  an exports row. Completion makes the run permissible.
+ *     domain_pause       a domain_pauses row (#66). Completion sets `placed_at` and **stops a domain's mail**.
  *
- * Two columns carry across both kinds, and both were checked rather than assumed:
+ * Two columns carry across every kind, and both were checked rather than assumed:
  *
- *   `mailbox_id`      keeps its name and meaning. For a send it is the mailbox the message is from; for a
- *                     lift it is the **held** mailbox. In both cases it answers exactly one question — who
- *                     holds `approval.decide` here, and is therefore eligible.
+ *   `scope_id`        was `mailbox_id` until #66, and the rename is the point rather than tidying. It always
+ *                     meant *the object whose relation-holders are eligible to decide* — for a send the
+ *                     mailbox the message is from, for a lift the **held** mailbox, for a supervised read
+ *                     and an export the mailbox being reached into. A domain pause has **no mailbox**: it
+ *                     stops every mailbox sending from a domain, so no single mailbox's holders have
+ *                     authority over it, and its eligible set comes from `org.admin` on the organization.
+ *                     Migration 0021 named that case and deferred it — *"that kind either names a mailbox or
+ *                     brings a second source for its eligible set, and that is its ticket's work"* — and this
+ *                     is that ticket. **`SCOPE_OF` decides which relation on which object, per kind**, so a
+ *                     sixth kind is a compile error until it says where its approvers come from. A column
+ *                     named `mailbox_id` holding an organization id would be the overclaiming name AGENTS.md
+ *                     calls a landmine: the join to `mailboxes` returns nothing, and a join that returns
+ *                     nothing is the one nobody notices.
  *   `actor_user_id`   was `author_user_id`, renamed because a lift has no author. It always meant *the
  *                     person whose act this approval gates, and therefore the one person who may never
  *                     decide it*: the author of the send, the requester of the lift. §18's separation of
@@ -194,12 +205,57 @@ export type Decision = "approve" | "deny";
  * because a two-way test on `hold_lift` had silently sent a third kind down the send path. Nothing about the
  * fourth kind needed new race logic, which is the whole return: an export is requested, decided, withdrawn
  * and refused by the same code as a send.
+ *
+ * `domain_pause` is the fifth (#66), and it is the first kind that is **not about a mailbox**. It was a
+ * compile error in six places — the five above plus `SCOPE_OF` below, which exists because of it — and that
+ * is again the design working: pausing a domain needed dual control and a mandatory reason, and the
+ * alternative was a second approval path, which would have been a second copy of the race logic all three of
+ * #61's defects lived in.
  */
 export const APPROVAL_SUBJECT_KINDS = [
-  "send_manifest", "hold_lift", "supervised_read", "ediscovery_export",
+  "send_manifest", "hold_lift", "supervised_read", "ediscovery_export", "domain_pause",
 ] as const;
 
 export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
+
+/** Which object an approval's eligible set is read from. Two today, and both are real `object_type`s. */
+export type ApprovalScope = "mailbox" | "organization";
+
+/**
+ * Where each kind's approvers come from: the object type, and therefore the relation.
+ *
+ *   `mailbox`       `approval.decide` holders on `scope_id`, via `decidersOf`.
+ *   `organization`  `org.admin` holders on `scope_id`, via `adminsOf`.
+ *
+ * A `Record` keyed on the union, like every other per-kind map in this file, so a sixth kind cannot inherit
+ * whichever answer happened to be the default. That matters more here than anywhere else in the module: the
+ * default would be `mailbox`, and a kind with no mailbox that inherited it would look up the holders of
+ * `approval.decide` on an id that is not a mailbox, find none, and report the request **unsatisfiable** — a
+ * governance act silently impossible to perform, which is #60's governing failure wearing a different hat.
+ */
+export const SCOPE_OF: Record<ApprovalSubjectKind, ApprovalScope> = {
+  send_manifest: "mailbox",
+  hold_lift: "mailbox",
+  supervised_read: "mailbox",
+  ediscovery_export: "mailbox",
+  domain_pause: "organization",
+};
+
+/**
+ * The eligible set for one approval, before the actor and the already-decided are taken out.
+ *
+ * One function so the four call sites — publication is the fifth and asks a narrower question — cannot each
+ * decide for themselves which relation a kind reads. `decidersOf` was called directly at two of them until
+ * #66, and a fifth kind reaching either of those lines would have been handed the mailbox answer.
+ */
+export async function approversOf(
+  env: Env,
+  orgId: string,
+  kind: ApprovalSubjectKind,
+  scopeId: string,
+): Promise<Set<string>> {
+  return SCOPE_OF[kind] === "organization" ? adminsOf(env, orgId) : decidersOf(env, orgId, scopeId);
+}
 
 /**
  * The word each kind uses for the act it gates, in the second person, for the refusal an actor reads when
@@ -219,6 +275,11 @@ const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
   // is the refusal that stops an investigator approving their own bulk copy of somebody's mailbox.
   ediscovery_export:
     "you asked for this export, so you cannot be one of the two people who approve it",
+  // The requester is always an administrator (`requestDomainPause` refuses anybody else), and every
+  // approver is one too — so this is the refusal that stops a single administrator stopping a customer's
+  // mail on their own authority, which is the whole ceremony #66 put in front of placing a pause.
+  domain_pause:
+    "you asked to pause this domain, so you cannot be one of the two people who approve it",
 };
 
 /**
@@ -238,6 +299,9 @@ const ACTOR_FIX: Record<ApprovalSubjectKind, string> = {
   ediscovery_export: "two other people holding approval.decide on that mailbox have to approve it — "
     + "GET /api/approvals shows them the predicate, its hash and the maximum number of messages it may "
     + "export. If the bound is wrong, they can deny it and a fresh request can be made",
+  domain_pause: "two other administrators have to approve it — GET /api/approvals shows them the domain "
+    + "and the reason you gave. If the domain is wrong, they can deny it and a fresh request can be made. "
+    + "A pause already in force is lifted by any one administrator, alone: POST /api/domain-pauses/:id/lift",
 };
 
 /**
@@ -286,6 +350,19 @@ const EXPIRES_AFTER_SECONDS: Record<ApprovalSubjectKind, number | null> = {
    * *"revocation terminates export jobs"*, enforced rather than asserted.
    */
   ediscovery_export: null,
+  /*
+   * `null`, and this one is the case where a deadline would be actively harmful rather than merely unread.
+   *
+   * A pause request is asked for because somebody believes a domain is sending mail it must not send. An
+   * expiry would **discard that request** while the condition it was raised about is still true, and the
+   * discard would be silent — the request simply stops being decidable, and the domain keeps sending. Every
+   * other kind's null is "nothing reads this column for me"; this one is "a deadline here fails in the
+   * dangerous direction".
+   *
+   * What bounds an undecided request instead is that it is visible: `GET /api/approvals` shows it to every
+   * other administrator, and `doctor` reports a pause requested and never decided beside the pauses in force.
+   */
+  domain_pause: null,
 };
 
 /**
@@ -360,10 +437,26 @@ export function shortfallFor(stages: Stages, eligible: number): Shortfall | null
   return null;
 }
 
-/** The shortfall as a sentence, so publication, the seal and the audit detail all say it the same way. */
-export function describeShortfall(shortfall: Shortfall, mailboxId: string): string {
+/**
+ * The shortfall as a sentence, so publication, the seal and the audit detail all say it the same way.
+ *
+ * `scope` names **which relation on which object** was short, because #66's fifth subject kind reads a
+ * different one: a send, a lift, a supervised read and an export are short of `approval.decide` holders on a
+ * mailbox, and a domain pause is short of `org.admin` holders on the organization. Defaulted to the mailbox
+ * form so the four existing callers say exactly what they said before — and taken as a parameter rather than
+ * inferred from the id's prefix, because a sentence about authority decided by a string prefix is the kind of
+ * claim that goes quietly wrong the first time an id space changes.
+ */
+export function describeShortfall(
+  shortfall: Shortfall,
+  scopeId: string,
+  scope: ApprovalScope = "mailbox",
+): string {
+  const holding = scope === "mailbox"
+    ? `approval.decide on mailbox ${scopeId}`
+    : `org.admin on organization ${scopeId}`;
   return `stage ${shortfall.ordinal} needs ${shortfall.required} distinct approver(s) holding `
-    + `approval.decide on mailbox ${mailboxId}, and ${shortfall.available} remain after the earlier stages `
+    + `${holding}, and ${shortfall.available} remain after the earlier stages `
     + `take theirs — ${shortfall.short} short. The stages need ${shortfall.needed} distinct people in total; `
     + `${shortfall.eligible} are eligible.`;
 }
@@ -398,7 +491,11 @@ export interface ApprovalRequestFacts {
   subjectKind: ApprovalSubjectKind;
   /** The row being decided on: a manifest id for a send, a `hold_lifts` id for a lift. */
   subjectId: string;
-  mailboxId: string;
+  /**
+   * The object whose relation-holders are eligible: a mailbox for the four mailbox-scoped kinds, the
+   * organization for a domain pause. `SCOPE_OF` says which, per kind.
+   */
+  scopeId: string;
   /** The person whose act this gates, and therefore the one person excluded from deciding it. */
   actorUserId: string;
   /**
@@ -483,9 +580,9 @@ export function planApproval(
   const statements = [
     gated(
       `INSERT INTO approvals
-         (id, org_id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at,
+         (id, org_id, subject_kind, subject_id, scope_id, actor_user_id, state, requested_at, resolved_at,
           expires_at)`,
-      [approvalId, orgId, facts.subjectKind, facts.subjectId, facts.mailboxId, facts.actorUserId,
+      [approvalId, orgId, facts.subjectKind, facts.subjectId, facts.scopeId, facts.actorUserId,
         "pending", at, null,
         // Derived from `at` rather than from a second `ctx.now()`, so the deadline is exactly
         // `requested_at` plus the constant. A Worker's clock advances across I/O and `ctx.now()` is not
@@ -513,7 +610,15 @@ export function planApproval(
      * exists to record. Eligibility is live, so re-deriving it later would silently re-address a request that
      * had already been answered.
      */
-    ...noticesForApprovalRequest(env, ctx, orgId, approvalId, facts.mailboxId, asked, at, gate),
+    // The notice's `mailbox_id` is the **mailbox** this is about, or NULL when the subject is not about one.
+    // An organization id in a column named mailbox_id would be read by `notificationsFor`'s second addressing
+    // mode as a mailbox nobody holds anything on, which is a join that quietly returns nothing — and these
+    // rows are addressed to a named person anyway, so the column is context rather than the address.
+    ...noticesForApprovalRequest(
+      env, ctx, orgId, approvalId,
+      SCOPE_OF[facts.subjectKind] === "mailbox" ? facts.scopeId : null,
+      asked, at, gate,
+    ),
   ];
 
   return {
@@ -534,7 +639,8 @@ export function planApproval(
         detail: {
           subjectKind: facts.subjectKind,
           subjectId: facts.subjectId,
-          mailboxId: facts.mailboxId,
+          scope: SCOPE_OF[facts.subjectKind],
+          scopeId: facts.scopeId,
           actorUserId: facts.actorUserId,
           stages: [...facts.stages],
           // How many people could have been asked, at the moment of asking. Recorded because the eligible set
@@ -554,7 +660,8 @@ export interface ApprovalRow {
   id: string;
   subjectKind: ApprovalSubjectKind;
   subjectId: string;
-  mailboxId: string;
+  /** The object whose relation-holders may decide this. See `SCOPE_OF` for which relation, per kind. */
+  scopeId: string;
   /** The person whose act this gates. Never eligible to decide it. */
   actorUserId: string;
   state: ApprovalState;
@@ -574,7 +681,7 @@ interface RawApproval {
   id: string;
   subject_kind: ApprovalSubjectKind;
   subject_id: string;
-  mailbox_id: string;
+  scope_id: string;
   actor_user_id: string;
   state: ApprovalState;
   requested_at: string;
@@ -587,7 +694,7 @@ function approvalOf(row: RawApproval): ApprovalRow {
     id: row.id,
     subjectKind: row.subject_kind,
     subjectId: row.subject_id,
-    mailboxId: row.mailbox_id,
+    scopeId: row.scope_id,
     actorUserId: row.actor_user_id,
     state: row.state,
     requestedAt: row.requested_at,
@@ -605,7 +712,7 @@ function approvalOf(row: RawApproval): ApprovalRow {
  * when that clause fired.
  */
 const APPROVAL_COLUMNS =
-  "id, subject_kind, subject_id, mailbox_id, actor_user_id, state, requested_at, resolved_at, expires_at";
+  "id, subject_kind, subject_id, scope_id, actor_user_id, state, requested_at, resolved_at, expires_at";
 
 async function readApproval(env: Env, orgId: string, approvalId: string): Promise<ApprovalRow | null> {
   const row = await env.CATALOG.prepare(
@@ -744,6 +851,13 @@ export interface DecisionOutcome {
    * copy and copies nothing. Somebody still has to run it, and until they do nothing has left the Node.
    */
   exportApproved?: boolean;
+  /**
+   * `domainPaused`, and it says what actually happened: the completing decision set `placed_at`, so mail
+   * from that domain stops at the next seal and the next dispatch. Not `pauseApproved` — an approval that
+   * authorized something to happen later is what `exportApproved` above means, and this one takes effect in
+   * its own transaction.
+   */
+  domainPaused?: boolean;
   /** True when this decision closed the last stage and had its subject's effect. */
   completed: boolean;
   /**
@@ -826,7 +940,7 @@ export async function decideApproval(
   });
   if (approval === null) throw unknown();
 
-  const deciders = await decidersOf(env, orgId, approval.mailboxId);
+  const deciders = await approversOf(env, orgId, approval.subjectKind, approval.scopeId);
   if (!deciders.has(actorUserId)) throw unknown();
 
   if (approval.actorUserId === actorUserId) {
@@ -962,7 +1076,11 @@ export async function decideApproval(
     detail: {
       subjectKind: approval.subjectKind,
       subjectId: approval.subjectId,
-      mailboxId: approval.mailboxId,
+      // Named for what it is rather than for what four of the five kinds happen to be: a mailbox for those
+      // four, the organization for a domain pause. `scope` says which, so a reader of the trail never has to
+      // guess what an id in this field is an id of.
+      scope: SCOPE_OF[approval.subjectKind],
+      scopeId: approval.scopeId,
       decision,
       stage,
       stages,
@@ -1063,6 +1181,8 @@ function outcomeFieldFor(
       return { supervisedGranted: decision === "approve" && completed };
     case "ediscovery_export":
       return { exportApproved: decision === "approve" && completed };
+    case "domain_pause":
+      return { domainPaused: decision === "approve" && completed };
     default: {
       const unhandled: never = kind;
       throw new Error(`E_APPROVAL_SUBJECT_UNHANDLED  ${String(unhandled)} reports no outcome field`);
@@ -1219,7 +1339,7 @@ function approveStatements(
        * complete the approval writes neither, and it is ordered **after** the UPDATE deliberately: the
        * notice's `due_at` reads the grant, and the grant is what this transaction is making live.
        */
-      noticeOwedByGrant(env, ctx, orgId, approval.subjectId, approval.mailboxId, at,
+      noticeOwedByGrant(env, ctx, orgId, approval.subjectId, approval.scopeId, at,
         { sql: approved, params: [approvalId, orgId] }),
     ];
   }
@@ -1240,6 +1360,31 @@ function approveStatements(
      * writes.
      */
     return [completion];
+  }
+
+  if (approval.subjectKind === "domain_pause") {
+    return [
+      completion,
+      /*
+       * **The one UPDATE domain_pauses that places a pause**, and the clauses are the lift's and the grant's
+       * one table over — which is the whole return on not giving this kind its own approval path.
+       *
+       *   EXISTS (approved)   #66's dual control, at the database. The approval became `approved` one
+       *                       statement ago in this same transaction, so two distinct administrators
+       *                       approved it and neither was the one who asked.
+       *   placed_at IS NULL   nothing places one pause twice. A second decision on a settled approval is
+       *                       already refused, so this is the layer that holds if that stops being true —
+       *                       and a second `domain_pause.placed` entry would claim a second act on one row.
+       *
+       * `dpz_in_force` is what stops two *different* rows pausing one domain: the UNIQUE partial index makes
+       * the second UPDATE fail rather than produce two pauses an administrator would have to lift twice.
+       */
+      env.CATALOG.prepare(
+        `UPDATE domain_pauses SET placed_at = ?
+          WHERE org_id = ? AND id = ? AND placed_at IS NULL AND lifted_at IS NULL
+            AND EXISTS (${approved})`,
+      ).bind(at, orgId, approval.subjectId, approvalId, orgId),
+    ];
   }
 
   return [
@@ -1285,6 +1430,10 @@ const HAS_AWAITING_MANIFEST: Record<ApprovalSubjectKind, boolean> = {
   // An export stays `requested` until somebody runs it, so a denial leaves it exactly where it was and a
   // withdrawal that makes the request unsatisfiable does too. Nothing was moved to be moved back.
   ediscovery_export: false,
+  // A denied pause request leaves `placed_at` NULL, which is where it started: the domain was never stopped,
+  // so nothing is restored. The row stays as the record that somebody asked to stop a domain's mail and two
+  // administrators would not — which is the half of the trail a unilateral pause would not produce.
+  domain_pause: false,
 };
 
 /**
@@ -1478,7 +1627,9 @@ const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | null> = 
           holdId: lift.holdId,
           liftId: lift.id,
           approvalId: approval.id,
-          mailboxId: approval.mailboxId,
+          // A lift is mailbox-scoped, so this is the held mailbox — the same value under the same name it
+          // always had, kept because `hold.placed` records it too and the two entries about one hold line up.
+          mailboxId: approval.scopeId,
           // The reason, in the trail as well as on the hold: this is the entry an investigation reaches for
           // when it asks why preservation stopped.
           reason: lift.reason,
@@ -1611,7 +1762,76 @@ const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | null> = 
         + "happen",
     },
   },
+
+  /**
+   * A domain pause (#66). The same shape a fifth time, and the `undone` clause is `placed_at IS NULL`.
+   *
+   * A pause already in force when its own approval completes is a state no path here produces — nothing
+   * places a pause but this statement — so reaching it means the world moved outside the product, and
+   * recording `domain_pause.placed` for it would put an entry in the trail claiming two administrators
+   * stopped a domain that was already stopped, which is what an investigation would read as two incidents.
+   */
+  domain_pause: {
+    undone: `SELECT 1 FROM domain_pauses p
+              WHERE p.org_id = a.org_id AND p.id = a.subject_id AND p.placed_at IS NULL
+                AND p.lifted_at IS NULL`,
+    event: async (env, orgId, approval, actorUserId, approvedBy) => {
+      const paused = await readDomainPause(env, orgId, approval.subjectId);
+      if (paused === null) return null;
+      return {
+        action: "domain.pause_placed",
+        outcome: "ok",
+        actorUserId,
+        // The pause, not the approval: the lift cites the same id, so one filter answers "everything that
+        // happened to this pause" — the shape `supervised.export_requested` and `hold.lifted` both use.
+        subject: paused.id,
+        detail: {
+          pauseId: paused.id,
+          domain: paused.domain,
+          // The reason the two administrators read before they agreed. In the trail as well as on the row,
+          // because this is the entry somebody reaches for when they ask why a customer's mail stopped.
+          reason: paused.reason,
+          requestedBy: approval.actorUserId,
+          approvedBy: [...approvedBy],
+        },
+      };
+    },
+    missing: {
+      code: "E_NO_DOMAIN_PAUSE",
+      what: (approval) =>
+        `approval ${approval.id} names domain pause ${approval.subjectId}, which does not exist`,
+      fix: "investigate; completing this would stop a domain's mail with no record of which domain or why",
+    },
+    raced: {
+      code: "E_DOMAIN_PAUSE_RACED",
+      what: (approval) =>
+        `approval ${approval.id} was not the decision that placed this pause, so nothing was recorded`,
+      why: "the decision that completes a pause is refused rather than recorded when the state moves under "
+        + "it: either somebody withdrew their approval, or the pause was already in force. Recording it "
+        + "would put a domain.pause_placed entry in the trail for an act that did not happen",
+    },
+  },
 };
+
+/** What a pause's own entry has to say: which domain, and the reason its two approvers read. */
+interface DomainPauseRow {
+  id: string;
+  domain: string;
+  reason: string;
+}
+
+/**
+ * The domain pause an approval names, or null if there is none.
+ *
+ * Here rather than in `src/domain-pause.ts` for the reason `readHoldLift`, `readSupervisedGrant` and
+ * `readExportRequest` all give: that module calls `planApproval` to open the request, so importing from it
+ * here would close a cycle. Three columns of a nine-column table.
+ */
+async function readDomainPause(env: Env, orgId: string, pauseId: string): Promise<DomainPauseRow | null> {
+  return env.CATALOG.prepare(
+    "SELECT id, domain, reason FROM domain_pauses WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, pauseId).first<DomainPauseRow>();
+}
 
 /* ---- withdrawing ----------------------------------------------------------------------------- */
 
@@ -1701,7 +1921,7 @@ export async function withdrawApproval(
 
   // What the eligible set becomes: the holders, minus the person whose act this is, minus everybody who has
   // decided — the withdrawer included, because `apd_one_per_person` makes their withdrawal terminal for them.
-  const deciders = await decidersOf(env, orgId, approval.mailboxId);
+  const deciders = await approversOf(env, orgId, approval.subjectKind, approval.scopeId);
   const decided = new Set(decisions.map((row) => row.decider_user_id));
   const stages = await stagesOfApproval(env, approvalId);
   const remaining = [...deciders].filter(
@@ -1764,7 +1984,7 @@ export async function withdrawApproval(
       `UPDATE send_manifests SET state = 'withheld', state_at = ?,
               state_reason = 'approval_unsatisfiable', last_error = ?
         WHERE id = ? AND org_id = ? AND state = 'awaiting' AND EXISTS (${withdrew})`,
-    ).bind(at, describeShortfall(shortfall, approval.mailboxId), approval.subjectId, orgId,
+    ).bind(at, describeShortfall(shortfall, approval.scopeId), approval.subjectId, orgId,
       ...withdrewParams),
     env.CATALOG.prepare(
       `UPDATE send_recipients SET submission_state = 'withheld', submission_state_at = ?
@@ -1890,6 +2110,15 @@ export interface PendingApproval extends ApprovalRow {
     matterId: string;
     destination: string;
   } | null;
+  /**
+   * #66's domain pause: which domain this would stop, and the reason its requester gave.
+   *
+   * A fifth `LEFT JOIN` on the same query. The two administrators being asked are the only people who see
+   * this text before deciding, which is why it travels with the request rather than living only in the trail
+   * — a person asked to stop a customer's mail with no stated reason is being asked to agree to nothing in
+   * particular.
+   */
+  domainPause: { pauseId: string; domain: string; reason: string } | null;
 }
 
 /**
@@ -1918,9 +2147,24 @@ export async function pendingApprovals(
   const mailboxes = [...byMailbox.entries()]
     .filter(([, people]) => people.has(userId))
     .map(([mailboxId]) => mailboxId);
-  if (mailboxes.length === 0) return [];
 
-  const placeholders = mailboxes.map(() => "?").join(", ");
+  /*
+   * The organization, when this person administers it (#66).
+   *
+   * `scope_id` is the object whose relation-holders may decide, so an administrator's queue is
+   * "the mailboxes where I hold approval.decide" **plus** "the organization, if I hold org.admin" — one
+   * `IN` list over one column rather than a second query or a second predicate. That is what the rename in
+   * migration 0026 buys: the filter did not have to learn about a second kind of scope, only about a second
+   * value that can appear in the same column.
+   *
+   * One query, unconditionally, and it is the cheapest of the three `pendingApprovals` already makes: a
+   * person who is not an administrator gets an empty set and the list is unchanged. Skipping it for
+   * non-administrators would need to know they are not one, which is this query.
+   */
+  const scopes = (await adminsOf(env, orgId)).has(userId) ? [...mailboxes, orgId] : mailboxes;
+  if (scopes.length === 0) return [];
+
+  const placeholders = scopes.map(() => "?").join(", ");
   const { results } = await env.CATALOG.prepare(
     `SELECT ${APPROVAL_COLUMNS.split(", ").map((column) => `a.${column}`).join(", ")}, l.reason AS reason,
             g.id AS grant_id, g.subject_id AS grant_subject_id, g.scope AS grant_scope,
@@ -1928,7 +2172,8 @@ export async function pendingApprovals(
             mt.type AS matter_type, mt.description AS matter_description,
             x.id AS export_id, x.requested_by AS export_requested_by, x.predicate AS export_predicate,
             x.predicate_sha256 AS export_predicate_sha256, x.max_messages AS export_max_messages,
-            x.matter_id AS export_matter_id, x.destination AS export_destination
+            x.matter_id AS export_matter_id, x.destination AS export_destination,
+            dp.id AS pause_id, dp.domain AS pause_domain, dp.reason AS pause_reason
        FROM approvals a
        LEFT JOIN hold_lifts l ON a.subject_kind = 'hold_lift' AND l.id = a.subject_id AND l.org_id = a.org_id
        LEFT JOIN supervised_grants g ON a.subject_kind = 'supervised_read' AND g.id = a.subject_id
@@ -1940,10 +2185,15 @@ export async function pendingApprovals(
        -- all-null here, and an approver deciding an export must see the bound before they agree to it.
        LEFT JOIN exports x ON a.subject_kind = 'ediscovery_export' AND x.id = a.subject_id
                           AND x.org_id = a.org_id
-      WHERE a.org_id = ? AND a.state = 'pending' AND a.mailbox_id IN (${placeholders})
+      -- #66's pause, on the same query and outer for the same reason as the three above: an administrator
+      -- being asked to stop a customer's mail must see which domain and why before they agree to it, and
+      -- every other subject kind produces all-null here.
+      LEFT JOIN domain_pauses dp ON a.subject_kind = 'domain_pause' AND dp.id = a.subject_id
+                                AND dp.org_id = a.org_id
+      WHERE a.org_id = ? AND a.state = 'pending' AND a.scope_id IN (${placeholders})
         AND a.actor_user_id != ?
       ORDER BY a.requested_at, a.id`,
-  ).bind(orgId, ...mailboxes, userId).all<RawApproval & {
+  ).bind(orgId, ...scopes, userId).all<RawApproval & {
     reason: string | null;
     grant_id: string | null;
     grant_subject_id: string | null;
@@ -1959,6 +2209,9 @@ export async function pendingApprovals(
     export_max_messages: number | null;
     export_matter_id: string | null;
     export_destination: string | null;
+    pause_id: string | null;
+    pause_domain: string | null;
+    pause_reason: string | null;
   }>();
 
   const out: PendingApproval[] = [];
@@ -2006,6 +2259,11 @@ export async function pendingApprovals(
           matterId: row.export_matter_id,
           destination: row.export_destination,
         },
+      // Every field or none, for the third time and the same reason: the reason is the field this exists
+      // for, and a half-populated object would let a caller render "pause null because null".
+      domainPause: row.pause_id === null || row.pause_domain === null || row.pause_reason === null
+        ? null
+        : { pauseId: row.pause_id, domain: row.pause_domain, reason: row.pause_reason },
     });
   }
   return out;

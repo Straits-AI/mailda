@@ -456,6 +456,29 @@ const FIGURES: Record<string, Classification> = {
     "approval.send_expiry_seconds",
   ),
 
+  // docs/receipts/send-breakers.md
+  ...mailda(
+    // Not plan-scoped, and this group needed the argument made twice rather than inherited, because the
+    // sizing paragraph in that receipt *mentions* a plan-scoped figure: `send.included_per_month` is 3,000 on
+    // Paid and "Not available" on Free, and it is what fixes the order of magnitude an ordinary Node sends
+    // at. It is **context, not an input** — nothing here is computed from it, which is why this is `mailda`
+    // rather than `derived` on that key. Two independent reasons the plan cannot change these figures: a
+    // Free Node cannot send to arbitrary recipients at all (`send_to_arbitrary_recipient`), so there is no
+    // Free volume for a Free limit to be different for; and a *rate* breaker is Mailda's own governance
+    // preference about what its own tables say is too fast, in the same class as
+    // `send.hold_window_default_seconds` and `approval.send_expiry_seconds`, which this file already
+    // classifies here for the same reason. `breaker.evaluate_max_subrequests` joins them as a cost figure
+    // over Mailda's own query, exactly like the policy, approval, dispatch and export cost groups.
+    "windows, thresholds and floors Mailda applies to its own sending, plus the cost of asking; the plan "
+      + "changes the size of the pot the query spends from, never how many operations the code performs or "
+      + "what this Node calls too fast",
+    "breaker.volume_window_seconds", "breaker.volume_max_recipients",
+    "breaker.bounce_window_seconds", "breaker.bounce_min_observations", "breaker.bounce_max_percent",
+    "breaker.complaint_window_seconds", "breaker.complaint_min_observations",
+    "breaker.complaint_max_percent",
+    "breaker.evaluate_max_subrequests",
+  ),
+
   // docs/receipts/queue-provisioning.md
   ...bothPlans(
     "which queue and subscription operations exist and by what path; capability facts, not plan-scaled quantities",

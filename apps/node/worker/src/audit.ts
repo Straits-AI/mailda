@@ -287,6 +287,61 @@ export const AUDIT_ACTIONS = {
     says: "An approver took back their own approval while the request was still incomplete.",
   },
 
+  /*
+   * Layer 5: send circuit breakers (#66, §18). Three actions, and each of the three exists for a reason the
+   * other two do not have — which is why they are not one action with a kind in its detail.
+   *
+   * `send.rate_limited` is the entry #66's own resolution said the design owes: a rate breaker keeps **no
+   * state at all** — it is a windowed `COUNT(*)` re-asked per send — so *"the trip leaves no row"*, and a
+   * trip that is not audited explicitly never happened. Every other send state can be reconstructed from
+   * `send_manifests`; this one names a threshold that was crossed by rows which will have aged out of the
+   * window by the time anybody looks.
+   *
+   * **It is not `send.suppressed`, and reusing that one was the tempting wrong answer.** `send.suppressed`
+   * says *"the Node declined to hand over, by its own rule"*, which is nearly right — but it is the entry for
+   * the `suppressed` **state**, which `dispatch.ts` documents as *"on the suppression list — will never
+   * arrive, and that is knowable now"*. A rate gate is the opposite claim on both halves: the mail **will**
+   * arrive, and nothing about this recipient is known to be wrong. Filing a delay under a name that means
+   * permanent non-arrival is the overclaim AGENTS.md §4 forbids, and it would have made *"how many sends did
+   * this Node discard"* unanswerable from the trail.
+   *
+   * **It is emitted on the transition, never on every sweep**, and that is enforced rather than intended: the
+   * entry and the state change share one `auditedBatch` whose gate excludes a manifest already `awaiting`
+   * with this same reason, so a send re-visited by the sweeper while the window is still over writes nothing
+   * at all. One entry per gate, not one per minute — without it, a send held for an hour behind a one-minute
+   * sweep would file sixty entries and falsify `audit-and-log-retention.md`'s "a handful per message".
+   *
+   * `domain.pause_placed` and `domain.pause_lifted` are the latched breaker's two acts, and their asymmetry
+   * **is** #66's decision rather than an artefact of what got built. Placing stops a customer's mail, so it
+   * takes two administrators and a mandatory reason and rides in `approveStatements` beside the one
+   * `UPDATE domain_pauses` that sets `placed_at`. Lifting re-permits sending, and the harm of a wrongly
+   * paused domain grows every minute it stands, so **one** administrator lifts it alone. That is #64's
+   * asymmetry pointing the other way, for the same reason it pointed the way it did there.
+   *
+   * `domain.pause_placed` exists beside `approval.decided` for the reason `hold.lifted` and
+   * `supervised.granted` do: `approval.decided` says two people agreed and structurally cannot say *what they
+   * agreed to*. Somebody reading the trail to answer "why did this domain's mail stop" must not have to join
+   * `approvals` to `domain_pauses` to learn the domain or the reason.
+   *
+   * There is deliberately **no** `domain.pause_requested`, for `hold.lift_requested`'s reason: requesting a
+   * pause **is** requesting an approval, and `approval.requested` records it in the same transaction as the
+   * row, with the stages, the eligible count and the reason in its detail.
+   *
+   * All three ride in a `batch()` beside the write they record, so none is `standalone`.
+   */
+  "send.rate_limited": {
+    says: "A windowed rate breaker gated a send: it has not left, it is not lost, and it goes when the "
+      + "window clears. Nothing else records this, because the breaker keeps no state.",
+  },
+  "domain.pause_placed": {
+    says: "Two distinct administrators stopped every send from a domain; the domain and the reason they "
+      + "were given are recorded with it.",
+  },
+  "domain.pause_lifted": {
+    says: "One administrator released a domain pause, alone — the harm of a wrongly paused domain grows "
+      + "every minute it stands.",
+  },
+
   /**
    * `standalone` means there is no accompanying write, so the bare `audit` append is correct and
    * `auditedBatch` has nothing to be atomic with. A lockout is a *refusal*: it changes nothing, and by

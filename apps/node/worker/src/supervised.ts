@@ -509,7 +509,7 @@ export async function requestSupervisedRead(
   const planned = planApproval(env, ctx, orgId, {
     subjectKind: "supervised_read",
     subjectId: grantId,
-    mailboxId: input.mailboxId,
+    scopeId: input.mailboxId,
     actorUserId,
     stages: SUPERVISED_STAGES,
     detail: { grantId, scope: input.scope, matterId, expiresAt, durationSeconds: seconds },
