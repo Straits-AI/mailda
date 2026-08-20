@@ -10,13 +10,24 @@ import type { Ctx } from "@mailda/runtime";
  * them on exactly that line: the Workflow owns execution, D1 owns the record. A view over instance state
  * would have gone blank at 30 days for every send a Butler ever proposed.
  *
- * ## What this is not, and where the seam is
+ * ## The seam this file named is now closed, and it closed **here** rather than beside this
  *
- * **Not #53's ledger.** No step inputs, no recorded LLM or connector output, no cached step result, and
- * therefore none of the four replay modes. The seam is named here so it is not discovered: a ledger is
- * additive over these two tables and keyed on `butler_runs.id`. Nothing in this module reads a column that
- * does not exist or writes one that is always NULL, which is the placeholder shape
- * `test/node/placeholder-columns.test.ts` exists to catch.
+ * This paragraph used to say *"not #53's ledger"* and point at a table nobody had built. #53 landed as four
+ * columns on these two tables (migration 0030) rather than as tables of its own, for the reason 0028 gave when
+ * it named the seam: a ledger is *additive over these two tables, keyed on `butler_runs.id`*, and a second set
+ * of run tables beside them would be two accounts of one run that can disagree.
+ *
+ * So what a run records now also includes **what it was given** (`trigger_facts`, the `event.*` root the
+ * trigger assembled) and **whether it is a replay** (`replay_of`, `replayed_by`). Those three are what
+ * `inspect` could not have had otherwise: the program is frozen on `butler_versions`, the outcome is in
+ * `butler_run_effects`, and the input lived only in Workflow instance params, which expire in 3 days on Free
+ * and 30 on Paid.
+ *
+ * What is still deliberately absent is a row per **step**, and per-step recorded LLM or connector output. The
+ * first is 0028's own argument unchanged — a pure node performs no I/O and costs 0, so a row each is storage
+ * bought for arithmetic nobody can be asked about — and the second has nothing to record until Layer 6 has an
+ * LLM or a connector. `src/butler/replay.ts` says both out loud rather than letting a reader infer that the
+ * effect list is the walk.
  *
  * ## Most of this file returns **statements**, and that is what keeps the writes atomic and cheap
  *
@@ -66,14 +77,51 @@ export type TerminalState = Exclude<RunState, "running" | "awaiting_release">;
 
 export type EffectOutcome = "ok" | "refused" | "failed";
 
+/**
+ * That a run is a replay, and whose decision it was (#53).
+ *
+ * Carried on the payload rather than passed separately to the route's own write, because **two callers open
+ * one row**. The replay route commits `openRunStatement` in the same `auditedBatch` as its `butler.replayed`
+ * entry — the act has to be recorded or not happen — and `interpret` calls the same function again a moment
+ * later.
+ *
+ * What makes that safe is `INSERT OR IGNORE`, which already had to make this statement a no-op twice for a
+ * retried Workflow step: the second call cannot change the row whatever it binds. Carrying the fields on the
+ * payload is a smaller property than that and worth having anyway — both callers derive every value from one
+ * object, so the two statements are identical rather than merely both ignored.
+ */
+export interface RunReplay {
+  /** The run being replayed. */
+  readonly ofRunId: string;
+  /** The person who asked. Never a Butler: a replay is a human decision to repeat an act with effects. */
+  readonly byUserId: string;
+}
+
 export interface RunIdentity {
-  /** The Workflow instance id: `<butlerVersionId>-<triggerKey>`. */
+  /**
+   * The Workflow instance id.
+   *
+   * `<butlerVersionId>-<triggerKey>` for a run a delivery caused, and `<butlerVersionId>-<replayId>` for a
+   * replay — because the primary key exists to stop one delivery producing two records of one version, so a
+   * replay keyed on the delivery would collide with the record it is replaying. Migration 0030 carries the
+   * argument, including why the two are the same shape rather than an exception.
+   */
   readonly runId: string;
   readonly orgId: string;
   readonly butlerId: string;
   readonly versionId: string;
   readonly triggerEvent: string;
   readonly triggerKey: string;
+  /**
+   * The `event.*` root, frozen as JSON (#53).
+   *
+   * The run's **input**, which is not re-derivable: `deliveryFacts` would answer about now, and a case created
+   * after the run or a conversation merged since would make a "replay" a run of the same program over
+   * different input. Serialized by the caller so this module has no opinion about the fact set's shape.
+   */
+  readonly triggerFacts: string;
+  /** Absent on an ordinary run, which is a value: a run a delivery caused is nobody's act. */
+  readonly replay?: RunReplay;
 }
 
 export interface EffectRecord {
@@ -98,11 +146,13 @@ export function openRunStatement(env: Env, ctx: Ctx, identity: RunIdentity): D1P
   return env.CATALOG.prepare(
     `INSERT OR IGNORE INTO butler_runs
        (id, org_id, butler_id, version_id, trigger_event, trigger_key, state, state_at, outcome_reason,
-        started_at, finished_at, nodes_executed, effects, refusals, subrequests_spent)
-     VALUES (?,?,?,?,?,?, 'running', ?, NULL, ?, NULL, 0, 0, 0, 0)`,
+        started_at, finished_at, nodes_executed, effects, refusals, subrequests_spent,
+        trigger_facts, replay_of, replayed_by)
+     VALUES (?,?,?,?,?,?, 'running', ?, NULL, ?, NULL, 0, 0, 0, 0, ?,?,?)`,
   ).bind(
     identity.runId, identity.orgId, identity.butlerId, identity.versionId,
     identity.triggerEvent, identity.triggerKey, at, at,
+    identity.triggerFacts, identity.replay?.ofRunId ?? null, identity.replay?.byUserId ?? null,
   );
 }
 
@@ -262,17 +312,54 @@ export interface RunRow {
   effects: number;
   refusals: number;
   subrequests_spent: number;
+  replay_of: string | null;
+  replayed_by: string | null;
+  /*
+   * **Migration 0030's `trigger_facts` is deliberately not a field here**, and its absence is a disclosure
+   * decision rather than a size one.
+   *
+   * It is the `event.*` root, which carries the triggering message's `subject`, `from` and `return_path` —
+   * mail content by `trigger.ts`'s own classification — and this interface is serialized straight into three
+   * JSON responses gated on `org.admin` alone: the run listing, `GET /api/butler-runs/:id`, and `inspect`.
+   * Every one of them disclosed a subject line to an administrator holding nothing on the mailbox, and
+   * `inspectRun`'s per-mailbox gate on the *parsed* facts would have been defeated by the raw column sitting
+   * beside it in the same object.
+   *
+   * So the blob has exactly one reader, `triggerFactsOf` below, named for what it returns. That is the total
+   * shape rather than three route-level omissions: a fourth route cannot leak a column its row does not carry.
+   */
 }
 
 const RUN_COLUMNS =
   `id, butler_id, version_id, trigger_event, trigger_key, state, state_at, outcome_reason,
-   started_at, finished_at, nodes_executed, effects, refusals, subrequests_spent`;
+   started_at, finished_at, nodes_executed, effects, refusals, subrequests_spent,
+   replay_of, replayed_by`;
 
 /** One run. */
 export async function runRow(env: Env, orgId: string, runId: string): Promise<RunRow | null> {
   return await env.CATALOG.prepare(
     `SELECT ${RUN_COLUMNS} FROM butler_runs WHERE org_id = ? AND id = ? LIMIT 1`,
   ).bind(orgId, runId).first<RunRow>();
+}
+
+/**
+ * The `event.*` root a run was given, verbatim — or null for a run opened before migration 0030.
+ *
+ * **The only reader of the column**, and the only way to obtain it. Split out from `runRow` because the facts
+ * are mail content and a run row is not: see the note at the end of `RunRow` for why that is a function rather
+ * than three careful routes. A caller reaching for this is either inheriting the input into a replay — where the
+ * facts go to the program and not to a person — or disclosing them, and `inspectRun` is where the second is
+ * authorized. Nothing here checks: a read this narrow is easier to audit by its call sites than by a parameter
+ * it could be handed the wrong value for.
+ *
+ * One scalar read on a route a person triggers by hand. It runs in parallel with `programOf` on both paths, so
+ * it adds no round trip to either.
+ */
+export async function triggerFactsOf(env: Env, orgId: string, runId: string): Promise<string | null> {
+  const row = await env.CATALOG.prepare(
+    "SELECT trigger_facts FROM butler_runs WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, runId).first<{ trigger_facts: string | null }>();
+  return row?.trigger_facts ?? null;
 }
 
 export interface RunEffectRow {
@@ -305,6 +392,26 @@ export async function recentRuns(env: Env, orgId: string, limit: number): Promis
   const { results } = await env.CATALOG.prepare(
     `SELECT ${RUN_COLUMNS} FROM butler_runs WHERE org_id = ? ORDER BY started_at DESC LIMIT ?`,
   ).bind(orgId, Math.max(1, Math.min(limit, 100))).all<RunRow>();
+  return results;
+}
+
+/**
+ * Every replay of one run, oldest first (#53).
+ *
+ * On `brn_by_replay_of`, which is partial on `replay_of IS NOT NULL` — so this reads an index holding only the
+ * replays on the Node rather than one entry per run that is not one. What `inspect` needs to answer *"has
+ * somebody already re-run this"* before a reader asks for another, which is the question that stops two people
+ * replaying the same run twice while looking at the same screen.
+ */
+export async function replaysOf(env: Env, orgId: string, runId: string): Promise<Array<{
+  id: string; state: string; outcome_reason: string | null; started_at: string; replayed_by: string | null;
+}>> {
+  const { results } = await env.CATALOG.prepare(
+    `SELECT id, state, outcome_reason, started_at, replayed_by FROM butler_runs
+      WHERE org_id = ? AND replay_of = ? ORDER BY started_at`,
+  ).bind(orgId, runId).all<{
+    id: string; state: string; outcome_reason: string | null; started_at: string; replayed_by: string | null;
+  }>();
   return results;
 }
 

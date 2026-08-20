@@ -1110,6 +1110,74 @@ path today is the human release gate on every Butler send, which is the gate the
 one that may later be outranked. The proper answer is the same missing trusted-recipient store, and saying so
 is better than a paragraph implying the problem is closed.
 
+**A run can now be replayed, and the rule that makes that safe is the one this ticket's own body got
+backwards.** §16 says a replay never reuses an old idempotency key for a *materially new* effect, and the
+tempting reading — *materially new means a different manifest id* — is exactly wrong. ADR 35's property is
+**directional**: a manifest id is a time-and-random ULID with no content constraint behind it, so the same id
+implies the same content and a different id implies nothing at all. A replay that reproduces a message byte for
+byte always gets a new id, so an id-based rule would call it new, mint a fresh key and **hand the same message
+over twice** — the precise thing that sentence exists to prevent. So it is decided by content: the envelope
+plus the normalized body's SHA-256, hashed by one function using hashes the seal already computes, derived
+rather than stored so it works on every manifest this Node has ever sealed. Same content means the old key is
+reused and nothing is sealed, written or sent; different content means a new key, and any approval bound to the
+old bytes is moot because approval binds an id. The headline test is a replay of an unchanged run producing
+**one** manifest where the rejected rule would have produced two.
+
+**`retry-effect` is offered only where non-acceptance is proven, and the unprovable case got its own name
+rather than a flag.** §16's precondition named a reconciler that does not exist — the only one here reconciles
+R2 evidence against ingress receipts — so the four things that can actually be proven are recorded outcomes:
+`refused`, `throttled`, `suppressed`, and an authored send whose submitted bytes were never written, because
+that column is set *before* the first submit. A recipient's attempt count is not a proof and is not consulted:
+it is updated after the call resolves, so a dead isolate leaves it at zero with the bytes already gone. Where
+the proof is missing the mode is **absent, not failing**, and `resend-may-duplicate` is what exists instead:
+human-only, refusing without an explicit acceptance of the risk and without a reason, minting a **new** key
+deliberately because the old one may already have been handed over, and audited under an action naming the
+person rather than the author. Two names because two epistemic states; one button for both would have put the
+safe act and the duplicate-risking one behind the same click. The rule is a total map over the send states
+rather than a list of ones to exclude — `outcome_unknown` is the *default* for anything unrecognised, so the
+unprovable population is the one that grows and a denylist guards only the spellings its author thought of.
+
+**A replay inherits its input and re-asks its judgement, and every one of those was decided rather than
+inherited by default.** The trigger facts are frozen on the run record and replayed unchanged, because
+re-deriving them describes *now* — a case created since, a conversation merged since — and a run over different
+input is not a replay of anything. Policy, authority, approvals, the rate breakers, the domain pause, the
+Butler pause and the version's publication state are all re-asked, so a replay cannot do what the live path
+would now refuse; a policy published after the original ran refuses the replay, and that is a test rather than a
+claim. A legal hold is in neither list on purpose: it governs destruction, not sending, and inventing a coupling
+would be a control nobody asked for. The ledger itself is four columns on the two tables the engine already had
+rather than tables of its own, because a second account of one run is two truths that can disagree — and the
+replay's cost counter starts at zero, since the pot is per instance, which is what makes a run killed for
+budget replayable at all.
+
+**Reading what a Butler did is not free of the mail it read, and `inspect` had to be gated for it.** A run's
+recorded input is the `event.*` root, and that carries the triggering message's subject line and sender — mail
+content, which the fact set's own declaration says of the `From:` header in as many words. The route is
+`org.admin`, which is a relation on the *organization* and appears nowhere in this Node's table of who may read
+a mailbox, so the mode shipped as a way for an administrator holding nothing anywhere to read the subject and
+sender of every message any Butler ever processed, with nothing recorded. The fix classifies every fact once, as
+a total map beside the fact set so a tenth one cannot arrive unclassified and an unknown key in a stored blob is
+treated as content, and withholds the content half unless the reader holds the mailbox's metadata or content
+relation — or a live supervised grant, which #63 built for exactly this investigation and which records itself
+before answering. Ids, states and tokens stay, so an auditor with no mailbox authority can still see which
+program ran over which delivery and what it did; what they get instead of a subject line is a named list of what
+was withheld and the authority that would open it, because a redaction a reader cannot see is a hole they read
+past. And the raw column is no longer on the run row at all: it had one careful gate and three responses
+serializing the row beside it, so it now has exactly one reader named for what it returns.
+
+**A replay of a send that was decided against says so, rather than reporting success.** Reusing the original's
+key is right whatever state it is in — that is what stops a duplicate — but *"this message is on its way"* is
+false of a send a policy withheld or a person cancelled. "A policy wrongly denied a Butler's send; fix the
+policy and re-run" is the most obvious use of the mode there is, and it was a no-op answering `ok`. It now
+records a refusal naming the decision, still against the original key, because re-composing there would open a
+real duplicate path rather than close anything.
+
+**And one Layer 2 invariant turned out to assume a first attempt.** `drafts_one_per_reply` says replying twice
+to the same message resumes the draft that exists — written about a person, and it binds a program too. A
+replay drafting the same reply died on the constraint before its first effect row, recording `engine_fault` and
+nothing else. The fix is the index's own sentence: on a replay the draft is resumed rather than re-created, and
+the argument against upserting on the ordinary path survives untouched because the lookup is bound to the
+Butler's own author id, so the widest thing it can find is a draft the same program wrote.
+
 **What is still not enforced is said rather than implied.** A loop whose body performs no I/O costs nothing,
 so it is affordable at a billion — true in subrequests, the only currency with a measurement behind it — and
 the engine does not refuse it either: it runs until the platform's CPU limit kills the step. And a workflow's
@@ -1344,7 +1412,8 @@ docs/ediscovery-export.md              the two export permissions, the bound, th
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
 docs/butler-ast.md                     the node set, what the checker refuses, how a version freezes
 docs/butler-engine.md                  what runs a Butler: the principal, the release gate, the budget,
-                                       the pause and the loop that places it
+                                       the pause and the loop that places it, the run ledger and the
+                                       four replay modes
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

@@ -11,9 +11,10 @@ import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectR
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
 import { describePause, pausedFrom, PAUSE_COLUMNS_FOR_RUN } from "./pause.ts";
+import { contentIdentity, type IncumbentSend, type ReplayIncumbents } from "../outbound/manifest.ts";
 import {
   abandonRun, closeRun, effectStatement, openRunStatement, parkStatement, resumeRun, spendStatement,
-  type EffectRecord, type RunCounts, type TerminalState,
+  type EffectRecord, type RunCounts, type RunReplay, type TerminalState,
 } from "./record.ts";
 import type { ButlerPrincipal } from "./principal.ts";
 
@@ -134,6 +135,20 @@ export interface ButlerRunPayload {
     /** The `event` root of the run's state. */
     readonly facts: Readonly<Record<string, unknown>>;
   };
+  /**
+   * That this run is a replay of another, and whose decision it was (#53).
+   *
+   * Absent on every run a delivery caused. When present it does **three** things and it is worth listing them
+   * because only the first is obvious: it lands on the run record as `replay_of`/`replayed_by`, it makes the
+   * engine read the replayed run's sends so the content rule can reuse their keys, and it adds one to the
+   * engine's fixed cost for that read.
+   *
+   * The `trigger.facts` it arrives with are the **recorded** facts of the run being replayed, copied by
+   * `src/butler/replay.ts`. That is the line the whole design rests on: **a replay inherits the input and
+   * re-asks the judgement.** Re-deriving the facts would run the same program over different input — a case
+   * created since, a conversation merged since — which is not a replay of anything.
+   */
+  readonly replay?: RunReplay;
 }
 
 export interface RunResult {
@@ -249,6 +264,13 @@ export async function interpret(
         versionId: payload.butlerVersionId,
         triggerEvent: payload.trigger.event,
         triggerKey: payload.trigger.key,
+        // The run's input, frozen on the row (#53). Written by the same statement as the rest of the
+        // identity, so a record with no account of what it was given is not representable. On a replay the
+        // route has already committed this exact row inside its own audited transaction; `INSERT OR IGNORE`
+        // makes this the no-op it already had to be for a retried step, and the values cannot differ because
+        // both writers read them off one payload.
+        triggerFacts: JSON.stringify(payload.trigger.facts),
+        ...(payload.replay === undefined ? {} : { replay: payload.replay }),
       }),
     ]);
     const row = (results[0]?.results?.[0] ?? null) as { ast_json: string; butler_name: string } | null;
@@ -320,11 +342,19 @@ export async function interpret(
    * a time against what the run has actually spent, which is a stronger check than any forecast because it
    * cannot be wrong about the shape of the graph.
    */
-  const forecast = checked.cost.total + ENGINE_FIXED_SUBREQUESTS;
+  /*
+   * A replay pays **one** more than the fixed three, and it is `1` because it is one statement: the read of
+   * the replayed run's sends, below. Not a measurement and therefore not a receipt — AGENTS.md's own
+   * exemption for a number that is `0`/`1` and means none/one — and deliberately not folded into
+   * `butler.run_cost_engine_fixed`, which is pinned as an equality at 3 for an ordinary run and is
+   * re-measured as 3 by `test/butler-run-cost.measure.test.ts` and `test/butler-pause-cost.measure.test.ts`.
+   */
+  const engineFixed = ENGINE_FIXED_SUBREQUESTS + (payload.replay === undefined ? 0 : 1);
+  const forecast = checked.cost.total + engineFixed;
   if (forecast > RUN_BUDGET) {
     await complain(env, ctx, orgId, runId, butler, "unaffordable_with_engine",
       `E_BUDGET_EXCEEDED  ${RUN_BUDGET_NAME}=${RUN_BUDGET}, this Butler's nodes cost `
-      + `${checked.cost.total} and the engine adds ${ENGINE_FIXED_SUBREQUESTS} for a forecast of ${forecast}`);
+      + `${checked.cost.total} and the engine adds ${engineFixed} for a forecast of ${forecast}`);
     return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
       state: "refused", reason: "unaffordable_with_engine",
     });
@@ -395,6 +425,64 @@ export async function interpret(
       effects: [],
       cost,
     };
+  }
+
+  /*
+   * The sends the replayed run made, read **once** and keyed by content identity (#53).
+   *
+   * One statement per invocation, on the replay path only — which is why the send node's own cost is
+   * unchanged: `butler.run_cost_max_send_propose` reserves what a `mail.send.propose` costs, and asking this
+   * question inside the node would have made a replay's send cost one more than the guard reserves for it.
+   *
+   * Deliberately **not** inside a `step.do`. The hash of an existing manifest cannot change, but the `state`
+   * carried alongside it can — a send `awaiting` release when the replay started may be `handed_over` when it
+   * resumes — and a cached step would bind the stale one into the run's own state for ever.
+   *
+   * A LEFT JOIN rather than an inner one, because the two cases have to be told apart: a send effect whose
+   * manifest is **gone** makes its content unprovable, and calling that materially new is the permissive
+   * failure — a byte-identical replay minting a fresh key and handing the same message over twice. So it
+   * refuses the run instead. `interpret` is the right place for that refusal rather than the route, because a
+   * manifest can be deleted between the two.
+   */
+  let incumbents: ReplayIncumbents | null = null;
+  if (payload.replay !== undefined) {
+    const { results } = await env.CATALOG.prepare(
+      `SELECT e.subject AS effect_subject, m.id, m.state, m.state_reason, m.mailbox_id,
+              m.envelope_to, m.envelope_cc, m.envelope_bcc, m.subject, m.in_reply_to_message_id,
+              m.body_normalized_sha256
+         FROM butler_run_effects e
+         LEFT JOIN send_manifests m ON m.org_id = e.org_id AND m.id = e.subject
+        WHERE e.org_id = ? AND e.run_id = ? AND e.node_type = 'mail.send.propose' AND e.subject IS NOT NULL`,
+    ).bind(orgId, payload.replay.ofRunId).all<{
+      effect_subject: string; id: string | null; state: string | null; state_reason: string | null;
+      mailbox_id: string | null; envelope_to: string | null; envelope_cc: string | null;
+      envelope_bcc: string | null; subject: string | null; in_reply_to_message_id: string | null;
+      body_normalized_sha256: string | null;
+    }>();
+
+    const byContent = new Map<string, IncumbentSend>();
+    for (const row of results) {
+      if (row.id === null) {
+        await complain(env, ctx, orgId, runId, butler, "replay_send_unprovable",
+          `the replayed run ${payload.replay.ofRunId} proposed send ${row.effect_subject} and no manifest `
+          + "for it exists, so this Node cannot prove whether this replay would repeat it. Refused rather "
+          + "than treated as new content, because a new idempotency key for an identical message is a second "
+          + "delivery nobody can recall (ADR 40)");
+        return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+          state: "refused", reason: "replay_send_unprovable",
+        });
+      }
+      byContent.set(await contentIdentity({
+        mailboxId: row.mailbox_id!,
+        to: JSON.parse(row.envelope_to ?? "[]") as string[],
+        cc: row.envelope_cc === null ? [] : (JSON.parse(row.envelope_cc) as string[]),
+        bcc: row.envelope_bcc === null ? [] : (JSON.parse(row.envelope_bcc) as string[]),
+        subject: row.subject ?? "",
+        inReplyToMessageId: row.in_reply_to_message_id,
+        bodyNormalizedSha256: row.body_normalized_sha256!,
+      }), { id: row.id, state: row.state!, stateReason: row.state_reason });
+    }
+    incumbents = { ofRunId: payload.replay.ofRunId, byContent };
   }
 
   const ast: Butler = checked.ast;
@@ -652,7 +740,7 @@ export async function interpret(
           // delivery has no correspondent, and that has to be a refusal rather than a missing key — so the
           // thing passed is the whole trigger, which is the only value that can answer it.
           const result = await perform(node, step, async () =>
-            await writeDraft(env, ctx, butler, node, state, payload.trigger));
+            await writeDraft(env, ctx, butler, node, state, payload.trigger, incumbents !== null));
           if (result.bind !== undefined) state.steps[node.as] = result.bind;
           cursor = node.next;
           break;
@@ -660,7 +748,8 @@ export async function interpret(
 
         case "mail.send.propose": {
           if (!affordable(node)) return await exhausted(node);
-          const result = await perform(node, step, async () => await proposeSend(env, ctx, butler, node, state));
+          const result = await perform(node, step, async () =>
+            await proposeSend(env, ctx, butler, node, state, incumbents));
           if (result.park !== undefined) {
             /*
              * The human-release gate. The manifest is already `awaiting` with this reason — `sealManifest`

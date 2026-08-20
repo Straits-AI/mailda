@@ -111,6 +111,23 @@ without it, which is the quantity the pot is actually spent in.
    was already in flight when it was placed.
 3. **One write** of the terminal state and the counts.
 
+**Amended 21 August 2026 (#53): a run that is a *replay* pays one more, and the figure below is unchanged.**
+The extra is the single statement that reads the replayed run's sends so the content rule can reuse their
+idempotency keys, issued once per invocation on the replay path only. It is not a measurement and gets no
+value here — it is `1` because it is one statement, which is AGENTS.md's own exemption for a number that means
+none or one. `butler.run_cost_engine_fixed` stays **3**, pinned as an equality for an ordinary run and
+re-measured as 3 by `test/butler-run-cost.measure.test.ts` and `test/butler-pause-cost.measure.test.ts`.
+
+The read is deliberately in the engine rather than inside `mail.send.propose`, and that placement is what keeps
+this receipt's per-node figures true: asking the question per send node would have made a replay's send cost one
+more than `butler.run_cost_max_send_propose` reserves for it, which is the guard reserving too little for
+exactly the node it matters for. On a replay whose content is identical the node costs **less** than the figure
+below, because it seals nothing at all — no R2 writes, no vault key, no manifest transaction.
+
+`draft` on a replay pays one more than the **6** measured below, against its bound of 10: `drafts_one_per_reply`
+forbids a second reply draft by the same author to the same message, so a replay resumes the draft it already
+wrote and one scalar read is what finds it.
+
 A run that sleeps or parks pays (2) again on each resume. That is why the *fixed* figure is per invocation
 while the *guard* is per instance: the pot is per instance (`workflow.budget_unit_is_instance = 1`, measured),
 a resumed instance gets a fresh meter, and whether the platform's pot resets with it is **unmeasured** — so

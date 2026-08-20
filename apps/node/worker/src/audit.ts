@@ -191,6 +191,67 @@ export const AUDIT_ACTIONS = {
   },
 
   /*
+   * Layer 4's replay modes (#53). One action, and it is the first Butler *run* action in this catalogue —
+   * which needed the argument against `butler.ran` to be re-read rather than assumed to still apply.
+   *
+   * It does not. `butler.ran` is refused because a run is caused by a **delivery**: nobody decided it, and one
+   * untrimmable entry per delivery per published Butler is exactly the per-row frequency
+   * `audit-and-log-retention.md`'s sizing forbids. A **replay** is the opposite on both counts. A named person
+   * decided to run a program again that proposes mail — the first thing in this product that deliberately
+   * repeats an act with external effects — and it happens as often as a human clicks, not as often as mail
+   * arrives.
+   *
+   * It rides in `auditedBatch` with the `butler_runs` INSERT rather than being appended beside a `create()`,
+   * because `auditedBatch`'s contract is the one this needs: if the Node cannot record the act, it does not
+   * perform the act. `audit` never throws, so appending with it would start the run anyway — an unrecorded act
+   * with external effects, which is the wrong failure direction. `standalone` is for refusals.
+   *
+   * `detail.mode` carries which mode ran, so the two send-scoped modes below and this one are one filter over
+   * "what has been replayed here". There is deliberately no `butler.inspected`: `inspect` executes nothing and
+   * performs no effect, and an entry per glance at a screen is the frequency this catalogue keeps out.
+   *
+   * **That is not the same as writing nothing, and the difference is one entry that already exists.** A run's
+   * recorded input carries the triggering message's subject and sender, so `inspectRun` gates those fields per
+   * mailbox — and where a **supervised grant** is what answers, §7 owes a `supervised.opened` before the
+   * fields are returned. So the read that is worth recording already is, under the action #63 declared for
+   * exactly that disclosure; what `butler.inspected` would add is a row for the ordinary relation holder,
+   * which is the per-glance frequency, and for the reader who holds nothing, who now sees no content at all.
+   */
+  "butler.replayed": {
+    says: "A person re-ran a recorded Butler run: the new run's id is the subject, and the run it repeats, "
+      + "the version, the delivery and what the original did are recorded with it.",
+  },
+
+  /*
+   * The two send-scoped replay modes (#53, §16), and **two actions because two epistemic states**. §5C's
+   * discipline applied to an action rather than to a readout: one of these cannot duplicate and the other
+   * might, and a single action with a flag in its detail would make "how often has this Node knowingly risked
+   * a second delivery" answerable only by reading every entry's detail.
+   *
+   * `send.retried` is the safe one. It is offered **iff** a recorded outcome proves non-acceptance —
+   * `refused`, `throttled`, `suppressed`, or an authored manifest whose `submitted_key` is NULL, because the
+   * bytes and that column are written before the first submit. It reuses the original manifest and therefore
+   * the original idempotency key, so it appends no `send.sealed`: nothing new was composed.
+   *
+   * `send.resent` is the unprovable sibling. It mints a **new** manifest and therefore a new key on purpose,
+   * so a `send.sealed` is appended beside it in the same transaction — and this entry exists because that one
+   * cannot carry what matters here. `send.sealed`'s actor is the *author*, which on a Butler's message is the
+   * `btl_`; this one's actor is the **person** who accepted that the recipient may receive two copies, and its
+   * detail carries their reason and `duplicatePossible: true`.
+   *
+   * Neither is `send.handed_over` or any other dispatch action: those record what the transport did, and these
+   * record a person deciding to ask it again.
+   */
+  "send.retried": {
+    says: "A person handed a send to dispatch again under its original key, because a recorded outcome proves "
+      + "it never left; the proof is named in the entry.",
+  },
+  "send.resent": {
+    says: "A person sealed a send again under a new idempotency key, having been told the first attempt's "
+      + "outcome is unknown and the recipient may receive two copies; their reason is recorded.",
+  },
+
+  /*
    * Layer 5: legal hold (#64). Two actions, and the asymmetry between them is the decision: placing is one
    * administrator alone because it only ever preserves, and lifting is dual control with a mandatory reason
    * because it re-permits destruction.

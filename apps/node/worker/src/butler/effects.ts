@@ -1,10 +1,16 @@
 import type { ButlerNode } from "@mailda/butler-ast";
+import { utf8 } from "@mailda/evidence";
 import type { Ctx } from "@mailda/runtime";
 
 import { claim, close } from "../cases.ts";
 import { readDraft, saveDraft } from "../drafts.ts";
 import { CallerError } from "../errors.ts";
-import { sealManifest } from "../outbound/manifest.ts";
+import { sha256Hex } from "../evidence-store.ts";
+import { normalizeAddress } from "../outbound/headers.ts";
+import {
+  contentIdentity, normalizeBody, sealManifest, type ReplayIncumbents,
+} from "../outbound/manifest.ts";
+import { incumbentStands } from "../outbound/retry.ts";
 import { caseMailboxHeldBy, notAnId, readEntity } from "./authority.ts";
 import { BUTLER_RELEASE_REASON } from "./gate.ts";
 import { evaluate, type RunState } from "./expr.ts";
@@ -94,6 +100,34 @@ export const EFFECT_REASONS = [
   "case_not_held_by_butler",
   /** The lookup resolved to nothing this Butler may read. Absent and forbidden answer alike (§5C). */
   "not_readable",
+  /**
+   * A replay was about to seal a send whose content is identical to one the replayed run already made, so it
+   * **reused that send's effect key and sealed nothing** (#53).
+   *
+   * The one reason token in this list that records an effect *not* happening while the outcome stays `ok`. It
+   * belongs with `ok` rather than with `refused` for the same reason a gated seal does: nothing declined
+   * anything, and the node's job — *"this message exists and is on its way"* — is already done by the manifest
+   * the reason points at, which is the row's `subject`.
+   *
+   * That last clause is what bounds this token to the states `incumbentStands` admits, and the sibling below
+   * is the pair it does not.
+   */
+  "replay_identical_content",
+  /**
+   * The same reuse, on an incumbent that is a decision **against** this message: `cancelled` or `withheld`
+   * (#53).
+   *
+   * A `withheld` manifest is not on its way and never will be, and a `cancelled` one was stopped by a person,
+   * so `replay_identical_content`'s justification does not hold and reporting `ok` would report a success that
+   * did not happen. This is the correction: the key is still reused — nothing is minted, so nothing can
+   * duplicate — and the outcome is `refused`, because what the replay met was a decision.
+   *
+   * A **refusal rather than a re-seal**, deliberately. Recomposing on a `withheld` incumbent would open a
+   * genuine duplicate path: the content rule compares against *the source run's* effects only, so two replays
+   * of one source run would each see only the original and each mint a manifest. `resend-may-duplicate` is the
+   * act that composes again, and it takes a person, a reason and an acknowledged risk.
+   */
+  "replay_send_decided",
 ] as const;
 
 export type EffectReason = (typeof EFFECT_REASONS)[number];
@@ -216,6 +250,22 @@ export async function closeCase(
  *
  * No `cc` and no `bcc` are passed at all, rather than empty arrays — a Butler cannot copy anybody, and an
  * absent argument is one fewer place for that to change quietly.
+ *
+ * ## On a replay it **resumes its own draft**, and that is a constraint #53 found rather than chose (#53)
+ *
+ * `drafts_one_per_reply` is `UNIQUE (org_id, author_user_id, in_reply_to_message_id)` — *"replying to the same
+ * message twice should resume the draft that already exists rather than quietly starting a second one"*. It
+ * was written about a person and it is a property of the table, so it binds a program too: a replay of a run
+ * that drafted a reply is the second reply by the same author to the same message, and inserting a second row
+ * violates the index. Before this was found, a replay died with a constraint error before its first effect
+ * row — the run recorded `engine_fault` and nothing else, which is exactly the shape AGENTS.md calls a
+ * landmine: a Layer 2 invariant that assumed a first attempt.
+ *
+ * The answer is the index's own sentence: resume it. One scalar read, on the replay path only, and the id it
+ * finds turns `saveDraft` into the upsert it already is. The argument against an upsert on the ordinary path
+ * survives intact — *"an upsert would let a run overwrite a draft a person is typing into"* — because the
+ * lookup is bound to `author_user_id = <the Butler>`, so the only draft it can find is one this Butler wrote.
+ * And a replay leaves no second stranded draft behind, which is a small improvement rather than a cost.
  */
 export async function writeDraft(
   env: Env,
@@ -224,6 +274,8 @@ export async function writeDraft(
   node: Extract<ButlerNode, { type: "draft" }>,
   state: RunState,
   trigger: RunTrigger,
+  /** True when this run is a replay. See the header on `drafts_one_per_reply`. */
+  isReplay = false,
 ): Promise<EffectResult> {
   const mailboxId = text(evaluate(node.mailboxId, state, node.id));
   if (mailboxId === null) throw notAnId(node.id, "mailbox", mailboxId);
@@ -235,11 +287,23 @@ export async function writeDraft(
     : text(evaluate(node.inReplyTo, state, node.id));
 
   return await refusable(async () => {
-    // `null` for the draft id, always: a Butler writes a new draft rather than editing one. An upsert would
-    // let a run overwrite a draft a person is typing into, and `saveDraft`'s own author filter is what makes
-    // that impossible — but only because the author is the Butler, which is a property of this call rather
-    // than of that function.
-    const record = await saveDraft(env, ctx, butler.orgId, butler.butlerId, null, {
+    /*
+     * `null` for the draft id on an ordinary run: a Butler writes a new draft rather than editing one. An
+     * upsert would let a run overwrite a draft a person is typing into, and `saveDraft`'s own author filter is
+     * what makes that impossible — but only because the author is the Butler, which is a property of this call
+     * rather than of that function.
+     *
+     * On a **replay** of a reply it is this Butler's existing draft for the same parent, because
+     * `drafts_one_per_reply` forbids a second one. Bound to `author_user_id = <this Butler>`, so the widest
+     * thing this can find is a draft the same program wrote — see the header.
+     */
+    const resume = isReplay && inReplyTo !== null
+      ? (await env.CATALOG.prepare(
+          `SELECT id FROM drafts
+            WHERE org_id = ? AND author_user_id = ? AND in_reply_to_message_id = ? LIMIT 1`,
+        ).bind(butler.orgId, butler.butlerId, inReplyTo).first<{ id: string }>())?.id ?? null
+      : null;
+    const record = await saveDraft(env, ctx, butler.orgId, butler.butlerId, resume, {
       mailboxId, to, subject, body, inReplyToMessageId: inReplyTo,
     });
     return {
@@ -282,6 +346,27 @@ export async function writeDraft(
  *    happened and mail that has not left, so the outcome is `ok` and the reason is the manifest's own state
  *    token. A `withheld` seal is a refusal. The engine adds no vocabulary of its own here: every token comes
  *    off the manifest, which is what keeps the run record and the outbox saying the same thing.
+ *
+ * ## And on a replay, a fourth: **is this the same effect the replayed run already had** (#53)
+ *
+ * §16 says a replay never reuses an old idempotency key for a *materially new* effect. Read the other way
+ * round — which is the way that matters — it says a replay whose effect is **not** materially new must reuse
+ * the old key, because minting a fresh one would hand the same message over twice.
+ *
+ * Materially new is decided by **content**, never by identifier: `contentIdentity` hashes the envelope and the
+ * normalized body's SHA-256, and `manifest.ts` carries why the tempting id-based rule is exactly backwards. So
+ * a replay that reproduces a send byte for byte records the **old** manifest id as its subject, seals nothing,
+ * writes no R2 object and sends no mail — and one whose content differs seals normally and gets a new id,
+ * which is a new key and by construction moots any approval bound to the old one (ADR 11).
+ *
+ * The check costs **no subrequest**: the incumbents were read once for the whole run by `interpret`, and every
+ * input to the hash is already in hand from the draft.
+ *
+ * **And one thing an identical incumbent does not always mean.** Reusing its key is right in every case, but
+ * *"this message is on its way"* is only true while the incumbent is one the world may still act on.
+ * `incumbentStands` is the total map that says which those are; a `cancelled` or `withheld` incumbent is a
+ * decision against this message and the effect is recorded as `replay_send_decided`, refused, rather than as a
+ * success that did not happen.
  */
 export async function proposeSend(
   env: Env,
@@ -289,6 +374,8 @@ export async function proposeSend(
   butler: ButlerPrincipal,
   node: Extract<ButlerNode, { type: "mail.send.propose" }>,
   state: RunState,
+  /** The sends the replayed run made, or null on an ordinary run. See `ReplayIncumbents`. */
+  replay: ReplayIncumbents | null = null,
 ): Promise<EffectResult> {
   const resolved = evaluate(node.draft, state, node.id);
   // Accepts the binding a `draft` node produced as well as a bare id, because `"${steps.reply}"` is what an
@@ -305,6 +392,56 @@ export async function proposeSend(
       // Absent, or somebody else's. A Butler may only send its own drafts, and §5C keeps the two answers
       // alike so a Butler cannot be used to discover which draft ids exist.
       return refused("not_readable", draftId);
+    }
+
+    if (replay !== null) {
+      /*
+       * The content rule, and it runs **before** the seal because a seal is the thing it may have to prevent.
+       *
+       * Every field is normalized the way `sealManifest` would normalize it a moment later — `normalizeAddress`
+       * on each recipient, `normalizeBody` on the text — so the hash is over what *would have been stored*
+       * rather than over what the draft happens to hold. Hashing the raw draft would make a trailing space
+       * count as new content and mint a key for a message the recipient cannot tell apart.
+       */
+      const identity = await contentIdentity({
+        mailboxId: draft.mailboxId,
+        to: draft.to.map((address) => normalizeAddress("to", address)),
+        cc: draft.cc.map((address) => normalizeAddress("cc", address)),
+        bcc: draft.bcc.map((address) => normalizeAddress("bcc", address)),
+        subject: draft.subject,
+        inReplyToMessageId: draft.inReplyToMessageId ?? null,
+        bodyNormalizedSha256: await sha256Hex(utf8(normalizeBody(draft.body))),
+      });
+      const incumbent = replay.byContent.get(identity);
+      if (incumbent !== undefined && !incumbentStands(incumbent.state)) {
+        /*
+         * The incumbent is a decision against this exact message — `withheld` by a policy, or `cancelled` by a
+         * person. The key is reused all the same, so nothing is minted and nothing can duplicate; what changes
+         * is that the run says so instead of reporting `ok` for a no-op. See `replay_send_decided` above for
+         * why re-sealing here would be the duplicate path rather than the fix.
+         */
+        return refused("replay_send_decided", incumbent.id);
+      }
+      if (incumbent !== undefined) {
+        return {
+          outcome: "ok",
+          reason: "replay_identical_content",
+          // The **old** effect key. This is the whole of §16's sentence: the run record points at the manifest
+          // that already exists, so `bre_by_subject` joins both runs to one send and the outbox shows one
+          // message rather than two.
+          subject: incumbent.id,
+          bind: { id: incumbent.id, state: incumbent.state, stateReason: incumbent.stateReason },
+          /*
+           * **No park, whatever the incumbent's state is** — and this is not an omission.
+           *
+           * A Butler's send is sealed `awaiting` with `butler_release_required`, so an incumbent very often
+           * carries exactly the reason that parks a run. Parking here would make the replay wait for a release
+           * of a send it did not create, and `runOfSubject` returns the *first* run for a subject, so the
+           * release would resume the original run and this one would sit until its timeout. The send is
+           * already released or still awaiting; either way this replay has nothing to wait for.
+           */
+        };
+      }
     }
 
     const sealed = await sealManifest(env, ctx, butler.orgId, {

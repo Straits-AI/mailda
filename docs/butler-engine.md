@@ -38,6 +38,8 @@ require a deploy. Three consequences fall out of the generic form and each is wo
 | `src/butler/gate.ts` | the human-release gate: the one send state this layer adds |
 | `src/butler/trigger.ts` | what starts a run, and the instance id that dedups it |
 | `src/butler/release.ts` | the human half of the gate |
+| `src/butler/replay.ts` | `inspect` and `re-run`: the ledger's two run-scoped replay modes (#53) |
+| `src/outbound/retry.ts` | `retry-effect` and `resend-may-duplicate`: the two send-scoped ones |
 | `src/butler/record.ts` | the run record in D1 |
 | `src/butler/pause.ts` | the latched pause and the loop that places it — **read-only**, because `doctor` imports it |
 | `src/butler/pause-acts.ts` | the two writes: the machine placing a pause, a person resuming one |
@@ -435,16 +437,244 @@ spend and — for a send that parks — the park. Batching every row at the end 
 for all of them and would leave a killed invocation with a record of nothing, which is the state this table
 exists to prevent.
 
-**This is not #53's ledger, and the seam is named rather than discovered.** No step inputs, no recorded LLM or
-connector output, no cached step result, and therefore none of the four replay modes — and none of those
-columns exist, because a column whose only value is NULL is a placeholder. A ledger is additive over these two
-tables, keyed on `butler_runs.id`.
+**The seam #50 named is now closed, and it closed on these two tables rather than beside them.** #53's ledger
+is four columns (migration 0030), for the reason 0028 gave when it named the seam: a second set of run tables
+would be two accounts of one run that can disagree. `trigger_facts` holds what the run was **given** — mail content, read only through `triggerFactsOf` and disclosed only behind `inspect`'s per-mailbox gate;
+`replay_of` and `replayed_by` say whether it is a replay and whose decision that was; `send_manifests.resend_of`
+says that one send deliberately repeats another. What is still absent is a row per **step**, for 0028's own
+reason, and recorded LLM or connector output, which has nothing to record until Layer 6 has either.
 
 `GET /api/butler-runs` and `GET /api/butler-runs/:id` read them, gated on **`org.admin`** — the same authority
 authoring a Butler takes. A run's effect list names ids across every mailbox the Butler touched, so bounding
 it per mailbox would mean either a partial answer that reads as complete or a query deciding visibility row by
 row. There is deliberately no route that *creates* a run: a Butler that could be fired by a request would be an
 automation with a manual override nobody governed.
+
+---
+
+## Replay: four modes, and the one sentence they all rest on (#53)
+
+§16 names the replay modes and this Node builds four of them. Migration 0030; `src/butler/replay.ts` owns the
+two run-scoped modes and `src/outbound/retry.ts` the two send-scoped ones.
+
+> **A replay inherits the input and re-asks the judgement.**
+
+Getting that backwards in the permissive direction is the whole hazard: a replay is the first act in this
+product that deliberately repeats an effect on the outside world, and every safety property Layer 5 built
+assumes a first attempt.
+
+### What each mode reads and writes
+
+| mode | route | reads | writes |
+|:--|:--|:--|:--|
+| `inspect` | `GET /api/butler-runs/:id/inspect` | the run row, the version's frozen `ast_json` and publication state, the pause in force, the effect rows in order, each send's current state and offer, any replays already made, and — gated per mailbox — what the run was **given** | **nothing**, except the `supervised.opened` entry §7 owes when a supervised grant is what opened the run's content fields |
+| `re-run` | `POST /api/butler-runs/:id/replay` | the source run's `trigger_facts` (through `triggerFactsOf`, the column's one reader), then everything the live path re-asks | a new `butler_runs` row carrying `replay_of`/`replayed_by`, in one transaction with `butler.replayed` |
+| `retry-effect` | `POST /api/sends/:id/retry` | one manifest's `state`, `fidelity`, `submitted_key` | that manifest back to `held`, audited `send.retried`; then dispatch, under the **original** key |
+| `resend-may-duplicate` | the same route, named mode | the same three, plus the envelope and the author's **typed** body | a **new** manifest under a **new** key with `resend_of` set, audited `send.resent` |
+
+`inspect` performs no effect — it creates no run, seals no manifest, writes no evidence and touches no state —
+and it appends no entry of its own, because an entry per glance at a screen is the per-row frequency this Node's
+trail keeps out. The one row it can write is not its own: §7 owes `supervised.opened` before a **grant**-
+authorized reader is shown the run's content fields, and that is a precondition of the read rather than a
+record of the mode. It also states in its own answer what is **not** recorded: the
+pure nodes of the walk left no rows, so which branch a guard took is not recoverable.
+
+#### `org.admin` is the floor on `inspect`, and not the whole check
+
+A run's recorded input is the `event.*` root, and that carries the triggering message's `subject`, `from`,
+`return_path` and `parse_error` — **mail content**, which `src/butler/trigger.ts` says of `from` in as many
+words. `org.admin` is a relation on the *organization*: it appears nowhere in `authz-read.ts`'s table of who may
+read a mailbox, and §7 is explicit that no relation implies `message.read`. So gating `inspect` on it alone made
+this route a way for an administrator holding nothing anywhere to read the subject line and the sender of every
+message any Butler ever processed, with nothing recorded — the pair #63 exists to prevent.
+
+Three things close it, and each is a decision rather than a defence:
+
+- **`FACT_DISCLOSURE`, beside `DeliveryFacts`** — a *total* map classifying every fact as `content` or
+  `operational`, so a tenth fact does not compile until somebody classifies it, and an **unknown** key in a
+  stored blob is treated as content. A list of fields to hide would guard only the spellings its author thought
+  of, and the fact set is the thing that grows: #52 grew it by `return_path`.
+- **`mailbox.metadata.read` or `mailbox.content.read` on the mailbox the delivery landed in, or a live
+  supervised grant of either scope** — `mayReadMetadata`, whose own contract is *"subject lines, sender
+  addresses"*, which is exactly and only what a fact set discloses. Requiring `mailbox.content.read` instead
+  would refuse a subject line to the holder of the relation that exists for nothing else, and would refuse
+  nobody extra. A grant opens it because #63 built that ceremony for precisely this case, and refusing it here
+  would push an investigator to `GET /api/messages` for the same subject lines through a door already sanctioned.
+- **Redaction that is stated, not silent** — the content fields come back `null` and `triggerFactsRedacted`
+  names them and says what authority would open them. A redacted `parse_error` reading `null` would otherwise
+  claim the headers parsed cleanly, which is a *false* answer rather than an absent one.
+
+`parse_error` is classified content, which is stricter than it looks: two of its three spellings are this Node's
+own sentences, but `E_HEADERS_UNPARSED  <parser message>` interpolates the failure to read the sender's bytes.
+
+**What is recorded:** a supervised grant produces `supervised.opened` before the facts are returned, and
+`recordDisclosure` throws, so a Node that cannot write its trail does not hand over the subject line. A
+**standing** relation records nothing, which is the product's settled rule for metadata rather than an exception
+carved here. `queueFor` is the precedent to the letter: it gates on this same `mayReadMetadata`, returns for a
+standing relation having appended nothing, and calls `recordDisclosure` only when `metadata.grantId` is
+non-null. `listMessages` records only its supervised arm, and even `mayRead` — which reaches a *body* — returns
+on a standing relation before its append and records only when a grant answered. The one path that records
+unconditionally is `authorizeExport`, whose reason is that an export takes a **copy off the
+Node**; `inspect` produces no copy and no bytes.
+
+**`butler_runs.trigger_facts` is not on `RunRow` at all.** `RunRow` is serialized into three responses gated on
+`org.admin`, so the blob has exactly one reader — `triggerFactsOf` — named for what it returns. That is the
+total shape rather than three route-level omissions: a fourth route cannot leak a column its row does not carry,
+and the per-mailbox gate on the parsed facts cannot be defeated by the raw column sitting beside it.
+
+The two send-scoped modes are on `/api/sends/:id` and not on a run because the states they turn on are states of
+a **manifest**, and a manifest outlives every run — most were never proposed by a Butler at all. Hanging them
+off a run would have made a person's refused send unretryable and a Butler's retryable.
+
+### Materially new is decided by content, never by identifier
+
+`contentIdentity` hashes the envelope — the mailbox, To, Cc, Bcc, the subject and the threading parent — plus
+`body_normalized_sha256`, one of the three hashes `sealManifest` already computes. Same identity means the same
+effect: the replay records the **old** manifest id as its subject, seals nothing, writes no R2 object and sends
+no mail, with `replay_identical_content` as the reason. Different identity means a new manifest and a new key,
+which by construction moots any approval bound to the old one.
+
+**Reusing the key is right on every state; claiming success is not.** `replay_identical_content`'s justification
+is *"this message exists and is on its way"*, and that is false of an incumbent the world has decided **against**
+— a `withheld` manifest is never going anywhere and a `cancelled` one was stopped by a person. Before this was
+fixed, "a policy wrongly denied a Butler's send; fix the policy and re-run" — the single most obvious use of
+`re-run` — was a no-op reporting `ok`. `incumbentStands` is the total `Record<SendState, boolean>` that decides
+it: `cancelled` and `withheld` do not stand, an unrecognised state does (standing performs nothing, so it cannot
+invent a decision nobody made), and an incumbent that does not stand records `replay_send_decided`, **refused**,
+against the incumbent's own id.
+
+The fix is a refusal and not a re-seal on purpose. Recomposing on a `withheld` incumbent would open a genuine
+duplicate path, because the content rule's scope is the source run's own effects: two replays of one run would
+each find only the original and each mint a manifest. Composing again is `resend-may-duplicate`, which takes a
+person, a reason and an acknowledged risk.
+
+**The tempting reading is exactly backwards.** #53's own body proposed *materially new means a different
+manifest id*, citing ADR 35. That property is **directional**: the id is a time-and-random ULID and nothing
+constrains content uniqueness, so same id implies same content and a different id implies nothing. A replay
+reproducing a message byte for byte always gets a new id — so an id-based rule would call it materially new,
+mint a fresh key and hand the same message over twice.
+
+Three properties of the rule worth stating because each was a decision:
+
+- **Derived, not stored.** A `content_sha256` column would have been NULL for every manifest sealed before it
+  landed, and a NULL that cannot match is the *permissive* failure. Derived, the rule works on every manifest
+  this Node has ever sealed.
+- **It errs on the side of *identical*.** Identity means *send nothing*, so collapsing two near-identical sends
+  is a refusal and separating them is a duplicate delivery. Addresses are therefore lower-cased, deduplicated
+  and sorted; the subject, the parent and the body hash are compared exactly.
+- **It is scoped to a replay of a run.** A person composing the same words twice is a new intent, and
+  *"please resend that"* stays representable — that is what `resend-may-duplicate` is.
+
+An incumbent whose manifest row has been **deleted** refuses the whole replay with `replay_send_unprovable`,
+because content that cannot be compared must not be assumed new.
+
+### `retry-effect` is offered iff non-acceptance is proven, and absent otherwise
+
+Absent, **not failing**: a mode unavailable because the Node cannot prove its precondition is a different thing
+from a mode that errors. What can be proven is narrow, and all four are first-party facts about this Node's own
+attempt rather than reconciliation results — §16's sentence named a reconciler that does not exist, and the
+blueprint now says so.
+
+| proof | why it is one |
+|:--|:--|
+| `refused` | the API boundary rejected the submission |
+| `throttled` | rate-limited before the bytes were taken |
+| `suppressed` | this Node declined to hand over, by its own rule |
+| `outcome_unknown` + `fidelity = 'authored'` + `submitted_key IS NULL` | the bytes are rendered, stored and recorded on the row **before** the first submit, so an absent key means none was attempted |
+
+`send_recipients.attempts = 0` is **not** a proof and is not consulted: it is updated only after the call
+resolves, so a dead isolate leaves it at zero with the bytes already gone. And provider observation can only
+ever *disprove* non-acceptance — `transport_message_id` is written only on `handed_over`.
+
+The rule is a `Record<SendState, …>` rather than a list of states to exclude, and that shape is load-bearing:
+`outcome_unknown` is the **default** for anything unrecognised, so the unprovable population is the one that
+grows and a denylist would guard only the spellings its author thought of. A tenth send state does not compile
+without a classification, and a state string the code has never seen offers nothing at all.
+
+It is expressed twice — in TypeScript for the offer and in SQL for the conditional `UPDATE` that performs the
+act — and `test/butler-replay.test.ts` drives both over every state crossed with both fidelities and both key
+states, because two expressions of one rule need a check rather than care.
+
+`E_RETRY_NOT_PROVEN` has **three** arms and not two, and the third is a correction. A `reconstructed` send
+reaches the refusal with `submitted_key` NULL, so it inherited the *authored* explanation and was told
+*"an absent submitted_key is the only durable proof of non-submission and this send has one"* — about a column
+holding nothing. An agent reading that is sent to check the wrong thing, which is worse than a vague reason: a
+false explanation ends the question a blank one would have started. It now says what is actually true of that
+path, which is that it never writes the column at all (ADR 33).
+
+### Two names, because two epistemic states
+
+`retry-effect` reuses the old key: the effect provably did not happen, so the intent is unchanged.
+`resend-may-duplicate` mints a **new** one: the old key may already have been handed over, and reusing it would
+claim these are the same effect — the one thing nobody can say about that case. It is human-only, refuses without
+`acceptDuplicateRisk: true`, refuses without a reason, enters the hold window rather than dispatching, and its
+audit entry names the **person** who accepted the risk rather than the author, which on a Butler's message is a
+`btl_`.
+
+Collapsing them into one act with a flag would put the safe case and the duplicate-risking case behind one
+button. What makes both safe against a partially delivered send is that `submitPerRecipient` already skips a
+recipient reading `handed_over`, citing ADR 40.
+
+### What a replay re-asks, and what it inherits
+
+| input | decision | why |
+|:--|:--|:--|
+| the trigger facts | **inherited** | re-deriving them describes *now*: a case created since, a conversation merged since, an address re-routed since. A run over different input is not a replay |
+| policy | **re-asked** | the seal evaluates current policy and dispatch re-evaluates it; §18's *"stricter policy fails closed"*. There is no path to an old decision, because a replay either seals a new manifest or seals none |
+| approval | **re-asked, structurally** | approval binds a manifest id, so new bytes get a new id and no old approval; identical content seals nothing, so there is nothing new to bind |
+| legal hold | **neither** | it governs destruction, not sending. A hold placed after the fact does not stop a replay, and inventing a coupling would be a control nobody asked for |
+| the hold window | **not inherited** | a replayed send gets its own `release_at`, so it is still cancellable |
+| rate breakers, domain pause | **re-asked** | at the seal and again at hand-over, unchanged |
+| the Butler pause | **re-asked, before any run exists** | a pause refuses rather than gates, so a paused Butler starts no run — and `interpret` asks again per invocation for a pause placed while a replay sleeps |
+| the version's publication state | **re-asked** | a replay runs the **same** version, because a run is one walk of one program; a superseded or deleted one refuses |
+
+### What a replay does to the run's cost counter: nothing
+
+`butler_runs.subrequests_spent` is accumulated **per instance**, because the pot is per instance. A replay is a
+new instance with a new id, so it opens its own row at zero and the original's figure is untouched. There is no
+double count — and the case that would have mattered now works: a run killed with `budget_exhausted` is
+replayable and gets a whole pot, rather than inheriting an exhausted one and being refused a replay that is in
+fact affordable. The two send-scoped modes spend nothing against any run's pot: they run in the request's
+invocation, the way `triggerButlers` runs in the sweeper's.
+
+A replay pays **one** subrequest more than the engine's fixed three — the single read of the replayed run's
+sends. It is `1` because it is one statement, `butler.run_cost_engine_fixed` stays pinned at 3 for an ordinary
+run, and the read is deliberately outside the send node so `butler.run_cost_max_send_propose` keeps describing
+what it names.
+
+### A replay's id is `<butlerVersionId>-<replayId>`
+
+Not `<butlerVersionId>-<triggerKey>`. 0028 made the instance id the primary key precisely so one delivery cannot
+produce two records of one version, so keying a replay on the delivery would collide with the record it is
+replaying. The second half becomes the replay's own `brp_` ULID: the same shape — *the version, and what made
+this run happen* — the same length to the character (61 against `workflow.instance_id_max_chars = 100`), and ADR
+9 intact, because for a replay the **intent is a person's decision** rather than a delivery. Two clicks are two
+runs; what stops the second sending a second copy is the content rule, not the id.
+
+That holds for the case people will hit and is bounded rather than absolute. The content rule compares against
+the *source run's own* effects, so two replays whose content still matches the original both reuse the
+original's key and both seal nothing. Two replays whose content is materially new relative to the original and
+identical **to each other** are not compared to one another, so each seals. The widening is one predicate on
+`interpret`'s incumbent read; it is not built because *"what have this run's siblings done"* is a different
+question and deserves deciding rather than arriving as a side effect. `src/butler/replay.ts` carries it.
+
+### One Layer 2 invariant that assumed a first attempt
+
+`drafts_one_per_reply` is `UNIQUE (org_id, author_user_id, in_reply_to_message_id)` — *"replying to the same
+message twice should resume the draft that already exists"*. Written about a person, and it binds a program
+too: a replay drafting the same reply as the same author violated it, and the run died with a constraint error
+before its first effect row, recording `engine_fault` and nothing else. The fix is the index's own sentence —
+on a replay, `writeDraft` resumes this Butler's existing draft for that parent. The argument against an upsert
+on the ordinary path survives, because the lookup is bound to the Butler's own `author_user_id`, so the widest
+thing it can find is a draft the same program wrote.
+
+### `simulate-recorded` is not built, and the reason is not that it is hard
+
+Its purpose is to reuse immutable recorded **LLM and connector** outputs, and both are Layer 6. At Layer 4 the
+expression language is pure and every effect node calls the same function a person's request would, so there is
+no non-deterministic step to record: a `simulate-recorded` here would replay deterministic output and its
+interesting case would be untestable. It arrives with `llm.*` or `connector.*`, and arrives with something to
+reuse.
 
 ---
 
@@ -502,8 +732,9 @@ a run that has never closed — so on this path those three columns read **zero 
 actually performed is its `butler_run_effects` rows, which are written with each effect in one transaction and
 returned beside the run row by `GET /api/butler-runs/:id`. Measured, not reasoned: `test/butler-pause.test.ts`
 suspends a run for real, places the pause under it, and finds the row reading `effects = 0` next to two effect
-rows. #53's run ledger owns closing that gap; until then, a reader who trusts `effects` on an abandoned run is
-reading a figure nothing ever wrote.
+rows. #53 closes that gap by pointing a reader at the rows rather than by writing a count nothing computed:
+`inspect` returns the effect list beside the run row, and says in the answer itself that the count columns are a
+projection only a close computes.
 
 Measured, `docs/receipts/butler-pause.md`: the trigger is **3** subrequests with a live Butler and **2** with a
 paused one — a pause makes the ingress path *cheaper*, because the `create` never happens. Placing one costs
@@ -742,9 +973,16 @@ header, and nothing reads it. Until they do, a Butler's send carries no marker s
 what bounds a multi-hop loop is the human release gate on each send and the latched self-provoked-run pause,
 which counts a Butler's runs rather than the loop's hops.
 
-**Still fog, unchanged from #50's resolution.** `queue_one` and `parallel_bounded` (they need a different id
-shape), the full §16 schedule semantics, the trigger catalogue beyond `mail.received`, the capability ceiling
-at publication, the run ledger and its four replay modes (#53), and simulation.
+**Still fog.** `queue_one` and `parallel_bounded` (they need a different id shape), the full §16 schedule
+semantics, the trigger catalogue beyond `mail.received`, the capability ceiling at publication,
+`simulate-recorded` and simulation generally — and **how long a run ledger is kept**.
+
+That last one is #53's own open question and it stays open rather than being defaulted. Audit entries are never
+trimmed and `log_entries` are bounded; a run ledger is neither, and the honest answer needs
+`audit-and-log-retention.md`'s row-size arithmetic against D1's 10 GB per-database ceiling. What #53 changed
+about it is only the size of the row: `trigger_facts` is the one column that grows it measurably.
+
+**The run ledger and its four replay modes are no longer on that list** — see the replay section above.
 
 **Static taint tracking is no longer on that list, and it is not because it was built.** #52 reversed it for
 this layer: with the one reachable sink closed by construction there is nothing a dataflow checker could

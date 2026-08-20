@@ -63,6 +63,20 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
        * "how often is dual control being exercised" unanswerable from the trail.
        */
       "send.released",
+      /*
+       * #53's two send-scoped replay modes, and they are two actions for the reason `send.rate_limited` is not
+       * `send.suppressed`: a name that means the wrong thing makes a question unanswerable from the trail.
+       *
+       * `send.retried` is an `UPDATE` on this table — a send whose non-acceptance is *recorded* going back to
+       * `held` under its original key — and it appends no `send.sealed` because nothing was composed.
+       * `send.resent` accompanies an INSERT: the unprovable case mints a new manifest and a new key on
+       * purpose, so `send.sealed` is appended for the new row and this rides beside it naming the **person**
+       * who accepted that a second copy may arrive. Folding the two into one action with a flag would put the
+       * safe act and the duplicate-risking one behind one filter, which is precisely the blur the two names
+       * exist to prevent.
+       */
+      "send.retried",
+      "send.resent",
     ],
   },
 
@@ -135,15 +149,28 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   },
   /* ---- Layer 4: the Butler engine (#50) ---- */
   butler_runs: {
-    exempt:
-      "The run record **is** the record of the run, and every act inside it that a person could be asked "
-      + "about is audited where it happens: a Butler's send appends `send.sealed` with the Butler as actor "
-      + "and `actor_kind = butler`, and a person releasing one appends `send.released` naming them. What "
-      + "this table adds is execution state — started, parked, finished, refused, what it spent — which is "
-      + "nobody's act. A `butler.ran` action would put one untrimmable entry per delivery per published "
-      + "Butler behind a fact this row already carries, falsifying audit-and-log-retention.md's 'a handful "
-      + "per message' sizing exactly as an entry per claim or per export page would. Faults and refusals go "
-      + "to `log_entries`, which is bounded and trimmed and is where 'why did this behave oddly' belongs.",
+    /*
+     * **Audited in exactly one direction, and the exemption that used to stand here is the argument for it.**
+     *
+     * This table was exempt because a run is caused by a *delivery*: nobody decided it, every act inside it
+     * that somebody could be asked about is audited where it happens (`send.sealed` with the Butler as actor,
+     * `send.released` naming the person), and what the row adds is execution state — started, parked,
+     * finished, refused, what it spent — which is nobody's act. A `butler.ran` action would have put one
+     * untrimmable entry per delivery per published Butler behind a fact the row already carries, falsifying
+     * audit-and-log-retention.md's "a handful per message" sizing exactly as an entry per claim or per export
+     * page would.
+     *
+     * Every word of that still holds for a run a delivery caused, and none of it holds for a **replay** (#53).
+     * A named person decided to run a program again that proposes mail — the first act in this product that
+     * deliberately repeats an effect on the outside world — and it happens as often as a human clicks. So
+     * `butler.replayed` is written for a replay's INSERT and nothing is written for an ordinary run's, which
+     * is the same frequency-and-answerability boundary `cases` draws between a claim and a claim *taken*.
+     *
+     * The entry rides in `auditedBatch` with that INSERT rather than beside the `create()` that follows it,
+     * because `auditedBatch`'s contract is the one this act needs: if the Node cannot record it, it does not
+     * happen. Faults and refusals still go to `log_entries`.
+     */
+    actions: ["butler.replayed"],
   },
   butler_run_effects: {
     exempt:

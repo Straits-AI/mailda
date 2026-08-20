@@ -7,7 +7,7 @@ import { describeShortfall, planApproval, type Shortfall } from "../approvals.ts
 import { decidersOf } from "../deciders.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
-import { putEvidence } from "../evidence-store.ts";
+import { putEvidence, sha256Hex } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
 import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
 import { domainOf, evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
@@ -114,6 +114,28 @@ export interface Composition {
    * argument for it, are in `src/butler/gate.ts`.
    */
   releaseRequired?: boolean;
+  /**
+   * That this send is a **deliberate second attempt at a send nobody can prove did not go** (#53).
+   *
+   * Set only by `resendMayDuplicate` in `src/outbound/retry.ts`, which is the unprovable sibling of
+   * `retry-effect`. It mints a new manifest — a new ADR 9 effect key — on purpose: the old key may already have
+   * been handed over, so reusing it would say *"this is the same effect, which never happened"* when the whole
+   * premise of the mode is that nobody can say. Two keys make two effects, and `resend_of` is what records
+   * that the second is the first one again.
+   *
+   * It is a parameter of the seal rather than a later `UPDATE` for the reason `releaseRequired` is: the fact
+   * has to exist when the manifest does, or there is a window in which the row reads as an unrelated send.
+   *
+   * `reason` is mandatory at the route and lands in the trail. `requestedByUserId` is the **person** who
+   * accepted the duplicate risk, and it is why this appends a second audit entry: `send.sealed`'s actor is the
+   * author, which on a Butler's send is the `btl_`, and *"a program's message was sent again because a named
+   * human decided to risk a duplicate"* is not a fact the author field can carry.
+   */
+  resend?: {
+    readonly ofManifestId: string;
+    readonly requestedByUserId: string;
+    readonly reason: string;
+  };
 }
 
 export interface SealedManifest {
@@ -204,9 +226,102 @@ export function sentPrefix(orgId: string): string {
   return `${orgId}/sent/`;
 }
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+/**
+ * What makes two sends **the same effect**: the envelope plus the normalized body's hash (#53).
+ *
+ * ## Why this is content and not an identifier, said where somebody will reach for the identifier
+ *
+ * #53's own body proposed *materially new means a different manifest id*, citing ADR 35. That is wrong, and it
+ * is wrong in the one direction that matters. ADR 35's property is **directional**: the id is `ctx.id("snd")`,
+ * a time-and-random ULID, and `send_manifests` carries no uniqueness constraint on content — so the same id
+ * implies the same content and a *different* id implies nothing at all. A replay producing byte-identical
+ * content always gets a new id, so an id-based rule would call it materially new, mint a fresh idempotency key
+ * and **hand the same message over twice**, which is precisely what 16's sentence exists to prevent.
+ *
+ * ## Derived, never stored
+ *
+ * Every input is a column `sealManifest` already writes — `body_normalized_sha256` is one of the three hashes
+ * it computes — so this is computable for every manifest this Node has ever sealed. A stored `content_sha256`
+ * would have been NULL for all of them, and a NULL that cannot match is the *permissive* failure: a replay
+ * would mint a new key for a send it could not prove identical. Migration 0030 records that choice.
+ *
+ * ## The normalization errs on the side of *identical*, deliberately
+ *
+ * Identity here means *reuse the old key and send nothing*, so collapsing two near-identical sends into one is
+ * a **refusal to send** and treating them as different is a **duplicate delivery**. #53's rule is to err
+ * strict, so: addresses are lower-cased, deduplicated and sorted — SMTP delivers to a set, and `sealManifest`
+ * already collapses one address appearing in both To and Cc into a single recipient row — while the subject,
+ * the threading parent and the body hash are compared exactly, because a difference in any of those is a
+ * difference a recipient would read.
+ *
+ * `JSON.stringify` over a fixed tuple rather than a delimiter join: a subject may contain any character, and a
+ * separator a value can contain is a way for two different sends to hash alike.
+ *
+ * ## The envelope sender is the **mailbox**, which is what makes one implementation possible
+ *
+ * ADR 36 makes From the mailbox, and `sealManifest` resolves the address *from* the mailbox — refusing rather
+ * than guessing when there is more than one and no `senderAddress` was named. So the mailbox identifies the
+ * sender at least as tightly as the address does, and it is the field both sides of the comparison have: an
+ * existing manifest carries `mailbox_id`, and a send that has not been sealed yet has a draft. Hashing the
+ * resolved address instead would mean resolving it twice — two more D1 reads inside a send node whose cost
+ * `butler.run_cost_max_send_propose` reserves — to learn something the mailbox already decides.
+ *
+ * That is why this function takes no `env` and performs no I/O: the whole rule is computable from a draft on
+ * one side and from columns already in hand on the other, so a replay's identity check costs **nothing**.
+ */
+export interface SendContent {
+  /** From, as ADR 36 defines it. */
+  readonly mailboxId: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
+  readonly subject: string;
+  readonly inReplyToMessageId: string | null;
+  /** The SHA-256 of the normalized body — `body_normalized_sha256`, not the body itself. */
+  readonly bodyNormalizedSha256: string;
+}
+
+export async function contentIdentity(content: SendContent): Promise<string> {
+  const addresses = (list: readonly string[]): string[] =>
+    [...new Set(list.map((address) => address.trim().toLowerCase()))].sort();
+  return await sha256Hex(utf8(JSON.stringify([
+    content.mailboxId,
+    addresses(content.to),
+    addresses(content.cc),
+    addresses(content.bcc),
+    content.subject,
+    content.inReplyToMessageId ?? "",
+    content.bodyNormalizedSha256,
+  ])));
+}
+
+/**
+ * The sends a replay might be repeating, keyed by their content identity (#53).
+ *
+ * Read **once per replay run** by `src/butler/interpret.ts` and handed down, rather than queried inside each
+ * send node: one statement for the whole run instead of one per `mail.send.propose`, which is what keeps
+ * `butler.run_cost_max_send_propose` describing the node it names.
+ */
+export interface ReplayIncumbents {
+  /** The run being replayed, named in the run record's reason so a reader knows which key was reused. */
+  readonly ofRunId: string;
+  /** content identity → the send that already carries it. */
+  readonly byContent: ReadonlyMap<string, IncumbentSend>;
+}
+
+/**
+ * A send a replay found it was about to make again.
+ *
+ * Three fields and no more, deliberately: the effect key, and enough of the send's state for the run record to
+ * say what the world is waiting on. It is **not** a `SealedManifest` and must not be widened into one — a
+ * `SealedManifest` is the result of sealing, its `state` is one of the three a seal can produce, and an
+ * incumbent can be in any of dispatch's nine. Returning one from a call that sealed nothing is the overclaim
+ * this shape exists to avoid.
+ */
+export interface IncumbentSend {
+  readonly id: string;
+  readonly state: string;
+  readonly stateReason: string | null;
 }
 
 /**
@@ -575,8 +690,8 @@ export async function sealManifest(
         body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
         submitted_key, submitted_sha256,
         sealed_at, release_at, state, state_at, transport_message_id, last_error, attempts,
-        policy_outcome, policy_versions, state_reason)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,?,0,?,?,?)`,
+        policy_outcome, policy_versions, state_reason, resend_of)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,?,0,?,?,?,?)`,
   )
     .bind(
       manifestId, orgId, composition.mailboxId, composition.authorUserId,
@@ -603,6 +718,7 @@ export async function sealManifest(
       decision.outcome,
       JSON.stringify(decision.matched.map((match) => match.versionId)),
       stateReason,
+      composition.resend?.ofManifestId ?? null,
     );
 
   // One row per recipient, in the same transaction as the manifest.
@@ -720,13 +836,44 @@ export async function sealManifest(
     },
   };
 
+  /*
+   * The resend's own entry (#53), and it is the third instance of the same shape rather than a new idea.
+   *
+   * `send.sealed` records what happened to the *send*, with the author as actor — which on a Butler's message
+   * is the `btl_`. This records that a **named person accepted the risk of a duplicate delivery**, which is a
+   * fact about a human decision and cannot ride in an entry whose actor is a program. Exactly the split
+   * `approval.requested` and `send.rate_limited` already make in this function's one `batch()`.
+   *
+   * In that batch rather than after it, for the reason every other entry here is: a resend that exists with no
+   * record of who risked it is not unlikely, it is unrepresentable.
+   */
+  const resendEvent: AuditEvent | null = composition.resend === undefined ? null : {
+    action: "send.resent",
+    // `ok`, like every other gate and decision this function records. Nothing was refused: a person was told a
+    // duplicate was possible and said go.
+    outcome: "ok",
+    actorUserId: composition.resend.requestedByUserId,
+    subject: manifestId,
+    detail: {
+      resendOf: composition.resend.ofManifestId,
+      reason: composition.resend.reason,
+      // Stated in the record, not only in the interface that asked. The whole point of the mode's separate
+      // name is that this fact is different from `retry-effect`'s, so the trail has to carry it.
+      duplicatePossible: true,
+      mailboxId: composition.mailboxId,
+      state: sealedState,
+      stateReason,
+    },
+  };
+
   // Two entries, one transaction. `approval.requested` is a fact about the people being asked — its subject is
   // the approval id and its detail is the stage set — which `send.sealed` cannot carry without becoming an entry
   // about two different things. See `auditedBatchMany`.
   await auditedBatchMany(
     env, ctx, orgId,
     [sealEvent, ...(approvalEvent === null ? [] : [approvalEvent]),
-      ...(breakerEvent === null ? [] : [breakerEvent])],
+      ...(breakerEvent === null ? [] : [breakerEvent]),
+      ...(resendEvent === null ? [] : [resendEvent])],
     (entries) => [manifestRow, ...recipientRows, ...approvalStatements, ...entries],
   );
 
@@ -815,5 +962,10 @@ export async function renderRfc822(
     .addIfPresent("References", m.references_header)
     .bytes(body);
 
-  return { raw, sha256: await sha256Hex(new TextDecoder().decode(raw)) };
+  // Hashed over the bytes rather than over a re-decoding of them. This file used to carry its own
+  // `sha256Hex(text)` beside `evidence-store.ts`'s `sha256Hex(bytes)` — two implementations of one hash, one of
+  // which round-tripped the bytes through a decoder first. #53 needed the exported one for content identity,
+  // and two spellings of "is this the same content" is exactly the correspondence problem that rule exists to
+  // settle, so the local copy is gone.
+  return { raw, sha256: await sha256Hex(raw) };
 }

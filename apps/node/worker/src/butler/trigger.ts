@@ -118,6 +118,91 @@ export type DeliveryFacts = {
   readonly parse_error: string | null;
 };
 
+/**
+ * Which of the facts above are **the sender's words**, and which are this Node's own (#53, #63).
+ *
+ * The fact set is the `event.*` root a run was given, and `butler_runs.trigger_facts` freezes it. That makes it
+ * readable long after the delivery, by anybody who can read a run — so somebody has to say, once, which of
+ * these fields is mail content. This is that statement, and it lives here rather than at the reading end
+ * because the field and its classification must move together: `from` is already documented above as
+ * *"Content, and readable for that reason only"*, and a classification written somewhere else is a second
+ * place for that sentence to be true.
+ *
+ * A **total map** over `DeliveryFacts`, so a tenth fact does not compile until somebody classifies it. That is
+ * the whole shape: a list of fields to hide would guard only the spellings its author thought of, and the fact
+ * set is the thing that grows — #52 grew it by `return_path` and four hand-written copies of it went stale the
+ * same day. `redactFacts` below therefore treats an **unknown** key as content too, because the map constrains
+ * what can be written here and cannot constrain what a stored JSON blob holds.
+ *
+ * Two entries are worth the argument:
+ *
+ *   - **`return_path` is content**, even though this Node read it off the envelope rather than off a header.
+ *     It is an address a stranger chose and it is who a reply goes to; disclosing it discloses who wrote in.
+ *   - **`parse_error` is content**, which is stricter than it looks. Two of its three spellings are this
+ *     Node's own sentences (`E_NO_MESSAGE_ID`, `E_NO_DATE`), but the third is
+ *     `E_HEADERS_UNPARSED  <the parser's message>` — a string interpolated from the failure to read the
+ *     sender's bytes, which can quote them. One spelling that can carry content makes the field content, and
+ *     the alternative is a classification that is right twice and wrong once with nothing to say which.
+ *
+ * `mailbox_address` is **operational**: it is the organization's own address, the one the run's Butler is
+ * declared against, and it names nobody outside. `received_at` is what this Node observed.
+ *
+ * ## `"content"` here is a narrower word than `mailbox.content.read`'s, and the bound is worth stating
+ *
+ * Everything a fact set can carry is **header-grade**: a subject, two addresses and a parser's complaint.
+ * That is why `inspectRun` gates it on `mayReadMetadata` — whose own contract is *"subject lines, sender
+ * addresses"* — rather than on the body relation, and it is only sound while the sentence above stays true of
+ * every member. A fact carrying **body** bytes would be content this classification cannot describe: it would
+ * read `"content"` and open to a `mailbox.metadata.read` holder, who by definition may not read a body.
+ *
+ * Nothing has to be remembered for that to be caught. `deliveryFacts` below is the sole producer, the map is
+ * total over its type so a new field does not compile unclassified, and `test/butler-replay.test.ts` pins
+ * these ten keys by name — so a body-grade fact cannot arrive without a person editing all three and being
+ * asked which authority it takes.
+ */
+export const FACT_DISCLOSURE: { [K in keyof DeliveryFacts]: "content" | "operational" } = {
+  message_id: "operational",
+  conversation_id: "operational",
+  case_id: "operational",
+  mailbox_id: "operational",
+  mailbox_address: "operational",
+  received_at: "operational",
+  subject: "content",
+  from: "content",
+  return_path: "content",
+  parse_error: "content",
+};
+
+/**
+ * A fact set with the content removed, and **the list of what was removed beside it**.
+ *
+ * The list is the point. A redacted `subject` reads as `null`, and so does a message that genuinely had none
+ * (`deliveryFacts` writes the empty string, but a pre-0030 or future fact set may not) — while a redacted
+ * `parse_error` reading `null` would say the headers parsed cleanly, which is a *false* answer rather than an
+ * absent one. Naming the keys turns every one of those nulls back into "withheld from you", so the caller is
+ * told there is a hole rather than handed a hole shaped like an answer.
+ *
+ * Pure, and the authority is somebody else's decision: `inspectRun` decides *whether* to call this.
+ */
+export function redactFacts(
+  facts: Readonly<Record<string, unknown>>,
+): { facts: Record<string, unknown>; redacted: string[] } {
+  const kept: Record<string, unknown> = {};
+  const redacted: string[] = [];
+  for (const [key, value] of Object.entries(facts)) {
+    const classification = Object.hasOwn(FACT_DISCLOSURE, key)
+      ? FACT_DISCLOSURE[key as keyof DeliveryFacts]
+      : "content";
+    if (classification === "operational") {
+      kept[key] = value;
+    } else {
+      kept[key] = null;
+      redacted.push(key);
+    }
+  }
+  return { facts: kept, redacted };
+}
+
 export interface TriggerOutcome {
   /** Instance ids created by this call. */
   readonly started: readonly string[];

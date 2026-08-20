@@ -47,8 +47,10 @@ import { releaseButlerSend } from "./butler/release.ts";
 import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
 import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
+import { inspectRun, replayRun } from "./butler/replay.ts";
 import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
+import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
 import { cloudflareTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
 import { resealBatch } from "./reseal.ts";
@@ -1287,6 +1289,67 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     /**
+     * The two send-scoped replay modes (#53, §16). `{ "mode": "retry-effect" | "resend-may-duplicate" }`.
+     *
+     * ## One route, two modes, and the mode is **required** rather than defaulted
+     *
+     * A default here would be a choice between an act that provably cannot duplicate and one that might, made
+     * for the caller by whoever typed the default. So the mode is named, and asking for `retry-effect` where
+     * non-acceptance is not proven is **refused with the other mode's name and its consequence** rather than
+     * silently upgraded — which is the whole reason there are two names. `resend-may-duplicate` additionally
+     * needs `acceptDuplicateRisk: true` and a reason, both refused with the four parts when absent, so no
+     * caller in any channel can reach the risky act by omission.
+     *
+     * ## `send.propose`, like cancel and release, and the unauthorized answer is the unknown one
+     *
+     * Retrying is an outbound act on the mailbox, so it takes the outbound authority — which whoever sealed
+     * the send holds by definition. An unauthorized caller gets exactly what an unknown id gets, so this is
+     * not a way to probe which mailboxes have failed sends (§5C). `retryEffect` and `resendMayDuplicate` then
+     * re-ask the **author's** authority through `dispatchOne` and `sealManifest`; the two checks are different
+     * questions and both are asked.
+     *
+     * ## Why this is not `/api/butler-runs/:id/replay`
+     *
+     * The four states these modes turn on are states of a *manifest*, and a manifest outlives every run — most
+     * were never proposed by a Butler at all. Hanging them off a run would have made a person's refused send
+     * unretryable and a Butler's retryable, which is a distinction with nothing behind it.
+     */
+    const retrySend = /^\/api\/sends\/([^/]+)\/retry$/.exec(url.pathname);
+    if (retrySend && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const target = await env.CATALOG.prepare(
+        "SELECT mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
+      ).bind(who.orgId, retrySend[1]!).first<{ mailbox_id: string }>();
+      const mayRetry = target !== null
+        && await maySend(env, { orgId: who.orgId, userId: who.userId }, target.mailbox_id);
+      if (!mayRetry) {
+        // The same body an unknown id gets, for `cancel`'s reason.
+        return Response.json({ error: "E_NO_MANIFEST", what: "no such send" }, { status: 404 });
+      }
+
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      if (body.mode === "retry-effect") {
+        return Response.json(await retryEffect(env, clock, who.orgId, who.userId, retrySend[1]!));
+      }
+      if (body.mode === "resend-may-duplicate") {
+        return Response.json(await resendMayDuplicate(env, clock, who.orgId, {
+          userId: who.userId,
+          acceptDuplicateRisk: body.acceptDuplicateRisk === true,
+          reason: String(body.reason ?? ""),
+        }, retrySend[1]!));
+      }
+      return Response.json({
+        error: "E_RETRY_MODE_UNKNOWN",
+        what: `${JSON.stringify(body.mode ?? null)} is not a retry mode`,
+        why: "there are two, because there are two epistemic states: one reuses the original idempotency key "
+          + "and provably cannot duplicate, and one mints a new key and might",
+        fix: 'send {"mode":"retry-effect"} where GET /api/sends offers it, or '
+          + '{"mode":"resend-may-duplicate","acceptDuplicateRisk":true,"reason":"…"} where it offers that',
+      }, { status: 422 });
+    }
+
+    /**
      * Releasing a Butler-proposed send (#50).
      *
      * Beside `cancel` because it is the same shape of act on the same object with the same authority:
@@ -1393,6 +1456,70 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       });
     }
 
+    /**
+     * The run ledger's two run-scoped replay modes (#53, §16).
+     *
+     * `GET  /api/butler-runs/:id/inspect`  the frozen program, what the run was given, what it did, and which
+     *                                     modes each of its sends offers. **Executes nothing**, and writes
+     *                                     nothing but the disclosure entry §7 owes when a supervised grant is
+     *                                     what showed the caller the run's content fields
+     * `POST /api/butler-runs/:id/replay`   `{ "mode": "re-run" }`. A new run of the same version over the same
+     *                                     recorded input, under current policy, authority, approvals and
+     *                                     breakers
+     *
+     * **`org.admin`, like the two read routes beside them**, and for the replay it is the stronger of the two
+     * readings: a `re-run` may propose sends from any mailbox the Butler touches, so bounding it per mailbox
+     * would authorize an act by one of the mailboxes it can affect. The person who may publish a Butler is the
+     * person who may run one again.
+     *
+     * **`org.admin` is the floor and not the whole check on `inspect`.** A run's recorded input carries the
+     * triggering message's subject and sender, which is mail content; `inspectRun` gates those fields on
+     * `mailbox.metadata.read` or `mailbox.content.read` on the mailbox the delivery landed in — or a live
+     * supervised grant — and redacts them, visibly, for an administrator who holds none of the three. The
+     * ids, states and tokens are what `org.admin` alone answers for.
+     *
+     * **There is no `mode` for the two send-scoped modes here.** `retry-effect` and `resend-may-duplicate` act
+     * on a manifest, a manifest outlives every run, and most manifests never had one — so they are
+     * `POST /api/sends/:id/retry` with `send.propose` on the mailbox, which is the authority composing the
+     * message took. Putting them here would have made a human's refused send unretryable while a Butler's was
+     * retryable, which is a distinction with nothing behind it.
+     *
+     * An unknown mode is refused with the modes that exist rather than defaulted, because a default here is a
+     * choice between an act that cannot duplicate and one that can.
+     */
+    const inspectRunPath = /^\/api\/butler-runs\/([^/]+)\/inspect$/.exec(url.pathname);
+    if (inspectRunPath && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const inspected = await inspectRun(env, clock, who, inspectRunPath[1]!);
+      if (inspected === null) return Response.json({ error: "not_found" }, { status: 404 });
+      return Response.json(inspected);
+    }
+
+    const replayRunPath = /^\/api\/butler-runs\/([^/]+)\/replay$/.exec(url.pathname);
+    if (replayRunPath && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      if (body.mode !== "re-run") {
+        return Response.json({
+          error: "E_REPLAY_MODE_UNKNOWN",
+          what: `${JSON.stringify(body.mode ?? null)} is not a replay mode this route performs`,
+          why: "this route runs a program again; `inspect` is a GET on this run and the two send-scoped "
+            + "modes act on a manifest, which outlives every run",
+          fix: 'send {"mode":"re-run"}, GET /api/butler-runs/:id/inspect, or '
+            + "POST /api/sends/:id/retry for retry-effect and resend-may-duplicate",
+        }, { status: 422 });
+      }
+      return Response.json(await replayRun(env, clock, who.orgId, who.userId, replayRunPath[1]!));
+    }
+
     const oneRun = /^\/api\/butler-runs\/([^/]+)$/.exec(url.pathname);
     if (oneRun && request.method === "GET") {
       const who = await principalFor(env, clock, request);
@@ -1470,6 +1597,21 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         sends: rows.results.map((send) => ({
           ...send,
           recipients: byManifest.get(String(send.id)) ?? [],
+          /*
+           * Which replay mode this send offers, or none (#53). **Free**: `retryOffer` is pure and every
+           * column it reads — `state`, `fidelity`, `submitted_key IS NOT NULL` — was already in the `SELECT`
+           * above for other reasons, so the outbox names the modes without a second query.
+           *
+           * It travels with the listing rather than behind a per-send request because that is what makes the
+           * distinction visible where somebody acts on it. AGENTS.md §3's rule is that a limit a developer can
+           * hit is one they must see; this is the same rule for a *mode*, and the failure it prevents is a
+           * client that offers "retry" on everything and discovers per send which of the two it got.
+           */
+          retry: retryOffer({
+            state: String(send.state),
+            fidelity: String(send.fidelity),
+            hasSubmitted: Number(send.has_submitted) === 1,
+          }),
         })),
         daily: await dailySendState(env, clock, who.orgId),
         capability: await cloudflareTransport.capability(env),

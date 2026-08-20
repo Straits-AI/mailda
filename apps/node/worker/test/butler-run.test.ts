@@ -1619,10 +1619,19 @@ describe("a stored AST is data, so the engine re-checks it", () => {
 /* ------------------------------------------------------------------ the vocabulary --------------- */
 
 describe("the engine's own refusal vocabulary is closed", () => {
-  it("declares exactly the six #50 settled on", () => {
+  it("declares exactly the six #50 settled on, plus #53's two replay tokens", () => {
+    // `replay_identical_content` is the seventh member and the only one that is not a refusal: a replay found
+    // it was about to seal a send identical to one the replayed run already made, so it reused that send's
+    // effect key and sealed nothing. It lives in this list because the run record's `reason` column carries
+    // it and a reason nobody can list is a reason nobody can filter on — see `effects.ts` on why the outcome
+    // beside it stays `ok`.
+    //
+    // `replay_send_decided` is the eighth and is that token's pair: the same key reuse, on an incumbent that
+    // is `cancelled` or `withheld` — a decision **against** this message, so nothing is on its way and `ok`
+    // would report a success that did not happen.
     expect([...EFFECT_REASONS].sort()).toEqual([
       "assignee_may_not_work_it", "case_closed", "case_held", "case_not_actionable",
-      "case_not_held_by_butler", "not_readable",
+      "case_not_held_by_butler", "not_readable", "replay_identical_content", "replay_send_decided",
     ]);
   });
 
