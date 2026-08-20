@@ -254,6 +254,30 @@ describe("doctor", () => {
     expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("sending_events_consumer");
   });
 
+  it("says a Butler can be published here and cannot be run (#49)", async () => {
+    // Migration 0027 gives this Node two Butler tables, so `migrations_applied` reports them present — and
+    // a reader is entitled to read that as "the feature works". It does not: #50 owns the engine and this
+    // bundle declares no Workflow binding. An operator who publishes a Butler and waits is owed the reason
+    // nothing happened, which is the same argument `workers_paid_plan` and `sending_events_consumer` make.
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const finding = find(report.findings, "butler_execution");
+
+    expect(finding.severity).toBe("report");
+    expect(finding.ok).toBe(true);
+    expect(report.verdict).not.toBe("refuse");
+    expect(finding.detail).toContain("none of them runs");
+    // The two things a publisher most needs to know beyond that: what is frozen, and what is refused.
+    expect(finding.detail).toContain("frozen");
+    expect(finding.detail).toContain("Reserved nodes");
+    // And the seam left open, stated where the reader meets it.
+    expect(finding.detail).toContain("maxItems");
+
+    // Infrastructure: the shape of the bundle and the name of a ticket, both public. So it survives into
+    // the report a locked-out operator sees unauthenticated.
+    expect(finding.discloses).toBe("infrastructure");
+    expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("butler_execution");
+  });
+
   it("gives every failure a fix — a refusal without a remedy is a dead end", async () => {
     const ctx = createSystemCtx();
     await claim(ctx);

@@ -35,6 +35,9 @@ importers:
       '@mailda/budgets':
         specifier: workspace:*
         version: link:../../../packages/budgets
+      '@mailda/butler-ast':
+        specifier: workspace:*
+        version: link:../../../packages/butler-ast
       '@mailda/evidence':
         specifier: workspace:*
         version: link:../../../packages/evidence
@@ -103,8 +106,36 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/butler-ast:
+    dependencies:
+      '@mailda/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      zod:
+        specifier: ^4.1.13
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      ajv:
+        specifier: ^8.17.1
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.10(@types/node@22.20.1)(vite@8.2.0(@types/node@22.20.1)(esbuild@0.28.1)(yaml@2.9.0))
+
   packages/contract:
     dependencies:
+      '@mailda/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       ajv:
         specifier: ^8.17.1
         version: 8.20.0

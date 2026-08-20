@@ -1,4 +1,4 @@
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { hashPassword, passwordProblem } from "./auth/password.ts";
 import { issueSession, type IssuedSession } from "./auth/session.ts";
@@ -74,7 +74,7 @@ export async function claimNode(
 
   const orgId = ctx.id("org");
   const userId = ctx.id("usr");
-  const mailboxId = ctx.id("mbx");
+  const mailboxId = ctx.id(ID_PREFIXES.mailbox);
   const at = new Date(ctx.now()).toISOString();
   const verifier = await hashPassword(password);
 

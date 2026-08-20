@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
+    "@mailda/butler-ast": "workspace:*",
     "@mailda/evidence": "workspace:*",
     "@mailda/runtime": "workspace:*",
     "@tanstack/react-query": "^5.101.4",

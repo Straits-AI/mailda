@@ -87,6 +87,28 @@ export const AUDIT_ACTIONS = {
   "send.outcome_unknown": { says: "Hand-over neither succeeded nor failed observably." },
 
   /*
+   * Layer 4: the Butler object (#49). Two actions, and the pair is the lifecycle rather than an asymmetry.
+   *
+   * `butler.drafted` rides beside the draft insert, and `butler.published` beside the promotion — both
+   * inside `auditedBatch`, so a published version with nothing in the trail is not representable. Neither
+   * is standalone.
+   *
+   * There is deliberately **no** `butler.edited`: an edit *is* a draft, delete-then-insert in one
+   * transaction, and a second action for one transaction would make "who changed this Butler" answerable
+   * from two places that can disagree. `detail.replacedDraft` distinguishes the two cases inside one action,
+   * which is the shape `cancelSend` set.
+   *
+   * And no `butler.ran`: nothing runs a Butler yet. A declared action nothing emits is a category of one —
+   * exactly what `test/audit-coverage.test.ts` fails on — so the run actions arrive with the engine (#50).
+   */
+  "butler.drafted": {
+    says: "An administrator wrote or replaced a Butler's draft; the AST digest and node count are recorded.",
+  },
+  "butler.published": {
+    says: "A Butler draft became an immutable version. Nothing executes it yet; detail.runnable says so.",
+  },
+
+  /*
    * Layer 5: legal hold (#64). Two actions, and the asymmetry between them is the decision: placing is one
    * administrator alone because it only ever preserves, and lifting is dual control with a mandatory reason
    * because it re-permits destruction.

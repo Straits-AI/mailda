@@ -110,6 +110,22 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    */
   domain_pauses: { actions: ["domain.pause_placed", "domain.pause_lifted"] },
 
+  /* ---- Layer 4: the Butler object (#49) ---- */
+  butlers: {
+    // The name and its creation. Both acts on this table happen in the same transaction as a version row,
+    // so both are already named by the version's own classification below — but the table is classified
+    // here rather than exempted, because "created by whom" is a question about the Butler and not about a
+    // version of it, and `butler.drafted`'s subject is the Butler id for exactly that reason.
+    actions: ["butler.drafted"],
+  },
+  butler_versions: {
+    // Auditable for a reason the other frozen-history table shares: a published version is the program a
+    // run binds, so "who published this, and when" is a fact somebody could be asked about. There is
+    // deliberately no `butler.edited` — an edit *is* a draft — and no run action, because nothing runs a
+    // Butler yet and a declared action nothing emits is the category of one this file fails on.
+    actions: ["butler.drafted", "butler.published"],
+  },
+
   /* ---- Layer 3 ---- */
   cases: {
     // The only audited case act is having one taken from you. Claiming and releasing are deliberately

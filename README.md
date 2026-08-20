@@ -118,11 +118,11 @@ What exists today:
 
 | | |
 |---|---|
-| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,586 lines specifying the target state, with 41 locked architectural decisions |
+| **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,916 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 30 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
+| **Decisions taken** | 31 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
 | **Measurements** | 37 receipts in [`docs/receipts/`](./docs/receipts/) generating 199 verified constants |
-| **Code** | A measurement harness and one Worker. 942 tests across two runtimes, checked on every push. Not a product. |
+| **Code** | A measurement harness and one Worker. 985 tests across two runtimes, checked on every push. Not a product. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -800,14 +800,59 @@ paths from 16 and 24 to 17 and 25, all inside their published bounds.
 
 **What is not built is named with the evidence rather than stubbed.** The resolution also specified a pause
 keyed on a Butler id, so that republishing a fixed Butler cannot silently clear a pause the machine placed —
-a good decision about an object that does not exist. `grep "CREATE TABLE" migrations/` returns nothing for
-butler: Layer 4 is unbuilt, so no Butler can be created, no run can be recorded, nothing could ever write such
-a row, and the pause could not be validated against anything. That is the same failure eight policy dimensions
+a good decision about an object that does not exist *as a runtime thing*. There are `butlers` and
+`butler_versions` tables now, so a Butler id can be validated — but nothing **runs** one, so no run can be
+recorded and a loop-detecting pause would have no denominator. That is the same failure eight policy dimensions
 and one team-scoped approval stage were already named absent for — a condition backed by no data is a policy
 that silently never fires, which reads as governance and is not. Filed as an issue with the evidence. Loop
 detection is excluded one layer down for the same reason: a breaker needs a denominator, and nothing records
 per-run outcomes at all. What shipped is not diminished by it — the three rates are the ones that stop a
 runaway *sending*, and a domain pause is a human act that needs no Butler.
+
+**A Butler can now be written down, checked and frozen — and nothing runs it, which the Node says out
+loud.** The node set is closed over storage that exists today, drawn by looking rather than by taste:
+fourteen nodes ship, and fifteen more are *representable in the AST and refused at publication with a reason
+naming what is missing*. That distinction is the point. `llm.classify` parses and is refused with "there is
+no LLM control plane"; an author who writes tomorrow's node gets an answer rather than a parse error.
+`template.render` is on the refused side because the groundwork for the cost ticket went looking for the
+template subsystem and found there is none — no table, and every occurrence of the word in the Worker's
+source incidental — which means the ticket caught itself putting a node on the shipping side of its own
+dividing line while drawing that line. What that costs is stated rather than glossed: the automation this
+layer ships is "assign it and draft a reply", not "assign it and send the standard acknowledgement".
+
+**Publishing is the versioning event, and it dissolves a question rather than answering it.** A published
+version cannot be edited at all — the edit goes to a draft, and publishing is a deliberate second act — so
+there is no dilemma about what a comment-only change does. Resubmitting the same bytes is **refused**: a
+version representing no decision is one a run would bind and a reader would be asked about for nothing.
+Reformatting the text *does* mint a version — the source text is half of what a version freezes — and the
+version says plainly that the program did not move, because the AST is stored canonically: sorted keys, no
+whitespace, null and absent identical, integers only. That canonical form is not what makes the refusal
+work, and the tempting sentence claiming it is has been struck: an AST is derived from its source, so
+identical bytes already give an identical AST. What it makes true is that `ast_sha256` fingerprints the
+*program* rather than its formatting. And "frozen" is enforced by the **database**, not by
+the write path: a trigger aborts any update that touches a published version's AST, its source text, either
+digest or its version number — or that tries to walk it back to a draft, which was the two-statement way
+round the first four. The test asserts it by *trying* rather than by reading the code. Deletion
+is deliberately **not** blocked, and the reason is written down — immutability and indestructibility are
+different properties, and an organization-deletion path is a good widget that a trigger would have trapped
+forever.
+
+**Every loop declares its own bound, and a bound that is exceeded fails.** It never truncates: *"replied to
+100 of 340 customers and reported success"* is not lost work, it is a system reporting something untrue
+about work owed to customers. The checker verifies a bound is present and well-formed and says **nothing**
+about whether it is affordable — that arithmetic moved twice in one week, it is per whole run rather than per
+step, and it is plan-scoped at 10,000 against 1,000 while nothing inside a Worker can detect the plan. So
+the seam is named and left empty rather than filled with the wrong number in the permissive direction.
+
+**One divergence stopped being latent.** The contract required a case id spelled `case_`; the Node minted
+`cas_`. A case id this Node produces could not pass its own contract's validation, and it was invisible only
+because the field was optional and nothing populated it. Butler nodes name case ids, so it had to be settled:
+the runtime won, because its spelling is on every row of every installed Node while the contract's had never
+matched anything — no data moved. The prefix now lives in one registry both sides read, with the pattern
+built *from* the ULID alphabet rather than beside it, and a closed-world test that refuses any hand-written
+identifier pattern anywhere in the repository. That test found a second divergence the day it was written: a
+field validating a sender identity against the **send manifest's** prefix, for an object that has no table
+at all.
 
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
@@ -1032,12 +1077,14 @@ docs/approvals.md                      stages, eligibility, the races, the dispa
 docs/supervised-access.md              matters, the time-boxed grant, per-act recording, the notice
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured
+docs/butler-ast.md                     the node set, what the checker refuses, how a version freezes
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      command schemas
+packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
                                        authorization, auth, outbox sweeper, interface

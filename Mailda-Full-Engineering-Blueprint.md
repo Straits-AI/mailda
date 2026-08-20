@@ -1617,6 +1617,70 @@ The CLI never decides to invoke AI on its own. A cron job or ordinary program ca
 
 No unrestricted JavaScript, shell, `eval`, arbitrary URL or ambient secret exists in the normal DSL. Advanced signed extensions run in isolated organization/deployment sandboxes with declared capabilities, dependency lock, egress policy and resource budgets. A signature establishes provenance, not trust: extension code runs in a memory-safe Wasm/isolate sandbox with no ambient network, filesystem, clock, randomness, secrets or direct Cloudflare bindings. Every egress/effect uses a metered capability handle that re-enters the command plane; deterministic termination and resource limits are mandatory.
 
+### The AST, and the shape Layer 4 fixes
+
+Amended 20 August 2026 (#49). The node list above and the DSL example below describe the target; this
+subsection is the contract, because the implementation is both **narrower** and **more specific** than the
+prose and the two must not be left to disagree. Full reasoning in `docs/butler-ast.md`.
+
+**The node set is closed over storage that exists today**, and it is a **generated discriminated union**
+rather than an open string, so adding a node without teaching the checker is a compile error. Fourteen
+nodes ship: `guard`, `switch`, bounded `map`/`foreach`, `join`, `wait`, `stop`; typed `transform`, schema
+`validate`, `lookup`; `case.assign`, `case.close`; `draft`; `mail.send.propose`.
+
+Fifteen are **reserved in the AST and refused by the checker** with a reason naming what is missing:
+`llm.classify`, `llm.extract`, `llm.summarize`, `llm.draft`, `llm.evaluate`, `label`, `route`, `archive`,
+`quarantine`, `case.upsert`, `case.task`, `case.note`, `connector.call`, `approval.request` and
+**`template.render`**. Reserved means *representable and refused*, not omitted: a Butler naming
+`llm.classify` parses and is then declined with a reason, because an author writing tomorrow's node deserves
+an answer rather than a parse error.
+
+**So the DSL example below does not currently compile**, and that is recorded rather than left to be
+discovered by whoever tries it. Its `llm.extract`, its `case.upsert` with typed fields and its
+`mail.template.render` are all on the reserved side. There is no `templates` table and no template
+subsystem at all — found by measurement, not assumed — so the automation this layer ships is *"assign the
+case and draft a reply, awaiting release"* rather than *"send the standard acknowledgement"*. A template
+subsystem is fog: it needs a versioned immutable object (invariant 9 applies to it exactly as to a Butler),
+a substitution language, and a decision about whether substitution is a taint sink, which it obviously is.
+
+**Typed case fields are deliberately unsettled.** `case.upsert` is reserved because typed fields interact
+with Layer 5's proof line — editing an approval-bound field invalidates the approval — so settling them
+inside an AST decision would decide Layer 5's shape as a side effect. An untyped JSON bag was rejected: the
+taint rule's *"validated against trusted organization state"* cannot mean anything without a schema.
+
+**`mail.received` is the only trigger**, because it is the only one `ingress.ts` produces. The rest of the
+trigger catalogue above is fog; a trigger enum admitting `mail.bounced` today would be a Butler that
+publishes and never fires, which is the failure §18's absent policy dimensions are named absent for.
+
+**Butler versioning is publication**, in the same words §18 uses for a policy and from the same decision. A
+Butler has a draft; publishing mints the version whether or not the AST changed; **a published version
+freezes both the AST and the source text**, which is invariant 9 read plainly; and a publish that changes
+nothing is refused. The canonical serialization that makes "changes nothing" decidable is ADR 35's, applied
+to a tree: key order derived from the names, arrays ordered, null and absent identical, integers only. Two
+digests are stored rather than one — over the AST and over the source text — so *"did the program change, or
+only its formatting"* is answerable from the columns. Frozen is enforced by two database triggers rather than by
+discipline: an update touching a published version's content is refused by the schema itself, and so is one
+that walks its lifecycle state backwards, which was the two-statement way round the first.
+
+**A bound that is exceeded fails; it never truncates.** Every `map`/`foreach` declares `maxItems`, and at
+runtime a collection larger than the declared limit fails the step and processes nothing. *"Replied to 100
+of 340 customers and reported success"* is a system reporting something untrue about work owed to customers.
+Whether a declared bound is **affordable** is a separate pass over the whole graph's cost against a
+plan-scoped whole-run subrequest budget, and it is not built: the checker verifies the bound is present and
+well-formed and encodes no affordability number at all.
+
+**Cycle detection is a checker pass, not a schema constraint**, because JSON Schema cannot express
+acyclicity and pretending otherwise would put the guarantee somewhere it does not hold. Iteration and
+acyclicity are compatible: a loop body's return to its own loop is implicit rather than an edge, so the
+declared graph is a DAG and every cycle in it is a mistake.
+
+**Identifiers are `btl_` and `btv_`**, typed-prefix ULIDs, from a registry both the contract and the runtime
+read.
+
+**Nothing executes a Butler yet**, and `mailda doctor` says so as a first-class check rather than leaving an
+operator to infer it from an absence. Two guarantees in the list below are also unbuilt and named here
+rather than implied: static taint tracking, and the capability ceiling computed at publication.
+
 ### DSL example
 
 ```yaml

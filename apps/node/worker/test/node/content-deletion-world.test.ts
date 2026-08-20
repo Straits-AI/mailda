@@ -155,6 +155,20 @@ const SITES: Site[] = [
       + "stages are what an approval freezes a copy of, and nothing in this Worker deletes those.",
   },
   {
+    file: "src/butlers.ts",
+    target: "butler_versions",
+    content: false,
+    why:
+      "The delete only ever removes a **draft**, in the same transaction that inserts its replacement — "
+      + "`btv_one_draft` permits exactly one, so editing is delete-then-insert rather than an update of a "
+      + "frozen row, exactly as `policy_versions` above. A draft carries no mail and no message: it is a "
+      + "program and the text somebody typed, and nothing executes it. Published and superseded versions "
+      + "are what a run would bind and what an audit entry names, and the `state = 'draft'` clause in the "
+      + "SQL is what keeps them out of reach — deliberately a clause rather than a trigger, because "
+      + "0027's header explains that immutability and indestructibility are different properties and a "
+      + "database-level delete ban would be a tripwire an organization-deletion path is entitled to hit.",
+  },
+  {
     file: "src/merge.ts",
     target: "cases",
     content: true,

@@ -9,10 +9,22 @@ import { statementsOf } from "../../src/sql-statements.ts";
 /**
  * Guards the assumption `src/migrate.ts` makes about its own SQL.
  *
- * The Node applies its own schema by splitting each migration on `;`, which is **wrong for SQL in
- * general** — a semicolon inside a string literal or a `BEGIN … END` trigger body is not a statement
- * boundary. It is correct for these files, and correct only as long as they stay this shape. Rather
- * than pretend to a general SQL parser, the limit is stated and this test is what keeps it true.
+ * The Node applies its own schema by splitting each migration into statements, which is **wrong for SQL in
+ * general** — a semicolon inside a string literal, a comment or a `BEGIN … END` trigger body is not a
+ * statement boundary. `statementsOf` is a small tokenizer that knows about all four, and this file is what
+ * keeps its knowledge matched to the files it is asked to split.
+ *
+ * ## What changed on 20 August 2026, and why the old assertion is gone rather than relaxed
+ *
+ * This file used to assert that **no migration contained a trigger**, with the standing instruction that
+ * the moment one was genuinely needed, `statementsOf` should become a real parser rather than gain a rule
+ * about how to write SQL. #49 needed one: migration 0027 makes a published Butler version's content
+ * unwritable *in the database* rather than merely unwritten, which is a `BEFORE UPDATE … BEGIN SELECT
+ * RAISE(ABORT, …); END` trigger, and a trigger body's inner semicolon is mandatory in SQLite's grammar.
+ *
+ * So the splitter grew a depth counter over `BEGIN`/`CASE`/`END`, and the assertion that used to forbid the
+ * construct is replaced by assertions that the construct **survives the split** — including the two ways a
+ * naive depth counter gets it wrong: a `CASE … END` inside a body, and a keyword inside a string.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,14 +35,81 @@ function files(): string[] {
 }
 
 describe("migration SQL stays splittable", () => {
-  it("contains no trigger bodies, which a semicolon split would cut in half", () => {
-    const offenders = files().filter((file) => {
+  it("keeps every real trigger body whole, semicolons and all", () => {
+    const withTriggers = files().filter((file) =>
+      /\bCREATE\s+TRIGGER\b/i.test(readFileSync(join(migrationsDir, file), "utf8")));
+
+    // Anti-vacuity, and the reason it is asserted rather than assumed: the loop below is about triggers, so
+    // if the repository ever had none this test would pass by not running — which is exactly the state it
+    // was written to replace.
+    expect(withTriggers.length, "no migration declares a trigger; this test has nothing to check")
+      .toBeGreaterThan(0);
+
+    for (const file of withTriggers) {
       const sql = readFileSync(join(migrationsDir, file), "utf8");
-      return /\bCREATE\s+TRIGGER\b/i.test(sql) || /\bBEGIN\b[\s\S]*\bEND\b/i.test(sql);
-    });
-    // If this fails, `statementsOf` will silently produce broken statements. Either write the trigger
-    // as a single statement with no inner semicolons, or replace the splitter with a real parser.
-    expect(offenders).toEqual([]);
+      const declared = [...sql.matchAll(/CREATE\s+TRIGGER\s+([a-z_]+)/gi)].map((match) => match[1]!);
+      const split = statementsOf(sql);
+      for (const name of declared) {
+        const statement = split.find((one) => new RegExp(`CREATE\\s+TRIGGER\\s+${name}\\b`, "i").test(one));
+        expect(statement, `${file}: ${name} did not survive as one statement`).toBeDefined();
+        // A body cut in half is the failure mode, and it is invisible in a count: the fragment still looks
+        // like SQL. So the whole `BEGIN … END` has to be inside the same statement as its `CREATE TRIGGER`.
+        expect(statement, `${file}: ${name} lost its body`).toMatch(/\bBEGIN\b[\s\S]*\bEND\b/i);
+      }
+    }
+  });
+
+  it("does not split inside a BEGIN … END body", () => {
+    expect(statementsOf(
+      "CREATE TRIGGER t BEFORE UPDATE ON a BEGIN SELECT RAISE(ABORT, 'no'); END; SELECT 9",
+    )).toEqual([
+      "CREATE TRIGGER t BEFORE UPDATE ON a BEGIN SELECT RAISE(ABORT, 'no'); END",
+      "SELECT 9",
+    ]);
+  });
+
+  it("counts CASE … END, so a CASE inside a body does not close it early", () => {
+    // The way a BEGIN-only depth counter breaks: `CASE`'s own `END` drops the depth to zero and the next
+    // semicolon cuts the body in half. Two statements out means it held; three means it did not.
+    const sql = "CREATE TRIGGER t BEFORE UPDATE ON a BEGIN "
+      + "SELECT CASE WHEN new.x IS NULL THEN 1 ELSE 2 END; "
+      + "SELECT RAISE(ABORT, 'no'); END; SELECT 9";
+    const split = statementsOf(sql);
+    expect(split).toHaveLength(2);
+    expect(split[0]).toContain("RAISE(ABORT, 'no')");
+    expect(split[1]).toBe("SELECT 9");
+  });
+
+  it("does not treat a keyword inside a string or a comment as a block", () => {
+    // `'BEGIN'` is text. A tokenizer that scanned keywords before consuming quoted runs would open a block
+    // that never closes and swallow the rest of the file into one statement.
+    expect(statementsOf("INSERT INTO a VALUES ('BEGIN'); SELECT 1")).toEqual([
+      "INSERT INTO a VALUES ('BEGIN')", "SELECT 1",
+    ]);
+    expect(statementsOf("SELECT 1; -- BEGIN a block that is only prose\nSELECT 2")).toEqual([
+      "SELECT 1", "SELECT 2",
+    ]);
+  });
+
+  it("does not treat BEGINNING or ENDPOINT as block keywords", () => {
+    expect(statementsOf('CREATE TABLE a ("beginning" TEXT, endpoint TEXT); SELECT 1')).toEqual([
+      'CREATE TABLE a ("beginning" TEXT, endpoint TEXT)', "SELECT 1",
+    ]);
+  });
+
+  it("survives a stray END without swallowing the rest of the file", () => {
+    // Depth must not go negative. If it did, every later semicolon would be "inside" a block.
+    expect(statementsOf("SELECT 1 END; SELECT 2; SELECT 3")).toEqual(["SELECT 1 END", "SELECT 2", "SELECT 3"]);
+  });
+
+  it("has no migration opening its own transaction", () => {
+    // `statementsOf` counts `BEGIN` as a block opener, which is right for a trigger body and would be wrong
+    // for `BEGIN TRANSACTION`. It never arises because these are applied through `batch()`, which *is* the
+    // transaction — asserted here rather than left as a comment in the splitter.
+    for (const file of files()) {
+      const sql = readFileSync(join(migrationsDir, file), "utf8");
+      expect(/\bBEGIN\s+(TRANSACTION|DEFERRED|IMMEDIATE|EXCLUSIVE)\b/i.test(sql), file).toBe(false);
+    }
   });
 
   it("does not split on a semicolon inside a string literal", () => {

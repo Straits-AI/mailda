@@ -1,4 +1,4 @@
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { auditedBatch, recordDisclosure } from "./audit.ts";
 import { mayReadMetadata, maySend, readableSubjects } from "./authz-read.ts";
@@ -72,6 +72,12 @@ export type ClaimOutcome = { kind: "claimed"; case: CaseRow } | ClaimRefusal;
  *
  * `INSERT OR IGNORE` against `cas_unique`, so a redelivery — or two deliveries racing — files one case. The
  * constraint is the concurrency control, not a check performed beforehand.
+ *
+ * The prefix comes from `ID_PREFIXES.case` rather than from a literal, and that is #49's resolution of a
+ * real divergence: `packages/contract` required `case_` while this line minted `cas_`, so a case id this
+ * Node produces could not pass its own contract's validation. The runtime spelling won — it is on every
+ * row of every installed Node, and the contract's had never matched anything — so no data moved. See
+ * `packages/runtime/src/ids.ts`.
  */
 export function caseForDelivery(
   env: Env,
@@ -85,7 +91,7 @@ export function caseForDelivery(
     `INSERT OR IGNORE INTO cases
        (id, org_id, conversation_id, mailbox_id, state, state_at, assignee, claimed_at, created_at)
      VALUES (?,?,?,?, 'open', ?, NULL, NULL, ?)`,
-  ).bind(ctx.id("cas"), orgId, conversationId, mailboxId, at, at);
+  ).bind(ctx.id(ID_PREFIXES.case), orgId, conversationId, mailboxId, at, at);
 }
 
 async function caseById(env: Env, orgId: string, caseId: string): Promise<CaseRow | null> {

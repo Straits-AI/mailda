@@ -1,5 +1,5 @@
 import { type Bytes, utf8 } from "@mailda/evidence";
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, auditedBatchMany } from "../audit.ts";
@@ -331,7 +331,7 @@ export async function sealManifest(
   const cc = (composition.cc ?? []).map((address) => normalizeAddress("cc", address));
   const bcc = (composition.bcc ?? []).map((address) => normalizeAddress("bcc", address));
 
-  const manifestId = ctx.id("snd");
+  const manifestId = ctx.id(ID_PREFIXES.sendManifest);
   const at = new Date(ctx.now()).toISOString();
 
   // The hold window (ADR 39). NULL means the default; 0 means dispatch immediately. Zero is a

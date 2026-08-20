@@ -55,7 +55,9 @@ export const payloads = {
       cc: Array.from({ length: 20 }, (_, n) => address(100 + n)),
       attachments: Array.from({ length: 20 }, (_, n) => attachment(n)),
       bodyHtml: `<html><body>${"<p>Regarding the delivery schedule.</p>".repeat(5_000)}</body></html>`,
-      headers: { "X-Mailda-Case": `case_${ULID}`, "X-Priority": "3" },
+      // `cas_`, not `case_`: #49 chose the prefix once, in the contract and the runtime together, and this
+      // payload is meant to look like real traffic.
+      headers: { "X-Mailda-Case": `cas_${ULID}`, "X-Priority": "3" },
     },
   },
 

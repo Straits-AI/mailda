@@ -207,6 +207,9 @@ const EXPECTED_TABLES = [
   // are a windowed COUNT(*) over rows that already exist — so this one row is the whole of what the latched
   // breaker needed.
   "domain_pauses",
+  // Migration 0027 (Layer 4: the Butler object). A Butler can be published and not run — see
+  // `butlerExecutionCheck` below, which says so rather than leaving a reader to infer it.
+  "butlers", "butler_versions",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -246,6 +249,8 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     // Before the evidence-based one, because it says which question this report cannot answer at all, and a
     // reader meeting a blind Node needs that first. Costs no subrequest: it reads nothing.
     sendingEventsConsumerCheck(),
+    // Same shape and same zero cost: a capability this Node does not have, stated once.
+    butlerExecutionCheck(),
     ...delivery,
     ...(await checkVault(env)),
     ...(await checkCredentialKek(env)),
@@ -409,6 +414,54 @@ function sendingEventsConsumerCheck(): Finding {
       "delivery outcome, before the per-Node queue or after it, and attaching the consumer alone does not " +
       "change that. `delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
+  };
+}
+
+/**
+ * Says out loud that a Butler can be published here and cannot be run.
+ *
+ * ## Why this is a check and not a paragraph in a document
+ *
+ * Migration 0027 gives this Node two Butler tables, a canonical AST, a structural checker and a
+ * draft-publish lifecycle, and **no engine**: #50 chose one generic `ButlerRun extends WorkflowEntrypoint`
+ * and nothing in this bundle declares a Workflow binding. An operator who publishes a Butler and waits is
+ * owed the reason nothing happened, and the alternative to saying it here is leaving them to infer it from
+ * an absence — which is the failure mode this whole file exists for. `migrations_applied` will happily
+ * report that both tables are present, and a reader is entitled to read that as "the feature works".
+ *
+ * ## `report`, `ok: true`, always — and what stops that becoming a lie
+ *
+ * It is a fact about how far this layer is built rather than a fault, and it varies with nothing an
+ * organization has stored, so it fails on no Node and carries no severity — `sendingEventsConsumerCheck` is
+ * the precedent and its argument is the same one: a finding that fails on every Node forever is one
+ * somebody mutes.
+ *
+ * The hazard in a permanently-true `detail` is that it stays true in the file long after it stops being
+ * true of the code. `test/node/butler-execution-world.test.ts` closes that: it fails the moment
+ * `wrangler.jsonc` declares a workflow or a `WorkflowEntrypoint` appears in `src/`, so the sentence cannot
+ * outlive the absence it describes. That is the #70 lesson — an identifier reads as though it is being
+ * checked, and nothing was checking it — applied to a claim rather than to a name.
+ *
+ * Costs no subrequest: it asks this table nothing. A count of published Butlers would be evidence, and it
+ * would also be a new fixed-cost query inside `doctor.max_subrequests_per_run`, whose receipt names exactly
+ * that as a staleness clause. The gap being reported is a property of the bundle, not of the data.
+ */
+function butlerExecutionCheck(): Finding {
+  return {
+    check: "butler_execution",
+    severity: "report",
+    // The shape of the bundle and the name of a ticket. Both public, no organization content, so this
+    // survives into the reduced report an unauthenticated locked-out operator sees.
+    discloses: "infrastructure",
+    ok: true,
+    detail:
+      "Butlers can be authored, checked, drafted and published on this Node, and none of them runs: there " +
+      "is no run engine in this bundle and no Workflow binding for one. Publication is still the versioning " +
+      "event — a published version's AST and source text are frozen, enforced by database triggers — so a " +
+      "Butler published now is the exact program a later engine will execute. Reserved nodes (llm.*, " +
+      "label, route, archive, quarantine, case.upsert, case.task, case.note, connector.*, " +
+      "approval.request, template.render) parse and are refused at publication with a reason naming the " +
+      "node. Whether a declared maxItems is affordable is not checked at all yet.",
   };
 }
 

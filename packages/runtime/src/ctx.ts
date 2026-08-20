@@ -11,11 +11,20 @@
  *   - §27 needs frozen-clock deterministic replay, which is then just an injection.
  */
 
-/** Crockford base32, excluding I, L, O and U. */
-const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/**
+ * Crockford base32, excluding I, L, O and U.
+ *
+ * Exported because `ids.ts` builds its validating character class from it (#49). A second hand-written
+ * spelling of this alphabet is exactly the divergence that file exists to close, one level down.
+ */
+export const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const ENCODING = ULID_ALPHABET;
 const TIME_CHARS = 10;
 const RANDOM_CHARS = 16;
 const RANDOM_BYTES = 10;
+
+/** How many characters follow the `prefix_`. Exported for the same reason as the alphabet. */
+export const ULID_BODY_CHARS = TIME_CHARS + RANDOM_CHARS;
 
 export interface Ctx {
   /** Milliseconds since the epoch. Frozen during synchronous execution on Workers. */
