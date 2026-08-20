@@ -181,8 +181,14 @@ export type Decision = "approve" | "deny";
  * constraint, and `test/node/content-deletion-world.test.ts` is what makes it one rather than a convention:
  * it requires every subject-kind literal in `src/` to appear here and requires `approvals` to have exactly
  * one writer, because a kind that slipped past would be an approval nothing knows how to complete.
+ *
+ * `supervised_read` is the third (#63), and adding it was a **compile error until handled** in three places —
+ * `ACTOR_DID`, `EXPIRES_AFTER_SECONDS` and `COMPLETING_EFFECT` are all `Record`s keyed on this union. That is
+ * the design working rather than a coincidence: #63 needed dual approval and the alternative was a second
+ * approval path, which would have been a second copy of the race logic **all three of #61's defects lived in**.
+ * The hold lift proved the generalisation; this ticket spent it.
  */
-export const APPROVAL_SUBJECT_KINDS = ["send_manifest", "hold_lift"] as const;
+export const APPROVAL_SUBJECT_KINDS = ["send_manifest", "hold_lift", "supervised_read"] as const;
 
 export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
 
@@ -196,6 +202,26 @@ export type ApprovalSubjectKind = (typeof APPROVAL_SUBJECT_KINDS)[number];
 const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
   send_manifest: "you composed this send, so you cannot decide its approval",
   hold_lift: "you requested this hold lift, so you cannot be one of the two people who approve it",
+  // The reader and the requester are the same principal by construction (`requestSupervisedRead`), so this
+  // refusal is the one that stops somebody approving their own way into a mailbox.
+  supervised_read:
+    "you asked to read this mailbox, so you cannot be one of the two people who approve it",
+};
+
+/**
+ * What to do instead, per kind, in the same refusal.
+ *
+ * A second `Record` rather than a ternary on `ACTOR_DID`'s key, because the ternary is what this was: a
+ * two-way test on `hold_lift` that handed `supervised_read` the send's advice — *"cancel the send if you want
+ * to stop it"* — to somebody who asked to read a mailbox. `ACTOR_DID` was a compile error when the third kind
+ * arrived and this was not, which is the whole argument for the shape: a refusal's `fix` is the part a person
+ * acts on (AGENTS.md principle 3), and advice about a different act is worse than none.
+ */
+const ACTOR_FIX: Record<ApprovalSubjectKind, string> = {
+  send_manifest: "cancel the send if you want to stop it, or ask another approver to decide",
+  hold_lift: "two other people holding approval.decide on the held mailbox have to approve it",
+  supervised_read: "two other people holding approval.decide on that mailbox have to approve it — "
+    + "GET /api/approvals shows them the request, its scope and its deadline",
 };
 
 /**
@@ -212,6 +238,22 @@ const ACTOR_DID: Record<ApprovalSubjectKind, string> = {
 const EXPIRES_AFTER_SECONDS: Record<ApprovalSubjectKind, number | null> = {
   send_manifest: BUDGETS["approval.send_expiry_seconds"],
   hold_lift: null,
+  /*
+   * `null`, and this one is the interesting case: a supervised read **does** have a deadline, and it is not
+   * this column.
+   *
+   * `supervised_grants.expires_at` is written at request time and is the hard stop the read path compares on
+   * every request. Putting a second deadline on the approval would be a second answer to "is this still good",
+   * and the one that counts would be whichever code path the reader opened — the drift this module already
+   * refuses for the completion predicate. So the grant's own deadline is the single terminal check, exactly as
+   * #62 chose one enforcement point for a lapsed send rather than two.
+   *
+   * The residual, stated because it follows and is not hidden: an approval decided after the grant's deadline
+   * passes produces a grant that is already over, and the read path denies from that instant. What stops that
+   * being a surprise is that the deadline travels on `GET /api/approvals` with the request, so the person being
+   * asked sees it before they answer.
+   */
+  supervised_read: null,
 };
 
 /**
@@ -644,6 +686,8 @@ export interface DecisionOutcome {
   manifestState?: "awaiting" | "held" | "withheld";
   /** For a `hold_lift` subject: true when this decision was the one that applied the lift. */
   holdLifted?: boolean;
+  /** For a `supervised_read` subject: true when this decision was the one that made the grant live. */
+  supervisedGranted?: boolean;
   /** True when this decision closed the last stage and had its subject's effect. */
   completed: boolean;
   /**
@@ -738,9 +782,7 @@ export async function decideApproval(
       what: ACTOR_DID[approval.subjectKind],
       why: "§18 requires separation of duty: an approval by the person whose act it is is not a second pair "
         + "of eyes",
-      fix: approval.subjectKind === "hold_lift"
-        ? "two other people holding approval.decide on the held mailbox have to approve it"
-        : "cancel the send if you want to stop it, or ask another approver to decide",
+      fix: ACTOR_FIX[approval.subjectKind],
     });
   }
 
@@ -785,39 +827,53 @@ export async function decideApproval(
     });
 
   /**
-   * The lift this decision is about to apply, or null for every other decision in this Node.
+   * The subject-specific half of a **completing** decision, or null.
    *
-   * Read only on the completing decision of a `hold_lift`, because that is the only path with something to
-   * say about it: the `hold.lifted` entry has to carry the hold and the reason it was requested for, and an
-   * investigator reading the trail must not have to join two tables to learn why destruction was re-permitted.
-   * One extra query, on an act that happens twice per lift at most.
+   * Null for every non-completing decision and for every `send_manifest`, whose completion has no second
+   * fact that must be true of the world. A completing `hold_lift` or `supervised_read` has one, and it is
+   * read here — not in `approveStatements` — because the entry that rides with it has to name what was agreed
+   * to, and an investigator reading the trail must not have to join two tables to learn it. One extra query,
+   * on an act that happens at most twice per subject.
    */
-  const lift = approval.subjectKind === "hold_lift" && expectedToComplete
-    ? await readHoldLift(env, orgId, approval.subjectId)
-    : null;
-  if (approval.subjectKind === "hold_lift" && expectedToComplete && lift === null) {
-    // The subject of an approval cannot be missing: `requestHoldLift` writes both rows in one transaction
-    // behind one predicate. So this is a corrupted state rather than a race, and completing into it would
-    // lift a hold with no record of what was asked for.
-    throw conflict("E_NO_HOLD_LIFT", {
-      what: `approval ${approvalId} names hold lift ${approval.subjectId}, which does not exist`,
+  const effect = COMPLETING_EFFECT[approval.subjectKind];
+  const completing = expectedToComplete && effect !== null ? effect : null;
+  /*
+   * Who the approvers are, this decision included. Recorded in the effect's entry because dual control is only
+   * evidence if the trail says who the two were, and the eligible set is live — it cannot be reconstructed
+   * from the tuples as they stand later.
+   */
+  const approvedBy = [
+    ...decisions
+      .filter((row) => row.decision === "approve" && row.withdrawn_at === null)
+      .map((row) => row.decider_user_id),
+    actorUserId,
+  ];
+  const effectEvent = completing === null
+    ? null
+    : await completing.event(env, orgId, approval, actorUserId, approvedBy);
+  if (completing !== null && effectEvent === null) {
+    // The subject of an approval cannot be missing: the request writes both rows in one transaction behind
+    // one predicate. So this is a corrupted state rather than a race, and completing into it would perform the
+    // subject's effect with no record of what was asked for.
+    throw conflict(completing.missing.code, {
+      what: completing.missing.what(approval),
       why: "the request row and its approval are written in one transaction, so neither can exist alone",
-      fix: "investigate; completing this would lift a hold with no record of the reason it was lifted for",
+      fix: completing.missing.fix,
     });
   }
 
   /**
    * The predicate every statement in this batch carries.
    *
-   * `pending` for every decision except the one that completes a lift, which additionally requires that this
-   * decision really does close every stage and that the hold has not already been lifted. See the header for
-   * why that one case refuses rather than records.
+   * `pending` for every decision except one that completes a subject with an effect, which additionally
+   * requires that this decision really does close every stage **and** that the effect has not already
+   * happened. See the header for why those cases refuse rather than record.
    *
    * The `+ CASE` is this decision counted before its row exists: the entries are placed first in the batch,
    * so the predicate is evaluated against the decisions that had committed **before** this one.
    */
   const pending = "SELECT 1 FROM approvals WHERE id = ? AND org_id = ? AND state = 'pending'";
-  const gate: AuditGate = lift === null
+  const gate: AuditGate = completing === null
     ? { sql: pending, params: [approvalId, orgId] }
     : {
       sql: `SELECT 1 FROM approvals a
@@ -829,9 +885,9 @@ export async function decideApproval(
                            WHERE d.approval_id = s.approval_id AND d.stage_ordinal = s.ordinal
                              AND d.decision = 'approve' AND d.withdrawn_at IS NULL)
                          + (CASE WHEN s.ordinal = ? THEN 1 ELSE 0 END) < s.required_count)
-                AND EXISTS (SELECT 1 FROM hold_lifts l
-                              JOIN holds h ON h.org_id = l.org_id AND h.id = l.hold_id
-                             WHERE l.id = a.subject_id AND h.lifted_at IS NULL)`,
+                AND EXISTS (${completing.undone})`,
+      // No parameters of its own: every `undone` clause below correlates on `a.subject_id` and `a.org_id`
+      // rather than binding the subject again, so the placeholder count cannot drift from the clause.
       params: [approvalId, orgId, stage],
     };
 
@@ -858,34 +914,7 @@ export async function decideApproval(
     },
   }];
 
-  if (lift !== null) {
-    events.push({
-      action: "hold.lifted",
-      outcome: "ok",
-      actorUserId,
-      // The hold, not the approval: an auditor filtering `hold.lifted` is asking which holds were released,
-      // and `hold.placed` already keys on the same subject so the two entries about one hold line up.
-      subject: lift.holdId,
-      detail: {
-        holdId: lift.holdId,
-        liftId: lift.id,
-        approvalId,
-        mailboxId: approval.mailboxId,
-        // The reason, in the trail as well as on the hold: this is the entry an investigation reaches for
-        // when it asks why preservation stopped.
-        reason: lift.reason,
-        requestedBy: approval.actorUserId,
-        // Both names. Dual control is only evidence if the trail says who the two were, and the eligible set
-        // is live — it cannot be reconstructed from the tuples as they stand later.
-        approvedBy: [
-          ...decisions
-            .filter((row) => row.decision === "approve" && row.withdrawn_at === null)
-            .map((row) => row.decider_user_id),
-          actorUserId,
-        ],
-      },
-    });
-  }
+  if (effectEvent !== null) events.push(effectEvent);
 
   const statements = decision === "approve"
     ? approveStatements(env, orgId, approval, at)
@@ -906,15 +935,13 @@ export async function decideApproval(
   if (decisionResult === 0) {
     // The predicate failed for every statement, so nothing was recorded and nothing changed.
     const now = await readApproval(env, orgId, approvalId);
-    if (lift === null || now === null || now.state !== "pending") throw settled(now ?? approval);
+    if (completing === null || now === null || now.state !== "pending") throw settled(now ?? approval);
     // Still pending, so the part of the predicate that failed was the stronger half: a standing approval was
-    // withdrawn, or the hold went out from under this request. Either way nothing was recorded, and saying
+    // withdrawn, or the subject's effect had already happened. Either way nothing was recorded, and saying
     // which of the two it was would need a read whose answer could change again before it was rendered.
-    throw conflict("E_HOLD_LIFT_RACED", {
-      what: `approval ${approvalId} was not the decision that lifted this hold, so nothing was recorded`,
-      why: "the decision that completes a lift is refused rather than recorded when the state moves under it: "
-        + "either somebody withdrew their approval, or the hold was already lifted. Recording it would put a "
-        + "hold.lifted entry in the trail for a lift that did not happen",
+    throw conflict(completing.raced.code, {
+      what: completing.raced.what(approval),
+      why: completing.raced.why,
       fix: "read the approval again — GET /api/approvals — and decide again if it is still open",
     });
   }
@@ -946,9 +973,13 @@ export async function decideApproval(
     decision,
     stageOrdinal: stage,
     approvalState,
+    // One field per subject kind, and never a field belonging to another one. A `manifestState` reading
+    // `awaiting` on a supervised read would be the kind of name AGENTS.md calls a landmine.
     ...(approval.subjectKind === "send_manifest"
       ? { manifestState: decision === "deny" ? "withheld" : completed ? "held" : "awaiting" } as const
-      : { holdLifted: decision === "approve" && completed }),
+      : approval.subjectKind === "hold_lift"
+        ? { holdLifted: decision === "approve" && completed }
+        : { supervisedGranted: decision === "approve" && completed }),
     completed,
     ...(conflictKind === undefined ? {} : { conflict: conflictKind }),
     openStage: decision === "deny" ? stage : openStage(stages, afterDecisions),
@@ -1066,6 +1097,33 @@ function approveStatements(
     ];
   }
 
+  if (approval.subjectKind === "supervised_read") {
+    return [
+      completion,
+      /*
+       * **The one UPDATE supervised_grants in this product**, and this is what makes a grant live.
+       *
+       * Every clause is load-bearing, and they are the same three the lift carries one table over:
+       *
+       *   EXISTS (approved)     #63's dual control, at the database. The approval became `approved` one
+       *                         statement ago in this same transaction, which means two distinct people
+       *                         approved it and neither was the person who will read.
+       *   granted_at IS NULL    nothing grants one grant twice. Unreachable through the product — a second
+       *                         request is refused while one is pending, and a settled approval cannot be
+       *                         decided again — and kept as the layer that holds if that stops being true.
+       *
+       * There is deliberately **no** `expires_at` in the SET list. The deadline was fixed at request time and
+       * is exactly what the two approvers were shown; recomputing it from the approval's own instant would
+       * silently extend every grant by however long the decision took, which is the widening §7 says needs a
+       * fresh approval of its own.
+       */
+      env.CATALOG.prepare(
+        `UPDATE supervised_grants SET granted_at = ?
+          WHERE org_id = ? AND id = ? AND granted_at IS NULL AND EXISTS (${approved})`,
+      ).bind(at, orgId, approval.subjectId, approvalId, orgId),
+    ];
+  }
+
   return [
     completion,
     // Back to `held`, so the ordinary hold window and the ordinary dispatcher take it from here. `state_reason`
@@ -1087,11 +1145,39 @@ function approveStatements(
 }
 
 /**
+ * Does this subject kind have a **manifest parked in `awaiting`** that a refusal has to move?
+ *
+ * A `Record` keyed on the union, and it exists because the two-way tests it replaces were the one place a
+ * third subject kind was *not* a compile error. `withdrawApproval` asked `subjectKind === "hold_lift"` and so
+ * ran the `UPDATE send_manifests` / `UPDATE send_recipients` pair for a **supervised read** — measured, not
+ * reasoned: a `send_recipients` row whose `manifest_id` was the grant's id came back `withheld`. Real ids
+ * cannot collide (`snd_` and `sgr_` are different prefixes on different tables), so what shipped was two
+ * statements that could match nothing in a governance transaction, under a comment describing the other
+ * branch. That is the landmine shape exactly — no symptom now, and a `send_recipients` update keyed on
+ * `manifest_id` alone waiting for the day two id spaces meet.
+ *
+ * `false` for both non-send kinds for the same reason, said once here rather than twice below: nothing was
+ * moved out of its resting state to be moved back. A lift leaves the hold standing; a supervised read leaves
+ * `granted_at` NULL. In both cases closing the request **is** the whole refusal.
+ */
+const HAS_AWAITING_MANIFEST: Record<ApprovalSubjectKind, boolean> = {
+  send_manifest: true,
+  hold_lift: false,
+  supervised_read: false,
+};
+
+/**
  * Denying: terminal, and the send is `withheld` with `approval_denied`.
  *
  * A denied **lift** adds nothing beyond closing the request: the hold stays exactly as it was, which is the
  * whole point of refusing a lift, and the `hold_lifts` row stays as the record that somebody asked and was
  * told no. Nothing there needs a state column of its own — the approval carries it (0021).
+ *
+ * A denied **supervised read** is the same shape and the same argument (#63): `granted_at` stays NULL, so the
+ * grant confers nothing and never did, and the row stays as the record that somebody asked to read somebody
+ * else's mail and was refused. That record is the point — it is the half of §7's trail that a self-grant does
+ * not produce. Asking again mints a new row, which is why the approval's subject is a request rather than a
+ * person-and-mailbox pair.
  */
 function denyStatements(
   env: Env,
@@ -1106,7 +1192,8 @@ function denyStatements(
       WHERE id = ? AND org_id = ? AND state = 'pending'`,
   ).bind(at, approvalId, orgId);
 
-  if (approval.subjectKind === "hold_lift") return [closed];
+  // Everything except a send: closing the request *is* the denial, because nothing was moved to move back.
+  if (!HAS_AWAITING_MANIFEST[approval.subjectKind]) return [closed];
 
   return [
     closed,
@@ -1123,7 +1210,7 @@ function denyStatements(
   ];
 }
 
-/* ---- the lift subject, read from here so the audit entry can name it ------------------------- */
+/* ---- what a completing decision additionally guarantees, per subject kind --------------------- */
 
 /** One lift request: what it asks to lift, and the reason it was asked for. */
 export interface HoldLiftRow {
@@ -1145,6 +1232,178 @@ async function readHoldLift(env: Env, orgId: string, liftId: string): Promise<Ho
   ).bind(orgId, liftId).first<{ id: string; hold_id: string; reason: string }>();
   return row === null ? null : { id: row.id, holdId: row.hold_id, reason: row.reason };
 }
+
+/** What a supervised grant's own entry has to say: who, over what, how much, under what matter, until when. */
+interface SupervisedGrantRow {
+  id: string;
+  subject_id: string;
+  mailbox_id: string;
+  scope: string;
+  matter_id: string | null;
+  requested_at: string;
+  expires_at: string;
+}
+
+/**
+ * The supervised grant an approval names, or null if there is none.
+ *
+ * Here rather than in `src/supervised.ts` for exactly `readHoldLift`'s reason: that module calls
+ * `planApproval` to open the request, so importing from it here would close a cycle. A read on this side of
+ * the seam is a smaller problem than a cycle, and it is why `src/supervised.ts` deliberately has no
+ * single-grant read of its own for the two to disagree about.
+ */
+async function readSupervisedGrant(
+  env: Env,
+  orgId: string,
+  grantId: string,
+): Promise<SupervisedGrantRow | null> {
+  return env.CATALOG.prepare(
+    `SELECT id, subject_id, mailbox_id, scope, matter_id, requested_at, expires_at
+       FROM supervised_grants WHERE org_id = ? AND id = ? LIMIT 1`,
+  ).bind(orgId, grantId).first<SupervisedGrantRow>();
+}
+
+/**
+ * The subject-specific half of a completing decision: what must still be **undone** for it to be legitimate,
+ * what it records, and the two refusals it can produce.
+ *
+ * Data, not logic. The race logic itself — the strong predicate, the "record nothing rather than a false
+ * entry" rule, the conditional UPDATE — stays in `decideApproval` and is written once, because **all three of
+ * #61's defects were in that logic** and a second copy would be a second place for them. What varies between
+ * subject kinds is a SQL clause, an entry, and two sentences, so that is what this holds.
+ */
+interface CompletingEffect {
+  /**
+   * ANDed into the completing decision's predicate as `AND EXISTS (<undone>)`.
+   *
+   * Correlated on `a.subject_id` and `a.org_id` from the enclosing query rather than binding the subject
+   * again, so a clause and its placeholder count cannot drift apart.
+   */
+  undone: string;
+  /**
+   * The entry that must ride in the same transaction as the effect, or null when the subject row is missing.
+   *
+   * Reads the subject so the entry can name **what was agreed to**. `approval.decided` says two people agreed
+   * and structurally cannot say to what, which is why this exists rather than a richer detail on that entry.
+   */
+  event: (
+    env: Env, orgId: string, approval: ApprovalRow, actorUserId: string, approvedBy: readonly string[],
+  ) => Promise<AuditEvent | null>;
+  /** The refusal when the subject row is absent — a state no path in this Node produces. */
+  missing: { code: string; what: (approval: ApprovalRow) => string; fix: string };
+  /** The refusal when the strong predicate failed, so nothing at all was recorded. */
+  raced: { code: string; what: (approval: ApprovalRow) => string; why: string };
+}
+
+/**
+ * Per subject kind, and `null` for a kind whose completion has no second fact about the world.
+ *
+ * A `Record` keyed on the union, so a fourth subject kind is a compile error here rather than a completing
+ * decision that silently closes the request and performs nothing — which is the failure mode a `hold_lift`
+ * would have had if this had been a lookup with a default.
+ *
+ * `send_manifest` is `null` deliberately: releasing a held send has nothing that could already have happened,
+ * so its completing decision carries only the `pending` predicate and a lost race is reported as
+ * `conflict: "withdrawn"` with the decision **kept**. The other two refuse and record nothing, because their
+ * entry would otherwise be a false statement in the one place that is supposed to be checkable.
+ */
+const COMPLETING_EFFECT: Record<ApprovalSubjectKind, CompletingEffect | null> = {
+  send_manifest: null,
+
+  hold_lift: {
+    undone: `SELECT 1 FROM hold_lifts l
+               JOIN holds h ON h.org_id = l.org_id AND h.id = l.hold_id
+              WHERE l.org_id = a.org_id AND l.id = a.subject_id AND h.lifted_at IS NULL`,
+    event: async (env, orgId, approval, actorUserId, approvedBy) => {
+      const lift = await readHoldLift(env, orgId, approval.subjectId);
+      if (lift === null) return null;
+      return {
+        action: "hold.lifted",
+        outcome: "ok",
+        actorUserId,
+        // The hold, not the approval: an auditor filtering `hold.lifted` is asking which holds were released,
+        // and `hold.placed` already keys on the same subject so the two entries about one hold line up.
+        subject: lift.holdId,
+        detail: {
+          holdId: lift.holdId,
+          liftId: lift.id,
+          approvalId: approval.id,
+          mailboxId: approval.mailboxId,
+          // The reason, in the trail as well as on the hold: this is the entry an investigation reaches for
+          // when it asks why preservation stopped.
+          reason: lift.reason,
+          requestedBy: approval.actorUserId,
+          approvedBy: [...approvedBy],
+        },
+      };
+    },
+    missing: {
+      code: "E_NO_HOLD_LIFT",
+      what: (approval) =>
+        `approval ${approval.id} names hold lift ${approval.subjectId}, which does not exist`,
+      fix: "investigate; completing this would lift a hold with no record of the reason it was lifted for",
+    },
+    raced: {
+      code: "E_HOLD_LIFT_RACED",
+      what: (approval) =>
+        `approval ${approval.id} was not the decision that lifted this hold, so nothing was recorded`,
+      why: "the decision that completes a lift is refused rather than recorded when the state moves under it: "
+        + "either somebody withdrew their approval, or the hold was already lifted. Recording it would put a "
+        + "hold.lifted entry in the trail for a lift that did not happen",
+    },
+  },
+
+  /**
+   * A supervised read (#63). The same shape as the lift, for the same reason, one table over.
+   *
+   * `granted_at IS NULL` is the undone half: a grant that is already live must not be granted a second time,
+   * because a second `supervised.granted` entry would claim a second authorization over one row and the trail
+   * is the whole product here.
+   */
+  supervised_read: {
+    undone: `SELECT 1 FROM supervised_grants g
+              WHERE g.org_id = a.org_id AND g.id = a.subject_id AND g.granted_at IS NULL`,
+    event: async (env, orgId, approval, actorUserId, approvedBy) => {
+      const grant = await readSupervisedGrant(env, orgId, approval.subjectId);
+      if (grant === null) return null;
+      return {
+        action: "supervised.granted",
+        outcome: "ok",
+        actorUserId,
+        // The grant, not the approval: §7's question is about the access, and this is the id every later act
+        // under it will cite.
+        subject: grant.id,
+        detail: {
+          grantId: grant.id,
+          // The person let in, named separately from the entry's actor — who is the approver, not the reader.
+          // Conflating them is how a trail comes to say the wrong person read somebody's mail.
+          subjectId: grant.subject_id,
+          mailboxId: grant.mailbox_id,
+          scope: grant.scope,
+          matterId: grant.matter_id,
+          expiresAt: grant.expires_at,
+          requestedAt: grant.requested_at,
+          approvedBy: [...approvedBy],
+        },
+      };
+    },
+    missing: {
+      code: "E_NO_SUPERVISED_GRANT",
+      what: (approval) =>
+        `approval ${approval.id} names supervised grant ${approval.subjectId}, which does not exist`,
+      fix: "investigate; completing this would let somebody into a mailbox with no record of the scope, the "
+        + "matter or the deadline they were granted",
+    },
+    raced: {
+      code: "E_SUPERVISED_RACED",
+      what: (approval) =>
+        `approval ${approval.id} was not the decision that granted this read, so nothing was recorded`,
+      why: "the decision that completes a supervised read is refused rather than recorded when the state moves "
+        + "under it: either somebody withdrew their approval, or the grant was already live. Recording it "
+        + "would put a supervised.granted entry in the trail for an authorization that did not happen",
+    },
+  },
+};
 
 /* ---- withdrawing ----------------------------------------------------------------------------- */
 
@@ -1286,8 +1545,12 @@ export async function withdrawApproval(
    * complete is a hold that keeps preserving — and `doctor`'s `legal_hold_unliftable` finding is what stops
    * that being invisible: it reports a held mailbox with too few eligible approvers, which is exactly the
    * state a withdrawal can leave behind. Asking again means a fresh request, which is a new subject.
+   *
+   * A supervised read is the same: `granted_at` stays NULL, so the read was never authorized and the row
+   * stays as the record that somebody asked. Asked through `HAS_AWAITING_MANIFEST` rather than by naming a
+   * kind, because this test was `=== "hold_lift"` and therefore sent #63's third kind down the send path.
    */
-  const unsatisfiable = shortfall === null || approval.subjectKind === "hold_lift" ? closesRequest : [
+  const unsatisfiable = shortfall === null || !HAS_AWAITING_MANIFEST[approval.subjectKind] ? closesRequest : [
     ...closesRequest,
     env.CATALOG.prepare(
       `UPDATE send_manifests SET state = 'withheld', state_at = ?,
@@ -1365,6 +1628,37 @@ export interface PendingApproval extends ApprovalRow {
    * makes a send's null a null rather than a missing row.
    */
   reason: string | null;
+  /**
+   * What a `supervised_read` request asks for, and null for every other subject kind (#63).
+   *
+   * **In the queue, not only in the trail, and this is the whole of the control on a supervised read's
+   * duration.** §7 makes time part of the bound scope, so the deadline is part of what is being approved —
+   * and `src/supervised.ts` deliberately caps nothing, because a maximum duration is a number with no
+   * receipt. What stands in for a cap is that the two people asked see the mailbox, the scope, the matter and
+   * the exact deadline before they answer. A queue that showed only "somebody wants a supervised read" would
+   * be asking them to agree to nothing in particular, which is the same defect a blank lift reason is.
+   *
+   * Another `LEFT JOIN` on the same query, so it costs no extra round trip — the same shape `reason` uses.
+   */
+  supervised: {
+    grantId: string;
+    subjectId: string;
+    scope: string;
+    matterId: string | null;
+    /**
+     * The cited matter's kind and words, or null when the grant cites none.
+     *
+     * Here rather than in `GET /api/matters`, and that placement is the whole point: the two approvers need
+     * this text and **nobody else does**. An org-wide matter listing hands *"suspected exfiltration by Dana"*
+     * to Dana, and §7 makes the notice to her due after the matter closes, not on the day it opened. So the
+     * text travels with the request that cites it, to exactly the people being asked to agree to it, on the
+     * `LEFT JOIN` that was already fetching the grant. Null here means the grant cites no matter — which is a
+     * real answer (#63: the first act precedes the matter), and one the approvers should see as such rather
+     * than as a blank.
+     */
+    matter: { type: string; description: string } | null;
+    expiresAt: string;
+  } | null;
 }
 
 /**
@@ -1397,13 +1691,30 @@ export async function pendingApprovals(
 
   const placeholders = mailboxes.map(() => "?").join(", ");
   const { results } = await env.CATALOG.prepare(
-    `SELECT ${APPROVAL_COLUMNS.split(", ").map((column) => `a.${column}`).join(", ")}, l.reason AS reason
+    `SELECT ${APPROVAL_COLUMNS.split(", ").map((column) => `a.${column}`).join(", ")}, l.reason AS reason,
+            g.id AS grant_id, g.subject_id AS grant_subject_id, g.scope AS grant_scope,
+            g.matter_id AS grant_matter_id, g.expires_at AS grant_expires_at,
+            mt.type AS matter_type, mt.description AS matter_description
        FROM approvals a
        LEFT JOIN hold_lifts l ON a.subject_kind = 'hold_lift' AND l.id = a.subject_id AND l.org_id = a.org_id
+       LEFT JOIN supervised_grants g ON a.subject_kind = 'supervised_read' AND g.id = a.subject_id
+                                    AND g.org_id = a.org_id
+       -- The cited matter, for the two people being asked. A third outer join on the same query rather than a
+       -- second round trip, and outer because a grant citing no matter is a real answer rather than a gap.
+       LEFT JOIN matters mt ON mt.org_id = g.org_id AND mt.id = g.matter_id
       WHERE a.org_id = ? AND a.state = 'pending' AND a.mailbox_id IN (${placeholders})
         AND a.actor_user_id != ?
       ORDER BY a.requested_at, a.id`,
-  ).bind(orgId, ...mailboxes, userId).all<RawApproval & { reason: string | null }>();
+  ).bind(orgId, ...mailboxes, userId).all<RawApproval & {
+    reason: string | null;
+    grant_id: string | null;
+    grant_subject_id: string | null;
+    grant_scope: string | null;
+    grant_matter_id: string | null;
+    grant_expires_at: string | null;
+    matter_type: string | null;
+    matter_description: string | null;
+  }>();
 
   const out: PendingApproval[] = [];
   for (const row of results) {
@@ -1416,6 +1727,24 @@ export async function pendingApprovals(
       openStage: openStage(stages, decisions),
       decidedByMe: decisions.some((decision) => decision.decider_user_id === userId),
       reason: row.reason,
+      // Every field or none: a half-populated object would let a caller render "until null", and the
+      // deadline is the field this exists for. The `LEFT JOIN` produces all-null for any other subject kind.
+      supervised: row.grant_id === null || row.grant_scope === null || row.grant_expires_at === null
+        || row.grant_subject_id === null
+        ? null
+        : {
+          grantId: row.grant_id,
+          subjectId: row.grant_subject_id,
+          scope: row.grant_scope,
+          matterId: row.grant_matter_id,
+          // Both columns or neither, for the same reason the object above is all-or-nothing: a type with no
+          // description would let a caller render a matter it cannot show, and the description is the half
+          // the two approvers are actually reading.
+          matter: row.matter_type === null || row.matter_description === null
+            ? null
+            : { type: row.matter_type, description: row.matter_description },
+          expiresAt: row.grant_expires_at,
+        },
     });
   }
   return out;

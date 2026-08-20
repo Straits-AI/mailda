@@ -14,7 +14,9 @@ import {
 } from "./authz-read.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
-import { grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
+import { conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
+import { closeMatter, listMatters, openMatter } from "./matters.ts";
+import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
 import { placeHold, requestHoldLift } from "./holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
@@ -466,7 +468,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       // Empty rather than forbidden for a mailbox this caller cannot see: §5C keeps an absent thing and an
       // invisible one alike, and a queue is a list, which Blueprint:358 gates before returning counts.
-      return Response.json({ cases: await queueFor(env, who.orgId, who.userId, mailboxId) });
+      return Response.json({ cases: await queueFor(env, clock, who.orgId, who.userId, mailboxId) });
     }
 
     const caseAction = /^\/api\/cases\/([^/]+)\/(claim|steal|release|close)$/.exec(url.pathname);
@@ -534,10 +536,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const relation = String(body.relation ?? "");
       if (!isGrantable(relation)) {
+        /*
+         * A relation this Node *knows* but will not grant here gets told which door works, because "not
+         * grantable" is exactly the answer that sends an administrator round the back. `supervised.read` is
+         * conferred by a time-boxed grant with two approvers, not by a tuple, and an administrator who is
+         * told only "no" grants themselves `mailbox.content.read` instead — which still works, and which
+         * doctor now reports as `self_granted_access` (#63).
+         */
+        const supervised = conferredBySupervision(relation);
         return Response.json(
           {
             error: "not_grantable",
-            message: `${relation || "(none)"} is not a grantable relation.`,
+            message: supervised === null
+              ? `${relation || "(none)"} is not a grantable relation.`
+              : `${supervised} is not granted this way. It is a time-boxed supervised read: POST /api/supervised `
+                + `with {"mailboxId","scope","durationSeconds"} and an optional matter, and two people holding `
+                + `approval.decide on that mailbox — neither of them you — have to approve it (§7).`,
           },
           { status: 422 },
         );
@@ -638,6 +652,125 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         env, clock, who.orgId, who.userId, holdLift[1]!, String(body.reason ?? ""),
       );
       return Response.json({ lift: requested });
+    }
+
+    /**
+     * Matters and supervised reading (#63, §7, Layer 5).
+     *
+     * `POST /api/matters`             open a matter: a typed, described purpose that can later **close**
+     * `GET  /api/matters`             every matter in the organization, open and closed
+     * `POST /api/matters/:id/close`   close it. §7's notice to the people whose mail was read is due after this
+     * `POST /api/supervised`          ask to read a mailbox you hold nothing on, for a stated time
+     * `GET  /api/supervised`          every supervised read that took effect, live or expired
+     *
+     * **There is no endpoint that grants a supervised read**, and there deliberately never will be: the only
+     * thing that makes a request live is two people holding `approval.decide` on that mailbox deciding it at
+     * `POST /api/approvals/:id/decide`, which is #61's machinery unchanged. That is the whole return on
+     * generalising `approvals` to a subject (0021) — an approver's queue, a decision, a withdrawal and the
+     * trail behind them all work for a supervised read because they were never about sends.
+     *
+     * **Opening a matter takes no administrator**, and that is the decision: the value of the supervised path
+     * is that an investigator, HR or counsel can use it *without* being made an administrator, and a matter on
+     * its own confers nothing. Closing takes the opener or an `org.admin`, because the investigator is the one
+     * party with a reason to leave it open for ever and §7 hangs the notice on the close.
+     *
+     * `GET /api/matters` is **filtered**, not open: an `org.admin` sees every matter, anybody else sees the
+     * ones they opened. A description says *"suspected exfiltration by Dana"*, and §7 makes the notice to Dana
+     * due **after the matter closes** — an org-wide listing would deliver it on the day the matter opened, to
+     * the one person it must not reach first. The approvers' need for that text is real and is served on the
+     * request instead: `GET /api/approvals` carries the cited matter's type and description to the two people
+     * being asked. `GET /api/supervised` is admin-only for the neighbouring reason, because it names who has
+     * been let into whose mailbox — the organization's access map, and §5C's own example of what a listing
+     * must not hand out.
+     *
+     * **There is no UI**, for the reason the policy and approval planes have none: the shell is Layer 1-3's
+     * surface. What `doctor` does show is the state that matters operationally — `self_granted_access`, which
+     * is the finding that makes the back door visible beside this front one.
+     */
+    if (url.pathname === "/api/matters" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // An absent type and an absent description both reach `openMatter` as the empty string and are refused
+      // there with the four-part message, rather than defaulted — a matter this Node named for somebody would
+      // be a purpose nobody stated.
+      return Response.json({
+        matter: await openMatter(env, clock, who.orgId, who.userId, {
+          type: String(body.type ?? ""),
+          description: String(body.description ?? ""),
+        }),
+      });
+    }
+
+    if (url.pathname === "/api/matters" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      /*
+       * An administrator sees every matter; anybody else sees the ones they opened.
+       *
+       * **Not a flat listing, and this is a correction rather than a decision.** The first version returned
+       * every matter to every member, justified by *"the approvers read this text before deciding"* — which
+       * is an argument about approvers and was implemented as an argument about everybody. A matter's
+       * description names the person being examined, and §7 makes the notice to that person due **after the
+       * matter closes**; an org-wide listing tells them on the day it opens. The approvers' need is served on
+       * the request itself instead: `pendingApprovals` carries the cited matter's type and description, so
+       * the two people deciding read the matter they are deciding on.
+       *
+       * Empty rather than 403 for a non-admin with nothing, because that is what the shape already is: a
+       * filtered list, not a refusal, so it discloses no more than "you opened none".
+       */
+      const all = await isAdmin(env, who.orgId, who.userId);
+      return Response.json({
+        matters: await listMatters(env, who.orgId, all ? null : who.userId),
+      });
+    }
+
+    const matterClose = /^\/api\/matters\/([^/]+)\/close$/.exec(url.pathname);
+    if (matterClose && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({
+        matter: await closeMatter(env, clock, who.orgId, who.userId, matterClose[1]!),
+      });
+    }
+
+    if (url.pathname === "/api/supervised" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      /*
+       * The subject is the caller and there is no field for it. A request on somebody else's behalf would put
+       * the reader outside #61's actor exclusion, leaving them free to approve their own access — self-approval
+       * reached through a second name, which is precisely what §18 is about.
+       *
+       * `durationSeconds` is passed through as whatever arrived: `requestSupervisedRead` refuses anything that
+       * is not a whole positive number of seconds, and `Number(undefined)` is NaN, which it refuses by naming
+       * the field rather than by defaulting to a duration nobody chose.
+       */
+      return Response.json({
+        supervised: await requestSupervisedRead(env, clock, who.orgId, who.userId, {
+          mailboxId: String(body.mailboxId ?? ""),
+          scope: String(body.scope ?? ""),
+          durationSeconds: Number(body.durationSeconds),
+          matterId: body.matterId === undefined || body.matterId === null
+            ? null
+            : String(body.matterId),
+        }),
+      });
+    }
+
+    if (url.pathname === "/api/supervised" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        // §5C: the same answer an organization with no grants would give. A list that 403s tells a caller the
+        // access map exists and is worth asking about, which is the oracle every other refusal here avoids.
+        return Response.json(
+          { error: "not_found", message: "No supervised reads, or you do not have access to them." },
+          { status: 404 },
+        );
+      }
+      return Response.json({ supervised: await grantsForReport(env, clock, who.orgId) });
     }
 
     /**
@@ -870,7 +1003,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // not read all answer identically. The third case is #45 — this endpoint streams the **submitted
       // bytes**, so it disclosed the whole message rather than a row about it, and it was bounded by
       // organization alone.
-      if (row !== null && !(await mayRead(env, { orgId: who.orgId, userId: who.userId }, row.mailbox_id))) {
+      if (row !== null && !(await mayRead(env, clock, { orgId: who.orgId, userId: who.userId }, row.mailbox_id))) {
         return Response.json(
           { error: "not_found", message: "No such send, or you do not have access to it." },
           { status: 404 },

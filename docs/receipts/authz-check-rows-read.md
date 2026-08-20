@@ -123,3 +123,70 @@ every request, per §7 — would have scanned the organisation's entire tuple ta
   §7 requires all of them per request. Each addition should re-run this benchmark.
 - The `USE TEMP B-TREE FOR DISTINCT` in the list plan is not free and was not isolated.
   Worth revisiting if the list case ever dominates a trace.
+
+## Correction — 20 August 2026: supervised reading joined the check path
+
+`stale_when`'s last clause — *"ABAC/policy conditions begin reading additional rows on the
+request path"* — **fired**. #63 added `supervised.read`, a time-boxed grant that satisfies a
+content or metadata read for a mailbox the reader holds no relation on, so `mayRead`,
+`mayReadMetadata` and `listMessages` now consult a second table. The clause said to re-measure,
+so it was re-measured before anything shipped.
+
+**The values above are unchanged.** Nothing here is a new number; this is the check the clause
+demanded.
+
+**Measured:** `apps/node/worker/test/authz.measure.test.ts`, describe block *"supervised
+reading's effect on the authorization path (#63)"*, same corpus as above. The supervised rows
+are taken **after** the 4× scaling case has reseeded the database, which is why the
+standing-only baselines below read higher than the table above — the comparisons are same-user
+and same-moment, which is the only way the delta means anything.
+
+| Scenario | rows_read | queries |
+|---|---:|---:|
+| Content check, tuple hit, no supervised arm | 11 | 2 |
+| Content check, tuple hit, with the arm | 11 | 2 |
+| Content check, tuple miss, no arm | 10 | 2 |
+| Content check, tuple miss, with the arm (grant hits) | 11 | 2 |
+| Heavy user (12 teams), tuple miss, no arm | 50 | 2 |
+| Heavy user, tuple miss, with the arm (grant hits) | 51 | 2 |
+
+`mayRead` itself, priced with `metering()` from `src/cost-meter.ts` rather than a copy of its
+query: **2 D1 executions** in all four states — no grant anywhere, a grant held, a grant held by
+somebody else, and a denial. That is the figure `authz.check.max_queries = 2` bounds, and it is
+the one a hand-written benchmark cannot establish.
+
+**Why the delta is one row and not a multiple.** The grant lookup is a `UNION ALL` arm of the
+statement the check was already issuing, not a second query, and `sgr_live`
+(`migrations/0023_supervised_read.sql`) is **partial** on `granted_at IS NOT NULL` — so on a Node
+where nobody holds supervised access the arm seeks an empty index. Where a grant does exist the seek
+is fully covered, printed rather than argued in `test/explain.test.ts`:
+
+```
+COMPOUND QUERY
+LEFT-MOST SUBQUERY
+SEARCH relationship_tuples USING COVERING INDEX rt_unique
+  (org_id=? AND subject_id=? AND object_type=? AND relation=? AND object_id=?)
+UNION ALL
+SEARCH supervised_grants USING COVERING INDEX sgr_live
+  (org_id=? AND subject_id=? AND mailbox_id=? AND scope=? AND expires_at>?)
+```
+
+One compound, two searches, both covering, all five constrained columns used on each. **The first
+version of that index was not this**, and printing the plan is what said so: it was ordered
+`(…, mailbox_id, expires_at, scope)`, and a *range* ahead of an *equality* truncates the usable
+prefix at four columns and reads the scope off the row. Same lesson as #11's column order, one table
+over. `granted_at` is in the key as well, purely because SQLite's covering-index test does not credit
+a partial index's predicate as supplying the column it constrains — without it the plan reads the
+table row to re-check something the index already guarantees. The measured figures above are
+unchanged by the fix, which is worth stating: the improvement is in the plan, not in the row count at
+this corpus size.
+
+**Where the cost actually is, stated because it is the only real one.** A check that **hits** the
+tuple arm is unchanged, because `LIMIT 1` stops there. A check that **misses** it pays one extra
+row, because the compound has to exhaust the tuple arm before it can try the grant. Both are
+inside `authz.check.max_rows_read = 200` by more than an order of magnitude.
+
+**What is not measured, and is not claimed.** `listMessages` gained a `UNION` inside its mailbox
+sub-select and is not separately priced here; it stays two queries by construction, and the list
+budget it lives under is `authz.list.max_rows_read = 1000` against a worst observed 136. A
+supervised reader listing a mailbox is bounded by the same `LIMIT 50` every other reader is.

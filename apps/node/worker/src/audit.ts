@@ -108,6 +108,45 @@ export const AUDIT_ACTIONS = {
   },
 
   /*
+   * Layer 5: matters and supervised reading (#63, §7). Three actions, and what is **absent** is the half of
+   * #63 this part does not build.
+   *
+   * `matter.opened` / `matter.closed` are the lifecycle of the purpose a supervised read is for. Both ride in
+   * `auditedBatch` beside the `matters` row, so neither is `standalone`. Closing earns an entry of its own
+   * rather than being folded into the open: §7 hangs the notice to the person whose mail was read on the
+   * *close*, so "when did this matter end, and who ended it" is the question the obligation is computed from —
+   * and the closer may deliberately not be the opener (`closeMatter` lets an `org.admin` close somebody
+   * else's, precisely because the investigator is the party with a reason to leave it open).
+   *
+   * `supervised.granted` is the **effect** of a completed dual approval, recorded beside the one
+   * `UPDATE supervised_grants` that sets `granted_at`. It exists for exactly the reason `hold.lifted` does:
+   * `approval.decided` says two people agreed, and cannot say *what they agreed to*. Somebody reading the
+   * trail to answer §7's question — who was allowed into whose mailbox, how much of it, under what matter,
+   * until when — must not have to join `approvals` to `supervised_grants` to learn it. There is no
+   * `supervised.requested`, for the reason `hold.lift_requested` does not exist: requesting **is** requesting
+   * an approval, and `approval.requested` records it in the same transaction as the grant row.
+   *
+   * **Named absent, and this is the seam #63 part B attaches to.** §7 requires a record of every supervised
+   * *act* — the query, the result opened, the preview, the attachment read — and #63 settled that those are
+   * three further actions (`supervised.query`, `supervised.opened`, `supervised.attachment`), per act rather
+   * than per row, with a query entry carrying the ids it returned. **None of them is declared here**, because
+   * a declared action nothing emits is a category of one and `test/audit-coverage.test.ts` fails on it. They
+   * arrive with the code that emits them, together with the notification obligation §7 makes due after the
+   * matter closes. Until then this Node records **who was granted access and when**, and not what they read;
+   * that is a real gap and it is stated rather than implied by three unused names.
+   */
+  "matter.opened": {
+    says: "Somebody opened a matter: the purpose a supervised read can later cite, with its type and description.",
+  },
+  "matter.closed": {
+    says: "A matter was closed. §7 makes the notice to the people whose mail was read due after this instant.",
+  },
+  "supervised.granted": {
+    says: "Two distinct approvers granted somebody a time-boxed read over a mailbox; the scope, the matter and "
+      + "the expiry are recorded with it.",
+  },
+
+  /*
    * Layer 5: the policy object (#60). §18 lists policy publication among the acts an approval binds, which
    * settles whether it is answerable — it plainly is: a published policy decides whether other people's mail
    * may leave, and "who made this rule live" is the question an audit exists to answer.

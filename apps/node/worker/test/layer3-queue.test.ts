@@ -109,7 +109,7 @@ describe("two people work one queue without colliding", () => {
   it("shows the age so a person can judge staleness the Node refuses to", async () => {
     const caseId = await aCase(MAILBOX, "<three@example.net>");
     await claim(testEnv, atTime(5_200_000_000_000), ORG, ANA, caseId);
-    const queue = await queueFor(testEnv, ORG, BO, MAILBOX);
+    const queue = await queueFor(testEnv, createSystemCtx(), ORG, BO, MAILBOX);
     const entry = queue.find((c) => c.id === caseId);
     expect(entry?.assignee).toBe(ANA);
     expect(entry?.claimed_at).toBe(new Date(5_200_000_000_000).toISOString());
@@ -171,7 +171,7 @@ describe("a queue is bounded by the mailbox, and says nothing about others (#44)
   it("shows nothing to somebody who holds no relation, rather than refusing", async () => {
     await aCase(MAILBOX, "<eight@example.net>");
     // §5C keeps an absent thing and an invisible one alike: empty, not forbidden.
-    expect(await queueFor(testEnv, ORG, OUTSIDER, MAILBOX)).toEqual([]);
+    expect(await queueFor(testEnv, createSystemCtx(), ORG, OUTSIDER, MAILBOX)).toEqual([]);
   });
 
   it("does not reveal a sibling case on the same conversation in another mailbox", async () => {
@@ -185,7 +185,7 @@ describe("a queue is bounded by the mailbox, and says nothing about others (#44)
     ).bind(ORG).first<{ n: number }>();
     expect(conversations?.n).toBe(1);
 
-    const queue = await queueFor(testEnv, ORG, ANA, MAILBOX);
+    const queue = await queueFor(testEnv, createSystemCtx(), ORG, ANA, MAILBOX);
     expect(queue.map((c) => c.id)).toEqual([mine]);
     // Not the id, not a count, not an existence bit. §5C names existence and counts as gated.
     expect(JSON.stringify(queue)).not.toContain(theirs);
@@ -469,7 +469,7 @@ describe("the rail's per-mailbox depths (#42)", () => {
     const caseId = await aCase(MAILBOX, "<rail-f@example.net>");
     await claim(testEnv, atTime(7_200_000_000_000), ORG, ANA, caseId);
 
-    const queue = await queueFor(testEnv, ORG, BO, MAILBOX);
+    const queue = await queueFor(testEnv, createSystemCtx(), ORG, BO, MAILBOX);
     const row = queue.find((c) => c.id === caseId);
     // The first version returned the assignee alone and the queue rendered `usr_01KZ…` in the "held by"
     // column. Somebody deciding whether to take a case cannot weigh that — caught by looking at it.

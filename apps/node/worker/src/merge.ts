@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
-import { mayRead } from "./authz-read.ts";
+import { holdsStandingRead } from "./authz-read.ts";
 import { assertNotHeld } from "./holds.ts";
 import { notFound, unprocessable } from "./errors.ts";
 
@@ -156,7 +156,15 @@ export async function mergeConversations(
   ).bind(orgId, sourceId, targetId).all<{ mailbox_id: string }>();
 
   for (const { mailbox_id } of touched) {
-    if (!(await mayRead(env, { orgId, userId }, mailbox_id))) {
+    /*
+     * The **standing** relation, never a supervised grant (#63).
+     *
+     * Merging is irreversible restructuring of other people's queues, and this gate reads as a visibility
+     * test only because seeing is the minimum a person needs to be accountable for it. A time-boxed read
+     * granted for a matter is authority to *examine* a mailbox, not to reshape its cases — a read relation
+     * that authorized a write would be the widening `authz-read.ts` names as worse than granting nothing.
+     */
+    if (!(await holdsStandingRead(env, { orgId, userId }, mailbox_id))) {
       // Deliberately not naming which mailbox: that would disclose the existence of a queue this caller has
       // no relation to, which is the §5C rule #44 settled.
       return {

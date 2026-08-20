@@ -765,6 +765,20 @@ When enabled, authorized supervisors can read received/sent mail across the appr
 
 A supervised grant is bound to purpose, matter, resource scope, session and time. Expiry or revocation terminates search cursors, event streams, attachment URLs, cached previews, export jobs and API/MCP access; widening scope requires a new approval. Dual approvers must be distinct and currently eligible. Required employee notifications are durable system jobs and cannot be disabled by the investigator.
 
+**Shape (#63, Layer 5).** The paragraph above is now more specific than its prose was, because building it decided things the prose left open, and each of these is a contract clause rather than an implementation note.
+
+A **matter** is a first-class object — a type from a closed set, a description, who opened it, and `closed_at` — and not free text. This was forced, not preferred: the notice above is due *after the matter closes*, and free text cannot close. A grant cites **a matter or nothing**, because the realistic first act precedes any matter; a cited matter must be open, since granting fresh access under a closed one would make its notice untrue about the access it describes. `legal_hold` is one of the types, which is what makes "a matter closed while its hold stands" a computable question rather than a rhetorical one.
+
+**A matter is confidential until its notice is due.** The description names the person being examined, and the notification above is due *after the matter closes* — a contract that only means something if the matter is not disclosed to that person while it is open. A matter listing is therefore scoped: organization administrators see all, and anybody else sees the matters they opened. The people who must read a matter's text are the approvers of a grant citing it, and they read it on the request they are deciding rather than through a general listing.
+
+**Widening is a new grant, never an edit.** Scope and expiry are fixed when the grant is requested — so what the two approvers are shown before they decide is exactly what they authorize — and nothing in the product may move either afterwards. Renewal is therefore a fresh grant needing fresh dual approval, because time is part of the bound scope above and extending it is widening. A denied request never forecloses a later one: the approval's subject is the request, so asking again is a new request with its own approvers.
+
+**Failing closed at expiry is a property of never caching authorization, not a revocation mechanism.** Every request re-evaluates the live relationship (§7's own rule), so the request after the deadline finds the grant over. The enumeration this paragraph demands — cursors, event streams, attachment URLs, cached previews — is satisfied by construction wherever a Node presigns nothing, streams nothing, and authorizes raw-evidence reads per request; a Node that adds any of those owes an explicit termination path and this clause is where it is owed.
+
+**The reader is the requester.** A supervised grant is requested by the person who will read, so the separation-of-duty exclusion that bars the requester from deciding is the same rule that bars a reader from approving their own access. A request on somebody else's behalf would put the reader outside that exclusion.
+
+**Mailbox administration alone does not imply content access — but the authority to *grant* relations does, and that is not closed.** An administrator who can grant any relation to any subject can grant one to themselves. Refusing self-grants traps a two-person organization into seeking approval from the person being examined, and an administrator who cannot reach a mailbox they are responsible for edits the database instead, which is auditable nowhere. So the self-grant remains available and is made **conspicuous**: a grant whose actor and subject are the same principal is a diagnostic finding, not an ordinary event. Stated plainly because the alternative phrasing would be a claim nothing enforces — this does not prevent an administrator reading mail; it makes the front door and the back door distinguishable in the record.
+
 ### Mailbox relations
 
 - Owner.

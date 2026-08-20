@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest";
  * bitten four times between them. Neither is a design flaw worth a rewrite; both are exactly testable, so
  * this converts two recurring stumbles into one named failure.
  *
+ * A **third** hazard lives at the bottom of this file, and it is hazard 2 one language up: an unbalanced
+ * comment terminator inside a *TypeScript* block comment, which closed a doc comment early and cost a build.
+ * The guard kept turning out to be narrower than the hazard — CSS first, then SQL, now TypeScript itself —
+ * which is why each section says what it can and cannot see.
+ *
  * ## 1. A backtick in a CSS comment ends the template literal
  *
  * Three times: once in this stylesheet, once in a SQL comment in `response-clock.ts`, once again here. The
@@ -140,6 +145,161 @@ describe("SQL comments inside template literals carry no backticks", () => {
       offenders.length === 0 ? null
         : `backtick inside a SQL comment (${offenders.join(", ")}) — these sit inside TypeScript template `
           + "literals, so a backtick ends the literal and the build fails from a line that reads as prose",
+    ).toBeNull();
+  });
+});
+
+/**
+ * The same hazard a third time: a **comment terminator inside a TypeScript block comment**, which closes it
+ * early. (Written in words, not in characters, for the reason the CSS section above records: typing the two
+ * characters here would end this docblock.)
+ *
+ * This one has now cost a build. `src/matters.ts` documented a one-minute cron expression inside a JSDoc
+ * block; the star-slash in the middle of it terminated the comment, and the prose after it was parsed as
+ * code. The failure is loud — esbuild reports a parse error from a line that reads as English — so the cost is
+ * diagnosis, which is the slow part and the reason the two checks above exist.
+ *
+ * It is the **exact** invariant the CSS check enforces, one language up: scanning left to right, every comment
+ * terminator must close a comment an opener opened. When a doc block ends early, the terminator the author
+ * *meant* as the end is left standing in code, and that stray terminator is what this finds. Which also means
+ * the check does not need to guess at intent — it reads the same imbalance the compiler does.
+ *
+ * ## What it takes to make that scan sound, and where it is deliberately blunt
+ *
+ * `/` and `*` are ordinary operators in TypeScript, and the two characters can legitimately sit inside a
+ * string, a template literal, a line comment, or a regular expression. So this walks the file with a small
+ * state machine over exactly those five states. Two boundaries are declared rather than solved:
+ *
+ *   - **Regular expressions are recognised by the preceding token**, the standard heuristic, because deciding
+ *     whether `/` opens a regex or divides requires a parser. A misjudged `/` can only cause a *false
+ *     positive*, which costs one line of rewriting rather than an afternoon.
+ *   - **`${}` inside a template literal** is tracked with a depth counter so an interpolation containing a
+ *     string or a nested template stays understood. Beyond that, this is not a tokenizer.
+ *
+ * `src/client/` is included, unlike the SQL check above: JSX and React source carry the same doc comments and
+ * the same hazard, and the reason the SQL scan excludes the client is that the client writes no SQL.
+ */
+describe("TypeScript block comments are balanced, so a doc comment cannot end early", () => {
+  const sourceFiles = readdirSync(srcDir, { recursive: true, encoding: "utf8" })
+    .filter((entry) => /\.tsx?$/.test(entry) && !entry.endsWith(".d.ts"));
+
+  /**
+   * Every stray comment terminator in `text`, as 1-indexed line numbers.
+   *
+   * Returns positions rather than a boolean, so a failure names a line somebody can open — the lesson the CSS
+   * check records about diagnosis being the expensive half.
+   */
+  function strayTerminators(text: string): number[] {
+    const stray: number[] = [];
+    let state: "code" | "line" | "block" | "single" | "double" | "template" | "regex" = "code";
+    /** Nesting of `${` inside template literals, so an interpolation can hold its own strings. */
+    const templates: number[] = [];
+    /** The last non-whitespace character seen in code, which is how a regex is told from a division. */
+    let previous = "";
+    let line = 1;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text[i]!;
+      const next = text[i + 1] ?? "";
+      if (c === "\n") line += 1;
+
+      switch (state) {
+        case "code":
+          if (c === "\n") { break; }
+          if (c === "/" && next === "/") { state = "line"; i += 1; break; }
+          if (c === "/" && next === "*") { state = "block"; i += 1; break; }
+          if (c === "*" && next === "/") {
+            // A terminator with no comment open. Either a doc block ended early further up, or somebody typed
+            // one by hand — both leave the file meaning something other than it reads.
+            stray.push(line);
+            i += 1;
+            break;
+          }
+          if (c === "'") { state = "single"; break; }
+          if (c === '"') { state = "double"; break; }
+          if (c === "`") { state = "template"; break; }
+          if (c === "}" && templates.length > 0 && templates[templates.length - 1] === 0) {
+            // Closing the `${…}` we opened: back inside the template literal that holds it.
+            templates.pop();
+            state = "template";
+            break;
+          }
+          if (c === "}" && templates.length > 0) { templates[templates.length - 1]! -= 1; break; }
+          if (c === "{" && templates.length > 0) { templates[templates.length - 1]! += 1; break; }
+          // A `/` that is not a comment: a regex if what precedes it cannot end an expression, else division.
+          if (c === "/" && !/[\w)\]$]/.test(previous)) { state = "regex"; break; }
+          if (!/\s/.test(c)) previous = c;
+          break;
+
+        case "line":
+          if (c === "\n") state = "code";
+          break;
+
+        case "block":
+          if (c === "*" && next === "/") { state = "code"; previous = ""; i += 1; }
+          break;
+
+        case "single":
+          if (c === "\\") { i += 1; break; }
+          if (c === "'") { state = "code"; previous = "'"; }
+          break;
+
+        case "double":
+          if (c === "\\") { i += 1; break; }
+          if (c === '"') { state = "code"; previous = '"'; }
+          break;
+
+        case "template":
+          if (c === "\\") { i += 1; break; }
+          if (c === "$" && next === "{") { templates.push(0); state = "code"; previous = ""; i += 1; break; }
+          if (c === "`") { state = "code"; previous = "`"; }
+          break;
+
+        case "regex":
+          if (c === "\\") { i += 1; break; }
+          // An unterminated regex would be a syntax error the build catches; recovering at the newline keeps
+          // a misjudged division from swallowing the rest of the file and reporting nonsense.
+          if (c === "\n") { state = "code"; break; }
+          if (c === "/") { state = "code"; previous = "/"; }
+          break;
+      }
+    }
+    return stray;
+  }
+
+  it("finds source files to check, so this cannot pass vacuously", () => {
+    expect(sourceFiles.length).toBeGreaterThan(10);
+  });
+
+  it("recognises the pattern that cost a build, and the ones that must not trip it", () => {
+    /*
+     * The scanner is proved on inputs rather than trusted, because a source scan that found nothing would look
+     * exactly like a clean tree. The first case is the real defect, verbatim in shape: a cron expression in a
+     * doc comment, whose `*` and `/` close the block and leave the intended terminator stranded.
+     */
+    expect(strayTerminators('/**\n * runs on */1 * * * *\n */\nconst a = 1;\n')).toEqual([3]);
+    // And every legitimate way those two characters appear, none of which may fire.
+    expect(strayTerminators('const s = "*/";\n')).toEqual([]);
+    expect(strayTerminators("const t = `SELECT 1 -- */`;\n")).toEqual([]);
+    expect(strayTerminators("// a stray */ in a line comment\n")).toEqual([]);
+    expect(strayTerminators("const r = /a*\\//;\n")).toEqual([]);
+    expect(strayTerminators("const q = a / b * /* c */ d;\n")).toEqual([]);
+    expect(strayTerminators("const u = `x${ [1].map((n) => `${n}*/`).join('') }y`;\n")).toEqual([]);
+    // Division by a parenthesised expression, which the regex heuristic must not read as a regex opener.
+    expect(strayTerminators("const v = (a + b) / (c * d);\n")).toEqual([]);
+  });
+
+  it("has no stray comment terminator anywhere in src", () => {
+    const offenders: string[] = [];
+    for (const relative of sourceFiles) {
+      const source = readFileSync(join(srcDir, relative), "utf8");
+      for (const line of strayTerminators(source)) offenders.push(`${relative}:${line}`);
+    }
+    expect(
+      offenders.length === 0 ? null
+        : `comment terminator with no comment open (${offenders.join(", ")}) — a block comment above it ended `
+          + "early, most likely on a cron expression or a glob in the prose, so the text between the two "
+          + "terminators is being parsed as code",
     ).toBeNull();
   });
 });

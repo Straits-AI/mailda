@@ -376,6 +376,102 @@ still fails — because that was always the silent lift, and building the loud o
 one that matters instead: a hold over a mailbox where fewer than two people hold `approval.decide` **cannot be
 lifted by anybody**, and it says so before an administrator finds out by being refused.
 
+**"Mailbox administration alone does not imply content access" was true about the relation and false about
+the administrator.** `org.admin` can grant any grantable relation to any subject, and nothing excluded itself
+as a subject — so an administrator could give themselves `mailbox.content.read` and read anybody's mail in one
+audited call. Refusing that was the tempting fix and it sets a trap: in a two-person organization the only
+other approver is the person being examined, so the ceremony is either theatre or the read is impossible, and
+"impossible" for an administrator genuinely responsible for a mailbox is the wall that gets solved by editing
+the database directly — which leaves no record at all. So the door stays open and is made **loud**: an
+`access.granted` entry whose actor and subject are the same principal is now a `doctor` finding, costing one
+seek into the entries of the one action it is about — which is what it costs *because* the purpose-built index
+written for it was deleted: SQLite never chose it, and forced with `INDEXED BY` it was strictly worse, because
+its test for whether a query implies a partial index's predicate does not credit a column-to-column comparison.
+An index nothing chooses, under a comment saying it is load-bearing, is the defect this repository keeps paying
+for, and the only reason it was caught is that the plan was printed rather than reasoned about. The same print
+caught the *other* new index having its range column ahead of an equality column, truncating its usable prefix
+at four of five — #11's lesson arriving one table over. It is
+a `report` and not a `degraded`, because in that two-person organization the self-grant is the *correct* act and
+a permanent WARN on a legitimate act is how a check gets muted. Its own text says the thing that had to be said
+plainly: **this does not prevent an administrator reading mail. It makes the front door and the back door
+distinguishable in the record.**
+
+**The front door is `supervised.read`, and it is a relation no tuple carries.** A time-boxed grant over one
+mailbox, at one of two scopes, citing a matter or nothing, live only once **two people who are not the reader**
+have approved it — and the reader *is* the requester, structurally, because a request on somebody else's behalf
+would leave the reader outside the separation-of-duty exclusion and free to approve their own access. It is not
+a tuple because `relationship_tuples` has no expiry column and giving it one would put a time comparison into
+every authorization check in the product for the benefit of one relation. That is also the more honest shape:
+*"who can read this mailbox"* now has two answers with different structures, and collapsing them would make the
+answer uniform and wrong. The relation is nonetheless declared beside the others, with **how it is conferred**
+as a field — so `Grantable` is derived from the registry rather than listed twice, the ordinary grant route
+refuses it at compile time as well as at runtime, and the refusal a person reads **names the door that works**.
+An administrator told only "not grantable" is the person who grants themselves `content.read` instead.
+
+**Purpose had to become an object, and the notification requirement is what decided it.** §7 requires telling
+the employee after the matter **closes**, and free text cannot close — one shape simply cannot satisfy the
+contract, so `matters` carries a type, a description, who opened it and `closed_at`. It pays for itself twice
+more: several grants belong to one investigation, and *"widening scope requires a new approval"* becomes a
+second grant citing the same matter rather than an edit to a live one, because an editable grant is an audit
+trail that can be rewritten in place. There is no `UPDATE` of a grant's scope or deadline anywhere, and a test
+reads the one `UPDATE supervised_grants` that exists — from its string literal, with comments stripped, because
+this repository has already shipped a source scan that its own prose satisfied — to prove it sets `granted_at`,
+requires the approval to have become approved, refuses a grant already live, and **does not touch
+`expires_at`**. Recomputing the deadline at decision time would silently extend every grant by however long
+the decision took, which is the widening that is supposed to need its own approval.
+
+**A matter's description is not org-wide reading, and that boundary is what §7's deferred notice rests on.**
+The listing was open to every member at first, justified by the fact that the two approvers read the text
+before deciding — an argument about approvers, implemented as an argument about everybody. A description says
+*"suspected exfiltration by Dana"*, and §7 makes the notice to Dana due **after the matter closes**; an
+org-wide listing delivers it on the day the matter opens, to the one person it must not reach first. So
+`GET /api/matters` shows an `org.admin` everything and anybody else the matters they opened, and the
+approvers' real need is served where it belongs: the pending-approval row carries the cited matter's type and
+description to the two people being asked, on the join that was already fetching the grant. An approver reads
+the matter they are deciding on, not every matter in the building.
+
+**Expiry needed no mechanism, and the enumeration that proves it came back empty.** Nothing caches
+authorization, so the request after the deadline checks and finds the grant over; §7's list of things an expiry
+must terminate — cursors, event streams, presigned attachment URLs, cached previews — has no members on this
+Node, because nothing presigns, nothing streams and the raw-evidence read is authorized per request. So the
+test proves the **stop** through the real `.eml` read rather than asserting the absence of a cache: sixty
+seconds authorizes at +30 s and is refused at +60.001 s with nothing having run in between. What was measured
+instead of assumed is the cost, because the authorization receipt's `stale_when` names exactly this — a
+condition beginning to read additional rows on the request path. The grant lookup is a `UNION ALL` arm of the
+statement the check was already issuing, so it is **two queries either way**, priced through `mayRead` itself
+rather than through a copy of its query; and the index is partial on `granted_at IS NOT NULL`, so the arm costs
+**one row** on a check that misses the tuple arm and **nothing** on one that hits. The receipt's values did not
+move; the dated correction says so, which is the point of having the clause.
+
+**A supervised read is the third approval subject, not a second approval mechanism.** Adding it was a compile
+error in three places until handled, which is the design working: the per-kind wording, the per-kind deadline
+and the per-kind completion effect are all records keyed on the union. The hold lift had proved the
+generalisation; this ticket spent it, and the one refactor it cost is the shape worth knowing — the lift's
+hand-written "strong predicate" branch, where a completing decision also requires that the effect has not
+already happened and a lost race records **nothing** rather than an entry claiming an act that did not occur,
+became per-kind *data* while the race logic stayed written once. All three defects the approval machinery
+shipped with were in that logic.
+
+**What is not built is named, because two tickets are owed the answer.** §7 also requires a record of every
+query, result opened and attachment read, and a notification the investigator cannot switch off. Neither is
+here. The three audit actions for per-act recording are **not declared**, since a declared action nothing emits
+is a category of one and the coverage tripwire fails on it; the notification obligation has no row, no cron
+branch and no overdue count. So this Node records who was let into whose mailbox, under what matter, until
+when — and not what they then read. That sentence is in `listMessages`'s own docblock, at the function it is
+about, rather than in a changelog: leaving it implicit is how a half-closed world gets described as closed, and
+a reader who found a `closed_at` column and a `matter.closed` action could reasonably assume the notice went
+out.
+
+**A cron expression in a doc comment cost a build, so the comment-hazard tripwire grew a third language.** The
+guard has now been narrower than the hazard twice: it started as backticks in CSS, learned about SQL comments
+after three repeats, and did not know that a `*` and a `/` in prose end a **TypeScript** block comment — which
+is what a one-minute cron expression is made of. The prose after it parsed as code. The new check is the exact
+invariant the CSS one enforces, one language up: scanning left to right, every comment terminator must close a
+comment an opener opened, so a doc block that ends early leaves the terminator the author *meant* standing in
+code. It walks strings, template literals, line comments and regular expressions to get there, declares the
+regex heuristic as the one place it can produce a false positive, and is proved by putting the cron expression
+back and watching it name the line.
+
 **A policy that cannot be expressed is a policy that never fires, and so is one that can.** The blueprint
 lists thirteen policy dimensions and six outcomes. This Node ships **five conditions and four outcomes**, and
 the arithmetic in that sentence is the whole of the decision: the five — mailbox, actor, external recipient,
@@ -742,6 +838,7 @@ docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
 docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
+docs/supervised-access.md              matters, the time-boxed grant, which read paths accept it, what is absent
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts

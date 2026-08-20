@@ -313,13 +313,25 @@ export interface QueueEntry extends CaseRow {
  */
 export async function queueFor(
   env: Env,
+  /*
+   * The clock, and it is here for `mayReadMetadata` (#63): a supervised grant expires, so the question
+   * "may this person see these subject lines" now has an instant in it. Threaded rather than read from
+   * `Date.now()` inside, because §27's deterministic replay is that seam and lint bans the bare call.
+   */
+  ctx: Ctx,
   orgId: string,
   userId: string,
   mailboxId: string,
 ): Promise<QueueEntry[]> {
   const who = { orgId, userId };
+  /*
+   * `send.propose` first, and that ordering is what keeps a supervised reader out of somebody's queue: a
+   * grant satisfies the metadata check below but never this one, so a mailbox nobody has given them
+   * `send.propose` on returns an empty queue however wide their grant is. A supervised reader is not a
+   * member working this queue, and should not appear to be one.
+   */
   if (!(await maySend(env, who, mailboxId))) return [];
-  const maySeeContent = await mayReadMetadata(env, who, mailboxId);
+  const maySeeContent = await mayReadMetadata(env, ctx, who, mailboxId);
 
   // One template with one substitution, so the two variants cannot drift into selecting different case
   // columns. The literal NULLs keep the result shape identical, which is what lets the row type stay one type.

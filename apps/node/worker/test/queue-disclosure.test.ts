@@ -80,7 +80,7 @@ describe("the queue's message columns are gated separately from the queue itself
   it("withholds subject and sender from somebody holding only send.propose", async () => {
     const who = await principalHolding("usr_responder_only", ["send.propose"]);
 
-    const rows = await queueFor(testEnv, ORG, who, MAILBOX);
+    const rows = await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX);
 
     // The case is listed — they can work it, which is what send.propose is for.
     expect(rows).toHaveLength(1);
@@ -95,7 +95,7 @@ describe("the queue's message columns are gated separately from the queue itself
   it("shows them to somebody who also holds mailbox.metadata.read", async () => {
     const who = await principalHolding("usr_triage", ["send.propose", "mailbox.metadata.read"]);
 
-    const rows = await queueFor(testEnv, ORG, who, MAILBOX);
+    const rows = await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX);
 
     expect(rows[0]!.subject).toBe(SUBJECT);
     expect(rows[0]!.from_addr).toBe(SENDER);
@@ -107,7 +107,7 @@ describe("the queue's message columns are gated separately from the queue itself
     // so requiring metadata.read *as well* would be a rule with no defence.
     const who = await principalHolding("usr_reader", ["send.propose", "mailbox.content.read"]);
 
-    const rows = await queueFor(testEnv, ORG, who, MAILBOX);
+    const rows = await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX);
 
     expect(rows[0]!.subject).toBe(SUBJECT);
     expect(rows[0]!.content_restricted).toBe(false);
@@ -118,7 +118,7 @@ describe("the queue's message columns are gated separately from the queue itself
     // exists here. A reader reaches the same mail through the message list, which is gated on what they hold.
     const who = await principalHolding("usr_watcher", ["mailbox.metadata.read", "mailbox.content.read"]);
 
-    expect(await queueFor(testEnv, ORG, who, MAILBOX)).toHaveLength(0);
+    expect(await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX)).toHaveLength(0);
   });
 
   it("never returns the withheld columns in the result set at all", async () => {
@@ -127,7 +127,7 @@ describe("the queue's message columns are gated separately from the queue itself
     // makes the others durable: the string is not in the row.
     const who = await principalHolding("usr_responder_only", ["send.propose"]);
 
-    const rows = await queueFor(testEnv, ORG, who, MAILBOX);
+    const rows = await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX);
 
     expect(JSON.stringify(rows)).not.toContain(SUBJECT);
     expect(JSON.stringify(rows)).not.toContain(SENDER);
@@ -138,7 +138,7 @@ describe("the queue's message columns are gated separately from the queue itself
     // already knows the case exists, because they hold send.propose and can claim it.
     const who = await principalHolding("usr_responder_only", ["send.propose"]);
 
-    expect((await queueFor(testEnv, ORG, who, MAILBOX))[0]!.message_count).toBe(1);
+    expect((await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX))[0]!.message_count).toBe(1);
   });
 });
 
@@ -164,12 +164,12 @@ describe("mailbox.metadata.read is a real, grantable relation", () => {
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, admin, ORG, at).run();
 
-    expect((await queueFor(testEnv, ORG, who, MAILBOX))[0]!.content_restricted).toBe(true);
+    expect((await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX))[0]!.content_restricted).toBe(true);
 
     await grant(testEnv, ctx, ORG, admin, {
       subjectId: who, relation: "mailbox.metadata.read", objectId: MAILBOX,
     });
 
-    expect((await queueFor(testEnv, ORG, who, MAILBOX))[0]!.content_restricted).toBe(false);
+    expect((await queueFor(testEnv, createSystemCtx(), ORG, who, MAILBOX))[0]!.content_restricted).toBe(false);
   });
 });

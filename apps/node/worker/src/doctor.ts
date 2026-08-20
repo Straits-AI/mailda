@@ -195,6 +195,8 @@ const EXPECTED_TABLES = [
   "policy_stages", "approvals", "approval_stages", "approval_decisions",
   // Migration 0021 (Layer 5: lifting a hold).
   "hold_lifts",
+  // Migration 0023 (Layer 5: matters and supervised reading).
+  "matters", "supervised_grants",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -234,6 +236,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...strandedDraftBodyFindings(evidence.draftBodies),
     ...(await checkEvidenceChanged(env, claim?.org_id ?? null)),
     ...(await checkHolds(env, ctx, claim?.org_id ?? null)),
+    ...(await checkSelfGrants(env, claim?.org_id ?? null)),
     planCheck(),
   );
 
@@ -1247,6 +1250,124 @@ async function checkHolds(env: Env, ctx: Ctx, orgId: string | null): Promise<Fin
   }
 
   return findings;
+}
+
+/**
+ * The self-grant, made visible (#63, §7).
+ *
+ * ## What this finding is about, and what it deliberately does not claim
+ *
+ * §7 says *"mailbox administration alone does not imply content access"*. On this Node that is true about the
+ * **relation** and false about the **administrator**: `org.admin` can grant any grantable relation to any
+ * subject including itself, so an administrator can give themselves `mailbox.content.read` on any mailbox in
+ * one audited call. #63 decided not to close that, and the reasoning is worth carrying here because this is
+ * where somebody will come looking for the rule they expect to find: refusing a grant where actor and subject
+ * match traps a two-person organization, where the only other approver is the person being examined — and
+ * "impossible" for an administrator genuinely responsible for a mailbox is the wall that gets solved by
+ * editing the database directly, which is strictly worse than an audited self-grant.
+ *
+ * So there are two doors and this finding is what makes them look different:
+ *
+ *   `supervised.read`   the front door. Matter, scope, expiry, two approvers who are not the reader, and a
+ *                       `supervised.granted` entry saying all of it.
+ *   the self-grant      still open, and now conspicuous.
+ *
+ * **This does not prevent an administrator from reading mail, and it does not try to.** It makes the
+ * difference between the front door and the back door visible in the record. Written down here rather than
+ * left implied, because a finding whose text suggested it *stopped* something would be exactly the claim
+ * nothing enforces.
+ *
+ * ## `report`, not `degraded`, and this was the hard call
+ *
+ * `degraded` means *something is wrong here*, and a self-grant is not by itself wrong: the two-person
+ * organization above is the case #63 kept the door open for, and in it the self-grant is the **correct** act.
+ * A `degraded` on a legitimate act is the permanent WARN that `DELIVERY_SILENCE_MS` names in this same file —
+ * a false alarm gets a check muted, and a muted check guards nothing. `workers_paid_plan` is the precedent for
+ * the shape: a real fact, correctly reported, that no operator action can or should close. `draft_bodies_
+ * stranded` reached the same answer from the other side.
+ *
+ * The thing that *would* justify `degraded` is a self-grant on a mailbox where a supervised read **was**
+ * available — two other `approval.decide` holders existed and the front door was walked past. That is
+ * computable, and it is not computed here for an honest reason: eligibility is live, so it would be measured
+ * now rather than at the instant of the grant, and a finding that changed its verdict about a past act because
+ * somebody joined the team is worse than one that reports the act plainly.
+ *
+ * ## `data`, and one query that costs nothing on a clean Node
+ *
+ * The detail carries a count and an instant derived from this organization's audit trail — so it never
+ * reaches the unauthenticated report. The query is one statement and it rides `audit_by_action` (0008),
+ * seeking straight to this organization's `access.granted` entries and applying the actor-equals-subject test
+ * over those, so its cost is proportional to **grants made** rather than to how long the Node has been
+ * running. That distinction is what `doctor.max_subrequests_per_run` exists to protect.
+ *
+ * Migration 0023 first carried a purpose-built partial index for this, keyed on the condition itself.
+ * **SQLite never chose it**, and forced with `INDEXED BY` it was worse — usable on `org_id` alone, because
+ * SQLite's test for whether a query implies a partial index's predicate does not credit a column-to-column
+ * comparison. It was deleted rather than left as dead weight under a comment claiming it was load-bearing.
+ * The plan is printed in `test/explain.test.ts`, which is where that was found.
+ *
+ * The finding deliberately does **not** name each entry. Audit entries are never trimmed, so a detail listing
+ * every self-grant over a Node's life would grow without bound inside a bounded `detail` column. The entries
+ * are in the trail, filtered by action and actor.
+ */
+async function checkSelfGrants(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) {
+    return [{
+      check: "self_granted_access",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: "No organization yet, so nobody can have granted themselves anything.",
+    }];
+  }
+
+  const row = await env.CATALOG.prepare(
+    // One statement, prepared and executed once: `test/node/doctor-meter-honesty.test.ts` requires that of
+    // everything on this path, because the meter in this file counts prepares rather than executions.
+    `SELECT COUNT(*) AS n, MAX(at) AS last FROM audit_entries
+      WHERE org_id = ? AND action = 'access.granted' AND actor_user_id = subject`,
+  ).bind(orgId).first<{ n: number; last: string | null }>().catch(() => null);
+
+  if (row === null) {
+    return [{
+      check: "self_granted_access",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "Could not read the audit trail, so this report cannot say whether anybody has granted "
+        + "themselves access to a mailbox.",
+      fix: "check the migrations_applied finding first — a Node that cannot read audit_entries cannot record "
+        + "an act either",
+    }];
+  }
+
+  const count = row.n ?? 0;
+  return [{
+    check: "self_granted_access",
+    severity: "report",
+    discloses: "data",
+    // `ok` says "nothing to look at", not "nothing is wrong". A self-grant is reported, not faulted — see the
+    // header for why a `degraded` here would be the permanent WARN this file avoids elsewhere.
+    ok: count === 0,
+    detail: count === 0
+      ? "Nobody has granted a relation to themselves. Every relation in force was granted by one person to "
+        + "another, and reading a mailbox you hold nothing on goes through a supervised read with two "
+        + "approvers (§7)."
+      : `${count} access.granted entr${count === 1 ? "y" : "ies"} where the actor and the subject are the `
+        + `same principal, most recently at ${row.last ?? "an unrecorded instant"}. An administrator granting `
+        + `themselves a relation is a single audited call and it is not blocked: refusing it would trap a `
+        + `two-person organization into seeking approval from the person being examined. This finding does `
+        + `not prevent an administrator reading mail — it makes the front door and the back door `
+        + `distinguishable in the record.`,
+    ...(count === 0 ? {} : {
+      fix: "read them in the trail — GET /api/audit filtered on access.granted — and check each was the "
+        + "shortest path available. The front door is POST /api/supervised: a time-boxed read with a matter, "
+        + "a scope and two approvers who are not the reader, which produces a defensible record where a "
+        + "self-grant produces only this finding. Nothing here needs undoing if the self-grant was the right "
+        + "call; if it was not, POST /api/access DELETE revokes the relation and §7 makes that effective on "
+        + "the next request",
+    }),
+  }];
 }
 
 /**

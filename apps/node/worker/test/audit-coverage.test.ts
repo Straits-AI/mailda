@@ -187,6 +187,27 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // the row.
     actions: ["approval.decided", "approval.withdrawn"],
   },
+  matters: {
+    // Both writes are acts by a person and both are audited in the same transaction as the row. The close
+    // earns its own action rather than being folded into the open, because §7 makes the notice to the people
+    // whose mail was read due **after** the close — so "when did this matter end, and who ended it" is the
+    // question the obligation is computed from. `closeMatter` deliberately lets an `org.admin` close somebody
+    // else's matter, precisely because the investigator is the party with a reason to leave it open, which
+    // means the closer and the opener can differ and one entry could not answer for both.
+    actions: ["matter.opened", "matter.closed"],
+  },
+  supervised_grants: {
+    // The `INSERT` rides with `approval.requested` — asking for a supervised read **is** asking for an
+    // approval, and that entry's detail names the mailbox, the scope, the matter and the deadline. The one
+    // `UPDATE` that sets `granted_at` rides with `supervised.granted`, which is where §7's question is
+    // answered: who was let into whose mailbox, how much of it, under what matter, until when, and which two
+    // people agreed. Exactly the split `hold_lifts` and `holds` already use, one table apart.
+    //
+    // There is no `supervised.denied` and no `supervised.expired`: a denial is `approval.decided` with
+    // `outcome: "refused"`, and an expiry is not an act anybody took — the read path simply stops matching.
+    // A declared action nothing emits is a category of one, which the last assertion in this file fails on.
+    actions: ["approval.requested", "supervised.granted"],
+  },
   log_entries: { exempt: "The operational log. Auditing it would recurse and it is trimmed by design." },
   audit_entries: { exempt: "The trail itself. Self-reference is what the hash chain is for." },
   d1_migrations: { exempt: "Written by the platform's migration runner, not by this Node." },
