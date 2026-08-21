@@ -1316,6 +1316,15 @@ nowhere else, so every effect-free run had been closing with its `INSERT` defaul
 operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
 ([receipt](./docs/receipts/butler-run-cost.md))
 
+**You could not reply twice to the same conversation.** Reply claims the case in the same act,
+and the claim's compare-and-swap was `WHERE assignee IS NULL` — so re-claiming a case you already
+held changed no rows, fell through to the lost-the-race branch, and answered *held by you*. The
+button refused with "Held by you since …" and offered to take it and tell them: stealing your own
+case, notifying yourself. Every test claimed a case nobody held, so none of them saw it. It was
+found by an accessibility harness that could not get the composer open — and the same confusion
+turned out to be sitting in a Butler test whose name said "refuses one somebody else holds" while
+its fixture had the holder and the assignee be the same person.
+
 **A layer can be complete and unreachable.** Trying to publish one Butler through the product
 found there was no way to: the interpreter, the checker, the run ledger, the pause machinery and
 replay were all built and tested, and `createButlerDraft`, `editButlerDraft` and `publishButler`

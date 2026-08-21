@@ -396,6 +396,22 @@ export async function publishButler(
     });
   }
 
+  /*
+   * The next number is the live version's plus one, and that is correct **because 0033 makes the live
+   * version the highest one**.
+   *
+   * It was not always. 0027's `btv_forward_only` comment credited `btv_live` with preventing two live
+   * versions of one Butler, and `btv_live` is a plain index on `org_id` — it prevented nothing, so only this
+   * transaction stood in the way, and a transaction governs only the writes that go through it. Given a
+   * published v1 beside a published v2, the read above returned v1 with `LIMIT 1` and no `ORDER BY`, this
+   * computed 2, and `btv_version` rejected it — as an unhandled D1 constraint error and a **500**, not a
+   * refusal anybody could act on. Found by clicking publish twice.
+   *
+   * `MAX(version) + 1` was written here first and then removed, which is worth recording rather than
+   * quietly reverting: with `btv_one_live` there can be no live version that is not the highest, so `MAX`
+   * cannot differ from this — a mutation test could not tell the two apart, and it costs a second D1 round
+   * trip on every publish. One enforcement in the right place beats two, one of which nothing can check.
+   */
   const version = (current?.version ?? 0) + 1;
   const at = new Date(ctx.now()).toISOString();
 

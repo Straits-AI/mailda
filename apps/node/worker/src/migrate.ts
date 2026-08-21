@@ -30,6 +30,7 @@ import m0029 from "../migrations/0029_butler_pauses.sql";
 import m0030 from "../migrations/0030_run_ledger.sql";
 import m0031 from "../migrations/0031_butler_sponsor.sql";
 import m0032 from "../migrations/0032_teams.sql";
+import m0033 from "../migrations/0033_one_live_butler_version.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -116,6 +117,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0030_run_ledger.sql", sql: m0030 },
   { name: "0031_butler_sponsor.sql", sql: m0031 },
   { name: "0032_teams.sql", sql: m0032 },
+  { name: "0033_one_live_butler_version.sql", sql: m0033 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

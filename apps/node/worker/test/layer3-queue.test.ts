@@ -106,6 +106,37 @@ describe("two people work one queue without colliding", () => {
     expect((bo as { by: string }).by).toBe(ANA);
   });
 
+  /**
+   * Answering the same conversation twice.
+   *
+   * The predicate was `assignee IS NULL`, so re-claiming your own case changed no rows and fell through to
+   * the "lost the race" branch — which read the row, found *you* on it, and answered `held by <you>`. The
+   * reply button then refused with "Held by you since …" and offered to take it and tell them. In practice:
+   * **you could not reply twice to the same conversation.**
+   *
+   * Every test above claims a case nobody holds, which is why none of them saw it. It was found by an
+   * accessibility harness that could not get the composer open.
+   */
+  it("lets the holder claim their own case again, without moving when they claimed it", async () => {
+    const caseId = await aCase(MAILBOX, "<again@example.net>");
+    const first = await claim(testEnv, atTime(5_250_000_000_000), ORG, ANA, caseId);
+    expect(first.kind).toBe("claimed");
+
+    const again = await claim(testEnv, atTime(5_250_000_000_000 + 3_600_000), ORG, ANA, caseId);
+    expect(again.kind).toBe("claimed");
+
+    // "Since" does not move: re-opening the composer is not a new claim, and a queue whose ages reset every
+    // time somebody looks at a case cannot be used to judge staleness — which is the only thing it is for.
+    const queue = await queueFor(testEnv, createSystemCtx(), ORG, BO, MAILBOX);
+    expect(queue.find((c) => c.id === caseId)?.claimed_at)
+      .toBe(new Date(5_250_000_000_000).toISOString());
+
+    // And the widening stops at one person: somebody else's claim still collides.
+    const bo = await claim(testEnv, atTime(5_250_000_000_000 + 7_200_000), ORG, BO, caseId);
+    expect(bo.kind).toBe("held");
+    expect((bo as { by: string }).by).toBe(ANA);
+  });
+
   it("shows the age so a person can judge staleness the Node refuses to", async () => {
     const caseId = await aCase(MAILBOX, "<three@example.net>");
     await claim(testEnv, atTime(5_200_000_000_000), ORG, ANA, caseId);

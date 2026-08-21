@@ -104,11 +104,27 @@ async function caseById(env: Env, orgId: string, caseId: string): Promise<CaseRo
 }
 
 /**
- * Takes an unclaimed case. This is what the reply button calls.
+ * Takes a case that is unclaimed **or already this person's**. This is what the reply button calls.
  *
  * Gated on `send.propose` (#39): the purpose of claiming is to reply, so the authority to claim and the
  * authority to reply are the same one. A claim somebody cannot act on is work held hostage; a send without a
  * claim defeats the mechanism entirely.
+ *
+ * ## Claiming your own case is a no-op, not a refusal
+ *
+ * The predicate was `assignee IS NULL`, so re-claiming a case you already held changed no rows and fell
+ * through to the "lost the race" branch below — which then read the row, found *you* on it, and answered
+ * `held by <you>`. What a person saw was the reply button refusing with **"Held by you since …"** and
+ * offering to *take it, and they will be told*: stealing your own case and notifying yourself. In practice
+ * it meant **you could not reply twice to the same conversation**, which is most of what answering mail is.
+ *
+ * Found by an accessibility harness that could not open the composer — not by anybody reading this function,
+ * and not by its tests, which only ever claimed a case that nobody held.
+ *
+ * `assignee = ?1` widens the swap by exactly one person and no further: a case somebody *else* holds still
+ * fails the predicate and still reports who has it, which is the whole collision mechanism (#42) and is
+ * untouched. `claimed_at` and `state_at` are preserved when the row was already claimed, because re-opening
+ * the composer is not a new claim and moving "since" would make the queue's ages lie.
  */
 export async function claim(
   env: Env,
@@ -125,10 +141,16 @@ export async function claim(
 
   const at = new Date(ctx.now()).toISOString();
   const result = await env.CATALOG.prepare(
-    `UPDATE cases SET assignee = ?, claimed_at = ?, state = 'claimed', state_at = ?
-      WHERE org_id = ? AND id = ? AND assignee IS NULL AND state != 'closed'`,
+    `UPDATE cases
+        SET assignee = ?1,
+            claimed_at = COALESCE(claimed_at, ?2),
+            state = 'claimed',
+            state_at = CASE WHEN state = 'claimed' THEN state_at ELSE ?2 END
+      WHERE org_id = ?3 AND id = ?4
+        AND (assignee IS NULL OR assignee = ?1)
+        AND state != 'closed'`,
   )
-    .bind(userId, at, at, orgId, caseId)
+    .bind(userId, at, orgId, caseId)
     .run();
 
   if ((result.meta.changes ?? 0) > 0) {

@@ -354,6 +354,64 @@ describe("a published version is frozen", () => {
   });
 });
 
+describe("a Butler has one live version, and the database says so (#77)", () => {
+  /**
+   * 0027's `btv_forward_only` comment credits `btv_live` with preventing two live versions of one Butler.
+   * It could not: `btv_live` is `CREATE INDEX ... (org_id) WHERE state = 'published'` — not UNIQUE, and
+   * keyed on the organization. Only the publish transaction stood in the way, and a transaction governs
+   * only the writes that go through it, which is exactly the assumption `interpret.ts` refuses to make
+   * about a stored AST.
+   *
+   * Found by a widget sweep: publishing twice against a catalog holding two live rows produced an
+   * **unhandled D1 constraint error and a 500** instead of anything a person could act on.
+   */
+  it("refuses a second live version at the database, not just in the write path", async () => {
+    const ctx = atTime(AUGUST_20);
+    const draft = await createButlerDraft(testEnv, ctx, ORG, ADMIN, {
+      name: "sales-enquiries", source: source(),
+    });
+    const live = await publishButler(testEnv, ctx, ORG, ADMIN, draft.butlerId);
+
+    // Straight past the publish transaction, the way direct database access would.
+    await expect(testEnv.CATALOG.prepare(
+      `INSERT INTO butler_versions
+         (id, org_id, butler_id, version, state, ast_json, source_text, ast_sha256, source_sha256,
+          created_by, created_at, published_by, published_at)
+       VALUES (?,?,?,?,'published','{}','{}','x','y',?,?,?,?)`,
+    ).bind("btv_second_live", ORG, draft.butlerId, 99, ADMIN,
+      new Date(AUGUST_20).toISOString(), ADMIN, new Date(AUGUST_20).toISOString()).run())
+      .rejects.toThrow(/UNIQUE/);
+
+    // The one that was there is untouched.
+    expect((await versionRow(live.versionId))?.state).toBe("published");
+  });
+
+  /**
+   * Three publications, because the existing sequence test stops at two and an off-by-one that only bites
+   * on the third would pass it: with two versions, "live + 1" and "count + 1" agree.
+   */
+  it("keeps numbering past the second version, over a growing history", async () => {
+    const ctx = atTime(AUGUST_20);
+    const draft = await createButlerDraft(testEnv, ctx, ORG, ADMIN, {
+      name: "sales-enquiries", source: source(),
+    });
+    await publishButler(testEnv, ctx, ORG, ADMIN, draft.butlerId);
+
+    await editButlerDraft(testEnv, ctx, ORG, ADMIN, draft.butlerId, {
+      source: source(leadIntake({ metadata: { name: "sales-enquiries", owner: "team:sales-two" } })),
+    });
+    const second = await publishButler(testEnv, ctx, ORG, ADMIN, draft.butlerId);
+    expect(second.version).toBe(2);
+    expect(second.supersededVersionId).not.toBeNull();
+
+    await editButlerDraft(testEnv, ctx, ORG, ADMIN, draft.butlerId, {
+      source: source(leadIntake({ metadata: { name: "sales-enquiries", owner: "team:sales-three" } })),
+    });
+    // v1 is superseded and no longer live, so a live-only reading would compute 2 again and collide.
+    expect((await publishButler(testEnv, ctx, ORG, ADMIN, draft.butlerId)).version).toBe(3);
+  });
+});
+
 describe("a publish that changes nothing is refused", () => {
   it("refuses a draft byte-identical to the published version", async () => {
     const ctx = atTime(AUGUST_20);

@@ -289,6 +289,17 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
   reads as a clean accessibility run over an unaudited page. `pnpm axe` therefore runs under
   `--experimental-strip-types` so a `.mjs` script can import the `.ts` list.
 
+**Audited on 21 August 2026**, against a seeded local Node with content on every screen: 7 routes × 2 themes,
+**0 AA violations, 0 advisories**. It found one thing on the way — `empty-table-header` over the Butler
+screen's action column — which is exactly the class of defect this check exists for and would have shipped
+otherwise. The house rule that every `<th>` carries `scope="col"` came from the same pass.
+
+**What axe still does not see is interaction state.** It visits each route and audits what renders on load,
+so the composer dock, the Butler editor and the resume form — the largest interactive surfaces here — are
+never in the DOM when it looks. Those were audited separately and are clean, but by a throwaway script rather
+than by anything that runs again. Wiring opened states into `scripts/axe.mjs` is the obvious next move and is
+not done.
+
 It runs the WCAG tags as the gate and **best-practice rules as advisories**, because the gate provably
 misses things: the duplicate `main` landmark this shell shipped is `landmark-one-main`, which is tagged
 `best-practice` and so invisible to an AA-only run. On the first advisory run it immediately found that the

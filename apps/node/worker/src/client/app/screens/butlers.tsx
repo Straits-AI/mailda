@@ -176,7 +176,15 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
       <table>
         <caption className="dim">Versions — publication is the versioning event, and a published one is frozen</caption>
         <thead>
-          <tr><th>version</th><th>state</th><th>published</th><th>by</th><th>ast sha256</th></tr>
+          {/* `scope="col"` on every header, as the ledgers do: it is what tells a screen reader which
+              header announces a cell, and a table this wide is unreadable without it. */}
+          <tr>
+            <th scope="col">Version</th>
+            <th scope="col">State</th>
+            <th scope="col">Published</th>
+            <th scope="col">By</th>
+            <th scope="col">AST sha256</th>
+          </tr>
         </thead>
         <tbody>
           {versions.map((row) => (
@@ -203,7 +211,7 @@ function Paused({ butler }: { butler: ButlerRow }) {
 
   async function resume() {
     setProblem(null);
-    const outcome = await resumeButler(butler.id, reason);
+    const outcome = await resumeButler(butler.pause!.pauseId, reason);
     if (!outcome.ok) { setProblem(outcome.message); return; }
     setReason("");
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
@@ -214,7 +222,7 @@ function Paused({ butler }: { butler: ButlerRow }) {
       {/* The detector's own sentence. Somebody deciding whether to re-arm a Butler needs what it counted,
           not the word "paused". */}
       <p>{butler.pause.detail}</p>
-      <p className="dim mono">placed by {butler.pause.trippedBy} · {when(butler.pause.at)}</p>
+      <p className="dim mono">placed by {butler.pause.trippedBy} · {when(butler.pause.placedAt)}</p>
       <label className="field-row" htmlFor={`resume-${butler.id}`}>
         <span>why is it safe to resume?</span>
         <input
@@ -240,8 +248,13 @@ function Runs({ runs }: { runs: ButlerRunRow[] }) {
       <table>
         <thead>
           <tr>
-            <th>started</th><th>state</th><th>why it ended</th>
-            <th>nodes</th><th>effects</th><th>refusals</th><th>spent</th>
+            <th scope="col">Started</th>
+            <th scope="col">State</th>
+            <th scope="col">Why it ended</th>
+            <th scope="col" className="num">Nodes</th>
+            <th scope="col" className="num">Effects</th>
+            <th scope="col" className="num">Refusals</th>
+            <th scope="col" className="num">Spent</th>
           </tr>
         </thead>
         <tbody>
@@ -320,7 +333,18 @@ export function Butlers() {
         <div className="scroller">
           <table>
             <thead>
-              <tr><th>name</th><th>standing</th><th>published</th><th>draft</th><th /></tr>
+              {/*
+                The last column is named rather than left as `<th />`. axe's `empty-table-header` caught it
+                on this screen's first audit, and the rule is right: an unnamed header makes the cell under
+                it announce with nothing, so the "open" control belongs to no column a reader can hear.
+              */}
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Standing</th>
+                <th scope="col">Published</th>
+                <th scope="col">Draft</th>
+                <th scope="col">Editor</th>
+              </tr>
             </thead>
             <tbody>
               {rows.map((row) => (

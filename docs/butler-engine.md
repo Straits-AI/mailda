@@ -495,6 +495,29 @@ and *"this Butler is running"* are different facts. A list showing only the firs
 pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker stopped. It calls the
 same `pausesInForce` the trigger consults, so the list and the gate cannot disagree.
 
+### One live version, enforced (0033)
+
+0027's `btv_forward_only` comment credits `btv_live` with preventing two live versions of one Butler.
+`btv_live` is `CREATE INDEX ... (org_id) WHERE state = 'published'` — not UNIQUE, and keyed on the
+organization. It prevented nothing. Only the publish transaction did, and a transaction governs only the
+writes that go through it, which is exactly the assumption `interpret.ts` refuses to make about a stored AST.
+
+What it cost, observed: with a published v1 beside a published v2, `publishButler` read the live version with
+`LIMIT 1` and no `ORDER BY`, got v1, computed `1 + 1`, and hit `btv_version` — surfacing as an **unhandled D1
+constraint error and a 500**, not a refusal. The same two rows would make `triggerButlers` pick a program by
+row order, which is worse because it is silent.
+
+`btv_one_live` is the partial unique index that makes the claim true, in the shape `btv_one_draft` already
+uses. The migration repairs before it indexes — a unique index over dirty data is a Node that cannot migrate —
+and repairs to the lifecycle's own rule: the newest publication is the live one, older published rows become
+`superseded` with `superseded_at` set to their own `published_at`, because "when did this stop being live" is
+answered by when its successor arrived.
+
+`MAX(version) + 1` was written and then removed rather than kept as belt-and-braces, which is worth recording:
+with `btv_one_live` there can be no live version that is not the highest, so no test could tell the two forms
+apart, and it costs a D1 round trip on every publish. One enforcement in the right place beats two, one of
+which nothing can check.
+
 `GET /api/butlers/:id` carries `source_text` for the **draft and the live version**, and nothing else.
 
 The first cut of this said "the draft alone", and opening the screen showed why that was wrong: a Butler with

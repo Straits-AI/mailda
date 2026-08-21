@@ -419,7 +419,23 @@ export interface ButlerRow {
   published_at: string | null;
   /** The unpublished working copy, if there is one. At most one per Butler, by partial unique index. */
   draft_version_id: string | null;
-  pause: { reason: string; detail: string; trippedBy: string; at: string } | null;
+  /**
+   * The pause in force, exactly as `pausesInForce` returns it.
+   *
+   * Spelled out field by field rather than approximated, because approximating it shipped two defects at
+   * once: `at` did not exist (the field is `placedAt`, so the panel rendered an invalid date), and the
+   * resume act was handed `butler.id` when the route takes `pauseId` — so the button answered 404 every
+   * time. Neither was visible in a screenshot; both were found by clicking it.
+   */
+  pause: {
+    pauseId: string;
+    butlerId: string;
+    butlerName: string;
+    reason: string;
+    detail: string;
+    trippedBy: string;
+    placedAt: string;
+  } | null;
 }
 
 export interface ButlerVersionRow {
@@ -522,7 +538,8 @@ export const publishButlerVersion = (id: string) =>
     `/api/butlers/${encodeURIComponent(id)}/publish`, "POST",
   );
 
-export const resumeButler = (butlerId: string, reason: string) =>
+/** Takes the **pause** id, not the Butler's: one Butler can have been paused more than once over time. */
+export const resumeButler = (pauseId: string, reason: string) =>
   butlerAct<{ resumed: unknown }>(
-    `/api/butler-pauses/${encodeURIComponent(butlerId)}/resume`, "POST", { reason },
+    `/api/butler-pauses/${encodeURIComponent(pauseId)}/resume`, "POST", { reason },
   );

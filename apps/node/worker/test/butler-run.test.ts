@@ -1317,12 +1317,52 @@ describe("the rest of the shipped node set", () => {
       .bind(delivery.caseId).first<{ assignee: string; state: string }>();
     expect(assigned).toEqual({ assignee: RESPONDER, state: "claimed" });
 
-    // A second delivery, whose case is already held: refused, named, and the run carries on.
+    /*
+     * A second delivery, whose case **somebody else** already holds: refused, named, and the run carries on.
+     *
+     * This used to have `RESPONDER` hold it — the same person the Butler then assigned it to — and called
+     * the refusal `case_held`. That was the scenario the name claims tested by a different one: a case held
+     * by the person you are giving it to is not a conflict, it is already done. `claim` refused it only
+     * because its predicate was `assignee IS NULL`, which is the same defect that stopped a person replying
+     * twice to one conversation. With that fixed the old assertion inverted, which is how it was found.
+     *
+     * `APPROVER_A` holds it now, so the collision is real and the guarantee this test exists for — a Butler
+     * cannot take a case out of somebody's hands — is the thing being asserted.
+     */
     const second = await aDelivery(ctx, "Another");
-    await claim(testEnv, ctx, ORG, RESPONDER, second.caseId);
+    await grantTo(ctx, APPROVER_A, "send.propose");
+    expect((await claim(testEnv, ctx, ORG, APPROVER_A, second.caseId)).kind).toBe("claimed");
     const held = await run(ids, second, inlineSteps(), T0 + 2000);
     expect(held.effects.map((effect) => [effect.nodeType, effect.outcome, effect.reason]))
       .toEqual([["case.assign", "refused", "case_held"]]);
+    // And it is still theirs afterwards.
+    expect((await testEnv.CATALOG.prepare("SELECT assignee FROM cases WHERE id = ?")
+      .bind(second.caseId).first<{ assignee: string }>())?.assignee).toBe(APPROVER_A);
+  });
+
+  /**
+   * The other half of the same distinction, which nothing asserted before.
+   *
+   * Re-assigning a case to whoever already holds it is a **no-op that succeeded**, not a collision. A Butler
+   * that ran twice over one delivery — a replay, a retry — must not report its own previous work as a
+   * refusal, because `refusals` is a count an operator reads as "something did not happen".
+   */
+  it("assigns a case to the person already holding it without calling it a conflict", async () => {
+    const ctx = atTime(T0);
+    const withTransform = [
+      { id: "pick", type: "transform", as: "target", value: RESPONDER, next: "assign" },
+      { id: "assign", type: "case.assign", caseId: "${event.case_id}", assignee: "${steps.target}", next: null },
+    ];
+    const ids = await published(ctx, "triage-again", withTransform, "pick");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, RESPONDER, "send.propose");
+    const delivery = await aDelivery(ctx);
+    await claim(testEnv, ctx, ORG, RESPONDER, delivery.caseId);
+
+    const outcome = await run(ids, delivery, inlineSteps());
+    expect(outcome.effects.map((effect) => [effect.nodeType, effect.outcome, effect.reason]))
+      .toEqual([["case.assign", "ok", null]]);
+    expect(outcome.effects.filter((effect) => effect.outcome === "refused")).toHaveLength(0);
   });
 
   it("refuses a case in a mailbox the Butler holds nothing on, without saying which it was", async () => {
