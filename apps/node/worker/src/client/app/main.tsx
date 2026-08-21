@@ -12,6 +12,7 @@ import { APP_ROUTES } from "../../app-routes.ts";
 import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
+import { Butlers } from "./screens/butlers.tsx";
 import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
 
 /**
@@ -63,6 +64,7 @@ const rootRoute = createRootRoute({
 const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
   "/": Inbox,
   "/queue": Queue,
+  "/butlers": Butlers,
   "/outbox": Outbox,
   "/audit": Audit,
   "/log": Log,

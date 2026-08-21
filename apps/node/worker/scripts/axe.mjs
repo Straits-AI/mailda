@@ -42,14 +42,25 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
+import { APP_ROUTES } from "../src/app-routes.ts";
 
 const require = createRequire(import.meta.url);
 const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
 const origin = process.argv[2] ?? "http://127.0.0.1:8787";
-/** Kept in step with `src/app-routes.ts` by hand — five paths, and a missing one shows up as a screen
- *  nobody checked rather than as a wrong answer. */
-const ROUTES = ["/", "/queue", "/outbox", "/audit", "/log", "/doctor"];
+/*
+ * **Imported, not copied.** This was a hand-maintained list whose own comment said it was "kept in step with
+ * `src/app-routes.ts` by hand — five paths" while holding six, so it had already drifted before anybody
+ * noticed. That is the exact failure `app-routes.ts` opens by naming — *"in one place because two places
+ * would drift"* — and it is worse here than elsewhere: a route missing from this list is not a wrong answer,
+ * it is **a screen nobody checked**, which reads as a clean accessibility run over an unaudited page. The
+ * same shape as #71's binding allowlists and the cost meter's hand-kept list.
+ *
+ * Importing a `.ts` from a `.mjs` is why `pnpm axe` runs with `--experimental-strip-types`. `app-routes.ts`
+ * imports nothing and holds one array and one predicate, so there is no bundle to build to read it.
+ */
+
+const ROUTES = APP_ROUTES;
 const THEMES = /** @type {const} */ (["dark", "light"]);
 /** The gate. ADR 30 names WCAG 2.2 AA, and only these can fail the run. */
 const AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];

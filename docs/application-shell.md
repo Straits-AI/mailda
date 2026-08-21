@@ -58,6 +58,31 @@ every recipient bounced rendered as green `handed over`. `test/node/delivery-sum
 `session.client.js` is external for a different reason: it holds the token lifecycle in module scope, so a
 bundled copy would put two refresh timers on a page that also loads the framework-free script.
 
+## Starting a message (#79)
+
+Every outbound path this product had ran through **somebody else having written first**. The composer was
+reachable only from a message's reply button, and `replyContext` was its one caller.
+
+The composer itself was never the obstacle — `inReplyToMessageId` has always been optional and it renders
+"New message" in two places. What was missing was a caller that left it out. `newMessageContext(mailboxId)`
+is that caller, and it is three fields shorter on purpose: no `to`, no `subject`, no `body`. `replyContext`
+derives all three from the message being answered, and a composer that opens pre-addressed to a guess is
+how a message goes to the wrong person.
+
+It also claims **no case**, which is the substantive difference rather than an omission. Reply claims the
+case in the same act (#42) because two people answering one correspondent is the collision that matters. A
+message nobody sent has no case to claim and no collision to lose.
+
+The mailbox is **chosen, never inferred**: From is the mailbox (ADR 36) and `send.propose` is held per
+mailbox, so which one this goes from is a decision with a governance consequence. `useMailboxes` already
+returns exactly the mailboxes the caller holds `send.propose` on, so the options need no separate authority
+check and cannot offer one they may not use. Nothing renders when they hold none.
+
+The control lives in the heading, which precedes every branch of the screen — so it is present while the
+inbox is loading, when it is full, and, most importantly, when it is **empty**. That screen says "Nothing
+has arrived yet — send one to an address routed here", which until now was advice the product could not
+take: a fresh Node could receive before it could speak.
+
 ## The composer's From selector, and why the words live outside React
 
 A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1` — the
@@ -221,6 +246,30 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
+Seven routes now: `/`, `/queue`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+
+### `/butlers` (#78)
+
+The whole Layer 5 engine — interpreter, checker, run ledger, pause machinery, replay — shipped with **no
+interface whatsoever**; `grep -ric butler src/client/app/` returned 0. The observation API was already
+built and already careful, and nothing called it: `inspectRun` gates fact disclosure on `mayReadMetadata`
+and classifies every fact as content or operational (#53), an access decision written for a screen that did
+not exist, while `doctor` reported a paused Butler and gave an operator nowhere to look.
+
+The screen carries both halves, because *"why did it do that"* is answered by the program and the run
+together and splitting them would make the common diagnosis a two-screen navigation:
+
+- **Author** — the list, the draft source, save and publish. Findings come back from the route and are
+  shown verbatim. The browser deliberately does **not** validate: `checkButler` runs on the Node, and a
+  second copy here would be a second opinion about what publishes.
+- **Observe** — recent runs with state, the reason they ended, nodes, effects, refusals and spend; the
+  pauses in force, each with the detector's own sentence and a resume that requires a written reason.
+
+Three things it refuses to do, each one a decision made elsewhere that a screen could quietly undo: it does
+not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and
+it does not hide the rail link from non-administrators — the screen answers 404 by §5C, and a hidden link
+would be a second, weaker copy of that authority decision living in the navigation.
+
 ## Accessibility
 
 ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither replaces:
@@ -233,6 +282,12 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
 - **Structure and ARIA are checked by axe**, manually, via `pnpm --filter @mailda/worker run axe`. It runs
   every route in both themes, signs in with `MAILDA_AXE_EMAIL` / `MAILDA_AXE_PASSWORD`, and refuses to
   report a run as clean when it checked nothing.
+
+  It **imports `APP_ROUTES`** rather than keeping its own list, and that changed because the copy had
+  already drifted: its comment read "kept in step with `src/app-routes.ts` by hand — five paths" above an
+  array of six. A route missing from that list is not a wrong answer, it is a screen nobody checked, which
+  reads as a clean accessibility run over an unaudited page. `pnpm axe` therefore runs under
+  `--experimental-strip-types` so a `.mjs` script can import the `.ts` list.
 
 It runs the WCAG tags as the gate and **best-practice rules as advisories**, because the gate provably
 misses things: the duplicate `main` landmark this shell shipped is `landmark-one-main`, which is tagged

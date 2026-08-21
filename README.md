@@ -1316,6 +1316,16 @@ nowhere else, so every effect-free run had been closing with its `INSERT` defaul
 operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
 ([receipt](./docs/receipts/butler-run-cost.md))
 
+**A layer can be complete and unreachable.** Trying to publish one Butler through the product
+found there was no way to: the interpreter, the checker, the run ledger, the pause machinery and
+replay were all built and tested, and `createButlerDraft`, `editButlerDraft` and `publishButler`
+had no HTTP route at all. `grep -ric butler src/client/app/` returned **0** — the whole layer was
+invisible in the interface, including an `inspectRun` that redacts run facts by content
+classification for a screen that did not exist. The same shape in miniature: the composer had
+rendered "New message" in two places since it was written and no caller ever omitted the
+`inReplyToMessageId`, so every outbound path in a mail product ran through somebody else having
+written first. Tests pass on unreachable code. Now tracked as #77, #78 and #79, and built.
+
 **The second thing that test found was worse: the mail did not leave.** Driving one real message
 from one mailbox to another — seal, hand over, receive, trigger a Butler — surfaced a sealed send
 sitting `held` with `attempts = 0` long after its hold window closed. `OutboxSweeper`'s alarm

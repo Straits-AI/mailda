@@ -453,6 +453,53 @@ The trigger's cost is charged to the **sweeper's** invocation, never to a run's 
 
 ---
 
+## Writing one: the authoring surface (#77)
+
+For most of this layer's life a Butler could not be created through the product. `createButlerDraft`,
+`editButlerDraft` and `publishButler` were written, tested and **unreachable** — nothing in the request path
+imported them:
+
+```
+$ grep -c "createButlerDraft\|editButlerDraft\|publishButler" apps/node/worker/src/index.ts
+0
+```
+
+That inverted this layer's central decision. #49 made publication the versioning event with **no deploy
+anywhere in that lifecycle**, which is what one generic `ButlerRun` class is *for*: a Butler is runtime data
+so publishing one needs no deploy. With no route, publishing needed direct database access — which is
+stricter than a deploy, available to fewer people, and precisely the edit `interpret.ts` re-checks against in
+its own header: *"a stored AST is still data, and data can be edited by somebody with direct database
+access."* The defence existed and the front door did not.
+
+Five routes:
+
+| route | act |
+|:--|:--|
+| `POST /api/butlers` | create a Butler and its first draft |
+| `PUT /api/butlers/:id/draft` | replace the draft's source |
+| `POST /api/butlers/:id/publish` | promote the draft to a version |
+| `GET /api/butlers` | every Butler, its live version, and any pause in force |
+| `GET /api/butlers/:id` | the version history |
+
+**The three writes do not check authority**, deliberately. All three functions call `isAdmin` themselves and
+throw `E_NOT_AN_ADMINISTRATOR`; a check in the route as well would be a second opinion about who may author.
+The two reads *do* gate, and answer **404 rather than 403** — §5C, and the same answer `/api/policies` gives:
+a 403 on the list would confirm that this organization automates something.
+
+`publishButler` records `published_by`, which is the sponsor whose live authority caps the version (#51), so
+the route's principal is load-bearing rather than decorative. A publish with no principal would leave a
+published version capped against nobody.
+
+The list joins the pause in rather than leaving it to a second request, because *"this Butler is published"*
+and *"this Butler is running"* are different facts. A list showing only the first would be the enablement
+pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker stopped. It calls the
+same `pausesInForce` the trigger consults, so the list and the gate cannot disagree.
+
+`GET /api/butlers/:id` carries `source_text` for the **draft alone**. A published version's body is immutable
+and already named by `source_sha256`, so shipping every historical body would make the response grow with the
+number of times somebody edited a Butler — and a list endpoint that returns every version of every program is
+an export under another name.
+
 ## The run record, and the ledger seam
 
 `butler_runs` (one row per run) and `butler_run_effects` (one row per effect, and per refusal). Migration

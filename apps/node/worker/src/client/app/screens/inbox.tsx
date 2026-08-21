@@ -3,7 +3,7 @@ import { useState } from "react";
 import { apiFetch } from "/app/session.js";
 
 import { Nothing } from "../chrome.tsx";
-import { type MessageRow, claimCase, stealCase, useMessages } from "../api.ts";
+import { type MessageRow, claimCase, stealCase, useMailboxes, useMessages } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
 /**
@@ -106,6 +106,75 @@ function replyContext(message: MessageRow, mailboxId: string): ComposerContext {
   };
 }
 
+/**
+ * A message nobody prompted (#79).
+ *
+ * The composer has rendered "New message" in two places since it was written and `inReplyToMessageId` has
+ * always been optional — what was missing was any caller that left it out, so every outbound path the product
+ * had ran through somebody else having written first. This is that caller, and it is four fields short of
+ * `replyContext` on purpose:
+ *
+ * **No `to`.** A composer that opens pre-addressed to anything is how a message goes to the wrong person, and
+ * there is no candidate here that is not a guess. **No `subject`** and **no `body`** for the same reason —
+ * `replyContext` derives all three from the message being answered, and there is no such message.
+ *
+ * **No case, either**, and that is the substantive difference rather than an omission. Reply claims the case
+ * in the same act (#42) because two people answering one correspondent is the collision that matters. A
+ * message nobody sent has no case to claim and no collision to lose: the mailbox is a place to send *from*,
+ * not a conversation somebody else might already be holding.
+ */
+function newMessageContext(mailboxId: string): ComposerContext {
+  return { mailboxId };
+}
+
+/**
+ * The control that starts one, and the mailbox it will be sent from.
+ *
+ * The mailbox is **chosen, never inferred**. `From` is the mailbox (ADR 36) and `send.propose` is held per
+ * mailbox, so which one this goes from is a real decision with a governance consequence — picking the first
+ * row for somebody would put their name on an address they did not choose. `useMailboxes` already returns
+ * exactly the mailboxes the caller holds `send.propose` on, so the options need no separate authority check
+ * and cannot offer one they may not use.
+ *
+ * Nothing renders when they hold none: a button that can only fail is worse than no button.
+ */
+function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
+  const mailboxes = useMailboxes();
+  const rows = mailboxes.data?.mailboxes ?? [];
+  const [from, setFrom] = useState<string | null>(null);
+  if (rows.length === 0) return null;
+  const chosen = from ?? rows[0]!.id;
+
+  return (
+    <p className="new-message">
+      {rows.length === 1 ? null : (
+        <>
+          <label htmlFor="new-message-from" className="dim">from</label>
+          {" "}
+          <select
+            id="new-message-from"
+            value={chosen}
+            onChange={(event) => setFrom(event.target.value)}
+          >
+            {rows.map((row) => (
+              // The address, not only the name: two mailboxes can be called Support and what a recipient
+              // sees is the address. `addresses` is NULL when a mailbox has none, and `sealManifest` refuses
+              // that mailbox — so it is shown as such rather than silently looking sendable.
+              <option key={row.id} value={row.id}>
+                {row.name}{row.addresses === null ? " (no address)" : ` · ${row.addresses.split(",")[0]!}`}
+              </option>
+            ))}
+          </select>
+          {" "}
+        </>
+      )}
+      <button type="button" className="primary" onClick={() => onStart(chosen)}>
+        new message
+      </button>
+    </p>
+  );
+}
+
 function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () => void }) {
   return (
     <article className="reading-pane" aria-label="Message">
@@ -184,16 +253,37 @@ export function Inbox() {
   // style: with it inside the branches, a loading or empty inbox was a screen with no level-one heading —
   // which the advisory axe run caught on the first pass. A screen's name should not depend on whether its
   // data arrived.
+  /*
+   * `StartMessage` lives in the heading, which is rendered before every branch below — so it is present
+   * while the inbox is loading, when it is empty, and when it is full.
+   *
+   * The empty case is the one that matters and the reason it is here rather than beside the reading pane.
+   * That screen currently says "Nothing has arrived yet — send one to an address routed here", which until
+   * now was advice the product could not take: a Node with no mail had no way to send any. A fresh install
+   * could receive before it could speak.
+   */
   const heading = (
     <header className="ledger-head">
       <h1>Inbox</h1>
+      <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
       {messages.isSuccess ? <p className="dim mono">{messages.data.messages.length} messages</p> : null}
     </header>
   );
 
-  if (messages.isPending) return <>{heading}<Nothing kind="loading" /></>;
+  /*
+   * Rendered in **every** branch, not only the populated one.
+   *
+   * `StartMessage` sits in the heading and the heading precedes all four returns, so a composer mounted only
+   * beside the reading pane would let somebody open one on an empty inbox and watch nothing happen — state
+   * set, no dock. That is the failure mode of putting a new entry point on a screen written around a list.
+   */
+  const composer = composing === null
+    ? null
+    : <Composer context={composing} onClose={() => setComposing(null)} />;
+
+  if (messages.isPending) return <>{heading}<Nothing kind="loading" />{composer}</>;
   if (messages.isError) {
-    return <>{heading}<Nothing kind="failed" detail={messages.error.message} /></>;
+    return <>{heading}<Nothing kind="failed" detail={messages.error.message} />{composer}</>;
   }
 
   const rows = messages.data.messages;
@@ -205,6 +295,7 @@ export function Inbox() {
           kind="empty"
           detail="This Node is claimed and routing is live. Nothing has arrived yet — send one to an address routed here."
         />
+        {composer}
       </>
     );
   }
@@ -271,9 +362,7 @@ export function Inbox() {
           )}
         </p>
       )}
-      {composing === null ? null : (
-        <Composer context={composing} onClose={() => setComposing(null)} />
-      )}
+      {composer}
     </div>
     </>
   );

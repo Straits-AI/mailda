@@ -202,6 +202,18 @@ export function Rail() {
       </p>
       <ul className="rail-list" aria-labelledby="rail-ledgers">
         <li>
+          {/*
+            Butlers sits with the ledgers rather than the mailboxes, and the placement is the claim: a
+            Butler is not a place mail lands, it is a standing account of what this Node does without a
+            person. The screen is refused to anybody without `org.admin` (§5C, as a 404), so the link is
+            shown to everyone and the answer is given by the screen — hiding it would be a second, weaker
+            copy of the authority decision, in the navigation, where it cannot be enforced.
+          */}
+          <Link to="/butlers" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">Butlers</span>
+          </Link>
+        </li>
+        <li>
           <Link to="/outbox" className="rail-row" activeProps={{ className: "rail-row current" }}>
             <span className="rail-name">Outbox</span>
             {sends.isSuccess ? <span className="mono num">{sends.data.sends.length}</span> : null}

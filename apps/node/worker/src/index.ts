@@ -55,6 +55,7 @@ import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
 import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { inspectRun, replayRun } from "./butler/replay.ts";
+import { createButlerDraft, editButlerDraft, publishButler } from "./butlers.ts";
 import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
@@ -1532,6 +1533,129 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const limit = Number(url.searchParams.get("limit") ?? "25");
       return Response.json({ runs: await recentRuns(env, who.orgId, Number.isFinite(limit) ? limit : 25) });
+    }
+
+    /* ---------------------------------------------------------- authoring a Butler (#77) ------------- */
+
+    /**
+     * Writing a Butler, which until now could only be done with direct database access.
+     *
+     * `createButlerDraft`, `editButlerDraft` and `publishButler` were built, tested and unreachable — nothing
+     * in the request path imported them. That inverted #49's central decision: a Butler is **runtime data**
+     * precisely so publishing one needs no deploy, and with no route the only way to publish was to insert
+     * `butler_versions` rows by hand. Which is the edit `interpret.ts` re-checks against, in its own words:
+     * *"a stored AST is still data, and data can be edited by somebody with direct database access."* The
+     * defence existed; the front door did not.
+     *
+     * **None of these four re-decides authority**, and that is deliberate rather than an omission. All three
+     * functions call `isAdmin` themselves and throw `E_NOT_AN_ADMINISTRATOR` — a check here as well would be
+     * a second opinion about who may author, which is exactly the correspondence problem this repository keeps
+     * paying for. The reads below do gate, because they answer rather than act, and §5C makes a refused read
+     * indistinguishable from an absent one.
+     */
+    if (url.pathname === "/api/butlers" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        butler: await createButlerDraft(env, clock, who.orgId, who.userId, {
+          name: String(body.name ?? ""),
+          source: String(body.source ?? ""),
+        }),
+      });
+    }
+
+    const butlerDraft = /^\/api\/butlers\/([^/]+)\/draft$/.exec(url.pathname);
+    if (butlerDraft && request.method === "PUT") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        butler: await editButlerDraft(env, clock, who.orgId, who.userId, butlerDraft[1]!, {
+          source: String(body.source ?? ""),
+        }),
+      });
+    }
+
+    const butlerPublish = /^\/api\/butlers\/([^/]+)\/publish$/.exec(url.pathname);
+    if (butlerPublish && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({
+        published: await publishButler(env, clock, who.orgId, who.userId, butlerPublish[1]!),
+      });
+    }
+
+    /**
+     * Every Butler, with the version that is live and whether a machine has stopped it.
+     *
+     * The pause is joined in rather than left to a second request, because *"this Butler is published"* and
+     * *"this Butler is running"* are different facts and a list that showed only the first would be the
+     * enablement pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker
+     * stopped. `pausesInForce` is the same function `triggerButlers` consults, so the list and the gate
+     * cannot disagree.
+     */
+    if (url.pathname === "/api/butlers" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        // §5C, and the same answer `/api/policies` gives: a 403 would confirm that Butlers exist here.
+        return Response.json(
+          { error: "not_found", message: "No Butlers, or you do not have access to them." },
+          { status: 404 },
+        );
+      }
+      const { results } = await env.CATALOG.prepare(
+        `SELECT b.id, b.name, b.created_at,
+                live.id AS live_version_id, live.version AS live_version, live.published_at,
+                draft.id AS draft_version_id
+           FROM butlers b
+           LEFT JOIN butler_versions live
+             ON live.butler_id = b.id AND live.org_id = b.org_id AND live.state = 'published'
+           LEFT JOIN butler_versions draft
+             ON draft.butler_id = b.id AND draft.org_id = b.org_id AND draft.state = 'draft'
+          WHERE b.org_id = ?
+          ORDER BY b.name`,
+      ).bind(who.orgId).all<Record<string, unknown>>();
+      // `butlerPausesInForce`, not `pausesInForce` — the latter is `breakers.ts`'s **domain** pause and is
+      // already imported under its own name in this file. Two pause concepts, one spelling.
+      const paused = await butlerPausesInForce(env, who.orgId);
+      const byButler = new Map(paused.map((row) => [row.butlerId, row]));
+      return Response.json({
+        butlers: results.map((row) => ({ ...row, pause: byButler.get(String(row.id)) ?? null })),
+      });
+    }
+
+    /**
+     * One Butler's version history.
+     *
+     * `source_text` travels for the **draft only**. A published version's source is immutable and already
+     * identified by `source_sha256`, so shipping every historical body would make a list response grow with
+     * the number of times somebody edited a Butler — and the one body an author is about to act on is the
+     * draft. Reading an older version's source is a separate question, and answering it here by accident is
+     * how a list endpoint becomes an export.
+     */
+    const oneButler = /^\/api\/butlers\/([^/]+)$/.exec(url.pathname);
+    if (oneButler && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const butler = await env.CATALOG.prepare(
+        "SELECT id, name, created_at FROM butlers WHERE org_id = ? AND id = ?",
+      ).bind(who.orgId, oneButler[1]!).first<Record<string, unknown>>();
+      // A Butler in another organization and one that never existed answer identically (§5C).
+      if (butler === null) return Response.json({ error: "not_found" }, { status: 404 });
+      const { results } = await env.CATALOG.prepare(
+        `SELECT id, version, state, ast_sha256, source_sha256, created_by, created_at,
+                published_by, published_at, superseded_at,
+                CASE WHEN state = 'draft' THEN source_text ELSE NULL END AS source_text
+           FROM butler_versions
+          WHERE org_id = ? AND butler_id = ?
+          ORDER BY COALESCE(version, 2147483647) DESC, created_at DESC`,
+      ).bind(who.orgId, oneButler[1]!).all<Record<string, unknown>>();
+      return Response.json({ butler, versions: results });
     }
 
     /**

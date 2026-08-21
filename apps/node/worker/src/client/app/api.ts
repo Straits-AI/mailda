@@ -400,3 +400,129 @@ export async function mergeConversations(
     message: String(body?.reason ?? body?.message ?? `This Node answered ${response.status}.`),
   };
 }
+
+/* ------------------------------------------------------------------ Layer 5: Butlers (#78) --------- */
+
+/**
+ * A Butler, as the list reports it.
+ *
+ * `live_version` and `pause` are separate fields because they are separate facts, and the pair is the whole
+ * reason this row is shaped this way: a Butler can be **published and stopped**. Reporting only the first
+ * would be the enablement pointer #66 rejected, which conflates *not deployed* with *stopped by a breaker*.
+ */
+export interface ButlerRow {
+  id: string;
+  name: string;
+  created_at: string;
+  live_version_id: string | null;
+  live_version: number | null;
+  published_at: string | null;
+  /** The unpublished working copy, if there is one. At most one per Butler, by partial unique index. */
+  draft_version_id: string | null;
+  pause: { reason: string; detail: string; trippedBy: string; at: string } | null;
+}
+
+export interface ButlerVersionRow {
+  id: string;
+  version: number | null;
+  state: string;
+  ast_sha256: string;
+  source_sha256: string;
+  created_by: string;
+  created_at: string;
+  published_by: string | null;
+  published_at: string | null;
+  superseded_at: string | null;
+  /** Present for the draft alone — a published version's body is immutable and named by its digest. */
+  source_text: string | null;
+}
+
+export interface ButlerRunRow {
+  id: string;
+  butler_id: string;
+  version_id: string;
+  trigger_event: string;
+  trigger_key: string;
+  state: string;
+  outcome_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+  nodes_executed: number;
+  effects: number;
+  refusals: number;
+  subrequests_spent: number;
+  replay_of: string | null;
+  replayed_by: string | null;
+}
+
+export function useButlers(): UseQueryResult<{ butlers: ButlerRow[] }, Error> {
+  return useQuery({
+    queryKey: ["butlers"],
+    queryFn: () => read<{ butlers: ButlerRow[] }>("/api/butlers"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useButler(id: string | null): UseQueryResult<
+  { butler: { id: string; name: string }; versions: ButlerVersionRow[] }, Error
+> {
+  return useQuery({
+    queryKey: ["butler", id],
+    queryFn: () => read<{ butler: { id: string; name: string }; versions: ButlerVersionRow[] }>(
+      `/api/butlers/${encodeURIComponent(id!)}`,
+    ),
+    enabled: id !== null,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useButlerRuns(): UseQueryResult<{ runs: ButlerRunRow[] }, Error> {
+  return useQuery({
+    queryKey: ["butler-runs"],
+    queryFn: () => read<{ runs: ButlerRunRow[] }>("/api/butler-runs"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * The four acts, sharing one refusal shape.
+ *
+ * Every one of them can be refused for a reason the caller needs to read verbatim: the checker's findings,
+ * `E_NOT_AN_ADMINISTRATOR`, a publish with nothing to publish. `describeFindings` writes those sentences and
+ * paraphrasing them here would drop the half that says what to do — the same rule `setResponseTarget` follows.
+ */
+async function butlerAct<T>(
+  path: string,
+  method: "POST" | "PUT",
+  body?: unknown,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  const response = await apiFetch(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, value: parsed as T };
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const createButler = (name: string, source: string) =>
+  butlerAct<{ butler: { butlerId: string } }>("/api/butlers", "POST", { name, source });
+
+export const saveButlerDraft = (id: string, source: string) =>
+  butlerAct<{ butler: { versionId: string } }>(
+    `/api/butlers/${encodeURIComponent(id)}/draft`, "PUT", { source },
+  );
+
+export const publishButlerVersion = (id: string) =>
+  butlerAct<{ published: { version: number } }>(
+    `/api/butlers/${encodeURIComponent(id)}/publish`, "POST",
+  );
+
+export const resumeButler = (butlerId: string, reason: string) =>
+  butlerAct<{ resumed: unknown }>(
+    `/api/butler-pauses/${encodeURIComponent(butlerId)}/resume`, "POST", { reason },
+  );

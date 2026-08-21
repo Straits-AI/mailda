@@ -375,6 +375,33 @@ button.primary:disabled { opacity: .55; cursor: progress; }
   margin-bottom: .25rem;
 }
 .ledger-head h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }
+/*
+  The new-message control (#79) is the third child of a space-between header, which would otherwise strand
+  it in the middle. margin-left:auto takes up the slack so the heading stays left and the control sits with
+  the count on the right, where the other per-screen actions are.
+*/
+.new-message { margin: 0 0 0 auto; display: flex; align-items: baseline; gap: .4rem; }
+.new-message select { font: inherit; font-family: var(--mono); font-size: .8rem; }
+
+/* The Butler screen (#78). */
+.butler-detail { margin-top: 1.5rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.butler-detail h2 { margin: 0; font-size: 1.2rem; }
+.butler-source {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: .78rem;
+  line-height: 1.5;
+  /* A program is read by its indentation, so wrapping is off and the box scrolls instead. */
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+.butler-actions { margin: .6rem 0 1.2rem; }
+/* The checker's findings arrive as several lines and are the whole value of a refusal — kept as written. */
+.butler-findings { white-space: pre-wrap; font-family: var(--mono); font-size: .78rem; }
+.butler-pause { margin-top: 1rem; }
+.butler-pause p { margin: 0 0 .4rem; }
+.butler-runs-heading { margin-top: 2rem; font-size: 1.1rem; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }

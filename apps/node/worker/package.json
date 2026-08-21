@@ -13,7 +13,7 @@
     "set-password": "node --experimental-strip-types scripts/set-password.mjs",
     "queue:attach-consumer": "node scripts/attach-queue-consumer.mjs",
     "build:client": "node scripts/build-client.mjs",
-    "axe": "node scripts/axe.mjs"
+    "axe": "node --experimental-strip-types scripts/axe.mjs"
   },
   "dependencies": {
     "@mailda/budgets": "workspace:*",
