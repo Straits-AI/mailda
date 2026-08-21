@@ -686,3 +686,104 @@ export const publishPolicyVersion = (id: string) =>
   policyAct<{ published: { version: number } }>(
     `/api/policies/${encodeURIComponent(id)}/publish`, "POST",
   );
+
+/* ------------------------------------------------------------------ Layer 2/3: people (#39, #81) --- */
+
+/**
+ * The relations an administrator may grant, and what each one lets somebody do.
+ *
+ * Mirrors `GRANTABLE` in `src/access.ts` minus `supervised.read`, which is **not** granted this way: it is a
+ * time-boxed grant needing two approvals and a matter (§7), and the Node refuses it here with a message
+ * saying so. Listing it as an option would be offering a door that answers with a lecture.
+ */
+export const GRANTABLE_RELATIONS = [
+  { relation: "mailbox.metadata.read", object: "mailbox", what: "See that mail exists — senders, subjects, when. Not the message itself." },
+  { relation: "mailbox.content.read", object: "mailbox", what: "Read the messages." },
+  { relation: "send.propose", object: "mailbox", what: "Write and send from this mailbox, and claim its cases." },
+  { relation: "approval.decide", object: "mailbox", what: "Decide approvals for its mail. Never their own." },
+  { relation: "message.export", object: "mailbox", what: "Take a copy of a message out of the Node." },
+  { relation: "ediscovery.export", object: "mailbox", what: "Run a bulk export against a matter." },
+  { relation: "org.admin", object: "organization", what: "Administer the organization: rules, Butlers, access, holds." },
+] as const;
+
+export interface PersonRow {
+  id: string;
+  email: string;
+  created_at: string;
+  relations: Array<{ relation: string; objectType: string; objectId: string }>;
+}
+
+export function usePeople(): UseQueryResult<{ people: PersonRow[] }, Error> {
+  return useQuery({
+    queryKey: ["people"],
+    queryFn: () => read<{ people: PersonRow[] }>("/api/people"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export interface TeamRow { id: string; name: string; createdAt: string; memberCount: number }
+
+export function useTeams(): UseQueryResult<{ teams: TeamRow[] }, Error> {
+  return useQuery({
+    queryKey: ["teams"],
+    queryFn: () => read<{ teams: TeamRow[] }>("/api/teams"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+async function accessAct(
+  method: "POST" | "DELETE",
+  body: unknown,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch("/api/access", {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.ok) return { ok: true };
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  // Verbatim: the refusal for `supervised.read` explains the whole §7 ceremony, and a paraphrase loses it.
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const grant = (subjectId: string, relation: string, objectId: string) =>
+  accessAct("POST", { subjectId, relation, objectId });
+
+export const revokeAccess = (subjectId: string, relation: string, objectId: string) =>
+  accessAct("DELETE", { subjectId, relation, objectId });
+
+export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch("/api/teams", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (response.ok) return { ok: true };
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+}
+
+export async function setTeamMember(
+  teamId: string, userId: string, member: boolean,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(`/api/teams/${encodeURIComponent(teamId)}/members`, {
+    method: member ? "POST" : "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ userId }),
+  });
+  if (response.ok) return { ok: true };
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  return { ok: false, message: String(parsed?.message ?? `This Node answered ${response.status}.`) };
+}
+
+/** A team's roster. Per team rather than folded into the listing, which returns a count by design. */
+export function useTeamMembers(teamId: string): UseQueryResult<{ members: string[] }, Error> {
+  return useQuery({
+    queryKey: ["team-members", teamId],
+    queryFn: () => read<{ members: string[] }>(`/api/teams/${encodeURIComponent(teamId)}/members`),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}

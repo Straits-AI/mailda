@@ -670,6 +670,49 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }));
     }
 
+    /**
+     * Everybody in the organization, with what each of them may do (#39, #81).
+     *
+     * `GET /api/access` answers for **one** subject and defaults to the caller, which is the right shape for
+     * "what may I do" and useless for "who may read this mailbox" — the question an administrator actually
+     * has, and the one they had no way to ask. Without it there was no list of colleagues anywhere in the
+     * product, so granting somebody access meant knowing a user id they could only get from the database.
+     *
+     * One read rather than a list plus a relations call per person: the tuples are the same rows either way,
+     * and N+1 across a directory is how a screen becomes slow at the size where it starts to matter.
+     *
+     * **`org.admin` only, answering 404.** §5C, and the same answer `/api/policies` gives: who works here
+     * and what they can reach is exactly the shape a 403 would confirm the existence of.
+     */
+    if (url.pathname === "/api/people" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json(
+          { error: "not_found", message: "No directory, or you do not have access to it." },
+          { status: 404 },
+        );
+      }
+      const people = await env.CATALOG.prepare(
+        "SELECT id, email, created_at FROM users WHERE org_id = ? ORDER BY email",
+      ).bind(who.orgId).all<{ id: string; email: string; created_at: string }>();
+      const tuples = await env.CATALOG.prepare(
+        `SELECT subject_id, relation, object_type, object_id FROM relationship_tuples
+          WHERE org_id = ? ORDER BY relation`,
+      ).bind(who.orgId).all<{
+        subject_id: string; relation: string; object_type: string; object_id: string;
+      }>();
+      const held = new Map<string, Array<{ relation: string; objectType: string; objectId: string }>>();
+      for (const row of tuples.results) {
+        const list = held.get(row.subject_id) ?? [];
+        list.push({ relation: row.relation, objectType: row.object_type, objectId: row.object_id });
+        held.set(row.subject_id, list);
+      }
+      return Response.json({
+        people: people.results.map((person) => ({ ...person, relations: held.get(person.id) ?? [] })),
+      });
+    }
+
     if (url.pathname === "/api/access" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
@@ -744,6 +787,23 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     const teamMembers = /^\/api\/teams\/([^/]+)\/members$/.exec(url.pathname);
+    /**
+     * Who is in a team (#73, #81).
+     *
+     * `membersOf` was written with the sentence *"so an administrator can see who a grant to it reaches"*
+     * and had no route, so the only readable fact about a team was its member **count**. A screen given a
+     * count and a list of people can render a checkbox, and the checkbox cannot be right: it shows unchecked
+     * for a member, because nothing told it otherwise. A control that never reflects state is worse than no
+     * control, so the roster is readable now.
+     */
+    if (teamMembers && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      return Response.json({ members: await membersOf(env, who.orgId, teamMembers[1]!) });
+    }
     if (teamMembers && (request.method === "POST" || request.method === "DELETE")) {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

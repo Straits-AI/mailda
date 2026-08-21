@@ -1,0 +1,337 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+
+import { Nothing } from "../chrome.tsx";
+import {
+  GRANTABLE_RELATIONS, createTeam, grant, revokeAccess, setTeamMember,
+  useMailboxes, useMe, usePeople, useTeamMembers, useTeams, type PersonRow, type TeamRow,
+} from "../api.ts";
+
+/**
+ * Who works here and what each of them may reach (#39, #73, #81).
+ *
+ * ## Why this is the most basic thing that was missing
+ *
+ * Access is granted by relationship tuples and there was no screen for any of it, so giving a colleague
+ * access to a mailbox meant writing a `POST /api/access` by hand with a user id you could only get out of
+ * the database. There was no list of colleagues anywhere in the product. A shared mailbox that cannot be
+ * shared without a database client is Layer 3's whole premise sitting behind a wall.
+ *
+ * ## Relations are shown as what they let somebody do
+ *
+ * `mailbox.metadata.read` is exact and tells an administrator nothing about the consequence of granting it.
+ * "See that mail exists — senders, subjects, when. Not the message itself." is the same fact in the form the
+ * decision actually needs, and the distinction between that and `mailbox.content.read` is the one somebody
+ * granting access is most likely to get wrong.
+ *
+ * ## What this screen refuses to do
+ *
+ * **It does not create people.** There is no invitation flow and no second-user creation anywhere in this
+ * product; the only user is the one the claim made. Rendering an "add somebody" button that produced a
+ * `POST` to nothing would be worse than the absence, so the absence is stated on the screen instead.
+ *
+ * **It does not offer `supervised.read`.** That relation is not granted this way — it is time-boxed, needs
+ * two approvals and cites a matter (§7) — and `POST /api/access` refuses it with a message explaining the
+ * whole ceremony. Listing it would be offering a door that answers with a lecture.
+ *
+ * **It does not decide who may grant.** Every act here is `org.admin`-gated on the Node, and the read is a
+ * 404 for anybody else. The screen never checks; it renders what it is given and shows refusals verbatim.
+ */
+
+function relationsFor(person: PersonRow, objectId: string): Set<string> {
+  return new Set(person.relations.filter((r) => r.objectId === objectId).map((r) => r.relation));
+}
+
+/** One person's access to one object, as a set of toggles that say what they do. */
+function Grants({
+  person, objectId, objectLabel, relations, onChanged,
+}: {
+  person: PersonRow;
+  objectId: string;
+  objectLabel: string;
+  relations: ReadonlyArray<(typeof GRANTABLE_RELATIONS)[number]>;
+  onChanged: () => Promise<void>;
+}) {
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const held = relationsFor(person, objectId);
+
+  async function toggle(relation: string, on: boolean) {
+    setBusy(relation);
+    setProblem(null);
+    const outcome = on
+      ? await grant(person.id, relation, objectId)
+      : await revokeAccess(person.id, relation, objectId);
+    setBusy(null);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await onChanged();
+  }
+
+  return (
+    <td>
+      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+      <ul className="grant-list">
+        {relations.map((entry) => {
+          /*
+           * The relation's dots are stripped out of the **id**, not out of the label.
+           *
+           * `send.propose` in an id makes `#grant-…-send.propose` parse as an id plus a class, so every
+           * CSS-based lookup silently matches nothing — `getElementById` is fine, which is exactly what
+           * makes it a trap: the association works, and anything that reaches for the element by selector
+           * quietly does not. Found by a harness that could not click the box.
+           */
+          const id = `grant-${person.id}-${objectId}-${entry.relation}`.replace(/[^\w-]/g, "-");
+          return (
+            <li key={entry.relation}>
+              <label htmlFor={id}>
+                <input
+                  id={id}
+                  type="checkbox"
+                  checked={held.has(entry.relation)}
+                  disabled={busy === entry.relation}
+                  onChange={(event) => void toggle(entry.relation, event.target.checked)}
+                />
+                {" "}
+                <span className="mono">{entry.relation}</span>
+                {" — "}
+                <span className="dim">{entry.what}</span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="dim mono grant-object">{objectLabel}</p>
+    </td>
+  );
+}
+
+/**
+ * One team's row, with its roster read rather than assumed.
+ *
+ * The checkbox reflects `membersOf`, which is the Node's answer. The first version of this screen had no
+ * roster to read — `listTeams` returns a count by design — and rendered every box unchecked, so a member
+ * looked like a non-member and ticking an already-ticked person was the only way to find out. A control
+ * that cannot show state is worse than no control, which is why the roster route exists now.
+ */
+function Roster({
+  team, people, onToggle,
+}: {
+  team: TeamRow;
+  people: PersonRow[];
+  onToggle: (teamId: string, userId: string, on: boolean) => Promise<void>;
+}) {
+  const members = useTeamMembers(team.id);
+  const inTeam = new Set(members.data?.members ?? []);
+  return (
+    <tr>
+      <td>{team.name}</td>
+      <td>
+        <ul className="grant-list">
+          {people.map((person) => {
+            const id = `team-${team.id}-${person.id}`;
+            return (
+              <li key={person.id}>
+                <label htmlFor={id}>
+                  <input
+                    id={id}
+                    type="checkbox"
+                    checked={inTeam.has(person.id)}
+                    // Until the roster has been read, the boxes are not offered: an unchecked box during a
+                    // load is a claim about membership, which is the §5C distinction between "no" and
+                    // "not answered yet" in checkbox form.
+                    disabled={!members.isSuccess}
+                    onChange={(event) => void onToggle(team.id, person.id, event.target.checked)}
+                  />
+                  {" "}
+                  <span className="mono">{person.email}</span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </td>
+    </tr>
+  );
+}
+
+function Teams({ people }: { people: PersonRow[] }) {
+  const teams = useTeams();
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    await queryClient.invalidateQueries({ queryKey: ["team-members"] });
+  }
+
+  async function add() {
+    setProblem(null);
+    const outcome = await createTeam(name);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setName("");
+    await refresh();
+  }
+
+  async function member(teamId: string, userId: string, on: boolean) {
+    setProblem(null);
+    const outcome = await setTeamMember(teamId, userId, on);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await refresh();
+  }
+
+  return (
+    <section className="people-teams" aria-label="Teams">
+      <h2>Teams</h2>
+      {/*
+        Teams exist for one reason and saying it is more useful than a generic description: an approval stage
+        can require somebody *from finance, then somebody from legal* (#73, §18). A team with no stage citing
+        it changes nothing, which is why this sits below access rather than above it.
+      */}
+      <p className="dim">
+        A team is a group an approval stage can require a decision from — one from finance, then one from
+        legal. A team nothing cites changes nothing.
+      </p>
+      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+
+      <p className="field-row">
+        <label htmlFor="new-team-name">New team</label>
+        {" "}
+        <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
+        {" "}
+        <button type="button" onClick={() => void add()} disabled={name.trim() === ""}>create</button>
+      </p>
+
+      {teams.isSuccess && teams.data.teams.length > 0 ? (
+        <div className="scroller">
+          <table>
+            <thead>
+              <tr><th scope="col">Team</th><th scope="col">Members</th></tr>
+            </thead>
+            <tbody>
+              {teams.data.teams.map((team) => (
+                <Roster key={team.id} team={team} people={people} onToggle={member} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Nothing kind="empty" detail="No teams. Approval stages can name one once it exists." />
+      )}
+    </section>
+  );
+}
+
+export function People() {
+  const people = usePeople();
+  const mailboxes = useMailboxes();
+  const me = useMe();
+  const queryClient = useQueryClient();
+
+  async function refresh() {
+    await queryClient.invalidateQueries({ queryKey: ["people"] });
+    // Access decides what the rest of the interface can see, so a grant that did not refresh the rail would
+    // leave somebody looking at a mailbox list that no longer matches what they hold.
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+  }
+
+  const heading = (
+    <header className="ledger-head">
+      <h1>People</h1>
+      {people.isSuccess ? <p className="dim mono">{people.data.people.length}</p> : null}
+    </header>
+  );
+
+  if (people.isPending) return <>{heading}<Nothing kind="loading" /></>;
+  if (people.isError) {
+    return (
+      <>
+        {heading}
+        <Nothing
+          kind="empty"
+          detail="No directory, or you do not hold org.admin. Granting access is an administrator's act."
+        />
+      </>
+    );
+  }
+
+  const rows = people.data.people;
+  const boxes = mailboxes.data?.mailboxes ?? [];
+  const mailboxRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "mailbox");
+  const orgRelations = GRANTABLE_RELATIONS.filter((entry) => entry.object === "organization");
+  const orgId = me.data?.organizationId ?? "";
+
+  return (
+    <>
+      {heading}
+      {/*
+        Stated on the screen rather than left to be discovered: there is no way to add a person. The only
+        user is the one the claim made, and an "invite" button producing a POST to nothing would be worse
+        than the absence.
+      */}
+      <p className="dim">
+        Everybody with an account on this Node. There is no way to add one yet — the only account is the one
+        the install created.
+      </p>
+
+      {boxes.map((box) => (
+        <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
+          <h2>{box.name}</h2>
+          <div className="scroller">
+            <table>
+              <thead>
+                <tr><th scope="col">Person</th><th scope="col">May</th></tr>
+              </thead>
+              <tbody>
+                {rows.map((person) => (
+                  <tr key={person.id}>
+                    <td className="mono">{person.email}</td>
+                    <Grants
+                      person={person}
+                      objectId={box.id}
+                      objectLabel={box.id}
+                      relations={mailboxRelations}
+                      onChanged={refresh}
+                    />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
+
+      <section className="people-mailbox" aria-label="Administering the organization">
+        <h2>The organization</h2>
+        <div className="scroller">
+          <table>
+            <thead>
+              <tr><th scope="col">Person</th><th scope="col">May</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((person) => (
+                <tr key={person.id}>
+                  <td className="mono">{person.email}</td>
+                  {/*
+                    `org.admin` is scoped to the organization, so the object is the org's own id — taken from
+                    `/api/me`, which is the Node's answer to "which organization am I in", rather than
+                    inferred from whichever tuple happened to be in the list.
+                  */}
+                  <Grants
+                    person={person}
+                    objectId={orgId}
+                    objectLabel={orgId}
+                    relations={orgRelations}
+                    onChanged={refresh}
+                  />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <Teams people={rows} />
+    </>
+  );
+}

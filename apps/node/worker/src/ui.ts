@@ -432,6 +432,14 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .policy-editor h2 { margin: 0 0 .8rem; font-size: 1.1rem; }
 .policy-editor select, .policy-editor input { font: inherit; font-family: var(--mono); font-size: .82rem; }
 .policy-actions { margin: 1rem 0 0; }
+
+/* People (#81). Relations as a list of what each one lets somebody do, not a grid of tokens. */
+.people-mailbox { margin-top: 1.75rem; }
+.people-mailbox h2, .people-teams h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.people-teams { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
+.grant-list label { display: block; font-size: .84rem; cursor: pointer; }
+.grant-object { margin: .4rem 0 0; font-size: .7rem; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }

@@ -226,6 +226,11 @@ export function Rail() {
           </Link>
         </li>
         <li>
+          <Link to="/people" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">People</span>
+          </Link>
+        </li>
+        <li>
           {/*
             Butlers sits with the ledgers rather than the mailboxes, and the placement is the claim: a
             Butler is not a place mail lands, it is a standing account of what this Node does without a

@@ -246,7 +246,33 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Nine routes now: `/`, `/queue`, `/approvals`, `/rules`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+Ten routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/butlers`, `/outbox`, `/audit`, `/log`,
+`/doctor`.
+
+### `/people` (#39, #73, #81)
+
+The most basic thing that was missing. Access is relationship tuples and there was no screen for any of it,
+so giving a colleague access to a mailbox meant writing a `POST /api/access` by hand with a user id you could
+only get from the database — and there was no list of colleagues anywhere in the product. A shared mailbox
+that cannot be shared without a database client is Layer 3's premise sitting behind a wall.
+
+Relations are shown as **what they let somebody do**. `mailbox.metadata.read` is exact and says nothing about
+the consequence of granting it; "See that mail exists — senders, subjects, when. Not the message itself." is
+the same fact in the form the decision needs, and the difference between that and `mailbox.content.read` is
+the one an administrator is most likely to get wrong.
+
+Two endpoints were added because the reads did not exist:
+
+- `GET /api/people` — the directory with each person's tuples. `GET /api/access` answers for **one** subject
+  and defaults to the caller, which is right for "what may I do" and useless for "who may read this mailbox".
+- `GET /api/teams/:id/members` — `membersOf` was written with the sentence *"so an administrator can see who
+  a grant to it reaches"* and had no route, so the only readable fact about a team was its member **count**.
+  A screen given a count can render a checkbox, and the checkbox cannot be right.
+
+The screen does not create people: there is no invitation flow anywhere in this product, and an "add
+somebody" button producing a `POST` to nothing would be worse than the absence, so the absence is stated on
+the screen. It does not offer `supervised.read` either — that is time-boxed, needs two approvals and cites a
+matter (§7), and listing it would be offering a door that answers with a lecture.
 
 ### `/rules` (#60, #81)
 
