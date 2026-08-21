@@ -7,7 +7,8 @@ import type { Ctx } from "@mailda/runtime";
 
 import { log } from "../audit.ts";
 import { metering, type Cost } from "../cost-meter.ts";
-import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectResult } from "./effects.ts";
+import { type EffectResult } from "./effects.ts";
+import { liveEffects, type EffectHandle } from "./world.ts";
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
 import { ceilingOf } from "./ceiling.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
@@ -556,6 +557,27 @@ export async function interpret(
    */
   butler = { ...butler, ceiling: ceilingOf(ast, facts.sponsorUserId) };
 
+  /*
+   * The run's effect handle, built here because this is the first line at which the principal is complete
+   * (#87, §5's fifth charted answer).
+   *
+   * Every effect the walk causes goes through this object and none reaches `effects.ts` directly, so a node
+   * case names *what it wants done* rather than what it is entitled to. That is the property that lets one
+   * walk serve a live run and a simulated one: the switch below is identical either way, and the difference
+   * is which handle was constructed for it.
+   *
+   * `liveEffects` requires an `Env`, and that requirement is the enforcement rather than a detail of the
+   * signature — `ReadOnlyEnv` is not assignable to it, so this line cannot be written inside a function that
+   * holds only a read handle, for every effect that exists and every effect anybody adds. The argument, and
+   * the reason it is aimed at the catalog write rather than at the transport the chart named, is in
+   * `world.ts`.
+   *
+   * Built after the ceiling and not before: the handle closes over the principal, and a principal without
+   * its pinned ceiling would be a handle whose authority is whatever the Butler's live tuples say — which is
+   * the unpinned ceiling #51 exists to prevent.
+   */
+  const effects: EffectHandle = liveEffects(env, ctx, butler);
+
   const byId = new Map(ast.nodes.map((node) => [node.id, node]));
   const state: RunState = {
     event: payload.trigger.facts,
@@ -779,7 +801,7 @@ export async function interpret(
 
         case "lookup": {
           if (!affordable(node)) return await exhausted(node);
-          const result = await perform(node, step, async () => await lookupRow(env, butler, node, state));
+          const result = await perform(node, step, async () => await effects.lookup(node, state));
           if (result.bind !== undefined) state.steps[node.as] = result.bind;
           cursor = node.next;
           break;
@@ -787,14 +809,14 @@ export async function interpret(
 
         case "case.assign": {
           if (!affordable(node)) return await exhausted(node);
-          await perform(node, step, async () => await assignCase(env, ctx, butler, node, state));
+          await perform(node, step, async () => await effects.assignCase(node, state));
           cursor = node.next;
           break;
         }
 
         case "case.close": {
           if (!affordable(node)) return await exhausted(node);
-          await perform(node, step, async () => await closeCase(env, ctx, butler, node, state));
+          await perform(node, step, async () => await effects.closeCase(node, state));
           cursor = node.next;
           break;
         }
@@ -807,7 +829,7 @@ export async function interpret(
           // delivery has no correspondent, and that has to be a refusal rather than a missing key — so the
           // thing passed is the whole trigger, which is the only value that can answer it.
           const result = await perform(node, step, async () =>
-            await writeDraft(env, ctx, butler, node, state, payload.trigger, incumbents !== null));
+            await effects.writeDraft(node, state, payload.trigger, incumbents !== null));
           if (result.bind !== undefined) state.steps[node.as] = result.bind;
           cursor = node.next;
           break;
@@ -816,7 +838,7 @@ export async function interpret(
         case "mail.send.propose": {
           if (!affordable(node)) return await exhausted(node);
           const result = await perform(node, step, async () =>
-            await proposeSend(env, ctx, butler, node, state, incumbents));
+            await effects.proposeSend(node, state, incumbents));
           if (result.park !== undefined) {
             /*
              * The human-release gate. The manifest is already `awaiting` with this reason — `sealManifest`
