@@ -1639,6 +1639,39 @@ apps/node/worker/src/doctor.ts         checks the runtime claims every decision 
 probes/                                throwaway platform experiments
 ```
 
+## Passkeys are the way in now, and passwords are the fallback they were meant to be (#84)
+
+ADR 29 locks *"passkeys are the authentication Mailda builds; password authentication survives as a per-user
+fallback"* and it shipped **inverted**: passwords were the only authentication, and every reference to
+passkeys was prose. #83 made that worse rather than better — a Node that can add people turns one operator's
+own password into every colleague's, on a system holding an organization's mail.
+
+The sign-in screen now offers a passkey first and the password beneath it, because an interface that puts
+the fallback at the top teaches the opposite of what the decision says.
+
+**The relying-party id is derived from the request, never configured.** A stored one can disagree with the
+origin the browser is actually on, and when it does every ceremony fails with a mismatch nobody can act on —
+so deriving it makes the disagreement unrepresentable, and keeps the repository free of the customer-specific
+value ADR 24 forbids.
+
+**Verification is `@simplewebauthn/server` at +128.9 KiB gzip**, two thirds of which is X.509 machinery for
+attestation this Node deliberately does not request. Adopted anyway, by the test this repository set when it
+*deferred* a parser: attacker-chosen structure feeding an authentication decision is where a mature
+implementation earns its bytes. The tempting counter — that the cryptography is Web Crypto either way — is
+true and beside the point, because the five checks around it are where implementations go wrong and omitting
+one is an auth bypass rather than a bug.
+
+Tested against a **real software authenticator** rather than a recorded fixture, because the negatives are
+the whole property: a fixture proves one response verifies and can never answer *does a replay fail*. That
+choice paid immediately — a mutation caught one of these tests being vacuous, asking to revoke a credential
+id that did not exist, so the line binding a passkey to its owner could be deleted with everything still
+green.
+
+It also put the **pre-authentication surface into the accessibility gate for the first time**, and found a
+WCAG 2.2 AA failure that had been shipping since #83. That gap was the sharp one: the harness signs in
+first, so the one page an operator meets when the Node is broken was the one page nothing checked.
+See [`docs/authentication.md`](./docs/authentication.md).
+
 ## Both send APIs exist now, and they are not interchangeable (#86)
 
 ADR 33 locks *"the transport offers **both** send APIs, and every send records which one carried it."* The

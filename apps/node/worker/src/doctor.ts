@@ -188,6 +188,8 @@ const EXPECTED_TABLES = [
   "send_manifests", "send_counters", "node_capabilities", "invitations",
   // Migration 0036 (#86): the REST send API's credentials, wrapped under the credential KEK.
   "sending_transport",
+  // Migration 0037 (#84): passkeys, and the single-use challenges that make the ceremony replay-proof.
+  "credentials", "webauthn_challenges",
   "audit_entries", "log_entries",
   // Migration 0010 (per-recipient outcome).
   "send_recipients", "send_recipient_events",

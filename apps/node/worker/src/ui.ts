@@ -200,6 +200,22 @@ button.linkish {
   font: inherit; letter-spacing: inherit; text-transform: inherit;
   background: none; border: 0; padding: 0; color: var(--dim); cursor: pointer;
   border-bottom: 1px solid var(--rule);
+  /*
+   * WCAG 2.2 AA 2.5.8 (target size, minimum): a pointer target must be at least 24x24 CSS pixels. These
+   * are text-sized buttons -- "I have an invitation" measured 134.9 x 18.4 -- so the width was never the
+   * problem and the height always was.
+   *
+   * Found on the **sign-in screen**, which had never been audited: the axe harness signs in first, so the
+   * one page an operator meets when the Node is broken was the one page nothing checked. It is in the gate
+   * now, and this is what it found on its first run.
+   *
+   * inline-flex with a min-height rather than vertical padding, because padding would push the
+   * border-bottom away from the text and turn an underline into a box. The extra height is clickable and
+   * invisible, which is exactly what 2.5.8 asks for.
+   */
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
 }
 button.linkish:hover { color: var(--text); border-bottom-color: var(--rule-strong); }
 
@@ -421,6 +437,12 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .butler-format label { font-family: var(--mono); font-size: .8rem; }
 .butler-format .dim { font-size: .78rem; }
 .butler-actions { margin: .6rem 0 1.2rem; }
+
+/* Your own passkeys (#84), on the People screen. */
+.passkeys { margin: 1.4rem 0 2rem; border-top: 1px solid var(--rule); padding-top: 1rem; max-width: 46rem; }
+.passkeys h2 { margin: 0 0 .4rem; font-size: 1rem; }
+.passkeys .dim { font-size: .82rem; }
+.passkeys .field-row { margin: .8rem 0 .4rem; max-width: 22rem; }
 
 /* Sending credentials (#86), on the doctor screen beside the finding they answer. */
 .transport { margin-top: 1.6rem; border-top: 1px solid var(--rule); padding-top: 1rem; max-width: 40rem; }

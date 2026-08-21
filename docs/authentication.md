@@ -10,6 +10,77 @@ Numbers: [`receipts/password-hash-cost.md`](./receipts/password-hash-cost.md).
 to a per-user setting an administrator switches on. This document describes what runs now; the
 "Decided, not built" section at the end describes what supersedes it.
 
+## Passkeys (#84, ADR 29)
+
+ADR 29 locks *"passkeys are the authentication Mailda builds; password authentication survives as a per-user
+fallback."* It shipped **inverted** — passwords were the only authentication, and every reference to passkeys
+in the tree was prose. `src/claim.ts` said so outright, which is the honest treatment of a deferral and also
+the evidence that the contract's primary mechanism was never started.
+
+It mattered more than when it was written. #83 made a Node able to add people, so a password stopped being
+one operator's own credential on their own Node and became **every colleague's**.
+
+### The relying party is derived, never configured
+
+WebAuthn binds a credential to an origin, and the relying-party id is that origin's domain — a
+customer-specific value ADR 24 forbids the repository from holding. It comes from `request.url`, and that is
+**better** than a stored value rather than a concession to one: a stored RP id can disagree with the origin
+the browser is actually on, and when it does every ceremony fails with a mismatch nobody can act on.
+Deriving it makes the disagreement unrepresentable.
+
+Consequence, stated: a Node reachable at two origins holds separate credentials per origin. That is WebAuthn
+working as specified.
+
+### The five checks, and why a library
+
+| check | what it stops |
+|:--|:--|
+| challenge server-issued, single-use | replay of an intercepted assertion |
+| origin matches | a lookalike site relaying a ceremony |
+| RP id hash matches | the same, one layer down |
+| user presence | an assertion nobody touched |
+| counter never decreases | a cloned authenticator |
+
+`@simplewebauthn/server`, at +128.9 KiB gzip — 2.5× the YAML parser, and roughly two thirds of it X.509
+machinery for attestation formats this Node does not use. Adopted anyway by the test
+`mime-header-parse.md` set when it *deferred* a parser: attacker-chosen structure feeding an
+**authentication decision** is where a mature implementation earns its bytes.
+
+The tempting counter — *"the cryptography is Web Crypto either way"* — is true and beside the point. Those
+five checks are where WebAuthn implementations go wrong, and **omitting one is an auth bypass rather than a
+bug**. See `docs/receipts/passkey-verification.md`.
+
+### Attestation is `none`, and `userVerification` is `preferred`
+
+Attestation proves *what kind of authenticator* this is. Mailda has no policy that depends on the answer, so
+requesting it would collect a device fingerprint the product cannot use. Requesting none is the
+privacy-preserving default.
+
+`preferred` rather than `required` is the trade this Node takes: `required` demands the authenticator verify
+the *person*, which locks out every security key without a PIN. A primary mechanism some hardware cannot
+satisfy is one people route around by using the password fallback for ever.
+
+### Tested against a real authenticator, because the negatives are the point
+
+`test/authenticator.ts` holds a P-256 key and signs real assertions. A recorded browser fixture would prove
+one response verifies and could never answer *"does a replay fail"*. Mutation-proven four ways: not deleting
+the challenge, not checking its purpose, accepting a second origin, and dropping the owner binding from
+revocation each fail their own assertion.
+
+That last one **caught a vacuous test**: the first version asked to revoke an id that did not exist, so
+removing `user_id` from the delete's predicate changed nothing. The credential is now real and somebody
+else's, which is the only shape that distinguishes the two.
+
+### What does not change
+
+**Dual control.** §18 and #61 count distinct **people**. A passkey does not make one person two. The session
+a passkey issues carries the same fields a password's does, so no counting rule can branch on the mechanism
+even if somebody wanted it to.
+
+**Recovery.** Passwords stay, as ADR 29 says. `mailda set-password` remains the hatch for an account that has
+lost both — not the ordinary path, which is what #84 worried about and what keeping the fallback prevents.
+
+
 ## The shape
 
 ```

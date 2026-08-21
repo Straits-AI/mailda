@@ -607,6 +607,26 @@ export const AUDIT_ACTIONS = {
   "transport.configured": {
     says: "An administrator supplied the credentials this Node sends mail with.",
   },
+
+  /**
+   * Registering a passkey (#84).
+   *
+   * Audited rather than logged, unlike a sign-in, and the difference is the one this table is for: signing
+   * in exercises an existing way into an account, while registering **adds one**. It is the same shape as
+   * `access.granted` — an act that changes what somebody can do afterwards — and the question an investigator
+   * has about a compromised account is *when did a credential appear that I do not recognise*.
+   *
+   * The entry names the credential id and the label and never the public key: it discloses nothing, and an
+   * audit entry carrying material nobody reads is material somebody eventually parses.
+   */
+  "auth.passkey_registered": {
+    says: "Somebody added a passkey to their account — a new way in, not a use of an existing one.",
+  },
+
+  /** Revoking one. The other half, and the half somebody checks after losing a device. */
+  "auth.passkey_revoked": {
+    says: "Somebody removed a passkey from their account.",
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

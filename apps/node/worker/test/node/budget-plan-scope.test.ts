@@ -440,6 +440,15 @@ const FIGURES: Record<string, Classification> = {
     "mime.max_header_bytes", "mime.max_references_depth",
   ),
 
+  // docs/receipts/passkey-verification.md
+  ...mailda(
+    // Not plan-scoped, for the same reason the YAML figures are not: this is what one dependency costs
+    // Mailda's bundle, which is a property of the package and identical on both plans. The *script size
+    // limit* it is weighed against is plan-conditional, and that comparison is made in the receipt's prose.
+    "what the WebAuthn verifier costs Mailda's bundle",
+    "auth.webauthn_bundle_kib", "auth.webauthn_gzip_kib",
+  ),
+
   // docs/receipts/butler-source-format.md
   ...mailda(
     // Not plan-scoped, and the near-miss is worth naming: the *script size limit* these figures are weighed
@@ -469,6 +478,9 @@ const FIGURES: Record<string, Classification> = {
     // #83's invitation window. Mailda's own policy about how long a bearer credential for membership stays
     // usable — the plan has no opinion about it, and no platform limit bounds it.
     "auth.invitation_expiry_seconds",
+    // #84's passkey policy: how long a challenge stays redeemable and how many credentials an account may
+    // hold. Mailda's own decisions — WebAuthn bounds neither, and no platform limit touches either.
+    "auth.passkey_challenge_ttl_seconds", "auth.passkeys_per_user_max",
   ),
 
   // docs/receipts/approval-decision-cost.md

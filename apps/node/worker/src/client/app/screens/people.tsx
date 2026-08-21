@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Nothing } from "../chrome.tsx";
 import {
   GRANTABLE_RELATIONS, createTeam, grant, invite, revokeAccess, setTeamMember,
-  useInvitations, useMailboxes, useMe, usePeople, useTeamMembers, useTeams,
+  forgetPasskey, registerPasskey,
+  useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
   type PersonRow, type TeamRow,
 } from "../api.ts";
 
@@ -331,6 +332,113 @@ function Teams({ people }: { people: PersonRow[] }) {
   );
 }
 
+/**
+ * Your own passkeys (#84, ADR 29).
+ *
+ * **On the People screen and scoped to yourself**, which is a decision rather than a placement of
+ * convenience. Everything else here is an administrator acting on *other* people — granting, inviting, team
+ * membership — and this is the one block that is about the person reading it. Keeping the two together is
+ * what makes "who is in this organization and how do they get in" one page, and the heading says whose
+ * credentials these are so nobody reads the list as somebody else's.
+ *
+ * Every account today is password-only, which is why registration is here at all: ADR 29 makes passkeys
+ * primary, and a primary mechanism nobody can adopt without reinstalling is not primary.
+ */
+function Passkeys() {
+  const passkeys = usePasskeys();
+  const queryClient = useQueryClient();
+  const [label, setLabel] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    setBusy(true);
+    setProblem(null);
+    const outcome = await registerPasskey(label.trim() || "passkey");
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setLabel("");
+    await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
+  }
+
+  async function forget(credentialId: string) {
+    setBusy(true);
+    setProblem(null);
+    const outcome = await forgetPasskey(credentialId);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await queryClient.invalidateQueries({ queryKey: ["passkeys"] });
+  }
+
+  const held = passkeys.data?.passkeys ?? [];
+
+  return (
+    <section className="passkeys" aria-label="Your passkeys">
+      <h2>Your passkeys</h2>
+      <p className="dim">
+        A passkey signs you in with your device instead of a password. Your password still works — it is the
+        fallback, and it is what gets you back in if you lose every device.
+      </p>
+
+      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+
+      {held.length === 0
+        ? <p className="dim">None yet. This account signs in with a password only.</p>
+        : (
+          <table>
+            <caption className="dim">
+              “Last used” is what tells you which of these you can remove without locking yourself out.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Added</th>
+                <th scope="col">Last used</th>
+                <th scope="col">Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {held.map((passkey) => (
+                <tr key={passkey.id}>
+                  <td>{passkey.label}</td>
+                  <td className="mono">{new Date(passkey.createdAt).toLocaleDateString()}</td>
+                  <td className="mono">
+                    {passkey.lastUsedAt === null
+                      ? <span className="dim">never</span>
+                      : new Date(passkey.lastUsedAt).toLocaleDateString()}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="linkish"
+                      onClick={() => void forget(passkey.id)}
+                      disabled={busy}
+                    >
+                      remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+      <label className="field-row" htmlFor="passkey-label">
+        <span>Name this device</span>
+        <input
+          id="passkey-label"
+          value={label}
+          placeholder="work laptop"
+          onChange={(event) => setLabel(event.target.value)}
+        />
+      </label>
+      <p>
+        <button type="button" onClick={() => void add()} disabled={busy}>add a passkey</button>
+      </p>
+    </section>
+  );
+}
+
 export function People() {
   const people = usePeople();
   const mailboxes = useMailboxes();
@@ -374,6 +482,9 @@ export function People() {
   return (
     <>
       {heading}
+      {/* Yours, not theirs: everything else on this screen is an administrator acting on other
+          people, and the heading says so. */}
+      <Passkeys />
       <p className="dim">Everybody with an account on this Node.</p>
 
       {boxes.map((box) => (

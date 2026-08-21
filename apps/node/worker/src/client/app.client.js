@@ -190,14 +190,134 @@ function renderClaim() {
   );
 }
 
+/**
+ * Base64url, both ways.
+ *
+ * WebAuthn's JSON form carries every binary field as base64url, and `navigator.credentials` wants
+ * `ArrayBuffer`s — so the conversion happens at the boundary, twice, and nowhere else. Written here rather
+ * than pulled from a package because this file is the **pre-authentication** surface (ADR 30): it is what an
+ * operator meets when the Node is broken, and it loads no bundle by design.
+ */
+function fromB64url(value) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+function toB64url(buffer) {
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** What the routes accept: a `PublicKeyCredential` with its binary fields as base64url. */
+function serialiseCredential(credential) {
+  const response = credential.response;
+  const out = {
+    id: credential.id,
+    rawId: toB64url(credential.rawId),
+    type: credential.type,
+    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
+    response: { clientDataJSON: toB64url(response.clientDataJSON) },
+  };
+  if (response.attestationObject !== undefined) {
+    out.response.attestationObject = toB64url(response.attestationObject);
+    out.response.transports = response.getTransports?.() ?? [];
+  } else {
+    out.response.authenticatorData = toB64url(response.authenticatorData);
+    out.response.signature = toB64url(response.signature);
+    out.response.userHandle = response.userHandle === null ? null : toB64url(response.userHandle);
+  }
+  return out;
+}
+
+/**
+ * Signing in with a passkey (#84, ADR 29).
+ *
+ * **Nothing is typed.** The request names no account — the credential the authenticator returns is what
+ * identifies it — which is what keeps this from answering *"does this address have a passkey"* to anybody
+ * who asks. That is the same property `login` protects by making an unknown address and a wrong password
+ * indistinguishable, and it would be lost by asking for an email first.
+ *
+ * Returns a message on failure and never throws: this is the screen an operator reaches when the Node is
+ * already misbehaving, and a thrown error here is a blank page.
+ */
+async function signInWithPasskey() {
+  if (typeof PublicKeyCredential === "undefined") {
+    return "This browser has no passkey support. Sign in with your password.";
+  }
+  let options;
+  try {
+    const challenged = await fetch("/api/auth/passkeys/challenge", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "authenticate" }),
+    });
+    if (!challenged.ok) return "This Node could not start a passkey sign-in.";
+    options = (await challenged.json()).publicKey;
+  } catch {
+    return "This Node did not answer.";
+  }
+
+  let credential;
+  try {
+    credential = await navigator.credentials.get({
+      publicKey: { ...options, challenge: fromB64url(options.challenge) },
+    });
+  } catch {
+    // Includes the user simply cancelling the prompt, which is not an error worth alarming about.
+    return null;
+  }
+  if (credential === null) return null;
+
+  const verified = await fetch("/api/auth/passkeys/verify", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ credential: serialiseCredential(credential) }),
+  });
+  if (verified.ok) return "signed-in";
+  const body = await verified.json().catch(() => ({}));
+  return body.message ?? "That passkey was not accepted.";
+}
+
 function renderSignIn(message = null) {
   const email = field("email", "Email", { type: "email", required: "required", autocomplete: "username" });
   const password = field("password", "Password", { type: "password", required: "required", autocomplete: "current-password" });
   const errors = el("div", { class: "errors", role: "alert" });
   const submit = el("button", { class: "primary", type: "submit", text: "Sign in" });
 
-  const form = el("form", { novalidate: "novalidate" }, [email.node, password.node, submit, errors]);
+  /*
+   * The passkey button comes **first**, because ADR 29 makes passkeys the mechanism this product builds and
+   * the password the fallback — and an interface that puts the fallback at the top teaches the opposite of
+   * what the decision says. It is a button rather than an automatic prompt: a page that summons an
+   * authenticator dialog on load is one people learn to dismiss without reading.
+   */
+  const passkey = el("button", { class: "primary", type: "button", text: "Sign in with a passkey" });
+  const fallback = el("p", { class: "dim", text: "or sign in with your password" });
+  const form = el("form", { novalidate: "novalidate" }, [
+    passkey, fallback, email.node, password.node, submit, errors,
+  ]);
   if (message !== null) errors.replaceChildren(notice(message, "bad"));
+
+  passkey.addEventListener("click", async () => {
+    errors.replaceChildren();
+    passkey.disabled = true;
+    passkey.textContent = "Waiting for your passkey…";
+    try {
+      const outcome = await signInWithPasskey();
+      if (outcome === "signed-in") {
+        adopt();
+        startSessionTicker();
+        return route();
+      }
+      // `null` is a cancelled prompt: the person changed their mind, which is not a failure to report.
+      if (outcome !== null) errors.replaceChildren(notice(outcome, "bad"));
+    } finally {
+      passkey.disabled = false;
+      passkey.textContent = "Sign in with a passkey";
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

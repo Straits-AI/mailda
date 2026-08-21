@@ -4,6 +4,10 @@ import { BUDGETS } from "@mailda/budgets";
 import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
 import { auditedBatch } from "./audit.ts";
+import {
+  assertRoomForAnother, credentialsOf, forgetCredential, mintChallenge, relyingPartyFor,
+} from "./auth/passkey.ts";
+import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/passkey-verify.ts";
 
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
@@ -2322,6 +2326,116 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         { signedIn: true, userId: outcome.session.userId, organizationId: outcome.session.orgId },
         outcome.session,
       );
+    }
+
+    /**
+     * Passkeys (#84, ADR 29).
+     *
+     * `POST /api/auth/passkeys/challenge`  a challenge for either ceremony. Unauthenticated for `authenticate`
+     * `POST /api/auth/passkeys`            finish registration: verify the attestation, store the public key
+     * `POST /api/auth/passkeys/verify`     finish authentication: verify the assertion, issue a session
+     * `GET  /api/auth/passkeys`            the credentials this account holds
+     * `DELETE /api/auth/passkeys`          revoke one
+     *
+     * **The relying party comes from `request.url`**, never from configuration. WebAuthn binds a credential
+     * to an origin, and a stored relying-party id can disagree with the origin the browser is actually on —
+     * at which point every ceremony fails with a mismatch nobody can act on. Deriving it makes the
+     * disagreement unrepresentable, and it keeps the repository free of the customer-specific value ADR 24
+     * forbids. `src/auth/passkey.ts` carries the argument.
+     */
+    if (url.pathname === "/api/auth/passkeys/challenge" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const purpose = body.purpose === "register" ? "register" : "authenticate";
+      const rp = relyingPartyFor(request);
+
+      if (purpose === "register") {
+        // Registration is an authenticated act: it adds a way into an account that already exists.
+        const who = await principalFor(env, clock, request);
+        if (who === null) return unauthenticated();
+        await assertRoomForAnother(env, who.orgId, who.userId);
+        const challenge = await mintChallenge(env, clock, "register", who);
+        const existing = await credentialsOf(env, who.orgId, who.userId);
+        return Response.json({
+          publicKey: {
+            challenge,
+            rp: { id: rp.id, name: rp.name },
+            /*
+             * The user handle is the `usr_` id and never the email address. WebAuthn stores this on the
+             * authenticator, where it is readable by anything that can prompt for a credential — so putting
+             * an address there would publish the account's email to every site that asks.
+             */
+            user: { id: who.userId, name: who.userId, displayName: who.userId },
+            pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
+            // `none`: this Node has no policy that depends on what kind of authenticator this is, so asking
+            // would collect a device fingerprint it cannot use and ask the user to consent to disclosing it.
+            attestation: "none",
+            authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
+            // So a browser does not offer a key this account already holds.
+            excludeCredentials: existing.map((credential) => ({
+              id: credential.id, type: "public-key", transports: credential.transports ?? undefined,
+            })),
+            timeout: BUDGETS["auth.passkey_challenge_ttl_seconds"] * 1000,
+          },
+        });
+      }
+
+      /*
+       * Authentication is **unauthenticated by definition**, and it deliberately names no credentials.
+       *
+       * An `allowCredentials` list would require the caller to say who they are first, which would make this
+       * route answer *"does this address have a passkey"* to anybody who asked — the user-enumeration leak
+       * `login` goes to some trouble to avoid. A discoverable credential lets the authenticator choose, and
+       * the credential id it returns is what identifies the account.
+       */
+      const challenge = await mintChallenge(env, clock, "authenticate", null);
+      return Response.json({
+        publicKey: {
+          challenge,
+          rpId: rp.id,
+          userVerification: "preferred",
+          timeout: BUDGETS["auth.passkey_challenge_ttl_seconds"] * 1000,
+        },
+      });
+    }
+
+    if (url.pathname === "/api/auth/passkeys" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return await finishPasskeyRegistration(env, clock, request, who, body);
+    }
+
+    if (url.pathname === "/api/auth/passkeys/verify" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return await finishPasskeyAuthentication(env, clock, request, body);
+    }
+
+    if (url.pathname === "/api/auth/passkeys" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const held = await credentialsOf(env, who.orgId, who.userId);
+      return Response.json({
+        // Public keys are not returned. They disclose nothing, and a list screen has no use for them —
+        // sending them anyway would be a habit of returning whatever the row holds.
+        passkeys: held.map((credential) => ({
+          id: credential.id,
+          label: credential.label,
+          createdAt: credential.createdAt,
+          lastUsedAt: credential.lastUsedAt,
+          transports: credential.transports,
+        })),
+      });
+    }
+
+    if (url.pathname === "/api/auth/passkeys" && request.method === "DELETE") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const credentialId = String(body.credentialId ?? "");
+      // The entry rides in the delete's own transaction — see `forgetCredential`. A revocation that
+      // committed without its record would be the one an operator later cannot prove they performed.
+      await forgetCredential(env, clock, who.orgId, who.userId, credentialId);
+      return Response.json({ forgotten: true });
     }
 
     if (url.pathname === "/api/auth/refresh" && request.method === "POST") {

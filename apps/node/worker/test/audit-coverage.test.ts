@@ -121,6 +121,19 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    */
   sending_transport: { actions: ["transport.configured"] },
   /*
+   * A passkey is a **way into an account**, so both ends of its life are audited: `access.granted` is the
+   * shape, not `auth.signed_in`. Using an existing credential is an operational event and stays in the log;
+   * adding or removing one changes what somebody can do afterwards, which is what this table is for.
+   */
+  credentials: { actions: ["auth.passkey_registered", "auth.passkey_revoked"] },
+  /*
+   * Exempt, and the reason is the row's whole purpose. A challenge exists for seconds, is spent once and
+   * deleted in the statement that spends it — so there is no state for an entry to describe by the time one
+   * could be written, and auditing every ceremony would put one row in the permanent record for every
+   * *attempt* to sign in, which the log already carries.
+   */
+  webauthn_challenges: { exempt: "Minted and deleted within one ceremony; nothing survives to be audited." },
+  /*
    * **Was exempt for "no mutation path exists yet. Auditable when membership admin lands (§28)."** This is
    * that moment (#73), and the exemption's own sentence is what named it.
    *

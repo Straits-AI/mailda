@@ -165,6 +165,30 @@ const SITES: Site[] = [
       + "stages are what an approval freezes a copy of, and nothing in this Worker deletes those.",
   },
   {
+    file: "src/auth/passkey.ts",
+    target: "webauthn_challenges",
+    content: false,
+    why:
+      "Two deletes over the same table, and neither can reach anything a person wrote. A challenge is "
+      + "thirty-two random bytes this Node minted, spent once and deleted **in the act of spending it** — "
+      + "the delete *is* the single-use guarantee, and `changes` is checked so two redemptions resolve to "
+      + "one winner. The sweep beside it removes rows whose `expires_at` has passed, which are ceremonies "
+      + "somebody abandoned. There is no version of this table that holds mail, a message, a draft or a "
+      + "program: it holds a nonce for the length of a fingerprint touch.",
+  },
+  {
+    file: "src/auth/passkey.ts",
+    target: "credentials",
+    content: false,
+    why:
+      "A public key and its bookkeeping, revoked by the person who registered it. It carries no content "
+      + "and it is the deliberate act of removing a lost device — a legal hold has nothing to preserve "
+      + "here, and a Node that refused to revoke a credential while a hold stood would be preserving a way "
+      + "*into* an organization's mail rather than the mail. The predicate binds the row to its owner, so "
+      + "the widest thing this statement can reach is one of the caller's own credentials, and the audit "
+      + "entry rides in the same transaction.",
+  },
+  {
     file: "src/butlers.ts",
     target: "butler_versions",
     content: false,

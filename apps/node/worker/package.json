@@ -22,6 +22,7 @@
     "@mailda/contract": "workspace:*",
     "@mailda/evidence": "workspace:*",
     "@mailda/runtime": "workspace:*",
+    "@simplewebauthn/server": "^13.3.2",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "^1.170.23",
     "drizzle-orm": "^0.45.2",

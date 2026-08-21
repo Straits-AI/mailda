@@ -189,6 +189,45 @@ async function open(theme, route) {
   return null;
 }
 
+/**
+ * The **pre-authentication** surface, audited before anything signs in (#84).
+ *
+ * ADR 30 splits the interface at authentication, and this harness only ever saw the half behind it: the
+ * sign-in form, the first-run claim and the invitation redemption were never in the DOM when axe looked,
+ * because the very first thing this script does is sign in.
+ *
+ * That is the wrong half to skip. Those screens are the ones an operator meets **when the Node is broken** —
+ * #23 was that case literally — and they are framework-free precisely so they render when nothing else
+ * does. A page you debug a broken bundle from is a page that has to be usable.
+ *
+ * It found a WCAG 2.2 AA failure on its first run: `I have an invitation` measured 134.9 x 18.4 CSS pixels
+ * against 2.5.8's 24 x 24 minimum, and had been shipping since #83.
+ *
+ * **One advisory is known and left alone**, recorded here rather than quietly tolerated. `region` flags the
+ * `.rack` banner as content outside a landmark. It is a `<div>` in `page()`, shared with the authenticated
+ * shell — which reports zero advisories, because the mounted application supplies its own landmarks around
+ * it. Making it a `<header>` would fix two advisories on this page at the risk of a duplicate-banner
+ * advisory on the thirty behind it, so the trade is recorded and not taken. It is an advisory rather than a
+ * violation: this run still fails on violations alone.
+ *
+ * A separate context, because these pages are defined by *not* being signed in — reusing the authenticated
+ * one would put a session cookie on them and render something else entirely.
+ */
+const anonymous = await browser.newContext();
+for (const theme of THEMES) {
+  const page = await anonymous.newPage();
+  await page.emulateMedia({ colorScheme: theme });
+  await page.goto(origin, { waitUntil: "networkidle" });
+  const ready = await page.waitForSelector("form", { timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!ready) {
+    console.log(`${theme.padEnd(5)} sign-in      SKIPPED — no form rendered`);
+  } else {
+    await audit(page, `${theme.padEnd(5)} sign-in    `);
+  }
+  await page.close();
+}
+await anonymous.close();
+
 for (const theme of THEMES) {
   for (const route of ROUTES) {
     const page = await open(theme, route);

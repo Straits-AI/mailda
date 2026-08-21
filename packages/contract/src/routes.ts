@@ -87,6 +87,13 @@ export const ROUTES = [
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace" },
   { method: "GET", path: "/api/me", summary: "Who this session is" },
 
+  // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
+  { method: "POST", path: "/api/auth/passkeys/challenge", summary: "A single-use challenge for either ceremony. Unauthenticated for authentication, which is what keeps it from answering whether an address has a passkey" },
+  { method: "POST", path: "/api/auth/passkeys", summary: "Finish registration: verify the attestation and store the public key" },
+  { method: "POST", path: "/api/auth/passkeys/verify", summary: "Finish authentication: verify the assertion and issue a session" },
+  { method: "GET", path: "/api/auth/passkeys", summary: "The passkeys this account holds. Never returns a public key" },
+  { method: "DELETE", path: "/api/auth/passkeys", summary: "Revoke one, bound to its owner by the statement's own predicate" },
+
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding" },
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization" },

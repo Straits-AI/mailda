@@ -555,7 +555,10 @@ export function useButlerRuns(): UseQueryResult<{ runs: ButlerRunRow[] }, Error>
  */
 async function butlerAct<T>(
   path: string,
-  method: "POST" | "PUT",
+  // DELETE joined the union for #84's passkey revocation. A cast at one call site would have been the
+  // alternative, and a cast is how a route ends up being called with a verb this Node does not answer —
+  // which is the defect #85 found.
+  method: "POST" | "PUT" | "DELETE",
   body?: unknown,
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   const response = await apiFetch(path, {
@@ -647,6 +650,101 @@ export const configureTransport = (accountId: string, apiToken: string) =>
   butlerAct<{ configured: { accountId: string; configuredAt: string } }>(
     at("PUT", "/api/transport"), "PUT", { accountId, apiToken },
   );
+
+export interface PasskeyRow {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  transports: string[] | null;
+}
+
+export function usePasskeys(): UseQueryResult<{ passkeys: PasskeyRow[] }, Error> {
+  return useQuery({
+    queryKey: ["passkeys"],
+    queryFn: () => read<{ passkeys: PasskeyRow[] }>(GET("/api/auth/passkeys")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * Registering a passkey from inside the application (#84).
+ *
+ * The ceremony is the browser's, so this is three steps and not one: ask this Node for a challenge, hand it
+ * to the authenticator, hand what comes back to this Node. The binary conversions happen here because
+ * `navigator.credentials` speaks `ArrayBuffer` and the routes speak base64url — the same boundary
+ * `app.client.js` crosses for sign-in, and the code is deliberately the same shape in both.
+ */
+export async function registerPasskey(
+  label: string,
+): Promise<{ ok: true; value: { id: string } } | { ok: false; message: string }> {
+  if (typeof PublicKeyCredential === "undefined") {
+    return { ok: false, message: "This browser has no passkey support." };
+  }
+
+  const challenged = await butlerAct<{ publicKey: Record<string, unknown> }>(
+    at("POST", "/api/auth/passkeys/challenge"), "POST", { purpose: "register" },
+  );
+  if (!challenged.ok) return challenged;
+  const options = challenged.value.publicKey;
+
+  let credential: PublicKeyCredential | null;
+  try {
+    credential = await navigator.credentials.create({
+      publicKey: {
+        ...(options as unknown as PublicKeyCredentialCreationOptions),
+        challenge: fromB64url(String(options.challenge)),
+        user: {
+          ...(options.user as { id: string; name: string; displayName: string }),
+          id: new TextEncoder().encode(String((options.user as { id: string }).id)),
+        },
+        excludeCredentials: ((options.excludeCredentials ?? []) as Array<{ id: string; type: string }>)
+          .map((entry) => ({ ...entry, id: fromB64url(entry.id) })) as PublicKeyCredentialDescriptor[],
+      },
+    }) as PublicKeyCredential | null;
+  } catch {
+    // A cancelled prompt is a decision, not a failure. Reported as one so the screen says nothing alarming.
+    return { ok: false, message: "No passkey was created." };
+  }
+  if (credential === null) return { ok: false, message: "No passkey was created." };
+
+  return await butlerAct<{ registered: { id: string } }>(
+    at("POST", "/api/auth/passkeys"), "POST",
+    { credential: serialiseCredential(credential), label },
+  ).then((outcome) => outcome.ok
+    ? { ok: true as const, value: { id: outcome.value.registered.id } }
+    : outcome);
+}
+
+export const forgetPasskey = (credentialId: string) =>
+  butlerAct<{ forgotten: true }>(at("DELETE", "/api/auth/passkeys"), "DELETE", { credentialId });
+
+function fromB64url(value: string): Uint8Array {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+function toB64url(buffer: ArrayBuffer): string {
+  let binary = "";
+  for (const byte of new Uint8Array(buffer)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** A `PublicKeyCredential` in the JSON form the routes accept. */
+function serialiseCredential(credential: PublicKeyCredential): Record<string, unknown> {
+  const response = credential.response as AuthenticatorAttestationResponse;
+  return {
+    id: credential.id,
+    rawId: toB64url(credential.rawId),
+    type: credential.type,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: toB64url(response.clientDataJSON),
+      attestationObject: toB64url(response.attestationObject),
+      transports: response.getTransports?.() ?? [],
+    },
+  };
+}
 
 export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { butlerId: string } }>(
