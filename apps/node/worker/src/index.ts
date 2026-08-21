@@ -1629,11 +1629,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     /**
      * One Butler's version history.
      *
-     * `source_text` travels for the **draft only**. A published version's source is immutable and already
-     * identified by `source_sha256`, so shipping every historical body would make a list response grow with
-     * the number of times somebody edited a Butler — and the one body an author is about to act on is the
-     * draft. Reading an older version's source is a separate question, and answering it here by accident is
-     * how a list endpoint becomes an export.
+     * `source_text` travels for the **draft and the live version**, and for nothing else.
+     *
+     * The first draft of this said "the draft only", which was wrong in a way only opening the screen showed:
+     * a Butler with a published version and no draft rendered an **empty editor**. That reads as *this Butler
+     * has no program* over one that is live and running, and typing into it would start a replacement from
+     * scratch rather than from what the Butler currently does. Editing a published Butler means editing what
+     * is running; the route has to send that.
+     *
+     * **Superseded versions stay withheld**, which is the part worth keeping. Their bodies are immutable and
+     * already identified by `source_sha256`, and returning all of them would make one response grow with the
+     * number of times anybody ever edited a Butler — a list endpoint that returns every version of every
+     * program is an export under another name. At most two bodies travel here, whatever the history.
      */
     const oneButler = /^\/api\/butlers\/([^/]+)$/.exec(url.pathname);
     if (oneButler && request.method === "GET") {
@@ -1650,7 +1657,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       const { results } = await env.CATALOG.prepare(
         `SELECT id, version, state, ast_sha256, source_sha256, created_by, created_at,
                 published_by, published_at, superseded_at,
-                CASE WHEN state = 'draft' THEN source_text ELSE NULL END AS source_text
+                CASE WHEN state IN ('draft', 'published') THEN source_text ELSE NULL END AS source_text
            FROM butler_versions
           WHERE org_id = ? AND butler_id = ?
           ORDER BY COALESCE(version, 2147483647) DESC, created_at DESC`,

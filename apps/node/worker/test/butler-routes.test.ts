@@ -148,15 +148,40 @@ describe("a Butler can be written through the product, and only by an administra
     expect(butlers[0]!.live_version).toBe(1);
     expect(butlers[0]!.pause).toBeNull();
 
+    /*
+     * A second version, so the three states are all present and the source rule can be checked where it
+     * actually bites. With one version the rule is unfalsifiable: every row is the live one.
+     */
+    await SELF.fetch(
+      `https://node/api/butlers/${butler.butlerId}/draft`,
+      as(token, { source: source("acknowledge", "second version") }, "PUT"),
+    );
+    await SELF.fetch(`https://node/api/butlers/${butler.butlerId}/publish`, as(token));
+
     const one = await SELF.fetch(`https://node/api/butlers/${butler.butlerId}`, read(token));
     expect(one.status).toBe(200);
     const { versions } = await one.json() as {
-      versions: Array<{ state: string; source_text: string | null }>;
+      versions: Array<{ state: string; version: number | null; source_text: string | null }>;
     };
-    expect(versions).toHaveLength(1);
-    // A published version's body does not travel: it is immutable and already identified by its digest, and
-    // shipping every historical source would make this grow with the number of edits.
-    expect(versions[0]!.source_text).toBeNull();
+    expect(versions).toHaveLength(2);
+
+    const byState = new Map(versions.map((row) => [row.state, row]));
+    /*
+     * **The live version's body travels**, because editing a published Butler means editing what is running.
+     * Withholding it rendered an empty editor over a live Butler — which reads as "no program" and invites a
+     * replacement written from scratch.
+     */
+    // Asserted non-null first, so withholding it fails with "expected null not to be null" rather than
+    // chai complaining that `toContain` was handed the wrong type.
+    expect(byState.get("published")?.source_text).not.toBeNull();
+    expect(byState.get("published")?.source_text).toContain("second version");
+    /*
+     * **A superseded one's does not.** Its body is immutable and already named by `source_sha256`, and
+     * returning every historical source would make this response grow with the number of times anybody ever
+     * edited this Butler — a list endpoint that returns every version of every program is an export.
+     */
+    expect(byState.get("superseded")?.source_text).toBeNull();
+    expect(byState.get("superseded")?.version).toBe(1);
   });
 
   it("refuses the checker's findings through the route rather than only in a test", async () => {

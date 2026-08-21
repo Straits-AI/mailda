@@ -84,8 +84,19 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
 
   const versions = detail.data?.versions ?? [];
   const draft = versions.find((row) => row.state === "draft") ?? null;
-  // `??` rather than `||`: an empty draft body is a real state and must not fall through to the stored one.
-  const editing = source ?? draft?.source_text ?? "";
+  const live = versions.find((row) => row.state === "published") ?? null;
+  /*
+   * The draft if there is one, **otherwise what is running**.
+   *
+   * Falling back to the live version is not a convenience. Without it, opening a published Butler that has no
+   * draft showed an empty box — which reads as *this Butler has no program*, over one that is live, and
+   * invites somebody to write its replacement from scratch instead of editing what it does. Editing a
+   * published Butler means starting from the published program.
+   *
+   * `??` throughout rather than `||`: an empty draft body is a real state — somebody clearing the box and
+   * saving — and `||` would silently fall through it to the live source, resurrecting text they deleted.
+   */
+  const editing = source ?? draft?.source_text ?? live?.source_text ?? "";
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
@@ -146,7 +157,20 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         >
           publish
         </button>
-        {draft === null ? <span className="dim"> nothing unpublished to publish</span> : null}
+        {/*
+          Which program is in the box, said rather than left to be inferred. "Nothing unpublished to publish"
+          alone did not answer the question somebody actually has when they open a live Butler — *is this what
+          is running, or a blank page?* — and the answer differs by one save.
+        */}
+        {draft === null
+          ? (
+            <span className="dim">
+              {live === null
+                ? " nothing saved yet"
+                : ` showing live v${live.version ?? "?"} — save a draft to change it`}
+            </span>
+          )
+          : <span className="dim"> unpublished draft</span>}
       </p>
 
       <table>

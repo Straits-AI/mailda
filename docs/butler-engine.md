@@ -495,10 +495,17 @@ and *"this Butler is running"* are different facts. A list showing only the firs
 pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker stopped. It calls the
 same `pausesInForce` the trigger consults, so the list and the gate cannot disagree.
 
-`GET /api/butlers/:id` carries `source_text` for the **draft alone**. A published version's body is immutable
-and already named by `source_sha256`, so shipping every historical body would make the response grow with the
-number of times somebody edited a Butler — and a list endpoint that returns every version of every program is
-an export under another name.
+`GET /api/butlers/:id` carries `source_text` for the **draft and the live version**, and nothing else.
+
+The first cut of this said "the draft alone", and opening the screen showed why that was wrong: a Butler with
+a published version and no draft rendered an **empty editor**, which reads as *this Butler has no program*
+over one that is live and running — and invites somebody to write its replacement from scratch instead of
+editing what it does. Editing a published Butler means starting from the published program.
+
+Superseded versions stay withheld, which is the part worth keeping. Their bodies are immutable and already
+named by `source_sha256`, and returning all of them would make one response grow with the number of times
+anybody ever edited a Butler — a list endpoint that returns every version of every program is an export under
+another name. At most two bodies travel, whatever the history.
 
 ## The run record, and the ledger seam
 
