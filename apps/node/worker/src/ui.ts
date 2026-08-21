@@ -402,6 +402,25 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .butler-pause { margin-top: 1rem; }
 .butler-pause p { margin: 0 0 .4rem; }
 .butler-runs-heading { margin-top: 2rem; font-size: 1.1rem; }
+
+/* Approvals (#81). One card per decision — a table would make the gravest and the most routine identical. */
+.approval-list { display: flex; flex-direction: column; gap: 1.25rem; margin-top: 1rem; }
+.approval {
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 1rem 1.1rem;
+}
+.approval h2 { margin: 0 0 .3rem; font-size: 1.05rem; }
+.approval > p { margin: 0 0 .8rem; }
+.approval .headers { margin: 0 0 .8rem; }
+/* The requester's own words, set apart from the Node's — whose sentence it is matters when deciding. */
+.approval-reason {
+  margin: 0 0 .8rem;
+  padding: .5rem .8rem;
+  border-left: 2px solid var(--rule-strong);
+  font-style: italic;
+}
+.approval-actions { margin: .8rem 0 0; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }

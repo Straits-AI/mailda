@@ -2,8 +2,9 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
 
-import { useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow }
-  from "./api.ts";
+import {
+  useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow,
+} from "./api.ts";
 
 /**
  * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
@@ -136,6 +137,7 @@ export function Rail() {
   const messages = useMessages();
   const mailboxes = useMailboxes();
   const sends = useSends();
+  const approvals = useApprovals();
   const state = useRouterState();
   const path = state.location.pathname;
 
@@ -201,6 +203,19 @@ export function Rail() {
         ledgers
       </p>
       <ul className="rail-list" aria-labelledby="rail-ledgers">
+        <li>
+          {/*
+            Approvals is first among the ledgers because it is the only one that is *work*: the others record
+            what happened, this one is a queue of decisions somebody is waiting on. The count is the point —
+            an approver who has to open a screen to discover they are blocking a message will not open it.
+          */}
+          <Link to="/approvals" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">Approvals</span>
+            {approvals.isSuccess && approvals.data.approvals.length > 0
+              ? <span className="mono num">{approvals.data.approvals.length}</span>
+              : null}
+          </Link>
+        </li>
         <li>
           {/*
             Butlers sits with the ledgers rather than the mailboxes, and the placement is the claim: a

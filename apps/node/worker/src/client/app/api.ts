@@ -543,3 +543,67 @@ export const resumeButler = (pauseId: string, reason: string) =>
   butlerAct<{ resumed: unknown }>(
     `/api/butler-pauses/${encodeURIComponent(pauseId)}/resume`, "POST", { reason },
   );
+
+/* ------------------------------------------------------------------ Layer 4: approvals (#81) ------- */
+
+export interface ApprovalStage { count: number; teamId: string | null }
+
+/**
+ * One approval waiting on the signed-in person, exactly as `pendingApprovals` returns it.
+ *
+ * The list is already bounded by the caller: it computes the eligible set per subject kind and excludes the
+ * actor, so this screen shows what somebody may decide and never has to work that out for itself. Deciding
+ * who may approve in the browser would be a second opinion about separation of duty (§18).
+ */
+export interface ApprovalRow {
+  id: string;
+  subjectKind: "send_manifest" | "hold_lift" | "supervised_read" | "ediscovery_export" | "domain_pause";
+  subjectId: string;
+  scopeId: string;
+  /** The person whose act this gates. Never eligible to decide it. */
+  actorUserId: string;
+  state: string;
+  requestedAt: string;
+  resolvedAt: string | null;
+  expiresAt: string | null;
+  stages: ApprovalStage[];
+  openStage: number | null;
+  /** True when the caller has already decided, so the row is theirs to **withdraw** rather than to decide. */
+  decidedByMe: boolean;
+  /** The requester's own words, where the subject kind carries any. NULL for a send. */
+  reason: string | null;
+  supervised?: { grantId: string; subjectId: string; scope: string; matterId: string | null } | null;
+  pause?: { pauseId: string; domain: string; reason: string } | null;
+}
+
+export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Error> {
+  return useQuery({
+    queryKey: ["approvals"],
+    queryFn: () => read<{ approvals: ApprovalRow[] }>("/api/approvals"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+async function approvalAct(
+  path: string,
+  body?: unknown,
+): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; message: string }> {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, value: parsed ?? {} };
+  // Verbatim, as everywhere else: `E_APPROVER_IS_ACTOR` explains §18 in a sentence a paraphrase would lose.
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const decide = (id: string, decision: "approve" | "deny") =>
+  approvalAct(`/api/approvals/${encodeURIComponent(id)}/decide`, { decision });
+
+export const withdrawDecision = (id: string) =>
+  approvalAct(`/api/approvals/${encodeURIComponent(id)}/withdraw`);

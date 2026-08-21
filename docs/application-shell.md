@@ -246,7 +246,29 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Seven routes now: `/`, `/queue`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+Eight routes now: `/`, `/queue`, `/approvals`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+
+### `/approvals` (#81)
+
+The first of the governance surfaces, and it went first because without it a published `require_approval`
+policy made mail **undeliverable**. The outbox's only control for an `awaiting` send is *stop*, while its own
+comment says the send is "cleared by an approver (#61)" — an approver who had no screen. So the only
+resolution through the product was for the author to cancel their own message: a stop with no drain, which is
+the failure #66 kept `deny` out of `awaiting` to avoid, arriving at the surface instead of in the predicate.
+
+**The screen decides nothing about who may decide.** `GET /api/approvals` returns `pendingApprovals`, which
+computes the eligible set per subject kind and excludes the actor, so the list is already what this person
+may act on. A rule about separation of duty held in the browser would be a second opinion about the thing the
+mechanism exists to guarantee; `E_APPROVER_IS_ACTOR` is rendered verbatim if one ever arrives.
+
+**Five subject kinds, shown as what they are.** A send, a hold lift, a supervised read, an e-discovery export
+and a domain pause are not the same decision — approving a supervised read lets somebody read a colleague's
+mail; approving a domain pause stops a customer's. Identical rows with an id would make the gravest and the
+most routine look the same, so each says what approving it does, and carries the requester's own words where
+the subject kind has any.
+
+The deadline is a header rather than a detail, because an approval can lapse and a send whose approval lapsed
+is refused terminally. Somebody deciding today is the reason it will or will not make it.
 
 ### `/butlers` (#78)
 

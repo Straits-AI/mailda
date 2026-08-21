@@ -13,6 +13,7 @@ import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
 import { Butlers } from "./screens/butlers.tsx";
+import { Approvals } from "./screens/approvals.tsx";
 import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
 
 /**
@@ -29,7 +30,7 @@ import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
  * ## Routing is code-based on purpose
  *
  * TanStack Router's file-based routing generates a route tree and needs a watcher and a generated file in
- * the tree. Five routes do not earn that, and a generated file nobody reads is the shape this repository
+ * the tree. Eight routes do not earn that, and a generated file nobody reads is the shape this repository
  * has twice been bitten by. The routes are below, where a reader can count them.
  *
  * There is no route-level data loading. Every read is authorization-filtered per request (ADR 11), so a
@@ -64,6 +65,7 @@ const rootRoute = createRootRoute({
 const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
   "/": Inbox,
   "/queue": Queue,
+  "/approvals": Approvals,
   "/butlers": Butlers,
   "/outbox": Outbox,
   "/audit": Audit,
