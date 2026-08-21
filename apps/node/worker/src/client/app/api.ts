@@ -1,5 +1,8 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
+import {
+  EXPORTS_LIST, EXPORT_RUN, path as routePath, route, type HttpMethod, type PathFor,
+} from "@mailda/contract/routes";
 
 /**
  * Every read the application performs, and the one rule they all share.
@@ -29,6 +32,34 @@ export class ReadFailure extends Error {
     this.name = "ReadFailure";
     this.status = status;
   }
+}
+
+/**
+ * Every path this client asks for, built from the shared contract (#85, ADR 12).
+ *
+ * ADR 12 locks *"UI, CLI, SDK, Skill and MCP parity is generated from shared contracts"*, and this file used
+ * to be the counter-example: forty-nine path strings written by hand, none of which anything compared to the
+ * Worker that serves them. A route renamed on one side and not the other produced a request that **succeeds**
+ * — an unmatched `/api/…` path is answered with the interface shell and a 200 — so the screen renders empty
+ * and nothing anywhere reports an error.
+ *
+ * Now the template is checked against `ROUTES` at **compile time**: `PathFor<M>` is the union of templates
+ * registered for that method, so a typo, a removed route or the right path under the wrong verb stops the
+ * build. `packages/contract/src/routes.ts` is that registry and
+ * `apps/node/worker/test/node/route-registry.test.ts` holds it to `src/index.ts` in both directions — so the
+ * chain runs from this call site to the handler with no hand-maintained link in it.
+ */
+function at<M extends HttpMethod>(
+  method: M,
+  template: PathFor<M>,
+  params?: Readonly<Record<string, string>>,
+): string {
+  return routePath(route(method, template), params);
+}
+
+/** `at("GET", …)`, which is most of this file. The method is still named, in the registry lookup. */
+function GET(template: PathFor<"GET">, params?: Readonly<Record<string, string>>): string {
+  return at("GET", template, params);
 }
 
 async function read<T>(path: string): Promise<T> {
@@ -198,19 +229,19 @@ export interface NotificationRow {
 export function useNotifications(): UseQueryResult<{ notifications: NotificationRow[] }, Error> {
   return useQuery({
     queryKey: ["notifications"],
-    queryFn: () => read<{ notifications: NotificationRow[] }>("/api/notifications"),
+    queryFn: () => read<{ notifications: NotificationRow[] }>(GET("/api/notifications")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
 
 export function useMe(): UseQueryResult<Me, Error> {
-  return useQuery({ queryKey: ["me"], queryFn: () => read<Me>("/api/me"), ...AUTHORIZATION_SENSITIVE });
+  return useQuery({ queryKey: ["me"], queryFn: () => read<Me>(GET("/api/me")), ...AUTHORIZATION_SENSITIVE });
 }
 
 export function useMessages(): UseQueryResult<{ messages: MessageRow[] }, Error> {
   return useQuery({
     queryKey: ["messages"],
-    queryFn: () => read<{ messages: MessageRow[] }>("/api/messages"),
+    queryFn: () => read<{ messages: MessageRow[] }>(GET("/api/messages")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -224,7 +255,7 @@ export interface SendsResponse {
 export function useSends(): UseQueryResult<SendsResponse, Error> {
   return useQuery({
     queryKey: ["sends"],
-    queryFn: () => read<SendsResponse>("/api/sends"),
+    queryFn: () => read<SendsResponse>(GET("/api/sends")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -232,7 +263,7 @@ export function useSends(): UseQueryResult<SendsResponse, Error> {
 export function useAudit(): UseQueryResult<{ entries: AuditRow[] }, Error> {
   return useQuery({
     queryKey: ["audit"],
-    queryFn: () => read<{ entries: AuditRow[] }>("/api/audit"),
+    queryFn: () => read<{ entries: AuditRow[] }>(GET("/api/audit")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -240,7 +271,7 @@ export function useAudit(): UseQueryResult<{ entries: AuditRow[] }, Error> {
 export function useLogs(): UseQueryResult<{ entries: LogRow[]; counts: Array<{ level: string; n: number }> }, Error> {
   return useQuery({
     queryKey: ["logs"],
-    queryFn: () => read<{ entries: LogRow[]; counts: Array<{ level: string; n: number }> }>("/api/logs"),
+    queryFn: () => read<{ entries: LogRow[]; counts: Array<{ level: string; n: number }> }>(GET("/api/logs")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -255,7 +286,7 @@ export function useLogs(): UseQueryResult<{ entries: LogRow[]; counts: Array<{ l
 export function useDoctor(): UseQueryResult<DoctorReport, Error> {
   return useQuery({
     queryKey: ["doctor"],
-    queryFn: () => read<DoctorReport>("/api/doctor"),
+    queryFn: () => read<DoctorReport>(GET("/api/doctor")),
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
@@ -310,7 +341,7 @@ export interface CaseRow {
 export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Error> {
   return useQuery({
     queryKey: ["mailboxes"],
-    queryFn: () => read<{ mailboxes: MailboxQueue[] }>("/api/mailboxes"),
+    queryFn: () => read<{ mailboxes: MailboxQueue[] }>(GET("/api/mailboxes")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -318,7 +349,7 @@ export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Er
 export function useCases(mailboxId: string | null): UseQueryResult<{ cases: CaseRow[] }, Error> {
   return useQuery({
     queryKey: ["cases", mailboxId],
-    queryFn: () => read<{ cases: CaseRow[] }>(`/api/cases?mailbox=${encodeURIComponent(mailboxId!)}`),
+    queryFn: () => read<{ cases: CaseRow[] }>(`${GET("/api/cases")}?mailbox=${encodeURIComponent(mailboxId!)}`),
     enabled: mailboxId !== null,
     ...AUTHORIZATION_SENSITIVE,
   });
@@ -337,7 +368,7 @@ export type ClaimResult =
   | { ok: false; kind: "closed" | "not_found" | "failed"; message: string };
 
 async function act(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
-  const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/${action}`, { method: "POST" });
+  const response = await apiFetch(at("POST", "/api/cases/:caseId/:action", { caseId, action }), { method: "POST" });
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (response.ok) {
     return { ok: true, case: (body?.case ?? null) as CaseRow };
@@ -369,7 +400,7 @@ export async function setResponseTarget(
   mailboxId: string,
   minutes: number | null,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const response = await apiFetch(`/api/mailboxes/${encodeURIComponent(mailboxId)}`, {
+  const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ firstResponseMinutes: minutes }),
@@ -385,7 +416,7 @@ export async function mergeConversations(
   from: string,
   into: string,
 ): Promise<{ ok: true; messagesMoved: number } | { ok: false; message: string }> {
-  const response = await apiFetch("/api/conversations/merge", {
+  const response = await apiFetch(at("POST", "/api/conversations/merge"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ from, into }),
@@ -489,7 +520,7 @@ export interface ButlerRunRow {
 export function useButlers(): UseQueryResult<{ butlers: ButlerRow[] }, Error> {
   return useQuery({
     queryKey: ["butlers"],
-    queryFn: () => read<{ butlers: ButlerRow[] }>("/api/butlers"),
+    queryFn: () => read<{ butlers: ButlerRow[] }>(GET("/api/butlers")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -500,7 +531,7 @@ export function useButler(id: string | null): UseQueryResult<
   return useQuery({
     queryKey: ["butler", id],
     queryFn: () => read<{ butler: { id: string; name: string }; versions: ButlerVersionRow[] }>(
-      `/api/butlers/${encodeURIComponent(id!)}`,
+      GET("/api/butlers/:butlerId", { butlerId: id! }),
     ),
     enabled: id !== null,
     ...AUTHORIZATION_SENSITIVE,
@@ -510,7 +541,7 @@ export function useButler(id: string | null): UseQueryResult<
 export function useButlerRuns(): UseQueryResult<{ runs: ButlerRunRow[] }, Error> {
   return useQuery({
     queryKey: ["butler-runs"],
-    queryFn: () => read<{ runs: ButlerRunRow[] }>("/api/butler-runs"),
+    queryFn: () => read<{ runs: ButlerRunRow[] }>(GET("/api/butler-runs")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -577,34 +608,34 @@ export interface Simulation {
  */
 export const simulateButler = (id: string, facts: Record<string, unknown>) =>
   butlerAct<{ simulation: Simulation }>(
-    `/api/butlers/${encodeURIComponent(id)}/simulate`, "POST", { facts },
+    at("POST", "/api/butlers/:butlerId/simulate", { butlerId: id }), "POST", { facts },
   );
 
 /** A recorded run's own input, which is what a dry run is given. */
 export const runFacts = (runId: string) =>
   read<{ facts: Record<string, unknown> | null }>(
-    `/api/butler-runs/${encodeURIComponent(runId)}/inspect`,
+    GET("/api/butler-runs/:runId/inspect", { runId }),
   );
 
 export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { butlerId: string } }>(
-    "/api/butlers", "POST", { name, source, sourceFormat },
+    at("POST", "/api/butlers"), "POST", { name, source, sourceFormat },
   );
 
 export const saveButlerDraft = (id: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { versionId: string } }>(
-    `/api/butlers/${encodeURIComponent(id)}/draft`, "PUT", { source, sourceFormat },
+    at("PUT", "/api/butlers/:butlerId/draft", { butlerId: id }), "PUT", { source, sourceFormat },
   );
 
 export const publishButlerVersion = (id: string) =>
   butlerAct<{ published: { version: number } }>(
-    `/api/butlers/${encodeURIComponent(id)}/publish`, "POST",
+    at("POST", "/api/butlers/:butlerId/publish", { butlerId: id }), "POST",
   );
 
 /** Takes the **pause** id, not the Butler's: one Butler can have been paused more than once over time. */
 export const resumeButler = (pauseId: string, reason: string) =>
   butlerAct<{ resumed: unknown }>(
-    `/api/butler-pauses/${encodeURIComponent(pauseId)}/resume`, "POST", { reason },
+    at("POST", "/api/butler-pauses/:pauseId/resume", { pauseId }), "POST", { reason },
   );
 
 /* ------------------------------------------------------------------ Layer 4: approvals (#81) ------- */
@@ -642,7 +673,7 @@ export interface ApprovalRow {
 export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Error> {
   return useQuery({
     queryKey: ["approvals"],
-    queryFn: () => read<{ approvals: ApprovalRow[] }>("/api/approvals"),
+    queryFn: () => read<{ approvals: ApprovalRow[] }>(GET("/api/approvals")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -666,10 +697,10 @@ async function approvalAct(
 }
 
 export const decide = (id: string, decision: "approve" | "deny") =>
-  approvalAct(`/api/approvals/${encodeURIComponent(id)}/decide`, { decision });
+  approvalAct(at("POST", "/api/approvals/:approvalId/decide", { approvalId: id }), { decision });
 
 export const withdrawDecision = (id: string) =>
-  approvalAct(`/api/approvals/${encodeURIComponent(id)}/withdraw`);
+  approvalAct(at("POST", "/api/approvals/:approvalId/withdraw", { approvalId: id }));
 
 /* ------------------------------------------------------------------ Layer 4: policies (#81) -------- */
 
@@ -710,7 +741,7 @@ export interface PolicyConditions {
 export function usePolicies(): UseQueryResult<{ policies: PolicyVersionRow[] }, Error> {
   return useQuery({
     queryKey: ["policies"],
-    queryFn: () => read<{ policies: PolicyVersionRow[] }>("/api/policies"),
+    queryFn: () => read<{ policies: PolicyVersionRow[] }>(GET("/api/policies")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -735,19 +766,19 @@ async function policyAct<T>(
 
 export const createPolicy = (
   name: string, outcome: string, conditions: PolicyConditions, stages: number[],
-) => policyAct<{ policy: { policyId: string } }>("/api/policies", "POST", {
+) => policyAct<{ policy: { policyId: string } }>(at("POST", "/api/policies"), "POST", {
   name, outcome, conditions, stages,
 });
 
 export const savePolicyDraft = (
   id: string, outcome: string, conditions: PolicyConditions, stages: number[],
 ) => policyAct<{ policy: { versionId: string } }>(
-  `/api/policies/${encodeURIComponent(id)}/draft`, "PUT", { outcome, conditions, stages },
+  at("PUT", "/api/policies/:policyId/draft", { policyId: id }), "PUT", { outcome, conditions, stages },
 );
 
 export const publishPolicyVersion = (id: string) =>
   policyAct<{ published: { version: number } }>(
-    `/api/policies/${encodeURIComponent(id)}/publish`, "POST",
+    at("POST", "/api/policies/:policyId/publish", { policyId: id }), "POST",
   );
 
 /* ------------------------------------------------------------------ Layer 2/3: people (#39, #81) --- */
@@ -779,7 +810,7 @@ export interface PersonRow {
 export function usePeople(): UseQueryResult<{ people: PersonRow[] }, Error> {
   return useQuery({
     queryKey: ["people"],
-    queryFn: () => read<{ people: PersonRow[] }>("/api/people"),
+    queryFn: () => read<{ people: PersonRow[] }>(GET("/api/people")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -789,7 +820,7 @@ export interface TeamRow { id: string; name: string; createdAt: string; memberCo
 export function useTeams(): UseQueryResult<{ teams: TeamRow[] }, Error> {
   return useQuery({
     queryKey: ["teams"],
-    queryFn: () => read<{ teams: TeamRow[] }>("/api/teams"),
+    queryFn: () => read<{ teams: TeamRow[] }>(GET("/api/teams")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -798,7 +829,7 @@ async function accessAct(
   method: "POST" | "DELETE",
   body: unknown,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const response = await apiFetch("/api/access", {
+  const response = await apiFetch(at("POST", "/api/access"), {
     method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -819,7 +850,7 @@ export const revokeAccess = (subjectId: string, relation: string, objectId: stri
   accessAct("DELETE", { subjectId, relation, objectId });
 
 export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
-  const response = await apiFetch("/api/teams", {
+  const response = await apiFetch(at("POST", "/api/teams"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
@@ -832,7 +863,7 @@ export async function createTeam(name: string): Promise<{ ok: true } | { ok: fal
 export async function setTeamMember(
   teamId: string, userId: string, member: boolean,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const response = await apiFetch(`/api/teams/${encodeURIComponent(teamId)}/members`, {
+  const response = await apiFetch(at("POST", "/api/teams/:teamId/members", { teamId }), {
     method: member ? "POST" : "DELETE",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ userId }),
@@ -846,7 +877,7 @@ export async function setTeamMember(
 export function useTeamMembers(teamId: string): UseQueryResult<{ members: string[] }, Error> {
   return useQuery({
     queryKey: ["team-members", teamId],
-    queryFn: () => read<{ members: string[] }>(`/api/teams/${encodeURIComponent(teamId)}/members`),
+    queryFn: () => read<{ members: string[] }>(GET("/api/teams/:teamId/members", { teamId })),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -884,7 +915,7 @@ export interface DomainPauseRow {
 export function useBreakers(): UseQueryResult<{ breakers: BreakerReading[] }, Error> {
   return useQuery({
     queryKey: ["breakers"],
-    queryFn: () => read<{ breakers: BreakerReading[] }>("/api/breakers"),
+    queryFn: () => read<{ breakers: BreakerReading[] }>(GET("/api/breakers")),
     // Faster than the authorization reads: this is a live instrument, and a stale one is misleading in the
     // one situation somebody opens it for.
     staleTime: 5_000,
@@ -895,7 +926,7 @@ export function useBreakers(): UseQueryResult<{ breakers: BreakerReading[] }, Er
 export function useDomainPauses(): UseQueryResult<{ pauses: DomainPauseRow[] }, Error> {
   return useQuery({
     queryKey: ["domain-pauses"],
-    queryFn: () => read<{ pauses: DomainPauseRow[] }>("/api/domain-pauses"),
+    queryFn: () => read<{ pauses: DomainPauseRow[] }>(GET("/api/domain-pauses")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -916,11 +947,11 @@ async function pauseAct(path: string, body?: unknown) {
 
 /** Asks for a domain to be stopped. Two **other** administrators have to agree before it takes effect. */
 export const requestDomainPause = (domain: string, reason: string) =>
-  pauseAct("/api/domain-pauses", { domain, reason });
+  pauseAct(at("POST", "/api/domain-pauses"), { domain, reason });
 
 /** Restarts a domain's mail. One administrator, alone — the asymmetry is deliberate (#66). */
 export const liftDomainPause = (id: string) =>
-  pauseAct(`/api/domain-pauses/${encodeURIComponent(id)}/lift`);
+  pauseAct(at("POST", "/api/domain-pauses/:pauseId/lift", { pauseId: id }));
 
 /* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
 
@@ -983,7 +1014,7 @@ export interface ExportRow {
 export function useMatters(): UseQueryResult<{ matters: MatterRow[] }, Error> {
   return useQuery({
     queryKey: ["matters"],
-    queryFn: () => read<{ matters: MatterRow[] }>("/api/matters"),
+    queryFn: () => read<{ matters: MatterRow[] }>(GET("/api/matters")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -991,7 +1022,7 @@ export function useMatters(): UseQueryResult<{ matters: MatterRow[] }, Error> {
 export function useHolds(): UseQueryResult<{ holds: HoldRow[] }, Error> {
   return useQuery({
     queryKey: ["holds"],
-    queryFn: () => read<{ holds: HoldRow[] }>("/api/holds"),
+    queryFn: () => read<{ holds: HoldRow[] }>(GET("/api/holds")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -999,25 +1030,23 @@ export function useHolds(): UseQueryResult<{ holds: HoldRow[] }, Error> {
 export function useSupervised(): UseQueryResult<{ supervised: SupervisedGrantRow[] }, Error> {
   return useQuery({
     queryKey: ["supervised"],
-    queryFn: () => read<{ supervised: SupervisedGrantRow[] }>("/api/supervised"),
+    queryFn: () => read<{ supervised: SupervisedGrantRow[] }>(GET("/api/supervised")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
 
-/**
- * One spelling of the export route, for the reason `matter-and-scope-world.test.ts` gives about the storage
- * prefix: a path written twice is two things that can disagree.
- *
- * It also keeps this file clear of the literal that tripwire scans for. That guard is about the **R2 key**
- * `${orgId}/exports/${exportId}/` and an HTTP path is a different thing, but it cannot tell them apart —
- * and the right response to a blunt guard is to stop needing the exception, not to widen the guard.
+/*
+ * The export routes arrive **named** from the contract rather than spelled here, and the comment this
+ * replaces is why: `matter-and-scope-world.test.ts` scans this file for the literal `/exports/`, guarding
+ * the R2 key rather than an HTTP path — and it said, correctly, that the answer is to *stop needing the
+ * exception rather than widen the guard*. #85 kept that: the one spelling moved into
+ * `packages/contract/src/routes.ts`, which is the file whose job is to hold each route exactly once.
  */
-const EXPORTS = "/api/exports";
 
 export function useExports(): UseQueryResult<{ exports: ExportRow[] }, Error> {
   return useQuery({
     queryKey: ["exports"],
-    queryFn: () => read<{ exports: ExportRow[] }>(EXPORTS),
+    queryFn: () => read<{ exports: ExportRow[] }>(routePath(EXPORTS_LIST)),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -1037,24 +1066,24 @@ async function matterAct(path: string, body?: unknown) {
 }
 
 export const openMatter = (type: string, description: string) =>
-  matterAct("/api/matters", { type, description });
+  matterAct(at("POST", "/api/matters"), { type, description });
 
 /** Closing a matter is what makes §7's notice to the people who were read about fall due. */
 export const closeMatter = (id: string) =>
-  matterAct(`/api/matters/${encodeURIComponent(id)}/close`);
+  matterAct(at("POST", "/api/matters/:matterId/close", { matterId: id }));
 
 export const placeHold = (mailboxId: string, matterId: string | null) =>
-  matterAct("/api/holds", { mailboxId, matterId });
+  matterAct(at("POST", "/api/holds"), { mailboxId, matterId });
 
 /** Asks for a hold to be lifted. Two other people have to agree; a hold is not lifted by one. */
 export const askToLiftHold = (id: string, reason: string) =>
-  matterAct(`/api/holds/${encodeURIComponent(id)}/lift`, { reason });
+  matterAct(at("POST", "/api/holds/:holdId/lift", { holdId: id }), { reason });
 
 export const askToRead = (mailboxId: string, scope: string, durationSeconds: number, matterId: string | null) =>
-  matterAct("/api/supervised", { mailboxId, scope, durationSeconds, matterId });
+  matterAct(at("POST", "/api/supervised"), { mailboxId, scope, durationSeconds, matterId });
 
 export const runExport = (id: string) =>
-  matterAct(`${EXPORTS}/${encodeURIComponent(id)}/run`);
+  matterAct(routePath(EXPORT_RUN, { exportId: id }));
 
 /* ------------------------------------------------------------------ inviting somebody (#83) -------- */
 
@@ -1071,7 +1100,7 @@ export interface InvitationRow {
 export function useInvitations(): UseQueryResult<{ invitations: InvitationRow[] }, Error> {
   return useQuery({
     queryKey: ["invitations"],
-    queryFn: () => read<{ invitations: InvitationRow[] }>("/api/invitations"),
+    queryFn: () => read<{ invitations: InvitationRow[] }>(GET("/api/invitations")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -1086,7 +1115,7 @@ export function useInvitations(): UseQueryResult<{ invitations: InvitationRow[] 
 export async function invite(
   email: string,
 ): Promise<{ ok: true; secret: string; email: string; expiresAt: string } | { ok: false; message: string }> {
-  const response = await apiFetch("/api/invitations", {
+  const response = await apiFetch(at("POST", "/api/invitations"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email }),

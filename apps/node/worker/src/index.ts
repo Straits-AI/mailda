@@ -1251,7 +1251,25 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     }
 
     const policyDraft = /^\/api\/policies\/([^/]+)\/draft$/.exec(url.pathname);
-    if (policyDraft && request.method === "POST") {
+    /*
+     * **PUT, and it was POST until #85's route registry made the mismatch visible.**
+     *
+     * `src/client/app/api.ts` has always sent PUT here — `policyAct(…, "PUT", …)` — and this guard answered
+     * only POST, so every attempt to edit a policy draft from the interface fell through to the 404 at the
+     * foot of this handler and told the operator `not_found`. On a governance surface. Since the route
+     * shipped.
+     *
+     * Nothing caught it because `test/policy-routes.test.ts` builds every request with one helper that
+     * hard-codes `method: "POST"` — so the suite could not express the verb the UI actually uses, let alone
+     * disagree with it. That is the shape #85 exists to close, and the reason a registry is worth more than a
+     * reviewer: `packages/contract/src/routes.ts` now types the client's template per method, so the pair
+     * cannot diverge again without failing the build.
+     *
+     * **PUT rather than teaching the client POST**, on two grounds. `/api/butlers/:id/draft` — the same act
+     * one layer along — is already PUT, so POST here left the Node holding two verbs for one operation; and
+     * replacing a draft wholesale is what PUT means. Nothing that works today breaks, because nothing worked.
+     */
+    if (policyDraft && request.method === "PUT") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;

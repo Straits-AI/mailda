@@ -41,6 +41,9 @@ importers:
       '@mailda/butler-ast':
         specifier: workspace:*
         version: link:../../../packages/butler-ast
+      '@mailda/contract':
+        specifier: workspace:*
+        version: link:../../../packages/contract
       '@mailda/evidence':
         specifier: workspace:*
         version: link:../../../packages/evidence

@@ -40,12 +40,29 @@ async function sessionFor(userId: string): Promise<string> {
   return outcome.session.accessToken;
 }
 
-function as(token: string, body?: unknown): RequestInit {
+/**
+ * A request as somebody, with the verb stated.
+ *
+ * **The method used to be hard-coded to `POST` here, and that is how #85's defect survived.** Every call in
+ * this file went out as POST, so the suite could not express the verb the interface actually uses — and the
+ * interface sends `PUT /api/policies/:id/draft` against a handler that answered only POST. Editing a policy
+ * draft returned 404 `not_found` for as long as the route existed, on a governance surface, with fourteen
+ * green tests over it.
+ *
+ * A helper that fixes the method cannot detect a method divergence. So it is a parameter, defaulted to POST
+ * for the calls that genuinely are POST, and `put()` below exists so the draft calls say what they are.
+ */
+function as(token: string, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
+}
+
+/** Replacing a draft is a PUT, the same as `/api/butlers/:id/draft`, and the same as what the UI sends. */
+function put(token: string, body?: unknown): RequestInit {
+  return as(token, body, "PUT");
 }
 
 beforeEach(async () => {
@@ -116,7 +133,7 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     expect(published.published.version).toBe(1);
 
     // An edit produces a draft; the published version is never touched.
-    const edited = await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, as(token, {
+    const edited = await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, put(token, {
       outcome: "deny", conditions: { recipientExternal: true },
     }));
     expect(edited.status).toBe(200);
@@ -201,9 +218,9 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     }));
     const { policy } = await created.json() as { policy: { policyId: string } };
     await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
-    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, as(token, { outcome: "deny" }));
+    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, put(token, { outcome: "deny" }));
     await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
-    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, as(token, { outcome: "allow" }));
+    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, put(token, { outcome: "allow" }));
 
     const listed = await SELF.fetch("https://node/api/policies", {
       headers: { cookie: `mailda_at=${token}` },
@@ -259,7 +276,7 @@ describe("a no-op publish is refused with the reason", () => {
     const { policy } = await created.json() as { policy: { policyId: string } };
     await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
     // An edit that writes exactly what is already live.
-    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, as(token, {
+    await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, put(token, {
       outcome: "hold", conditions: { mailboxId: MAILBOX },
     }));
 
@@ -460,5 +477,37 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
     expect(body.error).toBe("E_NO_SUCH_TEAM");
     expect(body.message).toContain("tm_ghost");
     expect(body.message).toContain("fix");
+  });
+});
+
+describe("the verb the interface sends is the verb this Node answers (#85)", () => {
+  /**
+   * The regression guard for a defect that shipped and stayed.
+   *
+   * `src/client/app/api.ts` sends `PUT /api/policies/:id/draft`; the handler answered only POST, so the
+   * request fell through to the 404 at the foot of `fetch` and an administrator editing a policy was told
+   * `not_found`. Confirmed against a running Node before it was fixed — PUT 404, POST 200 — rather than
+   * inferred from the source.
+   *
+   * Asserted from **both sides** on purpose. The positive alone would pass again if somebody widened the
+   * guard to accept either verb, which is the tempting fix and the wrong one: two verbs for one act is the
+   * drift `packages/contract` exists to stop, and `/api/butlers/:id/draft` has been PUT all along.
+   */
+  it("answers PUT and refuses POST, which is the mismatch that shipped", async () => {
+    const token = await sessionFor(ADMIN);
+    const created = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "verb check", outcome: "hold", conditions: {}, stages: [],
+    }));
+    const { policy } = await created.json() as { policy: { policyId: string } };
+
+    const put_ = await SELF.fetch(
+      `https://node/api/policies/${policy.policyId}/draft`, put(token, { outcome: "deny" }),
+    );
+    expect(put_.status).toBe(200);
+
+    const post = await SELF.fetch(
+      `https://node/api/policies/${policy.policyId}/draft`, as(token, { outcome: "deny" }),
+    );
+    expect(post.status).toBe(404);
   });
 });

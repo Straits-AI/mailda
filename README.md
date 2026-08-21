@@ -1625,7 +1625,7 @@ docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
-packages/contract                      command schemas
+packages/contract                      the route registry, and command schemas
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
@@ -1638,6 +1638,27 @@ apps/node/worker/scripts               operator tools: password reset, queue con
 apps/node/worker/src/doctor.ts         checks the runtime claims every decision made
 probes/                                throwaway platform experiments
 ```
+
+## The routes are described once, and the description is checked (#85)
+
+ADR 12 locks *"UI, CLI, SDK, Skill and MCP parity is **generated from shared contracts**"*. Two of the five
+surfaces existed, neither was generated from anything, and `packages/contract` held one command's schemas
+against seventy-one served paths — through a `"main"` pointing at a file that did not exist, imported by
+nothing. A package with no importers has no way to be wrong.
+
+`packages/contract/src/routes.ts` now describes every route, and three checks hold the chain: the client's
+template is typed per method, so naming a route this Node does not serve is a **compile error**; and a
+tripwire compares the registry with the handler in both directions, on paths and on verbs.
+
+**Writing it found a live defect.** The interface sent `PUT /api/policies/:id/draft` and the handler answered
+only `POST`, so **editing a policy draft returned 404 `not_found`** — on a governance surface, since the route
+shipped. Nothing caught it because the route tests built every request with a helper that hard-coded
+`method: "POST"`: a helper that fixes the method cannot detect a method divergence, and fourteen green tests
+sat over it. Confirmed against a running Node before and after, rather than inferred.
+
+Schemas per route come next, then the SDK, Skill and MCP server — each generated rather than written, which
+is only possible once the routes are pinned. Doing them first is how five clients drift.
+See [`docs/api-contract.md`](./docs/api-contract.md).
 
 ## Contributing
 

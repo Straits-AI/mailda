@@ -20,5 +20,10 @@
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./routes": "./src/routes.ts",
+    "./send-mail": "./src/send-mail.ts"
   }
 }
