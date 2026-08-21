@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { BUDGETS } from "@mailda/budgets";
 import { canonicalButlerJson, checkButler } from "@mailda/butler-ast";
 import { createSystemCtx, ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
@@ -77,6 +78,41 @@ function source(ast: Record<string, unknown> = leadIntake(), space?: number): st
   return JSON.stringify(ast, null, space);
 }
 
+/**
+ * `leadIntake` written the way a person would write it: YAML, with the comments that are the entire reason
+ * #87 spent 50 KiB on a parser.
+ *
+ * The header is literal text — a generator would have to round-trip through the AST, and text the AST cannot
+ * reproduce is exactly what is being tested. The node list is rendered *from* the fixture so the two forms
+ * of the same program cannot drift apart as the fixture changes; every value goes through `JSON.stringify`,
+ * which is valid YAML because YAML 1.2 is a superset of JSON, and which sidesteps having to hand-quote
+ * `${event.body}` and friends.
+ */
+function yamlText(): string {
+  const ast = leadIntake();
+  const nodes = ast["nodes"] as Array<Record<string, unknown>>;
+  const body = nodes.map((node) => Object.entries(node).map(
+    ([key, value], index) => `${index === 0 ? "  - " : "    "}${key}: ${JSON.stringify(value)}`,
+  ).join("\n")).join("\n");
+
+  return `# Sales enquiries: shape the payload, assign, draft, propose.
+apiVersion: mailda/v1
+kind: Butler
+metadata:
+  name: sales-enquiries
+  owner: team:sales   # the sales rota, not a person — a leaver must not strand the Butler
+capabilities:
+  - action: send.propose
+    resource: mailbox:enquiries@example.com
+trigger:
+  event: mail.received
+  mailbox: enquiries@example.com
+entry: shape
+nodes:
+${body}
+`;
+}
+
 /** Rebuilds every object in a JSON value with its keys in reverse order. */
 function reversed<T>(value: T): T {
   if (Array.isArray(value)) return value.map(reversed) as unknown as T;
@@ -92,13 +128,13 @@ function reversed<T>(value: T): T {
 
 async function versionRow(id: string) {
   return await testEnv.CATALOG.prepare(
-    `SELECT id, version, state, ast_json, source_text, ast_sha256, source_sha256, published_by,
-            published_at, superseded_at
+    `SELECT id, version, state, ast_json, source_text, source_format, ast_sha256, source_sha256,
+            published_by, published_at, superseded_at
        FROM butler_versions WHERE org_id = ? AND id = ?`,
   ).bind(ORG, id).first<{
     id: string; version: number | null; state: string; ast_json: string; source_text: string;
-    ast_sha256: string; source_sha256: string; published_by: string | null; published_at: string | null;
-    superseded_at: string | null;
+    source_format: string; ast_sha256: string; source_sha256: string; published_by: string | null;
+    published_at: string | null; superseded_at: string | null;
   }>();
 }
 
@@ -673,5 +709,251 @@ describe("the audit trail", () => {
      * the entry asks next.
      */
     expect(published.trigger).toEqual({ event: "mail.received", mailbox: "enquiries@example.com" });
+  });
+});
+
+/**
+ * The second source format (#87), and the three things about it that only a database can prove.
+ *
+ * `packages/butler-ast` proves the checker over a parsed value and knows nothing about text. What is new
+ * here is text in two grammars reaching one AST, a column recording which grammar, and a publish path that
+ * has to re-derive with the *stored* grammar rather than a hard-coded one.
+ *
+ * `docs/receipts/butler-source-format.md` carries the cost that decided it (+50.8 KiB gzip) and the one-way
+ * rule these tests hold: YAML in, never YAML out.
+ */
+describe("a Butler may be authored in YAML (#87)", () => {
+  it("derives the same AST from YAML as from the JSON that means the same thing", async () => {
+    const fromJson = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "json-form", source: source(),
+    });
+    const fromYaml = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "yaml-form", source: yamlText(), sourceFormat: "yaml",
+    });
+
+    /*
+     * `ast_sha256` equal is the claim: one program, two texts. `source_sha256` must differ, or the two
+     * documents were the same bytes and this proves nothing about the parser.
+     */
+    expect(fromYaml.astSha256).toBe(fromJson.astSha256);
+    expect(fromYaml.sourceSha256).not.toBe(fromJson.sourceSha256);
+
+    const row = await versionRow(fromYaml.versionId);
+    expect(row?.source_format).toBe("yaml");
+    expect(row?.ast_json).toBe((await versionRow(fromJson.versionId))?.ast_json);
+  });
+
+  it("stores the author's text verbatim, comments and all, because that is what YAML was for", async () => {
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "yaml-form", source: yamlText(), sourceFormat: "yaml",
+    });
+    const row = await versionRow(draft.versionId);
+    /*
+     * The comment is the assertion. A `source_text` that survives the round trip through this Node is what
+     * makes the format worth 50 KiB; if anything ever regenerates the document from the AST, this line is
+     * what fails, and the receipt's "no AST-to-YAML renderer, and there must not be one" is what it points
+     * at.
+     */
+    expect(row?.source_text).toContain("# the sales rota, not a person");
+    expect(row?.source_text).toBe(yamlText());
+    // And the AST carries none of it — comments are not a program.
+    expect(row?.ast_json).not.toContain("sales rota");
+  });
+
+  it("records json when no format is named, because every caller written before #87 meant json", async () => {
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "unnamed-format", source: source(),
+    });
+    expect((await versionRow(draft.versionId))?.source_format).toBe("json");
+  });
+
+  it("refuses a format it has no parser for, rather than guessing json", async () => {
+    for (const bad of ["yml", "YAML", "toml", "", 7]) {
+      await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+        name: `format-${String(bad)}`,
+        source: source(),
+        sourceFormat: bad as never,
+      })).rejects.toThrow(/E_BUTLER_SOURCE_FORMAT_UNKNOWN/);
+    }
+  });
+
+  it("refuses YAML that does not parse, naming YAML rather than JSON", async () => {
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      // A tab where YAML forbids one, which is the error a person actually hits.
+      name: "broken-yaml", source: "apiVersion: mailda/v1\nkind: Butler\nmetadata:\n\tname: x\n",
+      sourceFormat: "yaml",
+    })).rejects.toThrow(/E_BUTLER_SOURCE_NOT_YAML/);
+  });
+
+  it("refuses an alias bomb inside the parse, where the byte limit cannot reach", async () => {
+    /*
+     * The one bound YAML needs and JSON does not.
+     *
+     * `d1.max_row_bytes` prices the *stored* text and is checked after the parse returns, so it is a bound
+     * on output for JSON — `JSON.parse` cannot amplify — and no bound at all here. This document is a few
+     * hundred bytes and expands geometrically; without `maxAliasCount` the parse is what runs out of
+     * memory, and a refusal about a row size is not something this Node ever gets to say.
+     *
+     * Asserted through `createButlerDraft` rather than against the parser directly, because the claim is
+     * that the bound is wired into the path an author reaches — a correctly-configured parser nobody calls
+     * with the option is the shape this repository keeps finding.
+     */
+    const bomb = [
+      "a: &a [x,x,x,x,x,x,x,x,x]",
+      "b: &b [*a,*a,*a,*a,*a,*a,*a,*a,*a]",
+      "c: &c [*b,*b,*b,*b,*b,*b,*b,*b,*b]",
+      "d: &d [*c,*c,*c,*c,*c,*c,*c,*c,*c]",
+      "e: [*d,*d,*d,*d,*d,*d,*d,*d,*d]",
+    ].join("\n");
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "alias-bomb", source: bomb, sourceFormat: "yaml",
+      /*
+       * The library's own sentence, not just the refusal code. `why` names `butler.yaml_max_alias_count` on
+       * every YAML refusal, so a regex matching only that would pass for a syntax error too — and with the
+       * option removed this document *parses* (into four arrays and an `e`, refused later as not a Butler).
+       * Matching the exhaustion message is what makes this a test of the bound rather than of the fixture.
+       */
+    })).rejects.toThrow(/E_BUTLER_SOURCE_NOT_YAML[\s\S]*Excessive alias count/);
+  });
+
+  it("bounds alias expansion at a hundred, refusing the hundredth and admitting the ninety-ninth", async () => {
+    /*
+     * The literal is the point, and the first version of this test did not have one.
+     *
+     * It built its document from `BUDGETS["butler.yaml_max_alias_count"]` and asserted that `budget - 1`
+     * parsed while `budget` did not — which is true for *every* value, so raising the budget to 1000 left it
+     * green. That is a test of the library honouring whatever number it is handed: a fact about `yaml`, not
+     * about this Node. Found by mutating the budget, which is the only way that shape ever gets found.
+     *
+     * So the counts below are written out, and the budget is asserted to be the number they assume. A change
+     * to either one is now a failure that names the other.
+     *
+     * The two refusals are what make it observable through the authoring path rather than against the parser:
+     * neither document is a Butler, so both are refused — but at 99 aliases the parse *succeeds* and the
+     * checker is what objects, while at 100 the parse never finishes. Which refusal arrives is the bound.
+     */
+    expect(BUDGETS["butler.yaml_max_alias_count"]).toBe(100);
+    const aliases = (count: number) => `a: &a x\nb: [${Array(count).fill("*a").join(",")}]`;
+
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "aliases-99", source: aliases(99), sourceFormat: "yaml",
+    })).rejects.toThrow(/E_BUTLER_DOES_NOT_CHECK/);
+
+    await expect(createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "aliases-100", source: aliases(100), sourceFormat: "yaml",
+    })).rejects.toThrow(/E_BUTLER_SOURCE_NOT_YAML[\s\S]*Excessive alias count/);
+  });
+
+  it("reads YAML 1.2, so an unquoted `no` stays a string rather than becoming false", async () => {
+    /*
+     * A tripwire against a dependency rather than against this code.
+     *
+     * YAML 1.1 resolved `no`, `off` and `y` to booleans — the "Norway problem" — and `yaml` 2.x defaults to
+     * the 1.2 core schema, which does not. That default is the difference between a Butler carrying a
+     * country code and a Butler carrying `false`, and it lives in a package version rather than in this
+     * repository. `parseSource` passes no `schema` option, so this is the default being relied on; if a bump
+     * ever changes it, this is the line that says so, and the fix is to pin the schema explicitly there.
+     */
+    const { parse } = await import("yaml");
+    expect(parse("v: no")).toEqual({ v: "no" });
+    expect(parse("v: off")).toEqual({ v: "off" });
+    expect(parse("v: false")).toEqual({ v: false });
+    expect(parse("v: true")).toEqual({ v: true });
+  });
+});
+
+describe("the format is part of what a version is", () => {
+  it("publishes a YAML draft, which means publication re-derives with the stored format", async () => {
+    /*
+     * The mutation this catches is one line: `checked(draft.source_text)` with a hard-coded `"json"`.
+     *
+     * Nothing else in the suite would notice. Every other publish test authors JSON, so a publish path that
+     * always parsed JSON would be green everywhere — and the failure it produces is the worst-shaped one
+     * available: `E_BUTLER_DRAFT_INCOHERENT`, a refusal whose whole message tells the author their stored
+     * digests disagree with their own source text, when what actually disagreed was this Node with itself.
+     */
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "yaml-published", source: yamlText(), sourceFormat: "yaml",
+    });
+    const live = await publishButler(testEnv, atTime(AUGUST_20 + 1000), ORG, ADMIN, draft.butlerId);
+    expect(live.version).toBe(1);
+
+    const row = await versionRow(live.versionId);
+    expect(row?.state).toBe("published");
+    expect(row?.source_format).toBe("yaml");
+  });
+
+  it("mints a version for a conversion whose bytes did not change, because the format did", async () => {
+    /*
+     * YAML 1.2 is a superset of JSON, so this document is valid as either and hashes the same both ways —
+     * which is exactly how a conversion starts: change the field, change nothing else.
+     *
+     * Without the format in the no-op comparison this publish is refused as `E_BUTLER_UNCHANGED`, and the
+     * author is told there is nothing to publish about the one act they performed. It is also what makes
+     * 0035's freeze worth having: a column no publish can change needs no trigger to protect it.
+     */
+    const text = source(leadIntake(), 2);
+    const first = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "converted", source: text,
+    });
+    const v1 = await publishButler(testEnv, atTime(AUGUST_20 + 1000), ORG, ADMIN, first.butlerId);
+
+    const second = await editButlerDraft(
+      testEnv, atTime(AUGUST_20 + 2000), ORG, ADMIN, first.butlerId,
+      { source: text, sourceFormat: "yaml" },
+    );
+    const v2 = await publishButler(testEnv, atTime(AUGUST_20 + 3000), ORG, ADMIN, first.butlerId);
+
+    expect(v2.version).toBe(2);
+    expect(v2.supersededVersionId).toBe(v1.versionId);
+    // Same program, same bytes, different record of how it was written — and the digests say so.
+    const [before, after] = [await versionRow(v1.versionId), await versionRow(second.versionId)];
+    expect(after?.ast_sha256).toBe(before?.ast_sha256);
+    expect(after?.source_sha256).toBe(before?.source_sha256);
+    expect([before?.source_format, after?.source_format]).toEqual(["json", "yaml"]);
+  });
+
+  it("still refuses a publish where the format did not change either", async () => {
+    // Anti-vacuity for the clause above: adding the format to the comparison must not retire the refusal.
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "no-op", source: yamlText(), sourceFormat: "yaml",
+    });
+    await publishButler(testEnv, atTime(AUGUST_20 + 1000), ORG, ADMIN, draft.butlerId);
+    await editButlerDraft(testEnv, atTime(AUGUST_20 + 2000), ORG, ADMIN, draft.butlerId, {
+      source: yamlText(), sourceFormat: "yaml",
+    });
+    await expect(publishButler(testEnv, atTime(AUGUST_20 + 3000), ORG, ADMIN, draft.butlerId))
+      .rejects.toThrow(/E_BUTLER_UNCHANGED/);
+  });
+
+  it("cannot have its format rewritten once published, and the database is what refuses", async () => {
+    /*
+     * 0031's lesson rather than 0031's test repeated: a content column outside `btv_frozen`'s WHEN clause
+     * is one UPDATE away from a frozen program its own recorded source no longer describes. Asserted by
+     * trying, because the write path never does it and discipline is not the property being claimed.
+     */
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "frozen-format", source: source(),
+    });
+    const live = await publishButler(testEnv, atTime(AUGUST_20 + 1000), ORG, ADMIN, draft.butlerId);
+    await expect(testEnv.CATALOG.prepare(
+      "UPDATE butler_versions SET source_format = 'yaml' WHERE org_id = ? AND id = ?",
+    ).bind(ORG, live.versionId).run()).rejects.toThrow(/E_BUTLER_VERSION_FROZEN/);
+    expect((await versionRow(live.versionId))?.source_format).toBe("json");
+  });
+
+  it("refuses a format the parser has no branch for, at the database", async () => {
+    /*
+     * The CHECK is why there is no lookup table, and why `SOURCE_FORMATS` in `src/butlers.ts` can be a
+     * two-element list rather than a query. A stored format with no branch is a row the publish path reads
+     * and cannot re-derive, so the database refuses it and the disagreement is impossible rather than
+     * merely absent.
+     */
+    const draft = await createButlerDraft(testEnv, atTime(AUGUST_20), ORG, ADMIN, {
+      name: "checked-format", source: source(),
+    });
+    await expect(testEnv.CATALOG.prepare(
+      "UPDATE butler_versions SET source_format = 'toml' WHERE org_id = ? AND id = ?",
+    ).bind(ORG, draft.versionId).run()).rejects.toThrow(/CHECK constraint failed/);
   });
 });

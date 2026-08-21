@@ -447,6 +447,28 @@ opened states × 2 themes — **36 views, 0 AA violations, 0 advisories**. It fo
 screen's action column — which is exactly the class of defect this check exists for and would have shipped
 otherwise. The house rule that every `<th>` carries `scope="col"` came from the same pass.
 
+**Re-audited the same day** after #87 added the Butler format selector: 30 views (the six composer and case
+states could not open on a Node with no mail), **0 AA violations, 0 advisories**, including the Butler editor
+in both themes. The selector is a `fieldset`/`legend` rather than a labelled pair of radios for the reason
+axe would have filed as an advisory: two radios sharing a `name` are one question, and a screen reader that
+announces *"json, radio, 1 of 2"* without the question has read out half of it.
+
+### Signing the harness in, when nobody knows a password
+
+Written down because it took a detour to work out and the next person will hit the same wall.
+`scripts/set-password.mjs` **refuses to read a password from a pipe** — deliberately, and it should keep
+refusing — so it cannot be driven from a script. On a local Node whose fixture accounts have no known
+password, the way in is #83's invitation flow, which is also the only way it has been exercised over HTTP:
+
+1. hash a fresh secret with `claimSecretHash` from `src/claim-secret.ts` (a leaf module, importable from
+   Node, which is why it was split out of `claim.ts`);
+2. `INSERT` an `invitations` row for a new address with that hash, via
+   `wrangler d1 execute CATALOG --local`;
+3. `POST /api/invitations/redeem` with the secret and a password the harness chose — the response signs the
+   new account in, which is the property the redemption route was built for;
+4. grant it `org.admin` in `relationship_tuples`, because the Butler, policy and people routes answer 404 to
+   everyone else (§5C), and a harness signed in as a non-admin audits empty screens and calls them clean.
+
 **Interaction states are audited too (#82).** A `STATES` list beside `APP_ROUTES` opens the reply composer,
 the new-message composer, the rule editor, the Butler editor, the resume form and a case, then runs the same
 two tag sets over each. They are where the forms are, and every defect axe has caught in this project was in

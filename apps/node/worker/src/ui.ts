@@ -396,6 +396,30 @@ button.primary:disabled { opacity: .55; cursor: progress; }
   overflow-wrap: normal;
   overflow-x: auto;
 }
+/*
+ * The format selector (#87). A fieldset, so the browser's default border and padding have to go -- the
+ * question is one line of a form, not a boxed section, and every other field-row here is borderless.
+ */
+.butler-format {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .1rem .8rem;
+  border: 0;
+  margin: 0 0 .6rem;
+  padding: 0;
+}
+.butler-format legend {
+  /* float rather than display, because a legend set to anything else stops being announced as the
+     group's name in several screen readers -- which is the entire reason this is a fieldset. */
+  float: left;
+  padding: 0;
+  margin-right: .8rem;
+  color: var(--dim);
+  font-size: .8rem;
+}
+.butler-format label { font-family: var(--mono); font-size: .8rem; }
+.butler-format .dim { font-size: .78rem; }
 .butler-actions { margin: .6rem 0 1.2rem; }
 /* The checker's findings arrive as several lines and are the whole value of a refusal — kept as written. */
 .butler-findings { white-space: pre-wrap; font-family: var(--mono); font-size: .78rem; }

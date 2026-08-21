@@ -5,7 +5,7 @@ import { Nothing } from "../chrome.tsx";
 import {
   createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
-  type ButlerRow, type ButlerRunRow,
+  type ButlerRow, type ButlerRunRow, type ButlerSourceFormat,
 } from "../api.ts";
 
 /**
@@ -41,15 +41,43 @@ import {
  */
 
 /** The empty program a new Butler starts from: it parses, it checks, and it does nothing. */
-const STARTER = JSON.stringify({
-  apiVersion: "mailda/v1",
-  kind: "Butler",
-  metadata: { name: "new butler", owner: "team:support" },
-  capabilities: [],
-  trigger: { event: "mail.received", mailbox: "support@example.com" },
-  entry: "halt",
-  nodes: [{ id: "halt", type: "stop", reason: "not doing anything yet" }],
-}, null, 2);
+/**
+ * What a new Butler starts as: YAML, with comments (#87).
+ *
+ * The starter was JSON until the parser landed, and switching it is the substance of the change rather than
+ * a decoration. A new author's first encounter with this feature is this text, and in JSON it could not
+ * contain a single word about what any of it means — every line below that begins with `#` is a line the
+ * previous starter structurally could not have.
+ *
+ * It is deliberately a Butler that **does nothing**: one `stop` node, no capabilities. A starter that
+ * proposed a send would be a program somebody publishes to see what happens, and what happens is mail.
+ */
+const STARTER = `# A new Butler. It does nothing yet — the one node below stops immediately.
+#
+# Delete these comments or keep them: the text you write is stored exactly as you write it, and
+# comments are the reason this is YAML rather than JSON. Switch the format to json above if you
+# would rather write it that way; nothing here rewrites your text for you.
+apiVersion: mailda/v1
+kind: Butler
+metadata:
+  name: new butler
+  # A team rather than a person, so a leaver does not strand the Butler.
+  owner: team:support
+
+# Nothing is permitted until it is listed here. An empty list is a Butler that can read its trigger
+# and decide, and can cause no effect at all.
+capabilities: []
+
+trigger:
+  event: mail.received
+  mailbox: support@example.com
+
+entry: halt
+nodes:
+  - id: halt
+    type: stop
+    reason: not doing anything yet
+`;
 
 function when(at: string | null): string {
   return at === null ? "—" : new Date(at).toLocaleString();
@@ -79,6 +107,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
   const detail = useButler(butler.id);
   const queryClient = useQueryClient();
   const [source, setSource] = useState<string | null>(null);
+  const [format, setFormat] = useState<ButlerSourceFormat | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -97,6 +126,14 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
    * saving — and `||` would silently fall through it to the live source, resurrecting text they deleted.
    */
   const editing = source ?? draft?.source_text ?? live?.source_text ?? "";
+  /*
+   * The format follows the text, by the same `??` chain and for the same reason: opening a published YAML
+   * Butler with the selector reading "json" would offer to re-parse the author's document in a grammar it
+   * was not written in, and the first save would refuse with a syntax error about a document nobody touched.
+   *
+   * `"json"` last, because a Butler stored before #87 has no other truthful answer.
+   */
+  const editingFormat = format ?? draft?.source_format ?? live?.source_format ?? "json";
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
@@ -106,10 +143,11 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
   async function save() {
     setBusy(true);
     setProblem(null);
-    const outcome = await saveButlerDraft(butler.id, editing);
+    const outcome = await saveButlerDraft(butler.id, editing, editingFormat);
     setBusy(false);
     if (!outcome.ok) { setProblem(outcome.message); return; }
     setSource(null);
+    setFormat(null);
     await refresh();
   }
 
@@ -134,6 +172,43 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         // with it, and a paraphrase would drop the half that says what to do.
         <pre className="notice bad butler-findings" role="alert">{problem}</pre>
       )}
+
+      {/*
+        A radio group rather than a `<select>`, because there are two options and both fit on the line — so
+        the current one is readable without opening anything, which is what a control that changes how the
+        box below is *parsed* should be.
+
+        `fieldset`/`legend` rather than a bare pair with a label: two radios sharing a name are one question,
+        and a screen reader that announces "json, radio, 1 of 2" without the question has read out half of
+        it. That is the axe best-practice advisory this screen would otherwise carry.
+      */}
+      <fieldset className="field-row butler-format">
+        <legend>format</legend>
+        {(["yaml", "json"] as const).map((option) => (
+          <label key={option} htmlFor={`butler-format-${option}`}>
+            <input
+              type="radio"
+              id={`butler-format-${option}`}
+              name="butler-format"
+              value={option}
+              checked={editingFormat === option}
+              onChange={() => setFormat(option)}
+            />
+            {" "}
+            {option}
+          </label>
+        ))}
+        {/*
+          Said in the interface because it is the one thing about this control that surprises people: it
+          changes which parser reads the box, and it does **not** rewrite the box. There is no AST-to-YAML
+          renderer in this system on purpose — regenerating a document from the parsed program would delete
+          every comment in it — so converting is a thing an author does to their own text, and this sentence
+          is what stops them expecting the button to do it.
+        */}
+        <span className="dim">
+          which parser reads the source below. Switching it does not rewrite your text
+        </span>
+      </fieldset>
 
       <label className="field-row" htmlFor="butler-source">
         <span>source</span>
@@ -286,7 +361,7 @@ export function Butlers() {
 
   async function create() {
     setProblem(null);
-    const outcome = await createButler("new butler", STARTER);
+    const outcome = await createButler("new butler", STARTER, "yaml");
     if (!outcome.ok) { setProblem(outcome.message); return; }
     await queryClient.invalidateQueries({ queryKey: ["butlers"] });
     setEditing(outcome.value.butler.butlerId);

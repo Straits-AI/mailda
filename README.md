@@ -880,6 +880,25 @@ source incidental — which means the ticket caught itself putting a node on the
 dividing line while drawing that line. What that costs is stated rather than glossed: the automation this
 layer ships is "assign it and draft a reply", not "assign it and send the standard acknowledgement".
 
+**And it can be written in YAML, which is the first format here that can hold the reason for a step.** The
+old sentence — "§16's YAML arrives when a YAML parser arrives in the bundle" — named no cost and no decider,
+so it survived three layers by being unfalsifiable. Priced instead: `yaml` 2.9 costs **+246.2 KiB raw,
++50.8 KiB gzip**, about 1% of the Paid script ceiling, and it was spent because JSON structurally cannot
+carry a comment and a Butler is a program. Every other file in this repository puts the argument next to the
+code; the one that could not was the automation.
+
+It goes **one way only**. There is no AST-to-YAML renderer and there must not be one: comments, blank lines
+and key order are not in the AST, so regenerating a document from one would delete every reason its author
+wrote down on the most ordinary act there is — open, change a field, save. The consequence is stated rather
+than left to be found: §16's *visual* builder cannot edit a YAML Butler, because a graph editor writes an AST
+and writing one back out needs the renderer that does not exist.
+
+The `source_format` column arrives in the same commit as the second value and not one earlier. The objection
+to it was correct for as long as it held — a column whose only value is `'json'` is the placeholder shape
+this schema already carries two of, and a tripwire exists to catch a third. It is frozen with the text, for
+the reason migration 0031 was written: a published version whose format could be flipped is a frozen program
+that its own recorded source no longer describes.
+
 **Publishing is the versioning event, and it dissolves a question rather than answering it.** A published
 version cannot be edited at all — the edit goes to a draft, and publishing is a deliberate second act — so
 there is no dilemma about what a comment-only change does. Resubmitting the same bytes is **refused**: a

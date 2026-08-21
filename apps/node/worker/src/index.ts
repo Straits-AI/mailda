@@ -58,7 +58,7 @@ import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
 import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { inspectRun, replayRun } from "./butler/replay.ts";
-import { createButlerDraft, editButlerDraft, publishButler } from "./butlers.ts";
+import { createButlerDraft, editButlerDraft, publishButler, readSourceFormat } from "./butlers.ts";
 import { cancelSend, dailySendState, dispatchDue, releasePolicyHold } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
@@ -1750,6 +1750,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         butler: await createButlerDraft(env, clock, who.orgId, who.userId, {
           name: String(body.name ?? ""),
           source: String(body.source ?? ""),
+          /*
+           * Passed through unnarrowed, deliberately. `readSourceFormat` takes `unknown` and refuses anything
+           * that is not a format it parses, so `String(body.sourceFormat ?? "")` here would be the bug: it
+           * turns an absent field into the string `""` and a wrong one into a plausible-looking value, and
+           * both arrive at the parser as something the caller never wrote.
+           */
+          sourceFormat: readSourceFormat(body.sourceFormat),
         }),
       });
     }
@@ -1762,6 +1769,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({
         butler: await editButlerDraft(env, clock, who.orgId, who.userId, butlerDraft[1]!, {
           source: String(body.source ?? ""),
+          sourceFormat: readSourceFormat(body.sourceFormat),
         }),
       });
     }
@@ -1844,7 +1852,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // A Butler in another organization and one that never existed answer identically (§5C).
       if (butler === null) return Response.json({ error: "not_found" }, { status: 404 });
       const { results } = await env.CATALOG.prepare(
-        `SELECT id, version, state, ast_sha256, source_sha256, created_by, created_at,
+        `SELECT id, version, state, source_format, ast_sha256, source_sha256, created_by, created_at,
                 published_by, published_at, superseded_at,
                 CASE WHEN state IN ('draft', 'published') THEN source_text ELSE NULL END AS source_text
            FROM butler_versions

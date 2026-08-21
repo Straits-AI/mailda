@@ -451,7 +451,22 @@ export interface ButlerVersionRow {
   superseded_at: string | null;
   /** Present for the draft alone — a published version's body is immutable and named by its digest. */
   source_text: string | null;
+  /*
+   * Travels for *every* version, including the superseded ones whose `source_text` is withheld. The format
+   * is metadata about how a version was written rather than the writing itself, and the history view's
+   * question — "when did this Butler move to YAML?" — is unanswerable without it.
+   */
+  source_format: ButlerSourceFormat;
 }
+
+/**
+ * The two grammars a Butler may be authored in (#87).
+ *
+ * Declared here rather than imported from `src/butlers.ts` because this file is the browser bundle's edge
+ * and the worker module reaches D1 — pulling it in would drag the store into the client. The pair is held
+ * together by `test/node/route-coverage`, which reads both sides of every route this file names.
+ */
+export type ButlerSourceFormat = "json" | "yaml";
 
 export interface ButlerRunRow {
   id: string;
@@ -525,12 +540,14 @@ async function butlerAct<T>(
   };
 }
 
-export const createButler = (name: string, source: string) =>
-  butlerAct<{ butler: { butlerId: string } }>("/api/butlers", "POST", { name, source });
+export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
+  butlerAct<{ butler: { butlerId: string } }>(
+    "/api/butlers", "POST", { name, source, sourceFormat },
+  );
 
-export const saveButlerDraft = (id: string, source: string) =>
+export const saveButlerDraft = (id: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { versionId: string } }>(
-    `/api/butlers/${encodeURIComponent(id)}/draft`, "PUT", { source },
+    `/api/butlers/${encodeURIComponent(id)}/draft`, "PUT", { source, sourceFormat },
   );
 
 export const publishButlerVersion = (id: string) =>

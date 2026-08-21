@@ -484,14 +484,47 @@ publishing is a deliberate second act.
 
 ### What arrives, and why it is one field rather than two
 
-A caller submits **`source`**: the JSON text they authored. The AST is *derived* from it. Accepting an
-`(ast, source)` pair would admit a mismatched pair that nothing on this side could detect, so the row would
-hold an author's record beside a program it does not describe. Deriving one from the other makes
-correspondence a property instead of a hope.
+A caller submits **`source`** — the text they authored — and **`sourceFormat`**, `json` or `yaml`. The AST is
+*derived* from it. Accepting an `(ast, source)` pair would admit a mismatched pair that nothing on this side
+could detect, so the row would hold an author's record beside a program it does not describe. Deriving one
+from the other makes correspondence a property instead of a hope.
 
-**JSON today, and there is no `source_format` column.** §16's YAML arrives when a YAML parser arrives in the
-bundle, with the same derivation and a column then. A column whose only value is `'json'` is the placeholder
-shape `placeholder-columns.test.ts` exists to catch.
+### YAML, and the deferral that had to be priced before it could be closed (#87)
+
+This section used to read: *"JSON today, and there is no `source_format` column. §16's YAML arrives when a
+YAML parser arrives in the bundle."* Both halves were right about the column and wrong about how to decide.
+"When a parser arrives" names no cost, no threshold and no decider, so it survived three layers of review by
+being unfalsifiable — the landmine shape, correct today with nothing to notice.
+
+`docs/receipts/butler-source-format.md` replaced it with a measurement: **+246.2 KiB raw, +50.8 KiB gzip**
+for `yaml` 2.9 invoked from the authoring path, about 1% of the Paid script ceiling. Adopted, for one reason
+above the others: **JSON cannot hold a comment**, and a Butler is the only program in this system whose
+format forbids writing down why a step exists — which is the practice AGENTS.md requires of everything else
+here.
+
+**`source_format` earns its column in the same commit and not one earlier.** The old objection was exactly
+right — a column whose only value is `'json'` is the placeholder shape `placeholder-columns.test.ts` exists
+to catch, and this schema already carries two of those. It stops being right the day a second value is real.
+`NOT NULL DEFAULT 'json'`, which is not a backfill guess: JSON is all this Node has ever parsed.
+
+**It is frozen with the text, and that is 0031's lesson rather than a habit.** A published version whose
+format could be flipped is a version whose `source_text` would be re-parsed by a different parser than the
+one that produced its frozen AST — and `E_BUTLER_DRAFT_INCOHERENT`, the refusal whose whole job is to catch
+disagreeing halves *before* they are frozen, would report it one publish too late, about a version nobody
+edited.
+
+**One way only: YAML in, never YAML out.** There is no AST-to-YAML renderer and there must not be one.
+Comments, blank lines and key order are not in the AST — that is what canonicalization means — so
+regenerating a document from one would silently delete every reason its author wrote down, on the most
+ordinary act there is: open, change a field, save. Stated as a consequence rather than left to be discovered:
+**§16's visual builder cannot edit a YAML Butler**, because a graph editor writes an AST and writing an AST
+back out needs the renderer that does not exist. Both editors reading one format is a §16 promise this Node
+keeps in one direction.
+
+One narrow interaction, since YAML 1.2 is a superset of JSON: a document valid as both hashes the same either
+way, so a conversion that changes only the format leaves both digests identical. `source_format` therefore
+joins the two digests in deciding the no-op refusal below — otherwise the one act an author performed would
+be reported as nothing to publish.
 
 ### Two digests, not one
 

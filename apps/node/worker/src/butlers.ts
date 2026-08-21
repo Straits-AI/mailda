@@ -34,11 +34,20 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
  *
  * ## What arrives, and why it is one field rather than two
  *
- * A caller submits `source`: the JSON text they authored. The AST is **derived** from it here. The
- * alternative — accepting an `(ast, source)` pair — admits a mismatched pair that nothing on this side can
- * detect, so the row would hold an author's record beside a program it does not describe. Deriving one from
- * the other makes correspondence a property instead of a hope. §16's YAML form arrives when a YAML parser
- * arrives in the bundle, with the same derivation.
+ * A caller submits `source` — the text they authored — and `sourceFormat`, which is `json` or `yaml`. The
+ * AST is **derived** from it here. The alternative — accepting an `(ast, source)` pair — admits a mismatched
+ * pair that nothing on this side can detect, so the row would hold an author's record beside a program it
+ * does not describe. Deriving one from the other makes correspondence a property instead of a hope.
+ *
+ * **YAML arrived in #87, and it goes one way only.** `docs/receipts/butler-source-format.md` measured the
+ * parser at +246.2 KiB raw and +50.8 KiB gzip and spent it for one reason: JSON cannot hold a comment, and
+ * a Butler is the only program in this system whose format forbids writing down why a step exists.
+ *
+ * There is **no AST-to-YAML renderer, and there must not be one.** Comments, blank lines and key order are
+ * not in the AST — that is what canonicalization means — so regenerating a document from one would silently
+ * delete every reason its author wrote down, on the most ordinary act there is: open, change a field, save.
+ * The consequence, stated rather than found later: **§16's visual builder cannot edit a YAML Butler**, since
+ * a graph editor writes an AST and writing an AST back out needs the renderer that does not exist.
  *
  * ## What this file does not do, stated rather than implied
  *
@@ -48,14 +57,19 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
  * is an *execution*, and the only thing they share is the row. What that buys is visible in the engine: a
  * run binds a **version**, so a run started under v3 goes on reading v3's frozen AST while v4 is live.
  *
- * **Nothing here is reachable over HTTP.** There is deliberately no authoring route, no CLI verb and no UI —
- * so a Butler is written by whoever can write the row, which today means a migration or a test. AGENTS.md
- * calls a capability present in one channel and absent from another a parity bug; zero channels is parity.
- * That is now the **one** thing standing between this layer and an operator using it, and it is stated here
- * rather than in a ticket because a reader of this file is exactly the person who will look for the route.
- * The engine's own two read routes and its release route exist (`/api/butler-runs`,
- * `POST /api/sends/:id/release`) because a run that nobody can see and a gate that nobody can clear are both
- * worse than no feature.
+ * **This is reachable over HTTP now, and the paragraph that said otherwise was the landmine.** Until #83's
+ * round it read *"there is deliberately no authoring route, no CLI verb and no UI — so a Butler is written by
+ * whoever can write the row, which today means a migration or a test"*, and it went on being read as current
+ * for as long as it stayed. `POST /api/butlers`, `PUT /api/butlers/:id/draft` and
+ * `POST /api/butlers/:id/publish` are the three acts of this file, with `GET /api/butlers` and
+ * `GET /api/butlers/:id` to read them and `src/client/app/screens/butlers.tsx` to drive them. The engine's
+ * two read routes and its release route (`/api/butler-runs`, `POST /api/sends/:id/release`) predate them.
+ *
+ * The zero-channel argument it made is still the right argument — a capability in one channel and absent
+ * from another is the parity bug AGENTS.md names — which is exactly why a header claiming zero channels
+ * after five were built is worse than no header. `test/node/route-coverage` is what holds the routes and the
+ * client to each other; nothing holds prose, so prose about what exists has to be corrected by hand and
+ * this is that correction.
  *
  * **A Butler's effects pass through Layer 5, and none of that is duplicated here.** `mail.send.propose`
  * seals a manifest, which is where `policy.ts` decides, `approvals.ts` gates and `breakers.ts` trips.
@@ -107,6 +121,108 @@ function refuseFindings(findings: readonly Finding[]): CallerError {
 }
 
 /**
+ * The formats a Butler may be authored in (#87, §16), and the reason there are exactly two.
+ *
+ * JSON was the only one until the parser's cost was measured — `docs/receipts/butler-source-format.md`,
+ * +246.2 KiB raw and +50.8 KiB gzip — and the sentence it replaced (*"§16's YAML form arrives when a YAML
+ * parser arrives in the bundle"*) was a condition with no threshold, repeated for three layers.
+ *
+ * This list, the `CHECK` in migration 0035 and `parseSource` below are the three places a format is named,
+ * and they have to agree: a stored format with no branch is a row the publish path reads and cannot
+ * re-derive. `test/butlers.test.ts` asserts the database refuses a third value, so the disagreement that
+ * matters is impossible rather than merely absent.
+ */
+export type ButlerSourceFormat = "json" | "yaml";
+
+const SOURCE_FORMATS: readonly ButlerSourceFormat[] = ["json", "yaml"];
+
+/**
+ * Narrows a caller's string, or refuses it.
+ *
+ * Refused rather than defaulted. A submission naming `"yml"` or `"YAML"` is an author who believes they are
+ * writing one format while this Node parses another, and the two parsers disagree about the same bytes
+ * (`{"a": 1}` is valid in both; `a: 1` is valid in one) — so a silent fallback to JSON turns a typo into a
+ * refusal about syntax, pointing at the document instead of at the field that was wrong.
+ *
+ * An absent format is the exception and means `"json"`, because every caller written before #87 omits it and
+ * every one of them meant JSON. That is the same argument 0035's `DEFAULT 'json'` makes about existing rows:
+ * not a plausible guess, the truth.
+ */
+export function readSourceFormat(value: unknown): ButlerSourceFormat {
+  if (value === undefined || value === null) return "json";
+  if (SOURCE_FORMATS.includes(value as ButlerSourceFormat)) return value as ButlerSourceFormat;
+  throw unprocessable("E_BUTLER_SOURCE_FORMAT_UNKNOWN", {
+    what: `${JSON.stringify(value)} is not a source format this Node parses`,
+    why: "the AST is derived from the source text by the named format's parser, so a format with no parser "
+      + "is a Butler whose program cannot be computed — and guessing one would parse the author's document "
+      + "with a grammar they did not write it in",
+    fix: `submit one of: ${SOURCE_FORMATS.join(", ")}. Omitting the field means json`,
+  });
+}
+
+/**
+ * Text to a value, by the format the author named.
+ *
+ * **The YAML import is deferred, and what that buys is narrower than it looks.** esbuild does no code
+ * splitting for the Workers target, so `await import("yaml")` is inlined into the one `index.js` and wrapped
+ * in its `__esm` lazy-init idiom — the bytes ship whatever this line says. What is actually deferred is the
+ * module's *top-level* work: building `yaml`'s schema tables, resolvers and stringifier. An inbound message
+ * is the hot path, it runs on every delivery, and it never authors a Butler — so it never pays for them. The
+ * receipt states this in the same words, because "dynamically imported, so it is off the hot path" is the
+ * sentence a reader will assume and it is false about the bytes.
+ *
+ * **`maxAliasCount` is the one bound YAML needs and JSON does not.** `checked` prices the stored text
+ * against `d1.max_row_bytes` *after* this returns, which is sufficient for JSON — `JSON.parse` cannot
+ * produce more output than it was given — and insufficient here, because alias expansion is amplification.
+ * A few hundred bytes of anchors can expand past the 128 MB memory limit before any byte count is reached,
+ * so the guard has to be inside the parse or it is not a guard.
+ *
+ * **Deleting the option changes nothing observable, and it is kept anyway — here is the argument.** `yaml`
+ * 2.9's own default is 100, the number the receipt carries, so no test in this repository can tell
+ * `parse(source, { maxAliasCount: 100 })` from `parse(source)`. This repository has twice deleted a defence
+ * in exactly that position (`MAX(version) + 1`, the redemption CAS) on the grounds that one enforcement
+ * beats two when nothing can check the second. This is not that: it is not a second enforcement of a rule
+ * this Node already makes, it is the *only* thing that makes `butler.yaml_max_alias_count` true. Without
+ * this argument the receipt would be documenting a dependency's default under Mailda's own namespace — a
+ * number that moves when somebody runs `pnpm update`, with a receipt still claiming Mailda chose it.
+ * `test/butlers.test.ts` pins the literal 100 against the budget so a change to either names the other.
+ *
+ * The two refusals are separate codes rather than one because the caller already knows which format they
+ * submitted, and a message naming that format is the difference between "your document is broken" and "your
+ * document is broken *as YAML*" — which is the actual answer when somebody pastes JSON into a YAML field
+ * and it very nearly works.
+ */
+async function parseSource(source: string, format: ButlerSourceFormat): Promise<unknown> {
+  if (format === "json") {
+    try {
+      return JSON.parse(source);
+    } catch (error) {
+      throw unprocessable("E_BUTLER_SOURCE_NOT_JSON", {
+        what: `the submitted source is not JSON: ${error instanceof Error ? error.message : String(error)}`,
+        why: "the AST is derived from the source text rather than sent beside it, so an unparseable source "
+          + "is a Butler with no program",
+        fix: "submit the canonical JSON form, or submit YAML with source_format: yaml",
+      });
+    }
+  }
+
+  const { parse } = await import("yaml");
+  try {
+    return parse(source, { maxAliasCount: BUDGETS["butler.yaml_max_alias_count"] });
+  } catch (error) {
+    throw unprocessable("E_BUTLER_SOURCE_NOT_YAML", {
+      what: `the submitted source is not YAML: ${error instanceof Error ? error.message : String(error)}`,
+      why: "the AST is derived from the source text rather than sent beside it, so an unparseable source is "
+        + "a Butler with no program. An alias-count refusal is this Node's bound rather than the format's: "
+        + `butler.yaml_max_alias_count=${BUDGETS["butler.yaml_max_alias_count"]}, because alias expansion `
+        + "amplifies and the byte limit is checked after the parse",
+      fix: "fix the YAML above, or submit the canonical JSON form with source_format: json. receipt "
+        + "docs/receipts/butler-source-format.md",
+    });
+  }
+}
+
+/**
  * Parses, checks and prices one submission.
  *
  * **The re-check at publication is not redundant.** A draft is checked when it is written and checked again
@@ -129,18 +245,11 @@ function refuseFindings(findings: readonly Finding[]): CallerError {
  * `createButlerDraft` with its arithmetic and its 498, and 498 is stored and published. A checker whose most
  * expensive refusal never reached a caller would have satisfied every assertion in the package.
  */
-async function checked(source: string): Promise<{ ast: Butler; astJson: string; digests: { ast: string; source: string } }> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch (error) {
-    throw unprocessable("E_BUTLER_SOURCE_NOT_JSON", {
-      what: `the submitted source is not JSON: ${error instanceof Error ? error.message : String(error)}`,
-      why: "the AST is derived from the source text rather than sent beside it, so an unparseable source is "
-        + "a Butler with no program",
-      fix: "submit the canonical JSON form. §16's YAML form needs a parser this Node does not carry yet",
-    });
-  }
+async function checked(
+  source: string,
+  format: ButlerSourceFormat,
+): Promise<{ ast: Butler; astJson: string; digests: { ast: string; source: string } }> {
+  const parsed = await parseSource(source, format);
 
   const result = checkButler(parsed);
   if (!result.ok) throw refuseFindings(result.findings);
@@ -181,16 +290,19 @@ function draftInsert(
   versionId: string,
   astJson: string,
   source: string,
+  format: ButlerSourceFormat,
   digests: { ast: string; source: string },
   actorUserId: string,
   at: string,
 ): D1PreparedStatement {
   return env.CATALOG.prepare(
     `INSERT INTO butler_versions
-       (id, org_id, butler_id, version, state, ast_json, source_text, ast_sha256, source_sha256,
-        created_by, created_at, published_by, published_at, superseded_at)
-     VALUES (?,?,?,NULL,'draft',?,?,?,?,?,?,NULL,NULL,NULL)`,
-  ).bind(versionId, orgId, butlerId, astJson, source, digests.ast, digests.source, actorUserId, at);
+       (id, org_id, butler_id, version, state, ast_json, source_text, source_format, ast_sha256,
+        source_sha256, created_by, created_at, published_by, published_at, superseded_at)
+     VALUES (?,?,?,NULL,'draft',?,?,?,?,?,?,?,NULL,NULL,NULL)`,
+  ).bind(
+    versionId, orgId, butlerId, astJson, source, format, digests.ast, digests.source, actorUserId, at,
+  );
 }
 
 /** Creates a Butler and its first draft. Nothing is published until somebody publishes it. */
@@ -199,7 +311,7 @@ export async function createButlerDraft(
   ctx: Ctx,
   orgId: string,
   actorUserId: string,
-  input: { name: string; source: string },
+  input: { name: string; source: string; sourceFormat?: ButlerSourceFormat },
 ): Promise<ButlerDraft> {
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
@@ -213,7 +325,8 @@ export async function createButlerDraft(
     });
   }
 
-  const { ast, astJson, digests } = await checked(input.source);
+  const format = readSourceFormat(input.sourceFormat);
+  const { ast, astJson, digests } = await checked(input.source, format);
 
   // Checked here for the message; enforced by `btl_name`. Two concurrent creations of the same name lose at
   // the UNIQUE index rather than here — worse wording, correct outcome, and the outcome is the part that
@@ -243,7 +356,9 @@ export async function createButlerDraft(
       env.CATALOG.prepare(
         "INSERT INTO butlers (id, org_id, name, created_by, created_at) VALUES (?,?,?,?,?)",
       ).bind(butlerId, orgId, name, actorUserId, at),
-      draftInsert(env, orgId, butlerId, versionId, astJson, input.source, digests, actorUserId, at),
+      draftInsert(
+        env, orgId, butlerId, versionId, astJson, input.source, format, digests, actorUserId, at,
+      ),
       entry,
     ],
   );
@@ -274,7 +389,7 @@ export async function editButlerDraft(
   orgId: string,
   actorUserId: string,
   butlerId: string,
-  input: { source: string },
+  input: { source: string; sourceFormat?: ButlerSourceFormat },
 ): Promise<ButlerDraft> {
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
@@ -289,7 +404,8 @@ export async function editButlerDraft(
     });
   }
 
-  const { ast, astJson, digests } = await checked(input.source);
+  const format = readSourceFormat(input.sourceFormat);
+  const { ast, astJson, digests } = await checked(input.source, format);
   const versionId = ctx.id(ID_PREFIXES.butlerVersion);
   const at = new Date(ctx.now()).toISOString();
 
@@ -305,7 +421,9 @@ export async function editButlerDraft(
       env.CATALOG.prepare(
         "DELETE FROM butler_versions WHERE org_id = ? AND butler_id = ? AND state = 'draft'",
       ).bind(orgId, butlerId),
-      draftInsert(env, orgId, butlerId, versionId, astJson, input.source, digests, actorUserId, at),
+      draftInsert(
+        env, orgId, butlerId, versionId, astJson, input.source, format, digests, actorUserId, at,
+      ),
       entry,
     ],
   );
@@ -332,10 +450,11 @@ export async function publishButler(
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
   const draft = await env.CATALOG.prepare(
-    `SELECT id, source_text, ast_sha256, source_sha256 FROM butler_versions
+    `SELECT id, source_text, source_format, ast_sha256, source_sha256 FROM butler_versions
       WHERE org_id = ? AND butler_id = ? AND state = 'draft' LIMIT 1`,
   ).bind(orgId, butlerId).first<{
-    id: string; source_text: string; ast_sha256: string; source_sha256: string;
+    id: string; source_text: string; source_format: ButlerSourceFormat;
+    ast_sha256: string; source_sha256: string;
   }>();
 
   if (draft === null) {
@@ -358,8 +477,14 @@ export async function publishButler(
    * correspondence a property at insert; re-deriving it here makes it a property at the moment it is frozen,
    * which is the moment that matters. Nothing in this file can produce a mismatch, so this refusal is a
    * tripwire: only a direct write to a draft row reaches it.
+   *
+   * **The format comes from the row, and getting that wrong would have been the whole defect #87 could
+   * introduce.** Re-deriving with a hard-coded `"json"` would refuse every YAML draft here — the AST would
+   * differ or the parse would fail, and the caller would be told their *digests* disagree with their source
+   * when what actually disagreed was this Node with itself. The stored format is part of what a version is,
+   * which is also why 0035 freezes it.
    */
-  const rechecked = await checked(draft.source_text);
+  const rechecked = await checked(draft.source_text, draft.source_format);
   if (
     rechecked.digests.ast !== draft.ast_sha256
     || rechecked.digests.source !== draft.source_sha256
@@ -375,16 +500,29 @@ export async function publishButler(
   }
 
   const current = await env.CATALOG.prepare(
-    `SELECT id, version, ast_sha256, source_sha256 FROM butler_versions
+    `SELECT id, version, source_format, ast_sha256, source_sha256 FROM butler_versions
       WHERE org_id = ? AND butler_id = ? AND state = 'published' LIMIT 1`,
   ).bind(orgId, butlerId).first<{
-    id: string; version: number; ast_sha256: string; source_sha256: string;
+    id: string; version: number; source_format: ButlerSourceFormat;
+    ast_sha256: string; source_sha256: string;
   }>();
 
+  /*
+   * The format joins the two digests in deciding "nothing changed", and the case is narrow enough to be
+   * worth naming rather than leaving to be discovered.
+   *
+   * YAML 1.2 is a superset of JSON, so `{"steps":[]}` is valid in both and hashes the same either way. An
+   * author converting a Butler from JSON to YAML *starts* by changing only the field — same bytes, same AST,
+   * same both digests — and without this clause that publish is refused as a no-op. It is not one: the
+   * version's record of how it was written is what the next editor reads, and the conversion is the act.
+   * Adding the format here is also what makes it worth freezing in 0035, since a value that no publish can
+   * change is a value nothing needs a trigger to protect.
+   */
   if (
     current !== null
     && current.ast_sha256 === draft.ast_sha256
     && current.source_sha256 === draft.source_sha256
+    && current.source_format === draft.source_format
   ) {
     throw conflict("E_BUTLER_UNCHANGED", {
       what: `Butler ${butlerId} draft is byte-identical to published version ${current.version}`,

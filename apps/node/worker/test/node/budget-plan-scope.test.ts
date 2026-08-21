@@ -440,6 +440,16 @@ const FIGURES: Record<string, Classification> = {
     "mime.max_header_bytes", "mime.max_references_depth",
   ),
 
+  // docs/receipts/butler-source-format.md
+  ...mailda(
+    // Not plan-scoped, and the near-miss is worth naming: the *script size limit* these figures are weighed
+    // against is emphatically plan-conditional — 3 MB on Free, 10 MB on Paid. These are not that limit. They
+    // are what one parser costs, which is a property of the dependency and identical on both plans. The
+    // ceiling they were compared against lives in the receipt's prose, where the comparison is made.
+    "what the YAML parser costs Mailda's bundle, and the alias bound Mailda's own parse path sets",
+    "butler.yaml_parser_bundle_kib", "butler.yaml_parser_gzip_kib", "butler.yaml_max_alias_count",
+  ),
+
   // docs/receipts/password-hash-cost.md
   ...bothPlans(
     "the Workers crypto API's per-call PBKDF2 iteration ceiling, measured in the runtime; not a plan entitlement",
