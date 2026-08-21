@@ -1,4 +1,4 @@
-import { env, SELF } from "cloudflare:test";
+import { createExecutionContext, env, SELF, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
@@ -15,6 +15,7 @@ import { login } from "../src/auth/session.ts";
 import deliveryScript from "../src/client/delivery.client.js";
 import { cancelSend, dispatchDue, type SendState } from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
+import worker from "../src/index.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, requiredStages } from "../src/policy.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 
@@ -1005,3 +1006,65 @@ function handingTransport(): TransportAdapter {
     submit: async (): Promise<SubmitOutcome> => ({ kind: "handed_over", transportMessageId: "tm_test" }),
   } as unknown as TransportAdapter;
 }
+
+/* ------------------------------------------------------- the gate clears, and the mail leaves ------ */
+
+describe("clearing a gate is not enough on its own; something has to sweep", () => {
+  /**
+   * An approved send has to actually go.
+   *
+   * `OutboxSweeper`'s alarm is the fast path, and it is armed by **sealing**. Clearing a gate arms nothing,
+   * and three separate acts move a manifest from a gated state to `held`: an approval completing, a Butler
+   * run's send being released, and a retry. So a send that a second approver had just cleared sat `held`
+   * with `attempts = 0` until an unrelated request poked the Node — observed on a fixture Node, after
+   * exactly this sequence.
+   *
+   * Arming from those three would be a list, and the fourth act to clear a gate would not be on it. The
+   * backstop is one sweep on the cron that already runs every minute, which is what this test drives: the
+   * exported `scheduled` handler, with the trigger `wrangler.jsonc` declares.
+   *
+   * `supervised-recording.test.ts` makes the same argument for §7's notices — a scan nothing calls is a row
+   * that sits — and this is that shape for outbound.
+   */
+  it("dispatches an approved send from the cron, with nothing else touching the Node", async () => {
+    await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
+    await requireApproval("gate", counts(1));
+    /*
+     * Sealed and decided on the **real** clock, because `scheduled` runs on one: every other test here uses
+     * a fixed August instant, and a send held since then is refused at dispatch as `approval_expired` — the
+     * recheck doing its job, and not the thing under test.
+     */
+    const now = createSystemCtx();
+    // A zero hold window, so the send is due the instant its gate clears — otherwise the cron correctly
+    // declines to dispatch something still inside its window, and the test would be asserting the wrong
+    // refusal. Zero is a real configuration, not a test hack: `outbound.test.ts` covers it for the
+    // password-reset mailbox that needs it.
+    await testEnv.CATALOG.prepare("UPDATE mailboxes SET hold_window_seconds = 0 WHERE id = ?")
+      .bind(MAILBOX).run();
+    const sealed = await sealManifest(testEnv, now, ORG, {
+      mailboxId: MAILBOX,
+      authorUserId: AUTHOR,
+      to: ["customer@example.net"],
+      subject: "Needs approval",
+      bodyTyped: "Body.",
+      fidelity: "authored",
+    });
+    expect((await manifestRow(sealed.id))?.state).toBe("awaiting");
+
+    const [approval] = await pendingApprovals(testEnv, ORG, ANN);
+    await decideApproval(testEnv, now, ORG, ANN, approval!.id, "approve");
+    // The gate is open and the message has still not moved: this is the state the defect left it in.
+    expect((await manifestRow(sealed.id))?.state).toBe("held");
+
+    const execution = createExecutionContext();
+    await worker.scheduled(
+      { scheduledTime: Date.now(), cron: "*/1 * * * *", noRetry: () => undefined } as ScheduledController,
+      testEnv,
+      execution,
+    );
+    await waitOnExecutionContext(execution);
+
+    const swept = await manifestRow(sealed.id);
+    expect(swept?.state, JSON.stringify(swept)).toBe("handed_over");
+  });
+});

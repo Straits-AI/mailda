@@ -1316,6 +1316,13 @@ nowhere else, so every effect-free run had been closing with its `INSERT` defaul
 operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
 ([receipt](./docs/receipts/butler-run-cost.md))
 
+**Clearing a gate is not the same as sending.** An approved message still sat in the outbox.
+The sweeper that dispatches mail is armed by *sealing*, and three separate acts move a message
+from gated to sendable — an approval completing, a Butler's send being released, a retry — none of
+which armed anything. Arming from those three would have been a list, and the fourth act to clear a
+gate would not have been on it. The backstop is one sweep on the cron that already runs every
+minute, which covers the acts that exist and the ones that do not yet.
+
 **You could not reply twice to the same conversation.** Reply claims the case in the same act,
 and the claim's compare-and-swap was `WHERE assignee IS NULL` — so re-claiming a case you already
 held changed no rows, fell through to the lost-the-race branch, and answered *held by you*. The

@@ -184,6 +184,36 @@ export default {
           orgId,
         }).catch(() => undefined);
       }
+
+      /*
+       * The outbound backstop, and it is here rather than beside each act for a reason worth stating.
+       *
+       * `OutboxSweeper`'s alarm is the fast path and re-arms itself while sends wait — but only once it is
+       * running, and on an idle Node it is not. Sealing arms it. **Clearing a gate does not**, and three
+       * separate acts move a manifest from a gated state to `held`: an approval completing
+       * (`approvals.ts`), a Butler run's send being released (`butler/release.ts`), and a retry
+       * (`outbound/retry.ts`). None of them armed anything, so an approved send sat `held` with
+       * `attempts = 0` until something unrelated poked the Node — measured, on a fixture Node, after a
+       * second approver cleared it.
+       *
+       * Arming from those three would work and would be wrong: it is a list, and the fourth act to clear a
+       * gate would not be on it. That is the correspondence problem this repository keeps paying for, and
+       * the same shape as the binding allowlists in #71. One sweep on a schedule that already runs covers
+       * every act that exists and every act that does not yet, and costs one query a minute on an idle Node
+       * — against the alternative of mail that leaves when somebody happens to open the app.
+       *
+       * The alarm stays the fast path: this bounds the delay at one minute, it does not replace it.
+       */
+      try {
+        await dispatchDue(env, clock, orgId, cloudflareTransport);
+      } catch (error) {
+        await log(env, clock, {
+          level: "error",
+          event: "outbound.sweep_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+          orgId,
+        }).catch(() => undefined);
+      }
     })());
   },
 
