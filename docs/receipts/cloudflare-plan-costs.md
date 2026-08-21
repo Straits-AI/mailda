@@ -116,3 +116,36 @@ do less. Workers Paid is mandatory. The evaluation problem is therefore still op
   R2 (§12) and are the largest storage line for a mail system, so this receipt is
   incomplete until they are.
 - Not verified against a real invoice. These are published figures.
+
+## Correction — 21 August 2026: nothing enforces the Paid plan, and something said it did
+
+ADR 25 makes Workers Paid mandatory, and every document that leans on that requirement — this one,
+`butler-step-budget.md`, `butler-step-cost.md`, `cron-lateness.md`, `docs/butler-ast.md` — describes it as
+enforced by `mailda deploy` "with an account token". **There was no `mailda deploy`.** No CLI existed at all:
+no `bin` entry anywhere in the workspace, and five loose scripts run through `pnpm --filter` doing the work
+(#80).
+
+Worse than the gap was where the claim surfaced. `doctor` shipped this finding:
+
+```
+check:    workers_paid_plan
+severity: report
+ok:       true
+detail:   "Not checkable from inside a Worker — no account API access.
+           `mailda deploy` verifies the plan at install and refuses on Workers Free (ADR 25)."
+```
+
+So a Node installed on Workers Free read `ok` and was told the check had happened somewhere else — #60's
+governing failure, *a condition backed by nothing is a policy that silently never fires*, reached through a
+doctor finding rather than a policy row. A `test/doctor.test.ts` assertion required the words "mailda deploy"
+to appear in that detail, so the suite was holding the claim in place.
+
+**The CLI exists now and still cannot check this.** A Worker cannot read its account's plan, and Cloudflare
+exposes no documented endpoint for it either. The honest state is *unverified*, which is what the finding
+now says, naming the dashboard as the only place to look. `ok: true` with severity `report` is kept
+deliberately: an unverified fact is not a failing check, and `degraded` would make every correctly-installed
+Node permanently yellow, which is how a warning stops being read.
+
+**The figures in this receipt do not change.** Every number here is a price and a limit, measured as stated.
+What changes is one sentence about who enforces the choice between them, and the sentences in the four
+documents above should be read the same way: the requirement is real, the enforcement is not.

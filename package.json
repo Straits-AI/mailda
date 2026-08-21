@@ -14,12 +14,15 @@
     "receipts": "turbo @mailda/receipts#generate",
     "receipts:check": "pnpm receipts && git diff --exit-code packages/budgets/src/generated.ts",
     "bench": "turbo bench",
-    "deploy": "pnpm --filter @mailda/worker run deploy",
-    "set-password": "pnpm --filter @mailda/worker run set-password",
-    "queue:attach-consumer": "pnpm --filter @mailda/worker run queue:attach-consumer"
+    "deploy": "node packages/cli/src/mailda.mjs deploy",
+    "set-password": "node packages/cli/src/mailda.mjs set-password",
+    "queue:attach-consumer": "pnpm --filter @mailda/worker run queue:attach-consumer",
+    "mailda": "node packages/cli/src/mailda.mjs",
+    "claim-secret": "node packages/cli/src/mailda.mjs claim-secret"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@mailda/cli": "workspace:*",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.9.0",

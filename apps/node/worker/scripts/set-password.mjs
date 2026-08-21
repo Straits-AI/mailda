@@ -21,11 +21,11 @@
  * second implementation to get subtly wrong — then writes it to the remote D1 catalog via wrangler.
  */
 
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { hashPassword } from "../src/auth/password.ts";
+import { d1 as run } from "./d1.mjs";
 
 const workerDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -78,15 +78,7 @@ function readSecret(prompt) {
 }
 
 /** One wrangler invocation, with the SQL passed via argv so nothing is written to a temp file. */
-function d1(sql, params) {
-  const args = ["wrangler", "d1", "execute", "CATALOG", "--remote", "--json", "--command", sql];
-  for (const p of params ?? []) args.push("--param", p);
-  const run = spawnSync("npx", args, { cwd: workerDir, encoding: "utf8" });
-  const text = `${run.stdout ?? ""}${run.stderr ?? ""}`;
-  const start = text.indexOf("[");
-  if (start === -1) fail(`wrangler did not return a result:\n${text.slice(-600)}`);
-  return JSON.parse(text.slice(start))[0].results;
-}
+const d1 = (sql, params) => run(workerDir, sql, params);
 
 const found = d1("SELECT id, email FROM users WHERE email = ? LIMIT 1", [email]);
 if (found.length === 0) fail(`no user with email ${email} on this Node`);

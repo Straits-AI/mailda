@@ -2496,7 +2496,7 @@ function claimMessage(status: string): string {
     case "already_claimed":
       return "This Node has already been claimed. Sign in instead, or restore from backup to start over.";
     case "bad_secret":
-      return "That bootstrap secret does not match. It was shown once during `mailda deploy`.";
+      return "That bootstrap secret does not match. It was shown once by `mailda claim-secret`, and only its hash is stored — seed again if it is lost.";
     case "not_installed":
       return "This Node has no bootstrap secret recorded. Run `mailda deploy` to complete installation.";
     default:

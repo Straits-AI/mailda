@@ -324,7 +324,7 @@ pinned tests pin nothing; writing the numbers in this package is the thing AGENT
 `src/cost.ts` carries the argument at the point of use. Three reasons: on the Free row a `foreach` of 200
 sending items costs 4,038 and is refused four times over, which puts the limit *before* where a good Butler
 goes and AGENTS.md says that makes the limit wrong rather than the widget; the permissive direction lands only
-on a plan ADR 25 refuses at install and `mailda deploy` enforces with an account token; and an unusably small
+on a plan ADR 25 refuses at install and ADR 25 requires and nothing enforces — see `cloudflare-plan-costs.md`'s correction of 21 August 2026; and an unusably small
 bound has a named failure mode in that receipt — it *"gets raised by whoever hits it, without re-measuring"*.
 
 **What the rejected row would have bought is stated, not glossed.** A Free Node is unsupported but not

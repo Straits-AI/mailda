@@ -216,12 +216,22 @@ describe("doctor", () => {
     expect(finding.receipt).toBe("docs/receipts/evidence-lifecycle.md");
   });
 
-  it("reports the plan check as absent rather than passing it silently", async () => {
+  /**
+   * The plan is unverified, and the finding must not credit anything with verifying it.
+   *
+   * This test used to assert the detail contained the words "mailda deploy" — locking in the claim that a
+   * tool which did not exist was checking the plan (#80). A Node on Workers Free read `ok` and was told the
+   * check had happened elsewhere. The assertion is now the property rather than the phrase: an omitted check
+   * is indistinguishable from a passing one, and a *credited* check reads better than either.
+   */
+  it("reports the plan as unverified, and credits nothing with checking it", async () => {
     const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "workers_paid_plan");
-    // An omitted check is indistinguishable from a passing one, so the gap is stated.
     expect(finding.severity).toBe("report");
-    expect(finding.detail).toContain("Not checkable");
-    expect(finding.detail).toContain("mailda deploy");
+    expect(finding.detail.toLowerCase()).toContain("unverified");
+    // The CLI exists now and still cannot read an account's plan. Naming it here would be the same defect
+    // with a truer-sounding subject.
+    expect(finding.detail).not.toContain("mailda ");
+    expect(finding.detail).toMatch(/not enforced|dashboard/);
   });
 
   it("reports the queue consumer as un-checkable, and names the step that attaches it (#72)", async () => {

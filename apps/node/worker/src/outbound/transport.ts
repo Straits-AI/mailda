@@ -48,8 +48,14 @@ export interface TransportAdapter {
   readonly name: string;
   /**
    * §14 requires "can this Node send" answerable **before** a user composes rather than discovered at
-   * submit. The capability comes from what `mailda deploy` recorded (ADR 34) — neither the plan nor
-   * domain onboarding is visible from inside a Worker — so this reads a stored answer and its date.
+   * submit. Neither the plan nor domain onboarding is visible from inside a Worker, so this reads a stored
+   * answer and its date out of `node_capabilities` (ADR 34).
+   *
+   * **Nothing writes that row.** It was to be `mailda deploy`, which did not exist (#80); the CLI that
+   * exists now still cannot, because Cloudflare's sending-domain onboarding is a dashboard flow with no
+   * endpoint listing its result, and a probe would mean sending a real message to a stranger to see whether
+   * it was refused. So `capability()` returns the honest "never verified" answer on every Node today, and
+   * the table is the seam that will hold the answer if Cloudflare ever exposes one.
    */
   capability(env: Env): Promise<TransportCapability>;
   submit(env: Env, request: SubmitRequest, fidelity: "authored" | "reconstructed"): Promise<SubmitOutcome>;
@@ -59,7 +65,11 @@ export interface TransportCapability {
   canSend: boolean;
   /** True only when a sending domain is onboarded. Without it, only verified destinations work. */
   arbitraryRecipients: boolean;
-  /** When `mailda deploy` last verified this. Staleness is visible rather than implied (ADR 34). */
+  /**
+   * When this was last verified, or **null** — which is every Node today, because nothing can verify it.
+   * Kept as a column rather than dropped: staleness is visible rather than implied (ADR 34), and a field
+   * that is always null is a smaller lie than a date somebody invented.
+   */
   verifiedAt: string | null;
   detail: string;
 }
@@ -135,8 +145,12 @@ export const cloudflareTransport: TransportAdapter = {
         arbitraryRecipients: false,
         verifiedAt: null,
         detail:
-          "No EMAIL binding. This Node cannot send at all — `mailda deploy` adds the binding and " +
-          "verifies the plan and the onboarded sending domain (ADR 34).",
+          // Was: "`mailda deploy` adds the binding and verifies the plan and the onboarded sending
+          // domain". There was no CLI (#80), and the one that exists now can do neither — the plan is not
+          // readable from anywhere this project has, and Cloudflare's sending-domain onboarding is a
+          // dashboard flow with no endpoint listing its result.
+          "No EMAIL binding. This Node cannot send at all — add a `send_email` binding to " +
+          "wrangler.jsonc and deploy again (ADR 34).",
       };
     }
 
@@ -154,9 +168,12 @@ export const cloudflareTransport: TransportAdapter = {
         arbitraryRecipients: false,
         verifiedAt: null,
         detail:
-          "The EMAIL binding is present but sending has never been verified. Neither the Workers plan " +
-          "nor whether a sending domain is onboarded is visible from inside a Worker; run " +
-          "`mailda deploy` or `mailda doctor --remote` to record it.",
+          // Neither gate is verifiable by anything this project has, which is stated rather than pointing
+          // at a command that cannot do it. `mailda deploy`'s own help says the same two sentences.
+          "The EMAIL binding is present but sending has never been verified, and nothing here can verify " +
+          "it: the Workers plan is not readable from a Worker, and whether a sending domain is onboarded " +
+          "has no documented API. Until one is onboarded this Node can only reach addresses already " +
+          "verified in your Cloudflare account.",
       };
     }
 

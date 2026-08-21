@@ -45,9 +45,12 @@ import { pendingReseal } from "./reseal.ts";
  *
  * ## What it cannot check
  *
- * The Workers Paid plan (ADR 25). A Worker cannot read its own account's plan; that check belongs
- * to `mailda deploy`, which holds an account token. Recorded as `report` naming the gap, rather
- * than silently omitted — an absent check reads exactly like a passing one.
+ * The Workers Paid plan (ADR 25). A Worker cannot read its own account's plan, and **nothing else checks
+ * it either** — this used to say the check "belongs to `mailda deploy`, which holds an account token", and
+ * there was no CLI at all (#80). The one that exists now still cannot: Cloudflare exposes no documented
+ * endpoint for an account's Workers plan. Recorded as `report` naming the gap, rather than silently
+ * omitted — an absent check reads exactly like a passing one, and a *credited* check reads better than
+ * either.
  */
 
 export type Severity = "refuse" | "degraded" | "report";
@@ -497,8 +500,9 @@ function butlerExecutionCheck(): Finding {
  * arrive only on a queue, fed by a Queues event subscription. Two account-level things stand between a
  * hand-over and an observed outcome, and the `sending_events_consumer` finding above names both: the
  * subscription is not in `wrangler.jsonc`, wrangler's CLI cannot create it, and the dashboard's own modal
- * currently throws — so it is created through the API by `mailda deploy` (`queue-provisioning.md`) — and
- * since #72 the consumer is attached out of band too.
+ * currently throws — so it has to be created through the API (`queue-provisioning.md`), which **no tool in
+ * this repository does**: `mailda deploy` attaches the consumer and stops there. And since #72 the consumer
+ * is attached out of band too.
  *
  * Which means it can be absent, deleted, disabled, or pointed at the wrong sending domain, and **nothing
  * about a Node in that state looks wrong**: sends still hand over, the outbox still fills, and every
@@ -1977,9 +1981,21 @@ function loopDetectionFinding(visibility: { threadedInbound: number; butlerSends
 }
 
 /**
- * ADR 25 requires Workers Paid, and a Worker cannot read its own account's plan. Reported as an
- * explicit gap rather than omitted: a check that is absent is indistinguishable from one that
- * passes, which is the same reasoning that put `stale_when` on every receipt.
+ * ADR 25 requires Workers Paid, and **nothing verifies it**. Reported as an explicit gap rather than
+ * omitted: a check that is absent is indistinguishable from one that passes, which is the same reasoning
+ * that put `stale_when` on every receipt.
+ *
+ * This used to read *"`mailda deploy` verifies the plan at install and refuses on Workers Free"*, and there
+ * was no `mailda deploy` — no CLI at all (#80). So a Node on Workers Free read `ok` and was told the check
+ * had happened somewhere else, which is #60's governing failure — a condition backed by nothing is a policy
+ * that silently never fires — reached through a doctor finding rather than a policy row. Worse than the
+ * missing check was the sentence saying it was covered.
+ *
+ * The CLI exists now and still cannot answer this: a Worker cannot read its account's plan, and Cloudflare
+ * exposes no documented endpoint for it either. So the honest report is *unverified*, and it names where a
+ * person can actually look. `ok: true` with severity `report` is kept deliberately — an unverified fact is
+ * not a failing check, and marking it `degraded` would make every correctly-installed Node permanently
+ * yellow, which is how a warning stops being read.
  */
 function planCheck(): Finding {
   return {
@@ -1987,7 +2003,9 @@ function planCheck(): Finding {
     severity: "report",
     discloses: "infrastructure",
     ok: true,
-    detail: "Not checkable from inside a Worker — no account API access. `mailda deploy` verifies the plan at install and refuses on Workers Free (ADR 25).",
+    detail: "Unverified. A Worker cannot read its account's plan and there is no documented API for it, so "
+      + "ADR 25's requirement that this Node runs on Workers Paid is not enforced anywhere — check it in "
+      + "the Cloudflare dashboard.",
     receipt: "docs/receipts/cloudflare-plan-costs.md",
   };
 }

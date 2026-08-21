@@ -1,0 +1,12 @@
+{
+  "name": "@mailda/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": { "mailda": "./src/mailda.mjs" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mailda/worker": "workspace:*"
+  }
+}

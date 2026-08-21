@@ -322,8 +322,12 @@ export interface EffectEnvelope {
   emittedHeaders: readonly string[];
   /** §18's adapter capability. Its *version* is named absent below, on the field. */
   transport: {
-    /** The adapter's name. `TransportAdapter` has no version and Cloudflare's binding exposes none, so the
-     * honest binding is the name plus the date `mailda deploy` last verified the capability. */
+    /*
+     * The adapter's name. `TransportAdapter` has no version and Cloudflare's binding exposes none, so the
+     * honest binding is the name plus the date the capability was last verified — which is `null` on every
+     * Node, because nothing can verify it (#80). Recording a null date is the point: it says the envelope
+     * was sealed against an *unverified* capability, which is a different fact from a stale one.
+     */
     adapter: string;
     canSend: boolean;
     arbitraryRecipients: boolean;

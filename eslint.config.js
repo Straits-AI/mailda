@@ -92,7 +92,10 @@ export default tseslint.config(
    * no request, no reused isolate, and nothing for §27 to replay.
    */
   {
-    files: [".github/scripts/**/*.mjs", "apps/node/worker/scripts/**/*.mjs", "*.config.js"],
+    // `packages/cli` is the `mailda` binary (#80): a Node program, not a Worker, and the only one in the
+    // workspace that runs on an operator's own machine.
+    files: [".github/scripts/**/*.mjs", "apps/node/worker/scripts/**/*.mjs", "packages/cli/**/*.mjs",
+            "*.config.js"],
     languageOptions: { globals: { ...globals.node } },
     rules: { "no-restricted-syntax": "off" },
   },

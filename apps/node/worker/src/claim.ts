@@ -1,5 +1,7 @@
 import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
+import { claimSecretHash } from "./claim-secret.ts";
+
 import { hashPassword, passwordProblem } from "./auth/password.ts";
 import { issueSession, type IssuedSession } from "./auth/session.ts";
 
@@ -23,10 +25,6 @@ import { issueSession, type IssuedSession } from "./auth/session.ts";
  * a temporary one.
  */
 
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 export interface ClaimOutcome {
   status: "claimed" | "already_claimed" | "bad_secret" | "not_installed" | "weak_password";
@@ -60,7 +58,7 @@ export async function claimNode(
   if (claim.claimed_at !== null) {
     return { status: "already_claimed" };
   }
-  if ((await sha256Hex(secret)) !== claim.secret_hash) {
+  if ((await claimSecretHash(secret)) !== claim.secret_hash) {
     return { status: "bad_secret" };
   }
 
@@ -141,11 +139,18 @@ export async function claimNode(
   return { status: "claimed", orgId, userId, session: await issueSession(env, ctx, { orgId, userId }) };
 }
 
-/** Records the install-time secret. Called by `mailda deploy`, never exposed over HTTP. */
+/**
+ * Records the install-time secret. Never exposed over HTTP.
+ *
+ * Its documented caller was `mailda deploy`, which did not exist — so for four layers the secret a
+ * `POST /api/claim` verifies was written by nothing, and the only caller of this function was its own test
+ * (#80). `mailda claim-secret` writes it now, through `scripts/seed-claim-secret.mjs`, which shares this
+ * file's hashing rather than reimplementing it.
+ */
 export async function seedClaimSecret(env: Env, ctx: Ctx, secret: string): Promise<void> {
   await env.CATALOG.prepare(
     "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES (?,?,NULL,NULL)",
   )
-    .bind(ctx.id("clm"), await sha256Hex(secret))
+    .bind(ctx.id("clm"), await claimSecretHash(secret))
     .run();
 }

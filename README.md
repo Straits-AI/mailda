@@ -1316,6 +1316,15 @@ nowhere else, so every effect-free run had been closing with its `INSERT` defaul
 operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
 ([receipt](./docs/receipts/butler-run-cost.md))
 
+**A shipped sentence saying a gap is covered is worse than the gap.** Ten documents and two
+source files described `mailda deploy` and `mailda doctor` as the mechanism for install and
+plan enforcement. There was no CLI — no `bin` entry anywhere. And `doctor` shipped a finding
+reading `workers_paid_plan: ok` whose detail said *"`mailda deploy` verifies the plan at
+install and refuses on Workers Free"*, so a Node on the plan the design forbids read *ok* and
+was told the check had happened elsewhere. A test required those words to be in the detail,
+so the suite held the claim in place. The CLI exists now; the plan still cannot be checked by
+anything, and the finding says so.
+
 **Clearing a gate is not the same as sending.** An approved message still sat in the outbox.
 The sweeper that dispatches mail is armed by *sealing*, and three separate acts move a message
 from gated to sendable — an approval completing, a Butler's send being released, a retry — none of
@@ -1450,7 +1459,7 @@ is classified: either changes to it are auditable and the actions are named, or 
 stated reason. A migration that adds a table fails the suite until somebody decides which
 (`test/audit-coverage.test.ts`), at the moment they still have the context to decide well.
 
-**Nothing checks itself by default.** `mailda doctor` verifies the runtime claims every other
+**Nothing checks itself by default.** `mailda doctor --url <origin>` verifies the runtime claims every other
 decision made, and on its first run against the deployed Node it found that the mail it holds is
 encrypted under a key published in this repository. Two checks deliberately *use* a credential
 rather than test for its presence — a Secrets Store secret is `pending` for a while after creation,
@@ -1481,8 +1490,11 @@ storage. ([receipt](./docs/receipts/cloudflare-plan-costs.md))
 
 **There is no free tier.** Not a pricing choice — Cloudflare's free plan forces 24-hour,
 non-configurable queue retention, so a message stuck in a queue for a day is silently
-deleted. A mail system cannot run there. `mailda deploy` detects the plan and refuses,
-saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
+deleted. A mail system cannot run there. **Nothing enforces this**: a Worker cannot read
+its own account's plan and Cloudflare exposes no documented API for it, so `doctor` reports
+the requirement as unverified and names where to look. This paragraph used to say
+`mailda deploy` detected the plan and refused; there was no CLI at all, which is the whole
+of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
 
 ### Deliberate limitations
 
@@ -1511,8 +1523,10 @@ saying why, rather than failing later. ([ADR 25](./Mailda-Full-Engineering-Bluep
   ([receipt](./docs/receipts/queue-provisioning.md))
 - **Paying for Workers is not enough to send.** Arbitrary recipients require a *sending domain
   onboarded* with SPF and DKIM. Until then a Node can only send to addresses already verified in your
-  own account — so it can receive a customer's message and be unable to answer it. `mailda deploy`
-  checks both and says which one is missing.
+  own account — so it can receive a customer's message and be unable to answer it. **Nothing checks
+  this either.** Onboarding is a dashboard flow with no endpoint listing its result, and the only
+  honest probe would be sending a real message to a stranger to see whether it was refused. The
+  outbox says the capability was never verified, and `mailda`'s own help says the same.
 - **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id,
   so verifiers are PBKDF2 at 600,000 effective iterations — an accepted baseline, not a strong one.
   Passkeys are specified and not yet built. The reasoning, including what this does and does not
