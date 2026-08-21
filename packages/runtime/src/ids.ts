@@ -52,6 +52,17 @@ export const ID_PREFIXES = {
   case: "cas",
   butler: "btl",
   butlerVersion: "btv",
+  /**
+   * The account. Minted by `claimNode` and `redeemInvitation` as `ctx.id("usr")` since the first layer, and
+   * registered here in #85 — the first time anything needed to **validate** one.
+   *
+   * That is the rule this registry actually follows, said plainly because the count of entries invites the
+   * wrong reading: it is not every prefix this Node mints. `ctx.id` takes a string, so `rt`, `fam`, `msg`,
+   * `thr` and a dozen others are minted without appearing here. A prefix arrives when something has to
+   * *check* it, because `id-prefix-world.test.ts` forbids writing the pattern by hand — which is exactly how
+   * `case_` and `cas_` came to disagree, and why the door has to be the only one.
+   */
+  user: "usr",
 } as const;
 
 /**

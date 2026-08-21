@@ -1,5 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
@@ -224,7 +224,7 @@ export async function redeemInvitation(
   if (taken !== null) throw refuse();
 
   const at = new Date(ctx.now()).toISOString();
-  const userId = ctx.id("usr");
+  const userId = ctx.id(ID_PREFIXES.user);
   const verifier = await hashPassword(password);
 
   /*

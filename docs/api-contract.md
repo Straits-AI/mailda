@@ -77,8 +77,49 @@ and report clean. An HTTP path is a different thing and a lexical guard cannot t
 already carried the right answer in a comment: *stop needing the exception, not widen the guard.* So the one
 spelling moved into the registry, which is the file whose job is to hold each route exactly once.
 
+## Step 2: schemas, and why they are partial on purpose
+
+`packages/contract/src/schemas.ts` describes what travels over the routes, and `RouteSpec` gained optional
+`request` and `response` fields to carry them. **13 of 94** route/method pairs are described. That number is
+exported by `schemaCoverage()` and asserted, so it is something a reader watches move rather than an
+impression.
+
+The partialness is the honest part. A file of ninety-four hand-written shapes that nothing compares against a
+real response would be ninety-four guesses wearing the clothes of a contract — and **worse than none**,
+because a generated client would trust it. So schemas arrive with their validation, one tranche at a time:
+`apps/node/worker/test/contract-responses.test.ts` drives every schema-bearing route against a real Node and
+parses the answer, so a schema that does not describe reality fails rather than misleads.
+
+### `.strict()` on responses, and it is doing security work in two places
+
+A lenient response schema would pass over a route that had grown a field the contract does not mention, which
+is the drift ADR 12 exists to stop arriving through the door marked "compatible". Two of these turn that from
+tidiness into a property:
+
+- **`GET /api/transport`** reads a credential and must never return it. The schema has no field for a token,
+  so a route that grew one fails.
+- **`GET /api/auth/passkeys`** must never return a public key. Same shape, same reason.
+
+Requests are deliberately **not** strict: a caller sending a field this Node ignores is harmless, and
+refusing it would break every client written against a later version.
+
+### One schema states a property two routes have to share
+
+`POST /api/auth/login` and `POST /api/auth/passkeys/verify` both carry `signedInResponse`. ADR 29 makes
+passkeys primary and passwords the fallback, and #84's rule is that nothing downstream learns which one
+signed you in — so giving the two routes different shapes would be the first place that broke. The schema is
+where it is stated; `contract-responses.test.ts` parses a real passkey assertion's answer with it.
+
+### What it found
+
+**`usr` was not in `ID_PREFIXES`.** `claim.ts` and `invitations.ts` have minted `ctx.id("usr")` since the
+first layer, and nothing had ever needed to *validate* a user id — so the prefix lived only as a literal.
+Writing the pattern by hand was not an option: `id-prefix-world.test.ts` forbids it outright, because that is
+exactly how `case_` and `cas_` came to disagree. Registering it then made that tripwire fire on the two mint
+sites, which now go through the registry. The gap and its closure were both the mechanism working.
+
 ## What comes next
 
-1. Request and response schemas per route, in the shape `send-mail.ts` already uses.
+1. The remaining 81 route/method pairs, in tranches, each with its validation.
 2. The SDK, Agent Skill and MCP server — each **generated** rather than written, which is only possible once
-   1 exists. Doing them first is how five clients drift.
+   1 is empty. Doing them first is how five clients drift.

@@ -71,7 +71,7 @@ export async function claimNode(
   }
 
   const orgId = ctx.id("org");
-  const userId = ctx.id("usr");
+  const userId = ctx.id(ID_PREFIXES.user);
   const mailboxId = ctx.id(ID_PREFIXES.mailbox);
   const at = new Date(ctx.now()).toISOString();
   const verifier = await hashPassword(password);

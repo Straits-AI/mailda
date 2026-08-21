@@ -40,6 +40,10 @@
  * such routes rather than letting a sixth join quietly.
  */
 
+import type { ZodType } from "zod";
+
+import * as S from "./schemas.ts";
+
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface RouteSpec {
@@ -54,6 +58,20 @@ export interface RouteSpec {
   readonly path: string;
   /** What it does, in the words a generated client would carry as a doc comment. */
   readonly summary: string;
+
+  /**
+   * What the route accepts and answers (#85 step 2).
+   *
+   * **Optional, and the optionality is the honest part.** Step 1 pinned the route *set* and is complete;
+   * these describe what travels, and they arrive one tranche at a time — because a schema nothing checks is
+   * a guess wearing the clothes of a contract, and a generated client would trust it.
+   * `apps/node/worker/test/contract-responses.test.ts` drives every schema-bearing route against a real
+   * Node and parses the answer, so a schema that does not describe reality fails rather than misleads.
+   *
+   * A route with no `response` is one nobody has done yet, which `SCHEMAS_MISSING` counts.
+   */
+  readonly request?: ZodType;
+  readonly response?: ZodType;
 }
 
 /**
@@ -80,19 +98,43 @@ export const ROUTES = [
   { method: "GET", path: "/api/doctor", summary: "What this Node can and cannot do, with the evidence" },
 
   // ---- authentication (#38, ADR 29) -----------------------------------------------------------------
-  { method: "POST", path: "/api/auth/login", summary: "Exchange a password for a session" },
+  {
+    method: "POST", path: "/api/auth/login",
+    summary: "Exchange a password for a session",
+    request: S.loginRequest, response: S.signedInResponse,
+  },
   { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token" },
   { method: "POST", path: "/api/auth/logout", summary: "End this session" },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds" },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace" },
-  { method: "GET", path: "/api/me", summary: "Who this session is" },
+  { method: "GET", path: "/api/me", summary: "Who this session is", response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
-  { method: "POST", path: "/api/auth/passkeys/challenge", summary: "A single-use challenge for either ceremony. Unauthenticated for authentication, which is what keeps it from answering whether an address has a passkey" },
-  { method: "POST", path: "/api/auth/passkeys", summary: "Finish registration: verify the attestation and store the public key" },
-  { method: "POST", path: "/api/auth/passkeys/verify", summary: "Finish authentication: verify the assertion and issue a session" },
-  { method: "GET", path: "/api/auth/passkeys", summary: "The passkeys this account holds. Never returns a public key" },
-  { method: "DELETE", path: "/api/auth/passkeys", summary: "Revoke one, bound to its owner by the statement's own predicate" },
+  {
+    method: "POST", path: "/api/auth/passkeys/challenge",
+    summary: "A single-use challenge for either ceremony. Unauthenticated for authentication, which is what keeps it from answering whether an address has a passkey",
+    request: S.passkeyChallengeRequest, response: S.passkeyChallengeResponse,
+  },
+  {
+    method: "POST", path: "/api/auth/passkeys",
+    summary: "Finish registration: verify the attestation and store the public key",
+    response: S.passkeyRegisteredResponse,
+  },
+  {
+    method: "POST", path: "/api/auth/passkeys/verify",
+    summary: "Finish authentication: verify the assertion and issue a session",
+    response: S.signedInResponse,
+  },
+  {
+    method: "GET", path: "/api/auth/passkeys",
+    summary: "The passkeys this account holds. Never returns a public key",
+    response: S.passkeyListResponse,
+  },
+  {
+    method: "DELETE", path: "/api/auth/passkeys",
+    summary: "Revoke one, bound to its owner by the statement's own predicate",
+    response: S.passkeyForgottenResponse,
+  },
 
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding" },
@@ -179,11 +221,25 @@ export const ROUTES = [
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
   { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live" },
-  { method: "POST", path: "/api/butlers", summary: "Create a Butler and its first draft" },
+  {
+    method: "POST", path: "/api/butlers", summary: "Create a Butler and its first draft",
+    request: S.createButlerRequest, response: S.butlerDraftResponse,
+  },
   { method: "GET", path: "/api/butlers/:butlerId", summary: "One Butler and its version history" },
-  { method: "PUT", path: "/api/butlers/:butlerId/draft", summary: "Replace a Butler's draft" },
-  { method: "POST", path: "/api/butlers/:butlerId/publish", summary: "Publish a Butler's draft, which is the versioning event" },
-  { method: "POST", path: "/api/butlers/:butlerId/simulate", summary: "Dry-run a Butler: walk it, cause nothing, report what a live run would do" },
+  {
+    method: "PUT", path: "/api/butlers/:butlerId/draft", summary: "Replace a Butler's draft",
+    request: S.editButlerDraftRequest, response: S.butlerDraftResponse,
+  },
+  {
+    method: "POST", path: "/api/butlers/:butlerId/publish",
+    summary: "Publish a Butler's draft, which is the versioning event",
+    response: S.butlerPublishedResponse,
+  },
+  {
+    method: "POST", path: "/api/butlers/:butlerId/simulate",
+    summary: "Dry-run a Butler: walk it, cause nothing, report what a live run would do",
+    request: S.simulateRequest, response: S.simulationResponse,
+  },
   { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done" },
   { method: "GET", path: "/api/butler-runs/:runId", summary: "One run" },
   { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers" },
@@ -201,8 +257,16 @@ export const ROUTES = [
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },
 
   // ---- the sending transport's credentials (#86, ADR 33) ------------------------------------------
-  { method: "GET", path: "/api/transport", summary: "Which adapter carries this Node's mail, and what both can say about themselves" },
-  { method: "PUT", path: "/api/transport", summary: "Supply the Cloudflare account id and Email Sending API token. The token is never returned" },
+  {
+    method: "GET", path: "/api/transport",
+    summary: "Which adapter carries this Node's mail, and what both can say about themselves",
+    response: S.transportResponse,
+  },
+  {
+    method: "PUT", path: "/api/transport",
+    summary: "Supply the Cloudflare account id and Email Sending API token. The token is never returned",
+    request: S.transportRequest, response: S.transportConfiguredResponse,
+  },
 
   // ---- maintenance ------------------------------------------------------------------------------------
   { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key" },
@@ -282,6 +346,24 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
  * compile. The runtime throw below is unreachable from typed code and is kept for the one caller that is
  * not: `.mjs` operator scripts, which no compiler ever looks at.
  */
+/**
+ * How much of the surface has a response schema, and how much does not (#85 step 2).
+ *
+ * A number rather than a feeling. Step 1 pinned every route; step 2 describes what travels over them, and it
+ * is partial on purpose — schemas arrive with the tests that check them, because a schema nothing validates
+ * is a guess a generated client would trust.
+ *
+ * Read through `RouteSpec` rather than off the literal tuple, because `as const` gives each entry only the
+ * fields it actually has — so the elements without a `response` have no such property to read. The widening
+ * is what makes "which of these lack one" askable at all.
+ */
+export function schemaCoverage(): { described: number; total: number; missing: readonly string[] } {
+  const all: readonly RouteSpec[] = ROUTES;
+  const missing = all.filter((spec) => spec.response === undefined)
+    .map((spec) => `${spec.method} ${spec.path}`);
+  return { described: all.length - missing.length, total: all.length, missing };
+}
+
 export function route<M extends HttpMethod>(method: M, template: PathFor<M>): RouteSpec {
   const found = ROUTES.find((spec) => spec.method === method && spec.path === template);
   if (found === undefined) throw new Error(`no route ${method} ${template} is registered`);
