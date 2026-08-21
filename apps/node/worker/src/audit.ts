@@ -83,6 +83,16 @@ export const AUDIT_ACTIONS = {
   },
   "access.granted": { says: "A relation was granted to somebody, by an administrator." },
   "access.revoked": { says: "A relation was withdrawn; §7 makes it effective on the next request." },
+  /*
+   * Two entries rather than one, because they are answerable by different people (#83).
+   *
+   * `access.invited` is an administrator's act: they minted a bearer credential for membership and handed it
+   * somewhere. `access.joined` is the invited person's: they redeemed it and an account now exists. Folding
+   * them into one entry would make the trail unable to answer "who let them in" separately from "when did
+   * they actually arrive" — and the gap between the two is exactly the window a leaked invitation lives in.
+   */
+  "access.invited": { says: "An administrator invited an address to join the organization." },
+  "access.joined": { says: "Somebody redeemed an invitation, and an account now exists for them." },
 
   /*
    * §28's membership administration (#73). Four actions, and the argument for each is *where it sits between

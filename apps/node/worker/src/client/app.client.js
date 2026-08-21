@@ -141,7 +141,7 @@ function renderClaim() {
     org.node, email.node, password.node,
     el("p", { class: "hint", text: "At least 12 characters. No character-class rules — length is what resists guessing." }),
     secret.node,
-    el("p", { class: "hint", text: "Shown once, during mailda deploy." }),
+    el("p", { class: "hint", text: "Shown once, by `mailda claim-secret`." }),
     submit, errors,
   ]);
 
@@ -235,7 +235,104 @@ function renderSignIn(message = null) {
             "request — not carried in a token.",
         }),
       ]),
-      panel("Sign in", null, [form]),
+      panel("Sign in", null, [
+        form,
+        /*
+         * The way in for somebody who was invited (#83).
+         *
+         * A link rather than a URL carrying the secret. An invitation is a bearer credential for membership,
+         * and a `?invite=…` link would put it in browser history, in a referrer, and in whatever logs sit
+         * between — which is why the claim secret is typed into a field rather than clicked, and this follows
+         * it. The administrator says "go to the Node and paste this", the same sentence they already use.
+         */
+        el("p", { class: "hint" }, [
+          (() => {
+            const link = el("button", { class: "linkish", type: "button", text: "I have an invitation" });
+            link.addEventListener("click", () => renderJoin());
+            return link;
+          })(),
+        ]),
+      ]),
+    ]),
+  );
+}
+
+/**
+ * Redeeming an invitation: paste the secret, choose a password, and you are in.
+ *
+ * Framework-free, beside sign-in and the claim, for ADR 30's reason and one more of its own: this is the
+ * screen a person meets **before they have an account**, so it cannot be behind the bundle the shell loads
+ * after sign-in.
+ *
+ * The password field is `new-password`, so a manager offers to generate one rather than filling the
+ * colleague's existing credential for a different site — which is what `current-password` would invite here.
+ */
+function renderJoin() {
+  const secret = field("invitation", "Invitation secret", {
+    required: "required", autocomplete: "off", class: "mono",
+  });
+  const password = field("join-password", "Choose a password", {
+    type: "password", required: "required", autocomplete: "new-password",
+  });
+  const errors = el("div", { class: "errors", role: "alert" });
+  const submit = el("button", { class: "primary", type: "submit", text: "Join" });
+
+  const form = el("form", { novalidate: "novalidate" }, [
+    secret.node, password.node,
+    el("p", { class: "hint", text: "At least 12 characters. No character-class rules — length is what resists guessing." }),
+    submit, errors,
+  ]);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errors.replaceChildren();
+    submit.disabled = true;
+    submit.textContent = "Joining…";
+    try {
+      const response = await fetch("/api/invitations/redeem", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ secret: secret.input.value, password: password.input.value }),
+      });
+      if (response.ok) {
+        // Signed in on the way through, the same as the claim: somebody who just chose a password should not
+        // be asked for it again immediately.
+        adopt();
+        startSessionTicker();
+        return route();
+      }
+      const body = await response.json().catch(() => ({}));
+      // The Node's own words. Its refusal is deliberately the same for a wrong, spent or expired secret, and
+      // softening it here would either invent a reason or lose the one sentence that says what to do.
+      errors.replaceChildren(notice(body.message ?? "That invitation could not be used.", "bad"));
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Join";
+    }
+  });
+
+  show(
+    el("div", { class: "split" }, [
+      el("div", { class: "split-lede", "data-reveal": "" }, [
+        el("h1", { text: "You have been invited." }),
+        el("p", {
+          text:
+            "Paste the secret you were given and choose a password. Nobody else ever sees it — not even " +
+            "the administrator who invited you. You will arrive holding nothing until they grant you " +
+            "access to a mailbox.",
+        }),
+      ]),
+      panel("Join", null, [
+        form,
+        el("p", { class: "hint" }, [
+          (() => {
+            const back = el("button", { class: "linkish", type: "button", text: "I already have an account" });
+            back.addEventListener("click", () => renderSignIn());
+            return back;
+          })(),
+        ]),
+      ]),
     ]),
   );
 }

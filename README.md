@@ -1527,6 +1527,14 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   this either.** Onboarding is a dashboard flow with no endpoint listing its result, and the only
   honest probe would be sending a real message to a stranger to see whether it was refused. The
   outbox says the capability was never verified, and `mailda`'s own help says the same.
+- **Nobody is emailed an invitation.** An administrator mints a secret and hands it over however they
+  already trust; the person redeems it and chooses their own password, which the administrator never
+  sees. The Node can send, which is what makes emailing it tempting — and it would mean posting a
+  credential to an address nobody has verified, from a mailbox whose sending capability is itself
+  unverified.
+- **A person cannot be removed.** Deleting an account with audit entries, cases and sealed manifests
+  attributed to it is a different question with its own answer, and guessing it would be worse than
+  leaving it. Revoking every relation is the available act, and it takes effect on the next request.
 - **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id,
   so verifiers are PBKDF2 at 600,000 effective iterations — an accepted baseline, not a strong one.
   Passkeys are specified and not yet built. The reasoning, including what this does and does not

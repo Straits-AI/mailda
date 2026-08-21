@@ -18,6 +18,7 @@ values:
   auth.refresh_replay_window_seconds: 30
   auth.access_token_refresh_margin_seconds: 120
   auth.max_failed_logins_per_15min: 10
+  auth.invitation_expiry_seconds: 604800
 ---
 
 ## The platform ceiling, and why it is the important number here
@@ -143,3 +144,40 @@ interim.**
 - `auth.max_failed_logins_per_15min = 10` — a tripwire past where a human typing a password goes.
   Recorded in D1 rather than in memory, because a new isolate forgets and an attacker can cause a
   new isolate at will.
+
+## Correction — 21 August 2026: `auth.invitation_expiry_seconds = 604800` is sized, not measured
+
+Seven days, and there is **no measurement behind it**, in the same way and for the same reason as
+`approval.send_expiry_seconds` in `dispatch-recheck-cost.md` and `send.hold_window_default_seconds` in
+`cloudflare-email-sending.md`: it is a statement about how long a human arrangement stays good, and no
+measurement of this system could settle it. Recorded here so a reader does not conclude the receipt rule was
+skipped.
+
+**What an invitation is, which is what the number has to be sized against.** Until #83 a Node could not add a
+second person at all — the only account was the one the claim created. An invitation is a secret an
+administrator mints and hands over out of band; whoever holds it becomes a member of the organization by
+choosing a password. So it is a **bearer credential for membership**, and its lifetime is the window in which
+a leaked one is still useful to an attacker.
+
+What it trades off, in both directions:
+
+- **Long enough to survive an ordinary handover.** An administrator who mints one on a Friday for somebody
+  starting on Monday, or pastes it into a message that is read after a weekend and a public holiday, must not
+  find it dead. Four days clears that — `approval.send_expiry_seconds` argues exactly this — and a week
+  clears it with a working day's slack on either side. An expiry that fires on a legitimate invitation is a
+  tripwire a good widget touches, which AGENTS.md says makes the tripwire wrong rather than the widget.
+- **Short enough that a stale link is not a standing key.** This is the direction that matters more than it
+  does for an approval, and it is why the number is not thirty days: the credential creates an *account*,
+  not a decision about one message. A link in a year-old email thread is how somebody becomes a member of an
+  organization nobody meant to add them to, and the only defence against that is the clock.
+
+**Why it is not configurable.** A per-invitation duration was considered and rejected. `supervised.read`
+takes one from the caller because §7 makes *time* part of the scope somebody approved — two people agreed to
+that window. An invitation has no approver: one administrator acts alone, and a field they can set to a year
+is a field that will be set to a year the first time a handover is awkward. The fixed window is the whole
+protection.
+
+**What is deliberately absent.** No renewal, and no extension. Re-minting is one call and produces a fresh
+secret with a fresh window, which is the same act with an honest audit trail — `access.invited` names the
+administrator each time. An extension would let one person quietly keep a bearer credential alive
+indefinitely with nothing in the trail saying how long it had really been out.

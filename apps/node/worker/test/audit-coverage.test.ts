@@ -81,7 +81,32 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   },
 
   /* ---- exempt, each for a reason that has to survive being read aloud ---- */
-  users: { exempt: "No mutation path exists yet. Becomes auditable the moment §28's user admin lands." },
+  /*
+   * **Was exempt for "no mutation path exists yet. Becomes auditable the moment §28's user admin lands."**
+   * This is that moment (#83), and the exemption's own sentence is what named it — the same way
+   * `team_members`' exemption named #73.
+   *
+   * A Node had exactly one account, written once by `claimNode`, so there was nothing to audit. Now an
+   * invitation can create one, and **an account is authority**: it is the subject every relation is granted
+   * to, so a row appearing here without a trail would make "who let this person in" unanswerable from the
+   * chain even though every grant to them is recorded.
+   *
+   * `access.joined` rather than `access.invited`, and the distinction is the point: the actor of this row's
+   * creation is the **invited person**, redeeming a secret. `access.invited` is the administrator's separate
+   * act, on `invitations` below. Filing both under one action would collapse "who let them in" and "when did
+   * they arrive" into one fact, and the gap between the two is exactly the window a leaked invitation lives in.
+   *
+   * `claimNode`'s first user is still unaudited and deliberately so: `node_claim`'s exemption below covers
+   * it, because that row's existence *is* the record and there is no chain yet to append to.
+   */
+  users: { actions: ["access.joined"] },
+  /*
+   * The administrator's half. Audited on both the mint and the withdrawal implied by a re-mint, because an
+   * invitation is a **bearer credential for membership** — the only artefact in this product that lets
+   * somebody become a principal — and one that was minted, handed somewhere and never redeemed is exactly
+   * the thing an investigator needs to be able to ask about.
+   */
+  invitations: { actions: ["access.invited", "access.joined"] },
   addresses: { exempt: "Set at claim time and never since; claim itself is audited by node_claim." },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },

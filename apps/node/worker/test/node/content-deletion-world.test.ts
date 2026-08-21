@@ -97,6 +97,16 @@ interface Site {
  */
 const SITES: Site[] = [
   {
+    file: "src/invitations.ts",
+    target: "invitations",
+    content: false,
+    why: "An unredeemed invitation, withdrawn because a second was minted for the same address (#83). It is "
+      + "a bearer credential and nothing else — no message, no attribution, no decision. Deleting one "
+      + "destroys the ability to join, which is the point of re-minting, and the two access.invited entries "
+      + "in the audit chain are what record that it happened. A redeemed row is never matched: the write "
+      + "path only ever deletes where redeemed_at IS NULL.",
+  },
+  {
     file: "src/auth/session.ts",
     target: "login_attempts",
     content: false,

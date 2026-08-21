@@ -24,6 +24,9 @@ import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
 import { notificationsFor } from "./notifications.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { holdsForReport, placeHold, requestHoldLift } from "./holds.ts";
+import {
+  inviteToOrganization, openInvitations, redeemInvitation,
+} from "./invitations.ts";
 import { liftDomainPause, requestDomainPause } from "./domain-pause.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
@@ -684,6 +687,53 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * **`org.admin` only, answering 404.** §5C, and the same answer `/api/policies` gives: who works here
      * and what they can reach is exactly the shape a 403 would confirm the existence of.
      */
+    /**
+     * Inviting somebody, and joining (#83).
+     *
+     * `POST /api/invitations` mints one; `GET` lists what is outstanding; `POST /api/invitations/redeem`
+     * turns a secret into an account. The redeem route is the **only** unauthenticated write in this
+     * section, and deliberately so: the person using it has no account yet, which is the whole point. Its
+     * refusal says nothing about why, for `claimNode`'s reason — distinguishing "no such invitation" from
+     * "expired" is an oracle for guessing, and the second would confirm who was invited.
+     */
+    if (url.pathname === "/api/invitations" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        invitation: await inviteToOrganization(
+          env, clock, who.orgId, who.userId, String(body.email ?? ""),
+        ),
+      });
+    }
+
+    if (url.pathname === "/api/invitations" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        // §5C, as with `/api/people`: who has been invited and not yet arrived is the same shape of fact.
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      return Response.json({ invitations: await openInvitations(env, clock, who.orgId) });
+    }
+
+    if (url.pathname === "/api/invitations/redeem" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const joined = await redeemInvitation(
+        env, clock, String(body.secret ?? ""), String(body.password ?? ""),
+      );
+      /*
+       * Signed in on the way out, the same as the claim.
+       *
+       * Somebody who has just chosen a password and been told "now sign in" would type it again immediately,
+       * and a redemption that left them at a sign-in form would make the first thing they do with the product
+       * a second authentication for no reason.
+       */
+      // `sessionResponse`, the same helper the claim uses — one place that knows how a session becomes
+      // cookies, rather than a second spelling of the contract the client depends on.
+      return sessionResponse({ joined: true, userId: joined.userId, email: joined.email }, joined.session);
+    }
+
     if (url.pathname === "/api/people" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

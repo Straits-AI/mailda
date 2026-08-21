@@ -3,8 +3,9 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  GRANTABLE_RELATIONS, createTeam, grant, revokeAccess, setTeamMember,
-  useMailboxes, useMe, usePeople, useTeamMembers, useTeams, type PersonRow, type TeamRow,
+  GRANTABLE_RELATIONS, createTeam, grant, invite, revokeAccess, setTeamMember,
+  useInvitations, useMailboxes, useMe, usePeople, useTeamMembers, useTeams,
+  type PersonRow, type TeamRow,
 } from "../api.ts";
 
 /**
@@ -40,6 +41,114 @@ import {
 
 function relationsFor(person: PersonRow, objectId: string): Set<string> {
   return new Set(person.relations.filter((r) => r.objectId === objectId).map((r) => r.relation));
+}
+
+/**
+ * Inviting somebody (#83).
+ *
+ * ## The secret is shown, once, and the screen says so
+ *
+ * Only its hash is stored, so there is no endpoint that can produce it again. A copy button alone would let
+ * somebody navigate away believing the invitation had been "sent" — nothing is sent, and the administrator
+ * is the delivery mechanism. So the value is displayed, with the sentence that it will not be shown again
+ * beside it, and re-minting is offered as the remedy rather than hidden as an error.
+ *
+ * ## What it does not do
+ *
+ * It does not mail the link. The Node can send, which is what makes that tempting, and it would mean posting
+ * a credential to an address nobody has verified belongs to the person, from a mailbox whose sending
+ * capability is itself unverified (#80). Handing it to the administrator to deliver however they already
+ * trust is the smaller, honest step.
+ *
+ * It does not grant anything. Somebody who redeems an invitation holds exactly nothing until an
+ * administrator grants access below, where the consequence of each relation is written next to it.
+ */
+function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
+  const invitations = useInvitations();
+  const [email, setEmail] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [minted, setMinted] = useState<{ secret: string; email: string; expiresAt: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function send() {
+    setBusy(true);
+    setProblem(null);
+    setMinted(null);
+    const outcome = await invite(email.trim());
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setEmail("");
+    setMinted({ secret: outcome.secret, email: outcome.email, expiresAt: outcome.expiresAt });
+    await onInvited();
+  }
+
+  return (
+    <section className="people-teams" aria-label="Invite somebody">
+      <h2>Invite somebody</h2>
+      <p className="dim">
+        They choose their own password, so you never see it. Hand them the secret however you already trust —
+        nothing is emailed. They arrive holding nothing until you grant access below.
+      </p>
+
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+
+      <p className="field-row">
+        <label htmlFor="invite-email">Address</label>
+        {" "}
+        <input
+          id="invite-email"
+          className="mono"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        {" "}
+        <button type="button" onClick={() => void send()} disabled={busy || email.trim() === ""}>
+          mint an invitation
+        </button>
+      </p>
+
+      {minted === null ? null : (
+        <div className="notice invite-secret" role="status">
+          <p>
+            Give this to <span className="mono">{minted.email}</span>. It works once, until{" "}
+            {new Date(minted.expiresAt).toLocaleString()}.
+          </p>
+          {/* Selectable, monospaced, and on its own line: this is going to be copied by hand. */}
+          <p className="mono invite-value">{minted.secret}</p>
+          <p className="dim">
+            Shown once — only its hash is stored, so nothing can recover it. Mint another if it is lost, which
+            invalidates this one.
+          </p>
+        </div>
+      )}
+
+      {invitations.isSuccess && invitations.data.invitations.length > 0 ? (
+        <div className="scroller">
+          <table>
+            <caption className="dim">Invited, and not yet arrived.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Address</th><th scope="col">Invited by</th>
+                <th scope="col">Expires</th><th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitations.data.invitations.map((row) => (
+                <tr key={row.id}>
+                  <td className="mono">{row.email}</td>
+                  <td className="mono dim">{row.invitedBy}</td>
+                  <td className="mono">{new Date(row.expiresAt).toLocaleString()}</td>
+                  {/* An expired invitation is kept and shown as expired, so an administrator can see what
+                      went stale rather than wondering whether they ever sent it. */}
+                  <td>{row.expired ? <span className="dim">expired — mint another</span> : "waiting"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 /** One person's access to one object, as a set of toggles that say what they do. */
@@ -230,6 +339,7 @@ export function People() {
 
   async function refresh() {
     await queryClient.invalidateQueries({ queryKey: ["people"] });
+    await queryClient.invalidateQueries({ queryKey: ["invitations"] });
     // Access decides what the rest of the interface can see, so a grant that did not refresh the rail would
     // leave somebody looking at a mailbox list that no longer matches what they hold.
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
@@ -264,15 +374,7 @@ export function People() {
   return (
     <>
       {heading}
-      {/*
-        Stated on the screen rather than left to be discovered: there is no way to add a person. The only
-        user is the one the claim made, and an "invite" button producing a POST to nothing would be worse
-        than the absence.
-      */}
-      <p className="dim">
-        Everybody with an account on this Node. There is no way to add one yet — the only account is the one
-        the install created.
-      </p>
+      <p className="dim">Everybody with an account on this Node.</p>
 
       {boxes.map((box) => (
         <section key={box.id} className="people-mailbox" aria-label={`Access to ${box.name}`}>
@@ -330,6 +432,8 @@ export function People() {
           </table>
         </div>
       </section>
+
+      <Invite onInvited={refresh} />
 
       <Teams people={rows} />
     </>

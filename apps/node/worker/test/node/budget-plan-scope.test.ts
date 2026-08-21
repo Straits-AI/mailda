@@ -456,6 +456,9 @@ const FIGURES: Record<string, Classification> = {
     "auth.refresh_token_ttl_seconds", "auth.signing_key_verify_grace_seconds",
     "auth.signing_key_cache_seconds", "auth.refresh_replay_window_seconds",
     "auth.access_token_refresh_margin_seconds", "auth.max_failed_logins_per_15min",
+    // #83's invitation window. Mailda's own policy about how long a bearer credential for membership stays
+    // usable — the plan has no opinion about it, and no platform limit bounds it.
+    "auth.invitation_expiry_seconds",
   ),
 
   // docs/receipts/approval-decision-cost.md

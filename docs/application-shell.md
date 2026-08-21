@@ -312,10 +312,42 @@ Two endpoints were added because the reads did not exist:
   a grant to it reaches"* and had no route, so the only readable fact about a team was its member **count**.
   A screen given a count can render a checkbox, and the checkbox cannot be right.
 
-The screen does not create people: there is no invitation flow anywhere in this product, and an "add
-somebody" button producing a `POST` to nothing would be worse than the absence, so the absence is stated on
-the screen. It does not offer `supervised.read` either — that is time-boxed, needs two approvals and cites a
-matter (§7), and listing it would be offering a door that answers with a lecture.
+It does not offer `supervised.read`: that is time-boxed, needs two approvals and cites a matter (§7), and
+listing it would be offering a door that answers with a lecture.
+
+### Inviting somebody (#83)
+
+The screen used to say it could not create a person, which was honest and not a resting state — a Node had
+exactly one account and nothing else wrote to `users`, so Layer 3's whole premise had one person to exercise
+it. Worse, several shipped refusals were the **only** reachable branch: a domain pause needs two other
+administrators, a supervised read two other approvers, a hold lift two distinct ones, so on a one-person Node
+they always refused and the governance they protect was never exercised.
+
+An administrator mints an invitation; the person redeems it by choosing their own password. The mechanism is
+`node_claim`'s, reused rather than reinvented — only the hash is stored, `claimSecretHash` is shared, and a
+lost invitation is re-minted rather than recovered.
+
+**The administrator never learns the password**, which is the property the shape is chosen for. An
+administrator who sets one and tells them becomes a permanent holder of every colleague's credential, which
+is worse than the gap it fills; `set-password` is already the deliberate operator escape hatch for a lockout
+and is loud about running outside the audit trail.
+
+The secret is **shown once, on screen, with the sentence saying so**. A copy button alone would let somebody
+navigate away believing the invitation had been sent — nothing is sent, and the administrator is the delivery
+mechanism. Emailing it was considered and rejected: the Node can send, which is what makes it tempting, and
+it would mean posting a credential to an address nobody has verified from a mailbox whose sending capability
+is itself unverified (#80).
+
+An invitation carries **an address and nothing else** — no relations, no mailbox, no role. Somebody who
+redeems one holds exactly nothing until an administrator grants access above, where the consequence of each
+relation is written beside it. Pre-loading grants would mean authority arriving with an account nobody had
+looked at yet, and would put one decision in two places.
+
+Redemption lives in `app.client.js` beside sign-in and the claim, framework-free, because it is the screen a
+person meets **before they have an account** — it cannot sit behind a bundle the shell loads after sign-in.
+It is reached by a link on the sign-in panel rather than a `?invite=…` URL: an invitation is a bearer
+credential, and a link would put it in browser history, in a referrer and in whatever logs sit between,
+which is exactly why the claim secret is typed rather than clicked.
 
 ### `/rules` (#60, #81)
 

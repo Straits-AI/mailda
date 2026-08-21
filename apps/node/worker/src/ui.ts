@@ -451,6 +451,18 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .matter-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
 .matter-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .matter-block > p { margin: 0 0 .6rem; }
+
+/* The minted invitation secret (#83): shown once, so it has to be readable and selectable. */
+.invite-secret { margin-top: 1rem; }
+.invite-secret p { margin: 0 0 .4rem; }
+.invite-value {
+  font-size: .95rem;
+  letter-spacing: .04em;
+  word-break: break-all;
+  user-select: all;
+  padding: .5rem .7rem;
+  border: 1px dashed var(--rule-strong);
+}
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }

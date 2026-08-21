@@ -992,3 +992,49 @@ export const askToRead = (mailboxId: string, scope: string, durationSeconds: num
 
 export const runExport = (id: string) =>
   matterAct(`${EXPORTS}/${encodeURIComponent(id)}/run`);
+
+/* ------------------------------------------------------------------ inviting somebody (#83) -------- */
+
+export interface InvitationRow {
+  id: string;
+  email: string;
+  invitedBy: string;
+  createdAt: string;
+  expiresAt: string;
+  /** True once the clock has passed it. The row survives so an administrator can see what went stale. */
+  expired: boolean;
+}
+
+export function useInvitations(): UseQueryResult<{ invitations: InvitationRow[] }, Error> {
+  return useQuery({
+    queryKey: ["invitations"],
+    queryFn: () => read<{ invitations: InvitationRow[] }>("/api/invitations"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * Mints an invitation and returns the secret **once**.
+ *
+ * There is no endpoint that can produce it again — the row holds only its hash — so a caller that discards
+ * this value has to re-mint, which withdraws the old link. That is why the screen shows it immediately and
+ * says so rather than tucking it behind a copy button that might not have been pressed.
+ */
+export async function invite(
+  email: string,
+): Promise<{ ok: true; secret: string; email: string; expiresAt: string } | { ok: false; message: string }> {
+  const response = await apiFetch("/api/invitations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) {
+    const minted = parsed?.invitation as { secret: string; email: string; expiresAt: string };
+    return { ok: true, ...minted };
+  }
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}

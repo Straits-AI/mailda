@@ -185,7 +185,7 @@ const EXPECTED_TABLES = [
   "outbox", "addresses", "mailboxes", "users", "sessions", "node_claim",
   "signing_keys", "refresh_tokens", "login_attempts",
   // Migration 0007 (outbound) and 0008 (audit). Absent here until 6 August 2026.
-  "send_manifests", "send_counters", "node_capabilities",
+  "send_manifests", "send_counters", "node_capabilities", "invitations",
   "audit_entries", "log_entries",
   // Migration 0010 (per-recipient outcome).
   "send_recipients", "send_recipient_events",
