@@ -877,6 +877,57 @@ describe("a Butler does not choose who its reply goes to", () => {
     expect(await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())
       .toEqual({ n: 0 });
   });
+
+  /**
+   * A run that performs no effect must still close with what it spent.
+   *
+   * Found by the first Butler run executed against **real** Cloudflare Workflows: a `stop`-only graph closed
+   * `nodes_executed = 1, effects = 0, subrequests_spent = 0` when the engine's fixed cost is three. The cause
+   * was that `spendStatement` had exactly one call site — batched with an effect — so a graph with no effect
+   * node never wrote the column and it kept its `INSERT` default. `closeRun` writes it now, in the `UPDATE`
+   * it was already issuing.
+   *
+   * Asserted against the meter rather than against a literal, so this cannot drift into a second opinion
+   * about what a run costs: the receipt's figure is checked by the measurement tests, and what this one
+   * proves is that the number reaching the *record* is the number the meter saw.
+   */
+  it("records what an effect-free run spent, not zero", async () => {
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "silent", [
+      { id: "halt", type: "stop", reason: "nothing to answer" },
+    ], "halt");
+    const delivery = await aDelivery(ctx);
+
+    const runId = `${ids.versionId}-${delivery.messageId}`;
+    const result = await interpret(
+      testEnv, ctx,
+      {
+        orgId: ORG, butlerId: ids.butlerId, butlerVersionId: ids.versionId,
+        trigger: { event: "mail.received", key: delivery.messageId, facts: {} },
+      },
+      inlineSteps(), runId,
+    );
+    expect(result.state).toBe("stopped");
+    expect(result.effects).toHaveLength(0);
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT effects, nodes_executed, subrequests_spent FROM butler_runs WHERE id = ?",
+    ).bind(runId).first<{ effects: number; nodes_executed: number; subrequests_spent: number }>();
+    expect(row?.effects).toBe(0);
+    expect(row?.nodes_executed).toBe(1);
+    /*
+     * **Equal to the meter's final total**, and that equality is the whole assertion.
+     *
+     * `closeRun` binds `spent + 1` because the closing `UPDATE` has not been issued when the value is bound;
+     * by the time `result.cost` is read here that `UPDATE` has happened and the meter has counted it. So the
+     * two meet exactly, and the run record states the same number the cost meter would.
+     *
+     * It comes to the engine's fixed three — the load batch, the read of the carried spend, and this write —
+     * which is `butler.run_cost_engine_fixed` reached from a second direction.
+     */
+    expect(row?.subrequests_spent).toBe(result.cost.subrequests);
+    expect(row?.subrequests_spent).toBe(3);
+  });
 });
 
 /* ------------------------------------------------------------------ the real workflow ------------- */

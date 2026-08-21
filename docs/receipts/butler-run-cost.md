@@ -296,3 +296,40 @@ moved *inside* it would be widening a tripwire nothing touched. `butler.run_cost
 `butler.run_cost_max_lookup` now sit one above their measurement, which is the thinnest margin in this file
 and is recorded here rather than quietly absorbed: the next operation added to either of those nodes lands on
 the bound, and the honest response then is to re-measure and re-size rather than to discover it at a refusal.
+
+## Correction — 21 August 2026: the first run against real Cloudflare Workflows, and the number it recorded
+
+`butler.run_cost_engine_fixed: 3` is **confirmed against the real platform** and no figure in this file
+changes. What changed is that the run *record* now states it.
+
+The engine had never executed against real Cloudflare Workflows — every figure above was measured in
+`workerd` under miniflare, and deploying proves a binding provisions rather than that a run completes. A
+`stop`-only Butler was published into a Node and started with `wrangler workflows trigger`. It completed, and
+the instance's step list showed exactly what this file predicts: one `load` step, nothing else wrapped,
+`nodes_executed = 1`, `effects = 0`. The three-part fixed cost is the same three statements listed under
+**Observed** — the load `batch()`, the read of the carried spend, and the terminal write.
+
+**And `butler_runs.subrequests_spent` read `0`.**
+
+`spendStatement` had exactly one call site: batched with an effect, inside `perform`. A graph with no effect
+node therefore never wrote the column and closed carrying its `INSERT` default. Every effect-free run — a
+`stop`, a `guard` that fell to a `stop`, a refusal before the walk — has been recording a spend of zero over
+a run that spent three, in a column an operator reads as a measurement. `closeRun` writes it now, in the
+`UPDATE` it was already issuing, so the fix costs nothing; `test/butler-run.test.ts` asserts the recorded
+figure equals the cost meter's own final total and fails at `0` when the write is removed.
+
+### The residue, named rather than paid for
+
+The figure is `spentBefore + this invocation`, and `spentBefore` is the column. So an invocation that ended
+in `step.sleep` **without performing an effect** still contributes nothing, and its overhead is missing from
+every later reading. That overhead is **one** subrequest — the read of `subrequests_spent`, the only thing
+outside a `step.do`, since a resumed instance serves the load `batch()` from cache. A run that sleeps *n*
+times before its first effect therefore under-reports by at most *n*, and `interpret`'s affordability guard
+is that much less strict than its comment claims.
+
+Closing it would mean a durable write per `wait`: a real subrequest on every waiting run, a `wait` repriced
+at publication in `packages/butler-ast/src/cost.ts`, and this file's `stale_when` fired. That buys back an
+accounting slack in a bound **the platform does not impose** — each invocation gets its own subrequest pot,
+and accumulating across them is this engine choosing to be stricter than it has to be. So the residue is
+recorded here and in `closeRun`'s header instead of being paid for, and if a `wait` ever does gain I/O for
+another reason, this is the second thing to fix in the same change.

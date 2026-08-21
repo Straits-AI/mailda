@@ -228,7 +228,32 @@ export async function resumeRun(env: Env, ctx: Ctx, orgId: string, runId: string
   ).bind(new Date(ctx.now()).toISOString(), orgId, runId).run();
 }
 
-/** Writes the terminal state and the counts together, so they cannot describe different sets of rows. */
+/**
+ * Writes the terminal state and the counts together, so they cannot describe different sets of rows.
+ *
+ * **`spent` is written here, and it had to be, because `spendStatement` alone leaves the column a lie.**
+ * That statement is batched with an effect and is issued nowhere else, so a run that performed no effect
+ * never wrote the column at all and closed reading `subrequests_spent = 0` — its `INSERT` default — over a
+ * run that really spent the engine's fixed three. The first Butler run executed against real Cloudflare
+ * Workflows was a `stop`-only graph and it closed exactly that way: `nodes_executed = 1`, `effects = 0`,
+ * `subrequests_spent = 0`. A number nobody had measured, in a column an operator reads as a measurement.
+ *
+ * It costs nothing to fix here: this `UPDATE` is already being issued, so the figure rides along in the
+ * statement that ends the run. `+ 1` is this statement itself, which the meter cannot have counted yet —
+ * the same adjustment `spendStatement`'s caller makes for the batch it rides in.
+ *
+ * **What it still does not cover, stated rather than implied.** The figure is `spentBefore + this
+ * invocation`, and `spentBefore` comes from the column — so an invocation that ended in `step.sleep` without
+ * performing an effect contributed nothing, and its overhead is absent from every later reading. That
+ * overhead is **one** subrequest: the read of `subrequests_spent` itself, the only thing outside a
+ * `step.do`, since a resumed instance serves the load batch from cache. So a run that sleeps *n* times
+ * before its first effect under-reports by at most *n*, and `interpret`'s affordability guard is that much
+ * less strict than its own comment claims. Closing it would mean one durable write per `wait` — a real
+ * subrequest on every waiting run, and a `wait` repriced at publication — to recover an accounting slack in
+ * a bound the platform does not impose in the first place (each invocation gets its own pot; accumulating
+ * across them is this engine choosing to be stricter). That trade is not worth making, so the residue is
+ * named here and in `docs/receipts/butler-run-cost.md` rather than paid for.
+ */
 export async function closeRun(
   env: Env,
   ctx: Ctx,
@@ -237,15 +262,16 @@ export async function closeRun(
   state: TerminalState,
   reason: string | null,
   counts: RunCounts,
+  spent: number,
 ): Promise<void> {
   const at = new Date(ctx.now()).toISOString();
   await env.CATALOG.prepare(
     `UPDATE butler_runs
         SET state = ?, state_at = ?, outcome_reason = ?, finished_at = ?,
-            nodes_executed = ?, effects = ?, refusals = ?
+            nodes_executed = ?, effects = ?, refusals = ?, subrequests_spent = ?
       WHERE org_id = ? AND id = ? AND state IN (${LIVE.map(() => "?").join(", ")})`,
   ).bind(
-    state, at, reason, at, counts.nodesExecuted, counts.effects, counts.refusals,
+    state, at, reason, at, counts.nodesExecuted, counts.effects, counts.refusals, spent + 1,
     orgId, runId, ...LIVE,
   ).run();
 }

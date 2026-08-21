@@ -925,6 +925,14 @@ and its receipt is the thing that would have to move. What is done instead:
   carries the total across invocations, and the run **refuses an effect it cannot afford before performing
   it** — with AGENTS.md §3's four parts in the operational log. So the 500-send loop stops at item 357 with a
   refusal a person can read, rather than dying with 434 sends performed and nothing saying why.
+
+  The column is written from two places and it took a run against the real platform to notice that it was
+  one. `spendStatement` rides in the `batch()` that records an effect, which covers every run that performs
+  one; `closeRun` writes it into the `UPDATE` that ends the run, which covers the rest. Before the second, a
+  graph with no effect node — a `stop`, a `guard` that fell to one, a refusal before the walk — closed
+  carrying the column's `INSERT` default and reported a spend of **zero** over a run that spent three. See
+  `docs/receipts/butler-run-cost.md`'s correction of 21 August 2026 for the measurement and for the one
+  subrequest per sleep the figure still does not carry, which is named there rather than paid for.
 - **The reservation comes from `butler-run-cost.md`**, not from #54's table, because where they differ the
   difference is real and reserving the smaller one would reserve too little for the one node it matters for.
 - **The start-time forecast stays a cheap pre-check and is a floor, not a total** — `priceButler(nodes).total

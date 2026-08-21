@@ -256,6 +256,18 @@ export async function interpret(
   const orgId = payload.orgId;
 
   /*
+   * What previous invocations of this run spent, and the pot read live off it.
+   *
+   * Declared here rather than where it is read, because every `finish` below writes the figure into the run
+   * record and the early exits reach `finish` *before* the read has happened. Zero until then is the true
+   * answer at those points and not a placeholder: the read is itself the first thing this invocation does
+   * beyond loading the program, so an exit above it has one invocation's cost and no history.
+   */
+  let spentBefore = 0;
+  /** The pot, live: what previous invocations spent plus what this one has. */
+  const spent = (): number => spentBefore + cost.subrequests;
+
+  /*
    * One `batch()`: read the program, open the record. D1 runs a batch as a single transaction and the cost
    * meter prices it as the one round trip it is, so a read and a write cost one subrequest between them.
    *
@@ -305,7 +317,7 @@ export async function interpret(
    * though nothing about the program could be read.
    */
   if (facts === null) {
-    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+    return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
       state: "refused", reason: "version_not_published",
     });
   }
@@ -337,7 +349,7 @@ export async function interpret(
     await complain(env, ctx, orgId, runId, butler, "sponsor_unknown",
       `published version ${payload.butlerVersionId} records no publisher, so there is no sponsor whose live `
       + "authority this run's capability ceiling can be capped against (#51). Republish the Butler");
-    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+    return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
       state: "refused", reason: "sponsor_unknown",
     });
   }
@@ -355,7 +367,7 @@ export async function interpret(
   } catch (error) {
     await complain(env, ctx, orgId, runId, butler, "ast_not_json",
       (error as Error).message.split("\n")[0] ?? "unreadable");
-    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+    return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
       state: "refused", reason: "ast_not_json",
     });
   }
@@ -364,7 +376,7 @@ export async function interpret(
   if (!checked.ok) {
     await complain(env, ctx, orgId, runId, butler, "ast_does_not_check",
       describeFindings(checked.findings));
-    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+    return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
       state: "refused", reason: "ast_does_not_check",
     });
   }
@@ -398,7 +410,7 @@ export async function interpret(
     await complain(env, ctx, orgId, runId, butler, "unaffordable_with_engine",
       `E_BUDGET_EXCEEDED  ${RUN_BUDGET_NAME}=${RUN_BUDGET}, this Butler's nodes cost `
       + `${checked.cost.total} and the engine adds ${engineFixed} for a forecast of ${forecast}`);
-    return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+    return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
       state: "refused", reason: "unaffordable_with_engine",
     });
   }
@@ -423,7 +435,7 @@ export async function interpret(
     subrequests_spent: number | null;
     pause_id: string | null; pause_reason: string | null; pause_at: string | null;
   }>();
-  const spentBefore = carried?.subrequests_spent ?? 0;
+  spentBefore = carried?.subrequests_spent ?? 0;
 
   /*
    * The pause, asked once **per invocation** — and this is the second half of #75's answer, not a repeat of
@@ -511,7 +523,7 @@ export async function interpret(
           + "for it exists, so this Node cannot prove whether this replay would repeat it. Refused rather "
           + "than treated as new content, because a new idempotency key for an identical message is a second "
           + "delivery nobody can recall (ADR 40)");
-        return await finish(env, ctx, orgId, runId, cost, counts, recorded, {
+        return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, {
           state: "refused", reason: "replay_send_unprovable",
         });
       }
@@ -557,9 +569,6 @@ export async function interpret(
     visits.set(nodeId, visit);
     return `${nodeId}#${visit}`;
   };
-
-  /** The pot, live: what previous invocations spent plus what this one has. */
-  const spent = (): number => spentBefore + cost.subrequests;
 
   /**
    * Performs one effect node: the step, its record, and the in-memory accounting.
@@ -876,7 +885,7 @@ export async function interpret(
     }
   }
 
-  return await finish(env, ctx, orgId, runId, cost, counts, recorded, terminal);
+  return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, terminal);
 }
 
 /**
@@ -898,11 +907,12 @@ async function finish(
   orgId: string,
   runId: string,
   cost: Cost,
+  spent: number,
   counts: RunCounts,
   recorded: (EffectRecord & { seq: number })[],
   terminal: Terminal,
 ): Promise<RunResult> {
-  await closeRun(env, ctx, orgId, runId, terminal.state, terminal.reason, counts);
+  await closeRun(env, ctx, orgId, runId, terminal.state, terminal.reason, counts, spent);
   return {
     runId,
     state: terminal.state,

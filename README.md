@@ -1308,6 +1308,14 @@ scan on every request** — 1,864 rows read where 7 were needed, growing linearl
 organisation size. It would have shipped invisibly.
 ([receipt](./docs/receipts/authz-check-rows-read.md))
 
+**And a measurement in a test is not a measurement in production.** The Butler engine's fixed
+cost had been measured at three subrequests under miniflare and asserted by two tests. The first
+run executed against real Cloudflare Workflows confirmed the three — and showed that the run
+record said **zero**. The statement that writes that column was batched with an effect and issued
+nowhere else, so every effect-free run had been closing with its `INSERT` default in a column an
+operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
+([receipt](./docs/receipts/butler-run-cost.md))
+
 **Structure beats discipline — including when the first attempt was a check.** An automated review
 found header injection in the outbound path. The first fix was a validator called at each site, which
 closed the hole in the shape this project had already rejected for `innerHTML`: correct only while every
