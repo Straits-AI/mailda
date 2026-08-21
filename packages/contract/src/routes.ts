@@ -193,6 +193,10 @@ export const ROUTES = [
   { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export" },
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },
 
+  // ---- the sending transport's credentials (#86, ADR 33) ------------------------------------------
+  { method: "GET", path: "/api/transport", summary: "Which adapter carries this Node's mail, and what both can say about themselves" },
+  { method: "PUT", path: "/api/transport", summary: "Supply the Cloudflare account id and Email Sending API token. The token is never returned" },
+
   // ---- maintenance ------------------------------------------------------------------------------------
   { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key" },
   { method: "POST", path: "/api/maintenance/reconcile", summary: "Reconcile stored evidence against its metadata" },

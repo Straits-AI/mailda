@@ -1639,6 +1639,31 @@ apps/node/worker/src/doctor.ts         checks the runtime claims every decision 
 probes/                                throwaway platform experiments
 ```
 
+## Both send APIs exist now, and they are not interchangeable (#86)
+
+ADR 33 locks *"the transport offers **both** send APIs, and every send records which one carried it."* The
+recording half was built and correct, with one possible value.
+
+The second adapter goes over `POST /accounts/{id}/email/sending/send`, and checking Cloudflare's docs before
+building it decided its shape: **that API takes structured JSON and no raw MIME**, so it cannot carry
+`authored` fidelity and refuses it rather than rebuilding the message. The binding stays preferred wherever
+it exists — it holds no credential to leak or rotate, and it is the only adapter that can submit the exact
+recorded bytes. What the REST path is for is the Node that has **no** binding, where the previous answer was
+"cannot send, permanently".
+
+Two of the ticket's own arguments for it did not survive this tree: batching recipients would collapse
+per-delivery outcomes that migration 0013 exists to keep, and a prior measurement had already found that
+submitting N times costs nothing extra. So it does not batch, and the honest remainder is smaller and real —
+a bindingless Node can speak, and a permanent bounce known at submission becomes `suppressed` rather than an
+optimistic hand-over.
+
+**It is also the first credential this Node has ever held**, and therefore the first real test of ADR 22's
+"every credential is a Secrets Store binding" — which does not survive ADR 24, for the reason already
+recorded in `wrangler.jsonc`: a `store_id` is account-specific and its removal drops the binding silently.
+The token is wrapped under the credential KEK instead, whose own header already named *transport credentials*
+as what it protects. No route returns it, and it is never a property of `env` — which is the property ADR 22
+was actually buying. See [`docs/send-transport.md`](./docs/send-transport.md).
+
 ## The routes are described once, and the description is checked (#85)
 
 ADR 12 locks *"UI, CLI, SDK, Skill and MCP parity is **generated from shared contracts**"*. Two of the five

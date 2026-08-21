@@ -260,3 +260,31 @@ export const cloudflareTransport: TransportAdapter = {
     }
   },
 };
+
+/**
+ * Which adapter carries this Node's mail (#86, ADR 33).
+ *
+ * **The binding when it exists, and that is a preference with a reason rather than an ordering.** It needs
+ * no credential at all, so a Node using it holds nothing that could leak and nothing to rotate; and it is
+ * the only path that can carry `authored` fidelity, which is what customer mail uses because the record must
+ * prove the exact bytes. Reaching for the REST API while a binding is present would trade both away for
+ * nothing.
+ *
+ * The REST adapter is therefore the answer to one question: *what does a Node do when it has no binding?*
+ * Before #86 the answer was "nothing, permanently" — the binding arrives by editing `wrangler.jsonc` and
+ * redeploying, which a Node whose operator cannot redeploy it cannot do.
+ *
+ * **Falling back to the binding when neither is available is deliberate**, and it is not a coin toss. Its
+ * refusal — *"This Node has no EMAIL binding, so it cannot send"* — names the thing an operator should
+ * install, where the REST adapter's would name a token that is the second-best answer. The most useful
+ * refusal wins.
+ *
+ * Asynchronous because "is REST configured" is a D1 read. That is one statement on a path that is already
+ * reading the manifest, and the alternative — caching the answer — is a Node that goes on believing it
+ * cannot send after somebody gives it a token.
+ */
+export async function chooseTransport(env: Env): Promise<TransportAdapter> {
+  if (env.EMAIL !== undefined) return cloudflareTransport;
+  const { restTransport, restConfigured } = await import("./rest-transport.ts");
+  return (await restConfigured(env)) === null ? cloudflareTransport : restTransport;
+}

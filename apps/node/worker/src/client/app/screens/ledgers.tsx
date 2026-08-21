@@ -4,7 +4,9 @@ import { apiFetch } from "/app/session.js";
 import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 
 import { Nothing } from "../chrome.tsx";
-import { type SendRow, useAudit, useDoctor, useLogs, useSends } from "../api.ts";
+import {
+  configureTransport, type SendRow, useAudit, useDoctor, useLogs, useSends, useTransport,
+} from "../api.ts";
 
 /**
  * The three ledgers and the diagnostic. Full-width tables, because for a ledger that is the right form.
@@ -395,6 +397,101 @@ export function Log() {
  * when something else is broken — #23 was exactly that, a dropped binding making sign-in return 500 with
  * `doctor` the only working surface. This one is for the operator who is signed in and fine.
  */
+/**
+ * Supplying the credentials this Node sends with (#86).
+ *
+ * **On the doctor screen, beside the finding it answers.** `transport_adapters` reports which adapters exist
+ * and, when neither does, says a Node cannot send at all — and the act that fixes it belongs next to the
+ * report that names it rather than on a settings screen an operator has to go looking for. This is the one
+ * place in the interface where a report and its remedy sit together, and the reason is that this remedy has
+ * nowhere else to be.
+ *
+ * **There is no CLI verb for this, and that is a constraint rather than an omission.** The token is wrapped
+ * under the credential KEK, which lives in a Durable Object only the Worker can reach — so a credential this
+ * Node encrypts can only be supplied through this Node. `mailda set-password` can be a script because a
+ * password hash needs no vault; this cannot.
+ *
+ * The field is `type="password"`: an API token with Email Sending: Edit is a credential, and a credential
+ * rendered in plain text is one a screen share discloses.
+ */
+function SendingCredentials() {
+  const transport = useTransport();
+  const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState("");
+  const [apiToken, setApiToken] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setProblem(null);
+    const outcome = await configureTransport(accountId.trim(), apiToken);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    // Cleared on success: the token has been handed over and nothing can read it back, so holding it in a
+    // form field afterwards would be the only place it still exists in the clear.
+    setApiToken("");
+    await queryClient.invalidateQueries({ queryKey: ["transport"] });
+    await queryClient.invalidateQueries({ queryKey: ["doctor"] });
+  }
+
+  const report = transport.data?.transport;
+
+  return (
+    <section className="transport" aria-label="Sending credentials">
+      <h2>Sending credentials</h2>
+      {report === undefined
+        ? <Nothing kind="loading" />
+        : (
+          <p className="dim">
+            Sends go through <span className="mono">{report.adapter}</span>.
+            {" "}
+            {report.available.binding
+              ? "The EMAIL binding is present and is preferred: it holds no credential, and it is the only adapter that can submit the exact bytes an authored send records."
+              : report.available.rest === null
+                ? "There is no EMAIL binding and no API token, so this Node cannot send at all."
+                : `There is no EMAIL binding, so reconstructed sends go over the REST API for account ${report.available.rest.accountId}. Authored sends are refused: that API builds its own MIME, so the bytes sent would not be the bytes recorded.`}
+          </p>
+        )}
+
+      {problem === null ? null : <p className="notice bad" role="alert">{problem}</p>}
+
+      <label className="field-row" htmlFor="transport-account">
+        <span>Cloudflare account id</span>
+        <input
+          id="transport-account"
+          className="mono"
+          value={accountId}
+          onChange={(event) => setAccountId(event.target.value)}
+        />
+      </label>
+      <label className="field-row" htmlFor="transport-token">
+        <span>Email Sending API token</span>
+        <input
+          id="transport-token"
+          type="password"
+          className="mono"
+          value={apiToken}
+          onChange={(event) => setApiToken(event.target.value)}
+        />
+      </label>
+      <p className="dim">
+        Needs the <span className="mono">Email Sending: Edit</span> permission. It is encrypted on arrival and
+        no route returns it — to change it, supply a new one.
+      </p>
+      <p>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || accountId.trim() === "" || apiToken === ""}
+        >
+          save credentials
+        </button>
+      </p>
+    </section>
+  );
+}
+
 export function Doctor() {
   const doctor = useDoctor();
   if (doctor.isPending || doctor.isError) {
@@ -446,6 +543,7 @@ export function Doctor() {
           ))}
         </tbody>
       </table>
+      <SendingCredentials />
     </section>
   );
 }

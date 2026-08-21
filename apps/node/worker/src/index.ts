@@ -3,6 +3,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
+import { auditedBatch } from "./audit.ts";
 
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
@@ -64,7 +65,7 @@ import { readOnly } from "./read-only.ts";
 import { cancelSend, dailySendState, dispatchDue, releasePolicyHold } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
-import { cloudflareTransport } from "./outbound/transport.ts";
+import { chooseTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
 import { resealBatch } from "./reseal.ts";
 import { safeFilename } from "./outbound/headers.ts";
@@ -210,7 +211,7 @@ export default {
        * The alarm stays the fast path: this bounds the delay at one minute, it does not replace it.
        */
       try {
-        await dispatchDue(env, clock, orgId, cloudflareTransport);
+        await dispatchDue(env, clock, orgId, await chooseTransport(env));
       } catch (error) {
         await log(env, clock, {
           level: "error",
@@ -1475,7 +1476,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       if (who === null) return unauthenticated();
 
       // §14: whether this Node can send is answerable *before* composing, not at submit.
-      const capability = await cloudflareTransport.capability(env);
+      const capability = await (await chooseTransport(env)).capability(env);
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const sealed = await sealManifest(env, clock, who.orgId, {
         mailboxId: String(body.mailboxId ?? ""),
@@ -1811,6 +1812,93 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * one thing this design must not do — or narrowing `isAdmin` for one caller. The gate stays where the
      * writable environment still exists, which is here.
      */
+    /**
+     * The sending transport's credentials (#86, ADR 33, ADR 22).
+     *
+     * `GET /api/transport` — which adapter carries this Node's mail, and what it can say about itself
+     * `PUT /api/transport` — supply the Cloudflare account id and an Email Sending API token
+     *
+     * **The token is never returned by anything.** `GET` reports *that* one is configured and when, which is
+     * the whole question an operator has; a route that could hand it back would make every administrator a
+     * holder of the account's sending authority, which is exactly what wrapping it under the credential KEK
+     * is for.
+     *
+     * Administrator-gated, because supplying this gives the Node the ability to send as the account — the
+     * same authority granting mailbox access carries, so the same gate.
+     */
+    if (url.pathname === "/api/transport" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { restConfigured } = await import("./outbound/rest-transport.ts");
+      const chosen = await chooseTransport(env);
+      const rest = await restConfigured(env);
+      return Response.json({
+        transport: {
+          adapter: chosen.name,
+          capability: await chosen.capability(env),
+          /*
+           * Both adapters' availability, so the answer to *why is this Node using that one* is on the same
+           * screen as the choice. `binding` is a fact about the deployment; `rest` is a fact about D1.
+           */
+          available: {
+            binding: env.EMAIL !== undefined,
+            rest: rest === null ? null : { accountId: rest.accountId, configuredAt: rest.at },
+          },
+        },
+      });
+    }
+
+    if (url.pathname === "/api/transport" && request.method === "PUT") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const accountId = String(body.accountId ?? "").trim();
+      const apiToken = String(body.apiToken ?? "").trim();
+      if (accountId === "" || apiToken === "") {
+        throw unprocessable("E_TRANSPORT_NEEDS_BOTH", {
+          what: `accountId was ${accountId === "" ? "empty" : "given"} and apiToken was `
+            + `${apiToken === "" ? "empty" : "given"}`,
+          why: "an account id with no token is a transport that would report itself available and refuse "
+            + "every send, so the two halves are one configuration and arrive together",
+          fix: "put { accountId, apiToken }. The token needs the Email Sending: Edit permission",
+        });
+      }
+
+      const { wrapCredential } = await import("./auth/kek.ts");
+      // Wrapped before the batch is built: `auditedBatch`'s statement builder is synchronous, and the
+      // wrap is a Durable Object round trip for the key.
+      const wrapped = await wrapCredential(env, apiToken);
+      const at = new Date(clock.now()).toISOString();
+      await auditedBatch<never>(
+        env, clock, who.orgId,
+        {
+          action: "transport.configured", outcome: "ok", actorUserId: who.userId, subject: accountId,
+          /*
+           * The account id and who did it — never the token, not even its length. An audit trail that
+           * recorded a credential would be a second place it lives, in the one table designed to be read.
+           */
+          detail: { accountId, adapter: "cloudflare-email-rest" },
+        },
+        (entry: D1PreparedStatement) => [
+          env.CATALOG.prepare(
+            `INSERT INTO sending_transport (id, account_id, api_token, configured_by, configured_at)
+             VALUES (1,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+               account_id = excluded.account_id, api_token = excluded.api_token,
+               configured_by = excluded.configured_by, configured_at = excluded.configured_at`,
+          ).bind(accountId, wrapped, who.userId, at),
+          entry,
+        ],
+      );
+      return Response.json({ configured: { accountId, configuredAt: at } });
+    }
+
     const butlerSimulate = /^\/api\/butlers\/([^/]+)\/simulate$/.exec(url.pathname);
     if (butlerSimulate && request.method === "POST") {
       const who = await principalFor(env, clock, request);
@@ -2138,7 +2226,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           }),
         })),
         daily: await dailySendState(env, clock, who.orgId),
-        capability: await cloudflareTransport.capability(env),
+        capability: await (await chooseTransport(env)).capability(env),
       });
     }
 
@@ -2158,7 +2246,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         env, { orgId: who.orgId, userId: who.userId }, "send.propose",
       );
       return Response.json({
-        dispatched: await dispatchDue(env, clock, who.orgId, cloudflareTransport, 20, dispatchable),
+        dispatched: await dispatchDue(env, clock, who.orgId, await chooseTransport(env), 20, dispatchable),
       });
     }
 

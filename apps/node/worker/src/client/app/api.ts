@@ -617,6 +617,37 @@ export const runFacts = (runId: string) =>
     GET("/api/butler-runs/:runId/inspect", { runId }),
   );
 
+export interface TransportReport {
+  adapter: string;
+  capability: { canSend: boolean; arbitraryRecipients: boolean; verifiedAt: string | null; detail: string };
+  available: {
+    binding: boolean;
+    /** `null` when no REST credentials exist. **Never carries the token** — see migration 0036. */
+    rest: { accountId: string; configuredAt: string } | null;
+  };
+}
+
+export function useTransport(): UseQueryResult<{ transport: TransportReport }, Error> {
+  return useQuery({
+    queryKey: ["transport"],
+    queryFn: () => read<{ transport: TransportReport }>(GET("/api/transport")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * Supplies the account id and the sending API token (#86).
+ *
+ * The token goes **to** the Node and never comes back: it is wrapped under the credential KEK on arrival and
+ * no route returns it. This is also why there is no CLI verb for it — wrapping needs the KeyVault Durable
+ * Object, which only the Worker can reach, so a credential this Node encrypts can only be supplied through
+ * this Node.
+ */
+export const configureTransport = (accountId: string, apiToken: string) =>
+  butlerAct<{ configured: { accountId: string; configuredAt: string } }>(
+    at("PUT", "/api/transport"), "PUT", { accountId, apiToken },
+  );
+
 export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { butlerId: string } }>(
     at("POST", "/api/butlers"), "POST", { name, source, sourceFormat },

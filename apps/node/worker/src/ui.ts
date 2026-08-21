@@ -422,6 +422,13 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .butler-format .dim { font-size: .78rem; }
 .butler-actions { margin: .6rem 0 1.2rem; }
 
+/* Sending credentials (#86), on the doctor screen beside the finding they answer. */
+.transport { margin-top: 1.6rem; border-top: 1px solid var(--rule); padding-top: 1rem; max-width: 40rem; }
+.transport h2 { margin: 0 0 .4rem; font-size: 1rem; }
+.transport .field-row { margin: .6rem 0; }
+.transport input { width: 100%; }
+.transport .dim { font-size: .8rem; }
+
 /* The dry run (#87). A section rather than a card: hairline rules, like everything else on this panel. */
 .butler-dry { border-top: 1px solid var(--rule); padding-top: .9rem; margin-bottom: 1.4rem; }
 .butler-dry h3 { margin: 0 0 .4rem; font-size: .95rem; }

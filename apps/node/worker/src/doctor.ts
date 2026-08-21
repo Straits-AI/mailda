@@ -186,6 +186,8 @@ const EXPECTED_TABLES = [
   "signing_keys", "refresh_tokens", "login_attempts",
   // Migration 0007 (outbound) and 0008 (audit). Absent here until 6 August 2026.
   "send_manifests", "send_counters", "node_capabilities", "invitations",
+  // Migration 0036 (#86): the REST send API's credentials, wrapped under the credential KEK.
+  "sending_transport",
   "audit_entries", "log_entries",
   // Migration 0010 (per-recipient outcome).
   "send_recipients", "send_recipient_events",
@@ -277,6 +279,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkBreakers(env, ctx, claim?.org_id ?? null, blind)),
     ...(await checkButlerPauses(env, claim?.org_id ?? null)),
     planCheck(),
+    ...(await checkTransportAdapters(env)),
   );
 
 
@@ -1997,6 +2000,49 @@ function loopDetectionFinding(visibility: { threadedInbound: number; butlerSends
  * not a failing check, and marking it `degraded` would make every correctly-installed Node permanently
  * yellow, which is how a warning stops being read.
  */
+/**
+ * Which send adapters this Node actually has (#86, ADR 33).
+ *
+ * ADR 33 locks *"the transport offers **both** send APIs"* and until #86 one was wired, so `adapter` on
+ * every sealed envelope had a single possible value. This reports what is really available rather than what
+ * the ADR says should be — which is the whole difference between a decision and its implementation, and the
+ * kind of gap `butler_execution` above exists to keep visible.
+ *
+ * **Never `ok: false`.** Having only the binding is the ordinary, preferred configuration: it needs no
+ * credential and it is the only adapter that can carry authored bytes. A degraded severity here would tell
+ * an operator to fix something that is not broken. `report` is the honest level — this is a fact about the
+ * deployment, and the finding that *does* fail when a Node cannot send is `outbound_send` beside it.
+ *
+ * One D1 read, and it reads no secret: `restConfigured` selects the account id and the date and never the
+ * wrapped token.
+ */
+async function checkTransportAdapters(env: Env): Promise<Finding[]> {
+  const { restConfigured } = await import("./outbound/rest-transport.ts");
+  const rest = await restConfigured(env).catch(() => null);
+  const binding = env.EMAIL !== undefined;
+  const chosen = binding ? "cloudflare-email-sending" : (rest === null ? "none" : "cloudflare-email-rest");
+
+  return [{
+    check: "transport_adapters",
+    severity: "report",
+    discloses: "data",
+    ok: true,
+    detail:
+      `${binding ? "The EMAIL binding is present" : "There is no EMAIL binding"}; `
+      + `${rest === null
+        ? "no sending API token is configured"
+        : `a sending API token is configured for account ${rest.accountId} (since ${rest.at})`}. `
+      + `Sends would go through ${chosen === "none" ? "nothing — this Node cannot send" : chosen}. `
+      + "The binding is preferred wherever it exists: it holds no credential, and it is the only adapter "
+      + "that can submit the exact recorded bytes an authored send requires. The REST adapter carries "
+      + "reconstructed sends only.",
+    ...(binding || rest !== null ? {} : {
+      fix: "add a `send_email` binding to wrangler.jsonc and deploy, or supply REST credentials with "
+        + "PUT /api/transport if this Node cannot be redeployed",
+    }),
+  }];
+}
+
 function planCheck(): Finding {
   return {
     check: "workers_paid_plan",

@@ -111,6 +111,16 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   /*
+   * Audited rather than exempt, and the neighbour above is why the distinction matters.
+   * `node_capabilities` caches what the platform allows; this row **hands this Node the ability to send as a
+   * Cloudflare account**, which is authority somebody granted rather than a fact somebody observed.
+   *
+   * The entry names the account and the person and never the token — an audit trail that recorded a
+   * credential would be a second place it lives, in the one table designed to be read widely and kept for
+   * ever.
+   */
+  sending_transport: { actions: ["transport.configured"] },
+  /*
    * **Was exempt for "no mutation path exists yet. Auditable when membership admin lands (§28)."** This is
    * that moment (#73), and the exemption's own sentence is what named it.
    *

@@ -593,6 +593,20 @@ export const AUDIT_ACTIONS = {
     says: "A content-destroying act was refused because a legal hold covered it; the attempt is the evidence.",
     standalone: true,
   },
+
+  /**
+   * Supplying the sending API token (#86).
+   *
+   * Recorded because it hands this Node the ability to send as a Cloudflare account, which is authority
+   * rather than configuration — the same reason `access.granted` is here.
+   *
+   * **The entry names the account and the person and never the token**, not even its length. An audit trail
+   * that recorded a credential would be a second place the credential lives, in the one table designed to be
+   * read widely and kept for ever.
+   */
+  "transport.configured": {
+    says: "An administrator supplied the credentials this Node sends mail with.",
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
