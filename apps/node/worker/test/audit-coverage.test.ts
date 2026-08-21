@@ -85,7 +85,47 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   addresses: { exempt: "Set at claim time and never since; claim itself is audited by node_claim." },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
-  team_members: { exempt: "No mutation path exists yet. Auditable when membership admin lands (§28)." },
+  /*
+   * **Was exempt for "no mutation path exists yet. Auditable when membership admin lands (§28)."** This is
+   * that moment (#73), and the exemption's own sentence is what named it.
+   *
+   * Audited because **membership is authority**, which is the whole argument and is not the same argument the
+   * table above it makes. `readableSubjects` resolves a principal to `[userId, ...teamIds]`, so a relation
+   * held by a team is held by every member of it — which means adding somebody to a team can hand them a
+   * mailbox's contents and a vote on somebody else's send **with no `access.granted` entry anywhere**.
+   * Un-audited, an administrator grants a team once, in the trail, and then changes who that grant reaches for
+   * ever, in silence. That is the question `relationship_tuples` is audited for, reached through a second door.
+   *
+   * The boundary is the one `case.claim_taken` drew — frequency and answerability — and membership is at the
+   * far end of both: bounded by headcount and organizational change rather than by mail volume, and plainly
+   * something somebody could be asked about. Nothing like an entry per claim.
+   *
+   * Both entries key their **subject** on the person rather than on the team, so "what authority did this
+   * person get, and when" is one filter across `access.granted` and this. `team.member_removed` carries
+   * `remaining`, because removing the last member is what makes a live team-scoped policy unsatisfiable and
+   * that consequence is not otherwise attributable to an act.
+   */
+  team_members: { actions: ["team.member_added", "team.member_removed"] },
+  /*
+   * The team itself (#73). Two actions, and this is the harder classification of the pair.
+   *
+   * Creating a team confers **nothing** — an empty team with no tuples is a name — so the authority argument
+   * that audits `team_members` does not reach here, and the frequency argument alone would exempt it. What
+   * earns the entry is that there is no other entry riding in that transaction to answer for it: `policies` is
+   * exempt two entries down *because* `policy.drafted` records the same act in the same batch, and a `teams`
+   * row has no such neighbour. Exempting it would leave "where did this team come from" unanswerable.
+   *
+   * A rename earns its own action for a sharper reason: a team is granted to by **id** and chosen by a human
+   * reading a **name**, so renaming "Interns" to "Finance" changes what the next administrator believes they
+   * are granting `approval.decide` to. The entry carries both names, which is why there is no `renamed_at`
+   * column — a column could say when and never from what.
+   *
+   * There is deliberately no `team.deleted` and no `team.archived`: migration 0032 refuses both acts, because
+   * a team is a tuple subject and deleting the row would leave grants conferring nothing while still reading
+   * as grants. A declared action nothing emits is a category of one, which the last assertion in this file
+   * fails on.
+   */
+  teams: { actions: ["team.created", "team.renamed"] },
   mailboxes: {
     // Was exempt for "no mutation path exists yet". A mailbox's first-response target is now settable, and
     // it is the one thing about a mailbox anybody can change — because it is a **promise to customers**

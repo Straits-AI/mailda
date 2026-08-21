@@ -174,7 +174,7 @@ describe("POST /api/holds/:id/lift asks; the approvals endpoints decide", () => 
     const { lift } = await asked.json() as {
       lift: { liftId: string; approvalId: string; stages: number[]; eligible: number };
     };
-    expect(lift.stages).toEqual([2]);
+    expect(lift.stages).toEqual([{ count: 2, teamId: null }]);
     expect(lift.eligible).toBe(2);
 
     // The administrator is given approval.decide as well, so nothing but the actor exclusion stands between

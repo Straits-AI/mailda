@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
-import { decideApproval, pendingApprovals } from "../src/approvals.ts";
+import { decideApproval, pendingApprovals, stageOf } from "../src/approvals.ts";
 import { evaluateBreakers, pausesInForce } from "../src/breakers.ts";
 import { liftDomainPause, requestDomainPause } from "../src/domain-pause.ts";
 import { runDoctor } from "../src/doctor.ts";
@@ -132,7 +132,7 @@ describe("placing a pause takes two administrators and a reason", () => {
     const requested = await requestDomainPause(
       testEnv, atTime(AUGUST_20), ORG, ADMIN_A, "acme.example", "suspected compromise",
     );
-    expect(requested.stages).toEqual([2]);
+    expect(requested.stages).toEqual([stageOf(2)]);
     // Two, not three: the requester is removed from their own request by `planApproval`, which is §18's
     // separation of duty applied once rather than by every caller.
     expect(requested.eligible).toBe(2);

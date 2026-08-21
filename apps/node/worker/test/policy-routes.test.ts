@@ -50,7 +50,8 @@ function as(token: string, body?: unknown): RequestInit {
 
 beforeEach(async () => {
   for (const table of ["policy_versions", "policies", "send_manifests", "send_recipients", "send_counters",
-                       "relationship_tuples", "addresses", "mailboxes", "users", "node_claim",
+                       "policy_stages", "relationship_tuples", "team_members", "teams",
+                       "addresses", "mailboxes", "users", "node_claim",
                        "login_attempts", "sessions", "refresh_tokens", "audit_entries", "outbox"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
@@ -323,5 +324,141 @@ describe("a published deny reaches the send path", () => {
     expect(sends[0]!.state).toBe("awaiting");
     expect(sends[0]!.state_reason).toBe("policy_approval_required");
     expect(sends[0]!.policy_outcome).toBe("require_approval");
+  });
+});
+
+describe("teams and team-scoped stages travel through the API (#73)", () => {
+  /**
+   * The membership plane through the routes, for the reason the policy plane has this file at all: a
+   * subsystem no channel can reach is the same failure as a condition backed by no data, one level up. Four
+   * claims here are claims about what a *caller* is told and a function-level test cannot check any of them.
+   */
+  function del(token: string, body: unknown): RequestInit {
+    return {
+      method: "DELETE",
+      headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    };
+  }
+
+  it("creates a team, moves a person in and out, and lists it with its size", async () => {
+    const token = await sessionFor(ADMIN);
+    const created = await SELF.fetch("https://node/api/teams", as(token, { name: "Legal" }));
+    expect(created.status).toBe(200);
+    const { team } = await created.json() as { team: { id: string; name: string } };
+    expect(team.name).toBe("Legal");
+
+    const added = await SELF.fetch(`https://node/api/teams/${team.id}/members`, as(token, { userId: ANA }));
+    expect(added.status).toBe(200);
+    expect((await added.json() as { membership: { members: number } }).membership.members).toBe(1);
+
+    const listed = await SELF.fetch("https://node/api/teams", {
+      headers: { cookie: `mailda_at=${token}` },
+    });
+    expect((await listed.json() as { teams: Array<{ name: string; memberCount: number }> }).teams)
+      .toEqual([expect.objectContaining({ name: "Legal", memberCount: 1 })]);
+
+    const renamed = await SELF.fetch(`https://node/api/teams/${team.id}/rename`, as(token, { name: "Counsel" }));
+    expect((await renamed.json() as { team: { name: string } }).team.name).toBe("Counsel");
+
+    const one = await SELF.fetch(`https://node/api/teams/${team.id}`, {
+      headers: { cookie: `mailda_at=${token}` },
+    });
+    expect(await one.json() as unknown).toEqual({
+      team: expect.objectContaining({ name: "Counsel" }), members: [ANA],
+    });
+
+    const removed = await SELF.fetch(`https://node/api/teams/${team.id}/members`, del(token, { userId: ANA }));
+    expect((await removed.json() as { membership: { members: number } }).membership.members).toBe(0);
+  });
+
+  it("refuses a non-administrator on every writing act, and on the roster", async () => {
+    const admin = await sessionFor(ADMIN);
+    const { team } = await (await SELF.fetch("https://node/api/teams", as(admin, { name: "Legal" })))
+      .json() as { team: { id: string } };
+    await SELF.fetch(`https://node/api/teams/${team.id}/members`, as(admin, { userId: ADMIN }));
+
+    const ana = await sessionFor(ANA);
+    for (const [path, init] of [
+      ["https://node/api/teams", as(ana, { name: "Shadow finance" })],
+      [`https://node/api/teams/${team.id}/rename`, as(ana, { name: "Mine now" })],
+      [`https://node/api/teams/${team.id}/members`, as(ana, { userId: ANA })],
+      [`https://node/api/teams/${team.id}/members`, del(ana, { userId: ANA })],
+      /*
+       * The **roster**, which is a read and is refused all the same. A team's members are exactly the people
+       * every tuple that team holds reaches, so *"who is in Legal"* answers *"who can decide an approval on
+       * that mailbox"* — the map `GET /api/access?subject=…` already refuses a non-administrator, read from
+       * the subject's end. Asserted here because it is the one place in this plane where a read and a write
+       * take the same relation for two different reasons, and a route comment claiming it would not be a
+       * check.
+       */
+      [`https://node/api/teams/${team.id}`, { headers: { cookie: `mailda_at=${ana}` } }],
+    ] as const) {
+      const response = await SELF.fetch(path, init);
+      expect(response.status, path).toBe(403);
+      expect((await response.json() as { error: string }).error).toBe("E_NOT_AN_ADMINISTRATOR");
+    }
+    // The **listing** is open to any member, and that is the deliberate exception: a team is a name and a
+    // headcount there, which is what an author reading a shortfall naming team Legal has to resolve. The two
+    // assertions belong in one test because the claim is the line between them, not either half alone.
+    const listed = await SELF.fetch("https://node/api/teams", { headers: { cookie: `mailda_at=${ana}` } });
+    expect(listed.status).toBe(200);
+    expect((await listed.json() as { teams: Array<{ memberCount: number }> }).teams)
+      .toEqual([expect.objectContaining({ name: "Legal", memberCount: 1 })]);
+  });
+
+  it("accepts a team on a stage, keeps a bare number meaning the same thing, and stores both", async () => {
+    // `stagesFrom` accepts `2` and `{count, team}` and normalises them to one stored form. Without a test
+    // through the route the object arm would be code nothing exercises — the reason this file exists.
+    const token = await sessionFor(ADMIN);
+    const { team } = await (await SELF.fetch("https://node/api/teams", as(token, { name: "Legal" })))
+      .json() as { team: { id: string } };
+    await SELF.fetch(`https://node/api/teams/${team.id}/members`, as(token, { userId: ADMIN }));
+
+    const created = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "legal then anyone",
+      outcome: "require_approval",
+      conditions: { mailboxId: MAILBOX },
+      stages: [{ count: "1", team: team.id }, 1],
+    }));
+    expect(created.status).toBe(200);
+    const { policy } = await created.json() as { policy: { policyId: string; versionId: string } };
+
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT ordinal, required_count, team_id FROM policy_stages WHERE policy_version_id = ? ORDER BY ordinal",
+    ).bind(policy.versionId).all<{ ordinal: number; required_count: number; team_id: string | null }>();
+    expect(rows.results).toEqual([
+      { ordinal: 1, required_count: 1, team_id: team.id },
+      { ordinal: 2, required_count: 1, team_id: null },
+    ]);
+
+    // Two distinct people are needed and only ADMIN holds `approval.decide`, so publication refuses — and the
+    // message names the team, which is the part somebody acts on.
+    const response = await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
+    expect(response.status).toBe(409);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("E_APPROVAL_UNSATISFIABLE");
+    expect(body.message).toContain("stage 2 needs 1 distinct approver");
+  });
+
+  it("refuses a stage naming a team that does not exist, and says so as a not-found", async () => {
+    const token = await sessionFor(ADMIN);
+    const created = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "ghost reviews",
+      outcome: "require_approval",
+      conditions: { mailboxId: MAILBOX },
+      stages: [{ count: 1, team: "tm_ghost" }],
+    }));
+    expect(created.status).toBe(200);
+    const { policy } = await created.json() as { policy: { policyId: string } };
+
+    // The check a `teams` row makes possible: authoring is allowed — #60 keeps the draft so it can be fixed
+    // rather than retyped — and **publication** is where the team has to exist.
+    const response = await SELF.fetch(`https://node/api/policies/${policy.policyId}/publish`, as(token));
+    expect(response.status).toBe(404);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("E_NO_SUCH_TEAM");
+    expect(body.message).toContain("tm_ghost");
+    expect(body.message).toContain("fix");
   });
 });

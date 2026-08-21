@@ -413,3 +413,57 @@ describe("supervised reading's effect on the authorization path (#63)", () => {
     expect(heavyAfter.rowsRead).toBeLessThanOrEqual(heavyBefore.rowsRead + 5);
   });
 });
+
+/**
+ * What #73's `teams` table costs the authorization path: **nothing**, measured rather than inherited.
+ *
+ * `authz-check-rows-read.md`'s `stale_when` names *"the relationship_tuples or team_members index definitions
+ * change"* and *"a team-membership model beyond user->team->object is introduced"*. Neither fired — migration
+ * 0032 adds no index to either table and does not change the membership model, which is still one hop from a
+ * user to a team to an object — and the figures were re-run anyway, because *"the clause did not name it"* is
+ * not evidence about a number. That receipt has been corrected twice this week, and a figure inherited on the
+ * strength of an argument is exactly what those corrections were about.
+ *
+ * The seed builds `team_members` rows whose `team_id` names no `teams` row, which is what every Node looked
+ * like before 0032. So the measurement is the honest one: the same checks, before and after every team in the
+ * corpus becomes a real object.
+ */
+describe("the teams table's effect on the authorization path (#73)", () => {
+  it("costs the check nothing, because nothing on that path reads it", async () => {
+    const before = {
+      typical: await checkCost(corpus.typicalUser, corpus.mailboxes[1]!),
+      heavy: await checkCost(corpus.heavyUser, corpus.mailboxes[0]!),
+      deny: await checkCost(corpus.typicalUser, "mbx_DOES_NOT_EXIST"),
+    };
+    for (const [label, cost] of Object.entries(before)) report(`teams.before.${label}`, cost);
+
+    // Every team in the corpus becomes a first-class object.
+    const at = new Date().toISOString();
+    for (const [index, teamId] of corpus.teams.entries()) {
+      await env.CATALOG.prepare(
+        "INSERT OR IGNORE INTO teams (id, org_id, name, created_by, created_at) VALUES (?,?,?,?,?)",
+      ).bind(teamId, corpus.orgId, `Team ${index}`, corpus.typicalUser, at).run();
+    }
+    const rows = await env.CATALOG.prepare("SELECT COUNT(*) AS n FROM teams WHERE org_id = ?")
+      .bind(corpus.orgId).first<{ n: number }>();
+    // Anti-vacuity: if the inserts had not landed, "unchanged" would be a measurement of nothing happening.
+    expect(rows?.n).toBe(corpus.teams.length);
+
+    const after = {
+      typical: await checkCost(corpus.typicalUser, corpus.mailboxes[1]!),
+      heavy: await checkCost(corpus.heavyUser, corpus.mailboxes[0]!),
+      deny: await checkCost(corpus.typicalUser, "mbx_DOES_NOT_EXIST"),
+    };
+    for (const [label, cost] of Object.entries(after)) report(`teams.after.${label}`, cost);
+
+    for (const label of ["typical", "heavy", "deny"] as const) {
+      // Equalities, not bounds, and deliberately so: the claim being made is that the number **did not move**,
+      // which a bound cannot express. `readableSubjects` still issues one statement against `team_members` and
+      // the tuple lookup still reads `rt_unique`; `teams` is not joined by anything on this path.
+      expect(after[label].queries, `${label} queries`).toBe(before[label].queries);
+      expect(after[label].rowsRead, `${label} rows_read`).toBe(before[label].rowsRead);
+      assertWithinBudget("authz.check.max_queries", after[label].queries, { scenario: label });
+      assertWithinBudget("authz.check.max_rows_read", after[label].rowsRead, { scenario: label });
+    }
+  });
+});

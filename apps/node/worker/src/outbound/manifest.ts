@@ -3,8 +3,8 @@ import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, auditedBatchMany } from "../audit.ts";
-import { describeShortfall, planApproval, type Shortfall } from "../approvals.ts";
-import { decidersOf } from "../deciders.ts";
+import { describeShortfall, planApproval, teamsNamedBy, type Shortfall } from "../approvals.ts";
+import { decidersOf, rostersOf } from "../deciders.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
@@ -568,6 +568,19 @@ export async function sealManifest(
       decision.matched.filter((match) => match.outcome === "require_approval").map((match) => match.versionId),
     );
     const deciders = await decidersOf(env, orgId, composition.mailboxId);
+    /*
+     * The rosters of every team the folded stage set names (#73), and **only** when it names one.
+     *
+     * `teamsNamedBy` returns nothing for a stage set with no team constraint, and `rostersOf` short-circuits
+     * on an empty request with no query at all — so a send gated by an ordinary policy costs exactly what it
+     * cost before this existed, which is the laziness `evaluate` already uses for its two derived conditions.
+     * The figure is in `approval-decision-cost.md`, measured rather than argued.
+     *
+     * Read here rather than inside `planApproval` because that function is pure and returns statements for
+     * this transaction to carry; making it do I/O would put a read inside the thing whose whole shape is
+     * "decide, then hand back the rows".
+     */
+    const rosters = await rostersOf(env, orgId, teamsNamedBy(stages));
     const planned = planApproval(env, ctx, orgId, {
       // The subject is this manifest. `subject_kind` is written rather than implied by the id's prefix, for
       // the reason 0021 gives: a kind the writer leaves out falls back on a column default, and a default is
@@ -577,7 +590,7 @@ export async function sealManifest(
       scopeId: composition.mailboxId,
       actorUserId: composition.authorUserId,
       stages,
-    }, deciders);
+    }, deciders, rosters);
 
     if (planned.satisfiable) {
       approvalId = planned.plan.approvalId;

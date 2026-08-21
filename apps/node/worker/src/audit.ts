@@ -83,6 +83,53 @@ export const AUDIT_ACTIONS = {
   },
   "access.granted": { says: "A relation was granted to somebody, by an administrator." },
   "access.revoked": { says: "A relation was withdrawn; §7 makes it effective on the next request." },
+
+  /*
+   * §28's membership administration (#73). Four actions, and the argument for each is *where it sits between
+   * `access.granted` and the `case.claimed` that deliberately does not exist*.
+   *
+   * That boundary is frequency and answerability, and membership is at the far end of both. A claim happens
+   * all day and is a person picking up work; **adding somebody to a team is authority**. `readableSubjects`
+   * expands a principal into `[userId, ...teamIds]`, so a team holding `mailbox.content.read` or
+   * `approval.decide` confers it on every member — which means adding a person to a team can hand them a
+   * mailbox's contents and a vote on somebody else's send with **no `access.granted` entry anywhere**. Without
+   * these two actions, an administrator grants a team once, in the trail, and then quietly changes who that
+   * grant reaches, forever, in silence. That is the same question `access.granted` is audited for, reached
+   * through a second door, and it is the whole reason this pair exists.
+   *
+   * `team.member_removed` carries `remaining` — how many members the team has left — because removing the last
+   * one is the act that makes a live policy naming that team unsatisfiable, and *"which act emptied this
+   * team"* is exactly what somebody asks a week later when sends start being withheld.
+   *
+   * **`team.created` and `team.renamed` are the harder call, and they are audited on their own merits rather
+   * than because the pair above is.** Creating a team confers nothing — an empty team with no tuples is a name
+   * — so the frequency argument alone would exempt it. What earns it is that there is no other entry riding in
+   * that transaction to answer for it: `policies` is exempt in `audit-coverage.test.ts` precisely *because*
+   * `policy.drafted` records the same act, and a `teams` row has no such neighbour. Once per team is rarer
+   * than once per policy, so the untrimmable-table objection does not bite.
+   *
+   * A rename is answerable for a sharper reason: a team is granted to by **id** and chosen by a human reading
+   * a **name**, so renaming "Interns" to "Finance" changes what the next administrator believes they are
+   * granting `approval.decide` to. The entry carries both names, which a `renamed_at` column could not.
+   *
+   * All four ride in `auditedBatch` beside the write they record, so none is `standalone`. There is
+   * deliberately no `team.deleted` and no `team.archived`: migration 0032 refuses both acts, and a declared
+   * action nothing emits is a category of one — which the last assertion in `audit-coverage.test.ts` fails on.
+   */
+  "team.created": { says: "An administrator created a team; a team with no tuples confers nothing yet." },
+  "team.renamed": {
+    says: "An administrator renamed a team; both names are recorded, because a team is granted to by id and "
+      + "chosen by a human reading its name.",
+  },
+  "team.member_added": {
+    says: "An administrator put somebody in a team, which confers every relation that team holds — the same "
+      + "authority access.granted records, reached through membership.",
+  },
+  "team.member_removed": {
+    says: "An administrator took somebody out of a team, withdrawing every relation that team holds from "
+      + "them; how many members remain is recorded, because emptying a team can make a live policy "
+      + "unsatisfiable.",
+  },
   "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },
   "send.cancelled": { says: "A held send was stopped by a person before dispatch." },
   "send.withheld": {

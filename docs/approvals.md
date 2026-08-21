@@ -74,6 +74,11 @@ decisions. That one structure expresses all three review shapes §18 asks for.
 | parallel | `[2]` | one stage, two distinct people, no order between them |
 | sequential | `[1, 1]` | two stages, one person each, in order |
 | dual control | either | whichever of the two the organization means |
+| separation of **duty** | `[{count: 1, team: finance}, {count: 1, team: legal}]` | the same chain, each stage narrowed to a team ([#73][73]) |
+
+A stage is a **count and an optional team**. `2` and `{count: 2}` are the same stage and normalise to one
+stored form; `team: null` is the absence of a constraint and is what every stage written before migration 0032
+means, so nothing was backfilled.
 
 **The order is on the stages, not on the people.** That is what makes an order expressible at all: a set
 defined by a relation has no natural sequence, and naming people in a policy would widen authority. Each
@@ -87,10 +92,17 @@ form.
 ## Who may decide
 
 ```
-eligible(approval) = approval.decide holders on the approval's mailbox
+eligible(stage)    = approval.decide holders on the approval's mailbox
+                   ∩ members of stage.team_id, if one is named (#73)
                    − the actor: the send's author, or the lift's requester
                    − everybody who has already decided in this approval
 ```
+
+**The team term is an intersection, and that is load-bearing rather than incidental.** It can only ever remove
+people, so Layer 5's may-narrow-never-widen rule survives whole: naming a team makes a stage harder to fill and
+can never make somebody eligible who holds no relation. A team id naming nothing resolves to the **empty** set —
+the restrictive answer for the unclassified input — so a stage naming a team that has ceased to exist refuses
+rather than passes.
 
 `approval.decide` is a relation on the **mailbox** (`src/access.ts`), grantable by an administrator like any
 other. It is not implied by `org.admin` and not implied by `send.propose`: the first would make every
@@ -112,8 +124,18 @@ The query is the message; the index is the guarantee.
 
 | When | What it knows | What it does |
 |:--|:--|:--|
-| **Publication** (`publishPolicy`) | who holds `approval.decide` today; not who will write the message | refuses the publish, naming the mailbox, the stage and how many short |
-| **Evaluation** (`sealManifest`) | the author too, and today's grants | seals the send `withheld` with `approval_unsatisfiable` |
+| **Publication** (`publishPolicy`) | who holds `approval.decide` today; whether a named team **exists**; not who will write the message | refuses the publish, naming the mailbox, the stage, the team and how many short |
+| **Evaluation** (`sealManifest`) | the author too, today's grants, and today's membership | seals the send `withheld` with `approval_unsatisfiable` |
+| **The decision** (`decideApproval`) | who this person is, right now | refuses `E_APPROVER_NOT_IN_TEAM` if they have left the stage's team |
+
+**Publication verifies that a named team exists**, which is the check that was impossible before there was a
+`teams` row to look for: all the old world could ask was whether a team currently *has members*, and a
+misspelled id and a real team on a quiet week need opposite answers. `E_NO_SUCH_TEAM` and
+`E_APPROVAL_UNSATISFIABLE` are therefore two refusals rather than one.
+
+**A stage freezes the team's id and deliberately not its members.** Membership is authority and §7 makes
+authority live, so somebody who leaves a team stops being able to decide on their next request rather than on
+the next send — which is why the decision is a third check rather than a courtesy.
 
 Publication-only was rejected. Revoking `approval.decide` would then make a live policy unsatisfiable
 **silently**, and gated sends would collect in `awaiting` with nothing having failed — the shape of a
@@ -122,8 +144,13 @@ Publication-only was rejected. Revoking `approval.decide` would then make a live
 Publication of a policy with **no mailbox condition** is checked against every mailbox in the organization and
 refused if any of them is short, because such a policy gates sends from all of them.
 
+**A team that is emptied reaches exactly the same answer as a revoked relation**, and that is the point rather
+than a coincidence: removing the last member of a team a live policy names is **permitted** — refusing it would
+put a policy in charge of who may leave a team — and the next send is `withheld` with `approval_unsatisfiable`
+naming the stage, the team and the shortfall. Reversible: put somebody back and the next send is gated again.
+
 **What is still not covered**, stated rather than implied: a send *already* `awaiting` when the last approver
-loses the relation is not re-checked. Nothing sweeps `awaiting` — it is never dispatched, so [#62][62]'s
+loses the relation — or the last member leaves the stage's team — is not re-checked. Nothing sweeps `awaiting` — it is never dispatched, so [#62][62]'s
 dispatch-time recheck cannot see it — and the drain that exists is the author cancelling their own send. The
 one live case that *is* closed is a withdrawal that leaves too few eligible people, because that path already
 holds the eligible set. Closing the revoke case needs a pass over `awaiting` sends, which is the shape
@@ -416,13 +443,17 @@ free for the same reason, because it rides in the batch the decision was already
 
 ## Named absent
 
-- **A team constraint on a stage** (`{count: 1, team: finance}`). [#61][61] wanted it and it is not shipped:
-  `team_members` is **read-only in the product** — three SELECTs in `src/authz-read.ts`, nothing writes it —
-  and there is **no `teams` table at all**, so a team has no name and no existence of its own. A team-scoped
-  stage would be expressible and unusable, and publication could not verify that a named team exists, only
-  that it currently has members, which is a different question. Team management is [#73][73]. What this costs:
-  the team *labels* on a sequential chain, not the chain — ordered stages of count 1 still give sequential
-  review by two distinct people in a fixed order.
+- **Two teams at one ordinal.** *"A member of Finance **and** a member of Legal"* is a conjunction one stage
+  cannot carry, and folding two live rules by picking either team would silently drop half of a rule somebody
+  wrote. Publication refuses that pair when the two rules could provably both gate one send
+  (`E_POLICY_STAGE_TEAM_CONFLICT`), and the fold raises if it ever meets one anyway. What this costs: an
+  organization wanting both has to put them on different stages, which is an order they may not have meant.
+  A richer stage shape is a governance dimension no ticket has decided.
+- **A `doctor` finding for a live policy naming an empty team.** `legal_hold_unliftable` is the analogous check
+  one table over. This one is absent for the same reason the `awaiting` sweep above is: it is a pass over live
+  policy versions crossed with team rosters, which is cron-shaped rather than request-shaped, and a second
+  mechanism invented here would be the thing to undo later. The two checks that do exist — publication and
+  evaluation — are the two this mechanism has always had.
 - **Notification.** Every act here is something a person is waiting on, and there is no notification mechanism
   in this product. [#63][63] owns the harder version — §7 requires a notice the investigator cannot switch off
   — and has already chosen the shape: the obligation is a row, an existing cron delivers it.
@@ -450,6 +481,9 @@ POST /api/approvals/:id/decide       { "decision": "approve" | "deny" } — no d
 POST /api/approvals/:id/withdraw     take back your own approval while the request is incomplete
 
 POST /api/holds/:id/lift             { "reason": "..." } — org.admin asks; these three endpoints decide
+
+POST /api/teams                      { "name": "..." } — org.admin. See docs/teams.md
+GET  /api/teams                      every team with its size — the number a team-scoped stage turns on
 ```
 
 Scoped to the mailboxes the caller holds `approval.decide` on, and excluding approvals of their own acts: a

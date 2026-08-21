@@ -16,7 +16,9 @@ import {
 import { authorizeExportObject, exportsForReport, requestExport, runExport } from "./exports.ts";
 import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
-import { conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke } from "./access.ts";
+import {
+  assertAdmin, conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke,
+} from "./access.ts";
 import { closeMatter, listMatters, openMatter } from "./matters.ts";
 import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
 import { notificationsFor } from "./notifications.ts";
@@ -25,7 +27,12 @@ import { placeHold, requestHoldLift } from "./holds.ts";
 import { liftDomainPause, requestDomainPause } from "./domain-pause.ts";
 import { evaluateBreakers, pausesInForce } from "./breakers.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
-import { decideApproval, pendingApprovals, withdrawApproval } from "./approvals.ts";
+import {
+  decideApproval, pendingApprovals, stageOf, withdrawApproval, type Stages,
+} from "./approvals.ts";
+import {
+  addTeamMember, createTeam, listTeams, membersOf, readTeam, removeTeamMember, renameTeam,
+} from "./teams.ts";
 import { mergeConversations } from "./merge.ts";
 import { sweepResponseClocks } from "./response-clock.ts";
 import { setResponseTarget } from "./mailbox-policy.ts";
@@ -644,6 +651,117 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         );
       }
       return Response.json({ subjectId, relations: await relationsOf(env, who.orgId, subjectId) });
+    }
+
+    /**
+     * Teams and membership (#73, §28, Layer 3/5).
+     *
+     * `POST   /api/teams`              create a team. A team with no tuples confers nothing
+     * `GET    /api/teams`              every team, with its size — the number a team-scoped policy turns on
+     * `GET    /api/teams/:id`          one team and who is in it
+     * `POST   /api/teams/:id/rename`   change the name a person picks it out of a list by
+     * `POST   /api/teams/:id/members`  put somebody in it, which confers every relation the team holds
+     * `DELETE /api/teams/:id/members`  take somebody out, effective on their next request
+     *
+     * **Five of the six take `org.admin`; `GET /api/teams` is the one exception**, and the line between them
+     * is *name and headcount* against *who is in it*. The listing is the organizational chart — a member who
+     * reads a shortfall saying "a member of team Legal" has to be able to resolve that name — and the roster
+     * is the access map read from the other end, because a team's members are exactly the people every tuple
+     * that team holds reaches. `GET /api/access?subject=tm_…` is admin-only for that reason and this is the
+     * same question turned round, so it is admin-only too. Each handler carries its own half of the argument;
+     * `test/policy-routes.test.ts` asserts both, so the split is enforced rather than described.
+     *
+     * Among the five, the one worth arguing is `POST /api/teams`: creating a team confers nothing, so the
+     * *authority* argument alone would open it up the way `POST /api/matters` is open. It is closed because of
+     * the **name** — team names are unique in an organization, so creating one takes a name out of a shared
+     * space other people's grants will be chosen from. `src/teams.ts` carries the argument.
+     *
+     * **Granting to a team is still `POST /api/access`** with the team id as the subject, and there is
+     * deliberately no endpoint here that does it. A team is a subject like any other; a second door into
+     * `relationship_tuples` would be a second place for *"who can reach this mailbox"* to be answered.
+     *
+     * **There is no team deletion**, and that is not a gap: a team is a tuple subject, so removing the row
+     * would leave grants pointing at an id nothing identifies — conferring nothing while still reading as a
+     * grant. Emptying the team and revoking its tuples are the two acts that take its authority away, and both
+     * are here. Migration 0032 carries it in full.
+     */
+    if (url.pathname === "/api/teams" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      // An absent name reaches `createTeam` as the empty string and is refused there with the four-part
+      // message, rather than defaulted — a team this Node named for somebody would be a label nobody chose.
+      return Response.json({ team: await createTeam(env, clock, who.orgId, who.userId, String(body.name ?? "")) });
+    }
+
+    if (url.pathname === "/api/teams" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      /*
+       * Readable by any member, and that is a decision rather than an oversight.
+       *
+       * A team is a name and a headcount. It is **not** the access map: which relations a team holds is
+       * `GET /api/access?subject=tm_…` and who is in it is `GET /api/teams/:id`, and **both of those are
+       * admin-only**. §5C's concern is a listing that hands out what somebody may not see, and "this
+       * organization has a team called Finance with four people in it" is the organizational chart rather
+       * than the ACL.
+       *
+       * What it buys is that an author whose send is waiting on *"a member of team Legal"* can find out that
+       * such a team exists and how big it is, rather than reading a shortfall naming an id they cannot resolve.
+       */
+      return Response.json({ teams: await listTeams(env, who.orgId) });
+    }
+
+    const teamMembers = /^\/api\/teams\/([^/]+)\/members$/.exec(url.pathname);
+    if (teamMembers && (request.method === "POST" || request.method === "DELETE")) {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const act = request.method === "POST" ? addTeamMember : removeTeamMember;
+      return Response.json({
+        membership: await act(
+          env, clock, who.orgId, who.userId, teamMembers[1]!, String(body.userId ?? ""),
+        ),
+      });
+    }
+
+    const teamRename = /^\/api\/teams\/([^/]+)\/rename$/.exec(url.pathname);
+    if (teamRename && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      return Response.json({
+        team: await renameTeam(env, clock, who.orgId, who.userId, teamRename[1]!, String(body.name ?? "")),
+      });
+    }
+
+    const oneTeam = /^\/api\/teams\/([^/]+)$/.exec(url.pathname);
+    if (oneTeam && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      /*
+       * `org.admin`, unlike the listing above, because this is where the roster is.
+       *
+       * A team's members are exactly the people every tuple that team holds reaches, so answering *"who is in
+       * Finance"* answers *"who can decide an approval on that mailbox"* for anybody who can also read
+       * `GET /api/teams`. `GET /api/access?subject=…` refuses somebody else's relations to a non-administrator
+       * for that reason, and this is the same map read from the subject's end rather than a different one.
+       *
+       * **403 rather than the §5C 404** the supervised and export listings give, and the difference is that
+       * their oracle is still closed: those routes hide *whether there is anything to see*. This team's id,
+       * name and size were handed to this same caller by the listing one handler up, so a 404 would be a
+       * refusal that misstates a fact the caller already holds — and an error that lies is worse than one that
+       * says what is missing. `assertAdmin`'s message names the relation and how to get it.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
+      const team = await readTeam(env, who.orgId, oneTeam[1]!);
+      if (team === null) {
+        return Response.json(
+          { error: "not_found", message: "No such team." },
+          { status: 404 },
+        );
+      }
+      return Response.json({ team, members: await membersOf(env, who.orgId, team.id) });
     }
 
     /**
@@ -2026,20 +2144,37 @@ function conditionsFrom(raw: unknown): PolicyConditions {
 }
 
 /**
- * A policy's approval stages out of a JSON body: the count each stage requires, in review order (#61).
+ * A policy's approval stages out of a JSON body: what each stage requires, in review order (#61, #73).
  *
- * An array of numbers, because the position **is** the ordinal — `[1, 1]` is sequential review by two people,
- * `[2]` is parallel dual control. Coerced rather than trusted, for the reason `conditionsFrom` coerces its
- * volume floor: JSON from a form carries `"2"`, and `normaliseStages` demands an integer, so an uncoerced
- * value would be refused with a message about its own value being unusable.
+ * An array, because the position **is** the ordinal — `[1, 1]` is sequential review by two people, `[2]` is
+ * parallel dual control, and `[{"count":1,"team":"tm_…"},{"count":1,"team":"tm_…"}]` is §18's separation of
+ * *duty*: one from finance, then one from legal.
+ *
+ * ## A bare number is sugar for an unconstrained stage, and that is one spelling rather than two
+ *
+ * `2` and `{"count":2}` arrive as the same `Stage`, so there is exactly one **stored** form — which is the
+ * property #61 protects when it normalises the implicit stage away, reached one layer out. What the sugar buys
+ * is that every policy body written before teams existed still means what it meant, and a rule with no team
+ * constraint is not made to carry an object to say so.
+ *
+ * Coerced rather than trusted, for the reason `conditionsFrom` coerces its volume floor: JSON from a form
+ * carries `"2"`, and `normaliseStages` demands an integer, so an uncoerced value would be refused with a
+ * message about its own value being unusable.
  *
  * `undefined` and `[]` both mean the default, which is one stage of count 1. Anything that is not an array is
  * `undefined` rather than an error here: `normaliseStages` refuses what it cannot use, and one refusal beats
- * two.
+ * two. A `team` that is absent, null or not a string becomes `null` — no constraint — and an *empty* string is
+ * passed through as an empty string so `normaliseStages` can refuse it, because `""` is a typo rather than a
+ * choice and coercing it to null would silently weaken the rule its author wrote.
  */
-function stagesFrom(raw: unknown): number[] | undefined {
+function stagesFrom(raw: unknown): Stages | undefined {
   if (!Array.isArray(raw)) return undefined;
-  return raw.map((value) => Number(value));
+  return raw.map((value) => {
+    if (typeof value !== "object" || value === null) return stageOf(Number(value));
+    const stage = value as Record<string, unknown>;
+    const team = stage.team ?? stage.teamId;
+    return stageOf(Number(stage.count), typeof team === "string" ? team : null);
+  });
 }
 
 /** The claimed organization, or null on an unclaimed Node. */

@@ -1,0 +1,142 @@
+-- A team becomes a first-class object, and an approval stage may require a member of one (#73, #61, §18, §28).
+--
+-- Additive migration (#10 expand/contract). One new table, two new nullable columns, no DROP, no rewrite, no
+-- backfill and no bookmark gate.
+--
+-- ## Why the two halves are one migration
+--
+-- #61 shipped ordered approval stages and named the one constraint its own resolution wanted -- *"a member of
+-- team T"* -- **absent**, because the substrate was not there. #73 wrote down what was missing, from the code
+-- rather than from memory:
+--
+--   team_members (0001_init.sql) is id, org_id, team_id, user_id, created_at, and it is **read-only in the
+--   product** -- three SELECTs in src/authz-read.ts, two joins in src/deciders.ts, and no writer anywhere;
+--   and there is **no teams table at all**, so a team has no name and no existence of its own.
+--
+-- So a team-scoped stage would have been **expressible and unusable**: nobody could create the team it names,
+-- and publication could not verify the team exists -- only that it currently has members, which is a different
+-- question. That is this repository's most-repeated failure, *a condition backed by no data is a policy that
+-- silently never fires*, and it is why 0020 added no team column rather than a column with a comment.
+--
+-- The substrate and its consumer therefore land together. A subsystem with no consumer and a constraint with no
+-- subsystem are the two halves of the same mistake, and shipping either alone is how one of them rots.
+--
+-- ## teams: what a team is, and the two decisions in its shape
+--
+-- Five columns, and **no NULL is possible in any of them** -- stated because house style asks what each NULL
+-- means and the honest answer here is that there are none to explain. The two candidates were considered and
+-- both were refused:
+--
+--   `renamed_at`      refused. `team.renamed` is an audit action, and the entry carries the old name, the new
+--                     name and who changed it. A column would be a second, poorer account of the same fact --
+--                     it could say *when* and never *from what* or *by whom* -- and "answerable from two places
+--                     that can disagree" is the reasoning that keeps `policies` exempt in audit-coverage.
+--   `archived_at`     refused, and this is the lifecycle decision #73 asked for. **A team is never deleted and
+--                     never archived**, because a team is a *subject* in `relationship_tuples`: `grant` does
+--                     not verify that a subject is a person -- it cannot, since the same call grants to teams
+--                     -- so removing the team row would leave tuples conferring `approval.decide` and
+--                     `mailbox.content.read` on an id nothing identifies. `decidersByMailbox` requires a row in
+--                     `users`, so those tuples would confer **nothing** while still reading as a grant in
+--                     `GET /api/access`: a grant that silently does nothing, which is the exact defect this
+--                     file's first paragraph is about, reached from the other side.
+--
+--                     What replaces deletion is already here and is louder: **empty the team**, which is
+--                     reversible, audited per person, and *visible* -- a policy naming an emptied team becomes
+--                     unsatisfiable at evaluation with the shortfall named (`approval_unsatisfiable`), exactly
+--                     as revoking `approval.decide` from the last holder does. And **revoke its tuples**, which
+--                     is the existing act for taking a subject's authority away. So "what happens to grants
+--                     held by a deleted team" is answered by there being no deletion, rather than by a cascade
+--                     nobody would have measured.
+--
+-- `created_by` is the administrator who created it, NOT NULL because every path that writes this table requires
+-- `org.admin` and there is no installer or machine path to it. A nullable creator would be a column whose NULL
+-- meant "we do not know", which this Node does not have to say here.
+--
+-- ## The name is UNIQUE within the organization, and that is a decision rather than tidiness
+--
+-- `tea_name` is `UNIQUE (org_id, name)`. Two teams called "Finance" is precisely how somebody grants
+-- `approval.decide` to the wrong one -- a team is picked by a **human reading a name** and stored as an id, so
+-- an ambiguous name is a grant that goes to a team the administrator did not mean, with nothing anywhere to
+-- notice. `policies.name` is UNIQUE per organization for the same reason (`pol_name`, 0019) and the argument
+-- transfers whole: the name is what a person acts on.
+--
+-- The cost is stated rather than glossed: an organization that genuinely wants two teams with one name has to
+-- distinguish them, and the refusal (`E_TEAM_NAME_TAKEN`) names the existing team's id so a rename or a reuse
+-- is one step. That is the same bargain `policies` already makes.
+--
+-- The index does two jobs, which is why it is the only one: it enforces the uniqueness, and its `(org_id, name)`
+-- prefix is exactly what `GET /api/teams` reads -- every team in one organization, in name order, out of a
+-- covering index. Lookup by id goes through the primary key.
+--
+-- ## team_members needs a writer, and -- checked rather than assumed -- nothing else
+--
+-- #73 asked whether the table needs anything to stop the same person joining a team twice. It already has it:
+-- `tm_unique` is `UNIQUE (org_id, user_id, team_id)` (0001_init.sql), so a duplicate membership is refused by
+-- the database. The writer therefore uses `INSERT OR IGNORE` behind an audit gate, exactly as `grant` does for
+-- `rt_unique`: a replayed add is a no-op rather than an error, and it appends no second `team.member_added`
+-- entry claiming a second act. #9's shape reached from a request rather than a migration.
+--
+-- No column and no index is added to `team_members`, and both are measured rather than reasoned:
+--
+--   * The reverse direction -- *"who is in this team"* -- is what a team-scoped stage asks, and 0020 already
+--     printed the plan for it: `tm_unique`'s `org_id` prefix makes it a **covering index** range over one
+--     organization's membership, bounded by headcount rather than by mail volume. An index on
+--     (org_id, team_id, user_id) changed only which covering index the planner named. `test/teams.test.ts`
+--     prints the plan for the new roster query and asserts the same property, so the claim is checked here
+--     rather than inherited from 0020.
+--   * No `added_by` column. The `team.member_added` entry names the administrator, the team and the person, and
+--     a column beside it would be the `renamed_at` mistake one table over.
+--
+-- ## policy_stages.team_id and approval_stages.team_id
+--
+-- Both nullable, and **NULL means "no team constraint": the whole eligible set**. That is the meaning every row
+-- written before this migration already has, which is why there is no backfill -- an existing stage row is not
+-- missing a team, it has none, and those are the same thing here.
+--
+-- One column rather than a join table, because a stage names **at most one** team. The fold across two live
+-- `require_approval` versions is `max` per ordinal on the counts (#60's conflict resolution, reused); on teams
+-- there is no `max`, so `publishPolicy` refuses a version whose stage names a different team from one another
+-- live version could name at the same ordinal on a send they could **both** match. Refused at publication,
+-- where the whole rule set is knowable, rather than folded into a guess at the seal -- and `requiredStages`
+-- treats two distinct teams meeting at one ordinal as a corrupted state and raises, so the publication check is
+-- enforced at both ends rather than claimed at one.
+--
+-- The constraint is **strictly narrowing**, which is load-bearing and is why it is allowed to exist at all:
+--
+--     eligible(stage) = approval.decide holders on the scope object
+--                     ∩ members of stage.team_id, if one is named
+--                     − the actor whose act this gates
+--                     − everybody who has already decided
+--
+-- An intersection can only ever reduce the set, so Layer 5's may-narrow-never-widen rule survives intact:
+-- naming a team can never make somebody eligible who holds no relation. A team id naming **nothing** resolves
+-- to the empty set and therefore to a refusal, which is the restrictive direction -- the unclassified case is
+-- the restrictive one, not the permissive one.
+--
+-- ## No CHECK, no FOREIGN KEY, no trigger, for the reasons this tree already records
+--
+-- SQLite cannot add a CHECK with `ALTER TABLE`; D1 does not enforce foreign keys unless asked and this schema
+-- has never used one; and a trigger cannot exist in a migration here because `src/migrate.ts` splits statements
+-- on semicolons (`test/node/migrations.test.ts`). So the guarantees live in the one writer, `src/teams.ts`, and
+-- what makes that a constraint rather than a convention is `test/node/content-deletion-world.test.ts`, which
+-- requires `team_members` to have exactly one writing module.
+--
+-- The guarantee that matters most is #51's: **a Butler may not be a member of a team.** `addTeamMember`
+-- requires a row in `users`, and a Butler is a `btl_` in `butlers` -- so the refusal is a join that must
+-- succeed, not a prefix test on a string. If a Butler could join a team it would inherit that team's tuples,
+-- and a declared capability ceiling intersected with a set that moves when somebody else edits a team is not a
+-- ceiling. Enforced rather than documented.
+
+CREATE TABLE teams (
+  id         TEXT PRIMARY KEY,
+  org_id     TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX tea_name ON teams (org_id, name);
+
+ALTER TABLE policy_stages ADD COLUMN team_id TEXT;
+
+ALTER TABLE approval_stages ADD COLUMN team_id TEXT;

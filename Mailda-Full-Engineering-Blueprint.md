@@ -2042,12 +2042,27 @@ else's judgement as the reason a message was stopped. A denial lands in `withhel
 re-sealing is the remedy, which is the invalidation mechanism §29's revision binding already rests on.
 Withdrawal is terminal for the withdrawer, so no oscillation lets one person fill two slots.
 
-**A team-scoped stage is absent, with its reason.** `{count: 1, team: finance}` is the constraint separation of
-*duty* actually wants, and it is not built: `team_members` is read-only in this implementation and there is no
-`teams` object at all, so a team-scoped stage would be expressible and unusable and publication could not
-verify that a named team exists. It becomes available with team creation and membership administration (§28,
-tracked as #73). What ships without it is sequential review by distinct people in a fixed order — the sequence
-and the distinctness, not the duty labels.
+**A team-scoped stage is built (#73, 21 August 2026), and the substrate it needed came with it.**
+`{count: 1, team: finance}` is the constraint separation of *duty* actually wants. It was absent because
+`team_members` was read-only in this implementation and there was no `teams` object at all — so a team-scoped
+stage would have been expressible and unusable, and publication could not verify that a named team exists. A
+team is now a first-class object with a name unique in the organization, `team_members` has a writer, and the
+two shipped together because a subsystem with no consumer and a constraint with no subsystem are the two
+halves of one mistake.
+
+The constraint is an **intersection** and therefore strictly narrowing: naming a team can only remove people
+from the eligible set, never add one, so this section's may-narrow-never-widen rule is untouched. A team id
+naming nothing resolves to the empty set, which is the restrictive answer rather than the permissive one. It is
+checked **three** times — publication verifies the team exists and can fill the stage, the seal re-checks
+against live membership, and the decision itself re-reads the open stage's roster, because membership is
+authority and §7 makes authority live. A team emptied under a live policy therefore reaches the same answer as
+a revoked relation: `withheld` with `approval_unsatisfiable`, naming the stage, the team and the shortfall,
+rather than parking in `awaiting`.
+
+**Two different teams at one ordinal is refused at publication**, not folded. *"A member of Finance and a
+member of Legal"* is a conjunction one stage cannot carry, and choosing either would silently drop half of a
+rule somebody wrote; the refusal applies only where the two rules could provably gate the same send. That is
+the one part of separation of duty this shape still cannot express, and it is named rather than approximated.
 
 ### The policy object, and the shape Layer 5 fixes
 
@@ -2831,7 +2846,16 @@ Mailda is complete when an organization can, without hidden manual platform inte
 1. Create an organization, choose from placement/residency capabilities actually supported by its plan/adapters, configure SSO/SCIM and establish recoverable admins.
 2. Scaffold/deploy a Node into a customer Cloudflare account, reproduce it from the generated repository and operate it without a Mailda commercial account.
 3. Add a domain/subdomain or provider connector, pass DNS/security/deliverability tests and cut over safely without misrepresenting MX authority.
-4. Create, suspend, archive, restore and offboard employees with full mailbox lifecycle.
+4. Create, suspend, archive, restore and offboard employees with full mailbox lifecycle. **Team membership is
+   built (#73, 21 August 2026)** and is the part of this that authorization depends on: a team is a first-class
+   object with a unique name, `org.admin` creates it, renames it and moves people in and out of it, and every
+   one of those four acts is audited — because a relation held by a team is held by every member, so a
+   membership change is an authority change that would otherwise leave no entry anywhere. A team is never
+   deleted or archived: it is a tuple subject, so removing the row would leave grants conferring nothing while
+   still reading as grants. Emptying it and revoking its tuples are the two acts that withdraw its authority.
+   A **Butler may not be a member of a team**, enforced by requiring the subject to be a person, because a
+   capability ceiling intersected with a set a third party can edit is not a ceiling (ADR/#51). What remains
+   unbuilt here is the employee lifecycle itself — suspend, archive, restore, offboard — and nested teams.
 5. Create personal, shared, role, Butler, agent, system, archive and quarantine mailboxes.
 6. Use the web/PWA as the complete human client, with no IMAP, JMAP or SMTP mailbox service advertised or implied.
 7. Receive, scan, store, search, reply, forward, organize and export email within the selected adapter's declared capabilities.

@@ -20,15 +20,21 @@
  * *"who holds this relation on this object"*, which is the many-subjects direction and a different query with a
  * different cost — `approval-decision-cost.md` records that distinction rather than folding the two.
  *
- * ## What the guard actually requires, now that this file holds two questions
+ * ## What the guard actually requires, now that this file holds three questions
  *
  * This file used to say it *"writes nothing and prepares exactly one statement"*. #66 added `adminsOf` and
  * that sentence stopped being true, so it is corrected rather than left standing: the property
  * `test/node/doctor-meter-honesty.test.ts` enforces is **no `batch()`, and every `prepare` chained straight
- * into one execution**, which is what keeps prepare-count equal to execution-count on `doctor`'s path. Both
- * functions below satisfy it and neither writes anything. A count of statements was never the property; it
- * was a convenient way of stating it, and a convenient statement that stops being true is the defect this
+ * into one execution**, which is what keeps prepare-count equal to execution-count on `doctor`'s path. Every
+ * function below satisfies it and none of them writes anything. A count of statements was never the property;
+ * it was a convenient way of stating it, and a convenient statement that stops being true is the defect this
  * repository keeps finding.
+ *
+ * #73 added the third question, `rostersOf` — *"who is in this team"* — which is the narrowing term a
+ * team-scoped approval stage intersects with. It belongs here for the same reason the other two do: it is a
+ * leaf read on the eligibility path with no writer anywhere near it. `runDoctor` does not call it today, and
+ * it satisfies the guard regardless, which is the point of the guard being a property of the file rather than
+ * of the call graph.
  */
 
 /**
@@ -91,6 +97,74 @@ export async function decidersByMailbox(
  */
 export async function decidersOf(env: Env, orgId: string, mailboxId: string): Promise<Set<string>> {
   return (await decidersByMailbox(env, orgId, mailboxId)).get(mailboxId) ?? new Set<string>();
+}
+
+/**
+ * One team, as an eligibility check needs it: its identity, the name a refusal will print, and its members.
+ *
+ * The **name** travels with the members because the refusal an administrator reads is *"stage 2 needs a member
+ * of team Legal"*, and a sentence that could only say `tm_01J…` would send them to a second screen to find out
+ * what was short. It costs nothing: the join that reads the members reads the row that carries the name.
+ */
+export interface TeamRoster {
+  id: string;
+  name: string;
+  /** Every user id in the team. Empty is a real answer — an emptied team is not a missing one. */
+  members: Set<string>;
+}
+
+/**
+ * The rosters of the named teams, in one query. A team that does not exist is **absent from the map**.
+ *
+ * ## Absent and empty are different answers, and both callers need the difference
+ *
+ * `LEFT JOIN`, so a team with no members comes back as a key with an empty set while a team id naming nothing
+ * comes back not at all. Publication uses that to say two different things — *"there is no such team"*
+ * (`E_NO_SUCH_TEAM`, the check #73 says was impossible before a `teams` row existed) and *"that team is
+ * empty"* (`E_APPROVAL_UNSATISFIABLE`, with the shortfall named) — and collapsing them would make the first
+ * refusal, which is a typo, read as the second, which is an organizational fact.
+ *
+ * ## Both cases are restrictive, which is what makes the map safe to consume
+ *
+ * Every caller intersects a stage's eligible set with `rosters.get(teamId)?.members ?? EMPTY`. An unknown team
+ * therefore contributes the **empty** set and the stage is unsatisfiable — the restrictive answer for the
+ * unclassified input, rather than the permissive one a missing key would give if absence meant "unconstrained".
+ *
+ * ## One query, and no new index — measured rather than assumed
+ *
+ * `teams` is sought by primary key and `team_members` is ranged inside `tm_unique`, whose `org_id` prefix is
+ * usable even though the query constrains `team_id` rather than `user_id`. That is 0020's finding, and it is
+ * re-printed for *this* statement in `test/teams.test.ts` rather than inherited: the range is over one
+ * organization's membership, bounded by headcount and not by mail volume.
+ *
+ * `IN (…)` over the requested ids rather than every team in the organization, so a stage set naming one team
+ * reads one team's members. An empty request short-circuits with no query at all, which is what keeps a send
+ * gated by a team-less policy exactly as expensive as it was before this existed.
+ */
+export async function rostersOf(
+  env: Env,
+  orgId: string,
+  teamIds: readonly string[],
+): Promise<Map<string, TeamRoster>> {
+  const wanted = [...new Set(teamIds)];
+  if (wanted.length === 0) return new Map();
+  const placeholders = wanted.map(() => "?").join(", ");
+  const { results } = await env.CATALOG.prepare(
+    `SELECT t.id AS team_id, t.name AS team_name, m.user_id AS user_id
+       FROM teams t
+       LEFT JOIN team_members m ON m.org_id = t.org_id AND m.team_id = t.id
+      WHERE t.org_id = ? AND t.id IN (${placeholders})`,
+  ).bind(orgId, ...wanted).all<{ team_id: string; team_name: string; user_id: string | null }>();
+
+  const rosters = new Map<string, TeamRoster>();
+  for (const row of results) {
+    const roster = rosters.get(row.team_id)
+      ?? { id: row.team_id, name: row.team_name, members: new Set<string>() };
+    // Null on the outer join's unmatched side, which is a team with no members rather than a member with no id.
+    if (row.user_id !== null) roster.members.add(row.user_id);
+    rosters.set(row.team_id, roster);
+  }
+  return rosters;
 }
 
 /**

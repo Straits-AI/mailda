@@ -1,7 +1,9 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
-import { describeShortfall, planApproval, type Stages } from "./approvals.ts";
+import {
+  describeShortfall, NO_TEAM_ROSTERS, planApproval, stageOf, type Stages,
+} from "./approvals.ts";
 import { auditedBatch } from "./audit.ts";
 import { adminsOf } from "./deciders.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
@@ -64,14 +66,14 @@ import { domainOf } from "./policy.ts";
  * order in which one must precede the other. #64's `LIFT_STAGES` made the same call for the same reason, and
  * the shape means the second approver's `approve` completes the request whichever of them answers first.
  */
-export const PAUSE_STAGES: Stages = [2];
+export const PAUSE_STAGES: Stages = [stageOf(2)];
 
 export interface DomainPauseRequested {
   pauseId: string;
   approvalId: string;
   domain: string;
   reason: string;
-  stages: number[];
+  stages: Stages;
   /** Distinct administrators who could decide, the requester already removed. */
   eligible: number;
 }
@@ -167,7 +169,9 @@ export async function requestDomainPause(
     actorUserId,
     stages: PAUSE_STAGES,
     detail: { pauseId, domain, reason: stated },
-  }, admins, gate);
+  // `NO_TEAM_ROSTERS`: see `requestHoldLift` — a pause's stages name no team (#73), and its approvers come
+  // from `org.admin` rather than from a mailbox in any case.
+  }, admins, NO_TEAM_ROSTERS, gate);
 
   if (!planned.satisfiable) {
     // Refused before anything is written, because an open request nobody can complete reads as waiting for

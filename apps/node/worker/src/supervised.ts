@@ -2,7 +2,9 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { assertObject, SUPERVISED_RELATION } from "./access.ts";
-import { describeShortfall, planApproval, type Stages } from "./approvals.ts";
+import {
+  describeShortfall, NO_TEAM_ROSTERS, planApproval, stageOf, type Stages,
+} from "./approvals.ts";
 import { auditedBatch, detailFits, type AuditEvent } from "./audit.ts";
 import { decidersOf } from "./deciders.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
@@ -351,7 +353,7 @@ export function buildSupervisedQuery(
  * the machinery #61 already has: if supervised reading ever needed counsel to sign before the manager, it is
  * `[1, 1]` with nothing else changing.
  */
-export const SUPERVISED_STAGES: Stages = [2];
+export const SUPERVISED_STAGES: Stages = [stageOf(2)];
 
 export interface RequestSupervisedInput {
   mailboxId: string;
@@ -372,7 +374,7 @@ export interface SupervisedRequested {
   requestedAt: string;
   expiresAt: string;
   /** The stage set frozen at request time. */
-  stages: number[];
+  stages: Stages;
   /** Distinct people who could decide it, the requester already excluded. */
   eligible: number;
 }
@@ -513,7 +515,8 @@ export async function requestSupervisedRead(
     actorUserId,
     stages: SUPERVISED_STAGES,
     detail: { grantId, scope: input.scope, matterId, expiresAt, durationSeconds: seconds },
-  }, deciders, gate);
+  // `NO_TEAM_ROSTERS`: see `requestHoldLift` — a supervised read's stages name no team (#73).
+  }, deciders, NO_TEAM_ROSTERS, gate);
 
   if (!planned.satisfiable) {
     // Refused before anything is written, for `requestHoldLift`'s reason: an open request nobody can complete

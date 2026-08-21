@@ -286,3 +286,47 @@ figures above are D1 *executions*, which is what `authz.check.max_queries` bound
 the same index prefix as every other check in this file — one relation, one `object_id`, a handful of
 subjects — and no scan is possible against `rt_unique` with `org_id`, `object_type`, `relation` and
 `object_id` all constrained. Saying so rather than printing a number nobody produced.
+
+
+## Correction — 21 August 2026: a team became an object, and the check did not move (#73)
+
+`stale_when` names two clauses that could plausibly have fired here, and **neither did** — which is the
+finding, not an aside:
+
+- *"the relationship_tuples or team_members index definitions change"*. `migrations/0032_teams.sql` adds no
+  index to either table and no column to `team_members`. #73 asked whether membership needed anything to stop
+  the same person joining twice; `tm_unique` is `UNIQUE (org_id, user_id, team_id)` and has been since 0001, so
+  the answer was checked and was "it already has it".
+- *"a team-membership model beyond user->team->object is introduced"*. It was not. A team gains a **name and an
+  identity**; the hop a check makes is still user → team → object, in the same two round trips, against the
+  same index.
+
+**The figures were re-run anyway**, because *"the clause did not name it"* is not evidence about a number, and
+because this receipt has been corrected twice this week. A figure inherited on the strength of an argument is
+exactly what those corrections were about.
+
+**Measured:** `apps/node/worker/test/authz.measure.test.ts`, describe block *"the teams table's effect on the
+authorization path (#73)"*, same corpus and same instrument as the rest of this file. The seed builds
+`team_members` rows whose `team_id` names no `teams` row — which is what every Node looked like before 0032 —
+so the comparison is the same three checks before and after every team in the corpus becomes a real object.
+The insert is asserted to have landed before the second measurement, so "unchanged" is not a measurement of
+nothing having happened.
+
+| Scenario | rows_read before | rows_read after | queries before | queries after |
+|---|---:|---:|---:|---:|
+| Single-object check, typical user (2 teams) | 11 | 11 | 2 | 2 |
+| Single-object check, heavy user (12 teams) | 27 | 27 | 2 | 2 |
+| Single-object check, deny | 10 | 10 | 2 | 2 |
+
+**Asserted as equalities rather than as bounds**, deliberately: the claim is that the number *did not move*,
+and a bound cannot express that. `readableSubjects` still issues one statement against `team_members`, the
+tuple lookup still seeks `rt_unique`, and **`teams` is joined by nothing on this path at all** — the only
+reader of that table is `src/teams.ts` (administration), `src/policy.ts` (publication, verifying a named team
+exists) and `rostersOf` on the approval path.
+
+**Where the team constraint does cost something is the approval path, not this one.** A team-scoped stage adds
+one query — `rostersOf`, over `teams LEFT JOIN team_members` — at the seal, at the decision, at the withdrawal
+and at publication, and nothing at all when no stage names a team. Those figures live in
+`approval-decision-cost.md`, whose own `stale_when` named this change in advance and reserved the headroom it
+spent. Recorded here so a reader following the constraint does not conclude its cost is missing: it is 0 on the
+authorization path, and 1 on that one.

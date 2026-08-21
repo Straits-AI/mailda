@@ -215,6 +215,10 @@ const EXPECTED_TABLES = [
   "butler_runs", "butler_run_effects",
   // Migration 0029 (#75): the latched Butler pause #66 designed and named absent for want of these tables.
   "butler_pauses",
+  // Migration 0032 (#73): the team as a first-class object, so `team_members` gains a writer and an approval
+  // stage can require a member of a named team. `team_members` itself is above — it has existed since 0001,
+  // and what it lacked was never a table.
+  "teams",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {

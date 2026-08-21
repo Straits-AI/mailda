@@ -3,10 +3,12 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
 import {
-  describeShortfall, IMPLICIT_STAGES, shortfallFor, type Stages,
+  describeShortfall, IMPLICIT_STAGES, shortfallFor, stageOf, teamsNamedBy,
+  type Stage, type Stages,
 } from "./approvals.ts";
-import { decidersByMailbox } from "./deciders.ts";
+import { decidersByMailbox, rostersOf } from "./deciders.ts";
 import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
+import { readTeam } from "./teams.ts";
 
 /**
  * The policy object: five conditions, four totally-ordered outcomes, and a draft/publish lifecycle (#60,
@@ -168,7 +170,7 @@ export const POLICY_REASONS: readonly string[] =
  * same silent-inertness failure as a condition backed by no data — #60's governing principle, applied to the
  * shape #61 adds.
  */
-function normaliseStages(outcome: Outcome, stages: Stages | undefined): number[] {
+function normaliseStages(outcome: Outcome, stages: Stages | undefined): Stage[] {
   if (stages === undefined || stages.length === 0) return [];
   if (outcome !== "require_approval") {
     throw unprocessable("E_STAGES_WITHOUT_APPROVAL", {
@@ -178,27 +180,43 @@ function normaliseStages(outcome: Outcome, stages: Stages | undefined): number[]
       fix: "set the outcome to require_approval, or leave the stages out",
     });
   }
-  for (const count of stages) {
-    if (!Number.isInteger(count) || count < 1) {
+  for (const stage of stages) {
+    if (!Number.isInteger(stage.count) || stage.count < 1) {
       throw unprocessable("E_BAD_APPROVAL_STAGE", {
-        what: `${count} is not a number of approvals a stage can require`,
+        what: `${stage.count} is not a number of approvals a stage can require`,
         why: "a stage of 0 is a stage nobody has to satisfy, which is an unconditional pass written to look "
           + "like a review step",
         fix: "use a whole number of distinct approvers at or above 1 for each stage, in review order",
       });
     }
+    if (stage.teamId !== null && stage.teamId.trim() === "") {
+      // An empty string is not "no team": it is a team id nothing can match, which would be a stage nobody
+      // could ever satisfy wearing the shape of an unconstrained one. Refused rather than coerced to null,
+      // because coercing it would silently turn a typo into a *weaker* rule than the author wrote.
+      throw unprocessable("E_BAD_APPROVAL_STAGE_TEAM", {
+        what: "a stage named an empty team id",
+        why: "an empty team matches nobody, so the stage would gate every send it applies to on a review no "
+          + "eligible person can perform — and it would read as an unconstrained stage",
+        fix: 'send {"team": null} for no constraint, or a team id from GET /api/teams',
+      });
+    }
   }
   // The implicit default, spelled explicitly. Normalised away so the stored form is unique.
-  if (stages.length === IMPLICIT_STAGES.length && stages.every((n, i) => n === IMPLICIT_STAGES[i])) return [];
-  return [...stages];
+  const implicit = stages.length === IMPLICIT_STAGES.length
+    && stages.every((stage, index) =>
+      stage.count === IMPLICIT_STAGES[index]?.count && stage.teamId === IMPLICIT_STAGES[index]?.teamId);
+  if (implicit) return [];
+  return stages.map((stage) => stageOf(stage.count, stage.teamId));
 }
 
 /** The stage set a version actually asks for: its rows, or the implicit single stage when it has none. */
-export async function stagesOfVersion(env: Env, versionId: string): Promise<number[]> {
+export async function stagesOfVersion(env: Env, versionId: string): Promise<Stage[]> {
   const { results } = await env.CATALOG.prepare(
-    "SELECT required_count FROM policy_stages WHERE policy_version_id = ? ORDER BY ordinal",
-  ).bind(versionId).all<{ required_count: number }>();
-  return results.length === 0 ? [...IMPLICIT_STAGES] : results.map((row) => row.required_count);
+    "SELECT required_count, team_id FROM policy_stages WHERE policy_version_id = ? ORDER BY ordinal",
+  ).bind(versionId).all<{ required_count: number; team_id: string | null }>();
+  return results.length === 0
+    ? [...IMPLICIT_STAGES]
+    : results.map((row) => stageOf(row.required_count, row.team_id));
 }
 
 /**
@@ -214,23 +232,57 @@ export async function stagesOfVersion(env: Env, versionId: string): Promise<numb
  * why a version id set with nothing in `policy_stages` still returns `[1]` rather than `[]` — an empty stage set
  * would be an approval satisfied by nobody.
  */
-export async function requiredStages(env: Env, versionIds: readonly string[]): Promise<number[]> {
+export async function requiredStages(env: Env, versionIds: readonly string[]): Promise<Stage[]> {
   if (versionIds.length === 0) return [];
   const placeholders = versionIds.map(() => "?").join(", ");
   const { results } = await env.CATALOG.prepare(
-    `SELECT policy_version_id, ordinal, required_count FROM policy_stages
+    `SELECT policy_version_id, ordinal, required_count, team_id FROM policy_stages
       WHERE policy_version_id IN (${placeholders}) ORDER BY policy_version_id, ordinal`,
-  ).bind(...versionIds).all<{ policy_version_id: string; ordinal: number; required_count: number }>();
+  ).bind(...versionIds).all<{
+    policy_version_id: string; ordinal: number; required_count: number; team_id: string | null;
+  }>();
 
-  const perVersion = new Map<string, number[]>();
+  const perVersion = new Map<string, Stage[]>();
   for (const versionId of versionIds) perVersion.set(versionId, []);
-  for (const row of results) perVersion.get(row.policy_version_id)?.push(row.required_count);
+  for (const row of results) {
+    perVersion.get(row.policy_version_id)?.push(stageOf(row.required_count, row.team_id));
+  }
 
-  const folded: number[] = [];
+  const folded: Stage[] = [];
   for (const stages of perVersion.values()) {
     const effective = stages.length === 0 ? IMPLICIT_STAGES : stages;
-    effective.forEach((count, index) => {
-      folded[index] = Math.max(folded[index] ?? 0, count);
+    effective.forEach((stage, index) => {
+      const so_far = folded[index];
+      /*
+       * The **team** part of the fold, and it is not a `max` because teams are not ordered.
+       *
+       * A stage naming a team narrows one that names none, so a non-null constraint always wins over null —
+       * which is the same direction the counts run in and the only direction Layer 5 permits. What has no
+       * defensible answer is *two different* teams meeting at one ordinal: "a member of Finance and a member
+       * of Legal" is a conjunction one `(count, team)` pair cannot express, and picking either would silently
+       * drop half of a rule an administrator wrote.
+       *
+       * So it is not folded here — it is **refused at publication** (`assertNoTeamConflict`), where the whole
+       * live rule set is knowable, which is the same place #61 put the satisfiability check and for the same
+       * reason. Reaching it here means a stored state no publication path produces, so it raises rather than
+       * choosing: the identical treatment `evaluate` gives an outcome outside the four, one function up.
+       */
+      if (so_far !== undefined && so_far.teamId !== null && stage.teamId !== null
+        && so_far.teamId !== stage.teamId) {
+        throw new CallerError("E_POLICY_STAGE_TEAM_CONFLICT", 500, {
+          what: `two live policies require stage ${index + 1} of this send from different teams `
+            + `(${so_far.teamId} and ${stage.teamId})`,
+          why: "a stage is satisfied by members of one team, so two teams at one ordinal is a conjunction "
+            + "this shape cannot express — publication refuses it, which means this state was not produced "
+            + "by any path in this Node",
+          fix: "unpublish one of the two policies, or move the second team's requirement to its own stage; "
+            + "GET /api/policies shows which versions are live",
+        });
+      }
+      folded[index] = stageOf(
+        Math.max(so_far?.count ?? 0, stage.count),
+        so_far?.teamId ?? stage.teamId,
+      );
     });
   }
   return folded;
@@ -454,7 +506,15 @@ export function canonicalConditions(
     bit(conditions.recipientExternal),
     bit(conditions.isReply),
     num(conditions.orgDailyVolumeMin),
-    stages === undefined || stages.length === 0 ? "" : `|${stages.join(",")}`,
+    // A stage is its count, and `@team` after it when it names one (#73). An unconstrained stage serializes
+    // to exactly the digit it always did, so **every hash written before migration 0032 stays valid** — the
+    // same property #61 got from normalising the implicit stage to no rows, one level down. `@` is a
+    // character no count and no id can contain, so a team cannot be confused with the tail of a count.
+    stages === undefined || stages.length === 0
+      ? ""
+      : `|${stages.map((stage) => stage.teamId === null
+        ? String(stage.count)
+        : `${stage.count}@${stage.teamId}`).join(",")}`,
   ].join("");
 }
 
@@ -472,7 +532,7 @@ export interface DraftRecord {
    * The stage set as stored: empty means the implicit single stage, and only a `require_approval` draft can
    * carry any. See `normaliseStages` for why one rule has exactly one stored spelling.
    */
-  stages: number[];
+  stages: Stage[];
 }
 
 function requireAdminOrThrow(actorUserId: string): CallerError {
@@ -488,7 +548,7 @@ function validate(
   outcome: string,
   conditions: PolicyConditions,
   stages: Stages | undefined,
-): { outcome: Outcome; stages: number[] } {
+): { outcome: Outcome; stages: Stage[] } {
   if (!isOutcome(outcome)) {
     throw unprocessable("E_BAD_POLICY_OUTCOME", {
       what: `${JSON.stringify(outcome)} is not a policy outcome`,
@@ -585,7 +645,7 @@ function draftInsert(
   versionId: string,
   outcome: Outcome,
   conditions: PolicyConditions,
-  stages: readonly number[],
+  stages: Stages,
   hash: string,
   actorUserId: string,
   at: string,
@@ -613,10 +673,14 @@ function draftInsert(
   // conditions came from different edits.
   return [
     version,
-    ...stages.map((required, index) => env.CATALOG.prepare(
-      `INSERT INTO policy_stages (id, org_id, policy_version_id, ordinal, required_count, created_at)
-       VALUES (?,?,?,?,?,?)`,
-    ).bind(ctx.id("pst"), orgId, versionId, index + 1, required, at)),
+    // `team_id` is written explicitly rather than left to the column's NULL default (#73): "unconstrained" is
+    // a decision this stage made, and a writer that omits the column takes its meaning from the schema rather
+    // than from the act — 0021's argument about `subject_kind`, one table over.
+    ...stages.map((stage, index) => env.CATALOG.prepare(
+      `INSERT INTO policy_stages
+         (id, org_id, policy_version_id, ordinal, required_count, team_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("pst"), orgId, versionId, index + 1, stage.count, stage.teamId, at)),
   ];
 }
 
@@ -727,6 +791,28 @@ async function assertApprovable(
   const stages = await stagesOfVersion(env, versionId);
   const byMailbox = await decidersByMailbox(env, orgId, whenMailboxId ?? undefined);
 
+  /*
+   * **Every team a stage names must exist**, and this is the check #73 says was impossible before there was a
+   * `teams` row to look for. Publication could previously only ask whether a team currently *has members*,
+   * which is a different question — a misspelled id has none and neither does a real team on a quiet week,
+   * and the two need opposite answers.
+   *
+   * `readTeam` per named team rather than one query, because a stage set names one or two teams at most and
+   * the refusal wants to name **which** one is missing. Checked before the arithmetic below, so a typo is
+   * answered as a typo rather than as "nobody is eligible".
+   */
+  for (const teamId of teamsNamedBy(stages)) {
+    if ((await readTeam(env, orgId, teamId)) !== null) continue;
+    throw notFound("E_NO_SUCH_TEAM", {
+      what: `policy ${policyId} has a stage requiring a member of team ${teamId}, which does not exist`,
+      why: "a stage naming a team nothing identifies would gate every send it applies to on a review nobody "
+        + "could ever perform — a condition backed by no data is a policy that silently never fires (#60), "
+        + "and verifying the team exists is the check a teams table makes possible at all (#73)",
+      fix: "GET /api/teams for the ids, or POST /api/teams to create the one this rule means",
+    });
+  }
+  const rosters = await rostersOf(env, orgId, teamsNamedBy(stages));
+
   let mailboxes: string[];
   if (whenMailboxId !== null) {
     mailboxes = [whenMailboxId];
@@ -738,18 +824,105 @@ async function assertApprovable(
   }
 
   for (const mailboxId of mailboxes) {
-    const eligible = byMailbox.get(mailboxId)?.size ?? 0;
-    const shortfall = shortfallFor(stages, eligible);
+    const eligible = byMailbox.get(mailboxId) ?? new Set<string>();
+    const shortfall = shortfallFor(stages, eligible, rosters);
     if (shortfall === null) continue;
     throw conflict("E_APPROVAL_UNSATISFIABLE", {
       what: `policy ${policyId} would require an approval nobody can give: ${describeShortfall(shortfall, mailboxId)}`,
       why: "a rule that gates a send on a review no eligible person can perform does not govern the send, it "
         + "parks it — and a policy that reads as governance and fires never is worse than one that does not "
         + "exist (#60)",
-      fix: `grant approval.decide on mailbox ${mailboxId} to ${shortfall.short} more person(s), or lower the `
-        + "stage counts. Note that the author of a send is never eligible to approve it, so an approval needs "
-        + "one more holder than the counts alone suggest whenever the author is also an approver",
+      fix: shortfall.team === null
+        ? `grant approval.decide on mailbox ${mailboxId} to ${shortfall.short} more person(s), or lower the `
+          + "stage counts. Note that the author of a send is never eligible to approve it, so an approval "
+          + "needs one more holder than the counts alone suggest whenever the author is also an approver"
+        : `${shortfall.short} more member(s) of team ${shortfall.team.name ?? shortfall.team.id} have to hold `
+          + `approval.decide on mailbox ${mailboxId} — add them to the team `
+          + `(POST /api/teams/${shortfall.team.id}/members), grant the relation, or drop the team from the `
+          + "stage. Note that the author of a send is never eligible to approve it, so an approval needs one "
+          + "more holder than the counts alone suggest whenever the author is also an approver",
     });
+  }
+}
+
+/**
+ * Refuses a publication that would put **two different teams at one ordinal** on a send both rules could gate.
+ *
+ * ## Why this is a publication check rather than a fold
+ *
+ * `requiredStages` folds every matching `require_approval` version into one chain — `max` per ordinal on the
+ * counts, which is #60's own conflict resolution reused. Teams have no `max`: *"a member of Finance and a
+ * member of Legal"* at one ordinal is a conjunction that one `(count, team)` stage cannot carry, and choosing
+ * either team would silently discard half of a rule an administrator wrote. Inventing a richer stage shape to
+ * carry both would be a governance dimension no ticket has decided.
+ *
+ * So the conflict is refused where the whole live rule set is knowable — publication — which is the same
+ * place, and the same argument, as #61's satisfiability check. `requiredStages` raises if it ever meets one
+ * anyway, so the rule is enforced at both ends rather than claimed at one.
+ *
+ * ## The overlap test is conservative, and conservative in the safe direction
+ *
+ * Two versions are compared only when they could **both match one send**, so an organization with Finance
+ * approving mailbox A and Legal approving mailbox B is not refused — which matters, because that is the shape
+ * separation of duty is actually written in, and a tripwire a good policy trips is a wrong tripwire.
+ *
+ * Disjointness is *proved* rather than guessed: two versions cannot both match only when some condition they
+ * both constrain takes different values. Anything this cannot prove disjoint is treated as overlapping, which
+ * is the fail-closed direction — the cost is a refusal an administrator can work around by naming a condition,
+ * and the alternative cost is a live pair of rules whose fold raises a 500 at somebody's seal.
+ *
+ * `org_daily_volume` is deliberately not consulted: two floors always have sends above both, so a floor can
+ * never make a pair disjoint.
+ */
+function couldBothMatch(a: VersionRow, b: VersionRow): boolean {
+  const bothNamed = <T>(x: T | null, y: T | null): boolean => x !== null && y !== null && x !== y;
+  if (bothNamed(a.when_mailbox_id, b.when_mailbox_id)) return false;
+  if (bothNamed(a.when_actor_user_id, b.when_actor_user_id)) return false;
+  if (bothNamed(a.when_recipient_external, b.when_recipient_external)) return false;
+  if (bothNamed(a.when_is_reply, b.when_is_reply)) return false;
+  return true;
+}
+
+async function assertNoTeamConflict(
+  env: Env,
+  orgId: string,
+  policyId: string,
+  draft: VersionRow,
+  stages: readonly Stage[],
+): Promise<void> {
+  if (teamsNamedBy(stages).length === 0) {
+    // A version naming no team cannot conflict with anything: it folds by `max` on the counts alone and
+    // inherits whatever team the other version names, which is the narrowing direction. No query.
+    return;
+  }
+  const { results } = await env.CATALOG.prepare(
+    `SELECT v.id, v.policy_id, p.name, v.version, v.outcome,
+            v.when_mailbox_id, v.when_actor_user_id, v.when_recipient_external, v.when_is_reply,
+            v.when_org_daily_volume_min
+       FROM policy_versions v
+       JOIN policies p ON p.id = v.policy_id AND p.org_id = v.org_id
+      WHERE v.org_id = ? AND v.state = 'published' AND v.outcome = 'require_approval'
+        AND v.policy_id != ?
+      ORDER BY v.published_at, v.id`,
+  ).bind(orgId, policyId).all<VersionRow>();
+
+  for (const live of results) {
+    if (!couldBothMatch(draft, live)) continue;
+    const theirs = await stagesOfVersion(env, live.id);
+    for (const [index, stage] of stages.entries()) {
+      const other = theirs[index];
+      if (stage.teamId === null || other?.teamId == null || other.teamId === stage.teamId) continue;
+      throw conflict("E_POLICY_STAGE_TEAM_CONFLICT", {
+        what: `stage ${index + 1} of this policy requires a member of team ${stage.teamId}, and live policy `
+          + `${live.name} (version ${live.version}) requires a member of team ${other.teamId} at the same `
+          + "stage of sends both rules could gate",
+        why: "a stage is satisfied by members of one team, so two teams at one ordinal is a conjunction the "
+          + "stage shape cannot express — and folding them by picking one would silently drop half of a rule "
+          + "somebody wrote. Refused here because publication is where the whole live rule set is knowable",
+        fix: `put the two requirements on different stages, name the same team on both, or narrow one `
+          + `policy's conditions so the two cannot gate one send — GET /api/policies shows what is live`,
+      });
+    }
   }
 }
 
@@ -779,12 +952,17 @@ export async function publishPolicy(
 ): Promise<PublishedVersion> {
   if (!(await isAdmin(env, orgId, actorUserId))) throw requireAdminOrThrow(actorUserId);
 
+  // Every condition column, not only the mailbox: #73's stage-team conflict check has to know which sends
+  // this draft could gate before it can say whether another live rule could gate the same ones. Widening a
+  // `SELECT` that was already being issued costs nothing (`approval-decision-cost.md` has now checked that
+  // claim three times), and the alternative was a second read of the row this function is holding.
   const draft = await env.CATALOG.prepare(
-    `SELECT id, outcome, canonical_sha256, when_mailbox_id FROM policy_versions
+    `SELECT id, policy_id, '' AS name, 0 AS version, outcome, canonical_sha256,
+            when_mailbox_id, when_actor_user_id, when_recipient_external, when_is_reply,
+            when_org_daily_volume_min
+       FROM policy_versions
       WHERE org_id = ? AND policy_id = ? AND state = 'draft' LIMIT 1`,
-  ).bind(orgId, policyId).first<{
-    id: string; outcome: string; canonical_sha256: string; when_mailbox_id: string | null;
-  }>();
+  ).bind(orgId, policyId).first<VersionRow & { canonical_sha256: string }>();
 
   if (draft === null) {
     throw conflict("E_NO_POLICY_DRAFT", {
@@ -822,6 +1000,10 @@ export async function publishPolicy(
   // for the reason every absent condition in this file is absent.
   if (draft.outcome === "require_approval") {
     await assertApprovable(env, orgId, policyId, draft.id, draft.when_mailbox_id);
+    // And, before that same line is crossed: two live rules that would ask one ordinal of one send for
+    // members of two different teams. `requiredStages` cannot fold that and raises rather than guessing, so
+    // this is the check that keeps the raise unreachable through the product (#73).
+    await assertNoTeamConflict(env, orgId, policyId, draft, await stagesOfVersion(env, draft.id));
   }
 
   // Supersede first, then promote. `pv_version` is UNIQUE on (policy_id, version), so two concurrent

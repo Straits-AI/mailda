@@ -1,18 +1,76 @@
 ---
 id: approval-decision-cost
 kind: measured-tripwire
-measured_on: 2026-08-20
+measured_on: 2026-08-21
 stale_when: >
-  the eligible set gains a narrowing constraint — a team-scoped stage is the one #61 named absent, and it would
-  add a query or a join to every eligibility check; a decision stops carrying its audit entry, its decision row
-  and its state changes in one batch(), which is what makes the act one round trip; the completion predicate
-  moves out of SQL into TypeScript, which would turn one batch into a read plus a write; the approvals tables
-  gain a column a decision has to read; a D1 batch() stops being one round trip; or the seal's approval path
-  gains or loses an I/O operation for any other reason
+  the eligible set gains a second narrowing constraint beyond #73's team, or the team constraint stops being
+  resolved by one query over teams and team_members; a decision stops carrying its audit entry, its decision
+  row and its state changes in one batch(), which is what makes the act one round trip; the completion
+  predicate moves out of SQL into TypeScript, which would turn one batch into a read plus a write; the
+  approvals tables gain a column a decision has to read; a D1 batch() stops being one round trip; or the
+  seal's approval path gains or loses an I/O operation for any other reason
 values:
   approval.eligibility_max_subrequests: 3
   approval.decision_max_subrequests: 10
 ---
+
+## Correction, 21 August 2026: the team-scoped stage arrived, and the clause that named it fired (#73)
+
+The clause **"the eligible set gains a narrowing constraint — a team-scoped stage is the one #61 named absent,
+and it would add a query or a join to every eligibility check"** is now true. #73 built the `teams` table,
+membership administration and `policy_stages.team_id`, so a stage may require a member of a named team.
+
+**The clause's prediction was half right, which is why it had to be measured rather than reasoned about.** It
+adds a query — `rostersOf`, one statement over `teams LEFT JOIN team_members` — and it adds it **only where a
+team is actually named**. `teamsNamedBy` returns nothing for a stage set with no constraint and `rostersOf`
+short-circuits an empty request before it prepares anything, so an ordinary gated send pays zero.
+
+**No value moves.** `approval.eligibility_max_subrequests = 3` was sized in the section below with this exact
+change named as the one foreseeable use of its headroom; the headroom was spent as predicted, from 1 to 2.
+`approval.decision_max_subrequests = 10` covers a team-scoped decision at 7.
+
+**Measured:** same instrument, same file, same run — `metering()` from `src/cost-meter.ts`, in the real
+`workerd` runtime, counting executions and pricing a `batch()` as the one round trip it is. Run on
+21 August 2026.
+
+| Scenario | Subrequests | D1 executions | batches | R2 ops | DO RPCs |
+|:--|--:|--:|--:|--:|--:|
+| resolve one team's roster (`rostersOf`) | **1** | 1 | 0 | 0 | 0 |
+| resolve **no** teams — a stage set that names none | **0** | 0 | 0 | 0 | 0 |
+| `sealManifest`, gated by a team-less approval (control) | **14** | 10 | 1 | 2 | 2 |
+| `sealManifest`, gated by a **team-scoped** approval | **15** | 11 | 1 | 2 | 2 |
+| a decision on a team-scoped stage | **7** | 7 | 1 | 0 | 0 |
+| publishing a team-scoped `require_approval` version | **11** | 11 | 1 | 0 | 0 |
+
+The two seal figures come from **one run of one test**, deliberately, and the assertion is an equality on their
+difference rather than a bound on either: the claim being made is *"exactly one more"*, and a bound cannot
+express it. The control is measured beside the subject because a figure compared against a number written down
+last week is a comparison against a stale receipt, which is the correction this file has now made four times.
+
+**Where the one operation goes, per act:**
+
+- **The seal.** `rostersOf` is called once with every team the folded stage set names, so a chain of two
+  team-scoped stages still costs one query, not two.
+- **The decision.** One roster read, and only when the **open** stage names a team — a two-stage chain whose
+  first stage is unconstrained pays nothing for its first decision and one for its second.
+- **The withdrawal.** Same shape, and only for the stages still outstanding: a withdrawal from a fully
+  satisfied team-scoped stage asks nothing.
+- **Publication.** One `readTeam` per named team plus one `rostersOf`, which is where the existence check
+  #73 says was impossible before a `teams` row existed actually happens. Publication is an administrator
+  writing a rule, so this is the cheapest place to put the strictest check.
+
+**The team-less seal reads 14 against the 13 recorded in the section below, and that +1 is not this change.**
+The evidence is the `seal/hold-gate` control — a path #73 does not touch, with no approval stages in it at all
+— which reads **12** against the 11 recorded below, the same +1. It was re-measured on this working tree with
+the #73 source changes stashed and read **12** there as well, so the drift predates #73. What was **not**
+re-measured stashed is the approval-gate figure, because the stashed tree does not compile against these
+tests; that is stated rather than glossed, and the hold-gate control is what the inference rests on.
+
+The drift is recorded here as unexplained rather than folded silently into the new numbers, which is the whole
+point of a control: this change's claim is the **difference** of 1 between the two seal rows above, measured in
+one run, and that claim does not depend on where the shared 14 came from. Both figures are inside
+`butler.step_cost_max_send_propose`, which is what a gated seal is actually bounded by and what
+`test/approval-cost.measure.test.ts` asserts.
 
 ## Correction, 20 August 2026: the same clause fired again — `expires_at` (#62)
 
@@ -127,9 +185,11 @@ Both values are **bounds with headroom, not the measured figures**, for the reas
 states: an equality assertion on an I/O count fails on every harmless refactor and gets deleted, while a bound
 catches an operation becoming an order of magnitude more expensive.
 
-- `approval.eligibility_max_subrequests = 3` — measured **1**. The headroom is for exactly one foreseeable
-  change: #61 named a team-scoped stage constraint absent because `team_members` is read-only and there is no
-  `teams` table, and adding one would put a second predicate or a second read in this path.
+- `approval.eligibility_max_subrequests = 3` — measured **1**, and **2** once a stage names a team (#73). The
+  headroom was reserved for exactly one foreseeable change — *"#61 named a team-scoped stage constraint absent
+  because `team_members` is read-only and there is no `teams` table, and adding one would put a second
+  predicate or a second read in this path"* — and that change has now landed and spent it as predicted. One of
+  the three remains.
 - `approval.decision_max_subrequests = 10` — measured **6**. Bounded generously because a decision happens on a
   person's request rather than in a loop, and because #62 will add a recheck to the *dispatch* of an approved
   send, not to the decision itself.

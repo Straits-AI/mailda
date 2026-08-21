@@ -7,7 +7,7 @@ import { revoke } from "../src/access.ts";
 import { verifyChain } from "../src/audit.ts";
 import {
   APPROVAL_REASONS, decideApproval, openStage, pendingApprovals, shortfallFor,
-  stagesOfApproval, withdrawApproval, type Decision, type Stages,
+  stageOf, stagesOfApproval, withdrawApproval, type Decision, type Stages,
 } from "../src/approvals.ts";
 import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
@@ -58,6 +58,11 @@ const AUGUST_10 = Date.parse("2026-08-10T09:00:00.000Z");
 function atTime(millis: number): Ctx {
   const system = createSystemCtx();
   return { now: () => millis, id: (p) => system.id(p), random: (n) => system.random(n) };
+}
+
+/** A stage set of plain counts, which is what every pre-#73 case in this file asks for. */
+function counts(...required: number[]): Stages {
+  return required.map((count) => stageOf(count));
 }
 
 async function tuple(subjectId: string, relation: string, objectType: string, objectId: string): Promise<void> {
@@ -175,28 +180,65 @@ async function sessionFor(userId: string): Promise<string> {
 /* ------------------------------------------------------------------ the arithmetic -------------- */
 
 describe("the satisfiability rule (shortfallFor)", () => {
+  /** `n` distinct people, as the eligible set the rule is now expressed over. */
+  const people = (n: number): Set<string> =>
+    new Set(Array.from({ length: n }, (_, index) => `usr_p${index}`));
+
   it("is exhaustively decidable, and blames the first stage that cannot be filled", () => {
     // The whole rule, in one table. Both checks — publication and the seal — go through this function, so a
     // wrong cell here is wrong in both places, which is the argument for having one function rather than two
     // predicates that agree today.
-    expect(shortfallFor([1], 1)).toBeNull();
-    expect(shortfallFor([2], 2)).toBeNull();
-    expect(shortfallFor([1, 1], 2)).toBeNull();
-    expect(shortfallFor([2, 1], 3)).toBeNull();
+    //
+    // Unchanged cell for cell by #73's rewrite from subtraction to a matching, which is the point of keeping
+    // the table: with no team named, every stage draws from one set and the matching *is* the subtraction.
+    expect(shortfallFor(counts(1), people(1))).toBeNull();
+    expect(shortfallFor(counts(2), people(2))).toBeNull();
+    expect(shortfallFor(counts(1, 1), people(2))).toBeNull();
+    expect(shortfallFor(counts(2, 1), people(3))).toBeNull();
 
     // Nobody decides twice in one approval, so a chain needs the *sum* of its counts in distinct people.
-    expect(shortfallFor([1, 1], 1)).toEqual({
-      ordinal: 2, required: 1, available: 0, short: 1, eligible: 1, needed: 2,
+    expect(shortfallFor(counts(1, 1), people(1))).toEqual({
+      ordinal: 2, required: 1, available: 0, short: 1, eligible: 1, needed: 2, team: null,
     });
-    expect(shortfallFor([2], 1)).toEqual({
-      ordinal: 1, required: 2, available: 1, short: 1, eligible: 1, needed: 2,
+    expect(shortfallFor(counts(2), people(1))).toEqual({
+      ordinal: 1, required: 2, available: 1, short: 1, eligible: 1, needed: 2, team: null,
     });
     // The blame lands on the first stage that outruns the supply, not on the last one: stage 1 is fillable
     // here and stage 2 is not.
-    expect(shortfallFor([1, 2], 2)).toEqual({
-      ordinal: 2, required: 2, available: 1, short: 1, eligible: 2, needed: 3,
+    expect(shortfallFor(counts(1, 2), people(2))).toEqual({
+      ordinal: 2, required: 2, available: 1, short: 1, eligible: 2, needed: 3, team: null,
     });
-    expect(shortfallFor([1], 0)?.ordinal).toBe(1);
+    expect(shortfallFor(counts(1), people(0))?.ordinal).toBe(1);
+  });
+
+  it("re-assigns rather than blaming a later stage for an earlier one's choice (#73)", () => {
+    /*
+     * The case a greedy fold gets wrong, and the reason the rule is a matching now.
+     *
+     * Ann is in both teams; Bob is only in Legal. Stage 1 wants a member of Legal and stage 2 wants a member
+     * of Finance, and the *only* member of Finance is Ann — so stage 1 has to take Bob. A greedy pass that
+     * gave stage 1 whichever Legal member it saw first would take Ann and then report stage 2 as one member
+     * of Finance short, sending an administrator to grow a team that was never the problem.
+     */
+    const finance = { id: "tm_fin", name: "Finance", members: new Set(["usr_ann"]) };
+    const legal = { id: "tm_leg", name: "Legal", members: new Set(["usr_ann", "usr_bob"]) };
+    const rosters = new Map([[finance.id, finance], [legal.id, legal]]);
+    const eligible = new Set(["usr_ann", "usr_bob"]);
+
+    expect(shortfallFor([stageOf(1, legal.id), stageOf(1, finance.id)], eligible, rosters)).toBeNull();
+    // And it still refuses what is genuinely impossible: two from Finance, which has one member.
+    expect(shortfallFor([stageOf(2, finance.id)], eligible, rosters)).toEqual({
+      ordinal: 1, required: 2, available: 1, short: 1, eligible: 1, needed: 2,
+      team: { id: "tm_fin", name: "Finance" },
+    });
+  });
+
+  it("treats a team it has never heard of as nobody, which is the restrictive answer (#73)", () => {
+    // The house rule about unclassified inputs, at the one place it decides whether a send goes out. A roster
+    // map with no entry for the named team must not read as "unconstrained".
+    const shortfall = shortfallFor([stageOf(1, "tm_ghost")], new Set(["usr_ann", "usr_bob"]), new Map());
+    expect(shortfall?.available).toBe(0);
+    expect(shortfall?.team).toEqual({ id: "tm_ghost", name: null });
   });
 
   it("gives every reason token it writes words in the module a browser is served", () => {
@@ -231,10 +273,10 @@ describe("distinctness is measured on the person, not on the tuple", () => {
 
     // This is the failure the whole design turns on. At the tuple layer there are two holders, so a naive
     // count says the stage is satisfiable — and it would then be *satisfied* by one person deciding twice.
-    await expect(requireApproval("dual control", [2])).rejects.toThrow(/E_APPROVAL_UNSATISFIABLE/);
+    await expect(requireApproval("dual control", counts(2))).rejects.toThrow(/E_APPROVAL_UNSATISFIABLE/);
     // A second name, because the refused publish leaves its policy and draft behind — publication is what is
     // refused, not authoring, and #60 keeps the draft so an administrator can fix it rather than retype it.
-    await expect(requireApproval("dual control again", [2]))
+    await expect(requireApproval("dual control again", counts(2)))
       .rejects.toThrow(/stage 1 needs 2 distinct approver/);
   });
 
@@ -242,13 +284,13 @@ describe("distinctness is measured on the person, not on the tuple", () => {
     await tuple(TEAM_A, "approval.decide", "mailbox", MAILBOX);
     await tuple(TEAM_B, "approval.decide", "mailbox", MAILBOX);
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("dual control", [2]);
+    await requireApproval("dual control", counts(2));
 
     const sealed = await seal();
     expect(sealed.state).toBe("awaiting");
     expect(sealed.stateReason).toBe("policy_approval_required");
     const approval = (await approvalRow(sealed.id))!;
-    expect(await stagesOfApproval(testEnv, approval.id)).toEqual([2]);
+    expect(await stagesOfApproval(testEnv, approval.id)).toEqual(counts(2));
 
     // The person with two team hats decides once...
     const first = await decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, DUAL, approval.id, "approve");
@@ -355,11 +397,11 @@ describe("ordered stages give sequential review by distinct people", () => {
   it("takes two people in order for [1, 1], and the same person cannot take both", async () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("two stages", [1, 1]);
+    await requireApproval("two stages", counts(1, 1));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
-    expect(await stagesOfApproval(testEnv, approval.id)).toEqual([1, 1]);
+    expect(await stagesOfApproval(testEnv, approval.id)).toEqual(counts(1, 1));
 
     const first = await decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id, "approve");
     expect(first.stageOrdinal).toBe(1);
@@ -382,16 +424,16 @@ describe("ordered stages give sequential review by distinct people", () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    const one = await requireApproval("one approver", [1]);
-    const chain = await requireApproval("two then one", [2, 1]);
+    const one = await requireApproval("one approver", counts(1));
+    const chain = await requireApproval("two then one", counts(2, 1));
 
     // #60's conflict resolution reused rather than a second rule invented for stages: both policies are in
     // force, so the demand at each ordinal is the greater of the two, and the chain is as long as the longest.
-    expect(await requiredStages(testEnv, [one.versionId, chain.versionId])).toEqual([2, 1]);
+    expect(await requiredStages(testEnv, [one.versionId, chain.versionId])).toEqual(counts(2, 1));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
-    expect(await stagesOfApproval(testEnv, approval.id)).toEqual([2, 1]);
+    expect(await stagesOfApproval(testEnv, approval.id)).toEqual(counts(2, 1));
     expect(sealed.state).toBe("awaiting");
   });
 
@@ -406,14 +448,14 @@ describe("ordered stages give sequential review by distinct people", () => {
 
     // And an edit that spells the default out changes nothing, so publishing it is refused as a no-op.
     await editPolicyDraft(testEnv, atTime(AUGUST_10), ORG, ADMIN, implicit.policyId, {
-      outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: [1],
+      outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: counts(1),
     });
     await expect(publishPolicy(testEnv, atTime(AUGUST_10), ORG, ADMIN, implicit.policyId))
       .rejects.toThrow(/E_POLICY_UNCHANGED/);
 
     // A real change to the counts is a real change, which is what makes the stage set part of the content.
     await editPolicyDraft(testEnv, atTime(AUGUST_10), ORG, ADMIN, implicit.policyId, {
-      outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: [1, 1],
+      outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: counts(1, 1),
     });
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     expect((await publishPolicy(testEnv, atTime(AUGUST_10), ORG, ADMIN, implicit.policyId)).version).toBe(2);
@@ -421,10 +463,10 @@ describe("ordered stages give sequential review by distinct people", () => {
 
   it("refuses stages on an outcome that never reads them, and a stage of zero", async () => {
     await expect(createPolicyDraft(testEnv, atTime(AUGUST_10), ORG, ADMIN, {
-      name: "hold with stages", outcome: "hold", stages: [2],
+      name: "hold with stages", outcome: "hold", stages: counts(2),
     })).rejects.toThrow(/E_STAGES_WITHOUT_APPROVAL/);
     await expect(createPolicyDraft(testEnv, atTime(AUGUST_10), ORG, ADMIN, {
-      name: "nobody has to", outcome: "require_approval", stages: [0],
+      name: "nobody has to", outcome: "require_approval", stages: counts(0),
     })).rejects.toThrow(/E_BAD_APPROVAL_STAGE/);
   });
 });
@@ -481,7 +523,7 @@ describe("a denial is terminal", () => {
   it("withholds the send with approval_denied, and nothing reopens it", async () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal({ to: ["a@example.net"], cc: ["b@example.net"] });
     const approval = (await approvalRow(sealed.id))!;
@@ -518,7 +560,7 @@ describe("withdrawal is allowed while incomplete and refused once complete", () 
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -563,7 +605,7 @@ describe("withdrawal is allowed while incomplete and refused once complete", () 
   it("refuses a withdrawal by somebody who never approved", async () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
     await decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id, "approve");
@@ -578,7 +620,7 @@ describe("withdrawal is allowed while incomplete and refused once complete", () 
     // two, and the request is closed rather than left reading as pending.
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -603,7 +645,7 @@ describe("the conflict is the signal", () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -637,7 +679,7 @@ describe("the conflict is the signal", () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -670,7 +712,7 @@ describe("the conflict is the signal", () => {
     // reading as `pending`, which is the exact state this design exists to close.
     for (const person of [ANN, BOB, DUAL]) await tuple(person, "approval.decide", "mailbox", MAILBOX);
     await tuple(ADMIN, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("three", [3]);
+    await requireApproval("three", counts(3));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -709,7 +751,7 @@ describe("the conflict is the signal", () => {
     // recipient update in this Node exists to prevent.
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
 
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
@@ -785,7 +827,7 @@ describe("cancelling the send settles the request it was waiting on", () => {
 describe("the trail", () => {
   it("records the request beside the seal, in one transaction, with the chain intact", async () => {
     await tuple(ANN, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [1]);
+    await requireApproval("gate", counts(1));
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
 
@@ -798,7 +840,7 @@ describe("the trail", () => {
     // The Node asked, because the policy required it. Not the author: they did not choose to be reviewed.
     expect(entries.results[1]!.actor_user_id).toBeNull();
     const detail = JSON.parse(entries.results[1]!.detail) as Record<string, unknown>;
-    expect(detail.stages).toEqual([1]);
+    expect(detail.stages).toEqual([{ count: 1, teamId: null }]);
     expect(detail.eligible).toBe(1);
     expect(detail.subjectKind).toBe("send_manifest");
     expect(detail.subjectId).toBe(sealed.id);
@@ -815,7 +857,7 @@ describe("the trail", () => {
     // Three approvers for a count of two, so Ann's withdrawal leaves the request satisfiable and Bob is
     // deciding an open question rather than a dead one.
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
     const sealed = await seal();
     const approval = (await approvalRow(sealed.id))!;
 
@@ -868,7 +910,7 @@ describe("an approver can reach this from outside the process", () => {
     await tuple(BOB, "approval.decide", "mailbox", MAILBOX);
     // Three, so the withdrawal below leaves the request open rather than closing it as unsatisfiable.
     await tuple(DUAL, "approval.decide", "mailbox", MAILBOX);
-    await requireApproval("gate", [2]);
+    await requireApproval("gate", counts(2));
     const sealed = await seal();
 
     const annToken = await sessionFor(ANN);
@@ -879,7 +921,7 @@ describe("an approver can reach this from outside the process", () => {
     const { approvals } = await listed.json() as {
       approvals: Array<{
         id: string; subjectKind: string; subjectId: string; reason: string | null;
-        stages: number[]; openStage: number;
+        stages: Stages; openStage: number;
       }>;
     };
     expect(approvals).toHaveLength(1);
@@ -888,7 +930,7 @@ describe("an approver can reach this from outside the process", () => {
     // A send carries no requester's reason: the reason it is being reviewed is the policy that matched, which
     // the outbox already shows beside the send. `null` here rather than an invented sentence.
     expect(approvals[0]!.reason).toBeNull();
-    expect(approvals[0]!.stages).toEqual([2]);
+    expect(approvals[0]!.stages).toEqual(counts(2));
 
     const approvalId = approvals[0]!.id;
     const post = (token: string, path: string, body?: unknown) => SELF.fetch(`https://node${path}`, {

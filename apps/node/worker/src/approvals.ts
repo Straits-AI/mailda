@@ -2,7 +2,7 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, type AuditGate, auditedBatch, auditedBatchMany } from "./audit.ts";
-import { adminsOf, decidersByMailbox, decidersOf } from "./deciders.ts";
+import { adminsOf, decidersByMailbox, decidersOf, rostersOf, type TeamRoster } from "./deciders.ts";
 import { conflict, notFound } from "./errors.ts";
 import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts";
 
@@ -52,9 +52,10 @@ import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts
  *
  * §18 requires *"sequential/parallel/dual review"*. They are counts and ordinals over one structure:
  *
- *     parallel    [2]      one stage, two distinct decisions
- *     sequential  [1, 1]   two stages, one each, in order
+ *     parallel    [2]                        one stage, two distinct decisions
+ *     sequential  [1, 1]                     two stages, one each, in order
  *     dual        either, depending on whether the order matters
+ *     duty        [1 of finance, 1 of legal] the same two stages, each narrowed to a team (#73)
  *
  * The order is on the **stages**, not on the people. That is what dissolves the doubt this ticket opened with —
  * a set defined by a relation has no natural sequence, and naming people in a policy would widen authority —
@@ -62,9 +63,13 @@ import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts
  *
  * ## The eligible set
  *
- *     eligible(approval) = approval.decide holders on the manifest's mailbox
+ *     eligible(stage)    = approval.decide holders on the manifest's mailbox
+ *                        ∩ members of stage.team_id, if one is named (#73)
  *                        − the manifest's author
  *                        − everybody who has already decided in this approval
+ *
+ * The intersection is what makes the team constraint expressible without widening anything: it can only ever
+ * remove people. See the section below on what #73 built and what it deliberately did not freeze.
  *
  * **Distinctness is on `user_id`, not on tuples, and this is the subtle part.** `readableSubjects`
  * (src/authz-read.ts:104) returns `[userId, ...teamIds]`, so a relation can be held *through a team*. The
@@ -116,17 +121,35 @@ import { noticeOwedByGrant, noticesForApprovalRequest } from "./notifications.ts
  * Withdrawal is terminal for the withdrawer (`apd_one_per_person`): they cannot decide again. So the eligible
  * set only ever shrinks within one approval, and no amount of oscillation lets one person fill two slots.
  *
+ * ## The team constraint, which #61 wanted and #73 built the substrate for
+ *
+ * A stage may require **a member of a named team**, and that was named absent here until migration 0032
+ * because the substrate was not there: `team_members` had no writer, and there was no `teams` table at all, so
+ * a team had no name and no existence of its own. A team-scoped stage would have been expressible and
+ * unusable — nobody could create the team it named, and publication could not verify the team *exists*, only
+ * that it currently has members, which is a different question.
+ *
+ * Both halves landed together, and three properties are what make the constraint safe to have at all:
+ *
+ * - **Strictly narrowing.** `eligibleFor` intersects, so naming a team can only reduce the eligible set.
+ *   #61's may-narrow-never-widen rule survives whole, and an unknown team resolves to nobody rather than to
+ *   everybody — the restrictive answer for the unclassified input.
+ * - **Verified at publication.** `publishPolicy` refuses a stage naming a team that does not exist
+ *   (`E_NO_SUCH_TEAM`), which is the check that was impossible before a `teams` row existed, and refuses one
+ *   whose team is already too small to fill it.
+ * - **Re-checked at evaluation, twice over.** The seal recomputes the eligible set against live membership,
+ *   and `decideApproval` re-reads the open stage's roster at the instant of the decision. The stage freezes
+ *   the team's **id**; it deliberately does not freeze its members, because membership is authority and §7
+ *   makes authority live.
+ *
+ * A team that is **emptied** under a live policy therefore reaches the same answer as `approval.decide` being
+ * revoked from its last holder, which is #61's own precedent: the send is `withheld` with
+ * `approval_unsatisfiable`, naming which stage, which team and how many short. It does not park in `awaiting`,
+ * and the membership change is not refused — see `src/teams.ts` for why the refusal would have been the wrong
+ * direction.
+ *
  * ## Named absent
  *
- * - **A team constraint on a stage.** #61 wanted one narrowing constraint, *"a member of team T"*, and there is
- *   no `team_id` column. `team_members` is read-only in the product — three SELECTs in `src/authz-read.ts`,
- *   nothing writes it — and there is **no `teams` table at all**, so a team has no name and no existence of its
- *   own. A team-scoped stage would be expressible and unusable, and publication could not verify a named team
- *   exists, only that it currently has members, which is a different question. `migrations/0020_approvals.sql`
- *   carries the argument in full, and #73 tracks what would have to exist first — team creation, membership
- *   management, and a decision about whether a team is a first-class object or stays an implicit id. Ordered stages of count 1 still give
- *   sequential review by two distinct people in a fixed order, which is §18's sequential shape minus the team
- *   labels.
  * - **Notification.** Every act here is something a person is waiting on, and there is no notification
  *   mechanism in this product. #63 owns the harder version of the same problem — §7 requires a notice the
  *   investigator cannot switch off — and its resolution already chose the shape: the obligation is a row, an
@@ -381,13 +404,38 @@ export function expiryFor(kind: ApprovalSubjectKind, requestedAtMillis: number):
 /* ---- stages, and the arithmetic of a shortfall ----------------------------------------------- */
 
 /**
- * A stage set: the count required at each stage, in review order. `[2]` is parallel dual control, `[1, 1]` is
- * sequential.
+ * One stage: how many distinct decisions it takes, and the one team those deciders must belong to, or none.
  *
- * An array rather than objects with an ordinal, because the position **is** the ordinal — a separate field
- * would be a second representation of the same fact, and the failure mode is two stages numbered 2.
+ * The position in the array **is** the ordinal — a separate field would be a second representation of the same
+ * fact, and the failure mode is two stages numbered 2.
+ *
+ * `teamId` was `absent` until #73 and this was `readonly number[]`. It is an object now rather than a second
+ * parallel array of teams, for the reason the ordinal is not a field: two arrays that must stay the same
+ * length is a correspondence nothing enforces, and the failure mode is a count that gets a team belonging to
+ * the stage next to it.
  */
-export type Stages = readonly number[];
+export interface Stage {
+  count: number;
+  /**
+   * The team a decider must be in, or **null for no constraint: the whole eligible set**.
+   *
+   * Null is what every stage written before migration 0032 means, so absence is a defined answer rather than a
+   * missing one. A team id naming nothing resolves to the **empty** set, which is the restrictive answer for
+   * the unclassified input — see `eligibleFor`.
+   */
+  teamId: string | null;
+}
+
+/**
+ * A stage set, in review order. `[{2}]` is parallel dual control, `[{1}, {1}]` is sequential, and
+ * `[{1, finance}, {1, legal}]` is §18's separation of *duty* rather than only of eyes.
+ */
+export type Stages = readonly Stage[];
+
+/** One stage, spelled once, so no caller has to remember that an unconstrained stage carries a null team. */
+export function stageOf(count: number, teamId: string | null = null): Stage {
+  return { count, teamId };
+}
 
 /**
  * What one stage set means when a policy version names none: one decision, by somebody other than the author.
@@ -395,44 +443,137 @@ export type Stages = readonly number[];
  * The minimum the words *"requires approval"* can mean, and it is also what every `require_approval` version
  * published before migration 0020 means — so absence is a defined answer rather than a missing one.
  */
-export const IMPLICIT_STAGES: Stages = [1];
+export const IMPLICIT_STAGES: Stages = [stageOf(1)];
+
+/**
+ * The stage sets that carry **no** team constraint, for a caller with fixed stages of its own.
+ *
+ * `LIFT_STAGES`, `SUPERVISED_STAGES`, `EXPORT_STAGES` and `PAUSE_STAGES` are all of this shape: a decision
+ * this Node took rather than one a policy expresses, and none of them narrows to a team. Exported as a
+ * constant so those four modules pass an empty roster map by name rather than each writing `new Map()`, which
+ * would read as an omission rather than as a statement that there is nothing to resolve.
+ */
+export const NO_TEAM_ROSTERS: ReadonlyMap<string, TeamRoster> = new Map();
+
+/** Every team a stage set names, de-duplicated. What `rostersOf` has to be asked for, and nothing more. */
+export function teamsNamedBy(stages: Stages): string[] {
+  return [...new Set(stages.map((stage) => stage.teamId).filter((id): id is string => id !== null))];
+}
 
 export interface Shortfall {
   /** The first stage that cannot be filled, 1-based. */
   ordinal: number;
   /** How many distinct decisions that stage asks for. */
   required: number;
-  /** How many eligible people are left for it once the earlier stages have taken theirs. */
+  /** How many eligible people that stage could actually get, once the earlier stages have taken theirs. */
   available: number;
   /** `required - available`. Always at least 1 when this object exists. */
   short: number;
   /** Distinct eligible people in total, and what the whole chain would need. For the message. */
   eligible: number;
   needed: number;
+  /**
+   * The team the failing stage required, and its name, or null when it required none (#73).
+   *
+   * Carried on the shortfall rather than looked up by whoever renders it, because the sentence a person reads
+   * is *"stage 2 needs 1 member of team Legal"* and a message that could only say `tm_01J…` sends them to a
+   * second screen to find out what is short. The name comes free with the members — see `rostersOf`.
+   */
+  team: { id: string; name: string | null } | null;
+}
+
+const NOBODY: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The people who could take one stage: the eligible set, narrowed by the stage's team if it names one.
+ *
+ * **Strictly narrowing, and that is load-bearing rather than incidental.** An intersection can only ever
+ * reduce the set, so #61's may-narrow-never-widen rule survives whole: naming a team can make a stage harder
+ * to fill and can never make somebody eligible who holds no relation. If a path ever appeared where naming a
+ * team let somebody decide who could not before, it would not be this feature.
+ *
+ * A team the roster map has never heard of contributes `NOBODY`, so an unknown team is the **restrictive**
+ * answer rather than the permissive one. That is the direction chosen deliberately: publication refuses a
+ * stage naming a team that does not exist outright (`E_NO_SUCH_TEAM`), so reaching this with an unknown id
+ * means a team disappeared under a live policy — which cannot happen, because nothing deletes a team — or a
+ * caller forgot to resolve the rosters. Either way, "nobody is eligible" is the answer that fails closed.
+ */
+function eligibleFor(
+  stage: Stage,
+  eligible: ReadonlySet<string>,
+  rosters: ReadonlyMap<string, TeamRoster>,
+): ReadonlySet<string> {
+  if (stage.teamId === null) return eligible;
+  const members = rosters.get(stage.teamId)?.members ?? NOBODY;
+  return new Set([...eligible].filter((userId) => members.has(userId)));
 }
 
 /**
- * Can this stage set be satisfied by `eligible` distinct people, and if not, where does it fail?
+ * Can this stage set be satisfied, and if not, where does it fail?
  *
- * Nobody decides twice in one approval (`apd_one_per_person`), so the chain needs `sum(stages)` distinct
- * people, and the shortfall lands on the **first** stage whose cumulative demand outruns the supply. Reported
- * per stage rather than as a total because *"stage 2 needs 1 more approver than exist"* tells an administrator
- * what to change, and *"3 needed, 2 available"* makes them do the arithmetic themselves.
+ * ## Why this is a matching rather than the subtraction it used to be
  *
- * Pure, and exhaustively testable: this is the whole of the satisfiability rule, and both checks — publication
- * and evaluation — go through it rather than each computing it.
+ * It was `available = eligible - taken`, which is exact while every stage draws from **one** set. A
+ * team-scoped stage draws from a different set, and then the question stops being arithmetic: stage 1 taking
+ * two people from Finance may or may not leave stage 2 a member of Legal, depending on who is in both.
+ * Greedily assigning stage 1 first would blame stage 2 for stage 1's choice — an administrator told to grant
+ * `approval.decide` to another lawyer when the real answer was that one person was double-counted.
+ *
+ * So each stage's demand is satisfied by **augmenting paths** (Kuhn's), which lets a later stage displace an
+ * earlier one's assignment as long as that earlier one can be filled another way. The first stage that cannot
+ * be saturated even after re-assignment is the first stage whose *prefix* is genuinely infeasible, and prefix
+ * infeasibility is monotone — so it is also the honest place to put the blame.
+ *
+ * **With no teams anywhere this reduces exactly to the old subtraction**, because every supply is the same set
+ * and no re-assignment can help: `test/approvals.test.ts` still walks the same table of cases it always did.
+ *
+ * Nobody decides twice in one approval (`apd_one_per_person`), which is why a person is a unit of capacity
+ * here rather than a source of one decision per stage.
+ *
+ * Pure, and exhaustively testable: this is the whole of the satisfiability rule, and both checks —
+ * publication and evaluation — go through it rather than each computing it.
  */
-export function shortfallFor(stages: Stages, eligible: number): Shortfall | null {
-  const needed = stages.reduce((total, count) => total + count, 0);
-  let taken = 0;
-  for (const [index, required] of stages.entries()) {
-    const available = Math.max(0, eligible - taken);
-    if (required > available) {
+export function shortfallFor(
+  stages: Stages,
+  eligible: ReadonlySet<string>,
+  rosters: ReadonlyMap<string, TeamRoster> = NO_TEAM_ROSTERS,
+): Shortfall | null {
+  const needed = stages.reduce((total, stage) => total + stage.count, 0);
+  const supply = stages.map((stage) => eligibleFor(stage, eligible, rosters));
+  const union = new Set<string>();
+  for (const people of supply) for (const person of people) union.add(person);
+
+  /** Which stage currently holds each person. One person, one slot — that is the distinctness rule. */
+  const heldBy = new Map<string, number>();
+  const take = (index: number, visited: Set<string>): boolean => {
+    for (const person of supply[index] ?? NOBODY) {
+      if (visited.has(person)) continue;
+      visited.add(person);
+      const holder = heldBy.get(person);
+      // Free, or its current holder can find somebody else. The recursion is what stops an earlier stage's
+      // arbitrary choice being reported as a later stage's shortage.
+      if (holder === undefined || take(holder, visited)) {
+        heldBy.set(person, index);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  for (const [index, stage] of stages.entries()) {
+    for (let filled = 0; filled < stage.count; filled += 1) {
+      if (take(index, new Set<string>())) continue;
+      const roster = stage.teamId === null ? null : rosters.get(stage.teamId);
       return {
-        ordinal: index + 1, required, available, short: required - available, eligible, needed,
+        ordinal: index + 1,
+        required: stage.count,
+        available: filled,
+        short: stage.count - filled,
+        eligible: union.size,
+        needed,
+        team: stage.teamId === null ? null : { id: stage.teamId, name: roster?.name ?? null },
       };
     }
-    taken += required;
   }
   return null;
 }
@@ -446,6 +587,10 @@ export function shortfallFor(stages: Stages, eligible: number): Shortfall | null
  * form so the four existing callers say exactly what they said before — and taken as a parameter rather than
  * inferred from the id's prefix, because a sentence about authority decided by a string prefix is the kind of
  * claim that goes quietly wrong the first time an id space changes.
+ *
+ * A team-scoped stage adds one clause and never rewrites the sentence (#73), because the two facts are
+ * independent: the relation is what somebody has to *hold*, and the team is who they have to *be*. A reader
+ * who has seen this sentence before meets one extra clause rather than a different message.
  */
 export function describeShortfall(
   shortfall: Shortfall,
@@ -455,8 +600,12 @@ export function describeShortfall(
   const holding = scope === "mailbox"
     ? `approval.decide on mailbox ${scopeId}`
     : `org.admin on organization ${scopeId}`;
+  const inTeam = shortfall.team === null
+    ? ""
+    : ` and in team ${shortfall.team.name === null ? shortfall.team.id : `${shortfall.team.name} `
+      + `(${shortfall.team.id})`}`;
   return `stage ${shortfall.ordinal} needs ${shortfall.required} distinct approver(s) holding `
-    + `${holding}, and ${shortfall.available} remain after the earlier stages `
+    + `${holding}${inTeam}, and ${shortfall.available} remain after the earlier stages `
     + `take theirs — ${shortfall.short} short. The stages need ${shortfall.needed} distinct people in total; `
     + `${shortfall.eligible} are eligible.`;
 }
@@ -467,12 +616,16 @@ export function describeShortfall(
  * Ordered by the column rather than trusted to arrive in order, and read from the approval's own frozen copy
  * rather than from the policy: publishing a new version must not change what an approver already deciding was
  * asked for, which is the same reason #60 refused to re-evaluate in-flight sends on publication.
+ *
+ * `team_id` is part of that frozen copy for exactly the same reason the count is. What is **not** frozen is
+ * who is in the team: membership is re-read at every decision, because §7 makes authority live and a team
+ * somebody left must stop letting them decide on the next request rather than on the next send.
  */
-export async function stagesOfApproval(env: Env, approvalId: string): Promise<number[]> {
+export async function stagesOfApproval(env: Env, approvalId: string): Promise<Stage[]> {
   const { results } = await env.CATALOG.prepare(
-    "SELECT required_count FROM approval_stages WHERE approval_id = ? ORDER BY ordinal",
-  ).bind(approvalId).all<{ required_count: number }>();
-  return results.map((row) => row.required_count);
+    "SELECT required_count, team_id FROM approval_stages WHERE approval_id = ? ORDER BY ordinal",
+  ).bind(approvalId).all<{ required_count: number; team_id: string | null }>();
+  return results.map((row) => stageOf(row.required_count, row.team_id));
 }
 
 /* ---- who may decide -------------------------------------------------------------------------- */
@@ -551,11 +704,21 @@ export function planApproval(
   orgId: string,
   facts: ApprovalRequestFacts,
   deciders: ReadonlySet<string>,
+  /**
+   * The rosters of every team this stage set names (#73), resolved by the caller because it is I/O.
+   *
+   * `NO_TEAM_ROSTERS` for the four subject kinds whose stages are this Node's own decision rather than a
+   * policy's — a lift, a supervised read, an export and a domain pause all carry `teamId: null` — and it is
+   * passed **by name** rather than defaulted, so a fifth caller has to say what it means rather than inherit
+   * an answer. An empty map with a team-naming stage is the restrictive answer, not the permissive one, which
+   * is what makes getting this wrong loud instead of silent.
+   */
+  rosters: ReadonlyMap<string, TeamRoster>,
   gate?: AuditGate,
 ): ApprovalPlanned {
   const asked = [...deciders].filter((userId) => userId !== facts.actorUserId);
   const eligible = asked.length;
-  const shortfall = shortfallFor(facts.stages, eligible);
+  const shortfall = shortfallFor(facts.stages, new Set(asked), rosters);
   if (shortfall !== null) return { satisfiable: false, shortfall, eligible };
 
   const approvalId = ctx.id("apr");
@@ -591,9 +754,13 @@ export function planApproval(
         // silently counted a three-recipient send as one.
         expiryFor(facts.subjectKind, Date.parse(at))],
     ),
-    ...facts.stages.map((required, index) => gated(
-      "INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count)",
-      [ctx.id("ast"), orgId, approvalId, index + 1, required],
+    // The stage set, frozen with its team constraints. `team_id` is written explicitly rather than left to
+    // the column's NULL default, for 0021's reason about `subject_kind`: a writer that omits a column is a
+    // writer whose meaning comes from the schema rather than from the act, and "unconstrained" is a decision
+    // this stage set made rather than a value nobody supplied.
+    ...facts.stages.map((stage, index) => gated(
+      "INSERT INTO approval_stages (id, org_id, approval_id, ordinal, required_count, team_id)",
+      [ctx.id("ast"), orgId, approvalId, index + 1, stage.count, stage.teamId],
     )),
     /*
      * #61's notification, wired into #63 part B's mechanism rather than invented beside it (#61's resolution
@@ -816,8 +983,8 @@ function standingByStage(decisions: readonly DecisionRow[]): Map<number, number>
  */
 export function openStage(stages: Stages, decisions: readonly DecisionRow[]): number | null {
   const standing = standingByStage(decisions);
-  for (const [index, required] of stages.entries()) {
-    if ((standing.get(index + 1) ?? 0) < required) return index + 1;
+  for (const [index, stage] of stages.entries()) {
+    if ((standing.get(index + 1) ?? 0) < stage.count) return index + 1;
   }
   return null;
 }
@@ -985,15 +1152,50 @@ export async function decideApproval(
     });
   }
 
+  /*
+   * The open stage's **team**, re-checked live (#73).
+   *
+   * This is the evaluation half of *"checked twice"*, applied to the stage constraint rather than to the
+   * count. Publication verified the team exists; the seal verified enough of its members hold the relation;
+   * and this verifies, at the instant of the decision, that **this** person is still in it — because
+   * membership is authority and §7 makes authority live. A team somebody left has to stop letting them decide
+   * on the next request, exactly as a revoked tuple does, and the frozen stage set deliberately freezes the
+   * team's *id* and never its members.
+   *
+   * One extra query, and **only when the open stage names a team**: a stage set with no team constraint pays
+   * nothing, which is what keeps every decision this Node has ever taken exactly as expensive as it was
+   * (receipt: `approval-decision-cost.md`).
+   *
+   * The refusal is `E_APPROVER_NOT_IN_TEAM` rather than the §5C not-found above, and the asymmetry is
+   * deliberate: this caller has already been shown that the approval exists — they hold `approval.decide` on
+   * its scope and it is in their queue — so hiding the reason would leave them with a decision that silently
+   * does nothing, and a refusal that names the team is the one they can act on.
+   */
+  const constrained = stages[stage - 1]?.teamId ?? null;
+  if (constrained !== null) {
+    const roster = (await rostersOf(env, orgId, [constrained])).get(constrained);
+    if (roster === undefined || !roster.members.has(actorUserId)) {
+      throw conflict("E_APPROVER_NOT_IN_TEAM", {
+        what: `stage ${stage} of approval ${approvalId} may only be decided by a member of team `
+          + `${roster === undefined ? constrained : `${roster.name} (${constrained})`}, and you are not in it`,
+        why: "§18's separation of *duty* is a rule about which part of the organization reviews, not only "
+          + "about how many people do — so a stage naming a team is satisfied by its members and by nobody "
+          + "else. Membership is re-read here rather than frozen with the request, because authority is live",
+        fix: "another member of that team has to take this stage, or an administrator can add you to it — "
+          + "POST /api/teams/:id/members",
+      });
+    }
+  }
+
   const at = new Date(ctx.now()).toISOString();
 
   // Would this decision close the last stage? Computed from what was read, so the conflict below is
   // "we expected to complete and the database disagreed" rather than a bare zero.
   const standing = standingByStage(decisions);
   const expectedToComplete = decision === "approve"
-    && stages.every((required, index) => {
+    && stages.every((each, index) => {
       const have = (standing.get(index + 1) ?? 0) + (index + 1 === stage ? 1 : 0);
-      return have >= required;
+      return have >= each.count;
     });
 
   /**
@@ -1924,15 +2126,23 @@ export async function withdrawApproval(
   const deciders = await approversOf(env, orgId, approval.subjectKind, approval.scopeId);
   const decided = new Set(decisions.map((row) => row.decider_user_id));
   const stages = await stagesOfApproval(env, approvalId);
-  const remaining = [...deciders].filter(
+  const remaining = new Set([...deciders].filter(
     (userId) => userId !== approval.actorUserId && !decided.has(userId),
-  ).length;
+  ));
   // Counted against what is still needed, not against the whole chain: the stages the withdrawal does not
   // touch keep the decisions that already stand. The standing set is recomputed with this decision removed.
   const standing = standingByStage(decisions.filter((row) => row !== mine));
-  const outstanding = stages.map((required, index) =>
-    Math.max(0, required - (standing.get(index + 1) ?? 0)));
-  const shortfall = shortfallFor(outstanding, remaining);
+  // The outstanding demand keeps each stage's **team**, because a stage half-filled by Finance still needs
+  // the rest of it from Finance. Dropping the constraint here would report a withdrawal as survivable on the
+  // strength of people who could never take the slot — the permissive answer, in the one place that decides
+  // whether a send is withheld.
+  const outstanding: Stages = stages.map((each, index) =>
+    stageOf(Math.max(0, each.count - (standing.get(index + 1) ?? 0)), each.teamId));
+  // Only the teams still outstanding, so a withdrawal from an unconstrained stage set costs no extra query.
+  const rosters = await rostersOf(
+    env, orgId, teamsNamedBy(outstanding.filter((each) => each.count > 0)),
+  );
+  const shortfall = shortfallFor(outstanding, remaining, rosters);
 
   const at = new Date(ctx.now()).toISOString();
   // The counts the shortfall above was computed against, pinned into the predicate. See the header: the
@@ -2043,7 +2253,16 @@ export async function withdrawApproval(
 /* ---- what an approver is waiting on ---------------------------------------------------------- */
 
 export interface PendingApproval extends ApprovalRow {
-  stages: number[];
+  /**
+   * What this request asks for, per stage: the count, and the team it must come from (#73).
+   *
+   * The team is in the queue rather than only in the trail, for the reason `supervised` and `exportRequest`
+   * below are: the person being asked has to see what they are being asked for. A stage they cannot take
+   * still appears — they may hold `approval.decide` on the mailbox and be outside the team — and it is shown
+   * rather than filtered, because a request that vanished from one person's queue with no explanation is how
+   * an approval waits on somebody who never learns they are the one holding it up.
+   */
+  stages: Stage[];
   openStage: number | null;
   /** True when the caller has already decided, so the row is theirs to withdraw rather than to decide. */
   decidedByMe: boolean;

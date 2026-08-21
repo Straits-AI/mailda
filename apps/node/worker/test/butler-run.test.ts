@@ -9,6 +9,7 @@ import {
 } from "@mailda/butler-ast";
 
 import { grant, revoke } from "../src/access.ts";
+import { stageOf } from "../src/approvals.ts";
 import { maySend } from "../src/authz-read.ts";
 import { caseMailboxHeldBy, readEntity } from "../src/butler/authority.ts";
 import { EFFECT_REASONS } from "../src/butler/effects.ts";
@@ -1064,7 +1065,7 @@ describe("a send refused is the system working", () => {
       });
     }
     const policy = await createPolicyDraft(testEnv, ctx, ORG, ADMIN, {
-      name: "review outbound", outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: [2],
+      name: "review outbound", outcome: "require_approval", conditions: { mailboxId: MAILBOX }, stages: [stageOf(2)],
     });
     await publishPolicy(testEnv, ctx, ORG, ADMIN, policy.policyId);
     for (const approver of [APPROVER_A, APPROVER_B]) {

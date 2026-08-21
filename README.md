@@ -652,15 +652,76 @@ which is why writing that down would have been a claim the code contradicts on i
 is "this decision should have closed the last stage and did not", and *that* means a withdrawal, because a
 competing finalisation is refused by the predicate every statement in a decision shares rather than recorded.
 
-**One constraint was cut, with the reason recorded rather than a column added for it.** A stage was meant to be
-able to say "a member of team T". `team_members` turns out to be read-only in the whole product — three SELECTs,
-nothing writes it — and there is no `teams` table at all, so a team has no name and no existence of its own. A
-team-scoped stage would be **expressible and unusable**: no team can be created through any surface, and
-publication could not check that a named team exists, only that it currently has members. That is the same
-failure as a condition backed by no data, and a nullable `team_id` that is always NULL is that failure wearing a
-column. So the constraint is named absent, what would have to exist first is filed as an issue, and what it
-actually costs is said plainly: the team *labels* on a chain, not the chain — ordered stages of count 1 still
-give sequential review by two distinct people in a fixed order.
+**One constraint was cut, with the reason recorded rather than a column added for it — and it has now been
+built.** A stage was meant to be able to say "a member of team T". `team_members` turned out to be read-only in
+the whole product — three SELECTs, nothing writing it — and there was no `teams` table at all, so a team had no
+name and no existence of its own. A team-scoped stage would have been **expressible and unusable**: no team
+could be created through any surface, and publication could not check that a named team exists, only that it
+currently has members. That is the same failure as a condition backed by no data, and a nullable `team_id` that
+is always NULL is that failure wearing a column. So the constraint was named absent and what would have to
+exist first was filed as an issue — and the issue was then taken, which is the rest of this paragraph.
+
+**A team is now a first-class object, and the substrate and its consumer shipped together on purpose.** A
+subsystem with no consumer and a constraint with no subsystem are the two halves of one mistake, and shipping
+either alone is how one of them rots. So the same change adds a `teams` table with a name that is unique in the
+organization — because a team is granted to by id and *picked by a human reading a name*, and two teams called
+Finance is exactly how `approval.decide` reaches the wrong one — a writer for `team_members`, which had never
+had one, and the stage constraint that justified them. Membership needed nothing else in the schema, and that
+was checked rather than assumed: the UNIQUE index that stops one person joining a team twice has been there
+since the first migration, so an add is `INSERT OR IGNORE` behind an audit gate and a replay is a no-op that
+records nothing rather than a second entry claiming a second act.
+
+**Membership is authority, and that is what decided both the audit question and the Butler one.** A principal
+authorizes as themselves *plus every team they belong to*, so a relation held by a team is held by every member
+— which means adding somebody to a team can hand them a mailbox's contents and a vote on somebody else's send
+with **no access-granted entry anywhere**. Un-audited, an administrator grants a team once, in the trail, and
+then changes who that grant reaches for ever, in silence. So `team.member_added` and `team.member_removed` are
+recorded, keyed on the *person* so "what authority did this person get, and when" stays one filter across both
+doors into it; the removal carries how many members are left, because emptying a team is what makes a rule
+unsatisfiable and that consequence is not otherwise attributable to an act. Creating and renaming are audited
+too, on their own merits and not by association: a team row has no neighbouring entry to answer for it the way
+a policy's shell has, and a rename changes what the next administrator believes they are granting to. And a
+**Butler cannot be put in a team** — enforced by requiring the subject to be a row in `users`, which is a join
+that has to succeed rather than a test on the shape of an id, because a capability ceiling intersected with a
+set that moves whenever somebody edits a team is not a ceiling.
+
+**The constraint narrows and cannot widen, which is the property that let it exist at all.** The eligible set
+for a stage is the `approval.decide` holders on the mailbox *intersected with* the named team's members, minus
+the actor, minus everybody who has already decided — an intersection only ever removes people, so naming a team
+can never make somebody eligible who holds no relation. A team id naming nothing resolves to **nobody** rather
+than to everybody, which is the restrictive answer for the unclassified input. Publication verifies the team
+**exists**, which is the check that was impossible before there was a row to look for, and it is a different
+refusal from "that team is empty" because a misspelling and a quiet week need opposite answers.
+
+**A team that is emptied reaches the same answer as authority being revoked, because it is the same thing.**
+Removing the last member of a team a live policy names is permitted — refusing it would put a policy in charge
+of who may leave a team, and would fail in the direction that leaves somebody in a team they should not be in.
+What happens instead is what already happens when the last `approval.decide` holder loses the relation: the
+next send is `withheld` with `approval_unsatisfiable`, naming which stage, which team and how many short,
+rather than parking in a state that reads as waiting for somebody. And it is re-checked a third time at the
+decision itself: the request freezes the team's **id** and deliberately not its members, so somebody who leaves
+a team stops being able to decide on their next request rather than on the next send.
+
+**One thing about the fold needed deciding and is refused rather than guessed.** Two live rules that both gate
+one send are folded by taking the greater count at each ordinal — which is the existing conflict resolution
+reused. Teams have no greater-of: "a member of Finance and a member of Legal" at one ordinal is a conjunction
+one stage cannot carry, and picking either would silently drop half of a rule somebody wrote. So publication
+refuses that pair, and only when the two rules could **provably both match one send** — Finance approving one
+mailbox and Legal approving another is untouched, because a tripwire a good policy trips is a wrong tripwire.
+The fold raises if it ever meets the conflict anyway, so the rule is enforced at both ends instead of claimed
+at one.
+
+**What it cost, measured rather than counted.** The receipt for an approval decision had already named this
+change in its own staleness clause and reserved the headroom for it: *"the eligible set gains a narrowing
+constraint — a team-scoped stage is the one #61 named absent."* It fired, the headroom was spent as predicted,
+and no number moved. One query, `teams LEFT JOIN team_members`, spent at the seal, at the decision, at the
+withdrawal and at publication — and **only where a stage actually names a team**: a send gated by an ordinary
+policy asks nothing, because the resolver short-circuits an empty request before it prepares a statement. A
+team-scoped seal is exactly one operation more than a team-less one, measured as a difference in one run rather
+than against a figure written down last week. On the **authorization** path it costs nothing at all, and that
+was measured too rather than argued from the fact that nothing there reads the new table: the same three checks,
+before and after every team in the benchmark corpus becomes a real object, read identical rows and identical
+queries.
 
 **The cost was owed as a receipt and came back one third of the estimate.** The resolution counted "at most
 three queries" by reading the source, and said so in as many words — *"counted by reading, not measured, and
@@ -1440,6 +1501,8 @@ docs/receipts/                         every number, with its measurement
 docs/onboarding-journey.md             where the first-run experience breaks
 docs/authentication.md                 sign-in, tokens, key rotation, client lifecycle
 docs/approvals.md                      stages, eligibility, the races, the dispatch recheck, what is absent
+docs/teams.md                          the team as an object, membership as authority, what is audited,
+                                       why there is no delete, and what a team-scoped stage costs
 docs/supervised-access.md              matters, the time-boxed grant, per-act recording, the notice
 docs/ediscovery-export.md              the two export permissions, the bound, the manifest, the boundary
 docs/send-breakers.md                  the three windowed rates, the domain pause, sized versus measured

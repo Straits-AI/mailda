@@ -3,7 +3,9 @@ import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
 
 import { assertObject } from "./access.ts";
-import { describeShortfall, planApproval, type Stages } from "./approvals.ts";
+import {
+  describeShortfall, NO_TEAM_ROSTERS, planApproval, stageOf, type Stages,
+} from "./approvals.ts";
 import { auditedBatch } from "./audit.ts";
 import { mayExportBulk, type Principal } from "./authz-read.ts";
 import { decidersOf } from "./deciders.ts";
@@ -121,7 +123,7 @@ const TERMINAL_GATE = (orgId: string, exportId: string) => ({
  * for it by name for an export. A stage set rather than a bare count, so if an export ever needs counsel to
  * sign before the data-protection officer it is `[1, 1]` with nothing else changing.
  */
-export const EXPORT_STAGES: Stages = [2];
+export const EXPORT_STAGES: Stages = [stageOf(2)];
 
 /** How many messages one invocation copies before checkpointing. See `docs/receipts/ediscovery-export-cost.md`. */
 const PAGE_SIZE = BUDGETS["export.page_size"];
@@ -196,7 +198,7 @@ export interface ExportRequested {
   maxMessages: number;
   destination: string;
   requestedAt: string;
-  stages: number[];
+  stages: Stages;
   /** Distinct people who could decide it, the requester already excluded. */
   eligible: number;
 }
@@ -328,7 +330,8 @@ export async function requestExport(
     // rather than the predicate text, because the hash is the bound object §18 names and the text is on the
     // row for anybody who wants to read it.
     detail: { exportId, predicateSha256: sha256, maxMessages, matterId: input.matterId, destination },
-  }, deciders);
+  // `NO_TEAM_ROSTERS`: see `requestHoldLift` — an export's stages name no team (#73).
+  }, deciders, NO_TEAM_ROSTERS);
 
   if (!planned.satisfiable) {
     // Refused before anything is written, for `requestSupervisedRead`'s reason: an open request nobody can

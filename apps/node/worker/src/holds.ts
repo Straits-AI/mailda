@@ -1,7 +1,9 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
-import { describeShortfall, planApproval, type Stages } from "./approvals.ts";
+import {
+  describeShortfall, NO_TEAM_ROSTERS, planApproval, stageOf, type Stages,
+} from "./approvals.ts";
 import { decidersOf } from "./deciders.ts";
 import { audit, auditedBatch } from "./audit.ts";
 import { conflict, notFound, unprocessable } from "./errors.ts";
@@ -447,7 +449,7 @@ export async function holdsForReport(env: Env, orgId: string): Promise<HoldRepor
  * parallel dual control, and if lifting ever needed a sequence it would be `[1, 1]` with nothing else
  * changing.
  */
-export const LIFT_STAGES: Stages = [2];
+export const LIFT_STAGES: Stages = [stageOf(2)];
 
 export interface HoldLiftRequested {
   liftId: string;
@@ -456,7 +458,7 @@ export interface HoldLiftRequested {
   mailboxId: string;
   reason: string;
   /** The stage set the request was opened with, frozen at request time. */
-  stages: number[];
+  stages: Stages;
   /** Distinct people who could decide it, the requester already excluded. */
   eligible: number;
 }
@@ -558,7 +560,10 @@ export async function requestHoldLift(
     actorUserId,
     stages: LIFT_STAGES,
     detail: { holdId, liftId, reason: stated },
-  }, deciders, gate);
+  // `NO_TEAM_ROSTERS`: a lift's stage set is this Node's own decision and names no team (#73), so there is
+  // nothing to resolve. Passed by name rather than defaulted, so a stage set that ever did name one could not
+  // inherit an empty map by accident — and an empty map is the restrictive answer in any case.
+  }, deciders, NO_TEAM_ROSTERS, gate);
 
   if (!planned.satisfiable) {
     // Refused before anything is written, because an open request nobody can complete is worse than a

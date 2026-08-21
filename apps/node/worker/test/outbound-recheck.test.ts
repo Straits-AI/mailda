@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
-import { decideApproval, expiryFor, pendingApprovals, withdrawApproval } from "../src/approvals.ts";
+import {
+  decideApproval, expiryFor, pendingApprovals, stageOf, withdrawApproval,
+} from "../src/approvals.ts";
 import { BREAKER_REASONS } from "../src/breakers.ts";
 import { BUTLER_REASONS } from "../src/butler/gate.ts";
 import { runDoctor } from "../src/doctor.ts";
@@ -116,7 +118,8 @@ const composition = {
 async function published(name: string, outcome: string, stages?: number[]): Promise<void> {
   const ctx = atTime(SEALED_AT - 1000);
   const draft = await createPolicyDraft(testEnv, ctx, ORG, ADMIN, {
-    name, outcome, conditions: { mailboxId: MAILBOX }, ...(stages === undefined ? {} : { stages }),
+    name, outcome, conditions: { mailboxId: MAILBOX },
+    ...(stages === undefined ? {} : { stages: stages.map((count) => stageOf(count)) }),
   });
   await publishPolicy(testEnv, ctx, ORG, ADMIN, draft.policyId);
 }

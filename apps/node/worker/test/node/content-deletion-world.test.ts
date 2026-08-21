@@ -169,6 +169,18 @@ const SITES: Site[] = [
       + "database-level delete ban would be a tripwire an organization-deletion path is entitled to hit.",
   },
   {
+    file: "src/teams.ts",
+    target: "team_members",
+    content: false,
+    why:
+      "A membership, removed by an administrator (#73). It carries no mail and no message: it is a person and "
+      + "a team, and what the row conferred was **authority**, not evidence — so removing it withdraws access "
+      + "rather than destroying a record of anything. The act itself is preserved where records belong: "
+      + "`team.member_removed` rides in the same transaction, names the person, the team and how many members "
+      + "are left, and audit entries are never trimmed. This is `relationship_tuples` two entries up, reached "
+      + "through the other door into the same authority.",
+  },
+  {
     file: "src/merge.ts",
     target: "cases",
     content: true,

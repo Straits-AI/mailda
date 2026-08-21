@@ -5,7 +5,7 @@ import { createSystemCtx, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
 
-import { decideApproval, pendingApprovals } from "../src/approvals.ts";
+import { decideApproval, pendingApprovals, stageOf } from "../src/approvals.ts";
 import { verifyChain } from "../src/audit.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { deleteDraft, saveDraft } from "../src/drafts.ts";
@@ -428,7 +428,7 @@ describe("lifting a hold takes two people, a reason, and somebody who did not as
     const saved = await saveDraft(testEnv, ctx, ORG, ANA, null, composition);
     const hold = await placeHold(testEnv, ctx, ORG, ADMIN, { mailboxId: HELD_MAILBOX });
     const lift = await requestHoldLift(testEnv, ctx, ORG, ADMIN, hold.id, REASON);
-    expect(lift.stages).toEqual([2]);
+    expect(lift.stages).toEqual([stageOf(2)]);
     // Two of the three people on this mailbox hold approval.decide, and the requester is not one of them.
     expect(lift.eligible).toBe(2);
 
@@ -548,7 +548,7 @@ describe("lifting a hold takes two people, a reason, and somebody who did not as
     // The reason where a reader meets it. Somebody asked to re-permit destruction has to see what they are
     // agreeing to, and the audit trail is where a decision is accounted for afterwards rather than before.
     expect(queue[0]!.reason).toBe(REASON);
-    expect(queue[0]!.stages).toEqual([2]);
+    expect(queue[0]!.stages).toEqual([stageOf(2)]);
 
     // And not in the requester's own queue, because they cannot decide it.
     expect(await pendingApprovals(testEnv, ORG, ADMIN)).toEqual([]);
