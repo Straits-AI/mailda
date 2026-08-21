@@ -23,7 +23,7 @@ import { closeMatter, listMatters, openMatter } from "./matters.ts";
 import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
 import { notificationsFor } from "./notifications.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
-import { placeHold, requestHoldLift } from "./holds.ts";
+import { holdsForReport, placeHold, requestHoldLift } from "./holds.ts";
 import { liftDomainPause, requestDomainPause } from "./domain-pause.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
@@ -884,6 +884,26 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * approvers (`E_HOLD_LIFT_UNSATISFIABLE`). All of them are `CallerError`s rendered centrally with their
      * four parts.
      */
+    /**
+     * Every hold in force (#64, #81).
+     *
+     * `holdsForReport` was written for `doctor` and had no route, so a hold could be **placed** and
+     * **lifted by id** and never listed — an administrator who placed one last month had no way to find its
+     * id again, and no way to see what their organization is preserving. A legal hold nobody can enumerate
+     * is one nobody can answer a court about, which is the whole point of having it.
+     *
+     * `org.admin`, answering 404: what is under hold names mailboxes and date ranges, and §7 treats the fact
+     * of an investigation as disclosable only to the people running it.
+     */
+    if (url.pathname === "/api/holds" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      return Response.json({ holds: await holdsForReport(env, who.orgId) });
+    }
+
     if (url.pathname === "/api/holds" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

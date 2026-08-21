@@ -17,6 +17,7 @@ import { Approvals } from "./screens/approvals.tsx";
 import { Policies } from "./screens/policies.tsx";
 import { People } from "./screens/people.tsx";
 import { Limits } from "./screens/limits.tsx";
+import { Matters } from "./screens/matters.tsx";
 import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
 
 /**
@@ -33,7 +34,7 @@ import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
  * ## Routing is code-based on purpose
  *
  * TanStack Router's file-based routing generates a route tree and needs a watcher and a generated file in
- * the tree. Eleven routes do not earn that, and a generated file nobody reads is the shape this repository
+ * the tree. Twelve routes do not earn that, and a generated file nobody reads is the shape this repository
  * has twice been bitten by. The routes are below, where a reader can count them.
  *
  * There is no route-level data loading. Every read is authorization-filtered per request (ADR 11), so a
@@ -71,6 +72,7 @@ const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
   "/approvals": Approvals,
   "/rules": Policies,
   "/people": People,
+  "/matters": Matters,
   "/butlers": Butlers,
   "/limits": Limits,
   "/outbox": Outbox,

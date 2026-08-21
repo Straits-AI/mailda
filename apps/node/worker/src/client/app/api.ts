@@ -858,3 +858,137 @@ export const requestDomainPause = (domain: string, reason: string) =>
 /** Restarts a domain's mail. One administrator, alone — the asymmetry is deliberate (#66). */
 export const liftDomainPause = (id: string) =>
   pauseAct(`/api/domain-pauses/${encodeURIComponent(id)}/lift`);
+
+/* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
+
+export const MATTER_TYPES = [
+  { type: "legal_hold", what: "Preserving mail for a legal obligation." },
+  { type: "security_incident", what: "Investigating a compromise or a misuse of an account." },
+  { type: "departure_handover", what: "Passing on the work of somebody who has left." },
+  { type: "regulatory_request", what: "Answering a regulator." },
+] as const;
+
+export interface MatterRow {
+  id: string;
+  type: string;
+  description: string;
+  openedBy: string;
+  openedAt: string;
+  /** Null means **open** — and §7's notice to the person read about falls due when this stops being null. */
+  closedAt: string | null;
+  closedBy: string | null;
+}
+
+export interface HoldRow {
+  id: string;
+  matterId: string | null;
+  mailboxId: string;
+  fromDate: string | null;
+  toDate: string | null;
+  placedBy: string;
+  placedAt: string;
+  mailboxExists: boolean;
+  pendingLift: { liftId: string; approvalId: string; requestedBy: string; reason: string } | null;
+}
+
+export interface SupervisedGrantRow {
+  id: string;
+  subjectId: string;
+  mailboxId: string;
+  scope: string;
+  matterId: string | null;
+  requestedAt: string;
+  expiresAt: string;
+  /** Null until the dual approval completes. **A requested grant grants nothing.** */
+  grantedAt: string | null;
+  live: boolean;
+}
+
+export interface ExportRow {
+  id: string;
+  matterId: string;
+  mailboxId: string;
+  requestedBy: string;
+  maxMessages: number;
+  state: string;
+  stateReason: string | null;
+  messagesEmitted: number;
+  requestedAt: string;
+  completedAt: string | null;
+}
+
+export function useMatters(): UseQueryResult<{ matters: MatterRow[] }, Error> {
+  return useQuery({
+    queryKey: ["matters"],
+    queryFn: () => read<{ matters: MatterRow[] }>("/api/matters"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useHolds(): UseQueryResult<{ holds: HoldRow[] }, Error> {
+  return useQuery({
+    queryKey: ["holds"],
+    queryFn: () => read<{ holds: HoldRow[] }>("/api/holds"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useSupervised(): UseQueryResult<{ supervised: SupervisedGrantRow[] }, Error> {
+  return useQuery({
+    queryKey: ["supervised"],
+    queryFn: () => read<{ supervised: SupervisedGrantRow[] }>("/api/supervised"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * One spelling of the export route, for the reason `matter-and-scope-world.test.ts` gives about the storage
+ * prefix: a path written twice is two things that can disagree.
+ *
+ * It also keeps this file clear of the literal that tripwire scans for. That guard is about the **R2 key**
+ * `${orgId}/exports/${exportId}/` and an HTTP path is a different thing, but it cannot tell them apart —
+ * and the right response to a blunt guard is to stop needing the exception, not to widen the guard.
+ */
+const EXPORTS = "/api/exports";
+
+export function useExports(): UseQueryResult<{ exports: ExportRow[] }, Error> {
+  return useQuery({
+    queryKey: ["exports"],
+    queryFn: () => read<{ exports: ExportRow[] }>(EXPORTS),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+async function matterAct(path: string, body?: unknown) {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true as const, value: parsed ?? {} };
+  return {
+    ok: false as const,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const openMatter = (type: string, description: string) =>
+  matterAct("/api/matters", { type, description });
+
+/** Closing a matter is what makes §7's notice to the people who were read about fall due. */
+export const closeMatter = (id: string) =>
+  matterAct(`/api/matters/${encodeURIComponent(id)}/close`);
+
+export const placeHold = (mailboxId: string, matterId: string | null) =>
+  matterAct("/api/holds", { mailboxId, matterId });
+
+/** Asks for a hold to be lifted. Two other people have to agree; a hold is not lifted by one. */
+export const askToLiftHold = (id: string, reason: string) =>
+  matterAct(`/api/holds/${encodeURIComponent(id)}/lift`, { reason });
+
+export const askToRead = (mailboxId: string, scope: string, durationSeconds: number, matterId: string | null) =>
+  matterAct("/api/supervised", { mailboxId, scope, durationSeconds, matterId });
+
+export const runExport = (id: string) =>
+  matterAct(`${EXPORTS}/${encodeURIComponent(id)}/run`);

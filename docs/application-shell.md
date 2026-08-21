@@ -246,8 +246,27 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Eleven routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/butlers`, `/limits`, `/outbox`,
-`/audit`, `/log`, `/doctor`.
+Twelve routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/limits`,
+`/outbox`, `/audit`, `/log`, `/doctor`. With `/matters`, every API this Node exposes is reachable by a person.
+
+### `/matters` (#63, #64, #65, #81)
+
+Four things on one screen because they are one sequence, not four features: something happens, somebody opens
+a **matter**, mail is **held** so it cannot be deleted, somebody is allowed to **read** a colleague's mailbox
+for a bounded time, and a **copy** may be taken out. Each step cites the one before it, and splitting them
+across four screens would make an investigator navigate a relationship the data already has.
+
+The matter is first because it is the thing that can **close**, and §7 requires telling the employee *after*
+the matter closes. That is why `matters` is an object rather than a description field on a grant, and why
+this screen is organised around it: the close button is the obligation, on the row where somebody meets it.
+
+**Nothing here reports success it has not had.** A hold lift needs two other people, a supervised read needs
+two approvals neither of them the requester, an export is approved and then run. Every act says what it
+*asked for*. An investigator who believes a grant is live will act as though they can read, and they cannot.
+
+`GET /api/holds` was added for it: `holdsForReport` was written for `doctor` and had no route, so a hold
+could be placed and lifted **by id** and never listed. An administrator who placed one last month had no way
+to find its id again — and a legal hold nobody can enumerate is one nobody can answer a court about.
 
 ### `/limits` (#66, #81)
 

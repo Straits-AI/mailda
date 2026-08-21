@@ -446,6 +446,11 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .limits-pauses h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .limits-ask { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin: 1rem 0; }
 .limits-ask .field-row { margin: 0; }
+
+/* Matters (#81): four coupled things down one page, each a block with its own heading. */
+.matter-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.matter-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.matter-block > p { margin: 0 0 .6rem; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }
