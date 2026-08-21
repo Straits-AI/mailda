@@ -61,6 +61,52 @@ const origin = process.argv[2] ?? "http://127.0.0.1:8787";
  */
 
 const ROUTES = APP_ROUTES;
+
+/**
+ * The states that only exist after somebody clicks something.
+ *
+ * `ROUTES` above audits what renders on load, which is every screen and **none of the forms**. The composer
+ * dock, the Butler editor, the resume form and the rule editor are the largest interactive surfaces in this
+ * product and they were never in the DOM when axe looked (#82).
+ *
+ * That matters here more than it would elsewhere, because every defect axe has caught in this project was in
+ * an interactive control rendered with real content: `aria-allowed-attr` on a listitem, `nested-interactive`
+ * on the message list — which "surfaced only once the inbox had a message in it" — and `empty-table-header`
+ * on the Butler screen's action column. Opened states are strictly more of that.
+ *
+ * Each entry is a route, a name, and what to do once the shell has mounted. A state that **fails to open** is
+ * reported as `COULD NOT OPEN` and counted as unchecked, not as passing: the whole reason the route sweep
+ * distinguishes `SKIPPED` is that a screen nobody looked at must not read as a clean one.
+ *
+ * They are best-effort about content — a Node with no paused Butler has no resume form — so a state that
+ * cannot be reached on this Node says so and moves on rather than failing the run. Seed a Node with content
+ * on every screen if you want the whole list.
+ */
+const STATES = [
+  ["/", "composer — reply", async (page) => {
+    await page.locator(".message-row").first().click();
+    await page.getByRole("button", { name: "reply" }).click();
+    await page.waitForSelector(".composer-dock", { timeout: 10_000 });
+  }],
+  ["/", "composer — new message", async (page) => {
+    await page.getByRole("button", { name: "new message" }).click();
+    await page.waitForSelector(".composer-dock", { timeout: 10_000 });
+  }],
+  ["/rules", "rule editor", async (page) => {
+    await page.getByRole("button", { name: "new rule" }).click();
+    await page.waitForSelector(".policy-editor", { timeout: 10_000 });
+  }],
+  ["/butlers", "butler editor", async (page) => {
+    await page.getByRole("button", { name: "open" }).first().click();
+    await page.waitForSelector(".butler-source", { timeout: 10_000 });
+  }],
+  ["/butlers", "butler resume form", async (page) => {
+    await page.waitForSelector(".butler-pause", { timeout: 10_000 });
+  }],
+  ["/queue", "a case open", async (page) => {
+    await page.locator("tbody tr").first().click();
+  }],
+];
 const THEMES = /** @type {const} */ (["dark", "light"]);
 /** The gate. ADR 30 names WCAG 2.2 AA, and only these can fail the run. */
 const AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -96,49 +142,89 @@ let incomplete = 0;
 let advisories = 0;
 let checked = 0;
 
+/**
+ * Runs both tag sets over whatever is currently rendered, and reports it.
+ *
+ * Shared by the route sweep and the state sweep so the two cannot drift into auditing different things —
+ * which would be the worse half of having two sweeps at all.
+ */
+async function audit(page, label) {
+  await page.addScriptTag({ content: AXE });
+  const aa = await page.evaluate(
+    `axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(AA_TAGS)} } })`,
+  );
+  const advisory = await page.evaluate(
+    `axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(ADVISORY_TAGS)} } })`,
+  );
+
+  checked += 1;
+  violations += aa.violations.length;
+  incomplete += aa.incomplete.length;
+  advisories += advisory.violations.length;
+
+  const suffix = `${aa.passes.length} passed, ${aa.incomplete.length} unproven, ${advisory.violations.length} advisory`;
+  console.log(aa.violations.length === 0
+    ? `${label}  ok    ${suffix}`
+    : `${label}  ${aa.violations.length} AA violation(s), ${suffix}`);
+  for (const violation of [...aa.violations, ...advisory.violations]) {
+    const gate = aa.violations.includes(violation) ? "AA" : "advisory";
+    console.log(`    [${gate}/${violation.impact}] ${violation.id} — ${violation.help} (${violation.nodes.length} node(s))`);
+    console.log(`        ${violation.nodes[0]?.target.join(" ")}`);
+  }
+}
+
+/** Opens a route and waits for the application to exist. Null when the shell never mounted. */
+async function open(theme, route) {
+  const page = await context.newPage();
+  await page.emulateMedia({ colorScheme: theme });
+  await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded" });
+  // The shell mounts after the session module resolves, so a snapshot taken on DOMContentLoaded would
+  // measure an empty div. Waiting for the rail is waiting for the application to exist.
+  const mounted = await page
+    .waitForSelector(".app-shell", { timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (mounted) return page;
+  await page.close();
+  return null;
+}
+
 for (const theme of THEMES) {
   for (const route of ROUTES) {
-    const page = await context.newPage();
-    await page.emulateMedia({ colorScheme: theme });
-    await page.goto(`${origin}${route}`, { waitUntil: "domcontentloaded" });
-    // The shell mounts after the session module resolves, so a snapshot taken on DOMContentLoaded would
-    // measure an empty div. Waiting for the rail is waiting for the application to exist.
-    const mounted = await page
-      .waitForSelector(".app-shell", { timeout: 15_000 })
-      .then(() => true)
-      .catch(() => false);
+    const page = await open(theme, route);
+    if (page === null) {
+      console.log(`${theme.padEnd(5)} ${route.padEnd(11)}  SKIPPED — the shell did not mount (signed in?)`);
+      continue;
+    }
+    await audit(page, `${theme.padEnd(5)} ${route.padEnd(11)}`);
+    await page.close();
+  }
+}
 
-    if (!mounted) {
-      console.log(`${theme.padEnd(5)} ${route.padEnd(9)}  SKIPPED — the shell did not mount (signed in?)`);
+let unopened = 0;
+for (const theme of THEMES) {
+  for (const [route, name, reach] of STATES) {
+    const page = await open(theme, route);
+    if (page === null) {
+      console.log(`${theme.padEnd(5)} ${name.padEnd(26)} SKIPPED — the shell did not mount`);
+      continue;
+    }
+    try {
+      await reach(page);
+      await page.waitForTimeout(300);
+    } catch (error) {
+      /*
+       * Counted, and reported as its own thing. A state that did not open is **unaudited**, and letting it
+       * read as absent is how the interactive surfaces went unchecked in the first place. It does not fail
+       * the run, because a Node with no paused Butler genuinely has no resume form — the count at the end is
+       * what tells an operator how much of the list their Node could actually show.
+       */
+      unopened += 1;
+      console.log(`${theme.padEnd(5)} ${name.padEnd(26)} COULD NOT OPEN — ${String(error).split("\n")[0].slice(0, 80)}`);
       await page.close();
       continue;
     }
-
-    await page.addScriptTag({ content: AXE });
-    const aa = await page.evaluate(
-      `axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(AA_TAGS)} } })`,
-    );
-    const advisory = await page.evaluate(
-      `axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(ADVISORY_TAGS)} } })`,
-    );
-
-    checked += 1;
-    violations += aa.violations.length;
-    incomplete += aa.incomplete.length;
-    advisories += advisory.violations.length;
-
-    const head = `${theme.padEnd(5)} ${route.padEnd(9)}`;
-    const suffix = `${aa.passes.length} passed, ${aa.incomplete.length} unproven, ${advisory.violations.length} advisory`;
-    if (aa.violations.length === 0) {
-      console.log(`${head}  ok    ${suffix}`);
-    } else {
-      console.log(`${head}  ${aa.violations.length} AA violation(s), ${suffix}`);
-    }
-    for (const violation of [...aa.violations, ...advisory.violations]) {
-      const gate = aa.violations.includes(violation) ? "AA" : "advisory";
-      console.log(`    [${gate}/${violation.impact}] ${violation.id} — ${violation.help} (${violation.nodes.length} node(s))`);
-      console.log(`        ${violation.nodes[0]?.target.join(" ")}`);
-    }
+    await audit(page, `${theme.padEnd(5)} ${name.padEnd(26)}`);
     await page.close();
   }
 }
@@ -152,8 +238,8 @@ if (checked === 0) {
   // The unproven count is printed rather than swallowed. It is the number that made an earlier run read
   // as clean while examining almost nothing.
   console.log(
-    `\n${checked} screen(s) checked · ${violations} AA violation(s) · ${incomplete} unproven · ` +
-    `${advisories} advisory`,
+    `\n${checked} view(s) checked · ${violations} AA violation(s) · ${incomplete} unproven · ` +
+    `${advisories} advisory` + (unopened > 0 ? ` · ${unopened} state(s) could not be opened` : ""),
   );
   console.log("Contrast is not measured here — it is computed in test/node/contrast.test.ts. See ADR 30.");
   process.exitCode = violations === 0 ? 0 : 1;
