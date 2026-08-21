@@ -99,9 +99,20 @@ export class OutboxSweeper extends DurableObject<Env> {
    */
   async schedule(delayMs = CLAIM_STALE_MS): Promise<void> {
     const { createSystemCtx } = await import("@mailda/runtime");
+    const wanted = createSystemCtx().now() + delayMs;
     const existing = await this.ctx.storage.getAlarm();
-    if (existing === null) {
-      await this.ctx.storage.setAlarm(createSystemCtx().now() + delayMs);
+    /*
+     * The **earlier** of the two, not "only when none is pending".
+     *
+     * That was sound while every alarm was five seconds out, and stopped being sound the moment the sweep
+     * began parking itself on a send's `release_at` below: a Node holding a message for an hour has an alarm
+     * an hour away, and under the old rule an arrival thirty seconds later found an alarm pending and set
+     * nothing — so inbound publication waited for the outbound hold window. Taking the minimum keeps the
+     * idempotence the header claims (arming repeatedly still costs nothing) without letting a distant alarm
+     * absorb a near one.
+     */
+    if (existing === null || wanted < existing) {
+      await this.ctx.storage.setAlarm(wanted);
     }
   }
 
@@ -117,21 +128,45 @@ export class OutboxSweeper extends DurableObject<Env> {
     // Outbound too (ADR 39). The hold window closes on a wall clock, so a Node that was asleep when
     // it expired still sends — the same alarm machinery #9 built for inbound publication, rather than
     // a second scheduler with its own failure modes.
+    let outboundNext: number | null = null;
     try {
-      const { dispatchDue } = await import("./outbound/dispatch.ts");
+      const { dispatchDue, nextDispatchAt } = await import("./outbound/dispatch.ts");
       const claimed = await this.env.CATALOG.prepare(
         "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
       ).first<{ org_id: string }>();
-      if (claimed?.org_id != null) await dispatchDue(this.env, clock, claimed.org_id);
+      if (claimed?.org_id != null) {
+        await dispatchDue(this.env, clock, claimed.org_id);
+        // **After** the sweep, not before: what is still waiting once this pass has done what it can is the
+        // thing the next alarm is for. Asked before, a send dispatched in this very pass would have re-armed
+        // the alarm to chase itself.
+        outboundNext = await nextDispatchAt(this.env, clock, claimed.org_id);
+      }
     } catch {
       // A dispatch failure must not stop the inbound sweep. Every send stays in a state that
       // describes it, and the next alarm tries again.
     }
 
-    // Re-arm while work remains, so a backlog drains rather than waiting for the next write.
+    /*
+     * Re-arm while work remains, so a backlog drains rather than waiting for the next write.
+     *
+     * **`outboundNext` is the half that was missing**, and the sentence eleven lines above was false without
+     * it. The re-arm consulted `pendingEvents` alone — the *inbound* outbox — so a Node with nothing arriving
+     * let its alarm lapse while a sealed send sat inside its hold window, and nothing ever woke to send it.
+     * What actually moved such a send was an unrelated poke: `armSweeper` runs on inbound acceptance and on
+     * serving a page, so the mail left when somebody happened to look at the screen. Measured on the live
+     * Node before this changed — `held`, `attempts = 0`, `release_at` long past, until a page load.
+     *
+     * The two arms are combined by taking the **earlier**, because they are answers to different questions
+     * and the alarm can only be one instant: inbound work wants a short retry, an outbound hold window wants
+     * a wake at its end, and whichever comes first is when there is something to do. Sleeping exactly until
+     * `release_at` rather than polling is what keeps a long hold window free.
+     */
     const remaining = await pendingEvents(this.env, clock, 1);
-    if (remaining.length > 0 || drained > 0) {
-      await this.ctx.storage.setAlarm(clock.now() + CLAIM_STALE_MS);
-    }
+    const inboundNext = remaining.length > 0 || drained > 0 ? clock.now() + CLAIM_STALE_MS : null;
+    const next = inboundNext === null ? outboundNext
+      : outboundNext === null ? inboundNext
+        : Math.min(inboundNext, outboundNext);
+    // Never in the past: a due-now send reports `at`, and an alarm set behind the clock is a busy loop.
+    if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, clock.now() + CLAIM_STALE_MS));
   }
 }

@@ -286,6 +286,51 @@ export async function dispatchDue(
 }
 
 /**
+ * When the sweeper next has outbound work, as an epoch in milliseconds — or `null` for *"nothing waiting"*.
+ *
+ * **This exists because `OutboxSweeper`'s alarm re-armed on inbound work only, and its own comment claimed
+ * otherwise**: *"the hold window closes on a wall clock, so a Node that was asleep when it expired still
+ * sends"*. Nothing woke it. A sealed send therefore sat `held` until something unrelated poked the Node — an
+ * inbound message, or a person loading a page — which was measured against the live Node: a send with
+ * `release_at` already passed stayed `held` with `attempts = 0` for over a minute, and moved to
+ * `handed_over` within seconds of a page load. On an idle Node the mail simply did not leave.
+ *
+ * It is **here** rather than in `outbox.ts` for the reason `movableNow` exists at all: what counts as a send
+ * the sweeper must wake for is the dispatcher's own definition, and a second copy in the alarm is how the two
+ * drift apart. `due_now` is `movableNow` itself, unchanged and unduplicated.
+ *
+ * Two arms, and the second is the one the alarm could not have guessed:
+ *
+ *   - **`due_now`** — anything movable this instant, including a `throttled` send and an `awaiting` one whose
+ *     rate breaker has cleared. Returns `at` so the caller wakes immediately, because a send that is due and
+ *     was not dispatched means the last sweep hit its limit or an error, and the answer to both is to go again.
+ *   - **the earliest future `release_at`** — a send still inside its hold window. The alarm can sleep until
+ *     exactly then rather than polling, which is what makes a long window free instead of costly.
+ *
+ * `awaiting` on a **policy** gate is deliberately absent from both arms, and that is not an omission: those
+ * clear by somebody deciding, not by time passing, so there is no instant to wake at. The act that settles
+ * them is what arms the sweeper.
+ */
+export async function nextDispatchAt(env: Env, ctx: Ctx, orgId: string): Promise<number | null> {
+  const at = ctx.now();
+  const now = new Date(at).toISOString();
+  const row = await env.CATALOG.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM send_manifests WHERE org_id = ? AND ${movableNow("")}) AS due_now,
+       (SELECT MIN(release_at) FROM send_manifests
+         WHERE org_id = ? AND state = 'held' AND release_at > ?) AS next_at`,
+  ).bind(orgId, ...movableParams(now), orgId, now).first<{ due_now: number; next_at: string | null }>();
+
+  if (row === null) return null;
+  if (row.due_now > 0) return at;
+  if (row.next_at === null) return null;
+  const parsed = Date.parse(row.next_at);
+  // A `release_at` that does not parse would otherwise arm the alarm at `NaN`, which silently never fires —
+  // the same shape of failure this whole function exists to remove. Wake now and let the sweep decide.
+  return Number.isNaN(parsed) ? at : parsed;
+}
+
+/**
  * One manifest. Claims it first, so two concurrent dispatchers cannot both submit it — the same
  * conditional-update pattern the claim flow and the ingress receipt use.
  */

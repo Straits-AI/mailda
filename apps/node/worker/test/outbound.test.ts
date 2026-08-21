@@ -7,7 +7,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import { getEvidence, putEvidence } from "../src/evidence-store.ts";
 import {
-  cancelSend, dailySendState, dispatchDue, dispatchOne, isAutoRetryable,
+  cancelSend, dailySendState, dispatchDue, dispatchOne, isAutoRetryable, nextDispatchAt,
 } from "../src/outbound/dispatch.ts";
 import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
 import { HeaderBlock, normalizeAddress, safeFilename } from "../src/outbound/headers.ts";
@@ -138,6 +138,39 @@ describe("sealing a manifest (ADR 35)", () => {
     await testEnv.CATALOG.prepare("UPDATE mailboxes SET hold_window_seconds = 0 WHERE id = ?").bind(MAILBOX).run();
     const immediate = await sealManifest(testEnv, atTime(at), ORG, composition);
     expect(Date.parse(immediate.releaseAt)).toBe(at);
+  });
+
+  /**
+   * The sweeper has to be *told* a send is waiting, and for a while nothing told it.
+   *
+   * `OutboxSweeper`'s alarm re-armed on the inbound outbox alone, so a Node with nothing arriving let its
+   * alarm lapse while a sealed send sat inside its hold window — and the send left only when an unrelated
+   * act poked the Node. Found on the live Node: `held`, `attempts = 0`, `release_at` long past, moving to
+   * `handed_over` within seconds of a page load.
+   *
+   * The middle case is the one that was silently dropped, so it is the one asserted hardest: a send still
+   * inside its window must name **the instant its window ends**, because that is what lets the alarm sleep
+   * until then instead of polling or lapsing.
+   */
+  it("tells the sweeper when outbound work is next due", async () => {
+    const at = 2_000_000_000_000;
+    const hold = BUDGETS["send.hold_window_default_seconds"] * 1000;
+
+    expect(await nextDispatchAt(testEnv, atTime(at), ORG)).toBeNull();
+
+    const sealed = await sealManifest(testEnv, atTime(at), ORG, composition);
+    // Inside the hold window: not due, but the alarm must wake exactly when the window closes.
+    expect(await nextDispatchAt(testEnv, atTime(at), ORG)).toBe(at + hold);
+    expect(Date.parse(sealed.releaseAt)).toBe(at + hold);
+
+    // Past it: due now, so the caller is told to go immediately.
+    const after = at + hold + 1;
+    expect(await nextDispatchAt(testEnv, atTime(after), ORG)).toBe(after);
+
+    // Once it has gone there is nothing left to wake for, so the alarm is allowed to lapse.
+    const transport = fakeTransport({ kind: "handed_over", transportMessageId: "cf-sweeper" });
+    expect((await dispatchDue(testEnv, atTime(after), ORG, transport))[0]?.state).toBe("handed_over");
+    expect(await nextDispatchAt(testEnv, atTime(after), ORG)).toBeNull();
   });
 
   it("refuses a mailbox with no address, because From is the mailbox (ADR 36)", async () => {

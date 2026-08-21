@@ -1321,6 +1321,19 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         }
       }
 
+      /*
+       * Arm the sweeper, because sealing is what creates outbound work and nothing here did it.
+       *
+       * The alarm now re-arms itself while sends wait (`src/outbox.ts`), but only once it is running — and on
+       * an idle Node it is not. Without this, the first send after a quiet spell had no alarm to keep alive
+       * and waited for an unrelated poke: an arriving message, or somebody loading a page. That is how this
+       * was found, on the live Node, and "your mail leaves when someone opens the app" is the failure §13
+       * exists to prevent, reached from the outbound side.
+       *
+       * `waitUntil` for the same reason as the other two call sites: the person who pressed send is told the
+       * manifest is sealed — which is the durable fact — without waiting on the Durable Object.
+       */
+      ctx.waitUntil(armSweeper(env));
       return Response.json({ ...sealed, capability, draftRetained });
     }
 

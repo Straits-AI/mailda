@@ -1316,6 +1316,16 @@ nowhere else, so every effect-free run had been closing with its `INSERT` defaul
 operator reads as a measurement. Deploying proves a binding provisions; only running proves a run.
 ([receipt](./docs/receipts/butler-run-cost.md))
 
+**The second thing that test found was worse: the mail did not leave.** Driving one real message
+from one mailbox to another — seal, hand over, receive, trigger a Butler — surfaced a sealed send
+sitting `held` with `attempts = 0` long after its hold window closed. `OutboxSweeper`'s alarm
+re-armed on the *inbound* outbox only, while its own comment claimed "a Node that was asleep when
+it expired still sends". Nothing woke it. What actually moved the send was an unrelated poke: the
+sweeper is armed when mail arrives and when a page is served, so on an idle Node your mail left
+when somebody happened to open the app. The alarm now sleeps until the earliest `release_at` and
+sealing arms it — and the predicate for "a send worth waking for" is the dispatcher's own, not a
+second copy in the scheduler.
+
 **Structure beats discipline — including when the first attempt was a check.** An automated review
 found header injection in the outbound path. The first fix was a validator called at each site, which
 closed the hole in the shape this project had already rejected for `innerHTML`: correct only while every
