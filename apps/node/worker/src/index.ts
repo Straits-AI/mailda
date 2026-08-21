@@ -25,7 +25,7 @@ import { notificationsFor } from "./notifications.ts";
 import { deliverDueNotifications } from "./notice-delivery.ts";
 import { placeHold, requestHoldLift } from "./holds.ts";
 import { liftDomainPause, requestDomainPause } from "./domain-pause.ts";
-import { evaluateBreakers, pausesInForce } from "./breakers.ts";
+import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy, type PolicyConditions } from "./policy.ts";
 import {
   decideApproval, pendingApprovals, stageOf, withdrawApproval, type Stages,
@@ -1323,7 +1323,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // No domain, so the pause question is not asked here: the pause listing below is the answer to it, and
       // it is about every domain rather than about one this endpoint would have to be told.
       const decision = await evaluateBreakers(env, clock, who.orgId, null);
-      return Response.json({ breakers: decision.rates });
+      /*
+       * The sentence travels with the reading.
+       *
+       * `RATE_BREAKERS` already carries one plain sentence per breaker — "Too many of the addresses this
+       * Node sent to are being refused by their own mail servers" — written where the breaker is defined. A
+       * screen that rendered its own wording from `breaker: "bounce_rate"` would be a second copy of those
+       * words, drifting from the ones the refusal on a gated send actually uses. So the words ship with the
+       * numbers, and there is one place they are written.
+       */
+      return Response.json({
+        breakers: decision.rates.map((rate) => ({
+          ...rate, sentence: RATE_BREAKERS[rate.breaker].sentence,
+        })),
+      });
     }
 
     if (url.pathname === "/api/domain-pauses" && request.method === "POST") {

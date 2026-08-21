@@ -12,7 +12,7 @@
  * of dishonesty as an empty ledger that might be an unreadable one. A 404 is a real answer and this Node
  * keeps giving it.
  */
-export const APP_ROUTES = ["/", "/queue", "/approvals", "/rules", "/people", "/butlers", "/outbox", "/audit", "/log", "/doctor"] as const;
+export const APP_ROUTES = ["/", "/queue", "/approvals", "/rules", "/people", "/butlers", "/limits", "/outbox", "/audit", "/log", "/doctor"] as const;
 
 export type AppRoute = (typeof APP_ROUTES)[number];
 

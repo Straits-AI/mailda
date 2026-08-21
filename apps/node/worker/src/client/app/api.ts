@@ -787,3 +787,74 @@ export function useTeamMembers(teamId: string): UseQueryResult<{ members: string
     ...AUTHORIZATION_SENSITIVE,
   });
 }
+
+/* ------------------------------------------------------------------ Layer 5: sending limits (#66) -- */
+
+/**
+ * One rate breaker, as the Node reads it right now.
+ *
+ * `sentence` comes from the Node rather than from a table here: `RATE_BREAKERS` carries one plain sentence
+ * per breaker, written where the breaker is defined and used by the refusal on a gated send. A second copy
+ * in the client would drift from the words a person is shown when their message is actually stopped.
+ */
+export interface BreakerReading {
+  breaker: string;
+  sentence: string;
+  observations: number;
+  observed: number;
+  percent: number | null;
+  limit: number;
+  windowSeconds: number;
+  /** False when there is too little traffic to judge — which is a real answer, not a zero. */
+  armed: boolean;
+  unarmedReason: "no_observations" | null;
+  tripped: boolean;
+}
+
+export interface DomainPauseRow {
+  id: string;
+  domain: string;
+  placedAt: string;
+  reason: string;
+}
+
+export function useBreakers(): UseQueryResult<{ breakers: BreakerReading[] }, Error> {
+  return useQuery({
+    queryKey: ["breakers"],
+    queryFn: () => read<{ breakers: BreakerReading[] }>("/api/breakers"),
+    // Faster than the authorization reads: this is a live instrument, and a stale one is misleading in the
+    // one situation somebody opens it for.
+    staleTime: 5_000,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useDomainPauses(): UseQueryResult<{ pauses: DomainPauseRow[] }, Error> {
+  return useQuery({
+    queryKey: ["domain-pauses"],
+    queryFn: () => read<{ pauses: DomainPauseRow[] }>("/api/domain-pauses"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+async function pauseAct(path: string, body?: unknown) {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true as const, value: parsed ?? {} };
+  return {
+    ok: false as const,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+/** Asks for a domain to be stopped. Two **other** administrators have to agree before it takes effect. */
+export const requestDomainPause = (domain: string, reason: string) =>
+  pauseAct("/api/domain-pauses", { domain, reason });
+
+/** Restarts a domain's mail. One administrator, alone — the asymmetry is deliberate (#66). */
+export const liftDomainPause = (id: string) =>
+  pauseAct(`/api/domain-pauses/${encodeURIComponent(id)}/lift`);

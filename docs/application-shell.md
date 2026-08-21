@@ -246,8 +246,32 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Ten routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/butlers`, `/outbox`, `/audit`, `/log`,
-`/doctor`.
+Eleven routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/butlers`, `/limits`, `/outbox`,
+`/audit`, `/log`, `/doctor`.
+
+### `/limits` (#66, #81)
+
+`GET /api/breakers` exists because of AGENTS.md's third principle rather than for a dashboard — *a limit
+developers can hit is a limit they must see* — and until this screen the readings were available to a `curl`
+and to nobody else. The refusal on a gated send names the budget and the limit, but only once it has already
+stopped something.
+
+**Nothing here is configurable.** Every limit is a budget generated from a receipt, so a slider would be a
+number with no measurement behind it. The numbers are shown and not edited; changing one means changing the
+receipt, which is a change with an argument attached.
+
+**Unarmed is rendered as unarmed.** A breaker with too little traffic to judge shows "not enough traffic to
+judge", not `0%`. A Node that has sent four messages showing a healthy-looking zero is the wrong conclusion
+made easy.
+
+The breaker's sentence ships **with** the reading rather than being written again in the client:
+`RATE_BREAKERS` carries one per breaker, used by the refusal a person sees when their message is stopped, and
+a second copy here would drift from it.
+
+Domain pauses sit below, with the asymmetry stated: stopping a domain takes three administrators, restarting
+one takes a single administrator alone, because a mistake in the cautious direction should be easy to undo.
+The request says "asked", never "stopped" — two others have to agree first, and claiming otherwise is the one
+place §5C's distinction would make somebody stop watching.
 
 ### `/people` (#39, #73, #81)
 

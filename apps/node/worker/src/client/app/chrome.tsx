@@ -243,6 +243,12 @@ export function Rail() {
           </Link>
         </li>
         <li>
+          {/* Beside the outbox, because it is the answer to "why is nothing going out". */}
+          <Link to="/limits" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">Limits</span>
+          </Link>
+        </li>
+        <li>
           <Link to="/outbox" className="rail-row" activeProps={{ className: "rail-row current" }}>
             <span className="rail-name">Outbox</span>
             {sends.isSuccess ? <span className="mono num">{sends.data.sends.length}</span> : null}

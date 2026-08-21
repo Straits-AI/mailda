@@ -440,6 +440,12 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
 .grant-list label { display: block; font-size: .84rem; cursor: pointer; }
 .grant-object { margin: .4rem 0 0; font-size: .7rem; }
+
+/* Sending limits (#81). */
+.limits-pauses { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.limits-pauses h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.limits-ask { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin: 1rem 0; }
+.limits-ask .field-row { margin: 0; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }
