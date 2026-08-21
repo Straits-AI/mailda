@@ -421,6 +421,19 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .butler-format label { font-family: var(--mono); font-size: .8rem; }
 .butler-format .dim { font-size: .78rem; }
 .butler-actions { margin: .6rem 0 1.2rem; }
+
+/* The dry run (#87). A section rather than a card: hairline rules, like everything else on this panel. */
+.butler-dry { border-top: 1px solid var(--rule); padding-top: .9rem; margin-bottom: 1.4rem; }
+.butler-dry h3 { margin: 0 0 .4rem; font-size: .95rem; }
+.butler-dry-runs { list-style: none; margin: .5rem 0; padding: 0; }
+.butler-dry-runs li { margin: .25rem 0; font-size: .82rem; }
+.butler-dry-result { margin-top: .8rem; }
+/* The detail is JSON on one line and can be long. It scrolls in its own cell rather than widening the
+   table, which is the rule the whole panel follows: nothing makes the page scroll sideways. */
+.butler-dry-detail { max-width: 26rem; overflow-x: auto; white-space: nowrap; font-size: .72rem; }
+/* The limits are the sentences that stop this being read as a green light, so they are not dimmed away. */
+.butler-dry-limits { margin: .7rem 0 0; padding-left: 1.1rem; font-size: .82rem; }
+.butler-dry-limits li { margin: .3rem 0; }
 /* The checker's findings arrive as several lines and are the whole value of a refusal — kept as written. */
 .butler-findings { white-space: pre-wrap; font-family: var(--mono); font-size: .78rem; }
 .butler-pause { margin-top: 1rem; }

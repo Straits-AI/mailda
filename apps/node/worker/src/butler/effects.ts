@@ -17,6 +17,7 @@ import { evaluate, type RunState } from "./expr.ts";
 import { parentDelivery, replyRecipients, type RunTrigger } from "./parent.ts";
 import type { EffectOutcome } from "./record.ts";
 import type { ButlerPrincipal } from "./principal.ts";
+import type { ReadOnlyEnv } from "../read-only.ts";
 
 /**
  * The four effect nodes and `lookup`, each calling **what a human calls** (#50).
@@ -553,7 +554,12 @@ export async function proposeSend(
 
 /** `lookup`: one bounded row read, projected. Not an effect — recorded because it can be refused. */
 export async function lookupRow(
-  env: Env,
+  /*
+   * Narrowed to a read handle, because that is what this function is: `readEntity` is the whole body and
+   * `authority.ts` contains no writes. Saying so in the type is what lets a dry run call **this** function
+   * rather than an approximation of it — one lookup, one set of answers, no second implementation to drift.
+   */
+  env: ReadOnlyEnv,
   butler: ButlerPrincipal,
   node: Extract<ButlerNode, { type: "lookup" }>,
   state: RunState,

@@ -453,6 +453,11 @@ in both themes. The selector is a `fieldset`/`legend` rather than a labelled pai
 axe would have filed as an advisory: two radios sharing a `name` are one question, and a screen reader that
 announces *"json, radio, 1 of 2"* without the question has read out half of it.
 
+Audited a third time after #87's dry-run panel landed in the same editor: **30 views, 0 AA violations, 0
+advisories**. The panel's own accessibility decision is that it says why it is unusable rather than showing a
+disabled control — a Butler that has never run has no delivery to test against, and *"why can I not test
+this"* is a question a `disabled` attribute cannot answer.
+
 ### Signing the harness in, when nobody knows a password
 
 Written down because it took a detour to work out and the next person will hit the same wall.

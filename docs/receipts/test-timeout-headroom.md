@@ -129,6 +129,40 @@ exit that names the test.
   local run and a deployed run disagreed about cost. Tests that pay the real cost are the reason that
   landmine is now visible.
 
+## The other kind of load flake: a wall-clock window that was not a timeout at all
+
+This receipt's whole subject is that a slow suite reads as a flaky one. #87 found the same class in a
+different disguise, and it is recorded here because the next one will look like this rather than like a
+timeout.
+
+`test/butler-pause.test.ts` raced an `interpret` call against a **250 ms** timer to establish that the run
+was still parked. That much was sound: the promise not settling proves the invocation did not finish. The
+next line then read the run row and asserted `awaiting_release` — **a different claim**, and one 250 ms does
+not establish. On a loaded machine the walk had genuinely not reached its park yet, so the row said
+`running` and the assertion failed on a run that was about to do exactly the right thing.
+
+It surfaced when #87 added six fixture-heavy tests to `butler-run.test.ts`, which runs in parallel with that
+file: roughly one failure per five full-suite runs, and green every time the file ran alone. **The new tests
+did not break anything.** They moved the machine far enough along the load curve for an existing wall-clock
+assumption to stop holding — which is this receipt's thesis, arriving from the direction it did not predict.
+
+Fixed by waiting for the state instead of assuming a window was long enough. Polling is sound there
+*because* the promise never settles — `waitForEvent` blocks for ever on a parked instance — so there is no
+race between the poll and the run completing.
+
+Two things about the bound, both of which are the reason this is written down rather than just fixed:
+
+- It is **half** `test.timeout_ms`, derived rather than chosen, so the file holds no opinion of its own about
+  how long slow is.
+- The halving is not caution. `testTimeout` is that same budget, so a poll bounded by the *whole* of it never
+  gets to speak: vitest kills the test first and reports its own generic timeout, losing the one fact worth
+  having — which state the run actually reached. The first version of the fix had this wrong, and the symptom
+  was a mutation test that hung instead of failing with a message.
+
+The lesson for the next one: **`retry` would have hidden this**, exactly as this receipt already says it
+would have hidden the timeout. A wall-clock constant in a test is a budget with no receipt, and the ones that
+are not called `timeout` are the ones that survive review.
+
 ## Re-measuring
 
 ```sh

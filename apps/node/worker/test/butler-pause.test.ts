@@ -111,6 +111,47 @@ async function suspendedOr<T>(work: Promise<T>): Promise<T | null> {
   return raced === asleep ? null : raced as T;
 }
 
+/**
+ * Waits for a run to reach a state, rather than assuming a wall-clock window was long enough.
+ *
+ * ## The flake this replaces, because it is the interesting part
+ *
+ * `suspendedOr` above proves one thing: the invocation **did not finish** in 250 ms. The test below then read
+ * the run row and asserted `awaiting_release` — which is a *different* claim, and one 250 ms does not
+ * establish. On a loaded machine the walk had genuinely not reached its park yet, so the row said `running`
+ * and the assertion failed on a run that was about to do exactly the right thing.
+ *
+ * It failed roughly one run in five once #87 added six fixture-heavy tests to `butler-run.test.ts`, which
+ * executes in parallel with this file. The tests did not break it — they made an existing wall-clock
+ * assumption visible, which is the same shape `docs/receipts/test-timeout-headroom.md` already records for
+ * this suite: *"that is what made this suite look flaky rather than slow."*
+ *
+ * Polling is sound here precisely because the promise never settles: `waitForEvent` blocks for ever on a
+ * parked instance, so there is no race between this loop and the run completing. What is being waited for is
+ * a write the run has already committed or is about to.
+ *
+ * The bound is **half** `test.timeout_ms`, and the halving is the point rather than caution. `testTimeout`
+ * is that same budget, so a poll bounded by the whole of it never gets to speak: vitest kills the test first
+ * and reports its own generic timeout, and the message below — which names the state the run *did* reach —
+ * is the one a person needs. Half is derived rather than chosen, so this file still holds no opinion of its
+ * own about how long slow is.
+ */
+async function until(runId: string, state: string): Promise<Awaited<ReturnType<typeof runRow>>> {
+  const patience = BUDGETS["test.timeout_ms"] / 2;
+  const deadline = Date.now() + patience;
+  for (;;) {
+    const row = await runRow(testEnv, ORG, runId);
+    if (row?.state === state) return row;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `run ${runId} never reached ${state}; it is ${String(row?.state)} after ${patience}ms `
+        + `(half test.timeout_ms=${BUDGETS["test.timeout_ms"]}, so this fires before vitest's own timeout)`,
+      );
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+  }
+}
+
 interface Delivery { messageId: string; conversationId: string }
 
 /**
@@ -518,7 +559,8 @@ describe("a paused Butler does not run", () => {
     }, instance.steps(), runId));
     expect(stillAsleep, "the first invocation should still be parked on its release gate").toBeNull();
 
-    const parked = await runRow(testEnv, ORG, runId);
+    // Waited for, not assumed: see `until`. The promise above never settles, so this cannot race it.
+    const parked = await until(runId, "awaiting_release");
     expect(parked?.state).toBe("awaiting_release");
     const effectRows = async (): Promise<number> => (await testEnv.CATALOG.prepare(
       "SELECT COUNT(*) AS n FROM butler_run_effects WHERE org_id = ? AND run_id = ?",

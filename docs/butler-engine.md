@@ -131,6 +131,88 @@ cannot, and the four things the ceiling does not reach.
 4. **Walk** from `entry`, one edge at a time.
 5. **Close** with a terminal state, a reason and the counts.
 
+### The walk is one function, shared with the dry run (#87)
+
+Step 4 lives in `src/butler/walk.ts`, and it was `interpret`'s innermost closure until simulation needed a
+second caller. The extraction is the point rather than tidiness:
+
+**A simulation that diverges from the engine is worse than no simulation — it is a tool that tells authors
+their Butler is fine.** So there is one switch, one expression evaluator, one set of loop bounds and one
+affordability calculation, and both callers walk them. Two copies would have been the correspondence problem
+this repository keeps paying for, in the worst available place.
+
+`walk.ts` contains **no `env` and no import that reaches one.** Everything a walk can cause arrives as a
+`Walkable`, and the fields of that interface are not a design preference — they are exactly what would not
+come along when the walk moved out:
+
+| Seam | Live | Dry |
+|:--|:--|:--|
+| `effects` | `liveEffects(env, ctx, butler)` — the five functions in `effects.ts` | reads performed, writes reported |
+| `perform` | a `batch()`: the effect row, the spend, the park | an array in memory |
+| `complain` | a terminal row with a message | nothing; the terminal is the return value |
+| `steps` | the Workflow's `do`/`sleep` | inline; a `wait` is reported, not slept |
+| `awaitRelease` | waits for the release event, then marks the run resumed | returns immediately, so the author sees the rest of the program |
+| `affordable` / `exhausted` | against the run's live spend | against the walk's own arithmetic |
+
+## Simulation: what a dry run really asks, and what it cannot (#87)
+
+`POST /api/butlers/:id/simulate` walks the **draft** — or the live version if there is no draft, the same
+fallback the editor makes and for the same reason — over facts from a run this Node actually performed.
+
+**The safety is a type, not a flag.** Every function in `src/butler/simulate.ts` takes `ReadOnlyEnv`, which
+is not assignable to `Env`, so nothing reachable from it can construct the live effect handle or write a row
+— *because it does not compile*, for every write that exists and every write anybody adds. The narrowing
+happens once, in `readOnly(env)` at the route, which is the single line to read when asking how a simulation
+could write. `src/read-only.ts` carries the argument; `test/butler-world.test.ts` witnesses it with
+`@ts-expect-error`, the only assertion that can witness a compile error, mutation-proven in both directions.
+
+This replaces the mechanism §5's fifth charted answer specified, and the reason is recorded rather than
+quietly substituted. That answer said a simulated run carries **no transport capability**, so
+`mail.send.propose` is a type error. **A Butler run has no transport capability to withhold**: nothing under
+`src/butler/` names `EMAIL`, and `mail.send.propose` is `sealManifest` — it writes a manifest and stops, and
+a separate later invocation dispatches. The property the answer wanted is already true, for a stronger reason
+than it proposed, and what a simulated run must actually not do is **write**. Ranked by danger the chart's own
+example comes last: a proposed send is parked behind #61's approval, while `case.assign` and `draft` are
+gated by nothing.
+
+### Every check that does not depend on an unwritten row is really performed
+
+This is what separates a dry run worth running from one that prints the graph:
+
+| Real | Why |
+|:--|:--|
+| the AST re-check | `checkButler`, the same call publication makes |
+| every expression | `expr.ts` is pure; a `${…}` that does not resolve faults exactly as it would live |
+| loop bounds, affordability | arithmetic in the shared walk, so *"this Butler cannot afford to run"* is answerable before publishing |
+| `lookup` | the **real** `lookupRow`, narrowed to a read handle for exactly this reason |
+| a case's actionability | the real `caseMailboxHeldBy` — ceiling ∩ tuples ∩ sponsor's |
+| a mailbox's authority | the real `effectiveOnMailbox`, #51's three-term intersection |
+| **who a reply would go to** | `parentDelivery` + `replyRecipients`, both pure, both over the real trigger |
+
+That last row is the answer an author wants, and it is exact: the recipients are derived by the same code the
+live path uses. `test/butler-run.test.ts` asserts a dry run and a live run over **one delivery** reach the
+same nodes in the same order with the same verdicts — `ok` becoming `would` exactly where a live run wrote
+something, everything else matching. Mutation-proven three ways: skipping the authority read, dropping the
+`would` promotion, and preferring the published version over the draft all fail it.
+
+### And the limit is reported, because a dry run must not read as a green light
+
+A simulation writes no draft, so from the `draft` node onward it reasons about a row that does not exist.
+`mail.send.propose` normally reads that draft back, and the seal is where `policy.ts` decides,
+`approvals.ts` gates and `breakers.ts` trips — against content this run did not store.
+
+So the simulated `draft` binds a value marked `simulated`, `proposeSend` asks the authority it genuinely can
+and then names what it did not, and every report carries a `limits` list in words. Three things go in it:
+
+- the send's policy decision, breakers and approval gate are made at the seal, so a report says a send
+  **would be proposed**, never that it would be sent;
+- whether the *assignee* of a `case.assign` may work the case is decided by the claim, which writes;
+- a **draft** has no publisher, so its ceiling was capped against the asker's own authority — publishing caps
+  it against whoever publishes, who may hold less.
+
+A dry run that quietly implied policy had been checked would be worse than no dry run: a green light nobody
+granted.
+
 ### What is a step and what is not
 
 A `step.do` per node that performs I/O — the four effects and `lookup`. **Nothing else.** That is the line

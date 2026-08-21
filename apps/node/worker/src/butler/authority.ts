@@ -5,6 +5,7 @@ import { readableSubjects } from "../authz-read.ts";
 import { ceilingAddresses } from "./ceiling.ts";
 import { ButlerFault } from "./expr.ts";
 import type { ButlerPrincipal } from "./principal.ts";
+import type { ReadOnlyEnv } from "../read-only.ts";
 
 /**
  * Reading and acting as a Butler: **the three-term intersection, in two queries** (#50, #54, #51).
@@ -256,7 +257,7 @@ function effectiveOn(
  * `team_members.user_id` holds users, a Butler's subject is a `btl_`, so the read returns nothing by
  * construction. A Butler inheriting a team's grants is how a declared ceiling stops meaning anything.
  */
-async function sponsorSubjects(env: Env, butler: ButlerPrincipal): Promise<string[]> {
+async function sponsorSubjects(env: ReadOnlyEnv, butler: ButlerPrincipal): Promise<string[]> {
   return await readableSubjects(env, {
     orgId: butler.orgId, userId: butler.ceiling.sponsorUserId,
   });
@@ -299,7 +300,7 @@ export type EffectiveRefusal = "capability_not_declared" | "butler_not_granted" 
  * hold it directly or through any team, exactly as they would for their own reads.
  */
 export async function effectiveOnMailbox(
-  env: Env,
+  env: ReadOnlyEnv,
   butler: ButlerPrincipal,
   mailboxId: string,
   relations: readonly MailboxRelation[],
@@ -378,7 +379,7 @@ const BOUNDED_BY: { [K in (typeof LOOKUP_ENTITIES)[number]]: readonly MailboxRel
  * (`effectiveOnMailbox`), which is exactly the case where the author already knows which mailbox they meant.
  */
 export async function readEntity(
-  env: Env,
+  env: ReadOnlyEnv,
   butler: ButlerPrincipal,
   entity: (typeof LOOKUP_ENTITIES)[number],
   entityId: string,
@@ -412,7 +413,7 @@ export async function readEntity(
  * the same reason `readEntity` returns a row rather than an `Effective`.
  */
 export async function caseMailboxHeldBy(
-  env: Env,
+  env: ReadOnlyEnv,
   butler: ButlerPrincipal,
   caseId: string,
   relation: MailboxRelation,

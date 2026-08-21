@@ -2,7 +2,7 @@ import { createSystemCtx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
-import { CallerError } from "./errors.ts";
+import { CallerError, unprocessable } from "./errors.ts";
 
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
@@ -59,6 +59,8 @@ import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { inspectRun, replayRun } from "./butler/replay.ts";
 import { createButlerDraft, editButlerDraft, publishButler, readSourceFormat } from "./butlers.ts";
+import { simulateButler } from "./butler/simulate.ts";
+import { readOnly } from "./read-only.ts";
 import { cancelSend, dailySendState, dispatchDue, releasePolicyHold } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
@@ -1770,6 +1772,51 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         butler: await editButlerDraft(env, clock, who.orgId, who.userId, butlerDraft[1]!, {
           source: String(body.source ?? ""),
           sourceFormat: readSourceFormat(body.sourceFormat),
+        }),
+      });
+    }
+
+    /**
+     * The dry run (#87, §5's fifth charted answer).
+     *
+     * `POST /api/butlers/:id/simulate` — walk the current program over facts the caller supplies, cause
+     * nothing, and report what a live run would have done.
+     *
+     * **`readOnly(env)` is the whole safety argument, and it is this one expression.** `simulate.ts` takes a
+     * `ReadOnlyEnv` throughout, and `ReadOnlyEnv` is not assignable to `Env` — so no function reachable from
+     * that call can construct the live effect handle, write a row, or seal a manifest. Not because a check
+     * refuses it: because it does not compile. `src/read-only.ts` carries the argument.
+     *
+     * Admin-gated **here** rather than inside, and that is a departure from the three authoring routes above
+     * which check for themselves. The reason is the narrowing: `isAdmin` needs an environment it can read
+     * relationship tuples with, and doing it inside would mean either widening `simulate.ts`'s parameter — the
+     * one thing this design must not do — or narrowing `isAdmin` for one caller. The gate stays where the
+     * writable environment still exists, which is here.
+     */
+    const butlerSimulate = /^\/api\/butlers\/([^/]+)\/simulate$/.exec(url.pathname);
+    if (butlerSimulate && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      // A Butler in another organization and one this person may not see answer identically (§5C).
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const facts = body.facts;
+      if (facts === null || typeof facts !== "object" || Array.isArray(facts)) {
+        throw unprocessable("E_SIMULATION_NEEDS_FACTS", {
+          what: `facts was ${facts === undefined ? "absent" : JSON.stringify(facts)}`,
+          why: "a dry run answers \"what would this program do given this\", so it needs the given — and a "
+            + "run over no facts would report a walk whose every expression resolved to nothing",
+          fix: "post { facts: { … } }. The shape is a delivery's facts: the same object a live run's "
+            + "trigger carries, which GET /api/butler-runs shows for any run this Node has performed",
+        });
+      }
+      return Response.json({
+        simulation: await simulateButler(readOnly(env), who.orgId, who.userId, butlerSimulate[1]!, {
+          facts: facts as Readonly<Record<string, unknown>>,
+          event: typeof body.event === "string" ? body.event : undefined,
+          key: typeof body.key === "string" ? body.key : undefined,
         }),
       });
     }

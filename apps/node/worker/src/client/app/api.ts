@@ -540,6 +540,52 @@ async function butlerAct<T>(
   };
 }
 
+
+/** One node's effect in a dry run (#87). See `src/butler/simulate.ts` on the three outcomes. */
+export interface SimulatedEffectRow {
+  seq: number;
+  nodeId: string;
+  nodeType: string;
+  /** `would` is a write this Node declined to make; `ok`/`refused`/`failed` are real answers from real reads. */
+  outcome: "ok" | "refused" | "failed" | "would";
+  reason: string | null;
+  subject: string | null;
+  detail?: Record<string, unknown>;
+}
+
+export interface Simulation {
+  butlerId: string;
+  butlerName: string;
+  versionId: string;
+  version: number | null;
+  state: string;
+  reason: string | null;
+  nodesExecuted: number;
+  effects: SimulatedEffectRow[];
+  wouldSpend: number;
+  bindings: Record<string, unknown>;
+  /** What the dry run could not evaluate, in words. Rendered verbatim — a paraphrase drops the reason. */
+  limits: string[];
+}
+
+/**
+ * A dry run of the Butler's current program over facts from a real delivery.
+ *
+ * The facts come from a recorded run rather than being typed, because a delivery's facts are not something a
+ * person can write by hand — `parentDelivery` refuses a malformed one, and a dry run over facts that were
+ * never real would answer a question about nothing.
+ */
+export const simulateButler = (id: string, facts: Record<string, unknown>) =>
+  butlerAct<{ simulation: Simulation }>(
+    `/api/butlers/${encodeURIComponent(id)}/simulate`, "POST", { facts },
+  );
+
+/** A recorded run's own input, which is what a dry run is given. */
+export const runFacts = (runId: string) =>
+  read<{ facts: Record<string, unknown> | null }>(
+    `/api/butler-runs/${encodeURIComponent(runId)}/inspect`,
+  );
+
 export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
   butlerAct<{ butler: { butlerId: string } }>(
     "/api/butlers", "POST", { name, source, sourceFormat },

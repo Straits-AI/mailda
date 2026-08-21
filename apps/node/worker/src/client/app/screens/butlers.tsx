@@ -5,7 +5,8 @@ import { Nothing } from "../chrome.tsx";
 import {
   createButler, publishButlerVersion, resumeButler, saveButlerDraft,
   useButler, useButlerRuns, useButlers,
-  type ButlerRow, type ButlerRunRow, type ButlerSourceFormat,
+  runFacts, simulateButler,
+  type ButlerRow, type ButlerRunRow, type ButlerSourceFormat, type Simulation,
 } from "../api.ts";
 
 /**
@@ -108,9 +109,18 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
   const queryClient = useQueryClient();
   const [source, setSource] = useState<string | null>(null);
   const [format, setFormat] = useState<ButlerSourceFormat | null>(null);
+  const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /*
+   * This Butler's runs, for the dry run's input.
+   *
+   * `useButlerRuns` again rather than threading them down from `Butlers`: TanStack Query dedupes on the key,
+   * so this is the same request and the same cache entry, and the alternative is a prop that exists only to
+   * avoid a hook call.
+   */
+  const ranButler = (useButlerRuns().data?.runs ?? []).filter((row) => row.butler_id === butler.id);
   const versions = detail.data?.versions ?? [];
   const draft = versions.find((row) => row.state === "draft") ?? null;
   const live = versions.find((row) => row.state === "published") ?? null;
@@ -149,6 +159,34 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
     setSource(null);
     setFormat(null);
     await refresh();
+  }
+
+  /**
+   * A dry run: what this program would do, given what a real delivery gave a real run.
+   *
+   * Two requests rather than one, and the first is the reason this is worth having. A delivery's facts are
+   * not something a person can type — `parentDelivery` refuses a malformed set, and the recipients a `draft`
+   * node derives come from them — so the input is taken from a run this Node actually performed. What the
+   * author changes is the *program*, and the question the panel answers is what their edit would do to
+   * mail that already arrived.
+   */
+  async function dryRun(runId: string) {
+    setBusy(true);
+    setProblem(null);
+    setSimulation(null);
+    try {
+      const inspected = await runFacts(runId);
+      if (inspected.facts === null) {
+        // A run opened before migration 0030 recorded no facts. Said rather than shown as an empty report.
+        setProblem("That run recorded no trigger facts, so there is nothing to walk over. Pick a later run.");
+        return;
+      }
+      const outcome = await simulateButler(butler.id, inspected.facts);
+      if (!outcome.ok) { setProblem(outcome.message); return; }
+      setSimulation(outcome.value.simulation);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function publish() {
@@ -247,6 +285,118 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
           )
           : <span className="dim"> unpublished draft</span>}
       </p>
+
+      {/*
+        The dry run (#87).
+        
+        Placed between the editor and the version history because that is where it is used: you change the
+        program, you ask what it would do, and only then do you publish. Putting it after the history would
+        have made it a report about the past, which is the one thing it is not.
+      */}
+      <section className="butler-dry" aria-label="Dry run">
+        <h3>Dry run</h3>
+        {ranButler.length === 0
+          ? (
+            /*
+             * Said rather than shown as a disabled control with no explanation. A dry run needs a delivery's
+             * facts, those are not typeable by hand, and the honest answer to "why can I not test this" is
+             * that nothing has arrived for it yet.
+             */
+            <p className="dim">
+              A dry run walks this program over what a real delivery gave a real run, and this Butler has not
+              run yet. Publish it and send it something, then come back — the walk below causes nothing, so
+              it is safe to do afterwards as often as you like.
+            </p>
+          )
+          : (
+            <>
+              <p className="dim">
+                Walks the draft — or the live version if there is no draft — over a past run’s input. Reads
+                real rows and asks the real authority questions; writes nothing.
+              </p>
+              <ul className="butler-dry-runs">
+                {ranButler.slice(0, 5).map((row) => (
+                  <li key={row.id}>
+                    <button type="button" onClick={() => void dryRun(row.id)} disabled={busy}>
+                      dry run over {when(row.started_at)}
+                    </button>
+                    {" "}
+                    <span className="dim">{row.trigger_event} · {row.state}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+        {simulation === null ? null : (
+          <div className="butler-dry-result">
+            <p>
+              <strong>{simulation.state}</strong>
+              {simulation.reason === null ? null : <> — {simulation.reason}</>}
+              {" "}
+              <span className="dim">
+                {simulation.version === null ? "draft" : `v${simulation.version}`}
+                {" · "}{simulation.nodesExecuted} node(s){" · "}
+                would spend {simulation.wouldSpend}
+              </span>
+            </p>
+
+            {simulation.effects.length === 0
+              ? <p className="dim">No effect node was reached.</p>
+              : (
+                <table>
+                  <caption className="dim">
+                    “would” is a write this Node declined to make. Every other outcome is a real answer from
+                    a real read — the same one a live run would have recorded.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Node</th>
+                      <th scope="col">Type</th>
+                      <th scope="col">Outcome</th>
+                      <th scope="col">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {simulation.effects.map((effect) => (
+                      <tr key={effect.seq}>
+                        <td className="mono">{effect.nodeId}</td>
+                        <td className="mono">{effect.nodeType}</td>
+                        <td className={effect.outcome === "refused" || effect.outcome === "failed"
+                          ? "bad"
+                          : undefined}>
+                          {effect.outcome}
+                          {effect.reason === null ? null : <> — {effect.reason}</>}
+                        </td>
+                        {/*
+                          The detail verbatim, as JSON. It is the recipients a reply would go to and the
+                          mailbox it would come from — the answer the author came for — and shaping it into
+                          prose per node type would be four renderers that drift from one producer.
+                        */}
+                        <td className="mono butler-dry-detail">
+                          {effect.detail === undefined
+                            ? <span className="dim">—</span>
+                            : JSON.stringify(effect.detail)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+            {simulation.limits.length === 0 ? null : (
+              /*
+                Rendered verbatim and never summarised. These are the sentences that stop the report being
+                read as a green light: the seal is where policy, the breakers and the approval gate decide,
+                and none of them ran.
+              */
+              <ul className="butler-dry-limits">
+                {simulation.limits.map((limit) => <li key={limit}>{limit}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+      </section>
 
       <table>
         <caption className="dim">Versions — publication is the versioning event, and a published one is frozen</caption>

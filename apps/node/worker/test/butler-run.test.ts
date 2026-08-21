@@ -19,7 +19,9 @@ import { actingAs, BUTLER_ACTOR_KIND, type ButlerPrincipal } from "../src/butler
 import { releaseButlerSend } from "../src/butler/release.ts";
 import { runEffects, runRow } from "../src/butler/record.ts";
 import { deliveryFacts, triggerButlers } from "../src/butler/trigger.ts";
-import { createButlerDraft, publishButler } from "../src/butlers.ts";
+import { createButlerDraft, editButlerDraft, publishButler } from "../src/butlers.ts";
+import { simulateButler } from "../src/butler/simulate.ts";
+import { readOnly } from "../src/read-only.ts";
 import { ceilingOf } from "../src/butler/ceiling.ts";
 import { capabilitiesFor } from "./butler-capabilities.ts";
 import { claim } from "../src/cases.ts";
@@ -1840,5 +1842,208 @@ describe("the engine's own refusal vocabulary is closed", () => {
     if (!checked.ok) return;
     expect(checked.cost.total).toBe(priceButler(checked.ast.nodes).total);
     console.log(`MEASURE checker_prediction acknowledge=${checked.cost.total}`);
+  });
+});
+
+/* ---------------------------------------------------------- the dry run (#87) --------------------- */
+
+/**
+ * Simulation, and the one test that makes it worth having: it agrees with the engine.
+ *
+ * These live in this file rather than beside `simulate.ts` because the assertion that matters compares a dry
+ * run with a **live** run over the same delivery, and every fixture for the live one is above. Two files
+ * would have meant duplicating the delivery, the Butler and the grants — and a correspondence test whose two
+ * sides are built by two copies of a fixture proves less than it appears to.
+ */
+describe("a dry run walks the same program and causes nothing", () => {
+  /** Every table a live run of `ACKNOWLEDGE` writes to, so "causes nothing" can be counted rather than argued. */
+  async function rowCounts(): Promise<Record<string, number>> {
+    const tables = [
+      "drafts", "send_manifests", "send_recipients", "butler_runs", "butler_run_effects", "audit_entries",
+    ];
+    const out: Record<string, number> = {};
+    for (const table of tables) {
+      const row = await testEnv.CATALOG.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
+      out[table] = row?.n ?? -1;
+    }
+    // The case's claim state is a column rather than a row, and `case.assign` moves it. Counted as a value.
+    const claimed = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM cases WHERE assignee IS NOT NULL",
+    ).first<{ n: number }>();
+    out["cases_claimed"] = claimed?.n ?? -1;
+    return out;
+  }
+
+  it("reaches the same nodes with the same outcomes as the live run, over one delivery", async () => {
+    /*
+     * The correspondence test, and the reason `walk.ts` was extracted rather than copied.
+     *
+     * A simulation that diverges from the engine is worse than no simulation: it is a tool that tells authors
+     * their Butler is fine. So this asserts the two walks visit the same nodes in the same order and reach
+     * the same verdict on each — with `ok` becoming `would` exactly where a live run wrote something.
+     *
+     * The dry run goes **first**, so both see the same world. Running it after the live one would have it
+     * reasoning about the draft and manifest the live run had just created, which is a different question.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+    const facts = await factsOf(delivery);
+
+    const dry = await simulateButler(readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts });
+    const live = await run(ids, delivery, inlineSteps());
+
+    /*
+     * Non-vacuity first: two empty arrays are equal, and a correspondence test that passes because neither
+     * side did anything is the exact shape this repository keeps finding. `ACKNOWLEDGE` has two effect
+     * nodes, and both walks have to reach both.
+     */
+    expect(live.effects.map((e) => e.nodeId)).toEqual(["reply", "propose"]);
+
+    // Same nodes, same order.
+    expect(dry.effects.map((e) => e.nodeId)).toEqual(live.effects.map((e) => e.nodeId));
+    expect(dry.nodesExecuted).toBe(live.nodesExecuted);
+
+    /*
+     * Same verdicts, with the one substitution that is the point of the exercise. `ok` in a live run means
+     * *"and it is written"*; in a dry run the write is the part that did not happen, so it reports `would`.
+     * Anything else — a refusal, a fault — has to match exactly, because those are the answers a dry run
+     * exists to give and a divergence there would be the tool lying.
+     */
+    expect(dry.effects.map((e) => e.outcome)).toEqual(
+      live.effects.map((e) => (e.outcome === "ok" ? "would" : e.outcome)),
+    );
+
+    // And the same arithmetic: what a live run spent on nodes is what the dry run says it would.
+    expect(dry.wouldSpend).toBeGreaterThan(0);
+    expect(dry.state).toBe("finished");
+  });
+
+  it("writes nothing at all, which is a property of the type rather than of this test", async () => {
+    /*
+     * Belt and braces over a compile-time guarantee, and said plainly because the usual next question is
+     * whether this can be mutation-tested. **It cannot**, and that is the good news: making `simulate.ts`
+     * write would mean giving it an `Env`, and `ReadOnlyEnv` is not assignable to one — the mutation does not
+     * compile, so there is no version of this code that passes the typecheck and fails this test.
+     *
+     * It is here anyway for the thing a type cannot cover: a write reached through some path that never names
+     * an environment at all. Counting rows is what notices that.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+    const facts = await factsOf(delivery);
+
+    const before = await rowCounts();
+    const dry = await simulateButler(readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts });
+    const after = await rowCounts();
+
+    // The walk really did happen — otherwise this passes by simulating nothing, which is the same vacuity
+    // as asserting a clean run over an empty graph.
+    expect(dry.effects.length).toBeGreaterThan(0);
+    expect(after).toEqual(before);
+  });
+
+  it("names who a reply would go to, derived from the real delivery", async () => {
+    /*
+     * The answer an author actually wants from a dry run, and it is exact rather than modelled: the
+     * recipients come from `parentDelivery` + `replyRecipients`, the same two pure functions the live path
+     * uses, reading the same trigger facts.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+
+    const dry = await simulateButler(
+      readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts: await factsOf(delivery) },
+    );
+
+    const drafted = dry.effects.find((e) => e.nodeType === "draft");
+    expect(drafted?.outcome).toBe("would");
+    expect(drafted?.detail?.to).toEqual(["customer@example.net"]);
+    expect(drafted?.detail?.subject).toBe("Re: Invoice 4021 query");
+    // The body's size rather than the body: a report is rendered in a browser, and this field is a D1 row's
+    // worth of author-controlled string in the worst case.
+    expect(typeof drafted?.detail?.bodyBytes).toBe("number");
+  });
+
+  it("gives the real refusal when the Butler holds nothing on the mailbox", async () => {
+    /*
+     * The other half of being useful: a dry run has to be able to say *no*, for the real reason. No grant is
+     * made here, so #51's three-term intersection refuses at the first term — and this is the same refusal,
+     * with the same token, that the live run gives.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+
+    const dry = await simulateButler(
+      readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts: await factsOf(delivery) },
+    );
+
+    const drafted = dry.effects.find((e) => e.nodeType === "draft");
+    expect(drafted?.outcome).toBe("refused");
+    expect(drafted?.reason).not.toBeNull();
+  });
+
+  it("says what it could not evaluate, and a proposed send always says it", async () => {
+    /*
+     * A dry run that quietly implied policy had been checked would be worse than no dry run — it would be a
+     * green light nobody granted. The seal is where `policy.ts` decides, `approvals.ts` gates and
+     * `breakers.ts` trips, all against a draft this run did not write, so `limits` has to name it.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+
+    const dry = await simulateButler(
+      readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts: await factsOf(delivery) },
+    );
+
+    expect(dry.effects.some((e) => e.nodeType === "mail.send.propose")).toBe(true);
+    expect(dry.limits.join(" ")).toMatch(/policy decision, rate breakers and approval gate/);
+    // And it never claims a send would happen — only that one would be proposed.
+    expect(dry.limits.join(" ")).toMatch(/never that it would be sent/);
+  });
+
+  it("walks the draft rather than the live version, because that is what an author is editing", async () => {
+    /*
+     * The same fallback the editor screen makes, inverted and for the same reason: the editor shows the draft
+     * because that is what you are working on, and a dry run tests what you are working on. Simulating the
+     * live version while somebody edits a draft answers a question nobody asked.
+     */
+    const ctx = atTime(T0);
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    const delivery = await aDelivery(ctx, "Invoice 4021 query");
+
+    // A draft that stops immediately: a walk that ends at `halt` is unmistakably not the published graph.
+    await editButlerDraft(testEnv, ctx, ORG, ADMIN, ids.butlerId, {
+      source: JSON.stringify({
+        apiVersion: "mailda/v1", kind: "Butler",
+        metadata: { name: "acknowledge", owner: "team:support" },
+        capabilities: [],
+        trigger: { event: "mail.received", mailbox: ADDRESS },
+        entry: "halt",
+        nodes: [{ id: "halt", type: "stop", reason: "editing" }],
+      }),
+    });
+
+    const dry = await simulateButler(
+      readOnly(testEnv), ORG, ADMIN, ids.butlerId, { facts: await factsOf(delivery) },
+    );
+
+    expect(dry.version).toBeNull();
+    expect(dry.reason).toBe("editing");
+    expect(dry.effects).toEqual([]);
+    // And it says the ceiling it used is not the one publication will pin, which is the honest caveat.
+    expect(dry.limits.join(" ")).toMatch(/a draft has no publisher/);
   });
 });

@@ -9,6 +9,7 @@ import { log } from "../audit.ts";
 import { metering, type Cost } from "../cost-meter.ts";
 import { type EffectResult } from "./effects.ts";
 import { liveEffects, type EffectHandle } from "./world.ts";
+import { walk, type Terminal, type Walkable } from "./walk.ts";
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
 import { ceilingOf } from "./ceiling.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
@@ -163,8 +164,6 @@ export interface RunResult {
   /** What this invocation spent, as the cost meter saw it. Reported by the measurement test. */
   readonly cost: Cost;
 }
-
-type Terminal = { state: TerminalState; reason: string | null };
 
 /**
  * What the engine spends that no node accounts for: three subrequests, and here they are.
@@ -678,234 +677,49 @@ export async function interpret(
     return { state: "refused", reason: "budget_exhausted" };
   };
 
-  /** Walks one chain of edges. Returns a terminal when the whole run ends, `null` when the chain does. */
-  const runChain = async (from: string | null | undefined): Promise<Terminal | null> => {
-    let cursor: string | null | undefined = from;
-    while (cursor !== null && cursor !== undefined) {
-      const node = byId.get(cursor);
-      // Unreachable: `checkButler` above refuses a dangling edge. Terminal rather than a silent stop,
-      // because reaching it would mean the checker and this walk disagree about the graph.
-      if (node === undefined) return { state: "failed", reason: "edge_to_nothing" };
-
-      counts.nodesExecuted += 1;
-      const step = nameFor(node.id);
-
-      switch (node.type) {
-        case "guard":
-          cursor = isTrue(node.when, state, node.id) ? node.then : node.otherwise;
-          break;
-
-        case "switch": {
-          // Compared as a string, because `cases[].equals` is one by schema. `evaluateOperand` rather than
-          // `isTrue`: a switch wants the value, and one evaluator for both is what stops `guard` and
-          // `switch` disagreeing about what an expression means.
-          const subject = String(evaluateOperand(node.on, state, node.id));
-          cursor = node.cases.find((branch) => branch.equals === subject)?.next ?? node.default;
-          break;
-        }
-
-        case "transform":
-          state.steps[node.as] = evaluate(node.value, state, node.id);
-          cursor = node.next;
-          break;
-
-        case "validate": {
-          const problems = validateAgainst(
-            evaluate(node.value, state, node.id), node.schema, node.id,
-          );
-          if (problems.length > 0) {
-            await complain(env, ctx, orgId, runId, butler, "validate_failed", problems.join("; "));
-            return { state: "refused", reason: "validate_failed" };
-          }
-          cursor = node.next;
-          break;
-        }
-
-        case "join":
-          // A merge, not a barrier: no fan-out node ships, so at most one branch is ever live and there is
-          // nothing to wait for. #49 says so on the node itself.
-          cursor = node.next;
-          break;
-
-        case "wait":
-          // `step.sleep`, which reaches 365 days and costs no concurrency while waiting. No `sleepUntil`:
-          // the node carries `seconds` and nothing else, so there is no instant to sleep until.
-          await steps.sleep(step, node.seconds);
-          cursor = node.next;
-          break;
-
-        case "stop":
-          return { state: "stopped", reason: node.reason };
-
-        case "map":
-        case "foreach": {
-          const over = evaluate(node.over, state, node.id);
-          if (!Array.isArray(over)) {
-            throw new ButlerFault("E_BUTLER_LOOP_NOT_A_COLLECTION", {
-              what: `${node.type} ${node.id} was given ${over === null ? "null" : typeof over} to loop over`,
-              why: "a bounded loop iterates a collection; anything else has no length to compare against "
-                + "maxItems and no items to bind",
-              fix: `make ${JSON.stringify(node.over)} resolve to an array`,
-            }, node.id);
-          }
-          if (over.length > node.maxItems) {
-            /*
-             * #49's rule, verbatim: a collection larger than the bound **fails the step and processes
-             * nothing**. It never truncates — *"replied to 100 of 340 customers and reported success"* is a
-             * system reporting something untrue about work owed to customers.
-             *
-             * So this is terminal and no item has run. AGENTS.md §3's four parts, with the ask being the
-             * real length rather than a bound.
-             */
-            await complain(env, ctx, orgId, runId, butler, "loop_bound_exceeded",
-              `E_BUDGET_EXCEEDED  ${node.type} ${node.id} declares maxItems=${node.maxItems}, this run `
-              + `asked for ${over.length}. Nothing was processed: the bound fails the step rather than `
-              + "truncating, because a partial reply reported as a success is untrue about work owed");
-            return { state: "failed", reason: "loop_bound_exceeded" };
-          }
-          const collected: unknown[] = [];
-          for (const item of over) {
-            state.steps[node.as] = item;
-            // Cleared before the body, so "the body bound nothing under collectAs" is a fact about **this**
-            // iteration rather than about any earlier one. Without it the second iteration would silently
-            // collect the first's result again.
-            if (node.type === "map") delete state.steps[node.collectAs];
-            const terminal = await runChain(node.body);
-            if (terminal !== null) return terminal;
-            if (node.type === "map") {
-              /*
-               * `collectAs` collects what the body bound **under that same name**, per iteration.
-               *
-               * One name rather than two, and one concept rather than an invented one: inside the body
-               * `steps.<collectAs>` is this iteration's result, and after the loop it is the array of them.
-               * A body that bound nothing under it is refused rather than collecting nulls — a name that
-               * gathers a list of nothing is a name that lies about what the loop did.
-               */
-              if (!Object.hasOwn(state.steps, node.collectAs)) {
-                throw new ButlerFault("E_BUTLER_MAP_COLLECTS_NOTHING", {
-                  what: `map ${node.id} collects as ${JSON.stringify(node.collectAs)} and its body bound `
-                    + "nothing under that name",
-                  why: "a map that collected nulls would report a list of results for iterations that "
-                    + "produced none. A foreach is the node that collects nothing, and it says so",
-                  fix: `give a node in ${JSON.stringify(node.body)}'s chain \`as: ${node.collectAs}\`, or `
-                    + "use a foreach",
-                }, node.id);
-              }
-              collected.push(state.steps[node.collectAs]);
-            }
-          }
-          if (node.type === "map") state.steps[node.collectAs] = collected;
-          cursor = node.next;
-          break;
-        }
-
-        case "lookup": {
-          if (!affordable(node)) return await exhausted(node);
-          const result = await perform(node, step, async () => await effects.lookup(node, state));
-          if (result.bind !== undefined) state.steps[node.as] = result.bind;
-          cursor = node.next;
-          break;
-        }
-
-        case "case.assign": {
-          if (!affordable(node)) return await exhausted(node);
-          await perform(node, step, async () => await effects.assignCase(node, state));
-          cursor = node.next;
-          break;
-        }
-
-        case "case.close": {
-          if (!affordable(node)) return await exhausted(node);
-          await perform(node, step, async () => await effects.closeCase(node, state));
-          cursor = node.next;
-          break;
-        }
-
-        case "draft": {
-          if (!affordable(node)) return await exhausted(node);
-          // `payload.trigger`, not `state.event`, and the difference is not stylistic: deriving recipients
-          // from the parent delivery (#52) needs to know *which trigger fired*, and `RunState` carries only
-          // the facts and not the trigger's name. A `draft` in a run started by something other than a
-          // delivery has no correspondent, and that has to be a refusal rather than a missing key — so the
-          // thing passed is the whole trigger, which is the only value that can answer it.
-          const result = await perform(node, step, async () =>
-            await effects.writeDraft(node, state, payload.trigger, incumbents !== null));
-          if (result.bind !== undefined) state.steps[node.as] = result.bind;
-          cursor = node.next;
-          break;
-        }
-
-        case "mail.send.propose": {
-          if (!affordable(node)) return await exhausted(node);
-          const result = await perform(node, step, async () =>
-            await effects.proposeSend(node, state, incumbents));
-          if (result.park !== undefined) {
-            /*
-             * The human-release gate. The manifest is already `awaiting` with this reason — `sealManifest`
-             * sealed it that way, so there is no window in which `dispatchDue` could have moved it — and the
-             * run now parks. Waiting costs no concurrency, so a Node with ten thousand proposed sends holds
-             * ten thousand sleeping instances and no capacity.
-             *
-             * A timeout ends the **run** and not the send: the manifest stays `awaiting`, still releasable
-             * by `POST /api/sends/:id/release` and still cancellable. Letting a clock hand mail over would
-             * make this a delay rather than a gate.
-             */
-            const timeoutSeconds = releaseTimeoutSeconds();
-            try {
-              await steps.waitForEvent(`${step}:release`, RELEASE_EVENT, timeoutSeconds);
-            } catch {
-              // Deliberately not re-thrown and deliberately not swallowed either: it becomes a terminal
-              // state a person can see, which is what AGENTS.md asks of a `catch`.
-              return { state: "stopped", reason: "release_timed_out" };
-            }
-            await resumeRun(env, ctx, orgId, runId);
-          }
-          cursor = node.next;
-          break;
-        }
-
-        default:
-          /*
-           * A reserved node reached the walk.
-           *
-           * Unreachable through every path this Node has: `checkButler` above refuses each of the fifteen
-           * reserved kinds by name, before any effect. This exists anyway, and not out of caution — without
-           * it the walk **hangs**. `ButlerNode` is the union of *all* declared kinds, shipped and reserved,
-           * because #49 made a reserved node genuinely representable; so `node.type` can be `llm.classify` at
-           * the type level, the switch above would match nothing, `cursor` would not move, and the loop would
-           * spin until the platform killed the step. A terminal state is the one answer that is neither a
-           * hang nor a silent skip.
-           *
-           * **Unreachable and therefore untested, and that is said rather than implied.** Getting a reserved
-           * node into this switch means getting one past `checkButler`, and there is no path from outside
-           * this file that does — removing the re-check does not reach here either, it faults earlier on the
-           * refused result's absent `ast`. Measured, rather than assumed: the observed failure of that
-           * mutation is `TypeError: Cannot read properties of undefined (reading 'nodes')`. So this branch
-           * is not a check, it is what makes the switch **total** — and the reason to have it is that the
-           * alternative failure is a hang, which is the one shape an operator cannot diagnose.
-           */
-          return { state: "failed", reason: "reserved_node_reached_the_walk" };
+  /**
+   * The walk, with the capabilities this run was constructed with.
+   *
+   * Every field is a seam a dry run implements differently, and the list is not a design preference: it is
+   * what would not come along when the walk was extracted into `walk.ts`. Everything else moved unchanged,
+   * which is the reason to believe a simulation makes the same decisions this does — there is one switch, and
+   * both callers walk it.
+   *
+   * `awaitRelease` is the one that reads oddly here and belongs here anyway. The release gate is two acts —
+   * wait for the event, then mark the run resumed — and both need the environment, so neither can live in a
+   * file with no `env`. What `walk.ts` keeps is the *control flow*: whether a parked send ends the run.
+   */
+  const world: Walkable = {
+    byId, state, trigger: payload.trigger, incumbents, effects, steps, counts,
+    nameFor,
+    perform,
+    complain: async (reason, message) => await complain(env, ctx, orgId, runId, butler, reason, message),
+    affordable,
+    exhausted,
+    awaitRelease: async (step) => {
+      /*
+       * The human-release gate. The manifest is already `awaiting` with this reason — `sealManifest` sealed
+       * it that way, so there is no window in which `dispatchDue` could have moved it — and the run now
+       * parks. Waiting costs no concurrency, so a Node with ten thousand proposed sends holds ten thousand
+       * sleeping instances and no capacity.
+       *
+       * A timeout ends the **run** and not the send: the manifest stays `awaiting`, still releasable by
+       * `POST /api/sends/:id/release` and still cancellable. Letting a clock hand mail over would make this a
+       * delay rather than a gate.
+       */
+      try {
+        await steps.waitForEvent(`${step}:release`, RELEASE_EVENT, releaseTimeoutSeconds());
+      } catch {
+        // Deliberately not re-thrown and deliberately not swallowed either: it becomes a terminal state a
+        // person can see, which is what AGENTS.md asks of a `catch`.
+        return { state: "stopped", reason: "release_timed_out" };
       }
-    }
-    return null;
+      await resumeRun(env, ctx, orgId, runId);
+      return null;
+    },
   };
 
-  let terminal: Terminal;
-  try {
-    terminal = (await runChain(ast.entry)) ?? { state: "finished", reason: null };
-  } catch (error) {
-    if (error instanceof ButlerFault) {
-      await complain(env, ctx, orgId, runId, butler, error.code, error.message);
-      terminal = { state: "failed", reason: error.code };
-    } else {
-      // Not swallowed: recorded as a terminal state, logged, and re-raised is the one thing not done —
-      // because a Workflow that throws is retried, and retrying a run that has already performed its
-      // effects would perform them again. The record is the operational state AGENTS.md requires.
-      await complain(env, ctx, orgId, runId, butler, "engine_fault",
-        (error as Error).message.split("\n")[0] ?? "unknown");
-      terminal = { state: "failed", reason: "engine_fault" };
-    }
-  }
+  const terminal = await walk(world, ast.entry);
 
   return await finish(env, ctx, orgId, runId, cost, spent(), counts, recorded, terminal);
 }

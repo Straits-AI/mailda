@@ -899,6 +899,29 @@ this schema already carries two of, and a tripwire exists to catch a third. It i
 the reason migration 0031 was written: a published version whose format could be flipped is a frozen program
 that its own recorded source no longer describes.
 
+**And a Butler can be tried before it is trusted.** `POST /api/butlers/:id/simulate` walks the draft over
+facts from a run this Node actually performed, causes nothing, and reports what a live run would have done —
+including the answer an author actually wants, which is *who this reply would go to*, derived by the same code
+the live path uses.
+
+**What makes that safe is a type rather than a flag.** Every function in `src/butler/simulate.ts` takes a
+read-only environment, which is not assignable to the writable one — so nothing reachable from a dry run can
+seal a manifest or write a draft *because it does not compile*, for every write that exists and every write
+anybody adds. A proxy that threw would have been the effect-suppressing flag the map rejected: it fails at
+the write, in a branch a test has to reach.
+
+This replaced the mechanism the map's fifth Layer 4 answer specified, and the substitution is recorded rather
+than quiet. That answer withheld a **transport** capability. A Butler run has none to withhold — nothing
+under `src/butler/` names the mail binding, and `mail.send.propose` writes a sealed manifest that a separate
+later invocation dispatches — so the property it wanted was already true for a stronger reason, and the
+capability that actually needed withholding was the database write. Ranked by danger the answer's own example
+came last: a proposed send is parked behind an approval, while assigning a case is gated by nothing.
+
+It is **one walk**, shared with the engine, because a simulation that diverges from the engine is worse than
+no simulation: it is a tool that tells authors their Butler is fine. And what it cannot know it says out
+loud — the send's policy decision, breakers and approval gate happen when the manifest is sealed, so a report
+says a send *would be proposed*, never that it would be sent.
+
 **Publishing is the versioning event, and it dissolves a question rather than answering it.** A published
 version cannot be edited at all — the edit goes to a draft, and publishing is a deliberate second act — so
 there is no dilemma about what a comment-only change does. Resubmitting the same bytes is **refused**: a

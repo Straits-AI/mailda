@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 import type { MailboxRelation } from "./access.ts";
+import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
@@ -215,7 +216,7 @@ async function hasAnyRelation(
  * `hasAnyRelation` about who the caller *is*, and the surest way to agree is to share the function rather
  * than the shape.
  */
-export async function readableSubjects(env: Env, who: Principal): Promise<string[]> {
+export async function readableSubjects(env: ReadOnlyEnv, who: Principal): Promise<string[]> {
   const teams = await env.CATALOG.prepare(
     "SELECT team_id FROM team_members WHERE org_id = ? AND user_id = ?",
   )

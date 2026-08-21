@@ -5,6 +5,7 @@ import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectR
 import type { ButlerPrincipal } from "./principal.ts";
 import type { ReplayIncumbents } from "../outbound/manifest.ts";
 import type { RunState } from "./expr.ts";
+import type { ReadOnlyEnv } from "../read-only.ts";
 
 /**
  * The capability a run is constructed with, and the reason it is a *type* rather than a flag (#87, §5).
@@ -57,61 +58,6 @@ import type { RunState } from "./expr.ts";
  * one Worker.
  */
 
-/**
- * A prepared statement that can be read and not run.
- *
- * `bind` returns this same narrow type, so no chain of `.bind().bind()` widens back into a writable
- * statement — which is the hole a single-level narrowing would leave.
- *
- * `D1PreparedStatement` **is** assignable to this (it has all three members and more), which is the direction
- * that has to work: a live run hands its real statement wherever a read is wanted. The reverse fails, which
- * is the direction that has to be impossible.
- */
-export interface ReadOnlyStatement {
-  bind(...values: unknown[]): ReadOnlyStatement;
-  first<T = unknown>(colName: string): Promise<T | null>;
-  first<T = unknown>(): Promise<T | null>;
-  all<T = unknown>(): Promise<D1Result<T>>;
-}
-
-/** A catalog that can be asked questions and told nothing. No `batch`, and no statement that can `run`. */
-export interface ReadOnlyCatalog {
-  prepare(query: string): ReadOnlyStatement;
-}
-
-/**
- * The environment a simulated run is constructed with: one handle, and it reads.
- *
- * Deliberately **not** `Omit<Env, …>` or `Env & {…}`. Both would keep this assignable to or from `Env` in one
- * direction by accident, and the whole property is that the assignability goes one way. This is a separate
- * interface naming exactly what a simulation may touch, so adding a binding to `Env` — a second queue, a
- * vectorize index — does not silently hand it to simulated runs.
- *
- * `EVIDENCE` is absent and that is a decision, not an omission: reading a stored message means decrypting
- * evidence, and a dry run that decrypted mail to tell somebody what a draft would say would be a
- * confidentiality surface with no audit entry behind it. A simulation reasons over the trigger facts it was
- * given and the catalog rows it can read.
- */
-export interface ReadOnlyEnv {
-  readonly CATALOG: ReadOnlyCatalog;
-}
-
-/**
- * The one place a writable environment becomes a read-only one.
- *
- * A function, not a cast at each call site, so the crossing is grep-able and there is exactly one line to
- * read when asking *how could a simulation ever write?* It is the same shape as `metering(rawEnv)` in
- * `src/cost-meter.ts`, which already establishes that this engine narrows its environment at a boundary
- * rather than passing the raw one down.
- *
- * No proxy and no wrapper object: the returned value **is** `env`, and the narrowing is entirely in the type.
- * A wrapper would be a second object that could drift from the first, and it would buy nothing — the
- * guarantee is that the *caller* cannot name a write, not that the object cannot perform one. The runtime
- * value being the real catalog is what makes reads inside a simulation real reads.
- */
-export function readOnly(env: Env): ReadOnlyEnv {
-  return env;
-}
 
 /**
  * The effect handle a run context carries — the charted answer's first clause, literally.
@@ -125,6 +71,14 @@ export function readOnly(env: Env): ReadOnlyEnv {
  * effect node through one seam. A read that bypassed the handle would be a second way for a node to reach
  * storage, and the next reader would have to check both.
  */
+/*
+ * Re-exported so a reader of the engine finds the capability type where the capability is used. The
+ * definition and the argument for it are in `src/read-only.ts`, which is one directory up because two
+ * non-Butler modules narrowed to it — see that file's header.
+ */
+export type { ReadOnlyCatalog, ReadOnlyEnv, ReadOnlyStatement } from "../read-only.ts";
+export { readOnly } from "../read-only.ts";
+
 export interface EffectHandle {
   lookup(node: Extract<ButlerNode, { type: "lookup" }>, state: RunState): Promise<EffectResult>;
   assignCase(node: Extract<ButlerNode, { type: "case.assign" }>, state: RunState): Promise<EffectResult>;
