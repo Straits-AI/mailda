@@ -607,3 +607,82 @@ export const decide = (id: string, decision: "approve" | "deny") =>
 
 export const withdrawDecision = (id: string) =>
   approvalAct(`/api/approvals/${encodeURIComponent(id)}/withdraw`);
+
+/* ------------------------------------------------------------------ Layer 4: policies (#81) -------- */
+
+/**
+ * One policy **version**, as the list returns it — the endpoint returns every version of every policy, so a
+ * row is a version and the policy it belongs to is `policy_id` / `name`.
+ *
+ * The five conditions arrive as typed columns rather than a blob, which is #60's decision and matters here:
+ * a screen can render exactly the five that exist, and a sixth cannot appear without the column that would
+ * make something evaluate it.
+ */
+export interface PolicyVersionRow {
+  policy_id: string;
+  name: string;
+  version_id: string;
+  version: number | null;
+  state: string;
+  outcome: "allow" | "hold" | "require_approval" | "deny";
+  when_mailbox_id: string | null;
+  when_actor_user_id: string | null;
+  /** SQLite booleans: 1, 0 or NULL, where NULL means the condition is not part of this rule. */
+  when_recipient_external: number | null;
+  when_is_reply: number | null;
+  when_org_daily_volume_min: number | null;
+  created_at: string;
+  published_at: string | null;
+  superseded_at: string | null;
+}
+
+export interface PolicyConditions {
+  mailboxId?: string | null;
+  actorUserId?: string | null;
+  recipientExternal?: boolean | null;
+  isReply?: boolean | null;
+  orgDailyVolumeMin?: number | null;
+}
+
+export function usePolicies(): UseQueryResult<{ policies: PolicyVersionRow[] }, Error> {
+  return useQuery({
+    queryKey: ["policies"],
+    queryFn: () => read<{ policies: PolicyVersionRow[] }>("/api/policies"),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+async function policyAct<T>(
+  path: string,
+  method: "POST" | "PUT",
+  body?: unknown,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  const response = await apiFetch(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, value: parsed as T };
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export const createPolicy = (
+  name: string, outcome: string, conditions: PolicyConditions, stages: number[],
+) => policyAct<{ policy: { policyId: string } }>("/api/policies", "POST", {
+  name, outcome, conditions, stages,
+});
+
+export const savePolicyDraft = (
+  id: string, outcome: string, conditions: PolicyConditions, stages: number[],
+) => policyAct<{ policy: { versionId: string } }>(
+  `/api/policies/${encodeURIComponent(id)}/draft`, "PUT", { outcome, conditions, stages },
+);
+
+export const publishPolicyVersion = (id: string) =>
+  policyAct<{ published: { version: number } }>(
+    `/api/policies/${encodeURIComponent(id)}/publish`, "POST",
+  );

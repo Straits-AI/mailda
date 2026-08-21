@@ -246,7 +246,37 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Eight routes now: `/`, `/queue`, `/approvals`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+Nine routes now: `/`, `/queue`, `/approvals`, `/rules`, `/butlers`, `/outbox`, `/audit`, `/log`, `/doctor`.
+
+### `/rules` (#60, #81)
+
+Policies, under the word a person uses for them. Each rule renders as a **sentence** — *"Mail to anyone
+outside is held for a person to release."* — assembled from the same five columns the evaluator reads, so a
+sentence cannot describe a condition that is not there. `outcome: hold, when_recipient_external: 1` is
+accurate and tells a reader nothing about what their organization does.
+
+The editor offers exactly five conditions because #60 stored them as typed columns rather than a blob,
+precisely so a sixth that nothing evaluates cannot be written. Each condition has **three** states, not two:
+"not part of this rule" is different from "must be false", the column is nullable for that reason, and a
+checkbox would silently turn every unticked box into a condition the evaluator now reads.
+
+No delete, and no preview. A policy version is evidence about why a message was gated; superseding is how a
+rule stops applying. "Which of my messages would this have denied" would mean a second implementation of
+`evaluate` in the browser, and the evaluator's decision is already recorded on every manifest.
+
+### Letting go a message a rule held
+
+#60 gave `policy_hold` to any `send.propose` holder to release and nobody built the act, so for four layers
+the only drain was the author cancelling their own message — the queue-with-no-drain that `deny` was kept out
+of `awaiting` to avoid, and which `dispatch.ts`'s header has named as missing since it was written. Giving
+`hold` a screen made it two clicks away, so the act is built: `POST /api/sends/:id/release-hold`, and *let it
+go* beside *stop* in the outbox.
+
+Only `policy_hold`. `awaiting` is also where an approval-gated send and a rate-broken one sit, each with its
+own drain, and one button for all three would walk a message past whichever gate it was actually on. The
+author is deliberately **not** excluded: a hold is a pause for a human to read what is about to go, and that
+is usually the person who wrote it — which is the distinction from `require_approval`, where §18 excludes
+them by design.
 
 ### `/approvals` (#81)
 

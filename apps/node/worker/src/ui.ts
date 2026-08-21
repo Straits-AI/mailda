@@ -421,6 +421,17 @@ button.primary:disabled { opacity: .55; cursor: progress; }
   font-style: italic;
 }
 .approval-actions { margin: .8rem 0 0; }
+
+/* Rules (#81). The editor is a column of labelled controls, not a grid — each answer changes the sentence. */
+.policy-editor {
+  margin-top: 1.5rem;
+  border-top: 1px solid var(--rule-strong);
+  padding-top: 1rem;
+  max-width: 44rem;
+}
+.policy-editor h2 { margin: 0 0 .8rem; font-size: 1.1rem; }
+.policy-editor select, .policy-editor input { font: inherit; font-family: var(--mono); font-size: .82rem; }
+.policy-actions { margin: 1rem 0 0; }
 .count { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin: 0; }
 
 .scroller { overflow-x: auto; }

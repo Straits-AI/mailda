@@ -218,6 +218,15 @@ export function Rail() {
         </li>
         <li>
           {/*
+            "Rules" rather than "Policies": the word a person uses for what their organization does with
+            mail. The screen renders each one as a sentence for the same reason.
+          */}
+          <Link to="/rules" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">Rules</span>
+          </Link>
+        </li>
+        <li>
+          {/*
             Butlers sits with the ledgers rather than the mailboxes, and the placement is the claim: a
             Butler is not a place mail lands, it is a standing account of what this Node does without a
             person. The screen is refused to anybody without `org.admin` (§5C, as a 404), so the link is

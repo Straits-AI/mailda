@@ -56,7 +56,7 @@ import { resumeButlerPause } from "./butler/pause-acts.ts";
 import { recentRuns, runEffects, runRow } from "./butler/record.ts";
 import { inspectRun, replayRun } from "./butler/replay.ts";
 import { createButlerDraft, editButlerDraft, publishButler } from "./butlers.ts";
-import { cancelSend, dailySendState, dispatchDue } from "./outbound/dispatch.ts";
+import { cancelSend, dailySendState, dispatchDue, releasePolicyHold } from "./outbound/dispatch.ts";
 import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
 import { cloudflareTransport } from "./outbound/transport.ts";
@@ -1533,6 +1533,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     // from `./cases.ts` — and shadowing it here would compile in this block and be a different function
     // three hundred lines away.
     const releaseSend = /^\/api\/sends\/([^/]+)\/release$/.exec(url.pathname);
+    /**
+     * Releasing a send a **rule** held (#60, #81).
+     *
+     * Distinct from `/release` below, which is the Butler gate: that one hands a run's proposed send to a
+     * person, this one clears a `policy_hold`. Two acts because they answer to two different authorities and
+     * clear two different reasons, and a single route matching on `state` alone would let one walk a message
+     * past the other's gate.
+     */
+    const releaseHold = /^\/api\/sends\/([^/]+)\/release-hold$/.exec(url.pathname);
+    if (releaseHold && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      const outcome = await releasePolicyHold(env, clock, who.orgId, who.userId, releaseHold[1]!);
+      return Response.json(outcome, { status: outcome.released ? 200 : 409 });
+    }
+
     if (releaseSend && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

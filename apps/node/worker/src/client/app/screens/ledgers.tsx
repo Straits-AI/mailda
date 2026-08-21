@@ -114,6 +114,20 @@ export function Outbox() {
     if (!outcome.cancelled) setProblem(outcome.reason ?? "It could not be stopped.");
   }
 
+  /**
+   * Lets go a send a rule held.
+   *
+   * The same shape as `stop`: refetch rather than patch, and render the Node's refusal rather than guess.
+   * The reason matters more here than for a cancel — "this message is waiting on an approval, which this
+   * does not clear" tells somebody which gate they are actually looking at.
+   */
+  async function release(id: string) {
+    const response = await apiFetch(`/api/sends/${encodeURIComponent(id)}/release-hold`, { method: "POST" });
+    const outcome = (await response.json()) as { released: boolean; reason?: string };
+    await queryClient.invalidateQueries({ queryKey: ["sends"] });
+    if (!outcome.released) setProblem(outcome.reason ?? "It could not be released.");
+  }
+
   return (
     <section className="ledger" aria-label="Outbox">
       <header className="ledger-head">
@@ -184,13 +198,34 @@ export function Outbox() {
                     <td className="num mono dim">{clock(send.state_at)}</td>
                     <td className="num">
                       {send.state === "held" || send.state === "awaiting" ? (
-                        // `awaiting` too, and not as a convenience. An approval-gated send is now cleared by
-                        // an approver (#61), but a `policy_hold` still has no release act — and either way the
-                        // author may stop their own message, which is what this is. `cancelSend` bounds the
-                        // authority to the one they already hold.
-                        <button type="button" className="linkish" onClick={() => void stop(send.id)}>
-                          stop
-                        </button>
+                        <>
+                          {/*
+                            A send a **rule** held can now be let go, by anybody who could have sent it
+                            (#60's own answer, built in #81). Only `policy_hold`: an approval-gated send is
+                            cleared by an approver and a rate-broken one by its window, and offering one
+                            button for all three would walk a message past whichever gate it was actually on.
+                          */}
+                          {send.state_reason === "policy_hold" ? (
+                            <>
+                              <button
+                                type="button"
+                                className="linkish"
+                                onClick={() => void release(send.id)}
+                              >
+                                let it go
+                              </button>
+                              {" · "}
+                            </>
+                          ) : null}
+                          {/*
+                            `awaiting` too, and not as a convenience: either way the author may stop their own
+                            message, which is what this is. `cancelSend` bounds the authority to the one they
+                            already hold.
+                          */}
+                          <button type="button" className="linkish" onClick={() => void stop(send.id)}>
+                            stop
+                          </button>
+                        </>
                       ) : send.fidelity === "authored" && send.has_submitted === 1 ? (
                         // §12's point is that the submitted bytes are *producible*, so this is a link
                         // rather than a feature request — but only when they exist.

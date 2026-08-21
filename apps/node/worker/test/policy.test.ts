@@ -9,7 +9,9 @@ import {
   stricter, canonicalConditions, domainOf, STATE_FOR, type Outcome, type PolicyConditions,
 } from "../src/policy.ts";
 import deliveryScript from "../src/client/delivery.client.js";
-import { cancelSend, dispatchDue, type SendState } from "../src/outbound/dispatch.ts";
+import {
+  cancelSend, dispatchDue, releasePolicyHold, type SendState,
+} from "../src/outbound/dispatch.ts";
 import { DISPATCH_REASONS } from "../src/outbound/recheck.ts";
 import { conversationForDelivery } from "../src/conversations.ts";
 import { putEvidence } from "../src/evidence-store.ts";
@@ -628,6 +630,75 @@ describe("the state a decision produces (#60's mapping)", () => {
     expect(row?.state).toBe("awaiting");
     expect(row?.policy_outcome).toBe("hold");
     expect(JSON.parse(row!.policy_versions!)).toEqual([gate.versionId]);
+  });
+
+  /**
+   * A rule that holds mail has to have a way to let it go.
+   *
+   * #60 gave `policy_hold` to any `send.propose` holder to release and nobody built the act, so for four
+   * layers the only drain was the author cancelling their own message — a queue with no drain, which is the
+   * failure `deny` was kept out of `awaiting` to avoid. `dispatch.ts`'s header has said so in as many words
+   * since it was written. It became urgent when #81 gave `hold` a screen: a rule that parks every outgoing
+   * message is now two clicks away.
+   */
+  it("lets go a send a rule held, and records who did", async () => {
+    await published("gate", "hold", { mailboxId: MAILBOX });
+    const sealed = await seal();
+    expect(sealed.stateReason).toBe("policy_hold");
+
+    const released = await releasePolicyHold(testEnv, atTime(AUGUST_10 + 5000), ORG, AUTHOR, sealed.id);
+    expect(released).toEqual({ released: true });
+    const row = await manifestRow(sealed.id);
+    expect(row?.state).toBe("held");
+    // The reason is cleared: it is no longer waiting on anything, and a stale reason is a wrong answer.
+    expect(row?.state_reason).toBeNull();
+    // `policy_outcome` is **not** rewritten. What the rule decided at seal is evidence about why this was
+    // held, and a release is a later act — overwriting it would erase the reason the release was needed.
+    expect(row?.policy_outcome).toBe("hold");
+
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, action, subject FROM audit_entries
+        WHERE org_id = ? AND action = 'send.released' ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG).first<{ actor_user_id: string; action: string; subject: string }>();
+    expect(entry).toEqual({ actor_user_id: AUTHOR, action: "send.released", subject: sealed.id });
+  });
+
+  it("refuses somebody who could not have sent it, and says nothing about why", async () => {
+    /*
+     * `APPROVER` holds `approval.decide` on this mailbox and **not** `send.propose`, which makes them the
+     * sharpest possible subject: they may clear the stricter gate and must not clear this one. The two
+     * authorities are different things, and a release that accepted either would make `hold` a weaker
+     * approval rather than a different decision.
+     *
+     * The refusal is §5C's: "no such send", the same answer a send that never existed gets. Saying "you may
+     * not release this" would confirm that a message from this mailbox is sitting in the outbox.
+     */
+    await published("gate", "hold", { mailboxId: MAILBOX });
+    const sealed = await seal();
+
+    const refused = await releasePolicyHold(testEnv, atTime(AUGUST_10 + 5000), ORG, APPROVER, sealed.id);
+    expect(refused).toEqual({ released: false, reason: "no such send" });
+    expect((await manifestRow(sealed.id))?.state).toBe("awaiting");
+
+    // And the person who *can* send from it still can, so the refusal is about authority and not the state.
+    expect((await releasePolicyHold(testEnv, atTime(AUGUST_10 + 6000), ORG, AUTHOR, sealed.id)).released)
+      .toBe(true);
+  });
+
+  it("will not walk an approval-gated send past its approval", async () => {
+    /*
+     * The predicate names the **reason**, not just the state. `awaiting` is also where an approval-gated
+     * send and a rate-broken one sit, and a release matching on state alone would let a `send.propose`
+     * holder clear a gate #61 exists to keep shut — a governance bypass with a benign-looking name.
+     */
+    await published("approve", "require_approval", { mailboxId: MAILBOX });
+    const sealed = await seal();
+    expect(sealed.stateReason).toBe("policy_approval_required");
+
+    const refused = await releasePolicyHold(testEnv, atTime(AUGUST_10 + 5000), ORG, AUTHOR, sealed.id);
+    expect(refused.released).toBe(false);
+    expect(refused.reason).toContain("policy_approval_required");
+    expect((await manifestRow(sealed.id))?.state).toBe("awaiting");
   });
 
   it("seals an approval-required send in awaiting with the approval reason, which is the stricter gate", async () => {

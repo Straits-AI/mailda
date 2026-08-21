@@ -237,6 +237,96 @@ export async function cancelSend(
 }
 
 /**
+ * Releases a send a **policy** held, which until now had no way out but cancellation.
+ *
+ * #60 gave a `policy_hold` outcome to any `send.propose` holder to release and nobody built the act, so the
+ * only drain was the author cancelling their own message — the queue-with-no-drain that `deny` was kept out
+ * of `awaiting` to avoid, and that this file's header has named as missing since it was written. It became
+ * urgent rather than theoretical when #81 gave `hold` a screen: a rule that parks every outgoing message is
+ * now two clicks away, and a person who writes one must be able to let the mail go.
+ *
+ * ## Who may release, and why it is not the approver relation
+ *
+ * `send.propose` on the mailbox, which is #60's own answer and is narrower than it looks: it is the
+ * authority to put mail in the outbox from that mailbox in the first place. A `hold` outcome says *a person
+ * should look at this before it leaves*, not *a second person must agree* — that is `require_approval`, it
+ * has its own relation, its own eligible set and its own separation of duty, and conflating the two here
+ * would make `hold` a weaker approval rather than a different thing.
+ *
+ * The author is **not** excluded, and that is the distinction from §18 stated rather than left implicit: a
+ * hold is a pause for a human to read what is about to go, and the human best placed to read it is usually
+ * the one who wrote it.
+ *
+ * ## Only `policy_hold`
+ *
+ * The predicate names the reason as well as the state. `awaiting` is also where an approval-gated send and a
+ * rate-broken send sit, and each has its own drain — `decideApproval` and the window clearing. A release act
+ * that matched on `state` alone would let a `send.propose` holder walk an approval-gated message straight
+ * past #61, which is a governance bypass with a benign-looking name.
+ */
+export async function releasePolicyHold(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  userId: string,
+  manifestId: string,
+): Promise<{ released: boolean; reason?: string }> {
+  const manifest = await env.CATALOG.prepare(
+    "SELECT mailbox_id, state, state_reason FROM send_manifests WHERE id = ? AND org_id = ? LIMIT 1",
+  ).bind(manifestId, orgId).first<{ mailbox_id: string; state: SendState; state_reason: string | null }>();
+
+  // §5C: a send that does not exist and one in a mailbox this caller cannot send from answer identically.
+  if (manifest === null) return { released: false, reason: "no such send" };
+  if (!(await maySend(env, { orgId, userId }, manifest.mailbox_id))) {
+    return { released: false, reason: "no such send" };
+  }
+
+  const at = new Date(ctx.now()).toISOString();
+  const { results } = await auditedBatch<never>(
+    env, ctx, orgId,
+    {
+      action: "send.released", outcome: "ok", subject: manifestId,
+      actorUserId: userId,
+      detail: { from: "policy_hold" },
+    },
+    (entry) => [
+      entry,
+      /*
+       * Conditional on the state **and** the reason, so a concurrent approval decision or a cancellation
+       * loses at the database rather than producing a released-but-cancelled send. The entry goes first for
+       * the same reason `cancelSend` places it first: the update clears the predicate the entry is gated on.
+       *
+       * `release_at` is deliberately **not** moved. The hold window is the author's own window to stop their
+       * message and it has been running since the seal; restarting it here would make a release add delay,
+       * which is the opposite of what the act is for.
+       */
+      env.CATALOG.prepare(
+        `UPDATE send_manifests SET state = 'held', state_at = ?, state_reason = NULL
+          WHERE id = ? AND org_id = ? AND state = 'awaiting' AND state_reason = 'policy_hold'`,
+      ).bind(at, manifestId, orgId),
+      env.CATALOG.prepare(
+        `UPDATE send_recipients SET submission_state = 'held', submission_state_at = ?
+          WHERE org_id = ? AND manifest_id = ? AND submission_state = 'awaiting'`,
+      ).bind(at, orgId, manifestId),
+    ],
+    {
+      sql: `SELECT 1 FROM send_manifests
+             WHERE id = ? AND org_id = ? AND state = 'awaiting' AND state_reason = 'policy_hold'`,
+      params: [manifestId, orgId],
+    },
+  );
+
+  if ((results[1]?.meta.changes ?? 0) > 0) return { released: true };
+  return {
+    released: false,
+    // Named, because "release failed" leaves somebody unsure whether their message is going.
+    reason: manifest.state !== "awaiting"
+      ? `This message is not waiting on a rule; it is ${manifest.state}.`
+      : `This message is waiting on ${manifest.state_reason ?? "something else"}, which this does not clear.`,
+  };
+}
+
+/**
  * Releases everything whose hold window has closed, plus anything automatically retryable.
  *
  * Called by the outbox sweeper's alarm, so a Node that was asleep when a window expired still sends —
