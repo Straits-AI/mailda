@@ -168,7 +168,63 @@ fixture was built to satisfy it rather than around it:
   — because `retry-effect` is offered only where non-acceptance is recorded, so a stub that accepted would
   produce a send with nothing to retry.
 
+## Step 3: the SDK, generated
+
+`packages/sdk` emits one method per route from `ROUTES`. Nothing about a route is written twice — its path,
+verb, parameters and the shape of what it answers all come from the registry.
+
+```
+pnpm sdk         regenerate packages/sdk/src/generated.ts
+pnpm sdk:check   regenerate and fail on any diff
+```
+
+The same shape `pnpm receipts` and `packages/budgets/src/generated.ts` have used since Layer 1. A generated
+file that can drift from its generator is a landmine; one a gate re-derives is not.
+
+### The chain, end to end
+
+| link | held by | failure |
+|:--|:--|:--|
+| SDK → contract | the generator, and `test/generated.test.ts` | a hand edit fails the test |
+| client → contract | `PathFor<M>` | compile error |
+| contract → handler, paths and verbs | `route-registry.test.ts` | test failure, both directions |
+| contract → handler, bodies | `contract-responses.test.ts` | test failure, against a real Node |
+
+### Names are derived, never written down
+
+`<verb><StaticSegments>` with `By<Param>` for each captured segment: `getButlers`,
+`getButlersByButlerId`, `postButlersByButlerIdPublish`.
+
+**Verbose, and the trade is taken deliberately.** `postButlersByButlerIdPublish` is uglier than
+`butlers.publish` and it is *derived* rather than chosen — so it cannot drift, cannot collide silently, and
+needs no review. The alternative was a `name` field per route: readable, and ninety more hand-kept values
+that can disagree with the path beside them. The generator **fails** on a collision rather than emitting one,
+because two routes under one name would make one of them silently unreachable.
+
+Response types come from the schemas **by identity**: a `RouteSpec` carries the schema object, not its name,
+so the generator finds the export whose value *is* that object. No new field, no second registry — and a
+schema that is inlined rather than exported fails generation, which is the right pressure.
+
+### Responses are validated by default
+
+That is the difference between the SDK and a wrapper around `fetch`. A Node that has drifted is caught at the
+boundary, in the caller's process, with the offending field named — as a `ContractViolation`, which is
+deliberately a different error from `MaildaError`: a refusal means *you* asked for something disallowed, and
+a violation means the **Node** is wrong.
+
+`validate: false` exists for one case, named so nobody reaches for `catch {}` instead: a client talking to a
+**newer** Node. Response schemas are `.strict()`, so an added field is a parse error — the right default for
+catching drift and the wrong one for surviving a rolling upgrade.
+
+### What the build of it found
+
+**A top-level `writeFileSync` made the drift test vacuous.** The generator wrote on import, so importing it
+to reach `methodNameFor` regenerated the file before the test could read a hand edit — the comparison could
+never fail. Emitting is pure now and `src/write.ts` is the only thing that touches the disk. A module with a
+top-level side effect is a module that cannot be imported by the thing that checks it.
+
 ## What comes next
 
-Step 3: the SDK, Agent Skill and MCP server — each **generated** rather than written. That was blocked on
-this being complete, and it no longer is.
+The **Agent Skill** and **MCP server**, which #85 scoped to their own tickets so that neither becomes the
+reason the contract is shaped around one consumer. Both are surfaces onto this same registry, and both are
+cheap now that it is complete.

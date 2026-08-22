@@ -12,6 +12,7 @@ import { seedDelivery } from "./fixtures/delivery.ts";
 import { dispatchDue } from "../src/outbound/dispatch.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { claimSecretHash } from "../src/claim-secret.ts";
+import { createClient } from "@mailda/sdk";
 import { publishButler } from "../src/butlers.ts";
 import { interpret, type RunSteps } from "../src/butler/interpret.ts";
 import { deliveryFacts } from "../src/butler/trigger.ts";
@@ -1400,6 +1401,59 @@ describe("a Butler run, and the send it parks", () => {
     await answers("POST", "/api/butler-pauses/:pauseId/resume", {
       params: { pauseId: pause!.pauseId }, body: { reason: "the loop is fixed" }, cookie: held,
     });
+  });
+});
+
+describe("the generated SDK drives a real Node (#85 step 3)", () => {
+  /*
+   * The tests in `packages/sdk` check the SDK against a **stub** — that its paths are built from the
+   * contract, that a refusal becomes a `MaildaError`, that a wrong shape becomes a `ContractViolation`. What
+   * they cannot check is that the contract they were generated from describes *this* Node.
+   *
+   * That is what this does: the generated client, against the real handler, with response validation on. A
+   * schema that does not describe reality fails here as a `ContractViolation` — which is the same guarantee
+   * the tranches above give, arriving through the surface a consumer will actually use.
+   */
+  it("reads and writes through the generated methods, with validation on", async () => {
+    const held = await cookie();
+    const client = createClient({
+      origin: ORIGIN,
+      headers: { cookie: held },
+      // `SELF.fetch` rather than the global: the Node under test is this Worker, not a network address.
+      fetch: ((url: string, init: RequestInit) => SELF.fetch(url, init)) as unknown as typeof globalThis.fetch,
+    });
+
+    const me = await client.getMe();
+    expect(me.userId).toBe(USER);
+
+    const created = await client.postButlers({
+      name: "through the sdk", source: STARTER, sourceFormat: "json",
+    });
+    const published = await client.postButlersByButlerIdPublish({
+      butlerId: created.butler.butlerId,
+    });
+    expect(published.published.version).toBe(1);
+
+    const listed = await client.getButlers();
+    expect(listed.butlers).toHaveLength(1);
+    // The typed field is the point: this is `ButlerRow["live_version"]`, not `any`.
+    expect(listed.butlers[0]!.live_version).toBe(1);
+  });
+
+  it("turns a refusal into a MaildaError carrying this Node's own code", async () => {
+    /*
+     * The four-part refusal survives the SDK boundary rather than becoming a status code. `code` is what a
+     * caller branches on and `message` is what a person reads — which is the whole of AGENTS.md §3 reaching
+     * a consumer that never sees the HTTP.
+     */
+    const client = createClient({
+      origin: ORIGIN,
+      headers: { cookie: await cookie() },
+      fetch: ((url: string, init: RequestInit) => SELF.fetch(url, init)) as unknown as typeof globalThis.fetch,
+    });
+
+    await expect(client.postButlers({ name: "broken", source: "{not json", sourceFormat: "json" }))
+      .rejects.toMatchObject({ name: "MaildaError", code: "E_BUTLER_SOURCE_NOT_JSON" });
   });
 });
 

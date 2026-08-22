@@ -24,6 +24,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./routes": "./src/routes.ts",
-    "./send-mail": "./src/send-mail.ts"
+    "./send-mail": "./src/send-mail.ts",
+    "./schemas": "./src/schemas.ts"
   }
 }

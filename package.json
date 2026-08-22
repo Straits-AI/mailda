@@ -18,7 +18,9 @@
     "set-password": "node packages/cli/src/mailda.mjs set-password",
     "queue:attach-consumer": "pnpm --filter @mailda/worker run queue:attach-consumer",
     "mailda": "node packages/cli/src/mailda.mjs",
-    "claim-secret": "node packages/cli/src/mailda.mjs claim-secret"
+    "claim-secret": "node packages/cli/src/mailda.mjs claim-secret",
+    "sdk": "pnpm --filter @mailda/sdk generate",
+    "sdk:check": "pnpm sdk && git diff --exit-code packages/sdk/src/generated.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

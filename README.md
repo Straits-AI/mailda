@@ -1625,7 +1625,8 @@ docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
-packages/contract                      the route registry, and command schemas
+packages/contract                      the route registry, its schemas, and command schemas
+packages/sdk                           GENERATED from the registry — one method per route
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
@@ -1726,8 +1727,14 @@ mint sites, which now go through the registry.
 
 Reaching all of them took fixtures the product's own rules dictated: a second and third administrator for
 dual control, a lowercase address for the Butler ceiling, and a stub transport that **refuses** — because a
-retry is offered only where non-acceptance is recorded. The SDK, Skill and MCP server follow, each generated
-rather than written.
+retry is offered only where non-acceptance is recorded.
+
+**Step 3 ships the SDK, generated.** `packages/sdk` emits one method per route from the registry, `pnpm
+sdk:check` fails on any diff, and responses are validated against the contract by default — so a Node that
+has drifted is caught in the caller's process with the offending field named, as a `ContractViolation`
+rather than a refusal. Building it found its own defect: a top-level `writeFileSync` in the generator made
+the drift test vacuous, because importing the generator regenerated the file before the test could read a
+hand edit.
 See [`docs/api-contract.md`](./docs/api-contract.md).
 
 ## Contributing
