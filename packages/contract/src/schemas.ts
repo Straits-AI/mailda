@@ -564,6 +564,18 @@ export const butlerRunRow = z.object({
   trigger_event: z.string().min(1),
   trigger_key: z.string().min(1),
   state: z.string().min(1),
+  /*
+   * **A third field the client's own interface omits**, after `BreakerReading`'s two and `TeamRow`'s one.
+   * `RUN_COLUMNS` is shared by the list and the single read, so both have always returned it.
+   *
+   * It surfaced late for a reason worth recording: tranche three asserted the runs list was empty, so the
+   * row schema was declared and never exercised. A list schema is only as good as a row to check it with,
+   * and this is what that costs when there is not one.
+   *
+   * `state_at` is when the run entered its current state, which is not `finished_at` — a run parked on a
+   * release gate has the first and not the second.
+   */
+  state_at: isoDate,
   outcome_reason: z.string().nullable(),
   started_at: isoDate,
   finished_at: isoDate.nullable(),
@@ -1247,3 +1259,89 @@ export const approvalWithdrawnResponse = z.object({
     }).strict().nullable(),
   }).strict(),
 }).strict();
+
+/* ------------------------------------------------------------------ Butler runs, one at a time ----- */
+
+/** One recorded effect of a run. `at` is here and not on the summary row, which carries only counts. */
+const runEffect = z.object({
+  seq: z.number().int().positive(),
+  node_id: z.string().min(1),
+  node_type: z.string().min(1),
+  outcome: z.enum(["ok", "refused", "failed"]),
+  reason: z.string().nullable(),
+  subject: z.string().nullable(),
+  at: isoDate,
+  /** Present for a `mail.send.propose` whose manifest survives — what the send is doing *now*. */
+  send: z.object({
+    state: z.string().min(1),
+    fidelity: z.enum(["authored", "reconstructed"]),
+    retry: z.object({ mode: z.string().nullable(), why: z.string().min(1) }).strict(),
+    resentAs: z.string().nullable(),
+  }).strict().optional(),
+}).strict();
+
+export const butlerRunDetailResponse = z.object({
+  run: butlerRunRow,
+  effects: z.array(runEffect),
+}).loose();
+
+/**
+ * Inspecting a run (#53).
+ *
+ * Two fields here are the honest half of the record and would both be lost by a summary:
+ *
+ * `triggerFacts` is **what the run was given**, which is what makes a replay a replay: the input is
+ * inherited and the judgement re-asked. `triggerFactsRedacted` is non-null when the reader may not see all
+ * of it — mail content is not disclosed by an inspection.
+ *
+ * `notRecorded` is a sentence, in the payload, saying what this record cannot tell you: the pure nodes of
+ * the walk leave no row, because this Node keeps one row per **effect** rather than one per step. Which
+ * branch a guard took is not recoverable. A reader who assumed otherwise would draw conclusions from an
+ * absence, and the field exists so they cannot.
+ */
+export const butlerRunInspectionResponse = z.object({
+  run: butlerRunRow,
+  program: z.object({
+    state: z.string().min(1),
+    trigger: z.unknown(),
+    entry: z.unknown(),
+    nodes: z.array(z.object({ id: z.string(), type: z.string() }).loose()),
+    /** `checkButler` over the stored AST — whether a re-run would refuse itself before performing anything. */
+    checks: z.boolean(),
+    findings: z.string().nullable(),
+  }).loose().nullable(),
+  triggerFacts: z.record(z.string(), z.unknown()).nullable(),
+  triggerFactsRedacted: z.unknown().nullable(),
+  effects: z.array(runEffect),
+  replays: z.array(z.unknown()),
+  reRun: z.object({ available: z.boolean(), why: z.string().nullable() }).strict(),
+  notRecorded: z.string().min(1),
+}).loose();
+
+export const butlerRunReplayedResponse = z.object({
+  mode: z.string().min(1),
+  /** The **new** run's id. A replay is a new instance with its own budget, never a resumption. */
+  runId: z.string().min(1),
+  replayOf: z.string().min(1),
+}).loose();
+
+export const butlerPauseResumedResponse = z.object({
+  resumed: z.object({
+    pauseId: z.string().min(1),
+    butlerId: z.string().regex(idPattern(ID_PREFIXES.butler)),
+    resumedAt: isoDate,
+  }).strict(),
+}).strict();
+
+/**
+ * Releasing a send parked on a Butler's gate (#61).
+ *
+ * `resumed` says whether the parked **run** was woken, and it is separate from `released` on purpose: a
+ * timed-out run leaves its manifest releasable, so a send can be released long after the instance that
+ * proposed it has gone. Folding the two would make a release of an orphaned send look like a failure.
+ */
+export const sendReleasedResponse = z.object({
+  released: z.literal(true),
+  runId: z.string().min(1).nullable(),
+  resumed: z.boolean(),
+}).loose();

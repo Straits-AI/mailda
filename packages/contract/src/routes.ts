@@ -213,7 +213,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", response: S.sendCancelledResponse },
   { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed" },
-  { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate" },
+  { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
   { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold" },
   { method: "GET", path: "/api/sends/:sendId/submitted", summary: "The exact bytes handed to the transport" },
 
@@ -271,11 +271,11 @@ export const ROUTES = [
     request: S.simulateRequest, response: S.simulationResponse,
   },
   { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", response: S.butlerRunListResponse },
-  { method: "GET", path: "/api/butler-runs/:runId", summary: "One run" },
-  { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers" },
-  { method: "POST", path: "/api/butler-runs/:runId/replay", summary: "Replay a run in a named mode" },
+  { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", response: S.butlerRunDetailResponse },
+  { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", response: S.butlerRunInspectionResponse },
+  { method: "POST", path: "/api/butler-runs/:runId/replay", summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
   { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", response: S.butlerPauseListResponse },
-  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason" },
+  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason", response: S.butlerPauseResumedResponse },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
   {

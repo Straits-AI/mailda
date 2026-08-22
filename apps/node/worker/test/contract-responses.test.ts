@@ -10,6 +10,10 @@ import { issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
 import { claimSecretHash } from "../src/claim-secret.ts";
+import { publishButler } from "../src/butlers.ts";
+import { interpret, type RunSteps } from "../src/butler/interpret.ts";
+import { deliveryFacts } from "../src/butler/trigger.ts";
+import { placeButlerPause } from "../src/butler/pause-acts.ts";
 
 /**
  * The contract's schemas, checked against what the routes actually answer (#85 step 2, ADR 12).
@@ -418,12 +422,11 @@ describe("the governance reads answer what the contract says they do", () => {
     expect(detail.versions.length).toBe(1);
   });
 
-  it("GET /api/butler-runs and /api/butler-pauses, which are empty and say so", async () => {
+  it("GET /api/butler-runs and /api/butler-pauses, which are empty here", async () => {
     /*
-     * The two in this tranche whose **rows** are not exercised, stated rather than left to be assumed. A run
-     * needs a delivery and a Workflow instance; a pause needs a breaker to trip. Both are covered by
-     * `butler-run.test.ts` and `butler-pause.test.ts`, and neither is reproducible here cheaply — so what is
-     * checked is the envelope, and the row schemas wait for a tranche that can produce one.
+     * Envelopes only, and the cost of that showed up two tranches later: `butlerRunRow` was declared and
+     * never exercised, so it was missing `state_at` — which the list has always returned. A list schema is
+     * only as good as a row to check it against, and the group below now produces one.
      */
     const held = await cookie();
     const runs = await answers("GET", "/api/butler-runs", { cookie: held }) as { runs: unknown[] };
@@ -1138,6 +1141,148 @@ describe("the account lifecycle, on a Node that has not been claimed", () => {
   });
 });
 
+describe("a Butler run, and the send it parks", () => {
+  /*
+   * The last group that needed a state no earlier fixture reached: a **real run**, driven through
+   * `interpret` with an inline step runner, over a real delivery, by a Butler that proposes a send.
+   *
+   * Four things had to be true at once for the walk to get past its first node, and the Node refused
+   * precisely until they were — which is the three-term ceiling working:
+   *
+   *   1. the Butler holds `send.propose` on the mailbox (its own tuple, not the asker's);
+   *   2. the **sponsor** — whoever published the version — holds it too;
+   *   3. the version's `capabilities` declare the mailbox by address;
+   *   4. and that address is **lowercase**, because a ceiling lowercases what it declares and a ULID is
+   *      uppercase. `${mailboxId}@…` refused with `capability_not_declared` until it was lowercased, which
+   *      is a subtlety worth leaving written down rather than rediscovering.
+   */
+  const BUTLER_NODES = [
+    {
+      id: "reply", type: "draft", mailboxId: "${event.mailbox_id}", subject: "Re: ${event.subject}",
+      body: "Thanks for your message.", inReplyTo: "${event.message_id}", as: "ack", next: "propose",
+    },
+    { id: "propose", type: "mail.send.propose", draft: "${steps.ack}", next: null },
+  ];
+
+  function inlineSteps(): RunSteps {
+    return {
+      do: async (_name, body) => await body(),
+      sleep: async () => {},
+      // The release arrives at once: this fixture is about the record a run leaves, not about waiting.
+      waitForEvent: async () => ({ released: true }),
+    };
+  }
+
+  async function aRun(): Promise<{ runId: string; butlerId: string; sendId: string }> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const mailboxId = ctx.id("mbx");
+    const address = `${mailboxId.toLowerCase()}@acme.example`;
+
+    const rows = [
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("adr"), ORG, mailboxId, address, at),
+    ];
+    for (const relation of ["send.propose", "mailbox.content.read"]) {
+      rows.push(testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, relation, mailboxId, at));
+    }
+    await testEnv.CATALOG.batch(rows);
+
+    const source = JSON.stringify({
+      apiVersion: "mailda/v1", kind: "Butler", metadata: { name: "ack", owner: "team:support" },
+      capabilities: [{ action: "send.propose", resource: `mailbox:${address}` }],
+      trigger: { event: "mail.received", mailbox: address },
+      entry: "reply", nodes: BUTLER_NODES,
+    });
+    const draft = await createButlerDraft(testEnv, ctx, ORG, USER, { name: "ack", source });
+    const live = await publishButler(testEnv, ctx, ORG, USER, draft.butlerId);
+
+    // The Butler's own tuples. Its authority is not its author's.
+    for (const relation of ["send.propose", "mailbox.content.read"]) {
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, draft.butlerId, relation, mailboxId, at).run();
+    }
+
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const facts = await deliveryFacts(testEnv, ORG, delivery.messageId);
+    const runId = `${live.versionId}-${delivery.messageId}`;
+    const outcome = await interpret(testEnv, createSystemCtx(), {
+      orgId: ORG, butlerId: draft.butlerId, butlerVersionId: live.versionId,
+      trigger: { event: "mail.received", key: delivery.messageId, facts: facts! },
+    }, inlineSteps(), runId);
+
+    expect(outcome.state, JSON.stringify(outcome.effects)).toBe("finished");
+    const proposed = outcome.effects.find((effect) => effect.nodeType === "mail.send.propose");
+    return { runId, butlerId: draft.butlerId, sendId: proposed!.subject! };
+  }
+
+  it("the run, its inspection, and a replay", async () => {
+    const held = await cookie();
+    const { runId } = await aRun();
+
+    const detail = await answers("GET", "/api/butler-runs/:runId", {
+      params: { runId }, cookie: held,
+    }) as { effects: unknown[] };
+    expect(detail.effects).toHaveLength(2);
+
+    /*
+     * `notRecorded` is a sentence in the payload saying what the record cannot tell you: the pure nodes leave
+     * no row, because this Node keeps one per **effect** rather than one per step. A reader who assumed
+     * otherwise would draw conclusions from an absence, and the field exists so they cannot.
+     */
+    const inspected = await answers("GET", "/api/butler-runs/:runId/inspect", {
+      params: { runId }, cookie: held,
+    }) as { notRecorded: string; triggerFacts: Record<string, unknown> | null; reRun: { available: boolean } };
+    expect(inspected.notRecorded).toMatch(/one row per effect/);
+    // The input is inherited and the judgement re-asked — which is what makes a replay a replay.
+    expect(inspected.triggerFacts?.message_id).toBeDefined();
+    expect(inspected.reRun.available).toBe(true);
+
+    const replayed = await answers("POST", "/api/butler-runs/:runId/replay", {
+      params: { runId }, body: { mode: "re-run" }, cookie: held,
+    }) as { runId: string; replayOf: string };
+    // A replay is a **new** instance with its own budget, never a resumption of the old one.
+    expect(replayed.runId).not.toBe(runId);
+    expect(replayed.replayOf).toBe(runId);
+  });
+
+  it("releasing the send the run parked", async () => {
+    /*
+     * `resumed` is separate from `released` on purpose: a timed-out run leaves its manifest releasable, so a
+     * send can be released long after the instance that proposed it has gone. Folding the two would make a
+     * release of an orphaned send look like a failure.
+     */
+    const held = await cookie();
+    const { sendId } = await aRun();
+    const released = await answers("POST", "/api/sends/:sendId/release", {
+      params: { sendId }, body: {}, cookie: held,
+    }) as { released: boolean; runId: string | null };
+    expect(released.released).toBe(true);
+    expect(released.runId).not.toBeNull();
+  });
+
+  it("resuming a Butler a machine stopped", async () => {
+    const held = await cookie();
+    const { butlerId } = await aRun();
+    const pause = await placeButlerPause(testEnv, createSystemCtx(), ORG, {
+      butlerId, butlerName: "ack", reason: "loop_detected",
+      detail: "placed by this test, with the shape describeLoopTrip produces",
+      trippedBy: "msg_placeholder",
+    });
+    await answers("POST", "/api/butler-pauses/:pauseId/resume", {
+      params: { pauseId: pause!.pauseId }, body: { reason: "the loop is fixed" }, cookie: held,
+    });
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -1157,7 +1302,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(82);
+    expect(coverage.described).toBeGreaterThanOrEqual(87);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
