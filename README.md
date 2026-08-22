@@ -1714,8 +1714,8 @@ shipped. Nothing caught it because the route tests built every request with a he
 `method: "POST"`: a helper that fixes the method cannot detect a method divergence, and fourteen green tests
 sat over it. Confirmed against a running Node before and after, rather than inferred.
 
-Step 2 adds the schemas: **82 of 91** route/method pairs describe what travels over them, and the count is
-asserted so it only goes up. Partial on purpose — ninety-four hand-written shapes that nothing checks against
+Step 2 adds the schemas: **every describable route is described, 90 of 90**, and the test asserts equality
+rather than a floor — so a route added without a schema fails. Partial on purpose — ninety-four hand-written shapes that nothing checks against
 a real response would be ninety-four guesses a generated client trusts, so each arrives with a test that
 drives its route and parses the answer. Two of them do security work rather than tidiness: `.strict()` is
 what makes a route that grew an `apiToken` or a `publicKey` field fail instead of leak.
@@ -1724,8 +1724,9 @@ It found that **`usr` was not in the id registry** — minted as a literal since
 nothing had ever needed to validate a user id — and registering it made the id-prefix tripwire fire on both
 mint sites, which now go through the registry.
 
-Nine routes remain, each needing a state no fixture reaches yet — a dispatched send, a Butler gate, a policy
-hold, a Workflow instance. The SDK, Skill and MCP server follow once that count reaches 91, each generated
+Reaching all of them took fixtures the product's own rules dictated: a second and third administrator for
+dual control, a lowercase address for the Butler ceiling, and a stub transport that **refuses** — because a
+retry is offered only where non-acceptance is recorded. The SDK, Skill and MCP server follow, each generated
 rather than written.
 See [`docs/api-contract.md`](./docs/api-contract.md).
 

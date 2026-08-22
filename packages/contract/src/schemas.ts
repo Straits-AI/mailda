@@ -1367,3 +1367,26 @@ export const messageBodyResponse = z.object({
 
 /** Releasing a send a policy put on hold (#60). One field, because there is one question. */
 export const sendHoldReleasedResponse = z.object({ released: z.literal(true) }).strict();
+
+/**
+ * Retrying a send (ADR 40).
+ *
+ * `detail` is a sentence rather than a code, and it is the field that carries the epistemic claim: a
+ * `retry-effect` says *"this Node has a recorded outcome proving it never left"*, which is the whole reason
+ * that mode is safe and `resend-may-duplicate` is not. A caller shown only `mode` would have the label
+ * without the justification.
+ *
+ * `dispatch` is nested because a retry hands the message to the dispatcher and reports what **that** did —
+ * which may be "not due, or already moved by another dispatcher", a perfectly ordinary outcome that would
+ * look like a failure if flattened into the outer result.
+ */
+export const sendRetriedResponse = z.object({
+  mode: z.enum(["retry-effect", "resend-may-duplicate"]),
+  manifestId: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
+  dispatch: z.object({
+    manifestId: z.string().min(1),
+    state: z.string().min(1),
+    detail: z.string(),
+  }).loose(),
+  detail: z.string().min(1),
+}).loose();

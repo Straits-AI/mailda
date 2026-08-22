@@ -224,10 +224,19 @@ export const ROUTES = [
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", response: S.sendSealedResponse },
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", response: S.sendCancelledResponse },
-  { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed" },
+  { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed", response: S.sendRetriedResponse },
   { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
   { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
-  { method: "GET", path: "/api/sends/:sendId/submitted", summary: "The exact bytes handed to the transport" },
+  {
+    method: "GET", path: "/api/sends/:sendId/submitted",
+    /*
+     * **Not JSON**, and it took driving it to find that out: it answers the submitted message itself, as
+     * text. Which is the only answer that could be right — the whole point of storing the bytes is that they
+     * are the bytes, and wrapping them in a JSON envelope would make the record a description of the message
+     * rather than the message. It joins `NOT_JSON` for the same reason `/raw` is there.
+     */
+    summary: "The exact bytes handed to the transport, as the message itself",
+  },
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
   { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", response: S.policyListResponse },
@@ -402,12 +411,16 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
  * `/api/messages/:id/raw` is `message/rfc822` — the stored bytes, whose whole value is being unaltered — and
  * an export object is whatever was exported.
  *
- * Three, and asserted as exactly three, so a fourth is a decision somebody makes rather than a route that
- * quietly opted out of being described.
+ * **Four**, and asserted as exactly four, so a fifth is a decision somebody makes rather than a route that
+ * quietly opted out of being described. The fourth joined late: `/api/sends/:id/submitted` was assumed to
+ * answer JSON until it was driven, and it answers the submitted message itself. Which is the only answer
+ * that could be right — the point of storing the bytes is that they *are* the bytes, and a JSON envelope
+ * would make the record a description of the message rather than the message.
  */
 export const NOT_JSON: readonly string[] = [
   "GET /index.html",
   "GET /api/messages/:receiptId/raw",
+  "GET /api/sends/:sendId/submitted",
   "GET /api/exports/:exportId/objects/:objectId",
 ];
 

@@ -9,6 +9,8 @@ import { createButlerDraft } from "../src/butlers.ts";
 import { issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
+import { dispatchDue } from "../src/outbound/dispatch.ts";
+import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { claimSecretHash } from "../src/claim-secret.ts";
 import { publishButler } from "../src/butlers.ts";
 import { interpret, type RunSteps } from "../src/butler/interpret.ts";
@@ -49,6 +51,19 @@ const ORG = "org_contract";
  */
 const USER = createSystemCtx().id("usr");
 const ORIGIN = "https://node";
+
+/**
+ * A transport that refuses, for the one route that needs a send to have been attempted.
+ *
+ * Refusing rather than accepting, deliberately: `retry-effect` is offered only where non-acceptance is
+ * recorded, so a stub that accepted would produce a send with nothing to retry.
+ */
+const refusingTransport: TransportAdapter = {
+  name: "test-refusing",
+  capability: async () => ({ canSend: true, arbitraryRecipients: true, verifiedAt: null, detail: "test" }),
+  submit: async (): Promise<SubmitOutcome> =>
+    ({ kind: "refused", reason: "the test transport refused", retryable: true }),
+};
 
 beforeEach(async () => {
   for (const table of [
@@ -1062,6 +1077,58 @@ describe("the routes that only exist once mail has landed", () => {
     });
   });
 
+  it("a dispatched send: its submitted bytes and the retry it earns", async () => {
+    /*
+     * The last state no earlier fixture could reach, and it takes a **stub transport** — the pattern
+     * `breakers.test.ts` and `approvals.test.ts` already use. `dispatchDue` takes the adapter as a
+     * parameter precisely so a test can decide what the world answers.
+     *
+     * The stub **refuses**, which is deliberate: `retry-effect` is offered only where non-acceptance is
+     * recorded, so a stub that accepted would have produced a send with nothing to retry. ADR 40's whole
+     * distinction is that a recorded refusal proves the message never left.
+     */
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const sealed = await answers("POST", "/api/sends", {
+      body: {
+        mailboxId, to: ["x@y.test"], subject: "a", body: "b",
+        inReplyToMessageId: delivery.messageId,
+      },
+      cookie: held,
+    }) as { id: string; releaseAt: string };
+
+    const system = createSystemCtx();
+    const past = Date.parse(sealed.releaseAt) + 60_000;
+    const swept = await dispatchDue(
+      testEnv,
+      { now: () => past, id: (p) => system.id(p), random: (n) => system.random(n) },
+      ORG, refusingTransport, 20,
+    );
+    /*
+     * At least one, and **mine among them** — not exactly one. Earlier tests in this block leave sends that
+     * are also due by now, and a sweep is org-wide by design: it hands over everything ready, which is the
+     * behaviour a per-test count would be quietly asserting against.
+     */
+    expect(swept.map((one) => one.manifestId)).toContain(sealed.id);
+
+    /*
+     * `submitted` is **not JSON** — it answers the message itself, which is why it is in `NOT_JSON`. Checked
+     * here anyway, because "the bytes are the bytes" is the claim the whole authored path exists to make and
+     * a route that returned a description instead would satisfy no schema and no test.
+     */
+    const bytes = await SELF.fetch(`${ORIGIN}/api/sends/${sealed.id}/submitted`, {
+      headers: { cookie: held },
+    });
+    expect(bytes.status).toBe(200);
+    expect(await bytes.text()).toContain("From:");
+
+    const retried = await answers("POST", "/api/sends/:sendId/retry", {
+      params: { sendId: sealed.id }, body: { mode: "retry-effect" }, cookie: held,
+    }) as { detail: string };
+    // The sentence is the epistemic claim, and it is why this mode is the safe one.
+    expect(retried.detail).toMatch(/proving it never left/);
+  });
+
   it("POST /api/sends/dispatch, with nothing due", async () => {
     await answers("POST", "/api/sends/dispatch", { body: {}, cookie: await cookie() });
   });
@@ -1354,8 +1421,14 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The denominator excludes `NOT_JSON` — three routes that answer HTML, `message/rfc822` and an export's
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
-    expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(89);
+    expect(coverage.total).toBe(90);
+    /*
+     * **Every describable route is described.** The floor is the whole set now, so this asserts equality
+     * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be
+     * true before an SDK can be generated from this at all.
+     */
+    expect(coverage.described).toBe(coverage.total);
+    expect(coverage.missing).toEqual([]);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -1369,11 +1442,6 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
     const coverage = schemaCoverage();
     expect(coverage.described + coverage.missing.length).toBe(coverage.total);
     expect(coverage.missing).not.toContain("GET /api/transport");
-    /*
-     * A route that still has none, updated as tranches land — the point being that the count moves.
-     * Deliberately not one of `NOT_JSON`: those are excluded from the denominator entirely, so asserting
-     * one of them here would pass for ever and check nothing.
-     */
-    expect(coverage.missing).toContain("GET /api/sends/:sendId/submitted");
+
   });
 });

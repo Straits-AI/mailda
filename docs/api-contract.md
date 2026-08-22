@@ -80,14 +80,20 @@ spelling moved into the registry, which is the file whose job is to hold each ro
 ## Step 2: schemas, and why they are partial on purpose
 
 `packages/contract/src/schemas.ts` describes what travels over the routes, and `RouteSpec` gained optional
-`request` and `response` fields to carry them. **82 of 91** route/method pairs are described. That number is
+`request` and `response` fields to carry them. **Every describable route is described — 90 of 90** — and the
+test asserts equality rather than a floor, so a route added without a schema fails. That number is
 exported by `schemaCoverage()` and asserted, so it is something a reader watches move rather than an
 impression.
 
-The denominator is 91 rather than 94 because three routes cannot carry a JSON response schema and are named
-in `NOT_JSON`: `/index.html` is the interface shell, `/api/messages/:id/raw` is `message/rfc822` — stored
-bytes whose whole value is being unaltered — and an export object is whatever was exported. A target that
-counts routes no schema can describe is one nobody can reach.
+The denominator is 90 rather than 94 because **four** routes cannot carry a JSON response schema and are
+named in `NOT_JSON`: `/index.html` is the interface shell, `/api/messages/:receiptId/raw` and
+`/api/sends/:sendId/submitted` are the stored and submitted bytes, and an export object is whatever was
+exported. A target that counts routes no schema can describe is one nobody can reach.
+
+The fourth joined late and only by being driven: `submitted` was assumed to answer JSON and answers the
+submitted message itself. Which is the only answer that could be right — the point of storing the bytes is
+that they *are* the bytes, and a JSON envelope would make the record a description of the message rather
+than the message.
 
 The partialness is the honest part. A file of ninety-four hand-written shapes that nothing compares against a
 real response would be ninety-four guesses wearing the clothes of a contract — and **worse than none**,
@@ -138,16 +144,31 @@ Every one turned something up, which is the argument for doing this at all rathe
 | `TeamRow` omits `createdBy` | tranche 3 |
 | `usr` was not in `ID_PREFIXES`, and registering it made the id-prefix tripwire fire on both mint sites | step 2 |
 | `POST /api/prepare` is the migration endpoint, not what its name says | tranche 9 |
+| `butlerRunRow` was missing `state_at` — a **third** client omission, hidden because an earlier tranche asserted the list was empty | tranche 11 |
+| `GET /api/messages/:id/body` takes an **`ir_` receipt id**, not a `msg_` message id | tranche 12 |
+| `GET /api/sends/:id/submitted` does not answer JSON at all | tranche 13 |
 
 Several shapes are recorded specifically so that somebody tidying up does not break them: a `200` carrying an
 `error` field on sign-out (one shape for "you are not signed in", however you got there); a seal answering at
 the top level (the response *is* the envelope); `alreadyHeld` on a grant; `replayed` on a refresh;
 `stillVerifiesForSeconds` on a rotation; `tooFreshToJudge` separate from `stranded`.
 
+## Reaching every route took fixtures the product's own rules dictated
+
+Nothing here was seeded past a refusal. Where a route could not be reached, the reason was a rule, and the
+fixture was built to satisfy it rather than around it:
+
+- **Dual control.** Four routes refuse on a one-admin Node, so the contract tests grew a second and third
+  administrator. That is what made `approvalRow` checkable at all.
+- **The three-term ceiling.** A Butler run needed the Butler's own tuple, the sponsor's, a declared
+  capability, *and* a lowercase address — a ULID is uppercase and a ceiling lowercases what it declares, so
+  it refused `capability_not_declared` until that was fixed.
+- **A stub transport.** `submitted` and `retry` need a send that was actually attempted. `dispatchDue` takes
+  the adapter as a parameter precisely so a test can decide what the world answers, and the stub **refuses**
+  — because `retry-effect` is offered only where non-acceptance is recorded, so a stub that accepted would
+  produce a send with nothing to retry.
+
 ## What comes next
 
-1. **Nine routes** remain, each needing a state no fixture reaches yet: a dispatched send for `submitted` and
-   `retry`, a Butler gate for `release`, a policy hold for `release-hold`, a rendered body for
-   `messages/:id/body`, and a Workflow instance for the four Butler-run routes.
-2. The SDK, Agent Skill and MCP server — each **generated** rather than written, which is only possible once
-   1 is empty. Doing them first is how five clients drift.
+Step 3: the SDK, Agent Skill and MCP server — each **generated** rather than written. That was blocked on
+this being complete, and it no longer is.
