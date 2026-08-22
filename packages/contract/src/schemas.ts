@@ -382,3 +382,208 @@ export const notificationRow = z.object({
 export const notificationListResponse = z.object({
   notifications: z.array(notificationRow),
 }).strict();
+
+/* ------------------------------------------------------------------ people and teams (#73, #83) ---- */
+
+export const personRow = z.object({
+  id: userId,
+  email: z.string().min(1),
+  created_at: isoDate,
+  relations: z.array(z.object({
+    relation: z.string().min(1),
+    objectType: z.string().min(1),
+    objectId: z.string().min(1),
+  }).strict()),
+}).strict();
+
+export const peopleListResponse = z.object({ people: z.array(personRow) }).loose();
+
+export const teamRow = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  createdAt: isoDate,
+  /*
+   * **Another field the client's own `TeamRow` does not declare**, found the same way `BreakerReading`'s two
+   * were: by parsing the real answer. Who made a team is who a reader asks about when its grants turn out to
+   * be wider than expected, so it is worth having in the contract even while no screen renders it.
+   */
+  createdBy: userId,
+  memberCount: z.number().int().nonnegative(),
+}).strict();
+
+export const teamListResponse = z.object({ teams: z.array(teamRow) }).loose();
+export const teamMembersResponse = z.object({ members: z.array(z.string().min(1)) }).loose();
+
+export const invitationRow = z.object({
+  id: z.string().min(1),
+  email: z.string().min(1),
+  invitedBy: userId,
+  createdAt: isoDate,
+  expiresAt: isoDate,
+  /**
+   * Computed at read time rather than stored, and the schema says so by carrying it beside `expiresAt`.
+   * An invitation that has passed its window is still a row — the history of who was invited survives
+   * every redemption — so "expired" is a question about now, not a state a row moves into.
+   */
+  expired: z.boolean(),
+}).strict();
+
+export const invitationListResponse = z.object({ invitations: z.array(invitationRow) }).loose();
+
+/* ------------------------------------------------------------------ governance --------------------- */
+
+export const matterRow = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  description: z.string(),
+  openedBy: userId,
+  openedAt: isoDate,
+  closedAt: isoDate.nullable(),
+  closedBy: userId.nullable(),
+}).strict();
+
+export const matterListResponse = z.object({ matters: z.array(matterRow) }).loose();
+
+export const holdRow = z.object({
+  id: z.string().min(1),
+  matterId: z.string().nullable(),
+  mailboxId: z.string().min(1),
+  fromDate: z.string().nullable(),
+  toDate: z.string().nullable(),
+  placedBy: userId,
+  placedAt: isoDate,
+  /**
+   * Whether the mailbox a hold names still exists.
+   *
+   * Computed, and it is the field that stops a hold list quietly describing preservation over something
+   * gone. A schema without it would let the answer be dropped and the list keep looking complete.
+   */
+  mailboxExists: z.boolean(),
+  pendingLift: z.object({
+    liftId: z.string().min(1),
+    approvalId: z.string().min(1),
+    requestedBy: userId,
+    reason: z.string(),
+  }).strict().nullable(),
+}).strict();
+
+export const holdListResponse = z.object({ holds: z.array(holdRow) }).loose();
+
+export const domainPauseRow = z.object({
+  id: z.string().min(1),
+  domain: z.string().min(1),
+  placedAt: isoDate,
+  reason: z.string(),
+}).strict();
+
+export const domainPauseListResponse = z.object({ pauses: z.array(domainPauseRow) }).loose();
+
+export const policyVersionRow = z.object({
+  policy_id: z.string().min(1),
+  name: z.string().min(1),
+  version_id: z.string().min(1),
+  version: z.number().int().nullable(),
+  state: z.enum(["draft", "published", "superseded"]),
+  outcome: z.enum(["allow", "hold", "require_approval", "deny"]),
+  when_mailbox_id: z.string().nullable(),
+  when_actor_user_id: z.string().nullable(),
+  when_recipient_external: z.number().int().nullable(),
+  when_is_reply: z.number().int().nullable(),
+  when_org_daily_volume_min: z.number().int().nullable(),
+  created_at: isoDate,
+  published_at: isoDate.nullable(),
+  superseded_at: isoDate.nullable(),
+}).strict();
+
+export const policyListResponse = z.object({ policies: z.array(policyVersionRow) }).loose();
+
+export const exportRow = z.object({
+  id: z.string().min(1),
+  matterId: z.string().min(1),
+  mailboxId: z.string().min(1),
+  requestedBy: userId,
+  maxMessages: z.number().int().positive(),
+  state: z.string().min(1),
+  stateReason: z.string().nullable(),
+  messagesEmitted: z.number().int().nonnegative(),
+  requestedAt: isoDate,
+  completedAt: isoDate.nullable(),
+}).strict();
+
+export const exportListResponse = z.object({ exports: z.array(exportRow) }).loose();
+
+/* ------------------------------------------------------------------ Butlers, read ------------------ */
+
+export const butlerRow = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.butler)),
+  name: z.string().min(1),
+  created_at: isoDate,
+  live_version_id: z.string().nullable(),
+  live_version: z.number().int().nullable(),
+  published_at: isoDate.nullable(),
+  draft_version_id: z.string().nullable(),
+  /** A machine stopped it (#75). Null is the ordinary state; the object is what a reader needs next. */
+  pause: z.object({
+    pauseId: z.string().min(1),
+    butlerId: z.string().min(1),
+    butlerName: z.string(),
+    reason: z.string().min(1),
+    detail: z.string(),
+    trippedBy: z.string(),
+    placedAt: isoDate,
+  }).strict().nullable(),
+}).strict();
+
+export const butlerListResponse = z.object({ butlers: z.array(butlerRow) }).loose();
+
+export const butlerVersionRow = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.butlerVersion)),
+  version: z.number().int().nullable(),
+  state: z.enum(["draft", "published", "superseded"]),
+  source_format: butlerSourceFormat,
+  ast_sha256: sha256,
+  source_sha256: sha256,
+  created_by: userId,
+  created_at: isoDate,
+  published_by: userId.nullable(),
+  published_at: isoDate.nullable(),
+  superseded_at: isoDate.nullable(),
+  /** Withheld for a superseded version: its bytes are immutable and named by its digest (#77). */
+  source_text: z.string().nullable(),
+}).strict();
+
+export const butlerDetailResponse = z.object({
+  butler: z.object({ id: z.string(), name: z.string(), created_at: isoDate }).loose(),
+  versions: z.array(butlerVersionRow),
+}).loose();
+
+export const butlerRunRow = z.object({
+  id: z.string().min(1),
+  butler_id: z.string().min(1),
+  version_id: z.string().min(1),
+  trigger_event: z.string().min(1),
+  trigger_key: z.string().min(1),
+  state: z.string().min(1),
+  outcome_reason: z.string().nullable(),
+  started_at: isoDate,
+  finished_at: isoDate.nullable(),
+  nodes_executed: z.number().int().nonnegative(),
+  effects: z.number().int().nonnegative(),
+  refusals: z.number().int().nonnegative(),
+  subrequests_spent: z.number().int().nonnegative(),
+  replay_of: z.string().nullable(),
+  replayed_by: z.string().nullable(),
+}).strict();
+
+export const butlerRunListResponse = z.object({ runs: z.array(butlerRunRow) }).loose();
+export const butlerPauseListResponse = z.object({
+  pauses: z.array(z.object({
+    pauseId: z.string().min(1),
+    butlerId: z.string().min(1),
+    butlerName: z.string(),
+    reason: z.string().min(1),
+    detail: z.string(),
+    trippedBy: z.string(),
+    placedAt: isoDate,
+  }).strict()),
+}).loose();

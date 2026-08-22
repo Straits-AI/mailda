@@ -145,15 +145,15 @@ export const ROUTES = [
   },
 
   // ---- membership (#83) ------------------------------------------------------------------------------
-  { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding" },
+  { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", response: S.invitationListResponse },
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization" },
   { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password" },
-  { method: "GET", path: "/api/people", summary: "Everybody in this organization" },
-  { method: "GET", path: "/api/teams", summary: "Every team" },
+  { method: "GET", path: "/api/people", summary: "Everybody in this organization", response: S.peopleListResponse },
+  { method: "GET", path: "/api/teams", summary: "Every team", response: S.teamListResponse },
   { method: "POST", path: "/api/teams", summary: "Create a team" },
   { method: "GET", path: "/api/teams/:teamId", summary: "One team" },
   { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team" },
-  { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team" },
+  { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team", response: S.teamMembersResponse },
   { method: "POST", path: "/api/teams/:teamId/members", summary: "Put somebody in a team, conferring every relation it holds" },
   { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request" },
 
@@ -212,7 +212,7 @@ export const ROUTES = [
   { method: "GET", path: "/api/sends/:sendId/submitted", summary: "The exact bytes handed to the transport" },
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
-  { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live" },
+  { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", response: S.policyListResponse },
   { method: "POST", path: "/api/policies", summary: "Create a policy" },
   {
     method: "PUT",
@@ -227,10 +227,10 @@ export const ROUTES = [
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody" },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send" },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw an approval request" },
-  { method: "GET", path: "/api/holds", summary: "Legal holds in force" },
+  { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold" },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person" },
-  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to" },
+  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", response: S.matterListResponse },
   { method: "POST", path: "/api/matters", summary: "Open a matter" },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter" },
   {
@@ -238,17 +238,17 @@ export const ROUTES = [
     summary: "The rate breakers, with the readings behind them",
     response: S.breakerListResponse,
   },
-  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to" },
+  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain" },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person" },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
-  { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live" },
+  { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", response: S.butlerListResponse },
   {
     method: "POST", path: "/api/butlers", summary: "Create a Butler and its first draft",
     request: S.createButlerRequest, response: S.butlerDraftResponse,
   },
-  { method: "GET", path: "/api/butlers/:butlerId", summary: "One Butler and its version history" },
+  { method: "GET", path: "/api/butlers/:butlerId", summary: "One Butler and its version history", response: S.butlerDetailResponse },
   {
     method: "PUT", path: "/api/butlers/:butlerId/draft", summary: "Replace a Butler's draft",
     request: S.editButlerDraftRequest, response: S.butlerDraftResponse,
@@ -263,11 +263,11 @@ export const ROUTES = [
     summary: "Dry-run a Butler: walk it, cause nothing, report what a live run would do",
     request: S.simulateRequest, response: S.simulationResponse,
   },
-  { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done" },
+  { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", response: S.butlerRunListResponse },
   { method: "GET", path: "/api/butler-runs/:runId", summary: "One run" },
   { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers" },
   { method: "POST", path: "/api/butler-runs/:runId/replay", summary: "Replay a run in a named mode" },
-  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped" },
+  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", response: S.butlerPauseListResponse },
   { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason" },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
@@ -280,7 +280,7 @@ export const ROUTES = [
     method: "GET", path: "/api/logs", summary: "The operational log",
     response: S.logListResponse,
   },
-  { method: "GET", path: "/api/exports", summary: "Export jobs" },
+  { method: "GET", path: "/api/exports", summary: "Export jobs", response: S.exportListResponse },
   { method: "POST", path: "/api/exports", summary: "Start an e-discovery export" },
   { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export" },
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },

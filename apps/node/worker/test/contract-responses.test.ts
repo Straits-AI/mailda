@@ -316,6 +316,118 @@ describe("the ledgers answer what the contract says they do", () => {
   });
 });
 
+describe("the governance reads answer what the contract says they do", () => {
+  /*
+   * **Produced by real acts, not seeded.** Everything below is created through the route or the function
+   * that creates it in production, which is a stronger check than an `INSERT`: a hand-written row can carry
+   * a shape this Node never mints, and a schema validated against one would describe something that does
+   * not occur. The two exceptions in the tranche above earned their `INSERT`s by being projections.
+   */
+  async function post(path: string, body: unknown, held: string): Promise<Response> {
+    return await SELF.fetch(`${ORIGIN}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: held },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("GET /api/people, with the account that exists", async () => {
+    const read = await answers("GET", "/api/people", { cookie: await cookie() }) as { people: unknown[] };
+    expect(read.people.length).toBeGreaterThan(0);
+  });
+
+  it("GET /api/teams and its members, after creating one", async () => {
+    const held = await cookie();
+    const made = await post("/api/teams", { name: "support" }, held);
+    expect(made.status, await made.clone().text()).toBe(200);
+    const { team } = await made.json() as { team: { id: string } };
+
+    const teams = await answers("GET", "/api/teams", { cookie: held }) as { teams: unknown[] };
+    expect(teams.teams.length).toBe(1);
+    await answers("GET", "/api/teams/:teamId/members", { params: { teamId: team.id }, cookie: held });
+  });
+
+  it("GET /api/invitations, after minting one", async () => {
+    const held = await cookie();
+    const invited = await post("/api/invitations", { email: "colleague@local.invalid" }, held);
+    expect(invited.status, await invited.clone().text()).toBe(200);
+    const read = await answers("GET", "/api/invitations", { cookie: held }) as { invitations: unknown[] };
+    expect(read.invitations.length).toBe(1);
+  });
+
+  it("GET /api/matters, after opening one", async () => {
+    const held = await cookie();
+    /*
+     * `legal_hold`, not `investigation`. The first version of this test invented a type and the Node refused
+     * it with all four parts — naming the four it does recognise, which is why the fix took one reading.
+     */
+    const opened = await post("/api/matters", { type: "legal_hold", description: "a matter" }, held);
+    expect(opened.status, await opened.clone().text()).toBe(200);
+    const read = await answers("GET", "/api/matters", { cookie: held }) as { matters: unknown[] };
+    expect(read.matters.length).toBe(1);
+  });
+
+  it("GET /api/domain-pauses, which one person cannot fill", async () => {
+    /*
+     * **Dual control makes this row unproducible here, and that is the feature working.**
+     *
+     * #66 requires two distinct administrators to stop a domain's mail and excludes whoever asked, so on a
+     * Node with one admin the refusal is `E_DOMAIN_PAUSE_UNSATISFIABLE` — which this test met on its first
+     * run and which is the correct answer, not an obstacle to route around. Seeding the row directly would
+     * have produced a pause no governance path can create.
+     *
+     * So the envelope is checked and `domainPauseRow` waits for a tranche with an approval fixture. Said
+     * here rather than left as an untested schema nobody notices.
+     */
+    const held = await cookie();
+    const refused = await post("/api/domain-pauses", { domain: "example.net", reason: "a reason" }, held);
+    expect(refused.status).toBe(409);
+    expect(await refused.text()).toContain("E_DOMAIN_PAUSE_UNSATISFIABLE");
+
+    const read = await answers("GET", "/api/domain-pauses", { cookie: held }) as { pauses: unknown[] };
+    expect(read.pauses).toEqual([]);
+  });
+
+  it("GET /api/policies, after writing one", async () => {
+    const held = await cookie();
+    const made = await post("/api/policies", {
+      name: "hold everything", outcome: "hold", conditions: {}, stages: [],
+    }, held);
+    expect(made.status, await made.clone().text()).toBe(200);
+    const read = await answers("GET", "/api/policies", { cookie: held }) as { policies: unknown[] };
+    expect(read.policies.length).toBe(1);
+  });
+
+  it("GET /api/butlers and one Butler's history", async () => {
+    const held = await cookie();
+    const draft = await createButlerDraft(testEnv, createSystemCtx(), ORG, USER, {
+      name: "listed", source: STARTER,
+    });
+    const listed = await answers("GET", "/api/butlers", { cookie: held }) as { butlers: unknown[] };
+    expect(listed.butlers.length).toBe(1);
+
+    const detail = await answers("GET", "/api/butlers/:butlerId", {
+      params: { butlerId: draft.butlerId }, cookie: held,
+    }) as { versions: unknown[] };
+    // Non-vacuity: the version row's shape is the point, and an empty history would check none of it.
+    expect(detail.versions.length).toBe(1);
+  });
+
+  it("GET /api/butler-runs and /api/butler-pauses, which are empty and say so", async () => {
+    /*
+     * The two in this tranche whose **rows** are not exercised, stated rather than left to be assumed. A run
+     * needs a delivery and a Workflow instance; a pause needs a breaker to trip. Both are covered by
+     * `butler-run.test.ts` and `butler-pause.test.ts`, and neither is reproducible here cheaply — so what is
+     * checked is the envelope, and the row schemas wait for a tranche that can produce one.
+     */
+    const held = await cookie();
+    const runs = await answers("GET", "/api/butler-runs", { cookie: held }) as { runs: unknown[] };
+    const pauses = await answers("GET", "/api/butler-pauses", { cookie: held }) as { pauses: unknown[] };
+    expect(runs.runs).toEqual([]);
+    expect(pauses.pauses).toEqual([]);
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -331,7 +443,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      */
     const coverage = schemaCoverage();
     expect(coverage.total).toBeGreaterThan(70);
-    expect(coverage.described).toBeGreaterThanOrEqual(21);
+    expect(coverage.described).toBeGreaterThanOrEqual(34);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
