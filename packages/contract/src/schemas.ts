@@ -859,7 +859,6 @@ export const resealResponse = z.object({
   targetGeneration: z.number().int().nonnegative(),
 }).strict();
 
-export const approvalListResponse = z.object({ approvals: z.array(z.unknown()) }).loose();
 
 /**
  * Rotating the token signing key.
@@ -874,3 +873,135 @@ export const keyRotatedResponse = z.object({
   retiring: z.string().min(1).nullable(),
   stillVerifiesForSeconds: z.number().int().nonnegative(),
 }).strict();
+
+/* ------------------------------------------------------------------ dual control (#61, §7, §18) ---- */
+
+/** How many distinct people a stage needs, and whether it is scoped to a team. */
+const approvalStage = z.object({
+  count: z.number().int().positive(),
+  teamId: z.string().nullable(),
+}).strict();
+
+/**
+ * A request waiting on people.
+ *
+ * `eligible` travels with `stages` on every route that *opens* one, and that pairing is the point: a request
+ * needing two approvers on a Node with one eligible person is unsatisfiable, and the refusals say so up
+ * front rather than letting it sit for ever. Returning the count beside the requirement is what lets a
+ * caller see the arithmetic instead of waiting to discover it.
+ */
+const opened = { stages: z.array(approvalStage), eligible: z.number().int().nonnegative() };
+
+export const supervisedRequestedResponse = z.object({
+  supervised: z.object({
+    grantId: z.string().min(1),
+    approvalId: z.string().min(1),
+    subjectId: userId,
+    mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+    scope: z.string().min(1),
+    matterId: z.string().nullable(),
+    requestedAt: isoDate,
+    expiresAt: isoDate,
+    ...opened,
+  }).strict(),
+}).strict();
+
+export const approvalRow = z.object({
+  id: z.string().min(1),
+  subjectKind: z.enum([
+    "send_manifest", "hold_lift", "supervised_read", "ediscovery_export", "domain_pause",
+  ]),
+  subjectId: z.string().min(1),
+  scopeId: z.string().min(1),
+  actorUserId: userId,
+  state: z.string().min(1),
+  requestedAt: isoDate,
+  resolvedAt: isoDate.nullable(),
+  expiresAt: isoDate.nullable(),
+  stages: z.array(approvalStage),
+  /** Which stage is open, or null when none is. What tells a reader whether anything is waiting on them. */
+  openStage: z.number().int().nullable(),
+  /** Whether *this* caller has already decided. §18 counts distinct people, so it is per-reader. */
+  decidedByMe: z.boolean(),
+  reason: z.string().nullable(),
+}).loose();
+
+/**
+ * Deciding.
+ *
+ * `.loose()`, and it is the one response in this file where that is the honest answer rather than a
+ * concession. The body carries a **kind-specific outcome flag** — `supervisedGranted` for a supervised
+ * read, `exportApproved` for an export — because what an approval completing *does* differs by what was
+ * approved. Only those two were observed against a real Node, and inventing names for the other three
+ * subject kinds would be exactly the guessing these schemas exist to stop.
+ *
+ * What is strict is the part that is common to all five, which is everything a caller needs to know whether
+ * the request is still waiting.
+ */
+export const approvalDecidedResponse = z.object({
+  decided: z.object({
+    approvalId: z.string().min(1),
+    subjectKind: z.string().min(1),
+    subjectId: z.string().min(1),
+    decision: z.enum(["approve", "deny"]),
+    stageOrdinal: z.number().int().positive(),
+    approvalState: z.string().min(1),
+    /** True only on the decision that completed the whole request, not each stage. */
+    completed: z.boolean(),
+    openStage: z.number().int().nullable(),
+  }).loose(),
+}).strict();
+
+export const exportRequestedResponse = z.object({
+  export: z.object({
+    exportId: z.string().min(1),
+    approvalId: z.string().min(1),
+    requestedBy: userId,
+    mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+    matterId: z.string().min(1),
+    /**
+     * What was asked for, and its digest.
+     *
+     * The digest is what makes an export's scope provable after the fact: the predicate is frozen at the
+     * request, so an approval is an approval of *that* question rather than of a name somebody could widen
+     * afterwards.
+     */
+    predicate: z.object({
+      mailboxId: z.string().min(1),
+      fromDate: z.string().nullable(),
+      toDate: z.string().nullable(),
+      subjectContains: z.string().nullable(),
+    }).strict(),
+    predicateSha256: sha256,
+  }).loose(),
+}).strict();
+
+export const holdLiftRequestedResponse = z.object({
+  lift: z.object({
+    liftId: z.string().min(1),
+    approvalId: z.string().min(1),
+    holdId: z.string().min(1),
+    mailboxId: z.string().min(1),
+    reason: z.string(),
+    ...opened,
+  }).strict(),
+}).strict();
+
+export const domainPauseRequestedResponse = z.object({
+  pause: z.object({
+    pauseId: z.string().min(1),
+    approvalId: z.string().min(1),
+    domain: z.string().min(1),
+    reason: z.string(),
+    ...opened,
+  }).strict(),
+}).strict();
+
+/**
+ * The approvals waiting on somebody.
+ *
+ * Declared here rather than beside the other lists because `approvalRow` is defined with the dual-control
+ * shapes below it — and a list of a row is not worth writing before the row exists. The first draft had it
+ * up there with `z.unknown()` elements, which is a list schema that checks the envelope and nothing in it.
+ */
+export const approvalListResponse = z.object({ approvals: z.array(approvalRow) }).loose();

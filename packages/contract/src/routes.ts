@@ -162,7 +162,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
   { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", response: S.supervisedListResponse },
-  { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires" },
+  { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires", response: S.supervisedRequestedResponse },
 
   // ---- mail: reading -------------------------------------------------------------------------------
   {
@@ -226,11 +226,11 @@ export const ROUTES = [
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", response: S.approvalListResponse },
-  { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send" },
+  { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw an approval request" },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
-  { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person" },
+  { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
   { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", response: S.matterListResponse },
   { method: "POST", path: "/api/matters", summary: "Open a matter", response: S.matterResponse },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
@@ -240,7 +240,7 @@ export const ROUTES = [
     response: S.breakerListResponse,
   },
   { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", response: S.domainPauseListResponse },
-  { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain" },
+  { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person" },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
@@ -282,7 +282,7 @@ export const ROUTES = [
     response: S.logListResponse,
   },
   { method: "GET", path: "/api/exports", summary: "Export jobs", response: S.exportListResponse },
-  { method: "POST", path: "/api/exports", summary: "Start an e-discovery export" },
+  { method: "POST", path: "/api/exports", summary: "Start an e-discovery export", response: S.exportRequestedResponse },
   { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export" },
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },
 

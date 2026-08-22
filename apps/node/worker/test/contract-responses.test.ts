@@ -669,6 +669,149 @@ describe("the operator and key surfaces", () => {
   });
 });
 
+describe("dual control, with the second and third people it needs", () => {
+  /*
+   * **Three administrators, because two of these routes need two approvers who are not the asker.**
+   *
+   * Every earlier tranche ran as one person, and four routes refused with `E_..._UNSATISFIABLE` — correctly,
+   * and the tests recorded that rather than routing around it. This is the fixture that lets those rows
+   * exist: §7 requires dual approval for a supervised read and an export, #61 for a hold lift, #66 for a
+   * domain pause, and all four exclude whoever asked. One asker plus two deciders is the smallest
+   * organization in which any of it can complete.
+   */
+  const OTHER = createSystemCtx().id("usr");
+  const THIRD = createSystemCtx().id("usr");
+  let mailboxId = "";
+
+  beforeEach(async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    mailboxId = ctx.id("mbx");
+    const rows = [
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("adr"), ORG, mailboxId, `${mailboxId}@acme.example`, at),
+    ];
+    for (const person of [USER, OTHER, THIRD]) {
+      if (person !== USER) {
+        rows.push(testEnv.CATALOG.prepare(
+          "INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)",
+        ).bind(person, ORG, `${person}@local.invalid`, at));
+        rows.push(testEnv.CATALOG.prepare(
+          `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+           VALUES (?,?,?,'org.admin','organization',?,?)`,
+        ).bind(ctx.id("rt"), ORG, person, ORG, at));
+      }
+      for (const relation of ["approval.decide", "ediscovery.export", "send.propose"]) {
+        rows.push(testEnv.CATALOG.prepare(
+          `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+           VALUES (?,?,?,?,'mailbox',?,?)`,
+        ).bind(ctx.id("rt"), ORG, person, relation, mailboxId, at));
+      }
+    }
+    await testEnv.CATALOG.batch(rows);
+  });
+
+  async function cookieFor(person: string): Promise<string> {
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: person });
+    return `mailda_at=${session.accessToken}`;
+  }
+
+  async function matter(held: string): Promise<string> {
+    const opened = await answers("POST", "/api/matters", {
+      body: { type: "legal_hold", description: "a matter" }, cookie: held,
+    }) as { matter: { id: string } };
+    return opened.matter.id;
+  }
+
+  it("a supervised read: requested, approved twice, and live", async () => {
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const requested = await answers("POST", "/api/supervised", {
+      body: { subjectId: USER, mailboxId, scope: "metadata", durationSeconds: 3600, matterId },
+      cookie: asker,
+    }) as { supervised: { approvalId: string; eligible: number } };
+    // `eligible` beside `stages` is what lets a caller see the arithmetic rather than wait to discover it.
+    expect(requested.supervised.eligible).toBe(2);
+
+    const waiting = await answers("GET", "/api/approvals", { cookie: await cookieFor(OTHER) }) as {
+      approvals: Array<{ id: string; decidedByMe: boolean }>;
+    };
+    expect(waiting.approvals).toHaveLength(1);
+    expect(waiting.approvals[0]!.decidedByMe).toBe(false);
+
+    const first = await answers("POST", "/api/approvals/:approvalId/decide", {
+      params: { approvalId: requested.supervised.approvalId },
+      body: { decision: "approve" }, cookie: await cookieFor(OTHER),
+    }) as { decided: { completed: boolean } };
+    expect(first.decided.completed).toBe(false);
+
+    const second = await answers("POST", "/api/approvals/:approvalId/decide", {
+      params: { approvalId: requested.supervised.approvalId },
+      body: { decision: "approve" }, cookie: await cookieFor(THIRD),
+    }) as { decided: { completed: boolean } };
+    expect(second.decided.completed).toBe(true);
+
+    // And the grant is now live, which is the row `supervisedListResponse` describes.
+    const live = await answers("GET", "/api/supervised", { cookie: asker }) as {
+      supervised: Array<{ live: boolean }>;
+    };
+    expect(live.supervised).toHaveLength(1);
+    expect(live.supervised[0]!.live).toBe(true);
+  });
+
+  it("an export: requested with a frozen predicate", async () => {
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const requested = await answers("POST", "/api/exports", {
+      body: { matterId, mailboxId, maxMessages: 10 }, cookie: asker,
+    }) as { export: { predicateSha256: string } };
+    /*
+     * The digest is what makes the scope provable after the fact: the predicate is frozen at the request, so
+     * an approval approves *that* question rather than a name somebody could widen afterwards.
+     */
+    expect(requested.export.predicateSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("a hold lift and a domain pause, both of which open an approval", async () => {
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const placed = await answers("POST", "/api/holds", {
+      body: { mailboxId, matterId }, cookie: asker,
+    }) as { hold: { id: string } };
+    const lift = await answers("POST", "/api/holds/:holdId/lift", {
+      params: { holdId: placed.hold.id }, body: { reason: "done" }, cookie: asker,
+    }) as { lift: { eligible: number } };
+    expect(lift.lift.eligible).toBe(2);
+
+    const paused = await answers("POST", "/api/domain-pauses", {
+      body: { domain: "example.net", reason: "a reason" }, cookie: asker,
+    }) as { pause: { eligible: number } };
+    expect(paused.pause.eligible).toBe(2);
+  });
+
+  it("the holds list, with the two fields only it computes", async () => {
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const placed = await answers("POST", "/api/holds", {
+      body: { mailboxId, matterId }, cookie: asker,
+    }) as { hold: { id: string } };
+    await answers("POST", "/api/holds/:holdId/lift", {
+      params: { holdId: placed.hold.id }, body: { reason: "done" }, cookie: asker,
+    });
+
+    const listed = await answers("GET", "/api/holds", { cookie: asker }) as {
+      holds: Array<{ mailboxExists: boolean; pendingLift: unknown }>;
+    };
+    expect(listed.holds).toHaveLength(1);
+    // The two the placing route cannot answer, which is why `holdPlacedResponse` omits them.
+    expect(listed.holds[0]!.mailboxExists).toBe(true);
+    expect(listed.holds[0]!.pendingLift).not.toBeNull();
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -688,7 +831,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(65);
+    expect(coverage.described).toBeGreaterThanOrEqual(70);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
