@@ -784,3 +784,93 @@ export const signedOutResponse = z.object({
   message: z.string().min(1),
   refreshable: z.literal(false),
 }).strict();
+
+/* ------------------------------------------------------------------ tranche five ------------------- */
+
+export const jwksResponse = z.object({
+  keys: z.array(z.object({
+    kty: z.literal("EC"),
+    crv: z.literal("P-256"),
+    alg: z.literal("ES256"),
+    use: z.literal("sig"),
+    kid: z.string().min(1),
+    x: z.string().min(1),
+    y: z.string().min(1),
+    key_ops: z.array(z.literal("verify")),
+    ext: z.boolean(),
+  }).strict()),
+}).strict();
+
+/**
+ * Granting and revoking.
+ *
+ * `alreadyHeld` is the field that makes granting idempotent *and* legible: without it, a caller cannot tell
+ * a grant it just made from one that was already there, which is the difference between "I did this" and "I
+ * confirmed this" in an access review.
+ */
+export const grantedResponse = z.object({
+  granted: z.literal(true),
+  alreadyHeld: z.boolean(),
+}).strict();
+
+export const revokedResponse = z.object({ revoked: z.boolean() }).strict();
+
+export const mailboxPatchedResponse = z.object({
+  mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+  firstResponseMinutes: z.number().int().nullable(),
+}).strict();
+
+export const draftDetailResponse = z.object({ draft: draftRow }).loose();
+export const draftDeletedResponse = z.object({ deleted: z.boolean() }).strict();
+
+/** One prefix the reconciler swept, and how completely it could read it. */
+const sweep = z.object({
+  read: z.enum(["complete", "truncated"]),
+  prefix: z.string().min(1),
+  examined: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  /**
+   * Objects too recent to judge.
+   *
+   * Counted rather than listed, and separated from `stranded` rather than folded into it: an object written
+   * seconds ago has no transaction to be missing yet, and calling it stranded would make the reconciler
+   * delete writes that were still in flight.
+   */
+  tooFreshToJudge: z.number().int().nonnegative(),
+  stranded: z.array(z.unknown()),
+}).strict();
+
+export const reconcileResponse = z.object({
+  orphans: z.array(z.unknown()),
+  orphansDeleted: z.number().int().nonnegative(),
+  draftBodies: sweep,
+  draftBodiesDeleted: z.number().int().nonnegative(),
+  exportObjects: sweep,
+  exportObjectsDeleted: z.number().int().nonnegative(),
+  sentObjects: sweep,
+}).loose();
+
+export const resealResponse = z.object({
+  resealed: z.number().int().nonnegative(),
+  alreadyCurrent: z.number().int().nonnegative(),
+  failed: z.array(z.unknown()),
+  /** What is left under an older generation — the number `doctor` reports and `reseal` drives to zero. */
+  remaining: z.number().int().nonnegative(),
+  targetGeneration: z.number().int().nonnegative(),
+}).strict();
+
+export const approvalListResponse = z.object({ approvals: z.array(z.unknown()) }).loose();
+
+/**
+ * Rotating the token signing key.
+ *
+ * `stillVerifiesForSeconds` is the field that matters and the one a tidier shape would drop: the retiring
+ * key keeps verifying for a grace window, so a rotation is not a cliff — and a caller that did not know
+ * would expect every existing token to fail immediately.
+ */
+export const keyRotatedResponse = z.object({
+  rotated: z.literal(true),
+  kid: z.string().min(1),
+  retiring: z.string().min(1).nullable(),
+  stillVerifiesForSeconds: z.number().int().nonnegative(),
+}).strict();

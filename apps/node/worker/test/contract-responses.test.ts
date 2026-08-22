@@ -81,7 +81,7 @@ async function cookie(): Promise<string> {
  * level up.
  */
 async function answers(
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   template: string,
   init: { params?: Record<string, string>; body?: unknown; cookie?: string } = {},
 ): Promise<unknown> {
@@ -572,6 +572,103 @@ describe("the acts answer what the contract says they do", () => {
   });
 });
 
+describe("the operator and key surfaces", () => {
+  async function mailboxWithSend(): Promise<string> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const mailboxId = ctx.id("mbx");
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("adr"), ORG, mailboxId, `${mailboxId}@acme.example`, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+    ]);
+    return mailboxId;
+  }
+
+  it("GET /.well-known/jwks.json, with a key in it", async () => {
+    const jwks = await answers("GET", "/.well-known/jwks.json") as { keys: unknown[] };
+    // Non-vacuity, and it matters here: an empty JWKS is a Node whose tokens nothing can verify.
+    expect(jwks.keys.length).toBeGreaterThan(0);
+  });
+
+  it("granting and revoking, and the field that says which it was", async () => {
+    const held = await cookie();
+    const mailboxId = await mailboxWithSend();
+    const first = await answers("POST", "/api/access", {
+      body: { subjectId: USER, relation: "mailbox.content.read", objectId: mailboxId }, cookie: held,
+    }) as { alreadyHeld: boolean };
+    expect(first.alreadyHeld).toBe(false);
+
+    /*
+     * The second grant is the point. Without `alreadyHeld` a caller cannot tell a grant it just made from
+     * one that was already there — the difference between "I did this" and "I confirmed this" in an access
+     * review.
+     */
+    const again = await answers("POST", "/api/access", {
+      body: { subjectId: USER, relation: "mailbox.content.read", objectId: mailboxId }, cookie: held,
+    }) as { alreadyHeld: boolean };
+    expect(again.alreadyHeld).toBe(true);
+
+    await answers("DELETE", "/api/access", {
+      body: { subjectId: USER, relation: "mailbox.content.read", objectId: mailboxId }, cookie: held,
+    });
+  });
+
+  it("PATCH a mailbox's response target", async () => {
+    const held = await cookie();
+    const mailboxId = await mailboxWithSend();
+    await answers("PATCH", "/api/mailboxes/:mailboxId", {
+      params: { mailboxId }, body: { responseTargetMinutes: 60 }, cookie: held,
+    });
+  });
+
+  it("a draft, read back and discarded", async () => {
+    const held = await cookie();
+    const mailboxId = await mailboxWithSend();
+    const saved = await answers("PUT", "/api/drafts", {
+      body: { mailboxId, subject: "s", body: "b", to: ["a@b.test"] }, cookie: held,
+    }) as { draft: { id: string } };
+    await answers("GET", "/api/drafts/:draftId", { params: { draftId: saved.draft.id }, cookie: held });
+    await answers("DELETE", "/api/drafts/:draftId", { params: { draftId: saved.draft.id }, cookie: held });
+  });
+
+  it("the maintenance sweeps", async () => {
+    const held = await cookie();
+    await answers("POST", "/api/maintenance/reconcile", { body: {}, cookie: held });
+    await answers("POST", "/api/maintenance/reseal", { body: {}, cookie: held });
+  });
+
+  it("GET /api/approvals, which one person cannot fill either", async () => {
+    /*
+     * Same shape as the domain pause: §7 requires two distinct approvers for a supervised read and for an
+     * export, so a one-admin Node refuses both with `E_..._UNSATISFIABLE` before an approval exists. The
+     * envelope is checked; the row waits for a tranche with a second administrator.
+     */
+    const read = await answers("GET", "/api/approvals", { cookie: await cookie() }) as {
+      approvals: unknown[];
+    };
+    expect(read.approvals).toEqual([]);
+  });
+
+  it("rotating the signing key, and the grace it reports", async () => {
+    const held = await cookie();
+    const rotated = await answers("POST", "/api/auth/rotate-signing-key", { body: {}, cookie: held }) as {
+      stillVerifiesForSeconds: number;
+    };
+    /*
+     * The field a tidier shape would drop. A rotation is not a cliff — the retiring key keeps verifying for
+     * a grace window — and a caller that did not know would expect every existing token to fail at once.
+     */
+    expect(rotated.stillVerifiesForSeconds).toBeGreaterThan(0);
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -586,8 +683,12 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * (SDK, Skill, MCP, each generated) is blocked until `missing` is empty.
      */
     const coverage = schemaCoverage();
-    expect(coverage.total).toBeGreaterThan(70);
-    expect(coverage.described).toBeGreaterThanOrEqual(55);
+    /*
+     * The denominator excludes `NOT_JSON` — three routes that answer HTML, `message/rfc822` and an export's
+     * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
+     */
+    expect(coverage.total).toBe(91);
+    expect(coverage.described).toBeGreaterThanOrEqual(65);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -601,7 +702,11 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
     const coverage = schemaCoverage();
     expect(coverage.described + coverage.missing.length).toBe(coverage.total);
     expect(coverage.missing).not.toContain("GET /api/transport");
-    // A route that still has none. Updated as tranches land, which is the point of the count moving.
-    expect(coverage.missing).toContain("GET /api/messages/:messageId/raw");
+    /*
+     * A route that still has none, updated as tranches land — the point being that the count moves.
+     * Deliberately not one of `NOT_JSON`: those are excluded from the denominator entirely, so asserting
+     * one of them here would pass for ever and check nothing.
+     */
+    expect(coverage.missing).toContain("POST /api/claim");
   });
 });

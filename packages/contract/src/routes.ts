@@ -96,7 +96,7 @@ export const ROUTES = [
     response: S.healthResponse,
   },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
-  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens" },
+  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", response: S.jwksResponse },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization" },
   { method: "POST", path: "/api/prepare", summary: "Prepare a Node for claiming" },
   {
@@ -114,7 +114,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token" },
   { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
-  { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace" },
+  { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
   { method: "GET", path: "/api/me", summary: "Who this session is", response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
@@ -159,8 +159,8 @@ export const ROUTES = [
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
   { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", response: S.accessResponse },
-  { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox" },
-  { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox" },
+  { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
+  { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", response: S.supervisedListResponse },
   { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires" },
 
@@ -170,7 +170,7 @@ export const ROUTES = [
     summary: "The mailboxes this person may act in",
     response: S.mailboxListResponse,
   },
-  { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings" },
+  { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {
     method: "GET", path: "/api/messages", summary: "Message metadata, paged",
     response: S.messageListResponse,
@@ -200,8 +200,8 @@ export const ROUTES = [
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", response: S.draftListResponse },
   { method: "PUT", path: "/api/drafts", summary: "Save a draft", response: S.draftSavedResponse },
-  { method: "GET", path: "/api/drafts/:draftId", summary: "One draft" },
-  { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft" },
+  { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", response: S.draftDetailResponse },
+  { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", response: S.sendListResponse },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy" },
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now" },
@@ -225,7 +225,7 @@ export const ROUTES = [
     response: S.policyDraftResponse,
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
-  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody" },
+  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", response: S.approvalListResponse },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send" },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw an approval request" },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
@@ -299,8 +299,8 @@ export const ROUTES = [
   },
 
   // ---- maintenance ------------------------------------------------------------------------------------
-  { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key" },
-  { method: "POST", path: "/api/maintenance/reconcile", summary: "Reconcile stored evidence against its metadata" },
+  { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key", response: S.resealResponse },
+  { method: "POST", path: "/api/maintenance/reconcile", summary: "Reconcile stored evidence against its metadata", response: S.reconcileResponse },
   /*
    * `as const satisfies` rather than a `readonly RouteSpec[]` annotation, and the difference is the whole
    * enforcement rather than a stylistic preference.
@@ -377,6 +377,23 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
  * not: `.mjs` operator scripts, which no compiler ever looks at.
  */
 /**
+ * The routes that do not answer JSON, and therefore can never carry a response schema.
+ *
+ * Named rather than left in the missing count, because a denominator that includes them can never reach its
+ * numerator and a target nobody can hit is one nobody aims at. `/index.html` is the interface shell,
+ * `/api/messages/:id/raw` is `message/rfc822` — the stored bytes, whose whole value is being unaltered — and
+ * an export object is whatever was exported.
+ *
+ * Three, and asserted as exactly three, so a fourth is a decision somebody makes rather than a route that
+ * quietly opted out of being described.
+ */
+export const NOT_JSON: readonly string[] = [
+  "GET /index.html",
+  "GET /api/messages/:messageId/raw",
+  "GET /api/exports/:exportId/objects/:objectId",
+];
+
+/**
  * How much of the surface has a response schema, and how much does not (#85 step 2).
  *
  * A number rather than a feeling. Step 1 pinned every route; step 2 describes what travels over them, and it
@@ -389,9 +406,12 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
  */
 export function schemaCoverage(): { described: number; total: number; missing: readonly string[] } {
   const all: readonly RouteSpec[] = ROUTES;
-  const missing = all.filter((spec) => spec.response === undefined)
+  // `NOT_JSON` is excluded from both sides: a route that answers `message/rfc822` is not undescribed, it is
+  // not describable this way, and counting it as a gap would make the target unreachable.
+  const describable = all.filter((spec) => !NOT_JSON.includes(`${spec.method} ${spec.path}`));
+  const missing = describable.filter((spec) => spec.response === undefined)
     .map((spec) => `${spec.method} ${spec.path}`);
-  return { described: all.length - missing.length, total: all.length, missing };
+  return { described: describable.length - missing.length, total: describable.length, missing };
 }
 
 export function route<M extends HttpMethod>(method: M, template: PathFor<M>): RouteSpec {
