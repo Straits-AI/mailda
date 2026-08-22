@@ -90,7 +90,16 @@ export { ButlerRun } from "./butler/run.ts";
  * Layer 1 of the ladder in AGENTS.md: receive one real internet message, store it
  * losslessly, and show it to one authorized human.
  */
-export default {
+/**
+ * The Worker.
+ *
+ * Named rather than exported anonymously so that `/mcp` can re-enter it: an MCP tool call dispatches back
+ * through `handler.fetch`, which is what makes "the tool goes through this Node's own routes" true of the
+ * error translation and the cache headers as well as of the routing. Re-entering at `route` instead — the
+ * first attempt — skipped the `catch` that turns a `CallerError` into a four-part refusal, so a tool call
+ * that should have answered 422 with a remedy answered 500 with nothing.
+ */
+const handler = {
   /**
    * Cloudflare Queues invokes this with `email.sending` events — the only channel by which a Node learns
    * what happened to a message after hand-over (receipt: `email-sending-events.md`).
@@ -327,6 +336,8 @@ export default {
     }
   },
 };
+
+export default handler;
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   {
@@ -1830,6 +1841,31 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * Administrator-gated, because supplying this gives the Node the ability to send as the account — the
      * same authority granting mailbox access carries, so the same gate.
      */
+    /**
+     * The MCP server (#89, ADR 12).
+     *
+     * `POST /mcp` — one endpoint, MCP's Streamable HTTP transport, JSON-RPC 2.0 over it.
+     *
+     * **On this Worker rather than beside it**, which was #89's actual question. A second Worker breaks
+     * ADR 18's one-Worker rule and gives ADR 24 a second artifact to keep byte-identical; a separately-run
+     * bridge would be the first component in this product holding credentials for a Node it is not part of,
+     * which is the shape ADR 7's custody premise exists to rule out. Here, the mail never leaves the Node
+     * that holds it and no account resource is added. `src/mcp.ts` carries the full argument and the cost.
+     *
+     * Authenticated by the caller's own session, deliberately: every act lands in the audit trail under the
+     * person who set it going rather than under a machine.
+     */
+    if (url.pathname === "/mcp" && request.method === "POST") {
+      const { handleMcp } = await import("./mcp.ts");
+      /*
+       * The router itself is handed in, so a tool call re-enters it in process. Not `fetch` against this
+       * Worker's own origin: that goes back out through the edge, spends a subrequest from a budget this
+       * Node counts, and fails outright in workerd. The property the round trip was for — same handler,
+       * same guards, same refusals — survives without it.
+       */
+      return await handleMcp(request, (inner) => handler.fetch(inner, env, ctx));
+    }
+
     if (url.pathname === "/api/transport" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

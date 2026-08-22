@@ -1627,6 +1627,7 @@ packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      the route registry, its schemas, and command schemas
 packages/sdk                           GENERATED from the registry — one method per route
+skills/mailda                          GENERATED — the Agent Skill, from the curated list
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
@@ -1736,6 +1737,31 @@ rather than a refusal. Building it found its own defect: a top-level `writeFileS
 the drift test vacuous, because importing the generator regenerated the file before the test could read a
 hand edit.
 See [`docs/api-contract.md`](./docs/api-contract.md).
+
+## Two machine surfaces, over one curated list (#88, #89)
+
+ADR 12's last two surfaces. Both needed the same answer to the same question — *what should a machine be able
+to do here?* — so it is answered once in `packages/contract/src/agent.ts` and both read it.
+
+**53 of 94 routes are offered.** Everything that answers a question, and everything a person can undo.
+Withheld: 25 that need more than one person or cannot be undone, 17 that are acts of running the Node rather
+than using it, and one that is the surface itself.
+
+**`governed` is not about permission.** §18 counts distinct **people**, and an agent inside somebody's
+session is that person — so the Node already refuses. What the tier prevents is *offering* the act. A Skill
+listing "approve a send" teaches an agent to try, and it will keep trying: the refusal says *ask somebody who
+holds approval.decide*, and it has no way to know it can never be that somebody. An offer a caller can never
+complete is worse than no offer.
+
+So the Skill **names what it withholds**, with reasons. An absence reads as a gap somebody forgot; a stated
+exclusion reads as a decision.
+
+The MCP server is `POST /mcp` **on this Worker**, which was #89's actual question. A second Worker breaks ADR
+18; a separately-run bridge would be the first component holding credentials for a Node it is not part of,
+which is the shape ADR 7's custody premise rules out. A tool call re-enters this Node's own router in
+process — same guards, same audit entry, same refusals — authenticated by the caller's own session, so the
+trail names the person who set it going rather than a machine.
+See [`docs/machine-surfaces.md`](./docs/machine-surfaces.md).
 
 ## Contributing
 

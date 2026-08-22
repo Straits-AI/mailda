@@ -10,5 +10,7 @@
  * wrong. It is exported here so that the first consumer — `apps/node/worker/test/node/route-registry.test.ts`
  * — is a real one.
  */
+export * from "./agent.ts";
+export * from "./naming.ts";
 export * from "./routes.ts";
 export * from "./send-mail.ts";

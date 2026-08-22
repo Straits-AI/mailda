@@ -325,6 +325,21 @@ export const ROUTES = [
     request: S.transportRequest, response: S.transportConfiguredResponse,
   },
 
+  // ---- the MCP server (#89, ADR 12) ------------------------------------------------------------------
+  {
+    method: "POST", path: "/mcp",
+    /*
+     * The one route in this registry whose **shape this project did not choose**. MCP's Streamable HTTP
+     * transport is one endpoint carrying JSON-RPC 2.0, and that is a specification somebody else wrote —
+     * which is the cost #89 weighed against a second Worker or a separately-run bridge, and accepted.
+     *
+     * No response schema, and not for want of trying: a JSON-RPC reply is a union over every method the
+     * server implements, and describing it here would be restating MCP's specification in a second place
+     * that could disagree with it. `src/mcp.ts` and `test/mcp.test.ts` hold it instead.
+     */
+    summary: "MCP: tool discovery and invocation over JSON-RPC 2.0, exposing the curated capability list",
+  },
+
   // ---- maintenance ------------------------------------------------------------------------------------
   { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key", response: S.resealResponse },
   { method: "POST", path: "/api/maintenance/reconcile", summary: "Reconcile stored evidence against its metadata", response: S.reconcileResponse },
@@ -425,6 +440,22 @@ export const NOT_JSON: readonly string[] = [
 ];
 
 /**
+ * Routes whose response shape is **somebody else's specification**.
+ *
+ * Distinct from `NOT_JSON`, and the distinction is worth the second list: those routes do not answer JSON at
+ * all, and this one does — but its body is a JSON-RPC reply, a union over every method MCP defines.
+ * Describing it here would be restating that specification in a second place that could disagree with it,
+ * which is the correspondence problem this whole package exists to remove rather than relocate.
+ *
+ * `src/mcp.ts` and `apps/node/worker/test/mcp.test.ts` hold it instead: the handler is the description, and
+ * the test drives it as a client would.
+ *
+ * One, and asserted as one. A second would mean this Node had grown another protocol surface, which is a
+ * decision (#89 weighed it once) rather than a thing that should arrive quietly.
+ */
+export const EXTERNALLY_SPECIFIED: readonly string[] = ["POST /mcp"];
+
+/**
  * How much of the surface has a response schema, and how much does not (#85 step 2).
  *
  * A number rather than a feeling. Step 1 pinned every route; step 2 describes what travels over them, and it
@@ -437,9 +468,14 @@ export const NOT_JSON: readonly string[] = [
  */
 export function schemaCoverage(): { described: number; total: number; missing: readonly string[] } {
   const all: readonly RouteSpec[] = ROUTES;
-  // `NOT_JSON` is excluded from both sides: a route that answers `message/rfc822` is not undescribed, it is
-  // not describable this way, and counting it as a gap would make the target unreachable.
-  const describable = all.filter((spec) => !NOT_JSON.includes(`${spec.method} ${spec.path}`));
+  /*
+   * `NOT_JSON` and `EXTERNALLY_SPECIFIED` are excluded from both sides. A route that answers
+   * `message/rfc822` is not undescribed but undescribable this way; a route answering JSON-RPC is described
+   * by MCP's specification rather than by this one. Counting either as a gap makes the target unreachable,
+   * and a target nobody can hit is one nobody aims at.
+   */
+  const excluded = new Set([...NOT_JSON, ...EXTERNALLY_SPECIFIED]);
+  const describable = all.filter((spec) => !excluded.has(`${spec.method} ${spec.path}`));
   const missing = describable.filter((spec) => spec.response === undefined)
     .map((spec) => `${spec.method} ${spec.path}`);
   return { described: describable.length - missing.length, total: describable.length, missing };

@@ -25,6 +25,8 @@
     ".": "./src/index.ts",
     "./routes": "./src/routes.ts",
     "./send-mail": "./src/send-mail.ts",
-    "./schemas": "./src/schemas.ts"
+    "./schemas": "./src/schemas.ts",
+    "./agent": "./src/agent.ts",
+    "./naming": "./src/naming.ts"
   }
 }

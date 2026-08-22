@@ -1,4 +1,5 @@
 import { NOT_JSON, ROUTES, type RouteSpec } from "@mailda/contract/routes";
+import { methodNameFor } from "@mailda/contract/naming";
 import * as schemas from "@mailda/contract/schemas";
 
 /**
@@ -64,21 +65,12 @@ for (const [name, value] of Object.entries(schemas)) {
   if (typeof value === "object" && value !== null) SCHEMA_NAMES.set(value, name);
 }
 
-function camel(segment: string): string {
-  return segment
-    .split(/[^A-Za-z0-9]+/)
-    .filter((part) => part.length > 0)
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join("");
-}
-
-/** `<verb><StaticSegments>` with `By<Param>` for each captured segment, in path order. */
-export function methodNameFor(spec: RouteSpec): string {
-  const verb = spec.method.toLowerCase();
-  const parts = spec.path.split("/").filter((part) => part.length > 0 && part !== "api");
-  const name = parts.map((part) => (part.startsWith(":") ? `By${camel(part.slice(1))}` : camel(part)));
-  return verb + name.join("");
-}
+/*
+ * `methodNameFor` moved to `@mailda/contract/naming` once the Skill and the MCP server needed the same
+ * names. A name is part of what a route is, not of how one client renders it — and two spellings of one
+ * capability across three surfaces is an agent inferring they are different things.
+ */
+export { methodNameFor };
 
 function parametersOf(spec: RouteSpec): string[] {
   return [...spec.path.matchAll(/:(\w+)/g)].map((match) => match[1]!);

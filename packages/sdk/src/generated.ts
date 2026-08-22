@@ -843,6 +843,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * MCP: tool discovery and invocation over JSON-RPC 2.0, exposing the curated capability list
+   *
+   * `POST /mcp`
+   */
+  async postMcp(body?: unknown): Promise<unknown> {
+    return await this.json("POST", "/mcp", {}, body) as unknown;
+  }
+
+  /**
    * Reseal evidence under the current key
    *
    * `POST /api/maintenance/reseal`

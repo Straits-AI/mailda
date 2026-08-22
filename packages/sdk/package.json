@@ -9,7 +9,8 @@
   "scripts": {
     "generate": "node --experimental-strip-types src/write.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "skill": "node --experimental-strip-types src/write-skill.ts"
   },
   "dependencies": {
     "@mailda/contract": "workspace:*",

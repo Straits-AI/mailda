@@ -1475,6 +1475,11 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The denominator excludes `NOT_JSON` — three routes that answer HTML, `message/rfc822` and an export's
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
+    /*
+     * 90 of 95 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
+     * specifies rather than this contract (`EXTERNALLY_SPECIFIED`). Both are excluded from the denominator,
+     * because a target counting routes no schema can describe is one nobody aims at.
+     */
     expect(coverage.total).toBe(90);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality

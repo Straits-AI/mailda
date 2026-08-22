@@ -20,7 +20,9 @@
     "mailda": "node packages/cli/src/mailda.mjs",
     "claim-secret": "node packages/cli/src/mailda.mjs claim-secret",
     "sdk": "pnpm --filter @mailda/sdk generate",
-    "sdk:check": "pnpm sdk && git diff --exit-code packages/sdk/src/generated.ts"
+    "sdk:check": "pnpm sdk && git diff --exit-code packages/sdk/src/generated.ts",
+    "skill": "pnpm --filter @mailda/sdk skill",
+    "skill:check": "pnpm skill && git diff --exit-code skills/mailda/SKILL.md"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
