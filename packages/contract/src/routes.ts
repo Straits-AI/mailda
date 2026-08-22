@@ -194,8 +194,9 @@ export const ROUTES = [
      * handler corresponds to one-for-one: this file's job is to describe what exists.
      */
     summary: "Claim, steal, release or close a case",
+    response: S.caseActionResponse,
   },
-  { method: "POST", path: "/api/conversations/merge", summary: "Merge two conversations into one" },
+  { method: "POST", path: "/api/conversations/merge", summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", response: S.draftListResponse },
@@ -204,7 +205,7 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", response: S.sendListResponse },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy" },
-  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now" },
+  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left" },
   { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed" },
   { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate" },

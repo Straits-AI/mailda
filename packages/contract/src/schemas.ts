@@ -1005,3 +1005,50 @@ export const domainPauseRequestedResponse = z.object({
  * up there with `z.unknown()` elements, which is a list schema that checks the envelope and nothing in it.
  */
 export const approvalListResponse = z.object({ approvals: z.array(approvalRow) }).loose();
+
+/* ------------------------------------------------------------------ cases and dispatch ------------- */
+
+/** The case row a claim or a steal answers with: the row itself, without the list's computed columns. */
+const claimedCase = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.case)),
+  conversation_id: z.string().min(1),
+  mailbox_id: z.string().min(1),
+  state: z.enum(["open", "claimed", "closed"]),
+  state_at: isoDate,
+  assignee: z.string().nullable(),
+  claimed_at: isoDate.nullable(),
+  created_at: isoDate,
+}).strict();
+
+/**
+ * One route, four acts, four answers.
+ *
+ * A union rather than a loose object, because the four shapes are genuinely different and each one's key is
+ * what says which act happened: `claimed` for taking or stealing, `released`, `closed`. All four were
+ * observed against a real Node — a shape guessed for the fourth would have been the invention these schemas
+ * exist to prevent.
+ *
+ * `claim` and `steal` answer identically, and that is correct rather than an oversight: stealing is claiming
+ * a case somebody else holds, and the difference is in the audit trail (`case.claim_taken`) rather than in
+ * what the caller gets back.
+ */
+export const caseActionResponse = z.union([
+  z.object({ claimed: z.literal(true), case: claimedCase }).strict(),
+  z.object({ released: z.literal(true) }).strict(),
+  z.object({ closed: z.literal(true) }).strict(),
+]);
+
+/**
+ * Merging two conversations.
+ *
+ * `mailboxId` travels with the refusal as well as the success, because the reason a merge is refused is
+ * always *about one mailbox* — two cases in it disagree — and a caller with several would otherwise be told
+ * only that something somewhere was wrong.
+ */
+export const conversationMergedResponse = z.object({
+  merged: z.literal(true),
+  messagesMoved: z.number().int().nonnegative(),
+}).loose();
+
+/** What a dispatch sweep handed over. Empty is the ordinary answer on a Node with nothing due. */
+export const dispatchResponse = z.object({ dispatched: z.array(z.unknown()) }).loose();

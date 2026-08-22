@@ -8,6 +8,7 @@ import { log } from "../src/audit.ts";
 import { createButlerDraft } from "../src/butlers.ts";
 import { issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
+import { seedDelivery } from "./fixtures/delivery.ts";
 
 /**
  * The contract's schemas, checked against what the routes actually answer (#85 step 2, ADR 12).
@@ -49,6 +50,7 @@ beforeEach(async () => {
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
+    "mailbox_items", "messages", "cases", "conversations", "ingress_receipts",
     "relationship_tuples", "users", "node_claim",
   ]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
@@ -812,6 +814,128 @@ describe("dual control, with the second and third people it needs", () => {
   });
 });
 
+describe("the routes that only exist once mail has landed", () => {
+  /*
+   * `test/fixtures/delivery.ts`, shared with `butler-run.test.ts` rather than copied. Two spellings of
+   * *"what a delivery looks like"* would be one that stops matching what ingest writes, and the one nobody
+   * updates is always the one being trusted.
+   *
+   * It is deliberately not the ingest path — it writes the rows ingest produces — which is the right
+   * fidelity for describing **projections** over stored mail and the wrong one for a claim about ingest.
+   */
+  let mailboxId = "";
+  let address = "";
+
+  beforeEach(async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    mailboxId = ctx.id("mbx");
+    address = `${mailboxId}@acme.example`;
+    const rows = [
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("adr"), ORG, mailboxId, address, at),
+    ];
+    for (const relation of ["send.propose", "mailbox.content.read", "mailbox.metadata.read"]) {
+      rows.push(testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, relation, mailboxId, at));
+    }
+    await testEnv.CATALOG.batch(rows);
+  });
+
+  it("GET /api/messages, with a message in it", async () => {
+    await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const read = await answers("GET", "/api/messages", { cookie: await cookie() }) as {
+      messages: unknown[];
+    };
+    expect(read.messages).toHaveLength(1);
+  });
+
+  it("GET /api/cases, with a case in it", async () => {
+    await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    /*
+     * `?mailbox=` is required, and the refusal says why in one line: *"a queue belongs to one mailbox"*. The
+     * query string rides on the path here because `path()` builds the path and a caller appends the query —
+     * the same shape `useCases` uses in the client.
+     */
+    const held = await cookie();
+    const spec = route("GET", "/api/cases");
+    const response = await SELF.fetch(`${ORIGIN}${path(spec)}?mailbox=${mailboxId}`, {
+      headers: { cookie: held },
+    });
+    expect(response.status).toBe(200);
+    const read = spec.response!.parse(await response.json()) as { cases: unknown[] };
+    expect(read.cases).toHaveLength(1);
+  });
+
+  it("all four case acts, which answer four different shapes", async () => {
+    /*
+     * The union is the schema, and each key is what says which act happened. `claim` and `steal` answer
+     * identically — stealing is claiming a case somebody else holds, and the difference is in the audit
+     * trail rather than in what the caller gets back.
+     */
+    const held = await cookie();
+    const first = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const second = await seedDelivery(testEnv, createSystemCtx(), {
+      orgId: ORG, mailboxId, address,
+    }, { subject: "second" });
+
+    const claimed = await answers("POST", "/api/cases/:caseId/:action", {
+      params: { caseId: first.caseId, action: "claim" }, body: {}, cookie: held,
+    }) as { claimed: boolean };
+    expect(claimed.claimed).toBe(true);
+
+    await answers("POST", "/api/cases/:caseId/:action", {
+      params: { caseId: first.caseId, action: "steal" }, body: {}, cookie: held,
+    });
+    await answers("POST", "/api/cases/:caseId/:action", {
+      params: { caseId: second.caseId, action: "claim" }, body: {}, cookie: held,
+    });
+    await answers("POST", "/api/cases/:caseId/:action", {
+      params: { caseId: second.caseId, action: "release" }, body: {}, cookie: held,
+    });
+    await answers("POST", "/api/cases/:caseId/:action", {
+      params: { caseId: first.caseId, action: "close" }, body: {}, cookie: held,
+    });
+  });
+
+  it("merging two conversations, once one side is held", async () => {
+    /*
+     * A merge is refused while both cases are unclaimed — it would discard one side's history and the
+     * earlier SLA start, which is the one a breach is computed from. So the fixture claims one first, which
+     * is the state the refusal itself names as the way forward.
+     */
+    const held = await cookie();
+    const into = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const from = await seedDelivery(testEnv, createSystemCtx(), {
+      orgId: ORG, mailboxId, address,
+    }, { subject: "second" });
+    /*
+     * **Both** claimed, by the same person. The refusals walk you there: two unclaimed cases would discard
+     * one side's history and the earlier SLA start; one claimed and one not would either unassign somebody
+     * mid-reply or discard the unclaimed side. Each refusal names the resolution, which is how this fixture
+     * was arrived at rather than guessed.
+     */
+    for (const caseId of [into.caseId, from.caseId]) {
+      await answers("POST", "/api/cases/:caseId/:action", {
+        params: { caseId, action: "claim" }, body: {}, cookie: held,
+      });
+    }
+
+    await answers("POST", "/api/conversations/merge", {
+      body: { from: from.conversationId, into: into.conversationId }, cookie: held,
+    });
+  });
+
+  it("POST /api/sends/dispatch, with nothing due", async () => {
+    await answers("POST", "/api/sends/dispatch", { body: {}, cookie: await cookie() });
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -831,7 +955,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(70);
+    expect(coverage.described).toBeGreaterThanOrEqual(73);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
