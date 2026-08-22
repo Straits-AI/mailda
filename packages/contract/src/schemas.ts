@@ -587,3 +587,200 @@ export const butlerPauseListResponse = z.object({
     placedAt: isoDate,
   }).strict()),
 }).loose();
+
+/* ------------------------------------------------------------------ the acts ----------------------- */
+
+/**
+ * Tranche four (#85 step 2): what the write routes answer.
+ *
+ * Captured by driving every one of them against a real Node and reading the body, then written down —
+ * which is the opposite order from the ledgers above and the right one here. A write's answer is not
+ * declared anywhere on the consumer side: `butlerAct` and its siblings return `unknown` and the screens
+ * destructure what they need, so there was no second view to compare against and no divergence to find.
+ * What these schemas add is the first statement of the shape at all.
+ */
+
+export const teamCreatedResponse = z.object({ team: teamRow.omit({ memberCount: true }) }).strict();
+export const teamDetailResponse = z.object({
+  team: teamRow.omit({ memberCount: true }),
+  members: z.array(z.string().min(1)),
+}).strict();
+
+/**
+ * Adding or removing somebody from a team.
+ *
+ * `changed` is the field worth having: both routes are idempotent, so the answer to *"was this already the
+ * case"* is the only thing distinguishing a no-op from an act, and `members` is the count afterwards rather
+ * than a delta — a caller reconciling a roster wants the state, not the change.
+ */
+export const teamMembershipResponse = z.object({
+  membership: z.object({
+    teamId: z.string().min(1),
+    userId,
+    changed: z.boolean(),
+    members: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+/**
+ * Minting an invitation, and the one route in this product that returns a secret.
+ *
+ * **Deliberate, and the only time it is readable.** `invitations` stores the hash, so a lost invitation is
+ * re-minted rather than recovered — the same mechanism `mailda claim-secret` uses and the same sentence it
+ * prints. The schema names the field so that its presence is a decision on the record, not an accident
+ * somebody notices in a log.
+ *
+ * `replacedId` is the invitation this one withdrew, because `inv_one_open_per_email` permits one at a time:
+ * re-inviting somebody revokes the outstanding one, and a caller that did not know would leave a colleague
+ * holding a secret that no longer works.
+ */
+export const invitationCreatedResponse = z.object({
+  invitation: z.object({
+    invitationId: z.string().min(1),
+    email: z.string().min(1),
+    expiresAt: isoDate,
+    secret: z.string().min(1),
+    replacedId: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+export const matterResponse = z.object({ matter: matterRow }).strict();
+
+/**
+ * Placing a hold.
+ *
+ * Deliberately **not** `holdRow`: the list computes `mailboxExists` and `pendingLift`, which are questions
+ * about now rather than columns, and neither is knowable at the moment of placing one. Reusing the list's
+ * shape here would have been the tidier-looking mistake.
+ */
+export const holdPlacedResponse = z.object({
+  hold: holdRow.omit({ mailboxExists: true, pendingLift: true }),
+}).strict();
+
+export const accessResponse = z.object({
+  subjectId: z.string().min(1),
+  relations: z.array(z.object({
+    relation: z.string().min(1),
+    objectType: z.string().min(1),
+    objectId: z.string().min(1),
+    createdAt: isoDate,
+  }).strict()),
+}).loose();
+
+export const supervisedListResponse = z.object({
+  supervised: z.array(z.object({
+    id: z.string().min(1),
+    subjectId: z.string().min(1),
+    mailboxId: z.string().min(1),
+    scope: z.string().min(1),
+    matterId: z.string().nullable(),
+    requestedAt: isoDate,
+    expiresAt: isoDate,
+    grantedAt: isoDate.nullable(),
+    live: z.boolean(),
+  }).strict()),
+}).loose();
+
+export const caseListResponse = z.object({
+  cases: z.array(z.object({
+    id: z.string().regex(idPattern(ID_PREFIXES.case)),
+    conversation_id: z.string().min(1),
+    mailbox_id: z.string().min(1),
+    state: z.enum(["open", "claimed", "closed"]),
+    state_at: isoDate,
+    assignee: z.string().nullable(),
+    claimed_at: isoDate.nullable(),
+    created_at: isoDate,
+    subject: z.string().nullable(),
+    from_addr: z.string().nullable(),
+    content_restricted: z.boolean(),
+    message_count: z.number().int().nonnegative(),
+    assignee_email: z.string().nullable(),
+    response_due_at: isoDate.nullable(),
+    first_response_at: isoDate.nullable(),
+    response_breached_at: isoDate.nullable(),
+  }).strict()),
+}).loose();
+
+export const draftRow = z.object({
+  id: z.string().min(1),
+  mailboxId: z.string().min(1),
+  inReplyToMessageId: z.string().nullable(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  bcc: z.array(z.string()),
+  subject: z.string(),
+  body: z.string(),
+  /** The body's size beside the body, so a list can render one without measuring the other. */
+  bodyBytes: z.number().int().nonnegative(),
+  updatedAt: isoDate,
+}).strict();
+
+export const draftListResponse = z.object({ drafts: z.array(draftRow.omit({ body: true })) }).loose();
+export const draftSavedResponse = z.object({ draft: draftRow }).strict();
+
+export const sendListResponse = z.object({
+  sends: z.array(z.unknown()),
+  /** Today's count, for the volume breaker. `throttledAtCount` is null until something is throttled. */
+  daily: z.object({
+    day: z.string().min(1),
+    handedOver: z.number().int().nonnegative(),
+    throttledAtCount: z.number().int().nullable(),
+    firstThrottledAt: isoDate.nullable(),
+  }).strict(),
+  capability: z.object({
+    canSend: z.boolean(),
+    arbitraryRecipients: z.boolean(),
+    verifiedAt: isoDate.nullable(),
+    detail: z.string().min(1),
+  }).strict(),
+}).loose();
+
+/**
+ * Verifying the audit chain.
+ *
+ * `intact` is the answer; the other four are what make it checkable rather than asserted. `resumeFrom` is
+ * how a chain longer than one invocation's budget is verified in passes — a `null` there means the whole
+ * of it was covered, which is a materially different claim from `intact: true` alone.
+ */
+export const auditVerifyResponse = z.object({
+  checked: z.number().int().nonnegative(),
+  from: z.number().int(),
+  intact: z.boolean(),
+  brokenAt: z.number().int().nullable(),
+  resumeFrom: z.number().int().nullable(),
+}).strict();
+
+export const policyDraftResponse = z.object({
+  policy: z.object({
+    policyId: z.string().min(1),
+    versionId: z.string().min(1),
+    outcome: z.enum(["allow", "hold", "require_approval", "deny"]),
+    conditions: z.record(z.string(), z.unknown()),
+    stages: z.array(z.unknown()),
+  }).strict(),
+}).strict();
+
+export const policyPublishedResponse = z.object({
+  published: z.object({
+    policyId: z.string().min(1),
+    versionId: z.string().min(1),
+    version: z.number().int().positive(),
+    outcome: z.enum(["allow", "hold", "require_approval", "deny"]),
+    supersededVersionId: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/**
+ * Signing out.
+ *
+ * Answers `200` with an `error` field, which reads oddly and is correct: the body is the same
+ * `signedOutResponse` every expired-session path returns, so a client has **one** shape to recognise for
+ * "you are not signed in" rather than one for being thrown out and another for leaving. Written down here
+ * because the alternative is somebody tidying it into `{ ok: true }` and breaking that.
+ */
+export const signedOutResponse = z.object({
+  error: z.string().min(1),
+  message: z.string().min(1),
+  refreshable: z.literal(false),
+}).strict();

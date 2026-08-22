@@ -112,8 +112,8 @@ export const ROUTES = [
     request: S.loginRequest, response: S.signedInResponse,
   },
   { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token" },
-  { method: "POST", path: "/api/auth/logout", summary: "End this session" },
-  { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds" },
+  { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
+  { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace" },
   { method: "GET", path: "/api/me", summary: "Who this session is", response: S.meResponse },
 
@@ -146,22 +146,22 @@ export const ROUTES = [
 
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", response: S.invitationListResponse },
-  { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization" },
+  { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
   { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password" },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", response: S.peopleListResponse },
   { method: "GET", path: "/api/teams", summary: "Every team", response: S.teamListResponse },
-  { method: "POST", path: "/api/teams", summary: "Create a team" },
-  { method: "GET", path: "/api/teams/:teamId", summary: "One team" },
-  { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team" },
+  { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },
+  { method: "GET", path: "/api/teams/:teamId", summary: "One team", response: S.teamDetailResponse },
+  { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team", response: S.teamCreatedResponse },
   { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team", response: S.teamMembersResponse },
-  { method: "POST", path: "/api/teams/:teamId/members", summary: "Put somebody in a team, conferring every relation it holds" },
-  { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request" },
+  { method: "POST", path: "/api/teams/:teamId/members", summary: "Put somebody in a team, conferring every relation it holds", response: S.teamMembershipResponse },
+  { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
-  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox" },
+  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", response: S.accessResponse },
   { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox" },
   { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox" },
-  { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)" },
+  { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", response: S.supervisedListResponse },
   { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires" },
 
   // ---- mail: reading -------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ export const ROUTES = [
   },
 
   // ---- cases and conversations (#42) -----------------------------------------------------------------
-  { method: "GET", path: "/api/cases", summary: "Cases in the mailboxes this person may act in" },
+  { method: "GET", path: "/api/cases", summary: "Cases in the mailboxes this person may act in", response: S.caseListResponse },
   {
     method: "POST",
     path: "/api/cases/:caseId/:action",
@@ -198,11 +198,11 @@ export const ROUTES = [
   { method: "POST", path: "/api/conversations/merge", summary: "Merge two conversations into one" },
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
-  { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing" },
-  { method: "PUT", path: "/api/drafts", summary: "Save a draft" },
+  { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", response: S.draftListResponse },
+  { method: "PUT", path: "/api/drafts", summary: "Save a draft", response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft" },
   { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft" },
-  { method: "GET", path: "/api/sends", summary: "The outbox" },
+  { method: "GET", path: "/api/sends", summary: "The outbox", response: S.sendListResponse },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy" },
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now" },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left" },
@@ -213,7 +213,7 @@ export const ROUTES = [
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
   { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", response: S.policyListResponse },
-  { method: "POST", path: "/api/policies", summary: "Create a policy" },
+  { method: "POST", path: "/api/policies", summary: "Create a policy", response: S.policyDraftResponse },
   {
     method: "PUT",
     path: "/api/policies/:policyId/draft",
@@ -222,17 +222,18 @@ export const ROUTES = [
      * interface returned 404 `not_found` for as long as the route existed. Found by writing this registry.
      */
     summary: "Replace a policy's draft",
+    response: S.policyDraftResponse,
   },
-  { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event" },
+  { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody" },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send" },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw an approval request" },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
-  { method: "POST", path: "/api/holds", summary: "Place a legal hold" },
+  { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person" },
   { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", response: S.matterListResponse },
-  { method: "POST", path: "/api/matters", summary: "Open a matter" },
-  { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter" },
+  { method: "POST", path: "/api/matters", summary: "Open a matter", response: S.matterResponse },
+  { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
   {
     method: "GET", path: "/api/breakers",
     summary: "The rate breakers, with the readings behind them",
@@ -275,7 +276,7 @@ export const ROUTES = [
     method: "GET", path: "/api/audit", summary: "The audit trail",
     response: S.auditListResponse,
   },
-  { method: "POST", path: "/api/audit/verify", summary: "Verify the audit chain" },
+  { method: "POST", path: "/api/audit/verify", summary: "Verify the audit chain", response: S.auditVerifyResponse },
   {
     method: "GET", path: "/api/logs", summary: "The operational log",
     response: S.logListResponse,

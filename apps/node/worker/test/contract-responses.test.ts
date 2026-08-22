@@ -47,7 +47,9 @@ const ORIGIN = "https://node";
 beforeEach(async () => {
   for (const table of [
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
-    "butler_versions", "butlers", "sending_transport", "relationship_tuples", "users", "node_claim",
+    "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
+    "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
+    "relationship_tuples", "users", "node_claim",
   ]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
@@ -251,7 +253,7 @@ describe("the ledgers answer what the contract says they do", () => {
       ).bind(mailboxId, ORG, "support", at),
       testEnv.CATALOG.prepare(
         "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
-      ).bind(ctx.id("adr"), ORG, mailboxId, "support@acme.example", at),
+      ).bind(ctx.id("adr"), ORG, mailboxId, `${mailboxId}@acme.example`, at),
       testEnv.CATALOG.prepare(
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
          VALUES (?,?,?,'send.propose','mailbox',?,?)`,
@@ -428,6 +430,148 @@ describe("the governance reads answer what the contract says they do", () => {
   });
 });
 
+describe("the acts answer what the contract says they do", () => {
+  /*
+   * Captured by driving every one of these against a real Node and reading the body, then written down —
+   * the opposite order from the ledgers, and the right one here. A write's answer is declared nowhere on the
+   * consumer side: the client's act helpers return `unknown` and the screens destructure what they need, so
+   * there was no second view to compare against. These schemas are the first statement of the shape at all.
+   */
+  async function act(
+    method: "POST" | "PUT" | "DELETE", template: string,
+    init: { params?: Record<string, string>; body?: unknown; cookie: string },
+  ): Promise<unknown> {
+    return await answers(method, template, init);
+  }
+
+  async function mailbox(): Promise<string> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const mailboxId = ctx.id("mbx");
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      // Unique per mailbox: `addresses` is UNIQUE on (org_id, address), and several tests here seed one.
+      ).bind(ctx.id("adr"), ORG, mailboxId, `${mailboxId}@acme.example`, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+    ]);
+    return mailboxId;
+  }
+
+  it("the team acts, including the idempotent ones", async () => {
+    const held = await cookie();
+    const made = await act("POST", "/api/teams", { body: { name: "t1" }, cookie: held }) as {
+      team: { id: string };
+    };
+    await answers("GET", "/api/teams/:teamId", { params: { teamId: made.team.id }, cookie: held });
+    await act("POST", "/api/teams/:teamId/rename", {
+      params: { teamId: made.team.id }, body: { name: "t2" }, cookie: held,
+    });
+    const joined = await act("POST", "/api/teams/:teamId/members", {
+      params: { teamId: made.team.id }, body: { userId: USER }, cookie: held,
+    }) as { membership: { changed: boolean; members: number } };
+    // `changed` is the field that distinguishes an act from a no-op on an idempotent route.
+    expect(joined.membership).toMatchObject({ changed: true, members: 1 });
+    await act("DELETE", "/api/teams/:teamId/members", {
+      params: { teamId: made.team.id }, body: { userId: USER }, cookie: held,
+    });
+  });
+
+  it("minting an invitation, which is the one route that returns a secret", async () => {
+    /*
+     * The schema names `secret` so its presence is a decision on the record. `invitations` stores only the
+     * hash, so this is the one moment it is readable — the same mechanism `mailda claim-secret` uses.
+     */
+    const held = await cookie();
+    const minted = await act("POST", "/api/invitations", {
+      body: { email: "colleague@local.invalid" }, cookie: held,
+    }) as { invitation: { secret: string; replacedId: string | null } };
+    expect(minted.invitation.secret.length).toBeGreaterThan(20);
+    expect(minted.invitation.replacedId).toBeNull();
+  });
+
+  it("matters, and a hold placed against one", async () => {
+    const held = await cookie();
+    const mailboxId = await mailbox();
+    const opened = await act("POST", "/api/matters", {
+      body: { type: "legal_hold", description: "a matter" }, cookie: held,
+    }) as { matter: { id: string } };
+    await act("POST", "/api/holds", {
+      body: { mailboxId, matterId: opened.matter.id }, cookie: held,
+    });
+    /*
+     * Closed **after** the hold, because closing is what makes `closedAt`/`closedBy` non-null and the schema
+     * describes both states with one shape. A test that only opened one would leave half of it unexercised.
+     */
+    const closed = await act("POST", "/api/matters/:matterId/close", {
+      params: { matterId: opened.matter.id }, cookie: held,
+    }) as { matter: { closedAt: string | null } };
+    expect(closed.matter.closedAt).not.toBeNull();
+  });
+
+  it("the reads that answer with what a person holds", async () => {
+    const held = await cookie();
+    await mailbox();
+    const access = await answers("GET", "/api/access", { cookie: held }) as { relations: unknown[] };
+    expect(access.relations.length).toBeGreaterThan(0);
+    await answers("GET", "/api/supervised", { cookie: held });
+    await answers("GET", "/api/sends", { cookie: held });
+    await answers("GET", "/api/drafts", { cookie: held });
+  });
+
+  it("saving a draft", async () => {
+    const held = await cookie();
+    const mailboxId = await mailbox();
+    const saved = await act("PUT", "/api/drafts", {
+      body: { mailboxId, subject: "s", body: "b", to: ["a@b.test"] }, cookie: held,
+    }) as { draft: { bodyBytes: number } };
+    expect(saved.draft.bodyBytes).toBe(1);
+  });
+
+  it("the policy acts", async () => {
+    const held = await cookie();
+    const made = await act("POST", "/api/policies", {
+      body: { name: "p", outcome: "hold", conditions: {}, stages: [] }, cookie: held,
+    }) as { policy: { policyId: string } };
+    await act("PUT", "/api/policies/:policyId/draft", {
+      params: { policyId: made.policy.policyId },
+      body: { outcome: "deny", conditions: {}, stages: [] },
+      cookie: held,
+    });
+    const published = await act("POST", "/api/policies/:policyId/publish", {
+      params: { policyId: made.policy.policyId }, cookie: held,
+    }) as { published: { version: number } };
+    expect(published.published.version).toBe(1);
+  });
+
+  it("verifying the audit chain, over a chain with something in it", async () => {
+    const held = await cookie();
+    await createButlerDraft(testEnv, createSystemCtx(), ORG, USER, { name: "chained", source: STARTER });
+    const verified = await act("POST", "/api/audit/verify", { body: {}, cookie: held }) as {
+      checked: number; intact: boolean; resumeFrom: number | null;
+    };
+    // Non-vacuity: `intact: true` over nothing is not a claim about anything.
+    expect(verified.checked).toBeGreaterThan(0);
+    expect(verified.intact).toBe(true);
+    // `null` means the whole chain was covered, which is a different claim from `intact` alone.
+    expect(verified.resumeFrom).toBeNull();
+  });
+
+  it("signing out, which answers the same shape an expired session does", async () => {
+    /*
+     * A `200` carrying an `error` field reads oddly and is correct: one shape means a client has a single
+     * thing to recognise for "you are not signed in", whether it was thrown out or left. Written down so
+     * that nobody tidies it into `{ ok: true }` and breaks that.
+     */
+    await act("POST", "/api/auth/logout", { body: {}, cookie: await cookie() });
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -443,7 +587,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      */
     const coverage = schemaCoverage();
     expect(coverage.total).toBeGreaterThan(70);
-    expect(coverage.described).toBeGreaterThanOrEqual(34);
+    expect(coverage.described).toBeGreaterThanOrEqual(55);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -458,6 +602,6 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
     expect(coverage.described + coverage.missing.length).toBe(coverage.total);
     expect(coverage.missing).not.toContain("GET /api/transport");
     // A route that still has none. Updated as tranches land, which is the point of the count moving.
-    expect(coverage.missing).toContain("GET /api/cases");
+    expect(coverage.missing).toContain("GET /api/messages/:messageId/raw");
   });
 });
