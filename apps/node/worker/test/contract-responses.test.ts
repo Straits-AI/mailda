@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { path, route, schemaCoverage } from "@mailda/contract/routes";
 import { createSystemCtx } from "@mailda/runtime";
 
+import { log } from "../src/audit.ts";
 import { createButlerDraft } from "../src/butlers.ts";
 import { issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
@@ -229,6 +230,92 @@ describe("every schema-bearing route answers what the contract says it does", ()
   });
 });
 
+describe("the ledgers answer what the contract says they do", () => {
+  /*
+   * **Seeded, because an empty list validates nothing.** `z.array(rowSchema)` is satisfied by `[]`, so a
+   * test that drove these routes against empty tables would check the envelope and leave every row shape
+   * unexamined — which is the vacuity this repository keeps finding, arriving through a schema instead of an
+   * assertion.
+   *
+   * Rows go in with direct `INSERT`s rather than through the ingest path. That is honest for what is being
+   * checked: these schemas describe a route's **projection**, and a projection reads columns. What it would
+   * not be honest for is a claim about ingest, and none is made here.
+   */
+  async function seedMailbox(): Promise<string> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const mailboxId = ctx.id("mbx");
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        "INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+      ).bind(mailboxId, ORG, "support", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("adr"), ORG, mailboxId, "support@acme.example", at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+    ]);
+    return mailboxId;
+  }
+
+  it("GET /health", async () => {
+    await answers("GET", "/health");
+  });
+
+  it("GET /api/doctor, with its findings", async () => {
+    const report = await answers("GET", "/api/doctor", { cookie: await cookie() }) as {
+      findings: unknown[];
+    };
+    // Non-vacuity: an empty findings array would satisfy the schema and check no finding's shape.
+    expect(report.findings.length).toBeGreaterThan(5);
+  });
+
+  it("GET /api/breakers, with real readings", async () => {
+    const held = await cookie();
+    const read = await answers("GET", "/api/breakers", { cookie: held }) as { breakers: unknown[] };
+    expect(read.breakers.length).toBeGreaterThan(0);
+  });
+
+  it("GET /api/mailboxes, with a mailbox in it", async () => {
+    await seedMailbox();
+    const read = await answers("GET", "/api/mailboxes", { cookie: await cookie() }) as {
+      mailboxes: unknown[];
+    };
+    expect(read.mailboxes.length).toBe(1);
+  });
+
+  it("GET /api/audit, with an entry a real act produced", async () => {
+    /*
+     * The entry comes from `createButlerDraft` rather than an `INSERT`, deliberately: `audit_entries` is a
+     * hash chain, and a hand-written row would carry a `hash` this schema's pattern would accept and the
+     * chain would not. Producing it through an act is the only way the row is real.
+     */
+    const held = await cookie();
+    await createButlerDraft(testEnv, createSystemCtx(), ORG, USER, {
+      name: "audited", source: STARTER,
+    });
+    const read = await answers("GET", "/api/audit", { cookie: held }) as { entries: unknown[] };
+    expect(read.entries.length).toBeGreaterThan(0);
+  });
+
+  it("GET /api/logs, with an entry the logger produced", async () => {
+    /*
+     * Through `log()` rather than an `INSERT`, and the first version of this test got that wrong: it wrote
+     * the columns by hand, left `id` null, and the schema refused the answer. It was right to — `log()`
+     * mints a `log_` identifier, so a row without one is a row this Node cannot produce, and a test that
+     * seeded it would have been checking a shape that never occurs.
+     */
+    const held = await cookie();
+    await log(testEnv, createSystemCtx(), {
+      level: "info", event: "contract.check", message: "a line",
+    });
+    const read = await answers("GET", "/api/logs", { cookie: held }) as { entries: unknown[] };
+    expect(read.entries.length).toBeGreaterThan(0);
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -244,7 +331,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      */
     const coverage = schemaCoverage();
     expect(coverage.total).toBeGreaterThan(70);
-    expect(coverage.described).toBeGreaterThanOrEqual(12);
+    expect(coverage.described).toBeGreaterThanOrEqual(21);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -258,6 +345,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
     const coverage = schemaCoverage();
     expect(coverage.described + coverage.missing.length).toBe(coverage.total);
     expect(coverage.missing).not.toContain("GET /api/transport");
-    expect(coverage.missing).toContain("GET /api/audit");
+    // A route that still has none. Updated as tranches land, which is the point of the count moving.
+    expect(coverage.missing).toContain("GET /api/cases");
   });
 });

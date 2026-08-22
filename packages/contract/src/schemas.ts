@@ -230,3 +230,155 @@ export const simulateRequest = z.object({
   event: z.string().optional(),
   key: z.string().optional(),
 });
+
+/* ------------------------------------------------------------------ the ledgers --------------------- */
+
+/**
+ * The read surfaces, tranche two (#85 step 2).
+ *
+ * Written from the shapes `src/client/app/api.ts` declares — the consumer's own view, exercised by every
+ * screen — and then **arbitrated by the test**, which seeds a real row and parses the real answer. That
+ * order is deliberate: a schema derived from a reading of nine SQL projections would be nine chances to
+ * transcribe one wrong, and the transcription would be invisible. A schema derived from the consumer and
+ * checked against the producer fails loudly when the two disagree, which is the disagreement worth finding.
+ */
+
+/**
+ * What `/health` answers.
+ *
+ * `schema` is the last migration applied, and it is the field that makes this endpoint worth having: a Node
+ * that answers at all but is behind on migrations is the failure a bare `ok: true` cannot express. The first
+ * draft of this schema *did* say `ok: boolean`, and the route has never returned one — which is the whole
+ * reason step 2's schemas arrive with a test that drives the route.
+ */
+export const healthResponse = z.object({
+  node: z.literal("mailda"),
+  schema: z.string().min(1),
+  claimed: z.boolean(),
+  outboxPending: z.number().int().nonnegative(),
+  at: isoDate,
+}).loose();
+
+/** One `doctor` finding. `fix` is present only when there is something to do about it. */
+export const doctorFinding = z.object({
+  check: z.string().min(1),
+  severity: z.enum(["report", "degraded", "refuse"]),
+  discloses: z.string().min(1),
+  ok: z.boolean(),
+  detail: z.string().min(1),
+  fix: z.string().min(1).optional(),
+  receipt: z.string().min(1).optional(),
+}).strict();
+
+export const doctorResponse = z.object({
+  verdict: z.enum(["ok", "degraded", "refuse"]),
+  claimed: z.boolean(),
+  at: isoDate,
+  findings: z.array(doctorFinding),
+}).loose();
+
+export const mailboxRow = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+  name: z.string(),
+  unclaimed: z.number().int().nonnegative(),
+  claimed: z.number().int().nonnegative(),
+  mine: z.number().int().nonnegative(),
+  first_response_minutes: z.number().nullable(),
+  breached: z.number().int().nonnegative(),
+  addresses: z.string().nullable(),
+}).strict();
+
+export const mailboxListResponse = z.object({ mailboxes: z.array(mailboxRow) }).strict();
+
+export const messageRow = z.object({
+  id: z.string().min(1),
+  message_id: z.string().nullable(),
+  subject: z.string().nullable(),
+  from_addr: z.string().nullable(),
+  envelope_from: z.string(),
+  envelope_to: z.string(),
+  mailbox_id: z.string(),
+  raw_bytes: z.number().int().nonnegative(),
+  accepted_at: isoDate,
+  parse_error: z.string().nullable(),
+  conversation_id: z.string().nullable(),
+  case_id: z.string().nullable(),
+}).strict();
+
+export const messageListResponse = z.object({ messages: z.array(messageRow) }).loose();
+
+export const auditRow = z.object({
+  id: z.string().min(1),
+  seq: z.number().int().positive(),
+  at: isoDate,
+  actor_user_id: z.string().nullable(),
+  actor_kind: z.string().min(1),
+  action: z.string().min(1),
+  subject: z.string().nullable(),
+  outcome: z.string().min(1),
+  detail: z.string(),
+  hash: sha256,
+}).strict();
+
+export const auditListResponse = z.object({ entries: z.array(auditRow) }).loose();
+
+export const logRow = z.object({
+  // A `log_` identifier, not a rowid. The client had this right and the first draft of this schema did not.
+  id: z.string().min(1),
+  at: isoDate,
+  level: z.string().min(1),
+  event: z.string().min(1),
+  message: z.string(),
+  detail: z.string().nullable(),
+  request_id: z.string().nullable(),
+}).strict();
+
+export const logListResponse = z.object({
+  entries: z.array(logRow),
+  counts: z.array(z.object({ level: z.string(), n: z.number().int() }).strict()),
+}).loose();
+
+/**
+ * One rate breaker's reading.
+ *
+ * `sentence` is here because #66's rule is that a limit a developer can hit is one they must see, and the
+ * number alone does not say what it means. A schema without it would let the field be dropped.
+ */
+export const breakerReading = z.object({
+  breaker: z.string().min(1),
+  sentence: z.string().min(1),
+  observations: z.number().int().nonnegative(),
+  observed: z.number().int().nonnegative(),
+  percent: z.number().nullable(),
+  limit: z.number().int(),
+  windowSeconds: z.number().int().positive(),
+  armed: z.boolean(),
+  unarmedReason: z.literal("no_observations").nullable(),
+  tripped: z.boolean(),
+  /*
+   * **Two fields the client's own `BreakerReading` does not declare**, found by this schema's first run
+   * against the real route. Not a bug — nothing in the interface reads them — but it is precisely the drift
+   * ADR 12 is about: the consumer's view and the producer's answer had quietly diverged, and neither side
+   * could have noticed. `retryAfterExact` says whether `retryAfterSeconds` is a computed instant or an
+   * estimate, which is the difference between telling somebody *when* they may send and roughly when.
+   */
+  retryAfterSeconds: z.number().int().nullable(),
+  retryAfterExact: z.boolean(),
+}).strict();
+
+export const breakerListResponse = z.object({ breakers: z.array(breakerReading) }).loose();
+
+export const notificationRow = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["supervised_read", "approval_request"]),
+  subjectId: z.string().min(1),
+  mailboxId: z.string().nullable(),
+  matterId: z.string().nullable(),
+  dueAt: isoDate.nullable(),
+  deliveredAt: isoDate.nullable(),
+  body: z.unknown(),
+}).strict();
+
+export const notificationListResponse = z.object({
+  notifications: z.array(notificationRow),
+}).strict();

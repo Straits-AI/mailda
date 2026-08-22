@@ -90,12 +90,20 @@ export const METHOD_UNCHECKED: readonly string[] = [
 
 export const ROUTES = [
   // ---- the surface an unauthenticated caller reaches (ADR 30) ----------------------------------------
-  { method: "GET", path: "/health", summary: "Whether this Node is up, and what is missing if it is not" },
+  {
+    method: "GET", path: "/health",
+    summary: "Whether this Node is up, and what is missing if it is not",
+    response: S.healthResponse,
+  },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
   { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens" },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization" },
   { method: "POST", path: "/api/prepare", summary: "Prepare a Node for claiming" },
-  { method: "GET", path: "/api/doctor", summary: "What this Node can and cannot do, with the evidence" },
+  {
+    method: "GET", path: "/api/doctor",
+    summary: "What this Node can and cannot do, with the evidence",
+    response: S.doctorResponse,
+  },
 
   // ---- authentication (#38, ADR 29) -----------------------------------------------------------------
   {
@@ -157,12 +165,23 @@ export const ROUTES = [
   { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires" },
 
   // ---- mail: reading -------------------------------------------------------------------------------
-  { method: "GET", path: "/api/mailboxes", summary: "The mailboxes this person may act in" },
+  {
+    method: "GET", path: "/api/mailboxes",
+    summary: "The mailboxes this person may act in",
+    response: S.mailboxListResponse,
+  },
   { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings" },
-  { method: "GET", path: "/api/messages", summary: "Message metadata, paged" },
+  {
+    method: "GET", path: "/api/messages", summary: "Message metadata, paged",
+    response: S.messageListResponse,
+  },
   { method: "GET", path: "/api/messages/:messageId/body", summary: "One message's rendered body" },
   { method: "GET", path: "/api/messages/:messageId/raw", summary: "One message's stored bytes, as message/rfc822" },
-  { method: "GET", path: "/api/notifications", summary: "What has changed since the last poll" },
+  {
+    method: "GET", path: "/api/notifications",
+    summary: "What has changed since the last poll",
+    response: S.notificationListResponse,
+  },
 
   // ---- cases and conversations (#42) -----------------------------------------------------------------
   { method: "GET", path: "/api/cases", summary: "Cases in the mailboxes this person may act in" },
@@ -214,7 +233,11 @@ export const ROUTES = [
   { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to" },
   { method: "POST", path: "/api/matters", summary: "Open a matter" },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter" },
-  { method: "GET", path: "/api/breakers", summary: "The rate breakers, with the readings behind them" },
+  {
+    method: "GET", path: "/api/breakers",
+    summary: "The rate breakers, with the readings behind them",
+    response: S.breakerListResponse,
+  },
   { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to" },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain" },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person" },
@@ -248,9 +271,15 @@ export const ROUTES = [
   { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason" },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
-  { method: "GET", path: "/api/audit", summary: "The audit trail" },
+  {
+    method: "GET", path: "/api/audit", summary: "The audit trail",
+    response: S.auditListResponse,
+  },
   { method: "POST", path: "/api/audit/verify", summary: "Verify the audit chain" },
-  { method: "GET", path: "/api/logs", summary: "The operational log" },
+  {
+    method: "GET", path: "/api/logs", summary: "The operational log",
+    response: S.logListResponse,
+  },
   { method: "GET", path: "/api/exports", summary: "Export jobs" },
   { method: "POST", path: "/api/exports", summary: "Start an e-discovery export" },
   { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export" },
