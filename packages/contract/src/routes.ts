@@ -97,8 +97,13 @@ export const ROUTES = [
   },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
   { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", response: S.jwksResponse },
-  { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization" },
-  { method: "POST", path: "/api/prepare", summary: "Prepare a Node for claiming" },
+  { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
+  {
+    method: "POST", path: "/api/prepare",
+    // Named for claiming and actually the migration endpoint — see `prepareResponse`.
+    summary: "Apply pending migrations",
+    response: S.prepareResponse,
+  },
   {
     method: "GET", path: "/api/doctor",
     summary: "What this Node can and cannot do, with the evidence",
@@ -147,7 +152,7 @@ export const ROUTES = [
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", response: S.invitationListResponse },
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
-  { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password" },
+  { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", response: S.peopleListResponse },
   { method: "GET", path: "/api/teams", summary: "Every team", response: S.teamListResponse },
   { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },

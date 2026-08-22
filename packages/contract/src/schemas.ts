@@ -1132,3 +1132,41 @@ export const sendSealedResponse = z.object({
 }).strict();
 
 export const sendCancelledResponse = z.object({ cancelled: z.literal(true) }).strict();
+
+/* ------------------------------------------------------------------ the account lifecycle (§5A) ---- */
+
+/**
+ * `POST /api/prepare` — the migration endpoint, and not what its name suggests.
+ *
+ * It does not mint a claim secret or prepare an account: it applies pending migrations, which is why
+ * `alreadyCurrent` is the ordinary answer. Written down because the first reading of the name was wrong,
+ * and a generated client whose author guessed the same way would call it at the wrong moment.
+ */
+export const prepareResponse = z.object({
+  applied: z.array(z.string()),
+  /** Migrations another invocation applied first. A race is expected, not an error: installs are concurrent. */
+  raced: z.array(z.string()),
+  alreadyCurrent: z.boolean(),
+  message: z.string().min(1),
+}).loose();
+
+/**
+ * Claiming an unclaimed Node.
+ *
+ * **No `userId`.** The caller is the account that was just created, and it is signed in by the cookies on
+ * the response — so a body naming the id would be handing back something the session already carries. The
+ * email is echoed because it is what the operator typed and what they will sign in with.
+ */
+export const claimedResponse = z.object({
+  claimed: z.literal(true),
+  organizationId: z.string().min(1),
+  email: z.string().min(1),
+  accessExpiresAt: z.number().int().positive(),
+}).strict();
+
+export const redeemedResponse = z.object({
+  joined: z.literal(true),
+  userId,
+  email: z.string().min(1),
+  accessExpiresAt: z.number().int().positive(),
+}).strict();

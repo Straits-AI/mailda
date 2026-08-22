@@ -9,6 +9,7 @@ import { createButlerDraft } from "../src/butlers.ts";
 import { issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
+import { claimSecretHash } from "../src/claim-secret.ts";
 
 /**
  * The contract's schemas, checked against what the routes actually answer (#85 step 2, ADR 12).
@@ -973,6 +974,74 @@ describe("the routes that only exist once mail has landed", () => {
   });
 });
 
+describe("the account lifecycle, on a Node that has not been claimed", () => {
+  /*
+   * A separate `describe` with its own teardown, because these routes are defined by the Node **not** being
+   * claimed — and every other test here starts from one that is. Sharing the fixture would have meant
+   * testing the refusals rather than the acts.
+   */
+  beforeEach(async () => {
+    for (const table of ["node_claim", "users", "relationship_tuples", "invitations"]) {
+      await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
+    }
+  });
+
+  it("POST /api/prepare, which is the migration endpoint and not what its name suggests", async () => {
+    /*
+     * It applies pending migrations. It does not mint a claim secret or prepare an account, which is what
+     * the name reads as — the first attempt at this schema guessed the same way, and a generated client
+     * whose author did would call it at the wrong moment.
+     */
+    const prepared = await answers("POST", "/api/prepare", { body: {} }) as { alreadyCurrent: boolean };
+    expect(prepared.alreadyCurrent).toBe(true);
+  });
+
+  it("claiming, then inviting somebody who redeems", async () => {
+    const secret = "install-secret-value";
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('claim',?,NULL,NULL)",
+    ).bind(await claimSecretHash(secret)).run();
+
+    const claimed = await answers("POST", "/api/claim", {
+      body: {
+        organizationName: "Acme", email: "boss@local.invalid",
+        password: "a-long-enough-password", secret,
+      },
+    }) as { organizationId: string };
+    /*
+     * No `userId` in the body, and that is the schema's claim as much as the route's: the caller *is* the
+     * account just created and is signed in by the cookies, so naming the id would hand back what the
+     * session already carries.
+     */
+    expect(claimed.organizationId).toMatch(/^org_/);
+
+    /*
+     * The invitation is seeded rather than minted through the route, and the reason is worth a line: minting
+     * needs `org.admin`, and this test's whole point is the *unclaimed* lifecycle — reaching for an
+     * administrator here would mean building the organization twice. The row written is the same shape
+     * `inviteToOrganization` writes, including the hash, so what redemption verifies is unchanged.
+     */
+    const ctx = createSystemCtx();
+    const invitationSecret = "an-invitation-secret";
+    const now = ctx.now();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO invitations (id, org_id, email, secret_hash, invited_by, created_at, expires_at,
+                                redeemed_at, redeemed_user_id)
+       VALUES (?,?,?,?,?,?,?,NULL,NULL)`,
+    ).bind(
+      ctx.id("inv"), claimed.organizationId, "colleague@local.invalid",
+      await claimSecretHash(invitationSecret), "usr_seed",
+      new Date(now).toISOString(), new Date(now + 86_400_000).toISOString(),
+    ).run();
+
+    const joined = await answers("POST", "/api/invitations/redeem", {
+      body: { secret: invitationSecret, password: "another-long-password" },
+    }) as { joined: boolean; userId: string };
+    expect(joined.joined).toBe(true);
+    expect(joined.userId).toMatch(/^usr_/);
+  });
+});
+
 describe("the coverage of step 2 is a number, and it only goes up", () => {
   it("describes the routes it claims to, and names what is left", () => {
     /*
@@ -992,7 +1061,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(75);
+    expect(coverage.described).toBeGreaterThanOrEqual(78);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -1011,6 +1080,6 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * Deliberately not one of `NOT_JSON`: those are excluded from the denominator entirely, so asserting
      * one of them here would pass for ever and check nothing.
      */
-    expect(coverage.missing).toContain("POST /api/claim");
+    expect(coverage.missing).toContain("POST /api/auth/refresh");
   });
 });
