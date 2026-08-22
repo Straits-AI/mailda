@@ -1009,6 +1009,59 @@ describe("the routes that only exist once mail has landed", () => {
     });
   });
 
+  it("a message body, which takes the receipt id and not the message id", async () => {
+    /*
+     * **The route's segment is an `ir_` id.** `authorize` looks it up in `ingress_receipts`, so passing the
+     * obvious `msg_` one answers 404 *"No such message, or you do not have access to it"* — which reads as
+     * an authorization problem and is a wrong-kind-of-id problem. `GET /api/messages` returns both, `id`
+     * being the receipt and `message_id` the message, which is easy to have backwards and impossible to
+     * notice. Both are asserted here so the trap is documented by a failing alternative rather than a
+     * comment.
+     */
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+
+    const wrong = await SELF.fetch(`${ORIGIN}/api/messages/${delivery.messageId}/body`, {
+      headers: { cookie: held },
+    });
+    expect(wrong.status).toBe(404);
+
+    const rendered = await answers("GET", "/api/messages/:receiptId/body", {
+      params: { receiptId: delivery.receiptId }, cookie: held,
+    }) as { state: string; text: string | null };
+    expect(rendered.state).toBe("text-only");
+    expect(rendered.text).toContain("Where is my invoice?");
+  });
+
+  it("releasing a send a policy held", async () => {
+    /*
+     * A published `hold` policy is what puts a seal into `policy_hold`, which is a different state from the
+     * Butler gate above — `release` answers one and `release-hold` the other, and a send in the wrong one
+     * refuses. Producing it through a real policy rather than an UPDATE is what makes that distinction real.
+     */
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const policy = await answers("POST", "/api/policies", {
+      body: { name: "hold all", outcome: "hold", conditions: {}, stages: [] }, cookie: held,
+    }) as { policy: { policyId: string } };
+    await answers("POST", "/api/policies/:policyId/publish", {
+      params: { policyId: policy.policy.policyId }, cookie: held,
+    });
+
+    const sealed = await answers("POST", "/api/sends", {
+      body: {
+        mailboxId, to: ["x@y.test"], subject: "a", body: "b",
+        inReplyToMessageId: delivery.messageId,
+      },
+      cookie: held,
+    }) as { id: string; stateReason: string | null };
+    expect(sealed.stateReason).toBe("policy_hold");
+
+    await answers("POST", "/api/sends/:sendId/release-hold", {
+      params: { sendId: sealed.id }, body: {}, cookie: held,
+    });
+  });
+
   it("POST /api/sends/dispatch, with nothing due", async () => {
     await answers("POST", "/api/sends/dispatch", { body: {}, cookie: await cookie() });
   });
@@ -1302,7 +1355,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(87);
+    expect(coverage.described).toBeGreaterThanOrEqual(89);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -1321,6 +1374,6 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * Deliberately not one of `NOT_JSON`: those are excluded from the denominator entirely, so asserting
      * one of them here would pass for ever and check nothing.
      */
-    expect(coverage.missing).toContain("GET /api/messages/:messageId/body");
+    expect(coverage.missing).toContain("GET /api/sends/:sendId/submitted");
   });
 });

@@ -1345,3 +1345,25 @@ export const sendReleasedResponse = z.object({
   runId: z.string().min(1).nullable(),
   resumed: z.boolean(),
 }).loose();
+
+/* ------------------------------------------------------------------ a message body (ADR 37) -------- */
+
+/**
+ * One message's body, extracted and sanitised.
+ *
+ * `state` is the honest header: `text-only` says there was no HTML part rather than that HTML was stripped,
+ * and the two are different facts about the message. `blockedRemote` counts what sanitising removed — remote
+ * images are trackers, and a reader deciding whether to trust a message wants to know some were there.
+ * `problem` is non-null when the body could not be produced, which is not the same as an empty one.
+ */
+export const messageBodyResponse = z.object({
+  state: z.string().min(1),
+  html: z.string().nullable(),
+  text: z.string().nullable(),
+  blockedRemote: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  problem: z.string().nullable(),
+}).loose();
+
+/** Releasing a send a policy put on hold (#60). One field, because there is one question. */
+export const sendHoldReleasedResponse = z.object({ released: z.literal(true) }).strict();

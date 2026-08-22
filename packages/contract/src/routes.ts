@@ -180,8 +180,20 @@ export const ROUTES = [
     method: "GET", path: "/api/messages", summary: "Message metadata, paged",
     response: S.messageListResponse,
   },
-  { method: "GET", path: "/api/messages/:messageId/body", summary: "One message's rendered body" },
-  { method: "GET", path: "/api/messages/:messageId/raw", summary: "One message's stored bytes, as message/rfc822" },
+  {
+    method: "GET", path: "/api/messages/:receiptId/body",
+    /*
+     * **`:receiptId`, not `:messageId`, and the rename is a finding rather than a tidy-up.**
+     *
+     * `authorize` looks the segment up in `ingress_receipts`, so this route takes an `ir_` id. Passing the
+     * obvious `msg_` one answers 404 *"No such message, or you do not have access to it"* — which reads as an
+     * authorization problem and is a wrong-kind-of-id problem. `GET /api/messages` returns both: `id` is the
+     * receipt and `message_id` is the message, which is easy to have backwards and impossible to notice.
+     */
+    summary: "One message's rendered body. Takes the receipt id that GET /api/messages returns as `id`",
+    response: S.messageBodyResponse,
+  },
+  { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" },
   {
     method: "GET", path: "/api/notifications",
     summary: "What has changed since the last poll",
@@ -214,7 +226,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", response: S.sendCancelledResponse },
   { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed" },
   { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
-  { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold" },
+  { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
   { method: "GET", path: "/api/sends/:sendId/submitted", summary: "The exact bytes handed to the transport" },
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
@@ -395,7 +407,7 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
  */
 export const NOT_JSON: readonly string[] = [
   "GET /index.html",
-  "GET /api/messages/:messageId/raw",
+  "GET /api/messages/:receiptId/raw",
   "GET /api/exports/:exportId/objects/:objectId",
 ];
 
