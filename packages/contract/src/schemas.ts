@@ -720,7 +720,9 @@ export const draftListResponse = z.object({ drafts: z.array(draftRow.omit({ body
 export const draftSavedResponse = z.object({ draft: draftRow }).strict();
 
 export const sendListResponse = z.object({
-  sends: z.array(z.unknown()),
+  // Tightened from `z.unknown()` in tranche seven, once a sealed manifest could be produced to check it
+  // against. A list schema whose elements are unknown checks an envelope and nothing in it.
+  sends: z.array(z.lazy(() => sendRow)),
   /** Today's count, for the volume breaker. `throttledAtCount` is null until something is throttled. */
   daily: z.object({
     day: z.string().min(1),
@@ -1052,3 +1054,81 @@ export const conversationMergedResponse = z.object({
 
 /** What a dispatch sweep handed over. Empty is the ordinary answer on a Node with nothing due. */
 export const dispatchResponse = z.object({ dispatched: z.array(z.unknown()) }).loose();
+
+/* ------------------------------------------------------------------ sending (#61, ADR 33, ADR 40) -- */
+
+/** One recipient's own state, because migration 0013 makes the **delivery** the unit rather than the send. */
+export const recipientRow = z.object({
+  manifest_id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
+  kind: z.enum(["to", "cc", "bcc"]),
+  address: z.string().min(1),
+  submission_state: z.string().min(1),
+  delivery_state: z.string().nullable(),
+  bounce_type: z.string().nullable(),
+  last_error: z.string().nullable(),
+}).strict();
+
+export const sendRow = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
+  subject: z.string(),
+  /** JSON, as stored. A string rather than an array, which is worth writing down because it looks like one. */
+  envelope_to: z.string(),
+  state: z.string().min(1),
+  state_at: isoDate,
+  release_at: isoDate,
+  attempts: z.number().int().nonnegative(),
+  last_error: z.string().nullable(),
+  transport_message_id: z.string().nullable(),
+  fidelity: z.enum(["authored", "reconstructed"]),
+  state_reason: z.string().nullable(),
+  policy_outcome: z.string().nullable(),
+  /** 0 or 1, not a boolean: it is `EXISTS` from SQL, and the client reads it as a number. */
+  has_submitted: z.number().int(),
+  recipients: z.array(recipientRow),
+  /**
+   * Which retry this send offers, and why.
+   *
+   * ADR 40's distinction made answerable rather than left to a caller's judgement: `retry-effect` reuses the
+   * original idempotency key and provably cannot duplicate; `resend-may-duplicate` mints a new one and
+   * might. `why` carries the reason the mode is what it is — `not_yet_attempted` for a send that has never
+   * been handed over — so a UI can explain a disabled button instead of just disabling it.
+   */
+  retry: z.object({ mode: z.string().nullable(), why: z.string().min(1) }).strict(),
+}).strict();
+
+const capability = z.object({
+  canSend: z.boolean(),
+  arbitraryRecipients: z.boolean(),
+  verifiedAt: isoDate.nullable(),
+  detail: z.string().min(1),
+}).strict();
+
+/**
+ * Sealing a manifest: the act that commits a send to policy (#61).
+ *
+ * Answers at the **top level** rather than under a `send` key, unlike every other act in this contract. That
+ * is worth writing down rather than tidying: this response is the sealed envelope itself — the policy
+ * outcome, the approval it needs, the breaker that would stop it, the capability of the Node that would
+ * carry it — and wrapping it would suggest there is something else in the reply.
+ */
+export const sendSealedResponse = z.object({
+  id: z.string().regex(idPattern(ID_PREFIXES.sendManifest)),
+  state: z.string().min(1),
+  releaseAt: isoDate,
+  rfcMessageId: z.string().min(1),
+  /** Null when the send answers nothing. Present as a header value, brackets and all. */
+  referencesHeader: z.string().nullable(),
+  policyOutcome: z.string().min(1),
+  policyVersionIds: z.array(z.string()),
+  stateReason: z.string().nullable(),
+  approvalId: z.string().nullable(),
+  /** How many more approvers the request needs than exist. Non-null is a send nobody can release. */
+  approvalShortfall: z.unknown().nullable(),
+  breaker: z.string().nullable(),
+  breakerError: z.string().nullable(),
+  capability,
+  /** Whether the draft survived the seal. False is the ordinary case: sealing consumes it. */
+  draftRetained: z.boolean(),
+}).strict();
+
+export const sendCancelledResponse = z.object({ cancelled: z.literal(true) }).strict();

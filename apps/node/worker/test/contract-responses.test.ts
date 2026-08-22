@@ -934,6 +934,43 @@ describe("the routes that only exist once mail has landed", () => {
   it("POST /api/sends/dispatch, with nothing due", async () => {
     await answers("POST", "/api/sends/dispatch", { body: {}, cookie: await cookie() });
   });
+
+  it("sealing a manifest, listing it, and cancelling it", async () => {
+    /*
+     * The seal answers at the **top level** rather than under a `send` key, unlike every other act here.
+     * Worth keeping rather than tidying: this response *is* the sealed envelope — the policy outcome, the
+     * approval it would need, the breaker that would stop it, the capability of the Node that would carry it
+     * — and wrapping it would suggest there is something else in the reply.
+     */
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    const sealed = await answers("POST", "/api/sends", {
+      body: {
+        mailboxId, to: ["x@y.test"], subject: "re", body: "hello",
+        inReplyToMessageId: delivery.messageId,
+      },
+      cookie: held,
+    }) as { id: string; state: string; draftRetained: boolean };
+    expect(sealed.state).toBe("held");
+    // Sealing consumes the draft; `draftRetained` is how a caller knows whether anything is left to edit.
+    expect(sealed.draftRetained).toBe(false);
+
+    /*
+     * And the list, whose `sends` elements were `z.unknown()` until a manifest could be produced to check
+     * them against. A list schema with unknown elements checks an envelope and nothing in it.
+     */
+    const listed = await answers("GET", "/api/sends", { cookie: held }) as {
+      sends: Array<{ recipients: unknown[]; retry: { why: string } }>;
+    };
+    expect(listed.sends).toHaveLength(1);
+    // Migration 0013's unit: one row per recipient, each with its own state.
+    expect(listed.sends[0]!.recipients).toHaveLength(1);
+    expect(listed.sends[0]!.retry.why).toBe("not_yet_attempted");
+
+    await answers("POST", "/api/sends/:sendId/cancel", {
+      params: { sendId: sealed.id }, body: {}, cookie: held,
+    });
+  });
 });
 
 describe("the coverage of step 2 is a number, and it only goes up", () => {
@@ -955,7 +992,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(73);
+    expect(coverage.described).toBeGreaterThanOrEqual(75);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
