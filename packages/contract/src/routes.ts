@@ -116,7 +116,7 @@ export const ROUTES = [
     summary: "Exchange a password for a session",
     request: S.loginRequest, response: S.signedInResponse,
   },
-  { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token" },
+  { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token", response: S.refreshedResponse },
   { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
@@ -233,7 +233,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", response: S.approvalListResponse },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
-  { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw an approval request" },
+  { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
@@ -247,7 +247,7 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
-  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person" },
+  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
   { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", response: S.butlerListResponse },
@@ -289,7 +289,7 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/exports", summary: "Export jobs", response: S.exportListResponse },
   { method: "POST", path: "/api/exports", summary: "Start an e-discovery export", response: S.exportRequestedResponse },
-  { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export" },
+  { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export", response: S.exportRunResponse },
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },
 
   // ---- the sending transport's credentials (#86, ADR 33) ------------------------------------------

@@ -795,6 +795,80 @@ describe("dual control, with the second and third people it needs", () => {
     expect(paused.pause.eligible).toBe(2);
   });
 
+  it("lifting a domain pause, once two people have approved it", async () => {
+    const asker = await cookieFor(USER);
+    /*
+     * A distinct domain per test: `E_DOMAIN_PAUSE_PENDING` permits one open question per domain, because two
+     * requests would ask two pairs of administrators about the same domain and whichever finished first
+     * would stop it while the other still read as pending. An earlier test in this block pauses
+     * `example.net`, and the refusal is what said so.
+     */
+    const requested = await answers("POST", "/api/domain-pauses", {
+      body: { domain: "lifted.example", reason: "a reason" }, cookie: asker,
+    }) as { pause: { pauseId: string; approvalId: string } };
+
+    for (const person of [OTHER, THIRD]) {
+      await answers("POST", "/api/approvals/:approvalId/decide", {
+        params: { approvalId: requested.pause.approvalId },
+        body: { decision: "approve" }, cookie: await cookieFor(person),
+      });
+    }
+    await answers("POST", "/api/domain-pauses/:pauseId/lift", {
+      params: { pauseId: requested.pause.pauseId }, body: { reason: "done" }, cookie: asker,
+    });
+  });
+
+  it("running an approved export, which is paged", async () => {
+    /*
+     * `pagesDone` and `done` are what let a caller drive an export to completion across invocations, because
+     * a bulk copy of a mailbox does not fit one subrequest budget. The manifest's digest and count are what
+     * make it provable afterwards — the same reason the request froze its predicate.
+     */
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const requested = await answers("POST", "/api/exports", {
+      body: { matterId, mailboxId, maxMessages: 5 }, cookie: asker,
+    }) as { export: { exportId: string; approvalId: string } };
+
+    for (const person of [OTHER, THIRD]) {
+      await answers("POST", "/api/approvals/:approvalId/decide", {
+        params: { approvalId: requested.export.approvalId },
+        body: { decision: "approve" }, cookie: await cookieFor(person),
+      });
+    }
+    const run = await answers("POST", "/api/exports/:exportId/run", {
+      params: { exportId: requested.export.exportId }, body: {}, cookie: asker,
+    }) as { run: { done: boolean; manifest: { count: number } | null } };
+    expect(run.run.done).toBe(true);
+    expect(run.run.manifest?.count).toBe(0);
+  });
+
+  it("withdrawing a decision, and the shortfall it creates", async () => {
+    /*
+     * The reply carries the shortfall the withdrawal *created*, which is the point of returning anything:
+     * taking a decision back can make a request unsatisfiable, and a caller told only the new state would
+     * not know whether anybody can still complete it.
+     */
+    const asker = await cookieFor(USER);
+    const matterId = await matter(asker);
+    const requested = await answers("POST", "/api/supervised", {
+      body: { subjectId: USER, mailboxId, scope: "metadata", durationSeconds: 3600, matterId },
+      cookie: asker,
+    }) as { supervised: { approvalId: string } };
+
+    const decider = await cookieFor(OTHER);
+    await answers("POST", "/api/approvals/:approvalId/decide", {
+      params: { approvalId: requested.supervised.approvalId },
+      body: { decision: "approve" }, cookie: decider,
+    });
+    const withdrawn = await answers("POST", "/api/approvals/:approvalId/withdraw", {
+      params: { approvalId: requested.supervised.approvalId }, body: {}, cookie: decider,
+    }) as { withdrawn: { approvalState: string; shortfall: { short: number } | null } };
+    // One approver withdrew and cannot decide again, so two are needed and one remains.
+    expect(withdrawn.withdrawn.approvalState).toBe("unsatisfiable");
+    expect(withdrawn.withdrawn.shortfall?.short).toBe(1);
+  });
+
   it("the holds list, with the two fields only it computes", async () => {
     const asker = await cookieFor(USER);
     const matterId = await matter(asker);
@@ -986,6 +1060,28 @@ describe("the account lifecycle, on a Node that has not been claimed", () => {
     }
   });
 
+  it("POST /api/auth/refresh, and the replay flag it carries", async () => {
+    /*
+     * A refresh token is single-use, so presenting one twice is either a client retrying or a stolen token
+     * being used — and this Node answers both by rotating the family and saying which. `replayed` is what
+     * lets a caller tell a retry from a compromise, and a summary that dropped it would hide the second.
+     */
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const person = ctx.id("usr");
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('c','x',?,?)")
+        .bind(at, ORG),
+      testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+        .bind(person, ORG, `${person}@local.invalid`, at),
+    ]);
+    const session = await issueSession(testEnv, ctx, { orgId: ORG, userId: person });
+    const refreshed = await answers("POST", "/api/auth/refresh", {
+      body: {}, cookie: `mailda_rt=${session.refreshToken}`,
+    }) as { replayed: boolean };
+    expect(refreshed.replayed).toBe(false);
+  });
+
   it("POST /api/prepare, which is the migration endpoint and not what its name suggests", async () => {
     /*
      * It applies pending migrations. It does not mint a claim secret or prepare an account, which is what
@@ -1061,7 +1157,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     expect(coverage.total).toBe(91);
-    expect(coverage.described).toBeGreaterThanOrEqual(78);
+    expect(coverage.described).toBeGreaterThanOrEqual(82);
     // Stated rather than asserted away: the remainder is real and this is where it is counted.
     expect(coverage.missing.length).toBe(coverage.total - coverage.described);
   });
@@ -1080,6 +1176,6 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * Deliberately not one of `NOT_JSON`: those are excluded from the denominator entirely, so asserting
      * one of them here would pass for ever and check nothing.
      */
-    expect(coverage.missing).toContain("POST /api/auth/refresh");
+    expect(coverage.missing).toContain("GET /api/messages/:messageId/body");
   });
 });

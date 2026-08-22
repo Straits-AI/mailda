@@ -80,9 +80,14 @@ spelling moved into the registry, which is the file whose job is to hold each ro
 ## Step 2: schemas, and why they are partial on purpose
 
 `packages/contract/src/schemas.ts` describes what travels over the routes, and `RouteSpec` gained optional
-`request` and `response` fields to carry them. **13 of 94** route/method pairs are described. That number is
+`request` and `response` fields to carry them. **82 of 91** route/method pairs are described. That number is
 exported by `schemaCoverage()` and asserted, so it is something a reader watches move rather than an
 impression.
+
+The denominator is 91 rather than 94 because three routes cannot carry a JSON response schema and are named
+in `NOT_JSON`: `/index.html` is the interface shell, `/api/messages/:id/raw` is `message/rfc822` — stored
+bytes whose whole value is being unaltered — and an export object is whatever was exported. A target that
+counts routes no schema can describe is one nobody can reach.
 
 The partialness is the honest part. A file of ninety-four hand-written shapes that nothing compares against a
 real response would be ninety-four guesses wearing the clothes of a contract — and **worse than none**,
@@ -118,8 +123,31 @@ Writing the pattern by hand was not an option: `id-prefix-world.test.ts` forbids
 exactly how `case_` and `cas_` came to disagree. Registering it then made that tripwire fire on the two mint
 sites, which now go through the registry. The gap and its closure were both the mechanism working.
 
+## What the nine tranches found
+
+Every one turned something up, which is the argument for doing this at all rather than trusting the shapes.
+
+| found | where |
+|:--|:--|
+| `PUT /api/policies/:id/draft` returned 404 — **the UI could never save a policy** | step 1 |
+| the route tests hard-coded `method: "POST"`, so no test *could* catch a verb divergence | step 1 |
+| `packages/contract` had no `index.ts` and nothing imported it | step 1 |
+| five routes have no method guard at all | step 1 |
+| `/health` has never returned `ok` | tranche 2 |
+| `BreakerReading` omits `retryAfterSeconds` and `retryAfterExact` | tranche 2 |
+| `TeamRow` omits `createdBy` | tranche 3 |
+| `usr` was not in `ID_PREFIXES`, and registering it made the id-prefix tripwire fire on both mint sites | step 2 |
+| `POST /api/prepare` is the migration endpoint, not what its name says | tranche 9 |
+
+Several shapes are recorded specifically so that somebody tidying up does not break them: a `200` carrying an
+`error` field on sign-out (one shape for "you are not signed in", however you got there); a seal answering at
+the top level (the response *is* the envelope); `alreadyHeld` on a grant; `replayed` on a refresh;
+`stillVerifiesForSeconds` on a rotation; `tooFreshToJudge` separate from `stranded`.
+
 ## What comes next
 
-1. The remaining 81 route/method pairs, in tranches, each with its validation.
+1. **Nine routes** remain, each needing a state no fixture reaches yet: a dispatched send for `submitted` and
+   `retry`, a Butler gate for `release`, a policy hold for `release-hold`, a rendered body for
+   `messages/:id/body`, and a Workflow instance for the four Butler-run routes.
 2. The SDK, Agent Skill and MCP server — each **generated** rather than written, which is only possible once
    1 is empty. Doing them first is how five clients drift.

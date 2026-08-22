@@ -1170,3 +1170,80 @@ export const redeemedResponse = z.object({
   email: z.string().min(1),
   accessExpiresAt: z.number().int().positive(),
 }).strict();
+
+/* ------------------------------------------------------------------ tranche ten -------------------- */
+
+/**
+ * Exchanging a refresh token.
+ *
+ * **`replayed` is the field that matters and the one a summary would drop.** A refresh token is single-use,
+ * so presenting one twice is either a client retrying or a stolen token being used — and this Node answers
+ * both by rotating the family and saying so, rather than by silently succeeding or silently failing. A
+ * caller that ignores the flag cannot tell a retry from a compromise.
+ */
+export const refreshedResponse = z.object({
+  refreshed: z.literal(true),
+  replayed: z.boolean(),
+  userId,
+  organizationId: z.string().min(1),
+  accessExpiresAt: z.number().int().positive(),
+}).strict();
+
+export const domainPauseLiftedResponse = z.object({
+  lifted: z.object({
+    pauseId: z.string().min(1),
+    domain: z.string().min(1),
+    liftedAt: isoDate,
+  }).strict(),
+}).strict();
+
+/**
+ * Advancing an export.
+ *
+ * Paged rather than atomic, and the shape says so: `pagesDone` and `done` are what let a caller drive it to
+ * completion across invocations, because a bulk copy of a mailbox does not fit one subrequest budget.
+ *
+ * The manifest's `sha256` and `count` are what make the export provable afterwards — the same reason the
+ * request froze its predicate. `abortedBecause` is non-null when it stopped early, which is a materially
+ * different state from `done` and would be invisible if the two were folded into one flag.
+ */
+export const exportRunResponse = z.object({
+  run: z.object({
+    exportId: z.string().min(1),
+    state: z.string().min(1),
+    emitted: z.number().int().nonnegative(),
+    messagesEmitted: z.number().int().nonnegative(),
+    pagesDone: z.number().int().nonnegative(),
+    done: z.boolean(),
+    manifest: z.object({
+      key: z.string().min(1),
+      sha256,
+      count: z.number().int().nonnegative(),
+    }).strict().nullable(),
+    abortedBecause: z.string().nullable(),
+  }).loose(),
+}).strict();
+
+/**
+ * Withdrawing a decision.
+ *
+ * The reply carries the **shortfall the withdrawal created**, which is the point of returning anything at
+ * all: taking a decision back can make a request unsatisfiable, and a caller that only learned the new state
+ * would not know whether anybody can still complete it. `available` against `needed` is the arithmetic.
+ */
+export const approvalWithdrawnResponse = z.object({
+  withdrawn: z.object({
+    approvalId: z.string().min(1),
+    approvalState: z.string().min(1),
+    stageOrdinal: z.number().int().positive(),
+    shortfall: z.object({
+      ordinal: z.number().int().positive(),
+      required: z.number().int().nonnegative(),
+      available: z.number().int().nonnegative(),
+      short: z.number().int().nonnegative(),
+      eligible: z.number().int().nonnegative(),
+      needed: z.number().int().nonnegative(),
+      team: z.string().nullable(),
+    }).strict().nullable(),
+  }).strict(),
+}).strict();
