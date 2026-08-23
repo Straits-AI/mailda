@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { apiFetch } from "/app/session.js";
 
 import { useMailboxes } from "../api.ts";
+import { splitAddresses } from "./split-addresses.js";
 
 /**
  * The docked composer — the reason ADR 30 put React at this layer.
@@ -66,10 +67,6 @@ interface DraftResponse {
     body: string;
     updatedAt: string;
   } | null;
-}
-
-function splitAddresses(value: string): string[] {
-  return value.split(/[,;]+/).map((part) => part.trim()).filter(Boolean);
 }
 
 /** Where the bytes are. Three states, and none of them claims more than happened. */
