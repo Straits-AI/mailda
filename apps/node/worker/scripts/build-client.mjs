@@ -62,8 +62,11 @@ const result = await build({
   // Left as runtime imports rather than bundled. `session.client.js` holds the token lifecycle in module
   // scope, and a bundled copy would put two refresh timers on a page that also loads the framework-free
   // script; `delivery.client.js` stays external so the module React renders from is the one the node test
-  // evaluates. See `src/client/app/externals.d.ts`.
-  external: ["/app/session.js", "/app/delivery.js"],
+  // evaluates. `/app/config.js` is served, not on disk (`ui.ts`), and is external for a third reason: the
+  // alternative was importing `@mailda/budgets` here, which bundles the whole 218-entry table for one
+  // integer — +7,960 bytes raw, +2,783 gzip, measured with this very line. See `composer.tsx`.
+  // Types for all three: `src/client/app/types/`, mapped by `src/client/tsconfig.json`.
+  external: ["/app/session.js", "/app/delivery.js", "/app/config.js"],
   // React reads this to strip development-only warnings and the dev-mode reconciler. Without it the
   // bundle carries both, which is both larger and slower.
   define: { "process.env.NODE_ENV": '"production"' },

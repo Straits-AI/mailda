@@ -44,6 +44,12 @@ export default defineConfig({
        * its own header for why it is not the real module.
        */
       "/app/session.js": fileURLToPath(new URL("./test/client/session-stub.ts", import.meta.url)),
+      /*
+       * `/app/config.js` is the same kind of specifier and is not even a file on disk — the Worker generates
+       * it per request (#97). Its stub is built from the same budgets the Worker reads, so a rendered screen
+       * shows the figure a real Node would send.
+       */
+      "/app/config.js": fileURLToPath(new URL("./test/client/config-stub.ts", import.meta.url)),
     },
   },
   test: {

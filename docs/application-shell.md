@@ -289,7 +289,64 @@ next `{…}`, and **the rule immediately following it is silently discarded**. T
 `width: 100%` on the queue's subject column into the served bytes and out of
 `document.styleSheets[0].cssRules`, so four consecutive layout attempts were measured honestly against a
 stylesheet that never contained the rule under test. `test/node/stylesheet-hazards.test.ts` now fails on
-either, and names the line.
+either, and names the line. Since #97 that literal is a named constant served at `/app/app.css` rather than a
+`<style>` element in the document — the next section says why — and the hazards did not move with it, so the
+check matches both shapes.
+
+## The browser policy, and what it cost the shell (#97)
+
+Every response leaves through one wrapper, `withSecurityHeaders` in `src/security-headers.ts`, applied in
+`fetch`: `default-src 'none'`, `script-src 'self'`, `style-src 'self'`, `img-src 'self' data:`,
+`connect-src 'self'`, `frame-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `form-action 'self'`,
+plus `nosniff`, `no-referrer`, a `Permissions-Policy` and HSTS. Before it, this Node sent none of them, and
+the reason nobody noticed is in the README: the reader's sandboxed iframe is a real defence and reads as *the*
+browser-security story, when it only protects the document from the mail.
+
+Two consequences land in this document rather than in the ticket.
+
+**The shell contains no inline script and no inline style, and that is load-bearing.** `MAILDA_CONFIG` shipped
+as an inline `<script>` and the stylesheet as an inline `<style>`. Either one forces `'unsafe-inline'`, which
+permits exactly what `script-src` exists to refuse, or a per-response nonce that the header and the document
+must agree on forever — a correspondence whose failure mode is a nonce repeated across a cached document. So
+the stylesheet is `/app/app.css` and the config is `/app/config.js`, both same-origin assets from
+`CLIENT_ASSETS` in `src/ui.ts`. `test/security-headers.test.ts` asserts the served document has neither
+shape, so re-introducing one fails a test here rather than the application in a browser.
+
+**`/app/config.js` is a module, and it is the browser's only channel for a receipt-derived number.** A JSON
+endpoint was the other option and loses: `session.client.js` reads these values at module evaluation to size
+the refresh margin, and making that asynchronous means the token lifecycle either waits on a request or starts
+with the wrong margin, in the file whose whole job is that a signed-in person never sees a 401. A same-origin
+module *is* a same-origin endpoint, and `script-src 'self'` covers it.
+
+The composer reads its hold window from that module too, and the alternative is worth recording because it was
+built first and looked better: the composer *is* bundled by esbuild here, so it can `import { BUDGETS }`
+directly. That ships the whole 218-entry table to a browser to deliver one integer — **+7,960 bytes raw,
++2,783 gzip** measured against `react-shell-bundle.md`, whose subject is precisely what this bundle costs
+somebody waiting for it — and gives the interface two sources for numbers that must agree with the Node.
+
+It also failed #90's draft-flush test when it was tried, and that reason has since **expired**. The test then
+ran on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where wall-clock time also advances the fake clock,
+so a slower module graph genuinely could push it past the 1,499 ms boundary it sits on. That was the test
+being flaky rather than the import being expensive, and the flake is fixed at its root — the clock now moves
+only when a test moves it. The bundle cost is what keeps this alternative withdrawn; the test failure was a
+symptom of something else and should not be read as evidence.
+
+So `/app/config.js` joins `/app/session.js` and
+`/app/delivery.js` as an esbuild external, with hand-written types in `src/client/app/types/` and a stub at
+`test/client/config-stub.ts` built from the same budgets the Worker reads.
+
+**`frame-src` is `'self'`, not `'none'`, and the measurement says why that is not the reason it works.** The
+reader renders sanitised mail into a `sandbox=""` `srcdoc` frame. Driven through a real Chromium, that frame
+renders under `frame-src 'self'`, under `frame-src 'none'` and under no `frame-src` at all — a `srcdoc`
+navigation inherits its parent's policy rather than being matched against a source list, so the directive is
+never asked. `'self'` stays because only one engine was measured and because `'self'` is the true description
+of what this application frames; `'none'` would say it frames nothing.
+
+The inheritance is the part that matters: `default-src 'none'` applies *inside* the reading pane. That is safe
+rather than lucky — the sanitiser already strips `<style>`, every `style` attribute and `src` on images, for
+reasons that predate the header. Both halves are asserted —
+`test/client/message-frame.test.tsx` renders the reader and checks the frame against the directive list, and
+`test/security-headers.test.ts` checks the sanitiser's real output against what the policy permits.
 
 ## Routes
 
@@ -508,6 +565,9 @@ Two rules about what goes in it, because the wrong answer to either makes it wor
   calls and resolves them when the test says so. These tests are about *when* a request happens and
   *whether* one happens at all, and a real `apiFetch` would put a network in the middle of an assertion
   about a timer.
+- **`/app/config.js` is stubbed for the same reason and then some** — it is not a file on disk at all, the
+  Worker generates it per request. `test/client/config-stub.ts` reads the same budgets `ui.ts` reads, so a
+  rendered screen shows the figure a real Node would send rather than a number typed into a test.
 
 The tests also type-check as part of the **client** program, not the Worker's: `src/client/tsconfig.json`
 includes `../../test/client/**/*` and the Worker's tsconfig excludes it. The Worker must not have `lib: DOM`
@@ -533,6 +593,14 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
   array of six. A route missing from that list is not a wrong answer, it is a screen nobody checked, which
   reads as a clean accessibility run over an unaudited page. `pnpm axe` therefore runs under
   `--experimental-strip-types` so a `.mjs` script can import the `.ts` list.
+
+  It **injects axe through the debugger, not as a `<script>` element**, since #97. `page.addScriptTag` creates
+  a real inline script, so `script-src 'self'` refuses it and every screen reported `axe is not defined` —
+  which is the policy working, not a harness to work around. `page.evaluate` runs over CDP and is not page
+  script. `context.bypassCSP` is deliberately not used: it would disable enforcement for the *application*
+  too, so a screen broken by the CSP — the one browser-level regression this harness is now placed to notice —
+  would keep rendering and keep passing. The injection is checked rather than assumed, because a library
+  evaluated for its side effect returns whatever its last statement happened to be.
 
 **Audited on 21 August 2026**, against a seeded local Node with content on every screen: 12 routes and 6
 opened states × 2 themes — **36 views, 0 AA violations, 0 advisories**. It found one thing on the way — `empty-table-header` over the Butler

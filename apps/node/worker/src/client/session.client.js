@@ -33,10 +33,24 @@
  * comment is where that constraint is recorded rather than discovered.
  */
 
-const config = window.MAILDA_CONFIG ?? {};
+/*
+ * Imported rather than read off `window`, which is what it was until #97.
+ *
+ * The values arrived in an inline `<script>` setting MAILDA_CONFIG on the window, and an inline script is the
+ * one thing a Content-Security-Policy worth having cannot permit. `/app/config.js` is the same two values
+ * as a same-origin module, so `script-src 'self'` covers it. Static, not dynamic: these are read at module
+ * evaluation, and a `fetch` here would make the token lifecycle either wait on a request or start with the
+ * wrong margin — in the file whose whole job is that nobody sees a 401 from ordinary expiry.
+ *
+ * The `?? 120` and `?? "mailda_at_exp"` defaults went with the global. They existed because a `window`
+ * property may not be there; an import cannot be missing without the module failing loudly, which is the
+ * honest failure for "the interface does not know when its own token expires".
+ */
+import { CONFIG } from "./config.js";
+
 /** From `docs/receipts/password-hash-cost.md`, handed down by the server rather than guessed. */
-const REFRESH_MARGIN_MS = (config.refreshMarginSeconds ?? 120) * 1000;
-const EXPIRY_COOKIE = config.expiryCookie ?? "mailda_at_exp";
+const REFRESH_MARGIN_MS = CONFIG.refreshMarginSeconds * 1000;
+const EXPIRY_COOKIE = CONFIG.expiryCookie;
 
 let inFlight = null;
 let timer = null;
