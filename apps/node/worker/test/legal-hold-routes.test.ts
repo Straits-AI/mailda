@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { hashPassword } from "../src/auth/password.ts";
-import { login } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import { placeHold } from "../src/holds.ts";
 import { saveDraft } from "../src/drafts.ts";
 
@@ -44,7 +44,7 @@ async function sessionFor(userId: string): Promise<string> {
 function as(token: string, body?: unknown): RequestInit {
   return {
     method: "POST",
-    headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+    headers: { cookie: `${ACCESS_COOKIE}=${token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }
@@ -197,7 +197,7 @@ describe("POST /api/holds/:id/lift asks; the approvals endpoints decide", () => 
 
     // Ana sees it in the queue **with the reason**, which is what she is being asked to agree to.
     const queue = await SELF.fetch("https://node/api/approvals", {
-      headers: { cookie: `mailda_at=${await sessionFor(ANA)}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${await sessionFor(ANA)}` },
     });
     const { approvals } = await queue.json() as {
       approvals: Array<{ id: string; subjectKind: string; reason: string | null }>;
@@ -242,7 +242,7 @@ describe("DELETE /api/drafts/:id answers the refusal rather than swallowing it",
 
     const response = await SELF.fetch(`https://node/api/drafts/${saved.id}`, {
       method: "DELETE",
-      headers: { cookie: `mailda_at=${await sessionFor(ANA)}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${await sessionFor(ANA)}` },
     });
 
     // 409, not 403 and not `{ deleted: false }`: the request is well-formed and it is the state that does

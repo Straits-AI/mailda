@@ -99,7 +99,7 @@ describe("every response carries the browser policy", () => {
      * with an invitation and no account gets one (#83), so an empty body reaches a real E_ refusal rather
      * than the 401 every other route answers first.
      */
-    const response = await fetchPath("/api/invitations/redeem", { method: "POST", body: "{}" });
+    const response = await fetchPath("/api/invitations/redeem", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(response.status).toBe(422);
     expect(policyOf(response).get("frame-ancestors")).toEqual(["'none'"]);
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
@@ -181,7 +181,7 @@ describe("the cache directive survives the exits, including the one nobody wrote
      * was refused, because those are the ones naming a resource — §5C's whole concern — and a shared cache
      * holding one answers the next person's question with somebody else's refusal.
      */
-    const refused = await through(testEnv, "/api/invitations/redeem", { method: "POST", body: "{}" });
+    const refused = await through(testEnv, "/api/invitations/redeem", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(refused.status).toBe(422);
     expect(refused.headers.get("cache-control")).toBe("no-store");
 

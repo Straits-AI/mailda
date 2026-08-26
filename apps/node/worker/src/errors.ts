@@ -33,6 +33,18 @@ export function notFound(code: string, detail: { what: string; why: string; fix:
   return new CallerError(code, 404, detail);
 }
 
+/**
+ * 403: the request will not be carried out for **this caller**, and no state change would make it work.
+ *
+ * Distinct from 401, which invites a retry with credentials, and from 404, which §5C uses to keep "absent"
+ * and "not yours" alike. This one says the request itself is not one this Node accepts from where it came:
+ * its first use is a cross-site mutation (#96), where the caller may hold a perfectly good session and the
+ * problem is the *origin*, so telling them to sign in would be advice that cannot help.
+ */
+export function forbidden(code: string, detail: { what: string; why: string; fix: string }): CallerError {
+  return new CallerError(code, 403, detail);
+}
+
 /** 409: the request is well-formed but the state does not permit it. */
 export function conflict(code: string, detail: { what: string; why: string; fix: string }): CallerError {
   return new CallerError(code, 409, detail);

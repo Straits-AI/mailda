@@ -48,7 +48,32 @@ const REPLAY_WINDOW_MS = BUDGETS["auth.refresh_replay_window_seconds"] * 1000;
 const MAX_FAILURES = BUDGETS["auth.max_failed_logins_per_15min"];
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
-export const ACCESS_COOKIE = "mailda_at";
+/*
+ * `__Host-` prefixed (#96). The prefix is a **browser-enforced** promise: a cookie named this way can only
+ * have been set by this exact host, over HTTPS, with `Path=/` and no `Domain` — so a sibling subdomain
+ * cannot set one this Node would then read. That is cookie fixation, and it is the same sibling-subdomain
+ * threat `csrf.ts` exists for, arriving from the other direction: not "can they send a request as you" but
+ * "can they choose the cookie you send".
+ *
+ * **Renaming these signs everybody out once, on upgrade.** Accepted rather than worked around: the
+ * alternative is carrying both names for a grace period, which means two cookies either of which
+ * authenticates, and "two live paths, one of them the old weaker one" is the shape ADR 29 warns about for
+ * authentication generally.
+ */
+export const ACCESS_COOKIE = "__Host-mailda_at";
+/*
+ * **Not** `__Host-` prefixed, and this is a deliberate trade rather than an oversight.
+ *
+ * The prefix requires `Path=/`. This cookie is scoped to `/api/auth` precisely so the refresh token is not
+ * attached to every request — a token that is not sent cannot leak from a log, a proxy or a mis-routed
+ * request. Path-scoping is the stronger of the two properties for the cookie that can mint new sessions, so
+ * it keeps the path and forgoes the prefix.
+ *
+ * What is lost: a sibling subdomain could set a `mailda_rt` this Node would read. What that buys an attacker
+ * is bounded — a refresh token they already know, presented to `/api/auth/refresh`, which validates it
+ * against the D1-backed family and finds nothing. Fixation matters when the victim's *session* becomes the
+ * attacker's; here the reverse.
+ */
 export const REFRESH_COOKIE = "mailda_rt";
 /**
  * Expiry hint. Not a credential — it holds one integer, the access token's expiry — and
@@ -57,7 +82,7 @@ export const REFRESH_COOKIE = "mailda_rt";
  * only remaining strategy is to wait for a 401, which is precisely the behaviour we are trying
  * not to ship. It survives a page reload, so a reopened tab knows where it stands immediately.
  */
-export const EXPIRY_COOKIE = "mailda_at_exp";
+export const EXPIRY_COOKIE = "__Host-mailda_at_exp";
 
 /** The refresh cookie is scoped to the refresh endpoint, so it is not attached to every request. */
 const REFRESH_PATH = "/api/auth";
@@ -438,22 +463,33 @@ export async function revokeAllSessions(env: Env, ctx: Ctx, orgId: string, userI
  *             mis-proxied request.
  *   expiry  — readable by script, contains one integer, no authority whatsoever.
  *
- * SameSite=Lax on all three: Lax withholds cookies from cross-site POST, which is what makes
- * the state-changing endpoints CSRF-safe without a separate token.
+ * ## `SameSite=Strict`, and what this comment used to claim
+ *
+ * It said Lax *"is what makes the state-changing endpoints CSRF-safe without a separate token"*. The first
+ * half was true and the conclusion did not follow: **same-site is not same-origin**, so every sibling
+ * subdomain of the customer's own domain was inside Lax's protection — on a product whose whole premise is
+ * running in the customer's own account, where sibling subdomains are the normal case.
+ *
+ * `csrf.ts` is the actual defence: exact `Origin`, `Sec-Fetch-Site` refusing `same-site`, and no
+ * CORS-safelisted content type. `Strict` here is one more layer rather than the argument — it withholds
+ * cookies from cross-site navigation as well as cross-site POST, and nothing in this product needs a cookie
+ * on a link followed from elsewhere. There is deliberately **no CSRF token**; the blueprint's browser
+ * section is amended with the reasoning, which is that a token has to be exempted for the SDK, the CLI and
+ * MCP, and an exemption reachable by omitting a header is the bypass the token was for.
  */
 export function sessionCookies(session: IssuedSession): string[] {
   return [
-    `${ACCESS_COOKIE}=${session.accessToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${ACCESS_TTL}`,
-    `${REFRESH_COOKIE}=${session.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=${REFRESH_PATH}; Max-Age=${REFRESH_TTL}`,
-    `${EXPIRY_COOKIE}=${session.accessExpiresAt}; Secure; SameSite=Lax; Path=/; Max-Age=${REFRESH_TTL}`,
+    `${ACCESS_COOKIE}=${session.accessToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${ACCESS_TTL}`,
+    `${REFRESH_COOKIE}=${session.refreshToken}; HttpOnly; Secure; SameSite=Strict; Path=${REFRESH_PATH}; Max-Age=${REFRESH_TTL}`,
+    `${EXPIRY_COOKIE}=${session.accessExpiresAt}; Secure; SameSite=Strict; Path=/; Max-Age=${REFRESH_TTL}`,
   ];
 }
 
 export function clearedCookies(): string[] {
   return [
-    `${ACCESS_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`,
-    `${REFRESH_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${REFRESH_PATH}; Max-Age=0`,
-    `${EXPIRY_COOKIE}=; Secure; SameSite=Lax; Path=/; Max-Age=0`,
+    `${ACCESS_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`,
+    `${REFRESH_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=${REFRESH_PATH}; Max-Age=0`,
+    `${EXPIRY_COOKIE}=; Secure; SameSite=Strict; Path=/; Max-Age=0`,
   ];
 }
 

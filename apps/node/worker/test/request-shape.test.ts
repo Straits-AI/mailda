@@ -85,15 +85,11 @@ describe("a real Node refuses a field outside a closed set, before it does anyth
      * The pair below is the whole argument: the same route, the same absence of credentials, and the only
      * difference is whether the body names a field that exists.
      */
-    const withUnknownField = await SELF.fetch(`${ORIGIN}/api/policies`, {
-      method: "POST",
-      body: JSON.stringify({ name: "n", outcome: "deny", conditions: { mailbox_id: "mbx_1" } }),
+    const withUnknownField = await SELF.fetch(`${ORIGIN}/api/policies`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "n", outcome: "deny", conditions: { mailbox_id: "mbx_1" } }),
     });
     expect(withUnknownField.status).toBe(422);
 
-    const wellFormed = await SELF.fetch(`${ORIGIN}/api/policies`, {
-      method: "POST",
-      body: JSON.stringify({ name: "n", outcome: "deny", conditions: { mailboxId: "mbx_1" } }),
+    const wellFormed = await SELF.fetch(`${ORIGIN}/api/policies`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "n", outcome: "deny", conditions: { mailboxId: "mbx_1" } }),
     });
     expect(wellFormed.status).toBe(401);
   });
@@ -114,9 +110,7 @@ describe("a real Node refuses a field outside a closed set, before it does anyth
      * a pass. There are no fields here to be unknown, so "no unknown fields" was vacuous rather than clean.
      */
     for (const conditions of ["mailbox_id=mbx_1", 7, true, ["mailboxId"]]) {
-      const response = await SELF.fetch(`${ORIGIN}/api/policies`, {
-        method: "POST",
-        body: JSON.stringify({ name: "n", outcome: "deny", conditions }),
+      const response = await SELF.fetch(`${ORIGIN}/api/policies`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "n", outcome: "deny", conditions }),
       });
       const body = await response.json() as { error?: string; message?: string };
       expect(response.status, `conditions as ${JSON.stringify(conditions)} was accepted`).toBe(422);
@@ -135,9 +129,7 @@ describe("a real Node refuses a field outside a closed set, before it does anyth
      * catches everything — #93 is about that happening **by accident**, not about forbidding it. A boundary
      * that refused an absent set would have made the deliberate case unreachable.
      */
-    const omitted = await SELF.fetch(`${ORIGIN}/api/policies`, {
-      method: "POST",
-      body: JSON.stringify({ name: "n", outcome: "deny" }),
+    const omitted = await SELF.fetch(`${ORIGIN}/api/policies`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "n", outcome: "deny" }),
     });
     expect(omitted.status, "an unconditional rule can no longer be written on purpose").toBe(401);
   });

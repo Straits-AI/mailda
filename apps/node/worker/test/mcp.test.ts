@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
-import { issueSession } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 
 /**
  * The MCP server (#89, ADR 12).
@@ -47,7 +47,7 @@ beforeEach(async () => {
 
 async function cookie(): Promise<string> {
   const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: USER });
-  return `mailda_at=${session.accessToken}`;
+  return `${ACCESS_COOKIE}=${session.accessToken}`;
 }
 
 async function rpc(method: string, params?: unknown, held?: string): Promise<Record<string, unknown>> {

@@ -5,7 +5,7 @@ import { createSystemCtx } from "@mailda/runtime";
 
 import { sealManifest } from "../src/outbound/manifest.ts";
 import { dispatchDue } from "../src/outbound/dispatch.ts";
-import { login } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import { hashPassword } from "../src/auth/password.ts";
 
 /**
@@ -41,7 +41,7 @@ async function sessionFor(userId: string): Promise<string> {
 }
 
 function as(token: string): RequestInit {
-  return { headers: { cookie: `mailda_at=${token}` } };
+  return { headers: { cookie: `${ACCESS_COOKIE}=${token}` } };
 }
 
 let manifestId: string;

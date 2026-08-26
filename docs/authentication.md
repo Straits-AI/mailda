@@ -94,13 +94,30 @@ GET  /.well-known/jwks.json                     ->  public verification keys
 
 | | |
 |---|---|
-| `mailda_at` | ES256 JWT. HttpOnly, `Path=/`, 10 minutes. |
+| `__Host-mailda_at` | ES256 JWT. HttpOnly, `Path=/`, 10 minutes. |
 | `mailda_rt` | Opaque, 32 random bytes. HttpOnly, `Path=/api/auth`, 30 days. Stored SHA-256-hashed. |
-| `mailda_at_exp` | One integer: when `mailda_at` expires. **Not** HttpOnly, on purpose. |
+| `__Host-mailda_at_exp` | One integer: when the access token expires. **Not** HttpOnly, on purpose. |
 
-All three are `SameSite=Lax`, which withholds them from cross-site POST — that is what makes the
-state-changing endpoints CSRF-safe without a separate token. `mailda_rt` is path-scoped so it rides
-along only with refresh requests; a token that is not sent cannot leak from a log.
+All three are `SameSite=Strict`. **This paragraph used to say they were `Lax`, and that Lax "is what makes
+the state-changing endpoints CSRF-safe without a separate token" — which was false** (#96). Lax does
+withhold cookies from cross-site POST, but same-site is computed on scheme plus registrable domain, so every
+sibling subdomain of the customer's own domain sat inside its protection. On a Node deployed into the
+customer's own account that is the normal configuration: a marketing site, a Pages preview, a forgotten
+CNAME. The real defence is `src/csrf.ts` — exact `Origin`, and `Sec-Fetch-Site` refusing `same-site` as well
+as `cross-site`. Strict is one more layer, not the argument.
+
+**`__Host-` on two of the three, and the exception is deliberate.** The prefix is a browser-enforced promise
+that a cookie was set by this exact host over HTTPS with `Path=/`, so a sibling subdomain cannot set one
+this Node would read — the same threat as above, arriving as fixation rather than forgery. The refresh cookie
+cannot have it, because the prefix *requires* `Path=/` and that cookie is scoped to `/api/auth` so the
+refresh token is not attached to every request. A token that is not sent cannot leak from a log or a
+mis-proxied request, and for the one credential that mints sessions that is the stronger property. What is
+given up is bounded: a sibling could set a `mailda_rt` this Node reads, and it would be a refresh token they
+already know, refused by the D1-backed family it is validated against.
+
+Renaming those two **signs everybody out once, on upgrade.** Accepted rather than smoothed over: carrying
+both names for a grace period means two cookies either of which authenticates, and "two live paths, one of
+them the older weaker one" is the shape ADR 29 warns about for authentication generally.
 
 `mailda_at_exp` is readable by the page because the page has to see expiry *coming*. It carries no
 authority whatsoever. Without it, a client cannot know when its own HttpOnly token dies, and the only

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { hashPassword } from "../src/auth/password.ts";
-import { login } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 
 /**
  * The policy object **through the HTTP surface** (#60).
@@ -55,7 +55,7 @@ async function sessionFor(userId: string): Promise<string> {
 function as(token: string, body?: unknown, method: "POST" | "PUT" | "DELETE" = "POST"): RequestInit {
   return {
     method,
-    headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+    headers: { cookie: `${ACCESS_COOKIE}=${token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }
@@ -272,7 +272,7 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     // an invisible thing and an absent one answering alike, which is the same rule the outbox's cancel and
     // submitted-bytes routes already follow.
     const response = await SELF.fetch("https://node/api/policies", {
-      headers: { cookie: `mailda_at=${await sessionFor(ANA)}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${await sessionFor(ANA)}` },
     });
     expect(response.status).toBe(404);
     expect((await response.json() as { error: string }).error).toBe("not_found");
@@ -300,7 +300,7 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     await SELF.fetch(`https://node/api/policies/${policy.policyId}/draft`, put(token, { outcome: "allow" }));
 
     const listed = await SELF.fetch("https://node/api/policies", {
-      headers: { cookie: `mailda_at=${token}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${token}` },
     });
     const { policies } = await listed.json() as {
       policies: Array<{ state: string; version: number | null; outcome: string }>;
@@ -408,7 +408,7 @@ describe("a published deny reaches the send path", () => {
     }));
 
     const listed = await SELF.fetch("https://node/api/sends", {
-      headers: { cookie: `mailda_at=${anaToken}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${anaToken}` },
     });
     const { sends } = await listed.json() as {
       sends: Array<{ state: string; state_reason: string | null; policy_outcome: string | null }>;
@@ -430,7 +430,7 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
   function del(token: string, body: unknown): RequestInit {
     return {
       method: "DELETE",
-      headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+      headers: { cookie: `${ACCESS_COOKIE}=${token}`, "content-type": "application/json" },
       body: JSON.stringify(body),
     };
   }
@@ -447,7 +447,7 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
     expect((await added.json() as { membership: { members: number } }).membership.members).toBe(1);
 
     const listed = await SELF.fetch("https://node/api/teams", {
-      headers: { cookie: `mailda_at=${token}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${token}` },
     });
     expect((await listed.json() as { teams: Array<{ name: string; memberCount: number }> }).teams)
       .toEqual([expect.objectContaining({ name: "Legal", memberCount: 1 })]);
@@ -456,7 +456,7 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
     expect((await renamed.json() as { team: { name: string } }).team.name).toBe("Counsel");
 
     const one = await SELF.fetch(`https://node/api/teams/${team.id}`, {
-      headers: { cookie: `mailda_at=${token}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${token}` },
     });
     expect(await one.json() as unknown).toEqual({
       team: expect.objectContaining({ name: "Counsel" }), members: [ANA],
@@ -486,7 +486,7 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
        * take the same relation for two different reasons, and a route comment claiming it would not be a
        * check.
        */
-      [`https://node/api/teams/${team.id}`, { headers: { cookie: `mailda_at=${ana}` } }],
+      [`https://node/api/teams/${team.id}`, { headers: { cookie: `${ACCESS_COOKIE}=${ana}` } }],
     ] as const) {
       const response = await SELF.fetch(path, init);
       expect(response.status, path).toBe(403);
@@ -495,7 +495,7 @@ describe("teams and team-scoped stages travel through the API (#73)", () => {
     // The **listing** is open to any member, and that is the deliberate exception: a team is a name and a
     // headcount there, which is what an author reading a shortfall naming team Legal has to resolve. The two
     // assertions belong in one test because the claim is the line between them, not either half alone.
-    const listed = await SELF.fetch("https://node/api/teams", { headers: { cookie: `mailda_at=${ana}` } });
+    const listed = await SELF.fetch("https://node/api/teams", { headers: { cookie: `${ACCESS_COOKIE}=${ana}` } });
     expect(listed.status).toBe(200);
     expect((await listed.json() as { teams: Array<{ memberCount: number }> }).teams)
       .toEqual([expect.objectContaining({ name: "Legal", memberCount: 1 })]);

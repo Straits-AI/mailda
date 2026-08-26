@@ -6,7 +6,7 @@ import { createSystemCtx } from "@mailda/runtime";
 
 import { log } from "../src/audit.ts";
 import { createButlerDraft } from "../src/butlers.ts";
-import { issueSession } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
 import { dispatchDue } from "../src/outbound/dispatch.ts";
@@ -93,7 +93,7 @@ beforeEach(async () => {
 
 async function cookie(): Promise<string> {
   const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: USER });
-  return `mailda_at=${session.accessToken}`;
+  return `${ACCESS_COOKIE}=${session.accessToken}`;
 }
 
 /**
@@ -738,7 +738,7 @@ describe("dual control, with the second and third people it needs", () => {
 
   async function cookieFor(person: string): Promise<string> {
     const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: person });
-    return `mailda_at=${session.accessToken}`;
+    return `${ACCESS_COOKIE}=${session.accessToken}`;
   }
 
   async function matter(held: string): Promise<string> {

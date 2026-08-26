@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { hashPassword } from "../src/auth/password.ts";
-import { login } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 
 /**
  * Authoring a Butler **through the HTTP surface** (#77).
@@ -64,13 +64,13 @@ async function sessionFor(userId: string): Promise<string> {
 function as(token: string, body?: unknown, method = "POST"): RequestInit {
   return {
     method,
-    headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+    headers: { cookie: `${ACCESS_COOKIE}=${token}`, "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }
 
 function read(token: string): RequestInit {
-  return { headers: { cookie: `mailda_at=${token}` } };
+  return { headers: { cookie: `${ACCESS_COOKIE}=${token}` } };
 }
 
 beforeEach(async () => {

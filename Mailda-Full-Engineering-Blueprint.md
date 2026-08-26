@@ -944,7 +944,29 @@ the receipt states plainly why Workers leaves no better primitive available.
 - Enterprise OIDC/SAML federation and SCIM.
 - Rotating refresh-token families and reuse detection.
 - Step-up authentication for domain changes, admin grants, token issuance, policy publication, exports, legal hold, purge and break-glass access.
-- State-changing requests require Origin/Fetch-Metadata validation plus synchronizer-token or signed double-submit CSRF protection; CORS is deny-by-default.
+- State-changing requests require Origin/Fetch-Metadata validation; CORS is deny-by-default. **Amended
+  26 August 2026 (#96): the synchronizer-token / signed double-submit requirement is withdrawn, and the
+  argument is recorded here rather than the requirement quietly skipped.**
+
+  What is built: exact `Origin` comparison, `Sec-Fetch-Site` refusing `same-site` as well as `cross-site`,
+  refusal of the HTML form encodings, `__Host-` on the two cookies that can carry it, and `SameSite=Strict`.
+  The load-bearing one is refusing **`same-site`** — same-site is scheme plus registrable domain, so under
+  `SameSite=Lax` every sibling subdomain of the customer's own domain could act as the person signed in, and
+  on a product deployed into the customer's own account that is the normal configuration rather than an edge.
+
+  Why the token is not built. It has to be exempted for the SDK, the CLI and the MCP server, none of which
+  has a document to read one from, and ADR 12 requires parity across exactly those surfaces. The only
+  available exemption is "no browser headers present" — which is reachable by omitting a header, and is
+  therefore the bypass the token existed to prevent. Meanwhile a browser **always** sends `Origin` on a
+  state-changing request, and CSRF is by definition somebody else's user agent attaching somebody else's
+  cookies, so exact-origin comparison covers the attack the token was for. Adding a mechanism whose own
+  exemption defeats it, to defend something already defended, is the kind of security theatre this project
+  refuses elsewhere.
+
+  What is genuinely given up: defence against a script running **on this origin** that can forge a request
+  but cannot read a token cookie. That is a same-origin script, which is XSS, and the answer to XSS here is
+  the Content Security Policy (#97) and the sanitiser — not a token that an XSS with DOM access could read
+  anyway.
 - Login/callback handling validates exact redirect URI, state, nonce and PKCE; session identifiers rotate at authentication and privilege elevation.
 - Content Security Policy, `frame-ancestors`, secure headers and `Cache-Control: no-store` protect authentication, admin and content surfaces.
 

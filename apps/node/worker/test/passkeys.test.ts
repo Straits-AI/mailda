@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
-import { issueSession } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { mintChallenge, spendChallenge } from "../src/auth/passkey.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 
@@ -62,7 +62,7 @@ beforeEach(async () => {
  */
 async function signedIn(): Promise<string> {
   const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: USER });
-  return `mailda_at=${session.accessToken}`;
+  return `${ACCESS_COOKIE}=${session.accessToken}`;
 }
 
 async function post(path: string, body: unknown, cookie?: string): Promise<Response> {
@@ -103,7 +103,7 @@ describe("a person can register a passkey and sign in with it", () => {
     const answer = await verified.json() as { signedIn: boolean; userId: string };
     expect(answer).toMatchObject({ signedIn: true, userId: USER });
     // The same cookies a password sign-in sets: nothing downstream learns which mechanism was used.
-    expect(verified.headers.get("set-cookie")).toContain("mailda_at=");
+    expect(verified.headers.get("set-cookie")).toContain(`${ACCESS_COOKIE}=`);
   });
 
   it("authenticates without being told who the caller is", async () => {

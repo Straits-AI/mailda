@@ -531,14 +531,36 @@ describe("session cookies", () => {
     for (const cookie of [access, refresh]) {
       expect(cookie).toContain("HttpOnly");
       expect(cookie).toContain("Secure");
-      // Lax withholds the cookie from a cross-site POST, which is what makes the state-changing
-      // endpoints CSRF-safe without a separate token.
-      expect(cookie).toContain("SameSite=Lax");
     }
 
-    // Scoped, so it is not attached to every request. A token that is not sent cannot leak from a
-    // log or a mis-proxied request.
+    /*
+     * `Strict` on all three, and this assertion used to say `Lax` above a comment claiming Lax "is what
+     * makes the state-changing endpoints CSRF-safe without a separate token" (#96). It is not: same-site is
+     * computed on the registrable domain, so every sibling subdomain of the customer's own domain was inside
+     * Lax's protection. `csrf.ts` is the actual defence and `test/csrf.test.ts` is where it is asserted;
+     * `Strict` here is one more layer rather than the argument.
+     */
+    for (const cookie of [access, refresh, expiry]) expect(cookie).toContain("SameSite=Strict");
+
+    /*
+     * **`__Host-` on two of the three, and the exception is the interesting one.** The prefix is a
+     * browser-enforced promise that a cookie was set by this exact host with `Path=/` — so a sibling
+     * subdomain cannot set one this Node would read, which is the same threat `csrf.ts` addresses from the
+     * other direction.
+     *
+     * The refresh cookie cannot have it, because the prefix *requires* `Path=/` and this cookie is
+     * deliberately scoped to `/api/auth` so the refresh token is not attached to every request. A token that
+     * is not sent cannot leak from a log or a mis-proxied request, and that is the stronger property for the
+     * one credential that can mint new sessions. Asserted in both directions so the trade cannot be
+     * "tidied" into consistency later.
+     */
+    expect(access.startsWith("__Host-")).toBe(true);
+    expect(expiry.startsWith("__Host-")).toBe(true);
+    expect(refresh.startsWith("__Host-"), "the refresh cookie cannot be __Host- and keep its path").toBe(false);
+
     expect(refresh).toContain("Path=/api/auth");
+    // Required by the prefix, and refused by the browser if absent — so this is what makes it real.
+    for (const cookie of [access, expiry]) expect(cookie).toContain("Path=/");
 
     // Readable by the page, because the client has to see expiry coming to refresh ahead of it.
     // It carries one integer and no authority.

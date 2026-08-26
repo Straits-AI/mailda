@@ -11,7 +11,7 @@ import {
 } from "../src/approvals.ts";
 import { decidersOf } from "../src/deciders.ts";
 import { hashPassword } from "../src/auth/password.ts";
-import { login } from "../src/auth/session.ts";
+import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import deliveryScript from "../src/client/delivery.client.js";
 import { cancelSend, dispatchDue, type SendState } from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
@@ -916,7 +916,7 @@ describe("an approver can reach this from outside the process", () => {
 
     const annToken = await sessionFor(ANN);
     const listed = await SELF.fetch("https://node/api/approvals", {
-      headers: { cookie: `mailda_at=${annToken}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${annToken}` },
     });
     expect(listed.status).toBe(200);
     const { approvals } = await listed.json() as {
@@ -936,7 +936,7 @@ describe("an approver can reach this from outside the process", () => {
     const approvalId = approvals[0]!.id;
     const post = (token: string, path: string, body?: unknown) => SELF.fetch(`https://node${path}`, {
       method: "POST",
-      headers: { cookie: `mailda_at=${token}`, "content-type": "application/json" },
+      headers: { cookie: `${ACCESS_COOKIE}=${token}`, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
 

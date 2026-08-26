@@ -12,6 +12,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 import { claimNode } from "./claim.ts";
 import { redeemForVault } from "./recovery.ts";
 import { migrate } from "./migrate.ts";
+import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
@@ -317,6 +318,12 @@ async function answer(request: Request, env: Env, ctx: ExecutionContext): Promis
      * `handleMcp` re-enters `handler.fetch`, so it reaches here too — the machine surface is held to the
      * same closed set rather than to a second definition of it.
      */
+    /*
+     * Before the body is even read: a cross-site mutation should not reach a schema, a handler or a
+     * database. Same position and same argument as the closed-set check below it (#93) — a guard each
+     * handler has to remember is one that will be forgotten, and this one fails silently when forgotten.
+     */
+    refuseCrossSite(request, new URL(request.url));
     await refuseUnknownFields(request, new URL(request.url).pathname);
     return await route(request, env, ctx);
   } catch (error) {
