@@ -45,8 +45,12 @@ function holdWindowSeconds(): number {
  *
  * Not a receipt value: it is a interaction choice rather than a measurement of anything, and inventing a
  * receipt for it would dilute what a receipt means. Long enough that ordinary typing produces one write per
- * pause rather than one per word, short enough that a person who types a sentence and closes the laptop
- * has it.
+ * pause rather than one per word.
+ *
+ * It deliberately no longer claims to be "short enough that a person who types a sentence and closes the
+ * laptop has it". That was never true of any value — it was the debounce being asked to cover for a close
+ * path that threw the pending write away (#90) — and closing is now safe at every value of this constant,
+ * which is what makes it free to be an interaction choice rather than a safety margin.
  */
 const AUTOSAVE_IDLE_MS = 1_500;
 
@@ -180,62 +184,189 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
 
   const touched = to !== "" || subject !== "" || body !== "";
 
-  /** Debounced autosave. One write per pause in typing, not one per keystroke. */
+  /**
+   * Whichever write is in the air, so nothing ever starts a second one beside it.
+   *
+   * A ref rather than state: every reader wants the value at the moment they ask, and a re-render is not
+   * only unnecessary but wrong — `flush` is called from a click handler and from an effect cleanup, and
+   * neither can wait for React to tell it what it already needs to know.
+   */
+  const inFlight = useRef<Promise<boolean> | null>(null);
+  /** True while `close` is waiting for the Node, so the buttons cannot be pressed twice. */
+  const [closing, setClosing] = useState(false);
+
+  /** Whether the Node's copy is behind what is on screen. The one definition of "there is work to do". */
+  function unsaved(): boolean {
+    const now = latest.current;
+    if (now.to === "" && now.subject === "" && now.body === "") return false;
+    const stored = saved.current;
+    return stored === null
+      || stored.to !== now.to || stored.subject !== now.subject || stored.body !== now.body;
+  }
+
+  /**
+   * One write. Returns whether the Node now has what was sent.
+   *
+   * Extracted from the debounce timer it used to live inside, which is the substance of #90: a save that
+   * only exists as a closure inside a `setTimeout` can only ever happen when that timer fires, so every
+   * other path that needed the bytes on the Node — closing, discarding, sealing — had no way to ask for
+   * one. The extraction is the fix; `close` awaiting it is just the call site.
+   */
+  async function writeDraft(): Promise<boolean> {
+    const current = latest.current;
+    setPhase({ kind: "saving" });
+    try {
+      const response = await apiFetch("/api/drafts", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: current.draftId,
+          mailboxId: context.mailboxId,
+          inReplyToMessageId: context.inReplyToMessageId ?? null,
+          to: splitAddresses(current.to),
+          subject: current.subject,
+          body: current.body,
+        }),
+      });
+      if (!response.ok) {
+        const failure = (await response.json().catch(() => null)) as { message?: string } | null;
+        setPhase({ kind: "failed", why: failure?.message ?? `this Node answered ${response.status}` });
+        return false;
+      }
+      const { draft } = (await response.json()) as DraftResponse;
+      if (draft === null) return false;
+      setDraftId(draft.id);
+      /*
+       * Into the ref as well as into state, and this is load-bearing rather than belt-and-braces.
+       *
+       * `discard` and `seal` both await an in-flight write and then need the id it created. State gets
+       * there via a re-render, and neither of them can be sure one has happened yet — so the version that
+       * read `draftId` from its own closure would send `null` and leave the draft sitting on the Node
+       * after somebody pressed discard. The ref is the value that is true immediately.
+       */
+      latest.current.draftId = draft.id;
+      // The snapshot is what was *sent*, not what is on screen now: somebody may have typed while the
+      // request was in flight, and recording the newer text as saved would skip the save that would have
+      // stored it. `flush` reads this back and writes again when it differs.
+      saved.current = { to: current.to, subject: current.subject, body: current.body };
+      setPhase({ kind: "saved", at: draft.updatedAt });
+      return true;
+    } catch (error) {
+      setPhase({ kind: "failed", why: (error as Error).message });
+      return false;
+    }
+  }
+
+  /**
+   * Get everything on screen onto the Node, and say whether it arrived.
+   *
+   * Two writes at once is the thing this exists to prevent: the last-write-wins order between them is
+   * whatever the network decides, so a slow first write can land after a fast second and leave the Node
+   * holding the older text. So a caller that finds one in flight **waits for it** rather than racing it,
+   * and then writes again only if the text moved on while it waited.
+   */
+  async function flush(): Promise<boolean> {
+    const already = inFlight.current;
+    if (already !== null) {
+      const ok = await already;
+      // Nothing typed while that was in the air, so its result is this call's answer.
+      if (!unsaved()) return ok;
+    }
+    if (!unsaved()) return true;
+    const run = writeDraft();
+    inFlight.current = run;
+    try {
+      return await run;
+    } finally {
+      inFlight.current = null;
+    }
+  }
+
+  /**
+   * Debounced autosave. One write per pause in typing, not one per keystroke.
+   *
+   * Its cleanup still only cancels the timer, which is right: this cleanup runs on **every** keystroke,
+   * and the newer text always has a newer timer behind it. What was missing was never here — it was that
+   * nothing else ever asked for a write. See the unmount effect below.
+   */
   useEffect(() => {
     if (resuming || !touched || sealing) return;
     // Nothing has changed since the Node last acknowledged a save, so there is nothing to write.
-    const current = saved.current;
-    if (current !== null && current.to === to && current.subject === subject && current.body === body) return;
+    if (!unsaved()) return;
     if (phase.kind === "empty" || phase.kind === "saved") setPhase({ kind: "browser" });
 
-    const timer = setTimeout(() => {
-      void (async () => {
-        const current = latest.current;
-        setPhase({ kind: "saving" });
-        try {
-          const response = await apiFetch("/api/drafts", {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              id: current.draftId,
-              mailboxId: context.mailboxId,
-              inReplyToMessageId: context.inReplyToMessageId ?? null,
-              to: splitAddresses(current.to),
-              subject: current.subject,
-              body: current.body,
-            }),
-          });
-          if (!response.ok) {
-            const failure = (await response.json().catch(() => null)) as { message?: string } | null;
-            setPhase({ kind: "failed", why: failure?.message ?? `this Node answered ${response.status}` });
-            return;
-          }
-          const { draft } = (await response.json()) as DraftResponse;
-          if (draft !== null) {
-            setDraftId(draft.id);
-            // The snapshot is what was *sent*, not what is on screen now: somebody may have typed while
-            // the request was in flight, and recording the newer text as saved would skip the save that
-            // would have stored it.
-            saved.current = { to: current.to, subject: current.subject, body: current.body };
-            setPhase({ kind: "saved", at: draft.updatedAt });
-          }
-        } catch (error) {
-          setPhase({ kind: "failed", why: (error as Error).message });
-        }
-      })();
-    }, AUTOSAVE_IDLE_MS);
-
+    const timer = setTimeout(() => void flush(), AUTOSAVE_IDLE_MS);
     return () => clearTimeout(timer);
     // `phase` is deliberately not a dependency: including it would restart the timer on every phase change
     // the timer itself causes, so a save would never fire.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [to, subject, body, resuming, touched, sealing, context.mailboxId, context.inReplyToMessageId]);
 
+  /**
+   * The last chance, for the paths that take the dock away without asking.
+   *
+   * `close` flushes and waits, so the ordinary path never needs this. What does need it is a rail link, a
+   * route change, anything that unmounts the composer without going through a button — and for those,
+   * cancelling the pending timer is exactly the data loss #90 is about.
+   *
+   * Empty deps, so this cleanup runs **once, on unmount**, and never on a keystroke. That is the whole
+   * reason it is a separate effect rather than a branch inside the one above: that one's cleanup fires
+   * constantly and cannot tell an unmount from a re-render, and guessing wrong in either direction is
+   * either a lost draft or a write per keypress.
+   *
+   * Nobody awaits it. By the time a cleanup runs there is no component left to report to, and the request
+   * is already with the browser, which finishes it without us. `setPhase` inside lands on an unmounted
+   * component and is ignored — correct, since there is no longer a screen to update.
+   */
+  useEffect(() => () => { if (unsaved()) void flush(); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []);
+
+  /**
+   * Closes the dock, and does not lose what was typed doing it.
+   *
+   * **This is #90.** The button used to be `onClick={onClose}`, straight through — while the autosave's
+   * effect cleanup cancelled the pending timer on the way out. Type a sentence, press close inside the
+   * idle window, and the writing was gone; on a draft that had never saved, all of it. The comment beside
+   * the button said "Closing keeps the draft", which is what kept anybody from looking.
+   *
+   * A failed flush **does not close**. The dock stays, showing the Node's own words, exactly as `discard`
+   * already does when a legal hold refuses its DELETE — somebody owed a reason has to still be looking at
+   * the thing the reason is about. Closing anyway would be the original bug with a message attached.
+   */
+  async function close() {
+    setProblem(null);
+    if (!unsaved()) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    try {
+      if (await flush()) {
+        onClose();
+        return;
+      }
+      // The phase label already carries `why` and announces it. `problem` as well, because this person
+      // asked to leave and is being kept here, which is a louder fact than an autosave that will retry.
+      setProblem(
+        "This draft is not saved on your Node yet, so the dock is staying open. Retry, or discard it "
+        + "on purpose.",
+      );
+    } finally {
+      setClosing(false);
+    }
+  }
+
   async function seal(event: React.FormEvent) {
     event.preventDefault();
     setProblem(null);
     setSealing(true);
     try {
+      // A write already in the air would otherwise land after the Node retires the draft below and
+      // resurrect it — the same race `close` and `discard` wait out, in the one path that also has a
+      // manifest riding on it.
+      const pending = inFlight.current;
+      if (pending !== null) await pending;
       const response = await apiFetch("/api/sends", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -249,8 +380,9 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           // one address, use it", and an empty string would be a sender that matches nothing.
           ...(senderAddress === "" ? {} : { senderAddress }),
           // The Node retires the draft once the manifest exists, rather than the browser deleting it and
-          // hoping the seal succeeded.
-          draftId,
+          // hoping the seal succeeded. From the ref for the reason `discard` reads it there: the write
+          // awaited above may be the one that created this draft.
+          draftId: latest.current.draftId,
         }),
       });
       const result = (await response.json()) as { id?: string; message?: string };
@@ -289,8 +421,13 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    */
   async function discard() {
     setProblem(null);
-    if (draftId !== null) {
-      const response = await apiFetch(`/api/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+    // Same race as `seal`: a PUT still in the air would land after the DELETE and put the draft back.
+    const pending = inFlight.current;
+    if (pending !== null) await pending;
+    // From the ref, not the closure: that write may be the one that created the draft being discarded.
+    const discarding = latest.current.draftId;
+    if (discarding !== null) {
+      const response = await apiFetch(`/api/drafts/${encodeURIComponent(discarding)}`, { method: "DELETE" });
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
       if (!response.ok && response.status !== 404) {
         const result = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -317,13 +454,14 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           {phaseText(phase)}
         </span>
         <span className="dock-actions">
-          {/* Closing keeps the draft. Discarding is a separate, named act — a single "close" that silently
-              threw away somebody's writing would be the worst possible reading of this dock. */}
-          <button type="button" className="linkish" onClick={() => void discard()}>
+          {/* Closing keeps the draft — it flushes first and stays open if that fails (#90). Discarding is
+              a separate, named act: a single "close" that silently threw away somebody's writing would be
+              the worst possible reading of this dock, and for a while it was what this one did. */}
+          <button type="button" className="linkish" onClick={() => void discard()} disabled={closing}>
             discard
           </button>
-          <button type="button" className="linkish" onClick={onClose}>
-            close
+          <button type="button" className="linkish" onClick={() => void close()} disabled={closing}>
+            {closing ? "saving…" : "close"}
           </button>
         </span>
       </header>

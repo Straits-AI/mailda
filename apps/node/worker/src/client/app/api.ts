@@ -719,7 +719,16 @@ export async function registerPasskey(
 export const forgetPasskey = (credentialId: string) =>
   butlerAct<{ forgotten: true }>(at("DELETE", "/api/auth/passkeys"), "DELETE", { credentialId });
 
-function fromB64url(value: string): Uint8Array {
+/**
+ * Base64url to bytes, for the fields WebAuthn wants as buffers.
+ *
+ * **The return type is `Uint8Array<ArrayBuffer>` deliberately, not the bare `Uint8Array` it used to be.**
+ * Bare `Uint8Array` means `Uint8Array<ArrayBufferLike>`, which admits `SharedArrayBuffer` and therefore is
+ * not assignable to `BufferSource` — so `challenge:` and `excludeCredentials[].id` did not typecheck. The
+ * value was always right; the annotation was wider than what the function actually returns, and widening a
+ * return type is how a correct value becomes a type error at its call site.
+ */
+function fromB64url(value: string): Uint8Array<ArrayBuffer> {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }

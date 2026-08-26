@@ -10,7 +10,7 @@ import { metering, type Cost } from "../cost-meter.ts";
 import { type EffectResult } from "./effects.ts";
 import { liveEffects, type EffectHandle } from "./world.ts";
 import { walk, type Terminal, type Walkable } from "./walk.ts";
-import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";
+import { type RunState } from "./expr.ts";
 import { ceilingOf } from "./ceiling.ts";
 import { RELEASE_TIMEOUT_BUDGET } from "./gate.ts";
 import { describePause, pausedFrom, PAUSE_COLUMNS_FOR_RUN } from "./pause.ts";

@@ -5,7 +5,6 @@ import { assignCase, closeCase, lookupRow, proposeSend, writeDraft, type EffectR
 import type { ButlerPrincipal } from "./principal.ts";
 import type { ReplayIncumbents } from "../outbound/manifest.ts";
 import type { RunState } from "./expr.ts";
-import type { ReadOnlyEnv } from "../read-only.ts";
 
 /**
  * The capability a run is constructed with, and the reason it is a *type* rather than a flag (#87, §5).

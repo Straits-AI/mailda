@@ -1,4 +1,4 @@
-import type { ButlerNode, ShippedKind } from "@mailda/butler-ast";
+import type { ButlerNode } from "@mailda/butler-ast";
 
 import { type EffectResult } from "./effects.ts";
 import { ButlerFault, isTrue, evaluate, evaluateOperand, validateAgainst, type RunState } from "./expr.ts";

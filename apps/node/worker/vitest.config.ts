@@ -22,9 +22,10 @@ export default defineConfig({
   test: {
     setupFiles: ["./test/setup.ts"],
 
-    // test/node/ holds checks about the repository itself, which need a filesystem. They run under
-    // vitest.node.config.ts; without this they would be picked up here and fail inside workerd.
-    exclude: [...configDefaults.exclude, "test/node/**"],
+    // test/node/ holds checks about the repository itself, which need a filesystem. test/client/ renders
+    // components, which needs a DOM. Neither exists inside workerd, and both have their own config —
+    // vitest.node.config.ts and vitest.client.config.ts. Without this they are picked up here and fail.
+    exclude: [...configDefaults.exclude, "test/node/**", "test/client/**"],
 
     // Measured, not inherited. Vitest's 5,000 ms default was already breached by a legitimate test
     // on an ordinarily-busy machine (5,790 ms worst case under load), and one breach cascades: the

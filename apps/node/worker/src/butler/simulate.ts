@@ -1,6 +1,6 @@
 import {
   checkButler, describeFindings, RUN_BUDGET, RUN_BUDGET_NAME,
-  type Butler, type ButlerNode, type ShippedKind,
+  type Butler, type ShippedKind,
 } from "@mailda/butler-ast";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import type { ReadOnlyEnv } from "../read-only.ts";

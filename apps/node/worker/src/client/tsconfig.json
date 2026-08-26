@@ -20,5 +20,8 @@
       "/app/delivery.js": ["./app/types/delivery.d.ts"]
     }
   },
-  "include": ["app/**/*"]
+  // `test/client` renders this code, so it is checked as part of this program rather than the Worker's —
+  // it needs the same DOM and JSX, and checking a test against different lib settings than the thing it
+  // mounts is how a test comes to compile while the component does not.
+  "include": ["app/**/*", "../../test/client/**/*"]
 }

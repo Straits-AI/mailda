@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "pnpm run build:client && vitest run && vitest run -c vitest.node.config.ts",
+    "test": "pnpm run build:client && vitest run && vitest run -c vitest.node.config.ts && vitest run -c vitest.client.config.ts",
     "bench": "vitest run --mode bench",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/client/tsconfig.json",
     "types": "wrangler types",
@@ -34,10 +34,12 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.1",
     "@mailda/sdk": "workspace:*",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "axe-core": "^4.13.0",
     "esbuild": "^0.28.1",
+    "happy-dom": "^20.11.6",
     "jsonc-parser": "^3.3.1",
     "playwright": "^1.62.1",
     "typescript": "^5.9.3",

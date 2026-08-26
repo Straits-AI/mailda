@@ -10,6 +10,9 @@
     "worker-configuration.d.ts"
   ],
   "exclude": [
-    "src/client/app/**"
+    "src/client/app/**",
+    // Renders components, so it needs the DOM and JSX this program deliberately refuses. Checked by
+    // `src/client/tsconfig.json` instead, alongside the code it mounts.
+    "test/client/**"
   ]
 }

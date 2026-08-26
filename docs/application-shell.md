@@ -202,6 +202,21 @@ shipping deliberately without it.
   route's 409 body and the handler's reading of it are asserted — `test/legal-hold-routes.test.ts` and
   `test/node/content-deletion-world.test.ts` — the second lexically, and it says so.
 
+- **Closing the dock flushes what the debounce has not written** (#90). The autosave lives in a
+  `setTimeout` owned by an effect, and that effect's cleanup cancels the timer — which is right on every
+  keystroke and was silently wrong on unmount. So for as long as drafts have existed, typing and then
+  pressing **close** inside the 1.5s idle window lost everything since the last save, and on a draft that
+  had never saved, all of it. The comment beside the button read *"Closing keeps the draft"*, which is
+  what kept anybody from checking. `close` now calls one `flush()` and waits for it; a flush that fails
+  **does not close**, leaving the dock open with the Node's own words, exactly as `discard` already did for
+  a legal hold. Closing anyway with a message attached would be the same data loss, narrated.
+  Two smaller things fall out of the same change and are worth naming because each was its own latent bug:
+  `discard` and `seal` now wait for any write already in the air, since a PUT landing after a DELETE
+  resurrects the draft and one landing after a seal resurrects a sent one; and both read the draft id from
+  a ref rather than their own closure, because the write they wait for may be the one that created it.
+  There is also an unmount-only effect that flushes for the paths `close` cannot cover — a rail link, a
+  route change — since cancelling the timer there is the same loss reached sideways.
+
 Nothing about a draft's own lifecycle is audited. A draft is the only write path a person triggers by *typing*
 rather than by deciding, and an entry per autosave would put dozens behind one human action —
 `audit-and-log-retention.md`'s sizing, falsified as a side effect of a convenience. The act that *is*
@@ -422,6 +437,40 @@ Three things it refuses to do, each one a decision made elsewhere that a screen 
 not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and
 it does not hide the rail link from non-administrators — the screen answers 404 by §5C, and a hidden link
 would be a second, weaker copy of that authority decision living in the navigation.
+
+## The interface is tested now, which it was not
+
+Until #90 this shell had **no automated test of any kind that rendered a component**. The suite was 1,135
+tests in workerd and 204 in node, and the browser half was checked by reading it, plus a manual axe run for
+structure. That is the whole explanation for a finding worth stating plainly: an external audit of this
+repository confirmed seven code-level defects and **four of them were here** — a draft lost on close (#90),
+a sending mailbox inferred under a comment saying it never is (#94), a recipient parser that splits inside a
+quoted display name (#100), an empty inbox asserting routing is live (#101). The only unexercised layer held
+most of the bugs. The 1,135 tests had nothing to say about any of them.
+
+So there is a third config, `vitest.client.config.ts`, on the precedent `vitest.node.config.ts` set: a
+separate file rather than a `projects` block, because `vitest.config.ts` carries the measured timeouts and
+the Cloudflare pool and restructuring it to host a DOM would risk a stable suite for no gain. It runs
+`test/client/**/*.test.tsx` under `happy-dom`, and `pnpm test` runs all three.
+
+Two rules about what goes in it, because the wrong answer to either makes it worse than nothing:
+
+- **Only what needs a mount.** `splitAddresses` and the mailbox choice are plain functions, tested in
+  `test/node/` where they need neither a DOM nor a render. Mounting a component to test a pure function is
+  slower, has more ways to be wrong, and hides that the function was extractable. The line is whether the
+  *mount* is the subject — for #90 it is, since no arrangement of pure functions expresses "the unmount
+  cancelled the timer before the click handler's save could fire".
+- **`/app/session.js` is stubbed, not real.** It is a browser-absolute specifier the bundler leaves
+  external, so vitest needs to be told what it is; `test/client/session-stub.ts` is a seam that records
+  calls and resolves them when the test says so. These tests are about *when* a request happens and
+  *whether* one happens at all, and a real `apiFetch` would put a network in the middle of an assertion
+  about a timer.
+
+The tests also type-check as part of the **client** program, not the Worker's: `src/client/tsconfig.json`
+includes `../../test/client/**/*` and the Worker's tsconfig excludes it. The Worker must not have `lib: DOM`
+— `document` resolving inside `src/index.ts` would make a whole class of mistake compile — and checking a
+test against different lib settings than the component it mounts is how a test comes to compile while the
+component does not.
 
 ## Accessibility
 
