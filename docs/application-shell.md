@@ -44,6 +44,42 @@ in it, and Layer 3 adds rows rather than a shape.**
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
   a reader's eye rests, and the counts belong beside the mailboxes they describe.
 
+## Paging the inbox (#91)
+
+The list had no way to reach anything older than the newest fifty, so this screen gained the smallest control
+that fixes that and deliberately not a redesign.
+
+**A cursor stack, one page at a time**, rather than an infinite list that appends. Three reasons, in the order
+they decided it:
+
+1. Every page re-runs the whole authorization server-side — that is what the cursor carrying position only is
+   for — so an appending list of ten pages refetches ten pages on every window focus. Ten authorizations, and
+   for a supervised reader ten more `supervised.query` entries about mail they are not currently looking at.
+2. Going back needs no reverse query. The stack holds cursors already used, so *newer* is a `pop`, and the only
+   cursors ever sent are ones the Node produced.
+3. A page reads as a page. An appended list reads as *"this is the mail"*, which is not a claim anything here
+   can make.
+
+The stack is component state and is meant to be: it is a scroll position, not a fact about the mailbox, so a
+reload landing on the newest page is right rather than lost.
+
+Three things the screen has to get right, and each is an honesty rule rather than a layout one:
+
+- ***older* exists exactly when `next_cursor` is non-null** — the Node saying there is at least one more row
+  this reader may see at this instant. The end of the list is an absent control, never a disabled one, for the
+  same reason `StartMessage` renders nothing when somebody holds no sendable mailbox.
+- **The heading says `50 shown`, not `50 messages`.** The old wording was true while the listing returned
+  everything there was; against a page it states a count of the archive and prints the size of a page. Nothing
+  counted a total, and there are no page numbers to click for the same reason.
+- **An empty later page does not say "nothing has arrived yet".** That sentence is a claim about the whole Node
+  and is false on page four — #101's defect in a new place. It says *"nothing older on this page"* and offers
+  the way back, because the reader got there by pressing a control this screen rendered. It is reachable
+  without a race, too: the Node said there was more, and by the time the reader asked for it the rows it
+  counted could have been revoked.
+
+`test/client/inbox-pages.test.tsx` mounts the screen for all of it, because the cursor stack is state and
+`newer` is not a function anything can call.
+
 ## The honesty rules live outside React
 
 `delivery.client.js` is DOM-free, served at `/app/delivery.js`, and imported by the shell **at runtime

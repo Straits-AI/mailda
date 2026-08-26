@@ -1323,6 +1323,45 @@ is named: Workers Builds overrides the Worker's name, so a second install into o
 Worker and the same workflow name, and what happens then is unmeasured. The queue case collided silently;
 this one is not known to.
 
+**Mail older than the newest fifty could not be reached, and the fix is a cursor that carries no authority.**
+`listMessages` ordered by arrival and took fifty, with no cursor, no offset and no mailbox filter — so the
+fifty-first message was not slow to reach, there was no parameter a caller could pass and no control the
+interface could render that would return it. On a mailbox taking twenty messages a day that is three days
+before the product that is meant to be a system of record stops showing its own contents. The bytes were
+never lost; the archive was present and unnavigable, which for mail is close enough to matter the same way.
+
+**The part that needed care is that a page is a position inside an authorization scope, not just a
+position.** The listing authorizes *in SQL* and §7 requires the live relationship on every operation, so a
+reader's scope moves between page one and page two: a supervised grant expires, a team membership is revoked,
+a mailbox relation is removed. A cursor that remembered the mailbox set page one resolved would be fast,
+obvious, and would disclose rows the reader may no longer see. So the cursor is `(accepted_at, id)` and
+nothing else, and **every page re-runs the whole authorization** — which is also why it needs no signature:
+forging one moves your own position in an ordering you are re-authorized against. The test the design exists
+for revokes access between the two pages and proves page two cannot return a row the revocation removed,
+against both structures that answer *"who may read this mailbox"* — a standing relation somebody deletes and
+a grant that runs out of time.
+
+**Keyset, not `OFFSET`, and the reason is arrivals rather than taste.** Mail lands while somebody is reading,
+so an offset counting rows from the top would skip one message and repeat another on every page turn. Two
+things came out of measuring it. `ingress_receipts` **had no index on the column the listing has ordered by
+since Layer 1** — so every inbox load already scanned the table and sorted it, 6,004 rows read on a
+1,200-delivery corpus against a 1,000-row budget, invisible because the fixtures hold three messages. And the
+obvious one-line cursor — comparing `accepted_at || ' ' || id` as the export path does — is correct and *not*
+an index constraint, so it reproduced `OFFSET`'s cost curve inside the change made to avoid it: page twenty
+read 1,176 rows. Two predicates and one migration later, page one reads 208 and page twenty reads 210. The
+fifty is now `messages.page_size` with a measurement behind it, sized under the tighter of two ceilings —
+what the list budget allows, and what fits one audit entry, because §7 records each page as an act and a page
+that splits its record stops being one row per act. ([receipt](./docs/receipts/message-page-size.md))
+
+**The page control is two buttons, and the parity work is the larger half.** *Older* is rendered exactly when
+the Node says there is at least one more row this reader may see — an absent control rather than a disabled
+one — and *newer* is a pop of cursors already used, so nothing asks for a backwards cursor that does not
+exist. The heading says `50 shown` rather than `50 messages`, because nothing counted a total and printing the
+page size as one was the old wording's quiet lie. What took longer: a fix that taught only the browser to page
+would have left `getMessages()` on page one for ever in the SDK, the Skill and MCP, which is #91's own defect
+rebuilt in three surfaces. Query parameters are now part of the route registry, so all four learn them at
+once.
+
 **It sends and receives.** Two Mailda mailboxes on the same domain exchanged mail through Cloudflare —
 sealed into an immutable manifest, dispatched, received, parsed and threaded. Both send APIs and both
 MIME forms were verified end to end.
@@ -1574,6 +1613,17 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   sees. The Node can send, which is what makes emailing it tempting — and it would mean posting a
   credential to an address nobody has verified, from a mailbox whose sending capability is itself
   unverified.
+- **There is no search, so pagination is the only way to an old message.** Reaching one means paging back to
+  it, newest first. Search is a much larger question — what is indexed, whether the index is authorized the
+  same way the rows are — and an FTS index over subjects costs per-message storage the shard arithmetic would
+  have to be re-measured for. Pagination is what makes the existing list honest; it does not make an old
+  message findable by what it says.
+- **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
+  time order until it has found enough belonging to it — measured at 2,410 rows read to return 3 messages from
+  a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization
+  predicate has the same shape, so a reader who may see one mailbox in ten has always paid it. Fixing it means
+  driving the listing from a per-mailbox ordering rather than from the evidence table, which is a change to
+  what the inbox reads. ([receipt](./docs/receipts/message-page-size.md))
 - **A person cannot be removed.** Deleting an account with audit entries, cases and sealed manifests
   attributed to it is a different question with its own answer, and guessing it would be worse than
   leaving it. Revoking every relation is the available act, and it takes effect on the next request.

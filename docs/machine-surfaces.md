@@ -34,6 +34,23 @@ Every route that changes something is classified by hand, and `exposureOf` **thr
 It worked twice on its first day: `POST /api/sends/:sendId/cancel` was the one changing route the first
 draft forgot, and `POST /mcp` arrived from #89 needing a tier that did not exist.
 
+## A tool's inputs include the route's query parameters (#91)
+
+A path parameter becomes a required string and a request schema becomes `body`. A route's `query` becomes
+**optional strings, flat beside the path ones** — flat because an agent filling this schema is choosing values
+rather than building a URL, and the two names cannot collide: a path parameter is a `:name` in the path and a
+query parameter is not.
+
+It matters more here than the mechanism suggests. `getMessages` used to return the newest fifty with no way to
+ask for anything else, so an agent looking for last month's invoice thread had one page and no way to know
+there was more. It now reports a `next_cursor` and takes one, and the parameter's **description carries into
+the tool schema** — because a paging control an agent cannot see the meaning of is a control it will not use.
+
+An argument that is absent, empty or not a string is **omitted** rather than refused. Omitting is what the
+route already means by absent — the newest page, every mailbox — so the honest failure for a wrong value is the
+route's own refusal, which names the shape and the way back. A guard here would be a second, differently
+worded opinion about a value the route already validates.
+
 ## `governed` is not about permission
 
 §18 and #61 count **distinct people**. An agent acting inside somebody's session *is* that person — not a

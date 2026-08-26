@@ -1,0 +1,22 @@
+-- The order the inbox is read in (#91). Additive (#10 expand/contract): one index, no DROP.
+--
+-- `listMessages` has ordered by `accepted_at DESC` since Layer 1 and `ingress_receipts` has never had an
+-- index on it: the only indexes are the primary key and `ir_derived_key` on `(org_id, provider_event_id)`,
+-- neither of which the ordering can use. So every inbox load scanned the whole table and sorted it, which
+-- was invisible while the page was the newest fifty of a fixture's three messages and is the term that
+-- grows with the archive. `docs/receipts/message-page-size.md` prints the plan and the rows read either way.
+--
+-- Keyset paging is what makes the index load-bearing rather than merely nice: page two resumes strictly
+-- after a `(accepted_at, id)` position, and a resume that cannot seek has to re-read every row it already
+-- returned. Without this, the second page is more expensive than the first and the tenth is ten times the
+-- first -- the same shape as OFFSET, which #91 rejected for a different reason.
+--
+-- `id` third, so the index is a total order and covers the tie-break. Two messages accepted in the same
+-- millisecond are ordinary (one delivery to two addresses of the same mailbox arrives as two receipts with
+-- one timestamp), and a cursor on the timestamp alone would either skip one of them or replay it for ever.
+-- Including `id` also keeps the seek a covering one for the ordering columns, so the scan reads the index
+-- rather than the table until it has the page's rows.
+--
+-- SQLite scans an index backwards for a DESC ordering, so this serves `ORDER BY accepted_at DESC, id DESC`
+-- without a second DESC index -- printed in `test/explain.test.ts` rather than trusted.
+CREATE INDEX ir_org_accepted ON ingress_receipts (org_id, accepted_at, id);

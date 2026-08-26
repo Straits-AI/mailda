@@ -109,6 +109,20 @@ export function tools(): Tool[] {
     for (const parameter of parameters) {
       properties[parameter] = { type: "string", description: `The ${parameter} this acts on.` };
     }
+    /*
+     * Query parameters, flat beside the path ones and **not** required (#91).
+     *
+     * Flat rather than nested under a `query` object because an agent filling this schema is choosing values,
+     * not building a URL — and the two cannot collide: a path parameter is a `:name` in the path and a query
+     * parameter is not, so one route cannot declare the same name twice without `path()` refusing it.
+     *
+     * The description is the contract's own, because a paging control an agent cannot see the meaning of is a
+     * control it will not use. `getMessages` without `cursor` reads the newest page for ever, which is the
+     * defect #91 fixed in the interface and would have left standing here.
+     */
+    for (const parameter of spec.query ?? []) {
+      properties[parameter.name] = { type: "string", description: parameter.description };
+    }
     if (spec.request !== undefined) {
       properties["body"] = published(
         z.toJSONSchema(spec.request, { target: "draft-2020-12", io: "input" }),
@@ -222,7 +236,19 @@ export async function handleMcp(request: Request, dispatch: Dispatch): Promise<R
     }
 
     const url = new URL(request.url);
-    const target = `${url.origin}${path(route(tool.spec.method as never, tool.spec.path as never), filled)}`;
+    /*
+     * Query parameters are optional, so an argument that is absent or not a string is **omitted** rather than
+     * refused (#91). Omitting is what the route already means by absent — the newest page, every mailbox — so
+     * the honest failure for a wrong value is the route's own refusal, which names the shape. A guard here
+     * would be a second, differently-worded opinion about a value `messagePage` already validates.
+     */
+    const search = new URLSearchParams();
+    for (const parameter of tool.spec.query ?? []) {
+      const value = args[parameter.name];
+      if (typeof value === "string" && value !== "") search.set(parameter.name, value);
+    }
+    const query = search.toString() === "" ? "" : `?${search.toString()}`;
+    const target = `${url.origin}${path(route(tool.spec.method as never, tool.spec.path as never), filled)}${query}`;
     const body = args["body"];
 
     const answer = await dispatch(new Request(target, {

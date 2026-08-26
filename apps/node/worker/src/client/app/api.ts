@@ -1,7 +1,8 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { apiFetch } from "/app/session.js";
 import {
-  EXPORTS_LIST, EXPORT_RUN, path as routePath, route, type HttpMethod, type PathFor,
+  EXPORTS_LIST, EXPORT_RUN, MESSAGE_PAGE_PARAMS, path as routePath, route,
+  type HttpMethod, type PathFor,
 } from "@mailda/contract/routes";
 
 /**
@@ -238,10 +239,39 @@ export function useMe(): UseQueryResult<Me, Error> {
   return useQuery({ queryKey: ["me"], queryFn: () => read<Me>(GET("/api/me")), ...AUTHORIZATION_SENSITIVE });
 }
 
-export function useMessages(): UseQueryResult<{ messages: MessageRow[] }, Error> {
+export interface MessagesPage {
+  messages: MessageRow[];
+  /**
+   * Where the next page resumes, or null for *"nothing older is visible to you"* (#91).
+   *
+   * Opaque to this client on purpose. It is a position the Node computed, and a client that took it apart to
+   * decide anything would be holding a fact about the ordering that only the Node's query can be right about.
+   * It goes back exactly as it arrived.
+   */
+  next_cursor: string | null;
+}
+
+/**
+ * One page of the inbox.
+ *
+ * **The cursor is part of the query key**, so each page is its own cache entry and going back to a page
+ * already read is instant while still being re-authorized on the way — `AUTHORIZATION_SENSITIVE` applies per
+ * page, so a revocation takes effect on the next fetch of *any* page rather than only the newest one. That is
+ * the client half of what #91's cursor design is for: the Node re-runs the authorization for every page, and
+ * this must not hold a page long enough to make that pointless.
+ */
+export function useMessages(page?: { cursor?: string | null; mailbox?: string | null }):
+UseQueryResult<MessagesPage, Error> {
+  const cursor = page?.cursor ?? null;
+  const mailbox = page?.mailbox ?? null;
+  const search = new URLSearchParams();
+  if (cursor !== null) search.set(MESSAGE_PAGE_PARAMS.cursor, cursor);
+  if (mailbox !== null) search.set(MESSAGE_PAGE_PARAMS.mailbox, mailbox);
+  const query = search.toString();
+
   return useQuery({
-    queryKey: ["messages"],
-    queryFn: () => read<{ messages: MessageRow[] }>(GET("/api/messages")),
+    queryKey: ["messages", cursor, mailbox],
+    queryFn: () => read<MessagesPage>(`${GET("/api/messages")}${query === "" ? "" : `?${query}`}`),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
