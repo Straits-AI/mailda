@@ -17,8 +17,27 @@
  * parsed mailbox is acceptable. Parsing only — the Node owns policy.
  */
 
-/** Depth of nested comments we will track before giving up on balance. */
-const MAX_COMMENT_DEPTH = 8;
+/*
+ * There is deliberately **no ceiling on comment nesting depth**, and the version that had one is worth
+ * describing because the value was fine and the mechanism was not.
+ *
+ * `MAX_COMMENT_DEPTH = 8` guarded the increment and left the decrement alone, so past eight the counter
+ * stopped tracking reality: nine `(` then eight `)` left it reading zero while one comment was still open,
+ * and the next comma split an address in half. Measured on the shipped function — `"((((((((()))))))), x)
+ * a@b.test"` came back as two recipients, where the same input one paren shallower came back as one.
+ *
+ * Two reasons it is gone rather than fixed:
+ *
+ * **The number had no receipt.** AGENTS.md's second principle allows three answers — a receipt, an adapter
+ * capability field, or `0`/`1` — and eight was none of them. Eight is a perfectly sensible *tripwire*: no
+ * real address nests comments that far, so only broken input reaches it. But a tripwire has to be reachable
+ * *loudly*, and this one silently changed the parse. "A silent budget is worse than no budget."
+ *
+ * **Nothing needed it.** The depth is one integer and the input is already bounded by the field it came
+ * from; counting to a million costs a million increments on a string a million characters long. The cap was
+ * protecting against nothing, which is the best possible answer to "where is the receipt for this number" —
+ * remove the number.
+ */
 
 export function splitAddresses(value: string): string[] {
   const recipients: string[] = [];
@@ -63,7 +82,7 @@ export function splitAddresses(value: string): string[] {
         current += char;
         if (i + 1 < value.length) current += value[++i];
       } else if (char === "(") {
-        if (commentDepth < MAX_COMMENT_DEPTH) commentDepth++;
+        commentDepth++;
         current += char;
       } else if (char === ")") {
         commentDepth--;

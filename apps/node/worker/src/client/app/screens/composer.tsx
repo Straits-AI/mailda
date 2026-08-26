@@ -5,7 +5,7 @@ import { apiFetch } from "/app/session.js";
 import { CONFIG } from "/app/config.js";
 
 import { useMailboxes } from "../api.ts";
-import { splitAddresses } from "./split-addresses.js";
+import { splitAddresses } from "./split-addresses.ts";
 
 /**
  * The docked composer — the reason ADR 30 put React at this layer.
