@@ -10,10 +10,38 @@ Two acts are built, of deliberately different grain:
 
 | | `message.export` | `ediscovery.export` |
 |:--|:--|:--|
-| what | one message's original `.eml` | a bounded set of messages, staged as sealed objects |
+| what | one message's original bytes — inbound `.eml` **or** outbound submitted (#95) | a bounded set of messages, staged as sealed objects |
 | who | anybody holding the relation on the mailbox, or a supervised grant of scope `content` | somebody an administrator granted it to |
 | ceremony | none | a matter, and two approvers who are not the requester |
 | record | `message.exported`, per download | `supervised.export_requested`, then `_completed` or `_aborted` |
+
+## Both directions, since #95
+
+There are exactly two routes that stream a whole RFC 5322 message off this Node, and for four months they
+authorized differently:
+
+| | authorization | record |
+|:--|:--|:--|
+| `GET /api/messages/:id/raw` | `message.export` **and** `mailbox.content.read` | `message.exported` |
+| `GET /api/sends/:sendId/submitted` | ~~`mailbox.content.read` alone~~ → the same as above | ~~none~~ → `message.exported` |
+
+So somebody holding content read and not `message.export` was refused the inbound copy and served the
+outbound one: same mailbox, same kind of bytes, same person, opposite answers. And #65's question — *who has
+taken a copy off this Node* — was answerable in one direction.
+
+**The tempting argument for keeping them different fails on a shared mailbox.** It goes: downloading a
+message *you sent* reveals nothing you did not already have, because you composed it. But
+`mailbox.content.read` is held **per mailbox, not per author**, so it lets somebody download the messages
+their colleagues sent from it — and a shared mailbox is the entire product. The act is bytes leaving the
+Node, and the direction does not change what the act is.
+
+The two decisions are now neighbours in `authz-read.ts` (`authorizeExport`, `authorizeSendExport`), because
+the way the divergence survived is that nothing put them side by side: four hundred lines apart, written
+months apart, and no test asked them the same question.
+`test/node/original-bytes-world.test.ts` is that question, asked of both — it requires every route streaming
+original bytes to route its authorization through one of the two, so a third such route cannot invent a third
+answer. The entry now carries `direction`, since one action covers both and an auditor should not have to
+infer which bytes moved from whether the subject looks like a receipt id.
 
 ---
 

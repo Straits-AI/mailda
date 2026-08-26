@@ -126,6 +126,86 @@ describe("the submitted bytes are bounded by mailbox (#45)", () => {
   });
 });
 
+describe("taking a copy off the Node needs message.export, both directions (#95)", () => {
+  /*
+   * **The asymmetry this closes.** `GET /api/sends/:sendId/submitted` took `mayRead` — content access —
+   * while `GET /api/messages/:id/raw` takes `message.export` *and* `mailbox.content.read`. So the owner
+   * below, who holds content read and not `message.export`, was refused the inbound copy and served the
+   * outbound one: same mailbox, same kind of bytes, same person, opposite answers.
+   *
+   * The fixture is what makes this readable: `beforeEach` grants the owner `mailbox.content.read` and
+   * `send.propose` and deliberately **not** `message.export`, which is the shape of an ordinary member of a
+   * shared mailbox. #65 made export separately revocable exactly so that shape exists.
+   */
+  it("refuses the submitted bytes to a reader who may not export", async () => {
+    const response = await SELF.fetch(
+      `https://node/api/sends/${manifestId}/submitted`, as(await sessionFor(OWNER)));
+    // §5C: the same 404 a stranger gets. "You may not export this" must not be distinguishable from
+    // "there is no such send", or the difference reports which ids exist.
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "not_found", message: "No such send, or you do not have access to it.",
+    });
+  });
+
+  it("answers 401 with no session, rather than a 404 or a crash", async () => {
+    /*
+     * Found by `scripts/mutants.mjs`: removing the `who === null` guard left every test passing, because
+     * nothing asked this route for the unauthenticated case. Without the guard the next line dereferences a
+     * null principal and the caller gets a 500 — a bug report instead of "sign in", which is the difference
+     * `errors.ts` exists to keep.
+     *
+     * `refreshable` matters too: the client contract is that every 401 says whether a refresh is worth
+     * trying, and a client that cannot tell either retries forever or signs somebody out recoverably.
+     */
+    const response = await SELF.fetch(`https://node/api/sends/${manifestId}/submitted`);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: "unauthenticated", refreshable: true });
+  });
+
+  it("serves them once the relation is granted, so the refusal is about the relation", async () => {
+    /*
+     * The other direction, and it is what stops the test above passing for the wrong reason — a 404 caused
+     * by a broken fixture, a missing manifest or a typo in the id would look identical.
+     */
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'message.export','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, OWNER, MAILBOX, new Date(ctx.now()).toISOString()).run();
+
+    const response = await SELF.fetch(
+      `https://node/api/sends/${manifestId}/submitted`, as(await sessionFor(OWNER)));
+    // 409 rather than 200: this send is still `held`, so there are no submitted bytes yet. What matters is
+    // that it is past the authorization and answering about the *send* rather than about access.
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "no_submitted_bytes" });
+  });
+
+  it("records the export before the bytes move, naming the direction", async () => {
+    /*
+     * #65's guarantee: taking a copy off the Node is recorded. One action covers both routes now, so the
+     * entry carries `direction` — an auditor reading `message.exported` should not have to infer which kind
+     * of bytes moved from whether the subject looks like a receipt id.
+     */
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'message.export','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, OWNER, MAILBOX, new Date(ctx.now()).toISOString()).run();
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
+
+    await SELF.fetch(`https://node/api/sends/${manifestId}/submitted`, as(await sessionFor(OWNER)));
+
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT action, subject, detail FROM audit_entries WHERE org_id = ? AND action = 'message.exported'",
+    ).bind(ORG).first<{ action: string; subject: string; detail: string }>();
+    expect(entry, "no message.exported entry for an outbound copy").not.toBeNull();
+    expect(entry!.subject).toBe(manifestId);
+    expect(entry!.detail).toContain('"direction":"outbound"');
+  });
+});
+
 describe("cancelling is bounded by send.propose (#45)", () => {
   it("does not let a stranger stop somebody else's send", async () => {
     const response = await SELF.fetch(

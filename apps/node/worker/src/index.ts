@@ -18,8 +18,8 @@ import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/eve
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
 import {
-  listMessages, authorize, authorizeExport, mailboxesWithRelation, mayRead, maySend, principalFor,
-  readableSubjects,
+  listMessages, authorize, authorizeExport, authorizeSendExport, mailboxesWithRelation, maySend,
+  principalFor, readableSubjects,
 } from "./authz-read.ts";
 import { authorizeExportObject, exportsForReport, requestExport, runExport } from "./exports.ts";
 import { isAppRoute } from "./app-routes.ts";
@@ -1597,32 +1597,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      */
     const submitted = /^\/api\/sends\/([^/]+)\/submitted$/.exec(url.pathname);
     if (submitted && request.method === "GET") {
-      const who = await principalFor(env, clock, request);
-      if (who === null) return unauthenticated();
-      const row = await env.CATALOG.prepare(
-        "SELECT submitted_key, fidelity, mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
-      ).bind(who.orgId, submitted[1]!)
-        .first<{ submitted_key: string | null; fidelity: string; mailbox_id: string }>();
-
-      // §5C: an absent send, one belonging to another organization, and one in a mailbox this caller may
-      // not read all answer identically. The third case is #45 — this endpoint streams the **submitted
-      // bytes**, so it disclosed the whole message rather than a row about it, and it was bounded by
-      // organization alone.
-      // The submitted bytes are a whole RFC 5322 message, attachments included, so this is the same act the
-      // raw inbound read is and takes the same action rather than a weaker one.
-      if (row !== null && !(await mayRead(env, clock, { orgId: who.orgId, userId: who.userId }, row.mailbox_id,
-        { action: "supervised.attachment", subject: submitted[1]! }))) {
-        return Response.json(
-          { error: "not_found", message: "No such send, or you do not have access to it." },
-          { status: 404 },
-        );
-      }
-      if (row === null) {
-        return Response.json(
-          { error: "not_found", message: "No such send, or you do not have access to it." },
-          { status: 404 },
-        );
-      }
+      /*
+       * One call, and the authorization lives beside the inbound `.eml`'s in `authz-read.ts` (#95).
+       *
+       * It used to be written out here — a `mayRead` and a §5C 404 — and that is how it came to differ from
+       * `authorizeExport`: content access where the inbound path requires `message.export`, so the same
+       * person was refused one copy and served the other. Two routes stream a whole RFC 5322 message off
+       * this Node and they now share one decision, because the way the divergence survived was that nothing
+       * put them next to each other.
+       */
+      const allowed = await authorizeSendExport(env, clock, request, submitted[1]!);
+      if (!allowed.ok) return allowed.response;
+      const row = allowed.row;
       if (row.submitted_key == null) {
         return Response.json(
           {

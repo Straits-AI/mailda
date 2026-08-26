@@ -281,6 +281,16 @@ describe("the ledgers answer what the contract says they do", () => {
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
          VALUES (?,?,?,'send.propose','mailbox',?,?)`,
       ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+      /*
+       * `message.export`, because `GET /api/sends/:sendId/submitted` requires it since #95 — the outbound
+       * original-message download now asks for the same relation the inbound `.eml` always did. Before that
+       * it took content access alone, which is why this fixture never needed it and why the divergence
+       * survived: the test that exercised the route could not have noticed the weaker requirement.
+       */
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'message.export','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
     ]);
     return mailboxId;
   }
@@ -481,6 +491,16 @@ describe("the acts answer what the contract says they do", () => {
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
          VALUES (?,?,?,'send.propose','mailbox',?,?)`,
       ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+      /*
+       * `message.export`, because `GET /api/sends/:sendId/submitted` requires it since #95 — the outbound
+       * original-message download now asks for the same relation the inbound `.eml` always did. Before that
+       * it took content access alone, which is why this fixture never needed it and why the divergence
+       * survived: the test that exercised the route could not have noticed the weaker requirement.
+       */
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'message.export','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
     ]);
     return mailboxId;
   }
@@ -608,6 +628,16 @@ describe("the operator and key surfaces", () => {
       testEnv.CATALOG.prepare(
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
          VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
+      /*
+       * `message.export`, because `GET /api/sends/:sendId/submitted` requires it since #95 — the outbound
+       * original-message download now asks for the same relation the inbound `.eml` always did. Before that
+       * it took content access alone, which is why this fixture never needed it and why the divergence
+       * survived: the test that exercised the route could not have noticed the weaker requirement.
+       */
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'message.export','mailbox',?,?)`,
       ).bind(ctx.id("rt"), ORG, USER, mailboxId, at),
     ]);
     return mailboxId;
@@ -932,7 +962,15 @@ describe("the routes that only exist once mail has landed", () => {
         "INSERT INTO addresses (id, org_id, mailbox_id, address, created_at) VALUES (?,?,?,?,?)",
       ).bind(ctx.id("adr"), ORG, mailboxId, address, at),
     ];
-    for (const relation of ["send.propose", "mailbox.content.read", "mailbox.metadata.read"]) {
+    /*
+     * `message.export` joins the list because `GET /api/sends/:sendId/submitted` requires it since #95 — the
+     * outbound original-message download asks for the same relation the inbound `.eml` always did. It took
+     * content access alone before, which is exactly why this fixture did not need it and why the divergence
+     * survived four months: the test exercising the route could not have noticed the weaker requirement.
+     */
+    for (const relation of [
+      "send.propose", "mailbox.content.read", "mailbox.metadata.read", "message.export",
+    ]) {
       rows.push(testEnv.CATALOG.prepare(
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
          VALUES (?,?,?,?,'mailbox',?,?)`,

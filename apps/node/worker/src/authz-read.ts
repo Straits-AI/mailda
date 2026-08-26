@@ -578,6 +578,101 @@ export async function authorizeExport(
   return { ok: true, blobKey: row.blob_key };
 }
 
+/**
+ * Authorizes the **outbound** original-message download: `GET /api/sends/:sendId/submitted` (#95, #16).
+ *
+ * ## Why this lives here rather than in the route
+ *
+ * There are exactly two endpoints in this product that stream a whole RFC 5322 message off the Node —
+ * inbound `.eml` and these submitted bytes — and until #95 they authorized **differently**. The inbound one
+ * came through `authorizeExport` above: `message.export` plus `mailbox.content.read`, with a
+ * `message.exported` entry written before the blob key was returned. The outbound one took `mayRead` alone,
+ * under a comment claiming it took *"the same action rather than a weaker one"*.
+ *
+ * So somebody holding content read and not `message.export` was refused the inbound copy and served the
+ * outbound one: same mailbox, same kind of bytes, same person, opposite answers. #65 exists to make *"who
+ * has taken a copy off this Node"* answerable, and it was answerable in one direction.
+ *
+ * The two decisions are siblings in one file now, because the way that divergence survived was that nothing
+ * put them next to each other. `test/node/original-bytes-world.test.ts` is the other half — it enumerates
+ * the routes that stream original bytes and requires each to come through one of these two functions, so a
+ * third such route cannot authorize itself a third way.
+ *
+ * ## Why symmetry rather than the other defensible answer
+ *
+ * The argument for keeping them different is that downloading a message *you sent* reveals nothing you did
+ * not already have — you composed it. **That fails on a shared mailbox, which is the entire product.**
+ * `mailbox.content.read` is held per mailbox and not per author, so it lets somebody download the messages
+ * their colleagues sent from it. The act is bytes leaving the Node, and the direction does not change what
+ * the act is.
+ */
+export async function authorizeSendExport(
+  env: Env,
+  ctx: Ctx,
+  request: Request,
+  sendId: string,
+): Promise<{ ok: true; row: { submitted_key: string | null; fidelity: string } } | { ok: false; response: Response }> {
+  const notFound = {
+    ok: false as const,
+    response: Response.json(
+      { error: "not_found", message: "No such send, or you do not have access to it." },
+      { status: 404 },
+    ),
+  };
+
+  const who = await principalFor(env, ctx, request);
+  if (who === null) {
+    return {
+      ok: false,
+      response: Response.json(
+        { error: "unauthenticated", message: "Sign in to read messages.", refreshable: true },
+        { status: 401, headers: { "x-mailda-refreshable": "true" } },
+      ),
+    };
+  }
+
+  const row = await env.CATALOG.prepare(
+    "SELECT submitted_key, fidelity, mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(who.orgId, sendId)
+    .first<{ submitted_key: string | null; fidelity: string; mailbox_id: string }>();
+  if (row === null) return notFound;
+
+  // §5C: "you may not export this" and "there is no such send" answer alike, exactly as the inbound path
+  // does — the id itself would otherwise disclose that a send exists in a mailbox the caller holds nothing on.
+  const exportable = await hasAnyRelation(env, who, ["message.export"], row.mailbox_id, {
+    scopes: SCOPES_FOR_CONTENT,
+    at: new Date(ctx.now()).toISOString(),
+  });
+  if (!exportable.allowed) return notFound;
+
+  if (!(await mayRead(env, ctx, who, row.mailbox_id,
+    { action: "supervised.attachment", subject: sendId }))) return notFound;
+
+  /*
+   * Appended **before** the caller reaches the bytes, and `recordDisclosure` throws rather than swallowing —
+   * so a Node that cannot write its trail does not hand the message over. Failing closed is the only
+   * direction that makes the record mean anything, and it is the inbound path's contract unchanged.
+   */
+  await recordDisclosure(env, ctx, who.orgId, [{
+    action: "message.exported",
+    outcome: "ok",
+    actorUserId: who.userId,
+    // The manifest id, so "who took a copy of this send" is one filter — the outbound counterpart of the
+    // inbound entry's receipt id.
+    subject: sendId,
+    detail: {
+      sendId,
+      mailboxId: row.mailbox_id,
+      // Which direction the bytes went, because one action now covers both and an auditor reading
+      // `message.exported` should not have to infer it from whether the subject looks like a receipt.
+      direction: "outbound",
+      grantId: exportable.grantId,
+    },
+  }]);
+
+  return { ok: true, row: { submitted_key: row.submitted_key, fidelity: row.fidelity } };
+}
+
 /* ---- one page of the inbox (#91) --------------------------------------------------------------- */
 
 /**
