@@ -27,9 +27,15 @@ const { previewUrlFrom, shouldPromote, versionIdFrom } =
  * The parsers get real tests, because they are pure and because a mis-parsed version id promotes the wrong
  * version — which is the one failure in this sequence that cannot be undone by not promoting anything.
  *
- * **What is deliberately not covered**: that `wrangler versions upload` actually publishes without shifting
- * traffic. That is Cloudflare's behaviour, not this repository's, and the whole rollback story rests on it.
- * It is documented in the deploy function and would need a real account to verify — the same gap #99 has.
+ * **Two things deliberately not covered**, both properties of Cloudflare rather than of this repository, and
+ * both needing a real account to verify — the same gap #99 has:
+ *
+ *   - that `wrangler versions upload` publishes without shifting traffic, which the whole rollback story
+ *     rests on;
+ *   - that the canary's **Durable Objects run the previous version's code**, because only one version of each
+ *     may run at a time and the canary holds 0% of traffic. So a change inside `KeyVault` or `OutboxSweeper`
+ *     is not what the gate checked. Documented in the deploy function, because "checked before promotion" is
+ *     not true of that one part and a reader should not have to discover it mid-rollout.
  */
 
 /** The order of the steps, by the string each one prints. */

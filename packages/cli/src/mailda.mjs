@@ -212,6 +212,27 @@ async function doctorVerdict(origin) {
  * `doctor` against the canary is therefore not the closing courtesy it used to be. It is the gate that
  * decides whether traffic moves, which is why it can no longer be skipped by omitting `--url`.
  *
+ * ## What the canary check does **not** cover, and it is not what you would guess
+ *
+ * **Durable Object code is not the canary's.** Cloudflare guarantees global uniqueness by running exactly one
+ * version of each Durable Object at a time, and under a gradual deployment each object is assigned a version
+ * by the traffic percentages. The canary has **0%**, so `KeyVault` and `OutboxSweeper` run the *previous*
+ * version's code while the canary's `fetch` runs the new one.
+ *
+ * Two consequences, and the first is more useful than it sounds:
+ *
+ *   - What the canary actually validates is **mixed-version compatibility** — new Worker code against old DO
+ *     code — which is the state every gradual rollout passes through anyway, and the state a big-bang deploy
+ *     never tests at all. So the check is exercising something real.
+ *   - But a change *inside* a Durable Object class is **not** what the canary checked. A broken `restore()` or
+ *     a broken alarm would pass the gate and only take effect once traffic moved. This is the one part of the
+ *     sequence where "checked before promotion" is not true, and it is written here rather than left for
+ *     somebody to find out during a rollout.
+ *
+ * Nothing here fixes that; it is a property of how Durable Objects and versions interact. What would is a
+ * check that exercises the DO paths after promotion and can still roll back — which needs the rollback to be
+ * a real step again, and is a decision rather than an omission.
+ *
  * **It does not refuse Workers Free**, and the README no longer says it does. A Worker cannot read its
  * account's plan and this CLI has no documented endpoint for it either; the honest state is unverified,
  * which is what `doctor` reports.
