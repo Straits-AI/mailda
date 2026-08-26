@@ -20,7 +20,14 @@ export interface Call {
 /** Every call made since the last `reset`, in order. The assertion surface. */
 export const calls: Call[] = [];
 
-type Handler = (call: Call) => Promise<Response> | Response;
+/**
+ * What a test answers a call with.
+ *
+ * `undefined` means **not mine** — fall through to the built-in defaults for the mailbox list and the inbox.
+ * That is what lets a suite answer one path explicitly without having to reproduce every other path the
+ * screen it mounts happens to fetch.
+ */
+type Handler = (call: Call) => Promise<Response | undefined> | Response | undefined;
 
 /** The default mailbox list: one, with one address, so nothing has to be chosen. */
 export interface StubMailbox {
@@ -34,7 +41,7 @@ const ONE_MAILBOX: StubMailbox[] = [{ id: "mbx_test", name: "Support", addresses
 let mailboxes: StubMailbox[] = ONE_MAILBOX;
 /** The inbox list. Empty by default, which is the state most of these tests are about. */
 let messages: unknown[] = [];
-let handler: Handler = () => Response.json({ draft: null });
+let handler: Handler = () => undefined;
 
 /**
  * What every call other than the mailbox list answers.
@@ -46,6 +53,18 @@ let handler: Handler = () => Response.json({ draft: null });
  */
 export function answerWith(next: Handler): void {
   handler = next;
+}
+
+/**
+ * Answer the draft routes and nothing else.
+ *
+ * `answerWith` hands a test *every* call, which is right when a suite wants control of the whole surface
+ * and wrong when it only cares about one route — a blanket handler silently answers `/api/mailboxes` too,
+ * and the screen then renders with no mailbox and fails somewhere unrelated to what the test is about.
+ * Naming the path is how a test says what it means.
+ */
+export function answerDrafts(next: (call: Call) => Promise<Response> | Response): void {
+  handler = (call) => (call.path.startsWith("/api/drafts") ? next(call) : undefined);
 }
 
 export function answerMailboxes(rows: StubMailbox[]): void {
@@ -60,7 +79,7 @@ export function reset(): void {
   calls.length = 0;
   mailboxes = ONE_MAILBOX;
   messages = [];
-  handler = () => Response.json({ draft: null });
+  handler = () => undefined;
 }
 
 /**
@@ -77,9 +96,21 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     body: typeof init.body === "string" ? JSON.parse(init.body) : undefined,
   };
   calls.push(call);
+  /*
+   * **The test's own handler wins.** The defaults below are scenery for the suites that do not care about
+   * these two paths, and for a while they were consulted *first* — which silently stole `/api/messages`
+   * from a test that had explicitly answered it with `answerWith`, so that test rendered an empty inbox and
+   * failed looking for a message it had supplied. A default that overrides an explicit instruction is not a
+   * default.
+   *
+   * `answered` is how the fallback is distinguished from a handler that genuinely wants to return nothing:
+   * a handler may return `undefined` to mean "not mine, use the default".
+   */
+  const answered = await handler(call);
+  if (answered !== undefined) return answered;
   if (path.startsWith("/api/mailboxes")) return Response.json({ mailboxes });
   if (path.startsWith("/api/messages")) return Response.json({ messages });
-  return await handler(call);
+  return Response.json({ draft: null });
 }
 
 /** `session.client.js` exports this too, and `api.ts` imports it. Nothing here exercises a countdown. */

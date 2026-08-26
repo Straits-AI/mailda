@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerWith, calls, reset } from "./session-stub.ts";
+import { answerDrafts, calls, reset } from "./session-stub.ts";
 
 /**
  * Closing the composer does not lose what was typed (#90).
@@ -80,7 +80,7 @@ beforeEach(() => {
    * available outcome — the boundary this test exists to sit exactly on cannot be shared with the wall.
    */
   vi.useFakeTimers();
-  answerWith(() => Response.json({
+  answerDrafts(() => Response.json({
     draft: { id: "dft_01", to: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" },
   }));
 });
@@ -145,7 +145,7 @@ describe("a close that cannot save does not close", () => {
      * already worked this way for a legal hold; `close` now does too.
      */
     const { onClose } = mount();
-    answerWith(() => Response.json(
+    answerDrafts(() => Response.json(
       { error: "E_LEGAL_HOLD", message: "A legal hold covers this mailbox." }, { status: 409 },
     ));
     await type("refused");
@@ -161,7 +161,7 @@ describe("a close that cannot save does not close", () => {
 
   it("keeps it open when the Node cannot be reached at all", async () => {
     const { onClose } = mount();
-    answerWith(() => { throw new Error("network down"); });
+    answerDrafts(() => { throw new Error("network down"); });
     await type("unreachable");
 
     await press(/^close$/);
@@ -181,7 +181,7 @@ describe("two writes never overlap", () => {
      */
     const { onClose } = mount();
     let release: (() => void) | null = null;
-    answerWith(async () => {
+    answerDrafts(async () => {
       await new Promise<void>((resolve) => { release = resolve; });
       return Response.json({
         draft: { id: "dft_01", to: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" },
@@ -200,7 +200,7 @@ describe("two writes never overlap", () => {
 
     // Now let the in-flight write land. Nothing changed while it was in the air, so its result is the
     // answer and the dock closes on it without a second request.
-    answerWith(() => Response.json({
+    answerDrafts(() => Response.json({
       draft: { id: "dft_01", to: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" },
     }));
     await act(async () => { release!(); });
@@ -225,7 +225,7 @@ describe("discarding removes the draft the in-flight write just created", () => 
      */
     mount();
     let release: (() => void) | null = null;
-    answerWith(async (call) => {
+    answerDrafts(async (call) => {
       if (call.method === "DELETE") return Response.json({}, { status: 204 });
       await new Promise<void>((resolve) => { release = resolve; });
       return Response.json({
