@@ -240,7 +240,13 @@ export const ROUTES = [
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
   { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", response: S.policyListResponse },
-  { method: "POST", path: "/api/policies", summary: "Create a policy", response: S.policyDraftResponse },
+  {
+    method: "POST", path: "/api/policies",
+    summary: "Create a policy",
+    // Strict, and #93's `createPolicyRequest` argues why this route is not one of the ones that tolerate
+    // an unknown field: every field of a policy body changes which sends the rule catches.
+    request: S.createPolicyRequest, response: S.policyDraftResponse,
+  },
   {
     method: "PUT",
     path: "/api/policies/:policyId/draft",
@@ -249,7 +255,7 @@ export const ROUTES = [
      * interface returned 404 `not_found` for as long as the route existed. Found by writing this registry.
      */
     summary: "Replace a policy's draft",
-    response: S.policyDraftResponse,
+    request: S.editPolicyDraftRequest, response: S.policyDraftResponse,
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", response: S.approvalListResponse },
@@ -485,4 +491,44 @@ export function route<M extends HttpMethod>(method: M, template: PathFor<M>): Ro
   const found = ROUTES.find((spec) => spec.method === method && spec.path === template);
   if (found === undefined) throw new Error(`no route ${method} ${template} is registered`);
   return found;
+}
+
+/**
+ * The templated routes as regexes, compiled once at module load rather than per request.
+ *
+ * `[^/]+` because a captured segment is one segment: the same shape `src/index.ts` matches with, and the same
+ * shape `path()` emits, since it percent-encodes anything that would add a slash.
+ */
+const MATCHERS: ReadonlyArray<{ method: string; pattern: RegExp; spec: RouteSpec }> = (ROUTES as readonly RouteSpec[])
+  .filter((spec) => spec.path.includes(":"))
+  .map((spec) => ({
+    method: spec.method,
+    pattern: new RegExp(`^${spec.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:\w+/g, "[^/]+")}$`),
+    spec,
+  }));
+
+/**
+ * `path()` run backwards: which route is *this* request (#93).
+ *
+ * `path()` turns a spec and its parameters into a URL, which is what a client needs. A server needs the
+ * other direction — a concrete `/api/policies/pol_01J…/draft` and a verb, back to the spec that describes
+ * it — and until #93 nothing needed it, because nothing on the Node read the contract at request time.
+ *
+ * **Literals before templates**, and that ordering is the only judgement in here. `/api/policies` and
+ * `/api/policies/:policyId/draft` cannot collide, but a future `/api/sends/summary` beside
+ * `/api/sends/:sendId` could, and an exact path is never the ambiguous reading. Matching in registration
+ * order instead would make correctness depend on where somebody happened to insert a line.
+ *
+ * The method is part of the answer, not a filter applied afterwards, for the reason `route()` types it that
+ * way: `POST /api/policies` and `GET /api/policies` are two routes, and #85 shipped a defect that existed
+ * only because a verb was assumed.
+ *
+ * Returns null for a path this Node does not serve rather than throwing: an unmatched `/api/…` path is the
+ * handler's 404 to give, and a caller that threw here would turn every stray URL into a 500.
+ */
+export function specFor(method: string, pathname: string): RouteSpec | null {
+  const all: readonly RouteSpec[] = ROUTES;
+  const exact = all.find((spec) => spec.method === method && spec.path === pathname);
+  if (exact !== undefined) return exact;
+  return MATCHERS.find((m) => m.method === method && m.pattern.test(pathname))?.spec ?? null;
 }

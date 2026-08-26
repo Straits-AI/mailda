@@ -11,6 +11,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 
 import { claimNode } from "./claim.ts";
 import { migrate } from "./migrate.ts";
+import { refuseUnknownFields } from "./request-shape.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
 import { EvidenceMissing, getEvidence, streamEvidence } from "./evidence-store.ts";
 import { acceptInbound } from "./ingress.ts";
@@ -301,6 +302,21 @@ async function answer(request: Request, env: Env, ctx: ExecutionContext): Promis
   const clock = createSystemCtx();
   const requestId = clock.id("req");
   try {
+    /*
+     * The contract, applied rather than described (#93).
+     *
+     * Inside this `try` and before the route, which is a deliberate position on two counts. Before the
+     * route and before authentication, for the reason `noStore` and the security headers sit one level out:
+     * a check each handler has to remember is one that will be forgotten, and this one fails **silently**
+     * when forgotten — a misspelled policy condition used to publish a rule matching every send in the
+     * organization and report it as created. And inside the `try`, so its refusal travels the same
+     * `CallerError` path as every other refusal and arrives as a four-part 422 rather than needing a second
+     * copy of this catch.
+     *
+     * `handleMcp` re-enters `handler.fetch`, so it reaches here too — the machine surface is held to the
+     * same closed set rather than to a second definition of it.
+     */
+    await refuseUnknownFields(request, new URL(request.url).pathname);
     return await route(request, env, ctx);
   } catch (error) {
     // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
@@ -2782,11 +2798,17 @@ function unauthenticated(): Response {
  * never fires"*, arriving through the API instead of through the schema, and the five-column table would not
  * have caught it because the extra key would never reach a column.
  *
- * An unrecognised key is therefore **ignored rather than refused**, and that is the one weak spot here worth
- * naming: a caller who spells `mailbox_id` instead of `mailboxId` publishes an unconditional policy and is
- * told nothing. Refusing unknown keys is the better behaviour and it belongs with the command contract in
- * `packages/contract`, which is where every channel's validation is generated from — a second hand-written
- * validator in this file is the correspondence problem `errors.ts` already rejected once.
+ * An unrecognised key is still **ignored rather than refused here**, and since #93 that is no longer a weak
+ * spot, because it is no longer the only line. `conditions` is a strict object in
+ * `packages/contract/src/schemas.ts` and `refuseUnknownFields` applies it at the boundary, so
+ * `{"mailbox_id":…}` never reaches this function — it is refused by name, with the five that exist, before
+ * anything is written. That is where the check belongs: the contract is where every channel's validation
+ * comes from, and a second hand-written validator in this file is the correspondence problem `errors.ts`
+ * already rejected once.
+ *
+ * This stays exactly as it was, and the reason is worth stating rather than trusting: it is the **last**
+ * line, not the first. A future route, a Butler effect or a restore path that builds conditions without
+ * going through the HTTP boundary still cannot smuggle a sixth key into the five columns.
  */
 function conditionsFrom(raw: unknown): PolicyConditions {
   if (typeof raw !== "object" || raw === null) return {};
@@ -2823,6 +2845,12 @@ function conditionsFrom(raw: unknown): PolicyConditions {
  * Coerced rather than trusted, for the reason `conditionsFrom` coerces its volume floor: JSON from a form
  * carries `"2"`, and `normaliseStages` demands an integer, so an uncoerced value would be refused with a
  * message about its own value being unusable.
+ *
+ * A stage's unrecognised keys are refused at the boundary since #93, for the same reason a condition's are
+ * and with the same mechanism: `team` is a **constraint**, so `{"count":1,"teem":"tm_finance"}` dropped
+ * quietly is not a stage with less detail — it is §18's separation of duty replaced by any single approver,
+ * in a rule whose author believed they had written the opposite. `count` is not: a misspelled count leaves
+ * `Number(undefined)`, and `normaliseStages` already refuses that loudly with `E_BAD_APPROVAL_STAGE`.
  *
  * `undefined` and `[]` both mean the default, which is one stage of count 1. Anything that is not an array is
  * `undefined` rather than an error here: `normaliseStages` refuses what it cannot use, and one refusal beats

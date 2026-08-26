@@ -76,9 +76,15 @@ decisions. That one structure expresses all three review shapes §18 asks for.
 | dual control | either | whichever of the two the organization means |
 | separation of **duty** | `[{count: 1, team: finance}, {count: 1, team: legal}]` | the same chain, each stage narrowed to a team ([#73][73]) |
 
-A stage is a **count and an optional team**. `2` and `{count: 2}` are the same stage and normalise to one
-stored form; `team: null` is the absence of a constraint and is what every stage written before migration 0032
-means, so nothing was backfilled.
+A stage is a **count and an optional team**, and those are the only two things it is. `2` and `{count: 2}` are
+the same stage and normalise to one stored form; `team: null` is the absence of a constraint and is what every
+stage written before migration 0032 means, so nothing was backfilled.
+
+Since [#93][93] the API **refuses** a stage field it does not recognise, rather than dropping it:
+`{count: 1, teem: finance}` accepted quietly is not a stage with less detail, it is separation of *duty*
+replaced by any single approver, in a rule whose author believed they had written the opposite. The refusal is
+`E_POLICY_STAGE_FIELD_UNKNOWN` and it names the three fields that exist. `teamId` is accepted as a spelling of
+`team` because the route always accepted both.
 
 **The order is on the stages, not on the people.** That is what makes an order expressible at all: a set
 defined by a relation has no natural sequence, and naming people in a policy would widen authority. Each
@@ -505,3 +511,4 @@ see what they are agreeing to *before* they decide — a trail is where a decisi
 [65]: https://github.com/Straits-AI/mailda/issues/65
 [66]: https://github.com/Straits-AI/mailda/issues/66
 [73]: https://github.com/Straits-AI/mailda/issues/73
+[93]: https://github.com/Straits-AI/mailda/issues/93

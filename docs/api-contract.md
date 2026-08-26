@@ -111,8 +111,62 @@ tidiness into a property:
   so a route that grew one fails.
 - **`GET /api/auth/passkeys`** must never return a public key. Same shape, same reason.
 
-Requests are deliberately **not** strict: a caller sending a field this Node ignores is harmless, and
-refusing it would break every client written against a later version.
+Requests are **not strict by default**, for a reason that holds most of the time: a caller sending a field
+this Node ignores is usually harmless, and refusing it would break every client written against a later
+version. See the next section for where "usually" ran out.
+
+### Step 2½: the contract applied to requests, not only describing them (#93)
+
+Step 2 wrote request schemas and step 3 generated a client from them, and through both of those **nothing on
+this Node ever checked a body against one**. The one place that read `spec.request` was `src/mcp.ts`, which
+turned it into an MCP tool's input schema and then forwarded the body to the route unexamined. The schemas
+described; nothing enforced. A route that had a schema read exactly like a route that was validated, which is
+why the gap survived two tickets that were looking straight at it — and it is the general lesson worth
+keeping: a contract package can be complete, imported and tested and still not be load-bearing.
+
+What it cost: `POST /api/policies` with `{"conditions":{"mailbox_id":"mbx_…"}}` — snake case instead of camel
+— reached `conditionsFrom`, which reads five named fields, dropped the key, and stored five NULLs. Five NULLs
+is a policy version matching **every send in the organization**. The `allow` written to narrow a gate widened
+it; a `deny` would have stopped all outbound mail; a `require_approval` would have gated the whole Node. And
+the caller was told the policy was created, because it was — publishing is immutable and versioned, so the
+wrong rule became a numbered version doing exactly what it was written to do.
+
+`apps/node/worker/src/request-shape.ts` is the boundary that closes it. Three decisions are worth reading
+before changing it:
+
+- **Unknown fields only, and the name says so.** `refuseUnknownFields`, not `validateRequest`. The handlers
+  already refuse bad *values* with four-part messages a schema cannot produce — `E_BAD_POLICY_OUTCOME` names
+  the four outcomes and why there cannot be a fifth, `E_BAD_POLICY_VOLUME` explains why a floor of 0 is an
+  unconditional rule in disguise. Parsing the whole body at the boundary would replace every one of them with
+  "expected string". What no handler can refuse is a field it never reads.
+- **Central, before the route and before authentication.** Same argument as `noStore`: a check each handler
+  has to remember is one that will be forgotten, and the forgotten case here is silent. `handleMcp` re-enters
+  this Worker's own `fetch`, so the machine surface is held to the same closed set rather than to a copy.
+- **Strictness is per route, decided and argued.** Not a global flag. Today the two policy-writing routes are
+  strict and six are tolerant, and `test/node/request-shape-world.test.ts` asserts **both sets exactly**, so
+  neither a route acquiring strictness without the argument nor one losing it is quiet.
+
+The `E_` code travels in the schema's `.meta({ refusal })`, beside the closed set it describes — the same
+reason `errors.ts` puts the HTTP status on the throw rather than in a lookup table.
+
+#### Why the policy body is where the default breaks
+
+The forward-compatibility argument is that an ignored field means *one thing less*. In a condition bag it
+means *the opposite rule*, because the fields are what make the rule narrow. That applies at both levels, and
+missing the outer one would have left the hole open: `{"conditons":{…}}` reaches `conditionsFrom(undefined)`,
+which is `{}`, which is the unconditional rule again. So the body and the bag are both closed, and so is an
+approval stage — a dropped `team` is §18's separation of *duty* replaced by any single approver.
+
+#### The tripwire is two halves, and neither is sufficient
+
+| half | proves | would pass over |
+|:--|:--|:--|
+| `test/node/request-shape-world.test.ts` | every closed set the contract declares is refused, named, and coded | a Worker that never calls the boundary |
+| `test/request-shape.test.ts` | a real Node refuses each of them, unauthenticated, with a 422 | a closed set the enumeration missed |
+
+Both drive the same walk over the schemas (`test/closed-sets.ts`) rather than a list of cases, because a list
+of cases has the property this ticket is about: it looks like a closed world and stops being one when the
+seventh closed set arrives.
 
 ### One schema states a property two routes have to share
 
