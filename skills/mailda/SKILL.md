@@ -58,7 +58,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getMailboxes` | The mailboxes this person may act in |
 | `getMatters` | Matters a hold or an export can be scoped to |
 | `getMe` | Who this session is |
-| `getMessages` | Message metadata, paged |
+| `getMessages` | Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible |
 | `getMessagesByReceiptIdBody` | One message's rendered body. Takes the receipt id that GET /api/messages returns as `id` |
 | `getMessagesByReceiptIdRaw` | One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does |
 | `getNotifications` | What has changed since the last poll |

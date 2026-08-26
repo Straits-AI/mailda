@@ -259,6 +259,30 @@ Response types come from the schemas **by identity**: a `RouteSpec` carries the 
 so the generator finds the export whose value *is* that object. No new field, no second registry — and a
 schema that is inlined rather than exported fails generation, which is the right pressure.
 
+### Query parameters are part of a route, and #91 is why
+
+A route's `query` names the parameters it reads, each an **optional string**. There is no required form and no
+other type, and both absences are decisions: a parameter a route cannot answer without is a path segment
+wearing a disguise, and belongs in `path` where `path()` refuses to build a URL without it; a generated client
+that can only send strings is honest about what a query string carries.
+
+They arrived with #91, which is the argument for having them at all. `GET /api/messages` returned the newest
+fifty and nothing else, so the fifty-first message was unreachable. Teaching the interface to page while
+leaving `getMessages()` with no way to send a cursor would have left that same defect standing in the SDK, the
+Skill and MCP — three of the four surfaces ADR 12 exists to keep in step. Declared on the route, all four
+learn it from one edit: the SDK grows an optional `query` argument, MCP grows optional string properties on the
+tool's input schema, and the Skill's summary says what the parameters are for.
+
+An `undefined` value is **dropped** rather than sent, in the transport, and the distinction is the whole
+meaning of a paging parameter: absent is *"the newest page"* and present is *"resume here"*.
+`URLSearchParams` stringifies whatever it is handed, so a caller spreading a partly-filled object would
+otherwise have asked the Node to resume from the letters `undefined` — which it refuses, correctly and
+confusingly.
+
+**One route reads a query parameter and does not declare one.** `GET /api/cases` requires `?mailbox=`, so the
+generated `getCases()` can only ever produce that route's 400. It is written down in `RouteSpec.query` rather
+than fixed in passing: #91 was the message listing, and a second route's refusal deserves its own ticket.
+
 ### Responses are validated by default
 
 That is the difference between the SDK and a wrapper around `fetch`. A Node that has drifted is caught at the

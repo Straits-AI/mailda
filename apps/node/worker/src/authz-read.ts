@@ -1,7 +1,10 @@
-import type { Ctx } from "@mailda/runtime";
+import { BUDGETS } from "@mailda/budgets";
+import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
+import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import type { MailboxRelation } from "./access.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
+import { unprocessable } from "./errors.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 import {
@@ -575,8 +578,207 @@ export async function authorizeExport(
   return { ok: true, blobKey: row.blob_key };
 }
 
+/* ---- one page of the inbox (#91) --------------------------------------------------------------- */
+
 /**
- * Messages the caller may actually see. §5 requires authorization before any listing.
+ * Where a page starts and what it is bounded to. **A position and a mailbox, and deliberately nothing else.**
+ *
+ * `after` is an `(accepted_at, id)` pair. It carries **position only**, and that is the whole
+ * design rather than a detail of the encoding: §7 re-evaluates the live relationship on every call, and a
+ * reader's scope moves between page one and page two — a supervised grant expires, a team membership is
+ * revoked, a mailbox relation is removed. A cursor that carried the *resolved mailbox set* would be a
+ * decision about visibility taken on page one and honoured on page two, which is exactly the cached
+ * authorization ADR 11 forbids and would disclose rows the reader may no longer see. So the cursor names a
+ * place in the ordering and every page re-runs the authorization from the tuples and grants that are live
+ * when it runs. That is the more expensive answer and it is the only one that cannot leak.
+ *
+ * Because it carries no authority, it needs **no signature and no server-side state**. A caller who forges
+ * one moves their own position in an ordering they are re-authorized against; the worst they can reach is a
+ * page of their own mail starting somewhere odd. Signing it would protect a secret it does not hold, and a
+ * stored cursor would be a row per reader per scroll. It is parsed as untrusted input — see `messagePageRequest` —
+ * because a *malformed* one must be refused rather than dropped, not because a well-formed one is trusted.
+ */
+export interface MessagePage {
+  /** Resume strictly after this position, or null for the newest page. */
+  after: { at: string; id: string } | null;
+  /** Bound the page to one mailbox, or null for every mailbox this reader may read. */
+  mailboxId: string | null;
+}
+
+/**
+ * The `(accepted_at, id)` pair, as the one string a client carries.
+ *
+ * A space between them, so it survives a query string as one value and splits back into two unambiguously —
+ * neither an ISO-8601 instant nor a typed-prefix ULID can contain one.
+ *
+ * **It is a pair on the wire and a pair in the SQL, and that is a correction rather than a style.**
+ * `exports.ts` compares the same two columns as `accepted_at || ' ' || id`, which is correct — a space sorts
+ * below every character either field can hold — and it is *not* an index constraint SQLite can use, because
+ * the left-hand side is an expression rather than a column. Measured, not reasoned: with the concatenated
+ * form, page eleven of the inbox read 717 rows against page one's 207 and page twenty read 1,176, breaching
+ * `authz.list.max_rows_read` at a hundred rows a page. That is the same cost curve as `OFFSET`, arrived at
+ * by a different route, in the change made to avoid it. The figures and the plans are in
+ * `docs/receipts/message-page-size.md`.
+ */
+function cursorOf(row: { accepted_at: string; id: string }): string {
+  return `${row.accepted_at} ${row.id}`;
+}
+
+/**
+ * The exact shape `cursorOf` emits, and nothing else.
+ *
+ * `accepted_at` is written by `new Date(ctx.now()).toISOString()` in `ingress.ts`, which is fixed-width UTC
+ * with milliseconds. So the format is knowable, and the cursor's own refusal already promises that it must
+ * be *"exactly what `next_cursor` returned"* — this is what makes that sentence true.
+ *
+ * **The first version validated the instant with `Date.parse`**, which is far weaker than it looks:
+ * `Date.parse("2027")` and `Date.parse("2026-08")` are both finite, so a client that truncated the cursor
+ * got a *silent wrong answer* rather than a refusal. `accepted_at` is compared as a **string** in the keyset
+ * predicate, and `'2027'` sorts after every `'2026-…'` value, so a truncated cursor asks for a position it
+ * has never been given and gets a page from somewhere else. Refusing the shape is the only way to keep the
+ * position and the row order talking about the same thing.
+ *
+ * The id is checked for shape rather than existence, which is deliberate: a cursor naming a receipt this
+ * caller may not read must answer the same as one naming a receipt that does not exist (§5C), and it
+ * already does — the keyset predicate simply finds nothing at that position.
+ */
+const CURSOR_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const CURSOR_ID = idPattern(ID_PREFIXES.ingressReceipt);
+
+/**
+ * Reads a page request off the URL, refusing a cursor it cannot understand.
+ *
+ * **A malformed cursor is refused rather than ignored**, and the alternative is the reason: dropping it
+ * would answer the newest page to somebody who asked for an older one — a *"you have reached the end"* or a
+ * *"here is your inbox again"* that is indistinguishable from the truth. AGENTS.md's never-swallow rule is
+ * usually about a `catch`; this is the same failure in a `??`. The refusal names the shape and the way back,
+ * because the caller that produced it is usually a client that mangled a value it was handed.
+ *
+ * The mailbox is **not** shape-checked, deliberately. It is a filter value compared inside the authorized
+ * set, so an id that names nothing — or names a mailbox this reader may not read — answers an empty page,
+ * which is what §5C already does for a message: *"no such thing, or not for you"* are one answer. Validating
+ * it would need an identifier pattern written by hand, which `test/node/id-prefix-world.test.ts` forbids, and
+ * would buy a distinction the authorization model refuses to draw anyway.
+ */
+export function messagePageRequest(url: URL): MessagePage {
+  const raw = url.searchParams.get(MESSAGE_PAGE_PARAMS.cursor);
+  const mailboxId = url.searchParams.get(MESSAGE_PAGE_PARAMS.mailbox);
+  if (raw === null) return { after: null, mailboxId };
+
+  const parts = raw.split(" ");
+  const instant = parts[0] ?? "";
+  const id = parts[1] ?? "";
+  if (parts.length !== 2 || !CURSOR_INSTANT.test(instant) || !CURSOR_ID.test(id)) {
+    throw unprocessable("E_PAGE_CURSOR_MALFORMED", {
+      what: `${MESSAGE_PAGE_PARAMS.cursor}=${JSON.stringify(raw)} is not a position in this listing`,
+      why: "A cursor is the `accepted_at` instant and the receipt id of the last row of the previous page, "
+        + "separated by one space — exactly what `next_cursor` returned. It is refused rather than ignored "
+        + "because answering the newest page to a request for an older one is indistinguishable from having "
+        + "reached the end of the mail.",
+      fix: `Send the \`next_cursor\` from the previous page verbatim, or omit ${MESSAGE_PAGE_PARAMS.cursor} to start `
+        + "from the newest message.",
+    });
+  }
+  return { after: { at: instant, id }, mailboxId };
+}
+
+/**
+ * One page of the listing, as SQL — **exported so the measurement measures the shipped statement.**
+ *
+ * `docs/receipts/message-page-size.md` sizes `messages.page_size` from the rows this reads, and
+ * `test/message-page.measure.test.ts` calls this builder rather than restating the query. That is not
+ * fastidiousness: `authz.measure.test.ts` hand-copies the statements it prices, and its receipt now carries
+ * the consequence — it says of *this* listing that it *"is not separately priced here"*, describing a query
+ * nothing measured. A copy of a query is a second thing for a receipt to stop describing.
+ *
+ * Keyset, not `OFFSET`: mail arrives while somebody is reading, so an offset that counted rows from the top
+ * would skip a message and repeat another every time one landed. The cursor names a row, so a page that
+ * resumes after it is stable under arrivals — the newest mail appears on page one where it belongs, and
+ * nothing between the pages moves.
+ *
+ * The cursor and mailbox predicates are **added rather than always present as `(? IS NULL OR …)`**, which is
+ * the shape `exports.ts` uses for its optional predicates and reads better than assembling a `WHERE`. It
+ * costs the seek: a disjunction whose first branch does not mention the column is not a range constraint, so
+ * the optional form plans as a scan even when a cursor *is* present. `test/explain.test.ts` prints that plan
+ * beside this one — `(org_id=?)` against `(org_id=? AND accepted_at<?)` — rather than leaving it as a claim.
+ */
+export function messagePageQuery(args: {
+  orgId: string;
+  subjects: readonly string[];
+  /** This reader's live grants, from `liveGrantsBySubject` — the only source of a grant id here (§7). */
+  supervised: { sql: string; params: unknown[] };
+  page: MessagePage;
+  /** How many rows to ask for. `listMessages` asks for the page plus one probe row — see `next_cursor`. */
+  limit: number;
+}): { sql: string; params: unknown[] } {
+  const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
+  const filters: string[] = [];
+  const filterParams: unknown[] = [];
+  if (args.page.mailboxId !== null) {
+    filters.push("AND a.mailbox_id = ?");
+    filterParams.push(args.page.mailboxId);
+  }
+  if (args.page.after !== null) {
+    /*
+     * Two predicates for one comparison, and the split is what makes the index work.
+     *
+     * `accepted_at <= ?` is a **column against a value**, so it is a range constraint the planner can use to
+     * seek into `ir_org_accepted` and scan downwards from the cursor. The second line then decides the tie:
+     * strictly older, or the same instant and a lower id. Together they are exactly `(accepted_at, id) <
+     * (at, id)`, which is `ORDER BY accepted_at DESC, id DESC` read from where the last page stopped.
+     *
+     * The obvious one-line spelling — `(accepted_at || ' ' || id) < ?` — is correct and unusable: an
+     * expression on the left is not a constraint, so the scan starts at the newest row every time and page
+     * twenty costs twenty pages. See `cursorOf` for the measurement that caught it.
+     */
+    filters.push("AND r.accepted_at <= ?");
+    filters.push("AND (r.accepted_at < ? OR r.id < ?)");
+    filterParams.push(args.page.after.at, args.page.after.at, args.page.after.id);
+  }
+
+  return {
+    // `case_id` travels with the message so the reply button can claim in one act (#42). Without it the
+    // interface would have to fetch a queue to find the case for the message it is already showing, and
+    // "claim then compose" would be two round trips wearing one gesture.
+    //
+    // Correlated on the delivery's own mailbox, so it is the case in *this* queue — a conversation reaching
+    // two mailboxes has a case in each, and the one that matters is the one belonging to the mailbox this
+    // reader is looking at.
+    //
+    // `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
+    // one join rather than from a second question. It is stripped from the response below: the row shape is a
+    // client contract (`MessageRow`), and an undeclared column is a field somebody starts depending on.
+    sql: `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
+            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
+            m.conversation_id, sg.grant_id AS supervised_grant_id,
+            (SELECT c.id FROM cases c
+              WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
+                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id
+       FROM ingress_receipts r
+       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+       LEFT JOIN messages m ON m.ingress_receipt_id = r.id
+       LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+      WHERE r.org_id = ?
+        ${filters.join("\n        ")}
+        AND (sg.grant_id IS NOT NULL
+             OR a.mailbox_id IN (
+               SELECT object_id FROM relationship_tuples
+                WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
+                  AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+             ))
+      ORDER BY r.accepted_at DESC, r.id DESC
+      LIMIT ?`,
+    // `id DESC` beside the timestamp is the tie-break the cursor needs to be total. One delivery to two
+    // addresses of the same mailbox arrives as two receipts sharing a millisecond, and an ordering that left
+    // their relative position to the planner would let a page boundary fall between them differently on the
+    // two queries that span it — dropping one and repeating the other.
+    params: [...args.supervised.params, args.orgId, ...filterParams, args.orgId, ...args.subjects, args.limit],
+  };
+}
+
+/**
+ * Messages the caller may actually see, newest first, one page at a time. §5 requires authorization before
+ * any listing.
  *
  * **This is where a supervised grant becomes usable**, and the reason is what §7 asks for: it lists *query*
  * first among the supervised acts, and a grant that could not list would only let somebody open a message
@@ -613,6 +815,27 @@ export async function authorizeExport(
  * therefore counts fruitful queries rather than all of them. Closing it means asking which grants are live on
  * every listing whether or not one answered — a second query on the hot read path, for a record of having seen
  * nothing. `docs/supervised-access.md` names it under "Still not built".
+ *
+ * ## One page is one act, and that is why the record is written per page (#91, §7)
+ *
+ * This used to return `LIMIT 50` with no cursor, so the fifty-first message was not slow to reach — it was
+ * unreachable, by any parameter a caller could pass. It now returns `messages.page_size` rows and a
+ * `next_cursor`, and each page is a separate request that re-runs the whole authorization.
+ *
+ * §7 records **acts**, and each page is one: a reader who pages three times has seen three sets of subject
+ * lines, at three instants, under whatever grants were live at each. So three `supervised.query` entries,
+ * each naming the ids *that page* returned. The alternative — one entry per traversal — would have to
+ * accumulate state across requests, and the entry it eventually wrote would name an instant at which some of
+ * those ids may no longer have been disclosable. Paging back over the same ground records again, which is
+ * correct: the mail was shown again.
+ *
+ * The page number is deliberately **not** in the entry. Two pages of one traversal carry disjoint id lists,
+ * so a reader of the trail can already tell them apart, and a `page` field would spend bytes from
+ * `audit.max_detail_bytes` — the budget the id list is competing for — on something the ids already say.
+ *
+ * The stated weakening above gets slightly wider and stays the same shape: a page that matched nothing
+ * records nothing, so paging past the end of a scope records the last fruitful page and not the empty one
+ * after it.
  */
 export async function listMessages(env: Env, ctx: Ctx, request: Request): Promise<Response> {
   const who = await principalFor(env, ctx, request);
@@ -630,47 +853,35 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     .all<{ team_id: string }>();
 
   const subjects = [who.userId, ...teams.results.map((r) => r.team_id)];
-  const placeholders = subjects.map(() => "?").join(", ");
+  // Thrown, not returned: `index.ts` renders a `CallerError` as its four-part refusal, and a second spelling
+  // of that shape here would be a second thing to keep in step. Parsed before the query so a bad cursor costs
+  // one round trip rather than a page.
+  const page = messagePageRequest(new URL(request.url));
   const supervised = liveGrantsBySubject(
     who.orgId, who.userId, new Date(ctx.now()).toISOString(), SCOPES_FOR_METADATA,
   );
 
+  const size = BUDGETS["messages.page_size"];
   // Authorization is inside the query, not a filter applied afterwards — §5 forbids
-  // returning counts or snippets for anything the caller cannot see.
-  const rows = await env.CATALOG.prepare(
-    // `case_id` travels with the message so the reply button can claim in one act (#42). Without it the
-    // interface would have to fetch a queue to find the case for the message it is already showing, and
-    // "claim then compose" would be two round trips wearing one gesture.
-    //
-    // Correlated on the delivery's own mailbox, so it is the case in *this* queue — a conversation reaching
-    // two mailboxes has a case in each, and the one that matters is the one belonging to the mailbox this
-    // reader is looking at.
-    //
-    // `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
-    // one join rather than from a second question. It is stripped from the response below: the row shape is a
-    // client contract (`MessageRow`), and an undeclared column is a field somebody starts depending on.
-    `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
-            a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
-            m.conversation_id, sg.grant_id AS supervised_grant_id,
-            (SELECT c.id FROM cases c
-              WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
-                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id
-       FROM ingress_receipts r
-       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-       LEFT JOIN messages m ON m.ingress_receipt_id = r.id
-       LEFT JOIN (${supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
-      WHERE r.org_id = ?
-        AND (sg.grant_id IS NOT NULL
-             OR a.mailbox_id IN (
-               SELECT object_id FROM relationship_tuples
-                WHERE org_id = ? AND subject_id IN (${placeholders})
-                  AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
-             ))
-      ORDER BY r.accepted_at DESC
-      LIMIT 50`,
-  )
-    .bind(...supervised.params, who.orgId, who.orgId, ...subjects)
-    .all<{ id: string; mailbox_id: string; supervised_grant_id: string | null }>();
+  // returning counts or snippets for anything the caller cannot see. Re-run in full on every page: the
+  // subjects, the grants and the tuple sub-select are all read at this instant, so a revocation between two
+  // pages takes effect on the second one. That is what the cursor carrying position only buys.
+  const query = messagePageQuery({
+    orgId: who.orgId,
+    subjects,
+    supervised,
+    page,
+    // One row past the page, and it is never returned. It is the difference between `next_cursor` meaning
+    // "there is at least one more row you may read" and "this page was full, so there might be" — and the
+    // second is the one that renders a control leading to an empty page. Costs one row read.
+    limit: size + 1,
+  });
+  const rows = await env.CATALOG.prepare(query.sql)
+    .bind(...query.params)
+    .all<{ id: string; accepted_at: string; mailbox_id: string; supervised_grant_id: string | null }>();
+
+  const more = rows.results.length > size;
+  const listed = more ? rows.results.slice(0, size) : rows.results;
 
   /*
    * The record, before the response exists.
@@ -678,9 +889,13 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
    * Grouped by grant rather than by row: §7 records **acts**, and this listing is one act. A reader holding
    * two live grants produces two entries, which is what makes the trail answer "what was seen under grant G"
    * — the question the notice and the investigation both ask.
+   *
+   * Built from `listed` rather than from `rows`, because the probe row is not disclosed: it is read to answer
+   * whether a next page exists and never leaves this function. Recording it would put an id in the trail that
+   * nobody saw, which is the same dishonesty as omitting one, in the other direction.
    */
   const byGrant = new Map<string, { mailboxId: string; ids: string[] }>();
-  for (const row of rows.results) {
+  for (const row of listed) {
     if (row.supervised_grant_id === null) continue;
     const seen = byGrant.get(row.supervised_grant_id)
       ?? { mailboxId: row.mailbox_id, ids: [] };
@@ -694,6 +909,13 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   }
 
   return Response.json({
-    messages: rows.results.map(({ supervised_grant_id: _grant, ...row }) => row),
+    messages: listed.map(({ supervised_grant_id: _grant, ...row }) => row),
+    /*
+     * Null means **nothing older is visible to this reader at this instant**, which is a narrower claim than
+     * "this is all the mail". A row this reader may not see is not counted, and a grant expiring a second
+     * from now would change the answer — so the field is a position to resume from rather than a statement
+     * about the archive. The interface renders it as a control that exists or does not, never as a count.
+     */
+    next_cursor: more ? cursorOf(listed[listed.length - 1]!) : null,
   });
 }

@@ -129,5 +129,50 @@ describe("query plans", () => {
         WHERE org_id = ? AND action = 'access.granted' AND actor_user_id = subject`,
       [corpus.orgId],
     );
+
+    /*
+     * The inbox's two pages (#91), and the claim to read here is that the **second** one seeks.
+     *
+     * `ir_org_accepted` (migration 0038) is what `ORDER BY accepted_at DESC, id DESC` reads its order out of;
+     * before it there was no index on the column the listing has always ordered by, so page one appeared as a
+     * `SCAN ingress_receipts` with a `USE TEMP B-TREE FOR ORDER BY` beside it.
+     *
+     * The cursor's plan is the one worth printing. `accepted_at <= ?` is a column against a value and shows as
+     * a range on the index; the one-line spelling `(accepted_at || ' ' || id) < ?` is an expression on the
+     * left and shows as the same scan page one had, which is how `message-page-size.md` came to record 1,176
+     * rows on page twenty. Both are printed below so the difference can be read rather than argued.
+     */
+    const listing = (extra: string) =>
+      `SELECT r.id, r.accepted_at, a.mailbox_id, m.subject
+         FROM ingress_receipts r
+         JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+         LEFT JOIN messages m ON m.ingress_receipt_id = r.id
+        WHERE r.org_id = ? ${extra}
+        ORDER BY r.accepted_at DESC, r.id DESC LIMIT ?`;
+    await explain("inbox page one (newest, no cursor)", listing(""), [corpus.orgId, 51]);
+    await explain(
+      "inbox page two (the cursor as two predicates — the shipped form)",
+      listing("AND r.accepted_at <= ? AND (r.accepted_at < ? OR r.id < ?)"),
+      [corpus.orgId, new Date().toISOString(), new Date().toISOString(), "rcpt_z", 51],
+    );
+    await explain(
+      "inbox page two (the cursor as one concatenation — rejected, and this is why)",
+      listing("AND (r.accepted_at || ' ' || r.id) < ?"),
+      [corpus.orgId, `${new Date().toISOString()} rcpt_z`, 51],
+    );
+    await explain(
+      /*
+       * The third form, and the reason `messagePageQuery` builds its `WHERE` rather than parameterising a
+       * fixed one. `(? IS NULL OR …)` is what `exports.ts` uses for its optional predicates and it reads
+       * better than string concatenation — but a disjunction whose first branch does not mention the column
+       * is not a constraint the planner can seek on, so the *optional* form costs what the concatenated form
+       * costs even when a cursor is present. Printed rather than asserted, like every plan in this file: the
+       * claim in that builder's comment is checkable here instead of being taken on trust.
+       */
+      "inbox page two (the cursor behind a null guard — also rejected)",
+      listing("AND (? IS NULL OR r.accepted_at <= ?) AND (? IS NULL OR r.accepted_at < ? OR r.id < ?)"),
+      [corpus.orgId, ...Array.from({ length: 2 }, () => new Date().toISOString()),
+        new Date().toISOString(), new Date().toISOString(), "rcpt_z", 51],
+    );
   });
 });

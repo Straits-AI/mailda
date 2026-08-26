@@ -316,7 +316,18 @@ export const messageRow = z.object({
   case_id: z.string().nullable(),
 }).strict();
 
-export const messageListResponse = z.object({ messages: z.array(messageRow) }).loose();
+export const messageListResponse = z.object({
+  messages: z.array(messageRow),
+  /**
+   * Where the next page resumes, or null (#91).
+   *
+   * `nullable()` rather than `optional()`, because the two say different things and only one of them is true:
+   * a null is the Node saying *"nothing older is visible to you at this instant"*, which is an answer. An
+   * absent field would be the Node saying nothing, and a client cannot tell that apart from a Node too old to
+   * page — which is how a reader ends up with the same fifty messages and no way to know there are more.
+   */
+  next_cursor: z.string().nullable(),
+}).loose();
 
 export const auditRow = z.object({
   id: z.string().min(1),

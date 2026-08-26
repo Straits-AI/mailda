@@ -330,12 +330,16 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Message metadata, paged
+   * Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible
+   *
+   * @param query.cursor The previous page's next_cursor, verbatim. Omit for the newest page.
+   *
+   * @param query.mailbox Only this mailbox's mail. Omit for every mailbox you may read.
    *
    * `GET /api/messages`
    */
-  async getMessages(): Promise<z.infer<typeof S.messageListResponse>> {
-    return await this.json("GET", "/api/messages", {}, undefined) as z.infer<typeof S.messageListResponse>;
+  async getMessages(query?: { cursor?: string; mailbox?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+    return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 
   /**

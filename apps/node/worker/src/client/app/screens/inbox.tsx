@@ -128,6 +128,57 @@ function newMessageContext(mailboxId: string): ComposerContext {
 }
 
 /**
+ * Narrows the listing to one mailbox (#91).
+ *
+ * ## Why this is a control on the screen and not a rail row
+ *
+ * The rail lists mailboxes, so a filter here looks like a duplicate — and the first reading of it was that
+ * the rail should simply become clickable. It should not, at least not for this: the rail's per-mailbox rows
+ * sit **under Queue** and carry *unclaimed* counts. They are about work nobody has taken, which is Layer 3's
+ * subject, and repointing them at a filtered inbox would change what they mean rather than give them a
+ * meaning. Whether a rail row navigates is a real question and it belongs with the queue, not with paging.
+ *
+ * ## Why it is not the same control as `StartMessage`'s
+ *
+ * That one picks a mailbox to **send as** — governance, per-mailbox `send.propose`, and #94's whole argument
+ * that it must never be defaulted invisibly. This one picks what to *look at*. So this one **does** default,
+ * to every mailbox, because "all" is a truthful description of an unfiltered list rather than a choice made
+ * on somebody's behalf. Two controls that look alike and differ in exactly that way, which is why they are
+ * separate functions with the reasoning written in both.
+ *
+ * The options come from `useMailboxes`, which returns what this reader holds `send.propose` on — **not** what
+ * they may read. That is a genuine mismatch and it is the narrower set: a supervised reader may see messages
+ * from a mailbox that is not in this list, so filtering cannot reach them and the unfiltered view is the one
+ * that shows their mail. Filtering to fewer rows than exist is safe; the reverse would not be. Named here
+ * because the honest fix is a `mailbox.content.read` listing, and inventing one for a filter would be a new
+ * authority surface added for a convenience.
+ */
+function MailboxFilter({ chosen, onChoose }: {
+  chosen: string | null;
+  onChoose: (mailboxId: string | null) => void;
+}) {
+  const mailboxes = useMailboxes();
+  const rows = mailboxes.data?.mailboxes ?? [];
+  // Nothing to narrow with one mailbox, and nothing to narrow at all with none.
+  if (rows.length < 2) return null;
+
+  return (
+    <span className="inbox-filter">
+      <label htmlFor="inbox-mailbox" className="dim">mailbox</label>
+      {" "}
+      <select
+        id="inbox-mailbox"
+        value={chosen ?? ""}
+        onChange={(event) => onChoose(event.target.value === "" ? null : event.target.value)}
+      >
+        <option value="">all mailboxes</option>
+        {rows.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+      </select>
+    </span>
+  );
+}
+
+/**
  * The control that starts one, and the mailbox it will be sent from.
  *
  * The mailbox is **chosen, never inferred**. `From` is the mailbox (ADR 36) and `send.propose` is held per
@@ -239,8 +290,55 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
   );
 }
 
+/**
+ * The one control the inbox needed, and deliberately not a redesign of it (#91).
+ *
+ * **A cursor stack, one page at a time**, rather than an infinite list that appends. Three reasons, in the
+ * order they decided it:
+ *
+ * 1. Every page re-runs the whole authorization server-side, so an appending list of ten pages refetches ten
+ *    pages on every window focus — ten authorizations, and for a supervised reader ten more `supervised.query`
+ *    entries recording mail they are not currently looking at. One page is one request.
+ * 2. Going back needs no reverse query. The stack holds the cursors already used, so *newer* is a `pop`.
+ * 3. It is honest about what the Node answered. An appended list reads as *"this is the mail"*; a page reads
+ *    as *"this is a page of the mail"*, which is the true claim — `next_cursor` says whether more is visible
+ *    and nothing here knows a total, because nothing counted one.
+ *
+ * The stack is component state and is meant to be: it is a scroll position, not a fact about the mailbox, and
+ * a reload landing on the newest page is the right behaviour rather than a lost one.
+ */
+function usePages() {
+  /** The cursors used to reach the current page. Empty means the newest one. */
+  const [stack, setStack] = useState<string[]>([]);
+  /** Which mailbox the listing is narrowed to, or null for every mailbox this reader may see. */
+  const [mailbox, setMailbox] = useState<string | null>(null);
+  return {
+    cursor: stack[stack.length - 1] ?? null,
+    mailbox,
+    /** 1-based, for the reader. Never presented as "of N": nothing here knows N and nothing counted it. */
+    number: stack.length + 1,
+    older: (next: string) => setStack((was) => [...was, next]),
+    newer: () => setStack((was) => was.slice(0, -1)),
+    newest: () => setStack([]),
+    /**
+     * Narrowing the listing **resets the position**, and that is a correctness requirement rather than a
+     * courtesy.
+     *
+     * A cursor is a position in one ordering. Change the filter and it is a position in a different
+     * ordering — the row it names may not be in the new listing at all, so the page it produces is
+     * somewhere arbitrary, or nowhere. The Node cannot catch this for us: the cursor is well-formed and the
+     * authorization re-runs, so it answers correctly for a question nobody asked.
+     */
+    narrowTo: (next: string | null) => {
+      setMailbox(next);
+      setStack([]);
+    },
+  };
+}
+
 export function Inbox() {
-  const messages = useMessages();
+  const pages = usePages();
+  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox });
   const [selected, setSelected] = useState<string | null>(null);
   const [composing, setComposing] = useState<ComposerContext | null>(null);
   /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
@@ -292,7 +390,19 @@ export function Inbox() {
     <header className="ledger-head">
       <h1>Inbox</h1>
       <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
-      {messages.isSuccess ? <p className="dim mono">{messages.data.messages.length} messages</p> : null}
+      <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
+      {/*
+        `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
+        `{n} messages` was true only while the listing returned everything there was; against a page it
+        states a count of the archive and prints the size of a page. Nothing here knows the total — no query
+        counted one — so the honest sentence names what is on the screen and which page it is.
+      */}
+      {messages.isSuccess ? (
+        <p className="dim mono">
+          {messages.data.messages.length} shown{pages.number === 1 ? "" : ` · page ${pages.number}`}
+          {pages.mailbox === null ? "" : " · one mailbox"}
+        </p>
+      ) : null}
     </header>
   );
 
@@ -314,30 +424,48 @@ export function Inbox() {
 
   const rows = messages.data.messages;
   if (rows.length === 0) {
+    /*
+     * Two different empties, and saying the wrong one is #101 again in a new place (#91).
+     *
+     * *"Nothing has arrived yet"* is a statement about the whole Node, and on page four it is simply false —
+     * mail arrived, it is on pages one to three. A page past the end says so and offers the way back, because
+     * the reader who is looking at it got there by pressing a control this screen rendered.
+     */
     return (
       <>
         {heading}
-        {/*
-          What an empty list means, and nothing further (#101).
+        {pages.number === 1 ? (
+          /*
+            What an empty list means, and nothing further (#101).
 
-          It used to say "This Node is claimed and routing is live", concluded from an empty result set —
-          which establishes neither. Email Routing never enabled, MX records pointing elsewhere, a catch-all
-          aimed at another Worker, no address configured at all: every one of those produces this same
-          screen, and the sentence told the reader it was working. They would then wait, send a test message,
-          watch that not arrive either, and still be looking at "routing is live".
+            It used to say "This Node is claimed and routing is live", concluded from an empty result set —
+            which establishes neither. Email Routing never enabled, MX records pointing elsewhere, a
+            catch-all aimed at another Worker, no address configured at all: every one produces this same
+            screen, and the sentence told the reader it was working.
 
-          The status is not restated here, because this screen cannot establish it and the version that
-          guessed is the bug. `doctor`'s `inbound_routing` finding is what can: it proves whether an address
-          exists and whether anything has ever arrived, and says plainly that whether routing is pointing
-          here *right now* needs the Cloudflare dashboard, because that lives in the account and this Node
-          holds no token for it. The link goes to /doctor rather than a Domain Setup screen because /doctor
-          is what exists.
-        */}
-        <Nothing
-          kind="empty"
-          detail="No messages are visible to you yet. Whether mail can reach this Node is a separate question — Doctor's inbound routing check answers it."
-          action={{ to: "/doctor", label: "check inbound routing" }}
-        />
+            `doctor`'s `inbound_routing` finding is what can answer it: whether an address exists, whether
+            anything has ever arrived, and plainly that whether routing points here *now* needs the
+            Cloudflare dashboard, because that lives in the account and this Node holds no token for it.
+          */
+          <Nothing
+            kind="empty"
+            detail="No messages are visible to you yet. Whether mail can reach this Node is a separate question — Doctor's inbound routing check answers it."
+            action={{ to: "/doctor", label: "check inbound routing" }}
+          />
+        ) : (
+          /*
+            Page two or later, which is a different statement and the reason this branches at all (#91). An
+            empty *later* page does not mean nothing has arrived — it means nothing is older than where the
+            reader is standing. Saying "nothing has arrived yet" here would be false, and saying anything
+            about routing would be false twice.
+          */
+          <>
+            <Nothing kind="empty" detail="Nothing older on this page." />
+            <p className="row-actions">
+              <button type="button" className="linkish" onClick={pages.newest}>newest</button>
+            </p>
+          </>
+        )}
         {composer}
       </>
     );
@@ -381,6 +509,32 @@ export function Inbox() {
           </li>
         ))}
       </ul>
+      {/*
+        The pager (#91). Two buttons, each rendered only when it can do something.
+
+        `older` exists exactly when `next_cursor` is non-null, which is the Node saying there is at least one
+        more row **this reader may see at this instant** — not that the archive continues. So an absent button
+        is the honest end of the list and never a disabled control the reader has to test.
+
+        Not a page-number list: producing one needs a total, nothing counted a total, and a count is the one
+        thing a listing authorized in SQL cannot cheaply have.
+      */}
+      {messages.data.next_cursor === null && pages.number === 1 ? null : (
+        <nav className="row-actions" aria-label="Pages">
+          {pages.number === 1 ? null : (
+            <button type="button" className="linkish" onClick={pages.newer}>newer</button>
+          )}
+          {messages.data.next_cursor === null ? null : (
+            <button
+              type="button"
+              className="linkish"
+              onClick={() => pages.older(messages.data.next_cursor!)}
+            >
+              older
+            </button>
+          )}
+        </nav>
+      )}
       {current === null ? (
         <p className="reading-pane notice dim">Select a message.</p>
       ) : (

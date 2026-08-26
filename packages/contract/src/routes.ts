@@ -60,6 +60,26 @@ export interface RouteSpec {
   readonly summary: string;
 
   /**
+   * Query parameters the route reads, if any — **optional strings, every one of them.**
+   *
+   * There is deliberately no `required` flag and no type other than string. A query parameter that a route
+   * cannot answer without is a path segment wearing a disguise: it belongs in `path` where `path()` refuses
+   * to build a URL without it. Everything that legitimately lives here narrows or positions a result the
+   * route already answers, so omitting it has a meaning — and a generated client that can only send strings
+   * is honest about a query string, which is what a URL carries.
+   *
+   * Declared here rather than in prose because it is what the SDK and MCP generate from: a paging control
+   * described in a summary is a control only the browser can use. See `GET /api/messages`.
+   *
+   * **`GET /api/cases` reads one and does not declare one**, which is a parity gap of exactly the kind this
+   * field exists to close: it *requires* `?mailbox=`, so the generated `getCases()` — which has no way to send
+   * it — can only ever produce that route's 400. Left as it is rather than fixed in passing, because #91 is
+   * about the message listing and a second route's refusal deserves its own ticket rather than a drive-by; it
+   * is written down here so the next reader finds it as a known gap and not as a surprise.
+   */
+  readonly query?: readonly { readonly name: string; readonly description: string }[];
+
+  /**
    * What the route accepts and answers (#85 step 2).
    *
    * **Optional, and the optionality is the honest part.** Step 1 pinned the route *set* and is complete;
@@ -80,6 +100,17 @@ export interface RouteSpec {
  * Listed rather than described, so the tripwire can assert this exact set. A sixth appearing means somebody
  * wrote a handler that answers every verb, which is worth a conversation rather than a silent addition.
  */
+/**
+ * The two query parameters `GET /api/messages` reads, spelled once (#91).
+ *
+ * Three surfaces name them — the registry entry below, `listMessages` which parses them, and the interface
+ * which sends them — and a query parameter is a name a client can only get wrong silently: a `?cursor=` the
+ * Node reads as `?after=` is not an error, it is the newest page, for ever. That is the defect #91 fixed;
+ * spelling it in three places would be a way to reintroduce it one refactor later. Path templates are
+ * already pinned this way, and this is the same problem one character to the right of the `?`.
+ */
+export const MESSAGE_PAGE_PARAMS = { cursor: "cursor", mailbox: "mailbox" } as const;
+
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
   "/api/doctor",
@@ -177,7 +208,26 @@ export const ROUTES = [
   },
   { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {
-    method: "GET", path: "/api/messages", summary: "Message metadata, paged",
+    method: "GET", path: "/api/messages",
+    summary: "Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to "
+      + "continue; null means nothing older is visible",
+    /*
+     * The first route to declare query parameters, and #91 is why the field exists rather than the paging
+     * being documented in this sentence and reachable only from the browser. `listMessages` returned the
+     * newest fifty and nothing else, so the fifty-first message was unreachable — and a fix that taught the
+     * UI to page while leaving `getMessages()` on page one for ever would have rebuilt the same defect in the
+     * SDK, the Skill and MCP. ADR 12's parity rule is not satisfied by three of four surfaces.
+     */
+    query: [
+      {
+        name: MESSAGE_PAGE_PARAMS.cursor,
+        description: "The previous page's next_cursor, verbatim. Omit for the newest page.",
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.mailbox,
+        description: "Only this mailbox's mail. Omit for every mailbox you may read.",
+      },
+    ],
     response: S.messageListResponse,
   },
   {

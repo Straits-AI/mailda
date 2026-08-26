@@ -95,9 +95,18 @@ function emitMethod(spec: RouteSpec): string {
   }
   if (requestType !== null) args.push(`body: ${requestType}`);
   else if (spec.method !== "GET") args.push("body?: unknown");
+  /*
+   * Query parameters come last and are wholly optional, so adding one to a route cannot change any existing
+   * call site (#91). Each is `?: string` because that is what a query string carries — see `RouteSpec.query`
+   * for why there is no required or typed form.
+   */
+  if (spec.query !== undefined && spec.query.length > 0) {
+    args.push(`query?: { ${spec.query.map((one) => `${one.name}?: string`).join("; ")} }`);
+  }
 
   const paramsArg = params.length > 0 ? "params" : "{}";
   const bodyArg = args.some((a) => a.startsWith("body")) ? "body" : "undefined";
+  const queryArg = spec.query !== undefined && spec.query.length > 0 ? ", query" : "";
 
   /*
    * `Response` for the four `NOT_JSON` routes rather than a parsed shape: they answer the interface shell,
@@ -105,13 +114,14 @@ function emitMethod(spec: RouteSpec): string {
    * signature — a caller wants the body, not a description of it.
    */
   const call = notJson
-    ? `return await this.raw("${spec.method}", "${spec.path}", ${paramsArg}, ${bodyArg});`
-    : `return await this.json("${spec.method}", "${spec.path}", ${paramsArg}, ${bodyArg}) as ${responseType};`;
+    ? `return await this.raw("${spec.method}", "${spec.path}", ${paramsArg}, ${bodyArg}${queryArg});`
+    : `return await this.json("${spec.method}", "${spec.path}", ${paramsArg}, ${bodyArg}${queryArg}) as ${responseType};`;
 
   return [
     "  /**",
     `   * ${spec.summary}`,
     "   *",
+    ...(spec.query ?? []).flatMap((one) => [`   * @param query.${one.name} ${one.description}`, "   *"]),
     `   * \`${spec.method} ${spec.path}\``,
     "   */",
     `  async ${name}(${args.join(", ")}): Promise<${responseType}> {`,

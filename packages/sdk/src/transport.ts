@@ -83,11 +83,24 @@ export class Transport {
     template: string,
     params: Readonly<Record<string, string>>,
     body: unknown,
+    query?: Readonly<Record<string, string | undefined>>,
   ): Promise<{ response: Response; spec: ReturnType<typeof route> }> {
     const spec = route(method as never, template as never);
     const call = this.#options.fetch ?? globalThis.fetch;
 
-    const response = await call(`${this.#options.origin}${path(spec, params)}`, {
+    /*
+     * An `undefined` value is dropped rather than sent as `?cursor=undefined` (#91).
+     *
+     * That distinction is the whole of what a paging parameter means: absent is *"the newest page"* and
+     * present is *"resume here"*. `URLSearchParams` stringifies whatever it is given, so a caller spreading a
+     * partly-filled object would have asked this Node to resume from the four letters `undef` — which
+     * `GET /api/messages` refuses, correctly and confusingly.
+     */
+    const search = new URLSearchParams(
+      Object.entries(query ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    ).toString();
+
+    const response = await call(`${this.#options.origin}${path(spec, params)}${search === "" ? "" : `?${search}`}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -110,8 +123,9 @@ export class Transport {
     template: string,
     params: Readonly<Record<string, string>>,
     body: unknown,
+    query?: Readonly<Record<string, string | undefined>>,
   ): Promise<unknown> {
-    const { response, spec } = await this.#send(method, template, params, body);
+    const { response, spec } = await this.#send(method, template, params, body, query);
     const parsed = await response.json().catch(() => null) as Record<string, unknown> | null;
 
     if (!response.ok) {
@@ -137,8 +151,9 @@ export class Transport {
     template: string,
     params: Readonly<Record<string, string>>,
     body: unknown,
+    query?: Readonly<Record<string, string | undefined>>,
   ): Promise<Response> {
-    const { response } = await this.#send(method, template, params, body);
+    const { response } = await this.#send(method, template, params, body, query);
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new MaildaError(response.status, "unknown", text || `${method} ${template} answered ${response.status}.`, text);

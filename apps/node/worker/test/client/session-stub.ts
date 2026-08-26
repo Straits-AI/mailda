@@ -110,6 +110,16 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (answered !== undefined) return answered;
   if (path.startsWith("/api/mailboxes")) return Response.json({ mailboxes });
   if (path.startsWith("/api/messages")) return Response.json({ messages });
+  /*
+   * The rail reads these two as well, and reads them **unguarded** — `approvals.data.approvals.length`. A
+   * default of `{}` therefore does not render an empty rail, it throws, and the test that mounted it fails
+   * with an empty document that reads exactly like a query which never resolved. Empty shapes rather than
+   * empty objects, so a component that mounts chrome gets a quiet rail instead of a crash.
+   */
+  if (path.startsWith("/api/approvals")) return Response.json({ approvals: [] });
+  if (path.startsWith("/api/sends")) {
+    return Response.json({ sends: [], daily: { handedOver: 0 } });
+  }
   return Response.json({ draft: null });
 }
 

@@ -298,8 +298,23 @@ because the design deliberately does not rest on it:
   **prefix** of the ids, a record that understates the exposure, which is the exact failure per-act
   recording was chosen to avoid.
 
-What *is* asserted is that the listing's real page (`LIMIT 50`) fits in one entry, with 57 the measured
-margin above it. A sibling field added tomorrow lowers the fill and breaks nothing.
+What *is* asserted is that the listing's real page fits in one entry, with 57 the measured margin above it. A
+sibling field added tomorrow lowers the fill and breaks nothing.
+
+**That page is `messages.page_size` now, not a `LIMIT 50` (#91).** The listing pages, so the sentence above
+has an extra consequence worth stating: **each page is one act and gets its own entry.** A reader who pages
+three times has seen three sets of subject lines at three instants under whatever grants were live at each,
+so three `supervised.query` entries, each naming the ids *that page* returned — and paging back over the same
+ground records again, because the mail was shown again. One entry per traversal was the alternative and it
+cannot be honest: it would have to accumulate across requests and name an instant at which some of those ids
+may no longer have been disclosable.
+
+Two smaller decisions inside that. The listing reads **one row past the page** to know whether a next page
+exists, and that row is never recorded — an id in the trail nobody saw is a wrong record in the direction that
+overstates. And the entry carries **no page number**, because two pages of one traversal already have disjoint
+id lists, and a `page` field would spend bytes from the cap the id list is competing for on something the ids
+say. The fill of 57 is also what the page size is sized under: `docs/receipts/message-page-size.md` takes the
+tighter of the list budget and this number, so one act stays one row.
 
 ---
 

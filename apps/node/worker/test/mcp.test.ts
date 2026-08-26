@@ -229,3 +229,59 @@ describe("a tool call goes through this Node's own routes", () => {
     expect(answer.error.message).toContain("butlerId");
   });
 });
+
+describe("a paged read carries its position, and a bad one is refused by the route", () => {
+  /*
+   * The machine half of #91, which shipped **untested**: replacing the forwarding condition with `if (false)`
+   * pinned MCP's `getMessages` to page one for ever — the exact defect #91 exists to fix, in a surface the
+   * change claimed to have fixed — and the whole of this file still passed.
+   */
+  it("accepts a well-formed cursor rather than refusing everything", async () => {
+    /*
+     * **This does not prove forwarding, and the first version claimed it did.** This Node has no mail in
+     * this suite, so a cursor page and page one are both empty and read identically — the assertion held
+     * with the forwarding replaced by `if (false)`, which is the exact defect it was written against.
+     *
+     * What it does prove is the other direction, which still needs proving: a *valid* cursor is not refused,
+     * so the refusal below is about the value and not about paging being broken. The witness for forwarding
+     * is that test, because a value that never reaches the route cannot be refused by it.
+     */
+    const answer = await rpc("tools/call", {
+      name: "getMessages",
+      arguments: { cursor: "2026-08-20T09:00:00.000Z rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ" },
+    }, await cookie()) as { result: { isError: boolean; content: Array<{ text: string }> } };
+
+    expect(answer.result.isError, answer.result.content[0]?.text).toBe(false);
+    expect(answer.result.content[0]!.text).toContain("next_cursor");
+  });
+
+  it("forwards a mailbox filter", async () => {
+    const answer = await rpc("tools/call", {
+      name: "getMessages", arguments: { mailbox: "mbx_nothing_here" },
+    }, await cookie()) as { result: { isError: boolean; content: Array<{ text: string }> } };
+    expect(answer.result.isError).toBe(false);
+  });
+
+  it("lets the route refuse a malformed cursor rather than dropping it", async () => {
+    /*
+     * The property the forwarding exists for. A non-string was silently omitted before, so an agent that
+     * sent `cursor: 7` received **the newest page** and no sign it had asked for anything else — a wrong
+     * answer indistinguishable from the right one, which is what `E_PAGE_CURSOR_MALFORMED` is for.
+     */
+    for (const cursor of [7, "", "yesterday"] as unknown[]) {
+      const answer = await rpc("tools/call", {
+        name: "getMessages", arguments: { cursor },
+      }, await cookie()) as { result: { isError: boolean; content: Array<{ text: string }> } };
+      expect(answer.result.isError, `cursor ${JSON.stringify(cursor)} was dropped`).toBe(true);
+      expect(answer.result.content[0]!.text).toContain("E_PAGE_CURSOR_MALFORMED");
+    }
+  });
+
+  it("omits an absent cursor, because absent is the newest page", async () => {
+    // The other side: `undefined` must stay absent or every unpaged read becomes a refusal.
+    const answer = await rpc("tools/call", {
+      name: "getMessages", arguments: {},
+    }, await cookie()) as { result: { isError: boolean } };
+    expect(answer.result.isError).toBe(false);
+  });
+});

@@ -192,6 +192,8 @@ inside `authz.check.max_rows_read = 200` by more than an order of magnitude.
 sub-select and is not separately priced here; it stays two queries by construction, and the list
 budget it lives under is `authz.list.max_rows_read = 1000` against a worst observed 136. A
 supervised reader listing a mailbox is bounded by the same `LIMIT 50` every other reader is.
+*(Superseded — see the 26 August 2026 correction at the end: the listing has its own receipt, and the
+`LIMIT 50` is now a cursor and a budget.)*
 
 ## Correction — 20 August 2026: the record joined the read path, and it costs two more
 
@@ -237,7 +239,7 @@ read. Too high and the recording grows a round trip on the read path unnoticed �
 derived table and a `supervised.query` append. It stays two queries when nothing is granted and four
 when something is, by the same decomposition, and it lives under `authz.list.max_rows_read = 1000`
 against a worst observed 136. A supervised reader listing a mailbox is bounded by the same `LIMIT 50`
-every other reader is.
+every other reader is. *(Superseded — see the 26 August 2026 correction at the end.)*
 
 ## Correction — 21 August 2026: a Butler's check has three terms, and it is still two queries (#51)
 
@@ -330,3 +332,24 @@ and at publication, and nothing at all when no stage names a team. Those figures
 `approval-decision-cost.md`, whose own `stale_when` named this change in advance and reserved the headroom it
 spent. Recorded here so a reader following the constraint does not conclude its cost is missing: it is 0 on the
 authorization path, and 1 on that one.
+
+## Correction — 26 August 2026: the message listing has its own receipt now (#91)
+
+Two paragraphs above say of `listMessages` *"is not separately priced here"*, and both end with **"bounded by
+the same `LIMIT 50` every other reader is."** Both sentences have been true and neither is any longer:
+
+- **The `LIMIT 50` is gone.** The listing takes `messages.page_size` and carries a keyset cursor, because
+  before #91 the fifty-first message was unreachable by any parameter a caller could pass.
+- **"Not separately priced" is closed rather than restated.** `docs/receipts/message-page-size.md` prices it,
+  and against the same budget: `authz.list.max_rows_read = 1000`, with a measured 208 rows read on page one
+  and 210 on page twenty.
+
+The measurement also found something this receipt's *"worst observed 136"* could not have: **136 was the cost
+of resolving the visible mailboxes, not of reading a page of mail.** `ingress_receipts` had no index on
+`accepted_at`, the column the listing has ordered by since Layer 1, so the listing itself scanned and sorted
+the table — 6,004 rows read on a 1,200-delivery corpus, six times this budget, on the first page. Migration
+`0038_inbox_page_order.sql` adds `(org_id, accepted_at, id)`.
+
+**Nothing in the figures above moves.** The check path is untouched: same statements, same indexes, same two
+round trips. What changed is that a claim this receipt made about a query it did not measure has been replaced
+by a receipt that measures it, which is the direction its own `stale_when` asks for.

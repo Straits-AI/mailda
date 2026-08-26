@@ -433,6 +433,15 @@ const FIGURES: Record<string, Classification> = {
     "shard.plan_warn_messages", "shard.plan_stop_messages", "shard.plan_route_messages",
   ),
 
+  // docs/receipts/message-page-size.md
+  ...mailda(
+    "how many messages one inbox page returns, measured as rows read by Mailda's own listing in workerd. "
+      + "Plan-independent for its siblings' reason: the figure is D1 rows scanned by our query against our "
+      + "own schema, and the ceilings it is sized under — authz.list.max_rows_read and audit.max_detail_bytes "
+      + "— are both Mailda's own",
+    "messages.page_size",
+  ),
+
   // docs/receipts/mime-header-parse.md
   ...mailda(
     "the parser bundle Mailda ships and the header bounds its own parse path imposes",
