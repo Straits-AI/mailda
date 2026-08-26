@@ -1,0 +1,69 @@
+# Reporting a security problem
+
+**Do not open a public issue.** Use GitHub's private vulnerability reporting on this repository —
+[Security → Report a vulnerability](https://github.com/Straits-AI/mailda/security/advisories/new) — which
+opens a draft advisory only maintainers and you can read.
+
+If that is unavailable to you, say so in a public issue **without describing the problem** and a maintainer
+will open a private channel.
+
+## What this software is, which shapes what counts as a vulnerability
+
+Mailda is not a service. One organization deploys one Node into **its own Cloudflare account**, holding its
+own domain, its own D1 and R2 data, and its own encryption keys. There is no Mailda-operated control plane to
+compromise and no shared tenancy to escape.
+
+So the interesting boundaries are not the usual ones:
+
+| boundary | what a finding here means |
+|:--|:--|
+| **between people in one organization** | a mailbox relation, a supervised grant or an approval that grants more than it says |
+| **between the Node and its own operator** | a record the operator can rewrite without it being detectable |
+| **between hostile mail and the reader** | a message escaping the sanitiser or the frame that contains it |
+| **between a browser and the Node** | forgery, fixation, or a session surviving a revocation |
+| **between the repository and a deployed Node** | anything in the update channel — the repo *is* how customers upgrade |
+
+That last row is the one most worth your attention and the least obvious: a customer upgrades by merging from
+this repository, so a compromise here reaches every Node that later pulls.
+
+## What is already known and documented, so you need not report it
+
+These are stated limitations rather than undiscovered problems. Reporting them is welcome but will be closed
+as known, and each has an issue or a source comment explaining the reasoning:
+
+- **A Cloudflare account operator can rewrite the audit chain.** The hash chain detects quiet modification of
+  *individual* entries; somebody with D1 access can rebuild the whole chain. The code says so where the chain
+  is verified. External anchoring is not built.
+- **Cloudflare holds ciphertext and keys.** Content is encrypted under keys in Durable Object storage, which
+  is Cloudflare's infrastructure. This defends against a D1 dump and a configuration leak, not against the
+  platform — ADR 28 states that explicitly, and it is why Secrets Store was rejected as offering nothing
+  extra.
+- **No attachment scanning, spam filtering or URL detonation.** Inbound mail is stored as evidence and
+  sanitised for display. It is not screened. A public mailbox on a production Node should not be accepting
+  attachments yet.
+- **Passwords remain a supported sign-in path.** Passkeys are the primary mechanism now, and ADR 29's plan to
+  make passwords a per-user opt-in setting is not built.
+- **Recovery codes restore the key vault and do not sign anybody in.** The redemption route is
+  unauthenticated on purpose, because the state it exists for has no verifiable session keys. What it can do
+  is bounded and asserted: it installs keys this Node already escrowed, issues no session, and grants nothing.
+
+## What is in scope and worth reporting
+
+Anything that breaks a claim the code makes about itself. This project's own findings are almost all of that
+shape — a comment asserting a property nothing enforced — so if you read a guarantee here and can defeat it,
+that is a report, whether or not the defeat is dramatic.
+
+Concretely: authorization that grants more than its relation names, a refusal that can be bypassed, evidence
+that can be altered without detection, a supervised read that leaves no record, a legal hold that fails to
+hold, a session that outlives its revocation, or anything reachable from a sibling subdomain of a customer's
+own domain.
+
+## What to expect
+
+There is no service-level agreement and it would be dishonest to print one. This is a small project. You will
+get an acknowledgement, an assessment of whether it is a vulnerability or a known limitation, and — if it is
+the former — a fix with the reasoning written down, which is how everything else here is fixed.
+
+Because customers upgrade by merging from this repository rather than by receiving a push, a fix reaches a
+deployed Node only when its operator pulls. Advisories are therefore published on the repository, and a fix
+that matters will say plainly what an operator has to do.

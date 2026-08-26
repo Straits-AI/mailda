@@ -109,10 +109,28 @@ working install red for a Node that works in every respect but one.
 
 ---
 
-## Status: designed, not built
+## Status: functional alpha, not production-ready
 
-**This is not deployable software yet.** Saying otherwise would be the kind of overclaim
-the project's own working agreement forbids.
+**Do not make this the only copy of mail you care about.** It receives, stores, reads, replies, governs and
+automates — and the release gates it sets for *itself* are not all closed. That sentence used to read "this
+is not deployable software yet", which by August 2026 had become the opposite overclaim: too pessimistic
+about the code and still correct about the verdict.
+
+What is honestly blocking, as of 27 August 2026, with everything else on the [issue
+tracker](https://github.com/Straits-AI/mailda/issues):
+
+| | |
+|---|---|
+| **Recovery is half built** | The key vault is escrowed under ADR 29's recovery codes (#92), so losing Durable Object storage is survivable. Exporting D1, R2 and the manifests and restoring them into a **clean** Cloudflare account is not, and no drill has measured an RPO or RTO. |
+| **Deployment is unproven** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). Nobody has run it against a second Cloudflare account, so the assumption the whole rollback rests on — that `versions upload` shifts no traffic — is documented and unverified. |
+| **Two Nodes in one account is unmeasured** | The Workflow binding is a fixed account-level name (#99). Production and staging in one account is a normal configuration and this has never been tried. |
+| **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
+| **The mail client is thin** | No search, no threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; the rest has not. |
+| **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
+
+What it is genuinely good for now: a controlled design-partner alpha, a non-critical shared mailbox, and
+exercising the governance and deterministic-automation model — which is the part that is further along than
+anything else here.
 
 What exists today:
 
@@ -120,9 +138,10 @@ What exists today:
 |---|---|
 | **Product contract** | [`Mailda-Full-Engineering-Blueprint.md`](./Mailda-Full-Engineering-Blueprint.md) — 2,967 lines specifying the target state, with 41 locked architectural decisions |
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md) — how decisions get made and what counts as done |
-| **Decisions taken** | 31 recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues/1) |
-| **Measurements** | 38 receipts in [`docs/receipts/`](./docs/receipts/) generating 206 verified constants |
-| **Code** | A measurement harness and one Worker. 1,132 tests across two runtimes, checked on every push. Not a product. |
+| **Decisions taken** | Recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues?q=is%3Aissue) |
+| **Measurements** | 43 receipts in [`docs/receipts/`](./docs/receipts/), generating every constant in `packages/budgets` — which is itself generated and never hand-edited |
+| **Code** | One Worker. **1,509 tests across three runtimes** — workerd, node, and a DOM for the interface, which had none until #90. The accessibility audit is manual and last covered 30 views with 0 AA violations; the screens added since have not been through it. |
+| **Licence** | [Apache-2.0](./LICENSE). Security reports go to [`SECURITY.md`](./SECURITY.md), privately. |
 
 **It can send to more than one person, which it never could before.** `EmailMessage` takes one address, so
 the old code joined recipients with commas into a single malformed one — a `Cc` refused the whole send.
@@ -1907,4 +1926,19 @@ the more useful half.
 
 ## Licence
 
-Not yet chosen. Blueprint §30 covers the intent; the decision is open.
+**[Apache-2.0](./LICENSE).** Chosen 27 August 2026 (#102), and it was not merely unchosen before — it was a
+gap with legal effect. Without a licence file, default copyright applies: nobody had permission to reproduce,
+modify or deploy this source, which is the entire distribution model. The product described itself as
+customer-owned software you run yourself, and that was not something anybody was licensed to do.
+
+Apache-2.0 rather than MIT for the **patent grant**, which matters for a project already taking outside
+contributions and for the enterprise buyers the paid offerings are aimed at. Rather than AGPL, because
+customers self-host by design — the network clause would bind resellers rather than users, and it would cost
+adoption at firms that forbid AGPL outright, for protection this deployment model largely already has.
+
+The paid offerings are unaffected. What is licensed here is the software; what is sold is deployment,
+updates, deliverability, assurance and managed responsibility, which is Blueprint §30's open-core position
+and needed no change.
+
+Security problems go to [`SECURITY.md`](./SECURITY.md) — privately, and **not** to the issue tracker. It also
+lists what is already known, so nobody spends time reporting a documented limitation.
