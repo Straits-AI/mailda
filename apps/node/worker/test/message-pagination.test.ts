@@ -291,7 +291,13 @@ describe("authorization is re-run on every page, so a revocation between two pag
      * at the very top of the archive and check that the mailbox they hold nothing on stays invisible.
      */
     const token = await sessionFor(READER);
-    const forged = `${new Date(AUGUST_20 + 60_000).toISOString()} rcpt_zzzzzzzzzzzzzzzzzzzzzzzzzz`;
+    /*
+     * **Well-formed** but invented, which is the case this test means. The first version used a lowercase
+     * body, and once the cursor's shape became strict (`idPattern`) that was refused for its spelling — so
+     * the test would have passed while proving nothing about authorization. A forgery has to get past the
+     * shape check to say anything about what happens next.
+     */
+    const forged = `${new Date(AUGUST_20 + 60_000).toISOString()} rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ`;
     const listed = await page(token, { [MESSAGE_PAGE_PARAMS.cursor]: forged });
     expect(listed.messages.length).toBeGreaterThan(0);
     expect(listed.messages.some((row) => row.mailbox_id === MAILBOX_NEVER)).toBe(false);
@@ -440,8 +446,27 @@ describe("a reader with several mailboxes can look at one", () => {
 /* ------------------------------------------------------- the refusal ----------------------------- */
 
 describe("a cursor this Node cannot read is refused, not ignored", () => {
+  /*
+   * The last four cases are the ones the **first version accepted**, and they are why the instant is matched
+   * against a pattern rather than handed to `Date.parse`.
+   *
+   * `Date.parse("2027")` is a finite number, and so is `Date.parse("2026-08")`. The old guard was
+   * `Number.isFinite(Date.parse(instant))`, so a client that truncated its cursor — a date picker, a log
+   * line copied by hand, a JSON round trip through a lossy field — sailed through. And `accepted_at` is
+   * compared as a **string** in the keyset predicate, where `'2027'` sorts after every `'2026-…'` value, so
+   * the caller silently received a page from a position nobody had given them. A wrong page is worse than a
+   * refusal here for the reason the whole `describe` is about: it is indistinguishable from the truth.
+   *
+   * The id half was not checked at all, which is why `rcpt_1` is in this list.
+   */
   const malformed = ["", "not-a-position", "2026-08-20T09:00:00.000Z", "2026-08-20T09:00:00.000Z ",
-    "yesterday rcpt_1", "2026-08-20T09:00:00.000Z rcpt_1 extra"];
+    "yesterday rcpt_1", "2026-08-20T09:00:00.000Z rcpt_1 extra",
+    // Accepted by `Date.parse`, refused by the shape.
+    "2027 rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "2026-08 rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "2026-08-20T09:00:00.000Z rcpt_1",
+    // Right length, wrong alphabet: Crockford base32 excludes I, L, O and U.
+    "2026-08-20T09:00:00.000Z rcpt_IIIIIIIIIIIIIIIIIIIIIIIIII"];
 
   for (const cursor of malformed) {
     it(`refuses ${JSON.stringify(cursor)} with a code and a way back`, async () => {

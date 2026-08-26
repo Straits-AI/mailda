@@ -1,6 +1,6 @@
 import { BUDGETS } from "@mailda/budgets";
 import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import type { MailboxRelation } from "./access.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
@@ -595,7 +595,7 @@ export async function authorizeExport(
  * Because it carries no authority, it needs **no signature and no server-side state**. A caller who forges
  * one moves their own position in an ordering they are re-authorized against; the worst they can reach is a
  * page of their own mail starting somewhere odd. Signing it would protect a secret it does not hold, and a
- * stored cursor would be a row per reader per scroll. It is parsed as untrusted input — see `messagePage` —
+ * stored cursor would be a row per reader per scroll. It is parsed as untrusted input — see `messagePageRequest` —
  * because a *malformed* one must be refused rather than dropped, not because a well-formed one is trusted.
  */
 export interface MessagePage {
@@ -625,6 +625,27 @@ function cursorOf(row: { accepted_at: string; id: string }): string {
 }
 
 /**
+ * The exact shape `cursorOf` emits, and nothing else.
+ *
+ * `accepted_at` is written by `new Date(ctx.now()).toISOString()` in `ingress.ts`, which is fixed-width UTC
+ * with milliseconds. So the format is knowable, and the cursor's own refusal already promises that it must
+ * be *"exactly what `next_cursor` returned"* — this is what makes that sentence true.
+ *
+ * **The first version validated the instant with `Date.parse`**, which is far weaker than it looks:
+ * `Date.parse("2027")` and `Date.parse("2026-08")` are both finite, so a client that truncated the cursor
+ * got a *silent wrong answer* rather than a refusal. `accepted_at` is compared as a **string** in the keyset
+ * predicate, and `'2027'` sorts after every `'2026-…'` value, so a truncated cursor asks for a position it
+ * has never been given and gets a page from somewhere else. Refusing the shape is the only way to keep the
+ * position and the row order talking about the same thing.
+ *
+ * The id is checked for shape rather than existence, which is deliberate: a cursor naming a receipt this
+ * caller may not read must answer the same as one naming a receipt that does not exist (§5C), and it
+ * already does — the keyset predicate simply finds nothing at that position.
+ */
+const CURSOR_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const CURSOR_ID = idPattern(ID_PREFIXES.ingressReceipt);
+
+/**
  * Reads a page request off the URL, refusing a cursor it cannot understand.
  *
  * **A malformed cursor is refused rather than ignored**, and the alternative is the reason: dropping it
@@ -639,7 +660,7 @@ function cursorOf(row: { accepted_at: string; id: string }): string {
  * it would need an identifier pattern written by hand, which `test/node/id-prefix-world.test.ts` forbids, and
  * would buy a distinction the authorization model refuses to draw anyway.
  */
-export function messagePage(url: URL): MessagePage {
+export function messagePageRequest(url: URL): MessagePage {
   const raw = url.searchParams.get(MESSAGE_PAGE_PARAMS.cursor);
   const mailboxId = url.searchParams.get(MESSAGE_PAGE_PARAMS.mailbox);
   if (raw === null) return { after: null, mailboxId };
@@ -647,7 +668,7 @@ export function messagePage(url: URL): MessagePage {
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
   const id = parts[1] ?? "";
-  if (parts.length !== 2 || id === "" || !Number.isFinite(Date.parse(instant))) {
+  if (parts.length !== 2 || !CURSOR_INSTANT.test(instant) || !CURSOR_ID.test(id)) {
     throw unprocessable("E_PAGE_CURSOR_MALFORMED", {
       what: `${MESSAGE_PAGE_PARAMS.cursor}=${JSON.stringify(raw)} is not a position in this listing`,
       why: "A cursor is the `accepted_at` instant and the receipt id of the last row of the previous page, "
@@ -835,7 +856,7 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // Thrown, not returned: `index.ts` renders a `CallerError` as its four-part refusal, and a second spelling
   // of that shape here would be a second thing to keep in step. Parsed before the query so a bad cursor costs
   // one round trip rather than a page.
-  const page = messagePage(new URL(request.url));
+  const page = messagePageRequest(new URL(request.url));
   const supervised = liveGrantsBySubject(
     who.orgId, who.userId, new Date(ctx.now()).toISOString(), SCOPES_FOR_METADATA,
   );

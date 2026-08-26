@@ -63,6 +63,17 @@ export const ID_PREFIXES = {
    * `case_` and `cas_` came to disagree, and why the door has to be the only one.
    */
   user: "usr",
+  /**
+   * The inbound receipt. Minted as `ctx.id("rcpt")` by `ingress.ts` since Layer 1, and registered in #91 —
+   * the first time anything had to **check** one, which is the rule stated above.
+   *
+   * What needed it: a page cursor is an `accepted_at` instant and a receipt id, and the first version
+   * validated the id half not at all and the instant half with `Date.parse` — which accepts `"2027"`. A
+   * cursor is compared as a string against `accepted_at`, so a truncated one silently asks for a position it
+   * was never given. Validating the shape means the id half comes from here rather than from a regex written
+   * beside it, which is what `case_`/`cas_` taught this registry.
+   */
+  ingressReceipt: "rcpt",
 } as const;
 
 /**

@@ -38,14 +38,22 @@ pressure, and a direct test of whether the index is used.
 
 | page size | rows read, page 1 | rows read, one mailbox | body bytes |
 |---:|---:|---:|---:|
-| 25 | 108 | 134 | 12,351 |
+| 25 | 108 | 132 | 12,351 |
 | **50** | **208** | **258** | **24,226** |
-| 100 | 408 | 506 | 47,976 |
+| 100 | 408 | 508 | 47,976 |
 | 200 | 808 | **1,008** | 95,473 |
 
 Four seeks per returned row — the receipt, its address, its message, its case — plus the page's one probe
 row and the tuple sub-select. So `rows_read ≈ 4 × (size + 1) + 4`, and `authz.list.max_rows_read = 1000`
 puts the cost ceiling a little under **200**: at 200 a page bounded to one mailbox already reads 1,008.
+
+**These figures were not reproducible when first recorded**, and the fix was in the corpus rather than in
+the table. The keyset order is `(accepted_at, id)`, every fourth delivery in the fixture shares a timestamp
+on purpose, and the receipt ids came from `ctx.id("rcpt")` — random ULIDs. So the id decided every tie, which
+decided how far the walk got before the page filled, and the one-mailbox column moved by a row or two
+between runs (506 then 508 at size 100; 134 then 132 at size 25). A receipt whose command prints a different
+number each time is not a receipt. The fixture now uses zero-padded deterministic ids, so lexical order
+matches insertion order, and the figures above are stable across repeated runs.
 
 **The mailbox-bounded page reads more than the unbounded one**, which is the opposite of the intuition and
 is the whole of why the filter was measured rather than assumed: bounding to a mailbox means scanning
@@ -74,7 +82,7 @@ Crockford ULID can hold — and which SQLite cannot turn into a range constraint
 an expression. Measured with that form: page 1 read 207, page 11 read 717, page 20 read 1,176. That is
 `OFFSET`'s cost curve reached by a different route, inside the change made to avoid it. The shipped form is
 two predicates — `accepted_at <= ?` for the range the planner can seek on, then `(accepted_at < ? OR id < ?)`
-for the tie. `test/explain.test.ts` prints all three plans, and the difference is one clause wide:
+for the tie. `test/explain.test.ts` prints all four plans, and the difference between the first three is one clause wide:
 
 ```
 inbox page one (newest, no cursor)

@@ -144,7 +144,18 @@ beforeAll(async () => {
    */
   const statements = [];
   for (let n = 0; n < DELIVERIES; n++) {
-    const receiptId = ctx.id("rcpt");
+    /*
+     * **A deterministic id, not `ctx.id("rcpt")`.** The keyset order is `(accepted_at, id)` and every fourth
+     * delivery shares a timestamp on purpose, so the id decides those ties — and a random ULID therefore
+     * decides how far the walk gets before its page fills. Measured with random ids, the figures in
+     * `message-page-size.md` moved by a row or two between runs (506 then 508 at size 100), which makes a
+     * receipt somebody cannot reproduce. AGENTS.md's receipt format promises a command that prints the same
+     * number.
+     *
+     * Zero-padded, so lexical order matches insertion order and the tie-break is the *stable* one rather
+     * than an arbitrary one that happens to be reproducible.
+     */
+    const receiptId = `rcpt_${String(n).padStart(26, "0")}`;
     /*
      * The quiet mailbox's three deliveries are the **oldest** in the Node, an hour before everything else, so
      * a page filtered to it is the worst case rather than a lucky one: the walk cannot stop early.

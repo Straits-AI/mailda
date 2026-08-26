@@ -80,6 +80,35 @@ Three things the screen has to get right, and each is an honesty rule rather tha
 `test/client/inbox-pages.test.tsx` mounts the screen for all of it, because the cursor stack is state and
 `newer` is not a function anything can call.
 
+### Narrowing to one mailbox
+
+`?mailbox=` reaches the API, the SDK and the MCP tool, and for a while it reached no control — so the one
+surface a person uses could not do what the ticket asked for. There is a selector in the inbox heading now.
+
+Three decisions worth having written down:
+
+- **It is a control on this screen, not a rail row.** The rail lists mailboxes, so a filter here looks like a
+  duplicate. It is not: the rail's per-mailbox rows sit **under Queue** and carry *unclaimed* counts — work
+  nobody has taken, which is Layer 3's subject. Repointing them at a filtered inbox would change what they
+  mean rather than give them a meaning, and whether a rail row navigates is a real question that belongs with
+  the queue.
+- **It defaults, and `StartMessage`'s selector must not** (#94). That one picks a mailbox to *send as*: per
+  mailbox `send.propose`, a governance consequence, and an invisible default puts somebody's name on an
+  address they did not choose. This one picks what to *look at*, so "all mailboxes" is a truthful description
+  of an unfiltered list rather than a decision taken on the reader's behalf. Two controls that look alike and
+  differ in exactly that, which is why the reasoning is written in both.
+- **Changing the filter resets the cursor**, and that is correctness rather than courtesy. A cursor is a
+  position in one ordering; narrow the listing and the row it names may not be in the new one at all, so the
+  page it produces is arbitrary or empty. Nothing server-side can catch it — the cursor is well-formed and
+  the authorization re-runs, so the Node correctly answers a question nobody asked.
+
+One honest limitation, named because the fix is a new authority surface rather than a tidy-up: the options
+come from `useMailboxes`, which returns the mailboxes this reader holds `send.propose` on — **not** what they
+may read. A supervised reader can therefore see mail from a mailbox the filter cannot name, and the
+unfiltered view is the one that shows it. Filtering to fewer rows than exist is safe; the reverse would not
+be. A `mailbox.content.read` listing is the real answer and inventing one for a filter would be a permission
+surface added for a convenience.
+
 ## The honesty rules live outside React
 
 `delivery.client.js` is DOM-free, served at `/app/delivery.js`, and imported by the shell **at runtime

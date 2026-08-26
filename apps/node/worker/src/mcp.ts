@@ -237,15 +237,24 @@ export async function handleMcp(request: Request, dispatch: Dispatch): Promise<R
 
     const url = new URL(request.url);
     /*
-     * Query parameters are optional, so an argument that is absent or not a string is **omitted** rather than
-     * refused (#91). Omitting is what the route already means by absent — the newest page, every mailbox — so
-     * the honest failure for a wrong value is the route's own refusal, which names the shape. A guard here
-     * would be a second, differently-worded opinion about a value `messagePage` already validates.
+     * Query parameters are optional, so an **absent** argument is omitted — that is what the route already
+     * means by absent: the newest page, every mailbox. Anything *present* is forwarded, whatever it is, and
+     * the route decides (#91).
+     *
+     * That last sentence is the fix rather than the original design. The first version forwarded a value only
+     * when it was a non-empty string, above a comment saying *"the honest failure for a wrong value is the
+     * route's own refusal, which names the shape"* — and the guard is exactly what stopped the route ever
+     * seeing the wrong value. An agent sending `cursor: 7` or `cursor: ""` got the newest page and no
+     * indication it had asked for anything else, which is the silent-wrong-answer that
+     * `E_PAGE_CURSOR_MALFORMED` exists to refuse. A comment promising a refusal, and code preventing it.
+     *
+     * Coerced to a string because a URL carries strings; a `7` therefore arrives at the route as `"7"` and is
+     * refused for its shape, which is the answer an agent can act on.
      */
     const search = new URLSearchParams();
     for (const parameter of tool.spec.query ?? []) {
       const value = args[parameter.name];
-      if (typeof value === "string" && value !== "") search.set(parameter.name, value);
+      if (value !== undefined && value !== null) search.set(parameter.name, String(value));
     }
     const query = search.toString() === "" ? "" : `?${search.toString()}`;
     const target = `${url.origin}${path(route(tool.spec.method as never, tool.spec.path as never), filled)}${query}`;

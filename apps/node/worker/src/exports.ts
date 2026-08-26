@@ -777,6 +777,12 @@ interface MessageRow {
  * in somebody's search string into wildcards, so the predicate that was hashed and the set it matches would
  * differ from what the approvers read. A substring match means what it says.
  */
+/*
+ * Named `messagePage` since #46 and **private to this file**, which is why the newer public reader of the
+ * inbox URL is `messagePageRequest` rather than sharing this name. Two functions called `messagePage` in one
+ * Worker meaning different things — one parses a URL into a page request, one executes a page of SQL — is the
+ * kind of near-collision AGENTS.md rule 4 is about, and `case_`/`cas_` is what it costs when nobody notices.
+ */
 async function messagePage(
   env: Env,
   orgId: string,

@@ -159,9 +159,25 @@ export function Rail() {
         <li>
           <Link to="/" className="rail-row" activeProps={{ className: "rail-row current" }}>
             <span className="rail-name">Inbox</span>
-            {/* A count only once it is known. A zero rendered while loading is a claim about an unread
-                list, which is precisely the §5C distinction between "empty" and "not yet answered". */}
-            {messages.isSuccess ? <span className="mono num">{messages.data.messages.length}</span> : null}
+            {/*
+              A count only once it is known. A zero rendered while loading is a claim about an unread list,
+              which is precisely the §5C distinction between "empty" and "not yet answered".
+
+              **`+` when more exist, because this number is a page and not a total** (#91). It always was —
+              the listing was capped at fifty long before it was paginated — so the rail has been printing a
+              page size where a reader reasonably reads a total, and the same commit that added paging
+              renamed the inbox heading to `{n} shown` for exactly that reason while leaving this one as a
+              bare figure. Two numbers from one query, one of them honest.
+
+              `next_cursor` already answers it, so this costs nothing: a null means nothing older is visible
+              and the figure is the whole of what this reader may see. A real total would need a second
+              authorization-scoped `COUNT`, and it is not worth a query to turn `50+` into `4,213`.
+            */}
+            {messages.isSuccess ? (
+              <span className="mono num">
+                {messages.data.messages.length}{messages.data.next_cursor === null ? "" : "+"}
+              </span>
+            ) : null}
           </Link>
         </li>
         {/*

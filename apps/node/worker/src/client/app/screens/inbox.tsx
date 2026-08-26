@@ -128,6 +128,57 @@ function newMessageContext(mailboxId: string): ComposerContext {
 }
 
 /**
+ * Narrows the listing to one mailbox (#91).
+ *
+ * ## Why this is a control on the screen and not a rail row
+ *
+ * The rail lists mailboxes, so a filter here looks like a duplicate — and the first reading of it was that
+ * the rail should simply become clickable. It should not, at least not for this: the rail's per-mailbox rows
+ * sit **under Queue** and carry *unclaimed* counts. They are about work nobody has taken, which is Layer 3's
+ * subject, and repointing them at a filtered inbox would change what they mean rather than give them a
+ * meaning. Whether a rail row navigates is a real question and it belongs with the queue, not with paging.
+ *
+ * ## Why it is not the same control as `StartMessage`'s
+ *
+ * That one picks a mailbox to **send as** — governance, per-mailbox `send.propose`, and #94's whole argument
+ * that it must never be defaulted invisibly. This one picks what to *look at*. So this one **does** default,
+ * to every mailbox, because "all" is a truthful description of an unfiltered list rather than a choice made
+ * on somebody's behalf. Two controls that look alike and differ in exactly that way, which is why they are
+ * separate functions with the reasoning written in both.
+ *
+ * The options come from `useMailboxes`, which returns what this reader holds `send.propose` on — **not** what
+ * they may read. That is a genuine mismatch and it is the narrower set: a supervised reader may see messages
+ * from a mailbox that is not in this list, so filtering cannot reach them and the unfiltered view is the one
+ * that shows their mail. Filtering to fewer rows than exist is safe; the reverse would not be. Named here
+ * because the honest fix is a `mailbox.content.read` listing, and inventing one for a filter would be a new
+ * authority surface added for a convenience.
+ */
+function MailboxFilter({ chosen, onChoose }: {
+  chosen: string | null;
+  onChoose: (mailboxId: string | null) => void;
+}) {
+  const mailboxes = useMailboxes();
+  const rows = mailboxes.data?.mailboxes ?? [];
+  // Nothing to narrow with one mailbox, and nothing to narrow at all with none.
+  if (rows.length < 2) return null;
+
+  return (
+    <span className="inbox-filter">
+      <label htmlFor="inbox-mailbox" className="dim">mailbox</label>
+      {" "}
+      <select
+        id="inbox-mailbox"
+        value={chosen ?? ""}
+        onChange={(event) => onChoose(event.target.value === "" ? null : event.target.value)}
+      >
+        <option value="">all mailboxes</option>
+        {rows.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+      </select>
+    </span>
+  );
+}
+
+/**
  * The control that starts one, and the mailbox it will be sent from.
  *
  * The mailbox is **chosen, never inferred**. `From` is the mailbox (ADR 36) and `send.propose` is held per
@@ -259,19 +310,35 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
 function usePages() {
   /** The cursors used to reach the current page. Empty means the newest one. */
   const [stack, setStack] = useState<string[]>([]);
+  /** Which mailbox the listing is narrowed to, or null for every mailbox this reader may see. */
+  const [mailbox, setMailbox] = useState<string | null>(null);
   return {
     cursor: stack[stack.length - 1] ?? null,
+    mailbox,
     /** 1-based, for the reader. Never presented as "of N": nothing here knows N and nothing counted it. */
     number: stack.length + 1,
     older: (next: string) => setStack((was) => [...was, next]),
     newer: () => setStack((was) => was.slice(0, -1)),
     newest: () => setStack([]),
+    /**
+     * Narrowing the listing **resets the position**, and that is a correctness requirement rather than a
+     * courtesy.
+     *
+     * A cursor is a position in one ordering. Change the filter and it is a position in a different
+     * ordering — the row it names may not be in the new listing at all, so the page it produces is
+     * somewhere arbitrary, or nowhere. The Node cannot catch this for us: the cursor is well-formed and the
+     * authorization re-runs, so it answers correctly for a question nobody asked.
+     */
+    narrowTo: (next: string | null) => {
+      setMailbox(next);
+      setStack([]);
+    },
   };
 }
 
 export function Inbox() {
   const pages = usePages();
-  const messages = useMessages({ cursor: pages.cursor });
+  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox });
   const [selected, setSelected] = useState<string | null>(null);
   const [composing, setComposing] = useState<ComposerContext | null>(null);
   /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
@@ -323,6 +390,7 @@ export function Inbox() {
     <header className="ledger-head">
       <h1>Inbox</h1>
       <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
+      <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
       {/*
         `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
         `{n} messages` was true only while the listing returned everything there was; against a page it
@@ -332,6 +400,7 @@ export function Inbox() {
       {messages.isSuccess ? (
         <p className="dim mono">
           {messages.data.messages.length} shown{pages.number === 1 ? "" : ` · page ${pages.number}`}
+          {pages.mailbox === null ? "" : " · one mailbox"}
         </p>
       ) : null}
     </header>

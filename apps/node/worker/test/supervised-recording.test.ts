@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { BUDGETS } from "@mailda/budgets";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
 import worker from "../src/index.ts";
@@ -362,13 +363,19 @@ describe("a query entry never truncates its id list, because a prefix understate
      * different set — `grantId`, `mailboxId`, `returned` and the continuation pair — so the real fill is
      * measured here rather than inherited, which is the point of splitting instead of picking a number.
      *
-     * What is **asserted** is the property the listing depends on: `listMessages` returns at most 50 rows, so
-     * a real page never splits. The fill is printed so the margin above 50 is a number somebody can read.
+     * What is **asserted** is the property the listing depends on: one page's worth of ids fits in one
+     * entry, so a real page never splits. The fill is printed so the margin is a number somebody can read.
+     *
+     * **From `messages.page_size`, not the literal 50 it happens to be.** #91 made the page a receipt-backed
+     * budget, and this file kept asserting the old constant in three places plus a comment — so raising the
+     * page size would have left this test passing while proving nothing about the page it now has. That is
+     * the shape of an assertion that agrees with whatever it is given.
      */
-    const details = await record(50);
+    const page = BUDGETS["messages.page_size"];
+    const details = await record(page);
     expect(details).toHaveLength(1);
     expect(details[0]?.truncated).toBeUndefined();
-    expect((details[0]?.ids as string[]).length).toBe(50);
+    expect((details[0]?.ids as string[]).length).toBe(page);
     // Continuation fields are absent when there is only one part: a reader should not have to parse
     // `part: 1, of: 1` to learn there was no split.
     expect(details[0]?.part).toBeUndefined();
@@ -379,10 +386,10 @@ describe("a query entry never truncates its id list, because a prefix understate
       if (buildSupervisedQuery("sgr_bound", INVESTIGATOR, MAILBOX,
         Array.from({ length: count }, (_, index) => id(index))).length === 1) fill = count;
     }
-    console.log(`MEASURE supervised.query  ids_per_entry=${fill}  listing_page=50`);
+    console.log(`MEASURE supervised.query  ids_per_entry=${fill}  listing_page=${page}`);
     // Comfortably above the listing's page, and the assertion is against the page rather than against the
     // fill: if a future page size passed this, the splitting is what keeps the record honest, not this line.
-    expect(fill).toBeGreaterThanOrEqual(50);
+    expect(fill).toBeGreaterThanOrEqual(page);
   });
 
   it("splits rather than truncating when a page will not fit", async () => {

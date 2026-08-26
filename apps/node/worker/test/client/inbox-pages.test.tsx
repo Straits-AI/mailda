@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { answerWith, calls, reset } from "./session-stub.ts";
+import { answerMailboxes, answerWith, calls, reset } from "./session-stub.ts";
 
 /**
  * The control that reaches older mail, rendered (#91).
@@ -27,7 +27,16 @@ import { answerWith, calls, reset } from "./session-stub.ts";
  */
 
 // `useNavigate` needs a router around it, and `Composer` — which the inbox imports — is its only caller here.
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+/*
+ * `Link` as well as `useNavigate`. #101 gave `Nothing` an optional `action` that renders a `<Link>`, and the
+ * empty inbox uses it to point at `doctor` — so a mock without `Link` makes the whole screen throw and
+ * renders an empty document, which reads in the failure output like the query never resolved.
+ */
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+  useRouterState: () => ({ location: { pathname: "/" } }),
+  Link: ({ children }: { children?: unknown }) => children,
+}));
 
 const { Inbox } = await import("../../src/client/app/screens/inbox.tsx");
 
@@ -59,7 +68,10 @@ function row(n: number) {
 function answerPages(pages: Record<string, { messages: unknown[]; next_cursor: string | null }>) {
   answerWith((call) => {
     const url = new URL(call.path, "https://node.example");
-    if (url.pathname !== "/api/messages") return Response.json({});
+    // `undefined`, not an empty object: this helper has an opinion about `/api/messages` and about nothing
+    // else, and answering the mailbox list with `{}` renders a screen with no mailboxes — which fails the
+    // filter tests below for a reason that has nothing to do with them.
+    if (url.pathname !== "/api/messages") return undefined;
     const cursor = url.searchParams.get("cursor") ?? "";
     const page = pages[cursor];
     if (page === undefined) return Response.json({ messages: [], next_cursor: null });
@@ -182,12 +194,144 @@ describe("the inbox can reach the page after the first", () => {
     expect(screen.getByRole("button", { name: /^newest$/ })).toBeDefined();
   });
 
-  it("still says nothing has arrived on an empty page one, which is the true statement there", async () => {
-    // The control for the test above: the sentence is not wrong, it was being said in the wrong place.
+  it("says something different on an empty page one, because it is a different statement", async () => {
+    /*
+     * The control for the test above. This file first asserted "Nothing has arrived yet" here, with a
+     * comment that the sentence was right and only in the wrong place — and #101 landed on main in between,
+     * because on page one that sentence sat next to a claim that *routing is live*, concluded from the same
+     * empty result set. So page one now says what an empty list means and points at `doctor`, and page two
+     * still says nothing is older than here. Two branches, two true statements, neither borrowed.
+     */
     answerPages({ "": { messages: [], next_cursor: null } });
     mount();
     await settle();
-    expect(screen.getByText(/Nothing has arrived yet/)).toBeDefined();
+    expect(screen.getByText(/No messages are visible to you yet/)).toBeDefined();
+    expect(screen.queryByText(/routing is live/i)).toBeNull();
+    expect(screen.queryByText(/Nothing older on this page/)).toBeNull();
     expect(screen.queryByRole("button", { name: /^older$/ })).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------- the mailbox filter --------------------- */
+
+/** Every `/api/messages` request this test made, as parsed query strings. */
+const asked = () => calls
+  .filter((call) => call.path.startsWith("/api/messages"))
+  .map((call) => new URL(call.path, "https://node.example").searchParams);
+
+async function choose(mailboxId: string) {
+  const select = document.getElementById("inbox-mailbox") as HTMLSelectElement;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLSelectElement.prototype, "value",
+    )!.set!;
+    setter.call(select, mailboxId);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+describe("the listing can be narrowed to one mailbox", () => {
+  const TWO = [
+    { id: "mbx_support", name: "Support", addresses: "support@example.test" },
+    { id: "mbx_billing", name: "Billing", addresses: "billing@example.test" },
+  ];
+
+  it("renders no control when there is nothing to narrow", async () => {
+    /*
+     * One mailbox is not a filter, and rendering a select whose only option is "all mailboxes" plus that one
+     * would be furniture — the same argument `StartMessage` makes about a one-option sender.
+     */
+    answerMailboxes([TWO[0]!]);
+    answerPages({ "": { messages: [row(1)], next_cursor: null } });
+    mount();
+    await settle();
+    expect(document.getElementById("inbox-mailbox")).toBeNull();
+  });
+
+  it("defaults to every mailbox, and asks for no mailbox when it does", async () => {
+    /*
+     * The deliberate difference from #94's sender control, which must never default. This one describes what
+     * is on screen rather than deciding something on the reader's behalf: "all" is a true statement about an
+     * unfiltered list, and a governance consequence is what makes an invisible default wrong.
+     */
+    answerMailboxes(TWO);
+    answerPages({ "": { messages: [row(1)], next_cursor: null } });
+    mount();
+    await settle();
+
+    expect((document.getElementById("inbox-mailbox") as HTMLSelectElement).value).toBe("");
+    expect(asked()[0]!.get("mailbox")).toBeNull();
+  });
+
+  it("sends the chosen mailbox, and only then", async () => {
+    answerMailboxes(TWO);
+    answerPages({ "": { messages: [row(1)], next_cursor: null } });
+    mount();
+    await settle();
+    await choose("mbx_billing");
+    await settle();
+
+    const last = asked()[asked().length - 1]!;
+    expect(last.get("mailbox")).toBe("mbx_billing");
+  });
+
+  it("drops the cursor when the filter changes, because a position is a position in one ordering", async () => {
+    /*
+     * **The correctness requirement, not a courtesy.** A cursor names a row in one ordering; narrow the
+     * listing and that row may not be in it at all, so the page it produces is somewhere arbitrary or
+     * nowhere. Nothing server-side can catch it: the cursor is well-formed and the authorization re-runs, so
+     * the Node answers correctly a question the reader did not ask.
+     *
+     * Reach page two, then narrow, and assert the request that follows carries the mailbox and **no cursor**.
+     */
+    answerMailboxes(TWO);
+    answerPages({
+      "": { messages: [row(1)], next_cursor: "2026-08-20T09:00:00.000Z rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ" },
+      "2026-08-20T09:00:00.000Z rcpt_ZZZZZZZZZZZZZZZZZZZZZZZZZZ": { messages: [row(1)], next_cursor: null },
+    });
+    mount();
+    await settle();
+    await press(/^older$/);
+    await settle();
+    expect(asked()[asked().length - 1]!.get("cursor"), "did not reach page two").not.toBeNull();
+
+    await choose("mbx_support");
+    await settle();
+
+    const after = asked()[asked().length - 1]!;
+    expect(after.get("mailbox")).toBe("mbx_support");
+    expect(after.get("cursor"), "carried a page-two cursor into a different listing").toBeNull();
+  });
+
+  it("goes back to every mailbox, and shows the unfiltered listing again", async () => {
+    /*
+     * Asserted on what is **displayed** rather than on the last request, and the first version got that
+     * wrong: returning to "all mailboxes" reuses a query key already in the cache, so no request is made at
+     * all and "the last request still says billing" was true of correct behaviour. A test that reads the
+     * network to answer a question about the screen is a test about the cache.
+     *
+     * So the two listings carry different mail, and the assertion is that the right one is on screen.
+     */
+    answerMailboxes(TWO);
+    answerWith((call) => {
+      const url = new URL(call.path, "https://node.example");
+      if (url.pathname !== "/api/messages") return undefined;
+      const mailbox = url.searchParams.get("mailbox");
+      const one = row(1);
+      return Response.json({
+        messages: [mailbox === null ? { ...one, subject: "everything" } : { ...one, subject: "billing only" }],
+        next_cursor: null,
+      });
+    });
+    mount();
+    await settle();
+    expect(screen.getByText("everything")).toBeDefined();
+
+    await choose("mbx_billing");
+    await waitFor(() => { expect(screen.getByText("billing only")).toBeDefined(); });
+
+    await choose("");
+    await waitFor(() => { expect(screen.getByText("everything")).toBeDefined(); });
+    expect((document.getElementById("inbox-mailbox") as HTMLSelectElement).value).toBe("");
   });
 });

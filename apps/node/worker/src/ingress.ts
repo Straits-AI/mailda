@@ -1,5 +1,5 @@
 import type { Bytes } from "@mailda/evidence";
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { putEvidence } from "./evidence-store.ts";
 
@@ -73,7 +73,10 @@ export async function acceptInbound(
     return { status: "already_accepted", receiptId: seen.id };
   }
 
-  const receiptId = ctx.id("rcpt");
+  // Through the registry, not as a literal. #91 registered this prefix because a page cursor has to
+  // *validate* one, and `id-prefix-world.test.ts` then required the mint and the check to come from the same
+  // place — which is the whole point of the registry and exactly how `case_`/`cas_` came to disagree.
+  const receiptId = ctx.id(ID_PREFIXES.ingressReceipt);
   const at = new Date(ctx.now()).toISOString();
   const timeBucket = bucketFor(ctx.now());
 
