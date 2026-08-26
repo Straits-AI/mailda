@@ -74,6 +74,14 @@ export const ID_PREFIXES = {
    * beside it, which is what `case_`/`cas_` taught this registry.
    */
   ingressReceipt: "rcpt",
+  /**
+   * A recovery code's row (#92). Registered because redemption **validates** an id it was handed, which is
+   * the rule this registry follows — a prefix arrives when something has to check one.
+   *
+   * `rcv`, not `rec`: `rcpt` is next to it in this list and three letters is not much distance. The pair
+   * that taught this registry its lesson was `case_` versus `cas_`.
+   */
+  recoveryCode: "rcv",
 } as const;
 
 /**

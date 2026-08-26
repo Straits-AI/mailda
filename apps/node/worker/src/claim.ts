@@ -4,6 +4,7 @@ import { claimSecretHash } from "./claim-secret.ts";
 
 import { hashPassword, passwordProblem } from "./auth/password.ts";
 import { issueSession, type IssuedSession } from "./auth/session.ts";
+import { mintRecoveryCodes } from "./recovery.ts";
 
 /**
  * Node claim and session issue (§5A).
@@ -33,6 +34,13 @@ export interface ClaimOutcome {
   session?: IssuedSession;
   /** Set when status is weak_password: the four-part explanation, ready to show. */
   problem?: string;
+  /**
+   * ADR 29's ten recovery codes, in plaintext, **once** (#92).
+   *
+   * Present only on `claimed`, and nothing can produce them again — this Node keeps a hash for verification
+   * and an escrow only the code itself opens. The interface has to show them at this moment or never.
+   */
+  recoveryCodes?: readonly string[];
 }
 
 /**
@@ -133,10 +141,20 @@ export async function claimNode(
     return { status: "already_claimed" };
   }
 
-  // After the claim commits, not inside the batch: issuing a session generates a signing key on
-  // first use, and a key is not something to mint speculatively inside a transaction that may
-  // yet be found to have lost a race.
-  return { status: "claimed", orgId, userId, session: await issueSession(env, ctx, { orgId, userId }) };
+  /*
+   * After the claim commits, not inside the batch: issuing a session generates a signing key on first use,
+   * and a key is not something to mint speculatively inside a transaction that may yet be found to have lost
+   * a race. The recovery codes are minted here for the same reason and one more of their own — `mintRecoveryCodes`
+   * reads the **vault**, and the vault generates its content and credential keys on first use, so minting has
+   * to happen after something has caused them to exist rather than before.
+   *
+   * ADR 28 is why this is on the claim path at all rather than an operator action somebody might get to:
+   * *"this decision does not ship without key escrow at claim"*. A Node that has accepted one message
+   * without an escrow already has content that cannot be recovered.
+   */
+  const session = await issueSession(env, ctx, { orgId, userId });
+  const escrow = await mintRecoveryCodes(env, ctx, orgId);
+  return { status: "claimed", orgId, userId, session, recoveryCodes: escrow.codes };
 }
 
 /**

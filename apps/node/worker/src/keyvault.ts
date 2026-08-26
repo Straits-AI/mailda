@@ -38,6 +38,13 @@ import { DurableObject } from "cloudflare:workers";
  * managed secret store would have allowed re-provisioning. ADR 28 therefore does not ship without
  * the key escrow in ADR 29 — the same recovery codes that restore an account restore the vault, so
  * an operator has one artifact to keep rather than two to lose separately.
+ *
+ * **That escrow exists now** (#92, `src/recovery.ts`). For a while the sentence above was a shipping
+ * condition satisfied by nothing, and worse: the refusals in this file told an operator to *"restore the
+ * vault from the ADR 29 recovery codes"* when there were none to hold, so the remedy named was impossible.
+ * `restore()` below is the method that puts a key back, `mintRecoveryCodes` writes the escrow at claim, and
+ * doctor's `recovery_escrow` finding reports whether it is present **and current** — a stale escrow restores
+ * a vault that can read old mail and not new, which is the failure that looks like success.
  */
 
 export type KeyPurpose = "content" | "credential";
@@ -122,8 +129,8 @@ export class KeyVault extends DurableObject<Env> {
         `E_VAULT_UNKNOWN_GENERATION  ${purpose} generation ${generation} is not in this vault\n` +
           "  why      an object records a key this Node has never held — a restored backup whose " +
           "Durable Object storage did not come with it, or the wrong Node\n" +
-          "  fix      restore the vault from the ADR 29 recovery codes; the data is intact but " +
-          "unreadable without its key",
+          "  fix      POST /api/recovery/redeem with one of the ten recovery codes printed at claim; " +
+          "the data is intact but unreadable without its key",
       );
     }
     return { generation, secret };
@@ -144,6 +151,69 @@ export class KeyVault extends DurableObject<Env> {
       result = { from, to };
     });
     return result;
+  }
+
+  /**
+   * Puts a generation's key back, from ADR 29's escrow (#92).
+   *
+   * This is the method that turns *"lose it and every message is permanently unreadable"* into a sentence
+   * with an escape. Everything else here **generates** keys; nothing could put a known one back, which is
+   * why three refusals in this file and in `doctor` named a remedy that did not exist.
+   *
+   * ## It never overwrites, and that is the whole safety argument
+   *
+   * A restore is run during an incident, by somebody who may not be certain what state this vault is in. If
+   * it overwrote, a code redeemed against a *healthy* vault — a mistake made under pressure — would replace
+   * live keys with older copies, and objects sealed since the escrow was taken would become unreadable. That
+   * is the failure mode of the mechanism meant to prevent exactly it.
+   *
+   * So a generation already present is left alone and reported as untouched. Restoring is therefore
+   * idempotent and safe to repeat, which is the property somebody re-running a half-finished recovery needs.
+   *
+   * `blockConcurrencyWhile` for `sealingKey`'s reason: the check and the write have to be one step, or two
+   * concurrent restores can both find a generation absent.
+   */
+  async restore(
+    purpose: KeyPurpose, generation: number, secret: string,
+  ): Promise<"restored" | "identical" | "conflict"> {
+    if (generation === LEGACY_GENERATION) {
+      /*
+       * Generation 0 is the published development constant and `openingKey` returns it without storage.
+       * Writing it would put a value from a public repository into the place this Node keeps its secrets, and
+       * a later reader would have no way to tell it from a real one.
+       */
+      return "identical";
+    }
+    let outcome: "restored" | "identical" | "conflict" = "identical";
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const present = await this.ctx.storage.get<string>(AT(purpose, generation));
+      if (present !== undefined) {
+        /*
+         * **A generation already here with a *different* secret is a real state, and it is the one worth
+         * refusing to paper over.** Reachable, and measured: wipe this storage, let the Node keep working,
+         * and `sealingKey` mints a fresh generation 1 — a different secret under the same number. An escrow
+         * taken before the wipe then carries generation 1 too, and the two are both needed: objects sealed
+         * before the loss open with one, objects sealed after with the other.
+         *
+         * Nothing can hold both under one number, so this keeps the **live** key — which preserves the newer
+         * mail — and reports the collision rather than resolving it in silence. Overwriting would trade
+         * newer mail for older; skipping quietly, which is what the first version did, told the operator the
+         * generation had been restored when it had not.
+         */
+        outcome = present === secret ? "identical" : "conflict";
+        return;
+      }
+      await this.ctx.storage.put(AT(purpose, generation), secret);
+      /*
+       * The pointer moves only forward. A restore that lowered `current` would make this Node seal *new*
+       * mail under an old key — which is not a recovery, it is a quiet downgrade of every message written
+       * afterwards. Key first, pointer second, as everywhere else in this file.
+       */
+      const current = (await this.ctx.storage.get<number>(CURRENT(purpose))) ?? LEGACY_GENERATION;
+      if (generation > current) await this.ctx.storage.put(CURRENT(purpose), generation);
+      outcome = "restored";
+    });
+    return outcome;
   }
 
   /** What the vault holds, for `doctor`. Generations only — never key material. */

@@ -216,6 +216,15 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/claim",
     "POST /api/prepare",
     "POST /api/invitations/redeem",
+    /*
+     * Spending an ADR 29 recovery code to restore the vault (#92). `operator` rather than `governed`, and
+     * the distinction is the one this tier exists for: a second person cannot make this safe for a machine.
+     * The code **is** the credential — the route is unauthenticated on purpose, because the state it exists
+     * for is one where session keys are unopenable — so an agent that could call it would be an agent
+     * holding this Node's last resort. There are ten of them and they are single-use, so an agent retrying
+     * a mistyped code would burn the escrow it was trying to use.
+     */
+    "POST /api/recovery/redeem",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

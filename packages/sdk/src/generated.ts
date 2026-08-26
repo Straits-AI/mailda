@@ -51,6 +51,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Spend an ADR 29 recovery code to restore this Node's key vault
+   *
+   * `POST /api/recovery/redeem`
+   */
+  async postRecoveryRedeem(body: z.infer<typeof S.redeemRecoveryRequest>): Promise<z.infer<typeof S.vaultRestoredResponse>> {
+    return await this.json("POST", "/api/recovery/redeem", {}, body) as z.infer<typeof S.vaultRestoredResponse>;
+  }
+
+  /**
    * Apply pending migrations
    *
    * `POST /api/prepare`

@@ -65,6 +65,30 @@ export const AUDIT_ACTIONS = {
   "auth.sign_in_failed": { says: "A password was presented and refused." },
   "auth.revoked_all_sessions": { says: "Every session for one person was ended at once (§28)." },
   "key.rotated": { says: "The signing key changed; tokens minted before and after differ in kid." },
+  /*
+   * ADR 29's recovery codes (#92). Both entries earn their place on the same ground and it is not
+   * frequency — minting happens at claim and re-minting is rare — it is that **restoring is an
+   * unauthenticated act on this Node's most sensitive material**.
+   *
+   * `POST /api/recovery/redeem` takes no session, deliberately: the state it exists for is one where the
+   * credential key is unopenable, so session keys cannot be verified and requiring a session would make the
+   * recovery path reachable only from the state that does not need it. An unauthenticated route that
+   * installs keys and leaves no trace is exactly what §7 exists to forbid, so the trail is what makes the
+   * exposure acceptable rather than merely bounded.
+   *
+   * Neither entry can name a person, and that is recorded rather than hidden: the actor is the code, and
+   * whoever holds a code is who this Node believes them to be. The subject is the code's row id — never the
+   * code, never its hash — so "which of the ten was spent, and when" is answerable without the trail
+   * carrying anything that opens the escrow.
+   */
+  "recovery.codes_minted": {
+    says: "A set of ten recovery codes was minted and the key vault escrowed under them; any previous set "
+      + "stopped working.",
+  },
+  "recovery.vault_restored": {
+    says: "A recovery code was spent to restore key material into the vault. Names the generations put back "
+      + "and the ones that collided with a live key and were not.",
+  },
 
   /*
    * Layer 3. Note what is *absent*: there is no `case.claimed` or `case.released`.

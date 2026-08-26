@@ -26,6 +26,17 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   refresh_tokens: { actions: ["auth.signed_in", "auth.revoked_all_sessions"] },
   sessions: { actions: ["auth.signed_in", "auth.revoked_all_sessions"] },
   login_attempts: { actions: ["auth.sign_in_failed", "auth.locked_out"] },
+  /*
+   * ADR 29's codes and ADR 28's escrow (#92). Auditable, and not because the table is sensitive — because
+   * `POST /api/recovery/redeem` takes **no session** and installs key material. That is the one
+   * unauthenticated privileged act on this Node, so the trail is what makes it accountable at all; an
+   * exemption here would leave a route that can restore the crown jewels and leave no trace.
+   *
+   * Neither entry names a person and that is stated rather than hidden: the actor is the code. The subject is
+   * the row id, never the code and never its hash, so "which of the ten was spent, and when" is answerable
+   * from a trail that carries nothing able to open the escrow.
+   */
+  recovery_codes: { actions: ["recovery.codes_minted", "recovery.vault_restored"] },
   send_manifests: {
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",

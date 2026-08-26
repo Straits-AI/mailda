@@ -1282,7 +1282,37 @@ export const claimedResponse = z.object({
   organizationId: z.string().min(1),
   email: z.string().min(1),
   accessExpiresAt: z.number().int().positive(),
+  /**
+   * ADR 29's ten recovery codes, in plaintext (#92). The **only** response in this contract that carries
+   * them: the Node keeps a hash to recognise one and an escrow only the code itself opens, so nothing can
+   * produce them again. Optional because a Node claimed before this shipped has none.
+   */
+  recoveryCodes: z.array(z.string().min(1)).optional(),
 }).strict();
+
+/**
+ * What a redeemed recovery code put back: the generations, per purpose. Never key material.
+ *
+ * `conflicted` is the half worth reading. A generation the vault already held under a *different* secret
+ * could not be installed — reachable when storage was lost and the Node kept working, minting a fresh
+ * generation 1 while the escrow carries the old one. The live key is kept, so mail sealed under the escrowed
+ * key stays unreadable, and this is where an operator finds that out.
+ */
+export const vaultRestoredResponse = z.object({
+  restored: z.object({
+    content: z.array(z.number().int().nonnegative()),
+    credential: z.array(z.number().int().nonnegative()),
+  }).strict(),
+  conflicted: z.object({
+    content: z.array(z.number().int().nonnegative()),
+    credential: z.array(z.number().int().nonnegative()),
+  }).strict(),
+}).strict();
+
+/** A recovery code, as typed. Hyphens and case are cosmetic and normalised by the Node. */
+export const redeemRecoveryRequest = z.object({
+  code: z.string().min(1),
+}).loose();
 
 export const redeemedResponse = z.object({
   joined: z.literal(true),

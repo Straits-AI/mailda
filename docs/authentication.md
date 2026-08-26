@@ -273,7 +273,8 @@ On `mailda.swmengappdev.workers.dev`, 4 August 2026:
   `invalid_credentials` with matching timing** — "not enabled for this account" would otherwise name
   exactly the accounts worth attacking.
 - **Ten single-use 128-bit recovery codes, plain SHA-256.** Not human-chosen, so no offline-guessing
-  surface to price. The same codes carry the key escrow below.
+  surface to price. The same codes carry the key escrow below. **The escrow half is built** (#92); signing in
+  with a code is not — see below.
 - **Both KEKs move into Durable Object storage, generated per Node.** Secrets Store bindings are not
   account-portable (measured: removing the config block drops the binding silently rather than
   relinking as D1 does), and #7 had already established that Secrets Store never protected against
@@ -283,6 +284,55 @@ On `mailda.swmengappdev.workers.dev`, 4 August 2026:
 
 Still additive and not blocked: OIDC/SAML federation and SCIM, DPoP/mTLS sender constraints, the CLI
 device grant.
+
+## The key escrow, which ADR 28 refused to ship without (#92)
+
+`keyvault.ts` said it plainly and for a while nothing satisfied it: *"ADR 28 therefore does not ship without
+the key escrow in ADR 29."* Worse than a gap — three refusals told an operator to *"restore the vault from
+the ADR 29 recovery codes"* when none existed, so the remedy named was impossible and somebody would go
+looking for it.
+
+Ten codes are minted at claim and returned **once**, in the claim response and nowhere else. Each carries its
+own copy of the vault's secrets, so any one of them restores it and losing nine is survivable — which is what
+"ten single-use codes" has to mean.
+
+**Two uses of one secret, kept apart, and this is the whole design:**
+
+| | derived from | stored on the Node | answers |
+|:--|:--|:--|:--|
+| authentication | `sha256(code)` | **yes** | is this one of the ten? |
+| encryption | the code's plaintext, domain-separated | **no** | may this open the vault? |
+
+Sealing the escrow under the stored hash would put the ciphertext and its key in one row, and a D1 dump — the
+exact threat ADR 28 says Durable Object storage defends against — would carry both. So this Node can *verify*
+a code it cannot *use*. `test/recovery-escrow.test.ts` asserts it by attempting the attack: every value the
+table contains, used as a key against the blob, must fail, and the code itself must succeed.
+
+Three things the mechanism reports rather than hides:
+
+- **A stale escrow.** Rotation makes new objects openable only by the new key, so an escrow taken before it
+  restores a vault that reads old mail and not new. `doctor`'s `recovery_escrow` compares the escrow's
+  generations against the vault's inventory and goes `degraded` — the only honesty check in `doctor.ts`
+  allowed to be, because a Node holding unrecoverable mail is not healthy.
+- **A generation it could not install.** Reachable, and found by mutation testing rather than by reasoning:
+  lose the storage, let the Node keep working, and `sealingKey` mints a *fresh* generation 1 with a different
+  secret. The escrow's generation 1 and the live one are both real and both needed. The live key is kept, so
+  newer mail survives, and the collision is reported — the first version silently skipped it and reported the
+  generation as restored.
+- **Nothing in the audit trail that could open the escrow.** Both acts are audited, because
+  `POST /api/recovery/redeem` takes **no session** — it must, since the state it exists for has no verifiable
+  session keys — and an unauthenticated route that installs keys without a trace is what §7 forbids. The
+  subject is the code's row id, never the code and never its hash.
+
+**Signing in with a recovery code is deliberately not built.** ADR 29 gives the codes two jobs and this is
+the second. The first needs step-up, rate limiting and an audited session-issuance path, and shipping the
+vault half first closes ADR 28's gate without waiting on any of it. Redemption issues no session and grants
+nothing.
+
+**What #92 still asks for and this does not do:** exporting D1, the R2 object inventory and the cryptographic
+manifests, restoring all of it into a clean Cloudflare account, and measuring RPO and RTO from a real drill.
+That is a later layer rather than a deferral — the keys had to come first, because exporting evidence nobody
+can decrypt is a backup that proves nothing.
 
 ## Not built
 

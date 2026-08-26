@@ -107,6 +107,21 @@ const SITES: Site[] = [
       + "path only ever deletes where redeemed_at IS NULL.",
   },
   {
+    file: "src/recovery.ts",
+    target: "recovery_codes",
+    content: false,
+    why:
+      "The previous set of ADR 29 codes, replaced when a fresh set is minted (#92). Not content — a code " +
+      "hash and an escrow blob, no message and no attribution. But it is the closest thing in this table to " +
+      "content, and the distinction is worth being exact about: deleting these destroys no mail and destroys " +
+      "the *ability to recover* mail if the vault is later lost. What makes it safe is that the delete " +
+      "travels in the **same `batch` as the ten inserts that replace it**, so there is no window in which a " +
+      "Node has no escrow; D1's batch is one transaction, and a failure rolls the delete back with it. What " +
+      "makes it necessary is that a stale escrow is worse than none: ten codes that open a vault two " +
+      "generations behind restore a Node that cannot read its recent mail, and leaving them alongside a " +
+      "current set means somebody picks one during an incident.",
+  },
+  {
     file: "src/auth/session.ts",
     target: "login_attempts",
     content: false,

@@ -91,7 +91,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 | `postSendsDispatch` | Hand every due send to the transport now |
 
-## What you cannot do, and why — 43 withheld
+## What you cannot do, and why — 44 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -130,7 +130,7 @@ so you are that one person and can never be the second. These are not permission
 
   Mail leaving is the one act in this product nobody can undo. Sealing commits a message to policy and the dispatcher takes it from there; a cancellation is a race, not a reversal.
 
-### Operator — running the Node rather than using it (17)
+### Operator — running the Node rather than using it (18)
 
 - **`deleteAuthPasskeys`, `postAuthLogin`, `postAuthLogout`, `postAuthLogoutEverywhere`, `postAuthPasskeys`, `postAuthPasskeysChallenge`, `postAuthPasskeysVerify`, `postAuthRefresh`, `postAuthRotateSigningKey`, `putTransport`**
 
@@ -144,7 +144,7 @@ so you are that one person and can never be the second. These are not permission
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
 
-- **`postClaim`, `postInvitationsRedeem`, `postPrepare`**
+- **`postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryRedeem`**
 
   Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
 

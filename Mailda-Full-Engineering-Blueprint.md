@@ -903,7 +903,15 @@ on an OIDC provider, and is deliberately narrower than the full specification. S
 - **Claim sets the owner's password.** The prior flow issued one session against a one-time secret
   and stored no verifier, so losing that cookie meant losing the Node.
 
-### Decided 4 August 2026, not yet built (ADR 29)
+### Decided 4 August 2026 (ADR 29). Passkeys and the key escrow are built; the rest is not
+
+**Built since:** passkeys as the way in (#84), and the **key escrow** — ten single-use 128-bit codes carrying
+ADR 28's vault, minted at claim (#92). ADR 28 said it *"does not ship without"* that escrow and for a while
+nothing satisfied the condition, while three refusals named it as the remedy. `docs/authentication.md` has
+the design and what it deliberately does not do.
+
+**Still not built from this decision:** signing in with a recovery code (the escrow uses the same codes but
+issues no session), the password-as-per-user-setting change, the insistent second passkey, and step-up.
 
 - **Passkeys are the authentication Mailda builds.** No dependency: verification is an ES256 or
   RS256 signature over `authenticatorData ‖ sha256(clientDataJSON)`, and ES256 already exists for

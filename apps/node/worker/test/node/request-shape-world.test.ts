@@ -280,6 +280,14 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/auth/passkeys/challenge",
       "POST /api/butlers",
       "POST /api/butlers/:butlerId/simulate",
+      /*
+       * A recovery code (#92). Tolerant, and the reasoning is the same shape as `POST /api/auth/login`
+       * beside it: the body is one credential, an extra field changes nothing about what the Node does with
+       * it, and there is no closed set for a misspelling to silently empty. A missing or misspelled `code`
+       * is refused by name — `E_RECOVERY_CODE_UNKNOWN` — rather than quietly becoming an unconstrained
+       * anything, which is the failure #93 exists to prevent and the reason the policy routes are strict.
+       */
+      "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
       "PUT /api/transport",
     ]);

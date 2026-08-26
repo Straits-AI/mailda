@@ -6,6 +6,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
 
 import { clearKeyCache, currentSigningKey } from "../src/auth/keys.ts";
+import { mintRecoveryCodes } from "../src/recovery.ts";
 import { runDoctor, withoutDataFindings, type Finding } from "../src/doctor.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { placeHold } from "../src/holds.ts";
@@ -240,6 +241,13 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
     await testEnv.CATALOG.prepare(
       "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
     ).bind("addr_stranded", ORG, "support@stranded.test", MAILBOX, new Date(ctx.now()).toISOString()).run();
+    /*
+     * And a key escrow, so `recovery_escrow` (#92) is not a second failure. That finding is `degraded` on a
+     * Node with no escrow — deliberately the only honesty check in `doctor.ts` allowed to be — so
+     * "otherwise-healthy" above now has to include it. Minted rather than faked, because the finding compares
+     * the escrow's generations against the vault's own inventory and a hand-written row would read as stale.
+     */
+    await mintRecoveryCodes(testEnv, ctx, ORG);
     await aSealedDraftsResidue("dft_sealed");
 
     const report = await runDoctor(testEnv, ctx);

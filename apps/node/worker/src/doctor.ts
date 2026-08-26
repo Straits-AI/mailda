@@ -4,6 +4,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
+import { escrowState } from "./recovery.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
 import { decidersByMailbox } from "./deciders.ts";
@@ -226,6 +227,10 @@ const EXPECTED_TABLES = [
   // stage can require a member of a named team. `team_members` itself is above — it has existed since 0001,
   // and what it lacked was never a table.
   "teams",
+  // Migration 0039 (#92): ADR 29's recovery codes, carrying ADR 28's key escrow. The table ADR 28 said this
+  // Node "does not ship without" — three refusals in this file and in `keyvault.ts` named it as the remedy
+  // before anything created it.
+  "recovery_codes",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -283,6 +288,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     planCheck(),
     ...(await checkTransportAdapters(env)),
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
+    ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
   );
 
 
@@ -719,7 +725,7 @@ async function checkCredentialKek(env: Env): Promise<Finding[]> {
       discloses: "infrastructure",
       ok: false,
       detail: `Could not wrap and unwrap with the credential key: ${(error as Error).message.split("\n")[0]}`,
-      fix: "if the vault reports an unknown generation, restore it from the ADR 29 recovery codes — " +
+      fix: "if the vault reports an unknown generation, restore it with POST /api/recovery/redeem — " +
         "the data is intact but unreadable without its key",
     }];
   }
@@ -2043,6 +2049,76 @@ async function checkTransportAdapters(env: Env): Promise<Finding[]> {
       fix: "add a `send_email` binding to wrangler.jsonc and deploy, or supply REST credentials with "
         + "PUT /api/transport if this Node cannot be redeployed",
     }),
+  }];
+}
+
+/**
+ * Whether this Node's keys can be recovered if its Durable Object storage is lost (#92, ADR 28/29).
+ *
+ * ## Why this is the finding that matters most on this report
+ *
+ * `keyvault.ts` calls that storage the crown jewels and says losing it makes every message permanently
+ * unreadable. Every other check here reports something recoverable; this one reports whether the
+ * *irrecoverable* thing has a way back. It is `degraded` rather than `report` when the escrow is missing,
+ * which no other honesty check in this file is — a Node holding mail it cannot recover is not healthy, and
+ * calling it healthy is the kind of reassurance this repository keeps finding and removing.
+ *
+ * ## Stale is a distinct state from absent, and it is the more dangerous one
+ *
+ * `rotate()` mints a new generation, and objects sealed after it are opened only by that key. An escrow taken
+ * before the rotation therefore restores a vault that can read old mail and not new — a **half recovery that
+ * reports success**, discovered at the worst possible moment. So the escrow records which generations it
+ * carries and this compares them against the vault's own inventory, rather than checking that some codes
+ * exist. "Ten codes are present" is exactly the sort of true-and-useless statement a check like this
+ * degenerates into.
+ */
+async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+  const [state, inventory] = await Promise.all([
+    escrowState(env, orgId),
+    vault(env).inventory().catch(() => null),
+  ]);
+
+  if (state === null) {
+    return [{
+      check: "recovery_escrow",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "No key escrow. This Node's content and credential keys exist **only** in its Durable Object "
+        + "storage, so losing that storage makes every message permanently unreadable — which is the "
+        + "condition ADR 28 says it does not ship without covering.",
+      fix: "a Node claimed before #92 has no codes and there is no route that mints a set for one — the "
+        + "escrow is written at claim, because a Node that has accepted a single message without one already "
+        + "holds content it cannot recover. Re-claiming is not possible either. Treat this Node as "
+        + "unrecoverable and plan a migration to a freshly claimed one",
+    }];
+  }
+
+  const stale = inventory !== null
+    && (state.content < inventory.content || state.credential < inventory.credential);
+
+  return [{
+    check: "recovery_escrow",
+    severity: stale ? "degraded" : "report",
+    discloses: "data",
+    ok: !stale && state.unredeemed > 0,
+    detail: stale
+      ? `The escrow carries content generation ${state.content} and credential generation `
+        + `${state.credential}; the vault is now at ${inventory.content} and ${inventory.credential}. A `
+        + "restore from these codes would recover mail sealed before the rotation and **not** mail sealed "
+        + `since — a half recovery that looks like a whole one. ${state.unredeemed} of ${state.total} codes `
+        + "are unspent."
+      : `${state.unredeemed} of ${state.total} recovery codes unspent, carrying content generation `
+        + `${state.content} and credential generation ${state.credential} — current. The codes themselves `
+        + "are not here and cannot be: this Node keeps a hash that recognises one and an escrow only the "
+        + "code itself opens.",
+    ...(stale
+      ? { fix: "mint a fresh set of codes, which re-escrows every generation the vault now holds and "
+          + "invalidates the old set. The previously printed codes stop working, which is the point" }
+      : state.unredeemed === 0
+        ? { fix: "every code has been spent, so nothing can restore this vault. Mint a fresh set" }
+        : {}),
   }];
 }
 

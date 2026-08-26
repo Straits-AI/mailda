@@ -10,6 +10,7 @@ import {
 import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/passkey-verify.ts";
 
 import { claimNode } from "./claim.ts";
+import { redeemForVault } from "./recovery.ts";
 import { migrate } from "./migrate.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
 import { applySendingEvent, claimedOrg, type SendingEvent } from "./outbound/events.ts";
@@ -2341,10 +2342,46 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           { status: codes[outcome.status] ?? 400 },
         );
       }
+      /*
+       * The ten recovery codes travel in the claim response and **nowhere else, ever** (#92, ADR 29). This
+       * Node keeps a hash to recognise one and an escrow only the code itself opens, so there is no route
+       * that can produce them a second time — which is the property that makes the escrow worth having and
+       * the reason the interface has to show them at this moment.
+       */
       return sessionResponse(
-        { claimed: true, organizationId: outcome.orgId, email: (body.email ?? "").toLowerCase() },
+        {
+          claimed: true,
+          organizationId: outcome.orgId,
+          email: (body.email ?? "").toLowerCase(),
+          recoveryCodes: outcome.recoveryCodes,
+        },
         outcome.session!,
       );
+    }
+
+    /**
+     * Restores the vault from one of ADR 29's codes (#92).
+     *
+     * **Unauthenticated, and that is the decision rather than an oversight.** The state this exists for is a
+     * Node whose Durable Object storage is gone, where `credential` keys are unopenable — and session
+     * signing keys are wrapped under exactly those. So requiring a session would make the recovery path
+     * reachable only from the state that does not need it. The code is the credential, which is what a
+     * recovery code is for.
+     *
+     * What that costs is bounded on purpose: redemption restores **keys already escrowed by this Node**,
+     * issues no session, grants nothing, and reads no mail. Somebody holding a code can put a vault back to
+     * a state it was already in. They cannot use it to become anybody.
+     */
+    if (url.pathname === "/api/recovery/redeem" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as Record<string, string>;
+      const claimed = await env.CATALOG.prepare(
+        "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
+      ).first<{ org_id: string }>();
+      if (claimed?.org_id == null) {
+        return Response.json({ error: "not_claimed" }, { status: 409 });
+      }
+      const restored = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
+      return Response.json(restored);
     }
 
     // ---- Session lifecycle -------------------------------------------------------------
