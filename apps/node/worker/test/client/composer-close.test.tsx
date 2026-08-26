@@ -72,7 +72,14 @@ const drafts = () => calls.filter((call) => call.path === "/api/drafts" && call.
 
 beforeEach(() => {
   reset();
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  /*
+   * The clock moves only when a test moves it. `shouldAdvanceTime: true` was the first version and it made
+   * the 1,499 ms boundary test **flaky by construction**: with it, wall-clock time spent inside the awaits
+   * also advances the fake clock, so `advanceTimersByTimeAsync(1499)` plus a few real milliseconds crosses
+   * 1,500 and the debounce fires. It passed on a fast run and failed on a slower one, which is the worst
+   * available outcome — the boundary this test exists to sit exactly on cannot be shared with the wall.
+   */
+  vi.useFakeTimers();
   answerWith(() => Response.json({
     draft: { id: "dft_01", to: [], subject: "", body: "", updatedAt: "2026-08-26T00:00:00.000Z" },
   }));

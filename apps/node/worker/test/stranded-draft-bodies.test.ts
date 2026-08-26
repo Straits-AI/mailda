@@ -231,6 +231,15 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
     await testEnv.CATALOG.prepare("DELETE FROM signing_keys").run();
     clearKeyCache();
     await currentSigningKey(testEnv, createSystemCtx());
+    /*
+     * An address, so `inbound_routing` (#101) is not a second failure. That finding reports `ok: false` on a
+     * Node with nowhere for mail to land, which is correct and is exactly what "otherwise-healthy" above has
+     * to exclude — the assertion below is that the stranded finding is the **only** one failing, and it
+     * proves nothing about which finding moved the verdict if something unrelated is failing beside it.
+     */
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind("addr_stranded", ORG, "support@stranded.test", MAILBOX, new Date(ctx.now()).toISOString()).run();
     await aSealedDraftsResidue("dft_sealed");
 
     const report = await runDoctor(testEnv, ctx);

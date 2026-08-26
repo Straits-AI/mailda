@@ -78,10 +78,49 @@ mailbox, so which one this goes from is a decision with a governance consequence
 returns exactly the mailboxes the caller holds `send.propose` on, so the options need no separate authority
 check and cannot offer one they may not use. Nothing renders when they hold none.
 
+**That paragraph was false for as long as it existed** (#94). Nine lines under it the code read
+`const chosen = from ?? rows[0]!.id`, and the `<select>` rendered with that value — so the first mailbox
+looked chosen, and pressing the button without touching the dropdown sent from whichever mailbox the query
+happened to return first, in an order that is not even stable. The comment described picking the first row
+as the thing to avoid, and the line below it did that. What now holds:
+
+- **One mailbox auto-selects and renders no control.** One option is not a decision, and asking for it would
+  be ceremony on the commonest Node there is. The rule is narrower than "never default": a default *among
+  alternatives* is never invisible, and where there are no alternatives there is no default.
+- **More than one starts at nothing**, with `new message` disabled until a choice is made. The unchosen state
+  is a real `<option value="">`, not an absent value — a `<select>` whose value matches no option displays
+  its first one anyway, which is the original bug wearing a different implementation.
+
 The control lives in the heading, which precedes every branch of the screen — so it is present while the
-inbox is loading, when it is full, and, most importantly, when it is **empty**. That screen says "Nothing
-has arrived yet — send one to an address routed here", which until now was advice the product could not
-take: a fresh Node could receive before it could speak.
+inbox is loading, when it is full, and, most importantly, when it is **empty**.
+
+That empty screen used to say *"This Node is claimed and routing is live"* (#101), concluded from an empty
+result set, which establishes neither half. Email Routing never enabled, MX records pointing elsewhere, a
+catch-all aimed at a different Worker, no address configured at all — every one produces that same screen,
+so a reader whose routing was broken was told it worked, and would wait, and send a test message, and watch
+that not arrive either. It is the same shape as `doctor` once shipping `workers_paid_plan: ok` over a plan
+check that did not exist.
+
+It now says only what an empty list means and links to `doctor`, whose new **`inbound_routing`** finding is
+what can actually answer the question. That finding is careful about the boundary between the two halves:
+
+- **provable from inside** — whether any address exists (no row in `addresses` means nothing routed here has
+  anywhere to land, and `email()` refuses an unknown recipient), and whether anything has *ever* arrived
+  (one `ingress_receipts` row proves routing reached this Worker at least once).
+- **not provable** — whether Email Routing is enabled and pointing here *now*. That lives in the account,
+  behind a token this Node deliberately does not hold (ADR 22, ADR 24). So "has received" is reported as
+  **history, not a live status**: a Node whose routing was repointed an hour ago would otherwise read as
+  healthy forever on the strength of old mail.
+
+It is `report` severity so a correctly-installed Node with no mail yet does not turn the verdict red, and
+`discloses: "data"` because the counts come from an organization's mail (§5C).
+
+The shared `Nothing` component changed in the same pass, for the same reason. It appended *"An empty ledger.
+Not a filtered one: nothing has been hidden from you"* to **every** empty state — and authorization on this
+Node happens inside the SQL (ADR 11, §5), so an empty list routinely means "nothing you may see". The
+screens already knew: `matters.tsx` writes *"No matters, or you do not hold org.admin"* and this sentence
+contradicted it two words later on the same line. The reassurance is now opt-in via `unfiltered`, and a
+caller may only assert it where the query genuinely is not narrowed by a relation.
 
 ## The composer's From selector, and why the words live outside React
 
@@ -455,11 +494,15 @@ the Cloudflare pool and restructuring it to host a DOM would risk a stable suite
 
 Two rules about what goes in it, because the wrong answer to either makes it worse than nothing:
 
-- **Only what needs a mount.** `splitAddresses` and the mailbox choice are plain functions, tested in
-  `test/node/` where they need neither a DOM nor a render. Mounting a component to test a pure function is
-  slower, has more ways to be wrong, and hides that the function was extractable. The line is whether the
-  *mount* is the subject — for #90 it is, since no arrangement of pure functions expresses "the unmount
-  cancelled the timer before the click handler's save could fire".
+- **Only what needs a mount.** A plain function belongs in `test/node/`, where it needs neither a DOM nor a
+  render; mounting a component to test one is slower, has more ways to be wrong, and hides that the function
+  was extractable. The line is whether the *mount* is the subject. For #90 it is — no arrangement of pure
+  functions expresses "the unmount cancelled the timer before the click handler's save could fire". For #94
+  it also is, and that one is worth spelling out because it looks extractable and is not: the defect was
+  `from ?? rows[0]!.id`, but the **property** is that a person cannot start a message without having picked
+  an address, which is a claim about a disabled control and about what a click handler is handed. A
+  three-line `chosenMailbox` would have tested the `??` and left the button unexercised — which is exactly
+  how the original survived under a comment stating the opposite.
 - **`/app/session.js` is stubbed, not real.** It is a browser-absolute specifier the bundler leaves
   external, so vitest needs to be told what it is; `test/client/session-stub.ts` is a seam that records
   calls and resolves them when the test says so. These tests are about *when* a request happens and

@@ -5,6 +5,7 @@ import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
 import {
   useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow,
 } from "./api.ts";
+import type { AppRoute } from "../../app-routes.ts";
 
 /**
  * Variant B's chrome: a persistent rail, and an instrument bar along the bottom.
@@ -295,7 +296,41 @@ export function Rail() {
  * "Could not be read" is not "empty", and "you are not entitled to know" is neither. A single "nothing
  * here" for all three is how a mail client tells its first lie.
  */
-export function Nothing({ kind, detail }: { kind: "empty" | "failed" | "loading"; detail?: string }) {
+/**
+ * The three states a list can be in, said in words that do not claim more than is known.
+ *
+ * ## `unfiltered` is opt-in now, and used to be unconditional (#101)
+ *
+ * This appended *"An empty ledger. Not a filtered one: nothing has been hidden from you"* to **every** empty
+ * state. On most of them that is false. Authorization on this Node happens **inside the SQL** (ADR 11, §5),
+ * so an empty list routinely means "nothing you may see" rather than "nothing" — and telling a reader
+ * nothing has been hidden from them is exactly the claim the architecture forbids the interface from making.
+ *
+ * The screens knew. `matters.tsx` writes *"No matters, or you do not hold org.admin"* in its own detail,
+ * which is honest, and then this sentence contradicted it two words later on the same line.
+ *
+ * So a caller now has to **assert** it, and the assertion is only correct where the query is genuinely not
+ * scoped by a relation. The default says nothing extra, because a blank prompts a question and a wrong
+ * reassurance ends one.
+ */
+export function Nothing(
+  { kind, detail, unfiltered = false, action }: {
+    kind: "empty" | "failed" | "loading";
+    detail?: string;
+    /** Only pass this when the underlying query is not narrowed by authorization. It rarely is. */
+    unfiltered?: boolean;
+    /**
+     * Where to go to answer the question this screen cannot.
+     *
+     * `AppRoute`, not `string`. The first version took a string and cast it at the `<Link>`, which bought
+     * an `any` and gave up the one thing worth having here: a destination that does not exist becomes a
+     * compile error rather than a dead link on an empty screen somebody only reaches when something is
+     * already wrong. `app-routes.ts` is the same list `index.ts` serves deep links from, so the two cannot
+     * disagree about which routes exist.
+     */
+    action?: { to: AppRoute; label: string };
+  },
+) {
   if (kind === "loading") return <p className="notice dim">Reading…</p>;
   if (kind === "failed") {
     return (
@@ -306,8 +341,13 @@ export function Nothing({ kind, detail }: { kind: "empty" | "failed" | "loading"
   }
   return (
     <p className="notice">
-      {detail ?? "Nothing here yet."}{" "}
-      <span className="dim">An empty ledger. Not a filtered one: nothing has been hidden from you.</span>
+      {detail ?? "Nothing here yet."}
+      {unfiltered
+        ? <> <span className="dim">An empty ledger. Not a filtered one: nothing has been hidden from you.</span></>
+        : null}
+      {action === undefined
+        ? null
+        : <> <Link to={action.to} className="linkish">{action.label}</Link></>}
     </p>
   );
 }

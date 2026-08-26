@@ -282,6 +282,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkButlerPauses(env, claim?.org_id ?? null)),
     planCheck(),
     ...(await checkTransportAdapters(env)),
+    ...(await checkInboundRouting(env, claim?.org_id ?? null)),
   );
 
 
@@ -2042,6 +2043,102 @@ async function checkTransportAdapters(env: Env): Promise<Finding[]> {
       fix: "add a `send_email` binding to wrangler.jsonc and deploy, or supply REST credentials with "
         + "PUT /api/transport if this Node cannot be redeployed",
     }),
+  }];
+}
+
+/**
+ * Whether anything can arrive here, and how much of that this Node is able to know (#101).
+ *
+ * ## Why this finding exists
+ *
+ * The empty inbox used to say *"This Node is claimed and routing is live."* It concluded that from an empty
+ * result set, which establishes neither half. Every way of being broken — Email Routing never enabled, MX
+ * records absent or pointing elsewhere, a catch-all aimed at a different Worker, no address configured at
+ * all, inbound failing SPF upstream — produces exactly that screen, so somebody would be told the thing
+ * works and wait. It is the same defect `planCheck` above describes in its own words: a status derived from
+ * nothing, phrased with the confidence of a check.
+ *
+ * The screen now says only what an empty list means and points here. So this has to be worth arriving at.
+ *
+ * ## What is knowable from inside, and what is not
+ *
+ * Two things are provable without leaving the Worker, and both are evidence rather than inference:
+ *
+ *   - **is there an address at all** — no row in `addresses` means nothing routed here has anywhere to land,
+ *     and `email()` rejects an unknown recipient. A Node in that state cannot receive, whatever DNS says.
+ *   - **has anything ever arrived** — one `ingress_receipts` row is proof that routing reached this Worker
+ *     at least once. It is the only positive evidence available, and it is conclusive as far as it goes.
+ *
+ * One thing is **not** knowable and this finding says so rather than guessing: whether Email Routing is
+ * enabled on the zone and pointing at this Worker *right now*. That lives in the account, needs a token this
+ * Node deliberately does not hold (ADR 22, ADR 24), and a Node that has received mail before can have had
+ * its routing changed a minute ago. So "has received" is history, not a live status, and the detail is
+ * careful to be worded as history.
+ *
+ * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
+ */
+async function checkInboundRouting(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+
+  /*
+   * Both counts in one round trip. Two queries would be the obvious shape and this report is bounded by a
+   * subrequest budget it has to report on — `doctor_cost` is the finding that would have to absorb it.
+   */
+  const counted = await env.CATALOG.prepare(
+    `SELECT (SELECT COUNT(*) FROM addresses WHERE org_id = ?) AS addresses,
+            (SELECT COUNT(*) FROM ingress_receipts WHERE org_id = ?) AS received`,
+  ).bind(orgId, orgId).first<{ addresses: number; received: number }>().catch(() => null);
+
+  if (counted === null) {
+    return [{
+      check: "inbound_routing",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say whether anything can arrive.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+
+  const addresses = Number(counted.addresses);
+  const received = Number(counted.received);
+
+  /*
+   * `ok` is true once an address exists, and deliberately does **not** require that mail has arrived. A
+   * freshly installed Node that has been set up correctly and has simply not been written to yet is not
+   * unhealthy, and the file's own precedent for this is `loopDetectionFinding`: a check that fails on every
+   * quiet Node gets read as noise and then gets ignored on the Node where it means something.
+   */
+  return [{
+    check: "inbound_routing",
+    severity: "report",
+    discloses: "data",
+    ok: addresses > 0,
+    detail: addresses === 0
+      ? "No address is configured on this Node, so nothing can be delivered to it — `email()` refuses an "
+        + "unknown recipient. Whatever the zone's DNS says, this Node cannot receive yet."
+      : `${addresses} address(es) configured. `
+        + (received === 0
+          ? "**Nothing has ever arrived.** That is consistent with correct setup and no mail yet, and equally "
+            + "consistent with routing that was never enabled, MX records pointing elsewhere, or a catch-all "
+            + "aimed at a different Worker. This Node cannot tell those apart from the inside."
+          : `${received} message(s) have been accepted, so routing did reach this Worker at least once. `
+            + "That is history rather than a live status: it does not establish that routing is still "
+            + "pointing here, because the zone's configuration can have changed since the last one arrived."),
+    // Spread rather than an explicit `undefined`, matching this file: a Node that has received mail has
+    // nothing to fix, and `fix` is documented as present on every *failure*.
+    ...(addresses === 0
+      ? {
+        fix: "add an address on /people or via POST /api/addresses, then verify Email Routing in the "
+          + "Cloudflare dashboard points the recipient at this Worker",
+      }
+      : received === 0
+        ? {
+          fix: "send a message to an address on this Node. If it does not arrive, check Email Routing on "
+            + "the zone in the Cloudflare dashboard: the rule must target this Worker, and the MX records "
+            + "must be Cloudflare's. Neither is readable from here.",
+        }
+        : {}),
   }];
 }
 

@@ -32,6 +32,8 @@ export interface StubMailbox {
 const ONE_MAILBOX: StubMailbox[] = [{ id: "mbx_test", name: "Support", addresses: "support@example.test" }];
 
 let mailboxes: StubMailbox[] = ONE_MAILBOX;
+/** The inbox list. Empty by default, which is the state most of these tests are about. */
+let messages: unknown[] = [];
 let handler: Handler = () => Response.json({ draft: null });
 
 /**
@@ -50,9 +52,14 @@ export function answerMailboxes(rows: StubMailbox[]): void {
   mailboxes = rows;
 }
 
+export function answerMessages(rows: unknown[]): void {
+  messages = rows;
+}
+
 export function reset(): void {
   calls.length = 0;
   mailboxes = ONE_MAILBOX;
+  messages = [];
   handler = () => Response.json({ draft: null });
 }
 
@@ -71,6 +78,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   };
   calls.push(call);
   if (path.startsWith("/api/mailboxes")) return Response.json({ mailboxes });
+  if (path.startsWith("/api/messages")) return Response.json({ messages });
   return await handler(call);
 }
 

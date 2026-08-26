@@ -141,9 +141,23 @@ function newMessageContext(mailboxId: string): ComposerContext {
 function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
   const mailboxes = useMailboxes();
   const rows = mailboxes.data?.mailboxes ?? [];
+  /**
+   * What has been chosen. `null` means **nobody has chosen yet**, which is a different thing from "the
+   * first one" and is the whole of #94.
+   *
+   * It used to be `from ?? rows[0]!.id`, nine lines under the comment above saying picking the first row
+   * would put somebody's name on an address they did not choose. The `<select>` rendered with that value,
+   * so the first mailbox looked chosen, and pressing the button without touching the dropdown sent from
+   * whichever mailbox `useMailboxes` happened to return first — an order that is not even stable.
+   */
   const [from, setFrom] = useState<string | null>(null);
   if (rows.length === 0) return null;
-  const chosen = from ?? rows[0]!.id;
+  /*
+   * One mailbox is not a choice, so it needs no act: there is exactly one possible answer and asking for it
+   * would be ceremony. More than one and the default is **nothing**, because a default here is a governance
+   * decision made on somebody's behalf and then hidden from them by the control that claims to show it.
+   */
+  const chosen = from ?? (rows.length === 1 ? rows[0]!.id : null);
 
   return (
     <p className="new-message">
@@ -153,9 +167,13 @@ function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
           {" "}
           <select
             id="new-message-from"
-            value={chosen}
-            onChange={(event) => setFrom(event.target.value)}
+            // The empty string is the unchosen state, and it has to be a real option rather than an absent
+            // value: a `<select>` given a value matching no option shows its first one anyway, which is the
+            // original bug wearing a different implementation.
+            value={chosen ?? ""}
+            onChange={(event) => setFrom(event.target.value === "" ? null : event.target.value)}
           >
+            <option value="">choose a mailbox…</option>
             {rows.map((row) => (
               // The address, not only the name: two mailboxes can be called Support and what a recipient
               // sees is the address. `addresses` is NULL when a mailbox has none, and `sealManifest` refuses
@@ -168,7 +186,15 @@ function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
           {" "}
         </>
       )}
-      <button type="button" className="primary" onClick={() => onStart(chosen)}>
+      <button
+        type="button"
+        className="primary"
+        // Disabled rather than hidden, and rather than opening a composer with no sender: the control has
+        // to say that a choice is missing, not silently do nothing or silently pick. `aria-disabled` is not
+        // used in its place because there is genuinely nothing to activate yet.
+        disabled={chosen === null}
+        onClick={() => { if (chosen !== null) onStart(chosen); }}
+      >
         new message
       </button>
     </p>
@@ -291,9 +317,26 @@ export function Inbox() {
     return (
       <>
         {heading}
+        {/*
+          What an empty list means, and nothing further (#101).
+
+          It used to say "This Node is claimed and routing is live", concluded from an empty result set —
+          which establishes neither. Email Routing never enabled, MX records pointing elsewhere, a catch-all
+          aimed at another Worker, no address configured at all: every one of those produces this same
+          screen, and the sentence told the reader it was working. They would then wait, send a test message,
+          watch that not arrive either, and still be looking at "routing is live".
+
+          The status is not restated here, because this screen cannot establish it and the version that
+          guessed is the bug. `doctor`'s `inbound_routing` finding is what can: it proves whether an address
+          exists and whether anything has ever arrived, and says plainly that whether routing is pointing
+          here *right now* needs the Cloudflare dashboard, because that lives in the account and this Node
+          holds no token for it. The link goes to /doctor rather than a Domain Setup screen because /doctor
+          is what exists.
+        */}
         <Nothing
           kind="empty"
-          detail="This Node is claimed and routing is live. Nothing has arrived yet — send one to an address routed here."
+          detail="No messages are visible to you yet. Whether mail can reach this Node is a separate question — Doctor's inbound routing check answers it."
+          action={{ to: "/doctor", label: "check inbound routing" }}
         />
         {composer}
       </>

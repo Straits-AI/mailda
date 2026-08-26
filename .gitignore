@@ -28,6 +28,11 @@ build/
 # Agent scratch space
 .scratch/
 
+# Agent working state. `.claude/worktrees/` holds whole git worktrees of this repository when work is fanned
+# out across isolated copies, so a plain `git add -A` commits them as embedded repositories — which it did
+# once, and the commit had to be amended. Ignored rather than remembered.
+.claude/
+
 # Test and coverage
 coverage/
 .nyc_output/
