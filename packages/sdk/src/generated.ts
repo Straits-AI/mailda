@@ -514,7 +514,7 @@ export class GeneratedClient extends Transport {
    *
    * `POST /api/policies`
    */
-  async postPolicies(body?: unknown): Promise<z.infer<typeof S.policyDraftResponse>> {
+  async postPolicies(body: z.infer<typeof S.createPolicyRequest>): Promise<z.infer<typeof S.policyDraftResponse>> {
     return await this.json("POST", "/api/policies", {}, body) as z.infer<typeof S.policyDraftResponse>;
   }
 
@@ -523,7 +523,7 @@ export class GeneratedClient extends Transport {
    *
    * `PUT /api/policies/:policyId/draft`
    */
-  async putPoliciesByPolicyIdDraft(params: { policyId: string }, body?: unknown): Promise<z.infer<typeof S.policyDraftResponse>> {
+  async putPoliciesByPolicyIdDraft(params: { policyId: string }, body: z.infer<typeof S.editPolicyDraftRequest>): Promise<z.infer<typeof S.policyDraftResponse>> {
     return await this.json("PUT", "/api/policies/:policyId/draft", params, body) as z.infer<typeof S.policyDraftResponse>;
   }
 

@@ -1736,6 +1736,23 @@ has drifted is caught in the caller's process with the offending field named, as
 rather than a refusal. Building it found its own defect: a top-level `writeFileSync` in the generator made
 the drift test vacuous, because importing the generator regenerated the file before the test could read a
 hand edit.
+
+**Step 2½ applies the request schemas instead of only publishing them (#93).** Through steps 2 and 3 nothing
+on the Node ever checked a body against one — the only reader of `spec.request` was the MCP server, turning it
+into a tool's input schema and forwarding the body unexamined. So a route with a schema read exactly like a
+route that was validated, and one of them was publishing rules nobody had written: `POST /api/policies`
+with `{"conditions":{"mailbox_id":…}}` dropped the misspelled key, stored five NULLs, and made a policy
+version **matching every send in the organization** — reported to the caller as created, because it was. A
+`deny` written that way stops all outbound mail.
+
+The boundary is one function, applied centrally before the route and before authentication, and it refuses
+**unknown fields only** — bad values still reach the handlers, whose refusals name the four outcomes or
+explain why a volume floor of 0 is an unconditional rule in disguise. Strictness is a per-route decision with
+the argument written beside the schema, not a global flag: two routes refuse an unrecognised field today, six
+tolerate one, and a tripwire asserts both sets exactly. The refusal names the offending key, the fields that
+do exist, and the near miss — `did you mean mailboxId?` — using normalised spelling rather than an edit
+distance, because a distance cutoff is a number with no receipt.
+
 See [`docs/api-contract.md`](./docs/api-contract.md).
 
 ## Two machine surfaces, over one curated list (#88, #89)

@@ -107,6 +107,30 @@ describe("the tool list is the curated one, and nothing else", () => {
     expect(names).not.toContain("postMcp");
   });
 
+  it("publishes no internal metadata in a tool's input schema", async () => {
+    /*
+     * `.meta({ refusal: "E_…" })` tells `request-shape.ts` which code to refuse a closed set with (#93), and
+     * `z.toJSONSchema` copied it straight into the published schema — so the MCP tool for `postPolicies`
+     * advertised `"refusal":"E_POLICY_FIELD_UNKNOWN"` inside a description of its *input*. Not a secret, and
+     * not the caller's: a wire format carrying a server's internal wiring is one callers start depending on.
+     *
+     * Asserted over **every** tool rather than the one that had it, because the next `.meta()` will be added
+     * for a different reason by somebody who has not read this.
+     */
+    const answer = await rpc("tools/list") as {
+      result: { tools: Array<{ name: string; inputSchema: unknown }> };
+    };
+    const leaking = answer.result.tools
+      .filter((tool) => /"refusal"/.test(JSON.stringify(tool.inputSchema)))
+      .map((tool) => tool.name);
+    expect(leaking).toEqual([]);
+    // Non-vacuity: the tool that carries the metadata is on the list, so an empty result above is the
+    // stripping working rather than the schema being absent.
+    const policies = answer.result.tools.find((tool) => tool.name === "postPolicies");
+    expect(policies, "postPolicies is not offered, so this proves nothing").toBeDefined();
+    expect(JSON.stringify(policies!.inputSchema)).toMatch(/mailboxId/);
+  });
+
   it("gives each tool a JSON Schema with its path parameters required", async () => {
     const answer = await rpc("tools/list") as {
       result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown>; required: string[] } }> };

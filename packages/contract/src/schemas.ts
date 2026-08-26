@@ -23,12 +23,23 @@ import { ID_PREFIXES, idPattern } from "@mailda/runtime";
  * and parses the answer with the schema declared here. A schema that does not describe what the route
  * actually returns fails there, which is the property that makes this a contract instead of documentation.
  *
- * ## Why `.strict()` on responses and not on requests
+ * ## Why `.strict()` on responses, and on requests only where it is argued
  *
  * A response schema that tolerated extra keys would pass while the route quietly grew a field the contract
  * does not mention — which is exactly the drift ADR 12 is about, arriving through the door marked
- * "compatible". Requests are the opposite: a caller sending a field this Node ignores is harmless, and
- * refusing it would break every client written against a later version.
+ * "compatible". Requests were the opposite by default: a caller sending a field this Node ignores is usually
+ * harmless, and refusing it would break every client written against a later version.
+ *
+ * **"Usually" was doing too much work, and #93 is where it broke.** That argument holds where an ignored
+ * field means *one thing less*. It fails where an ignored field means *the opposite rule* — a policy's
+ * condition bag, whose whole purpose is a closed set of five, and where a misspelled key published a version
+ * matching every send in the organization and told the caller it was created. So strictness is decided per
+ * schema and the decision is written beside it (`policyConditions`, `createPolicyRequest`), rather than
+ * turned on globally: routes that genuinely want to tolerate additions still do, and a strict one carries
+ * the argument for why it is not one of them.
+ *
+ * A strict schema also carries the `E_` code its refusal should use, in `.meta({ refusal })`, so the code
+ * and the closed set it describes cannot drift apart. `apps/node/worker/src/request-shape.ts` reads it.
  */
 
 /* ------------------------------------------------------------------ shared shapes ------------------- */
@@ -764,6 +775,92 @@ export const auditVerifyResponse = z.object({
   brokenAt: z.number().int().nullable(),
   resumeFrom: z.number().int().nullable(),
 }).strict();
+
+/* ------------------------------------------------------------------ policy authoring (#60, #93) ---- */
+
+/**
+ * The five conditions a policy can name, and **nothing else** (#93).
+ *
+ * ## Why this one object is strict when request schemas are not
+ *
+ * The header above says requests tolerate unknown keys because a caller sending a field this Node ignores
+ * is harmless. That reasoning is about *forward compatibility* — an older Node should not refuse a newer
+ * client — and it does not survive contact with a condition bag, because here an ignored field does not
+ * mean "one thing less". It means **the opposite rule**.
+ *
+ * `POST /api/policies` with `{"conditions":{"mailbox_id":"mbx_…"}}` used to yield `{}` from
+ * `conditionsFrom`, which stores five NULLs, which is a version matching *every send in the organization*.
+ * An `allow` written to narrow a gate widened it; a `deny` stopped all outbound mail; a
+ * `require_approval` gated the whole Node — and the caller was told the policy was created, because it
+ * was. The publish path is immutable and versioned, so the wrong rule is now a numbered version doing
+ * exactly what it was written to do.
+ *
+ * So this is the one place where refusing is the compatible answer: a client that learns a sixth condition
+ * is talking to a Node whose schema has a sixth column, and until it does, silently dropping the condition
+ * produces a rule nobody wrote. `PolicyConditions` in `apps/node/worker/src/policy.ts` is the same closed
+ * five, held to this by `apps/node/worker/test/node/request-shape-world.test.ts`.
+ *
+ * `refusal` is read by the boundary that applies this — see `apps/node/worker/src/request-shape.ts`. It
+ * lives here rather than there so the code and the closed set it describes cannot drift apart.
+ *
+ * The **names** are closed and the **types** are not: `orgDailyVolumeMin` takes a string as well as a number
+ * because a form posts `"10"` and `conditionsFrom` coerces it, and `nullish()` throughout because null is a
+ * defined answer — *no constraint on this dimension* — rather than a missing one. A schema that refused the
+ * string would reject a well-formed rule with a message about its own value, which is the refusal
+ * `E_BAD_POLICY_VOLUME` was written to avoid.
+ */
+export const policyConditions = z.object({
+  mailboxId: z.string().nullish(),
+  actorUserId: z.string().nullish(),
+  recipientExternal: z.boolean().nullish(),
+  isReply: z.boolean().nullish(),
+  orgDailyVolumeMin: z.union([z.number(), z.string()]).nullish(),
+}).strict().meta({ refusal: "E_POLICY_CONDITION_UNKNOWN" });
+
+/**
+ * One approval stage: how many decisions, and the team the deciders must belong to.
+ *
+ * Strict for the reason `policyConditions` is, one field along: `team` is a **constraint**, so
+ * `{"count":1,"teem":"tm_finance"}` dropped silently is not a stage with less detail — it is separation of
+ * duty replaced by any single approver, in a rule whose author believed they had written the opposite.
+ *
+ * `team` and `teamId` are both accepted because `stagesFrom` accepts both, and the schema describes what
+ * the route does rather than what it ought to. `count` is a string or a number because JSON from a form
+ * carries `"1"` and the route coerces it — refusing it here would reject a well-formed rule.
+ */
+export const policyStage = z.union([
+  // A bare number is sugar for an unconstrained stage: `2` and `{"count":2}` arrive as the same stage.
+  z.number(),
+  z.string(),
+  z.object({
+    count: z.union([z.number(), z.string()]).nullish(),
+    team: z.string().nullish(),
+    teamId: z.string().nullish(),
+  }).strict().meta({ refusal: "E_POLICY_STAGE_FIELD_UNKNOWN" }),
+]);
+
+/**
+ * Creating a policy, and **strict at the top level too**.
+ *
+ * The same defect as `policyConditions`, one level out and equally quiet: `{"name":…,"outcome":"deny",
+ * "conditons":{…}}` — `conditions` misspelled — reaches `conditionsFrom(undefined)`, yields `{}`, and
+ * publishes a `deny` that stops all outbound mail. Every field of a policy body either narrows or widens
+ * what the rule catches, so there is no field here this Node can ignore harmlessly, which is exactly the
+ * test the loose default is meant to pass and cannot.
+ */
+export const createPolicyRequest = z.object({
+  name: z.string(),
+  outcome: z.string(),
+  conditions: policyConditions.optional(),
+  stages: z.array(policyStage).optional(),
+}).strict().meta({ refusal: "E_POLICY_FIELD_UNKNOWN" });
+
+/** Replacing a policy's draft: the create body without the name, which is the policy's and not the version's. */
+export const editPolicyDraftRequest = z.object({
+  outcome: z.string(),
+  conditions: policyConditions.optional(),
+  stages: z.array(policyStage).optional(),
+}).strict().meta({ refusal: "E_POLICY_FIELD_UNKNOWN" });
 
 export const policyDraftResponse = z.object({
   policy: z.object({

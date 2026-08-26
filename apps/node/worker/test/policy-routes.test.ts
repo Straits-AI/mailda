@@ -141,26 +141,102 @@ describe("the policy plane is reachable, and only by an administrator", () => {
     expect((await second.json() as { published: { version: number } }).published.version).toBe(2);
   });
 
-  it("ignores a condition name the five-column world does not have, and coerces the ones it has", async () => {
-    // `dataClass` is a dimension §18 lists and #60 named **absent**. Accepting it would publish a rule an
-    // administrator believed was narrow and which in fact matches every send — the exact failure mode #60's
-    // "a condition backed by no data" principle is about, arriving through the API rather than the schema.
-    //
-    // **Which mechanism actually makes it inert, said plainly, because the answer is not `conditionsFrom`.**
-    // The five-column INSERT is: `draftInsert` reads five named fields, so an extra key on the object reaches
-    // no column whether the route named the five reads or spread the body. Replacing `conditionsFrom` with
-    // `{ ...body.conditions }` leaves the two assertions below passing, which was measured by doing it — so
-    // they document the behaviour and the schema guards it.
-    //
-    // What `conditionsFrom` *does* contribute, and what the last two assertions guard, is **coercion**: JSON
-    // from a form or a loosely-typed client carries `"10"`, and `validate` demands an integer. Without the
-    // named read the volume floor is refused as `E_BAD_POLICY_VOLUME` — a well-formed rule rejected with a
-    // message about its own value being unusable, which is the worst kind of refusal to debug.
+  it("refuses a condition name the five-column world does not have, naming the five that exist", async () => {
+    /*
+     * **This test asserted the opposite until #93, and the behaviour it asserted was the defect.**
+     *
+     * `dataClass` is a dimension §18 lists and #60 named **absent**, and the old assertion was that it was
+     * silently *ignored*: `conditionsFrom` reads five named fields, so it reached no column and the policy
+     * was created with whatever else the body carried. That was described as making the condition "inert",
+     * which is true of `dataClass` in isolation and catastrophically false of the general case — because the
+     * same code path turns `{"mailbox_id": …}` into `{}`, and `{}` is five NULLs, and five NULLs is a policy
+     * matching **every send in the organization**. An `allow` narrowing a gate widened it, a `deny` stopped
+     * all outbound mail, and the caller was told the policy was created because it was.
+     *
+     * So the field is refused now, at the boundary, before anything is written — and the refusal names the
+     * five that exist, because a caller who has to read the schema to find their typo has been given a
+     * puzzle rather than an error.
+     */
     const token = await sessionFor(ADMIN);
-    const created = await SELF.fetch("https://node/api/policies", as(token, {
+    const refused = await SELF.fetch("https://node/api/policies", as(token, {
       name: "by data class",
       outcome: "deny",
-      conditions: { dataClass: "confidential", mailboxId: MAILBOX, orgDailyVolumeMin: "10" },
+      conditions: { dataClass: "confidential", mailboxId: MAILBOX },
+    }));
+    expect(refused.status).toBe(422);
+    const body = await refused.json() as { error: string; message: string };
+    expect(body.error).toBe("E_POLICY_CONDITION_UNKNOWN");
+    expect(body.message).toContain("conditions.dataClass");
+    // The five, from the schema rather than from a list in the message — so a sixth condition cannot leave
+    // the error naming five.
+    expect(body.message).toContain(
+      "mailboxId, actorUserId, recipientExternal, isReply, orgDailyVolumeMin",
+    );
+    // And nothing was written: a refusal that had already created the policy would be the worse half of the
+    // defect surviving the fix.
+    expect(await testEnv.CATALOG.prepare("SELECT id FROM policies WHERE org_id = ?").bind(ORG).first())
+      .toBeNull();
+  });
+
+  it("names the near miss, because case is the whole of the observed mistake", async () => {
+    // `mailbox_id` for `mailboxId` is the spelling #93 was reported against — a client written in a
+    // snake-case language. Normalised comparison rather than edit distance: "within two edits" is a
+    // threshold with no measurement behind it, and case and punctuation are the entire near miss.
+    const token = await sessionFor(ADMIN);
+    const refused = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "snake", outcome: "deny", conditions: { mailbox_id: MAILBOX },
+    }));
+    expect(refused.status).toBe(422);
+    expect((await refused.json() as { message: string }).message).toContain("did you mean mailboxId?");
+  });
+
+  it("refuses a misspelling of `conditions` itself, which is the same defect one level out", async () => {
+    /*
+     * The one that would have been left open by fixing only the condition bag: `conditons` reaches
+     * `conditionsFrom(undefined)`, which returns `{}`, which is the unconditional rule again. A `deny` here
+     * stops all outbound mail for the organization.
+     *
+     * This is why the policy request body is strict at the top level too, and why "requests tolerate unknown
+     * keys for forward compatibility" does not apply to it: every field of a policy body changes which sends
+     * the rule catches, so there is no field this Node can ignore harmlessly.
+     */
+    const token = await sessionFor(ADMIN);
+    const refused = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "typo", outcome: "deny", conditons: { mailboxId: MAILBOX },
+    }));
+    expect(refused.status).toBe(422);
+    const body = await refused.json() as { error: string; message: string };
+    expect(body.error).toBe("E_POLICY_FIELD_UNKNOWN");
+    expect(body.message).toContain("did you mean conditions?");
+  });
+
+  it("refuses an unknown field on a stage, because a dropped team is separation of duty removed", async () => {
+    // `{"count":1,"teem":"tm_…"}` silently dropped is not a stage with less detail: it is §18's separation of
+    // *duty* replaced by any single approver, in a rule whose author believed they had written the opposite.
+    // The stage schema is a union — a bare number is sugar for an unconstrained stage — so this also covers
+    // the boundary reading an unrecognised key out of the one union branch that matched everything else.
+    const token = await sessionFor(ADMIN);
+    const refused = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "duty", outcome: "require_approval", conditions: { mailboxId: MAILBOX },
+      stages: [{ count: 1, teem: "tm_finance" }],
+    }));
+    expect(refused.status).toBe(422);
+    const body = await refused.json() as { error: string; message: string };
+    expect(body.error).toBe("E_POLICY_STAGE_FIELD_UNKNOWN");
+    expect(body.message).toContain("stages.0.teem");
+    expect(body.message).toContain("count, team, teamId");
+  });
+
+  it("coerces the conditions it does have, so a form's strings are not refused as unusable", async () => {
+    // What `conditionsFrom` contributes, and what the last assertion guards, is **coercion**: JSON from a
+    // form or a loosely-typed client carries `"10"`, and `validate` demands an integer. Without the named
+    // read the volume floor is refused as `E_BAD_POLICY_VOLUME` — a well-formed rule rejected with a message
+    // about its own value being unusable, which is the worst kind of refusal to debug.
+    const token = await sessionFor(ADMIN);
+    const created = await SELF.fetch("https://node/api/policies", as(token, {
+      name: "by volume",
+      outcome: "deny",
+      conditions: { mailboxId: MAILBOX, orgDailyVolumeMin: "10" },
     }));
     expect(created.status).toBe(200);
     const { policy } = await created.json() as { policy: { versionId: string } };
@@ -172,7 +248,8 @@ describe("the policy plane is reachable, and only by an administrator", () => {
       when_mailbox_id: string | null; when_recipient_external: number | null;
       when_org_daily_volume_min: number | null;
     }>();
-    // The condition that exists was stored; the one that does not left no trace anywhere.
+    // The conditions named were stored; the four columns nobody named stayed NULL, which is what makes a
+    // rule narrow rather than universal.
     expect(row?.when_mailbox_id).toBe(MAILBOX);
     expect(row?.when_recipient_external).toBeNull();
     // And the floor is a number in the column, not the string the caller sent.
