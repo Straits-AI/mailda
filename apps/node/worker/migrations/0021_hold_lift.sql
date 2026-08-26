@@ -1,6 +1,15 @@
 -- Lifting a legal hold, and approvals generalised from a manifest to a subject (#64, #61, Layer 5).
--- Additive (#10 expand/contract): one new table, three new columns, two renamed columns, one index
--- replaced. No DROP TABLE, no DROP COLUMN, no bookmark gate.
+-- phase: contract
+--
+-- **Not additive**, which is what this line claimed until #98 checked it. One new table, three new columns
+-- and one index replaced are all expansion; the *two renamed columns* are not. A rename breaks the code
+-- already serving, which still reads the old name — so this migration cannot be applied ahead of its
+-- deploy, and `mailda deploy` refuses it without `--contract`.
+--
+-- The prose said "Additive (#10 expand/contract) … No DROP TABLE, no DROP COLUMN", and both halves were
+-- true and neither was the point: a `RENAME COLUMN` is a contraction without being a drop. The annotation
+-- was correct about what it mentioned and wrong about what it concluded, on one of only five migrations
+-- careful enough to carry it.
 --
 -- ## This is a rename, not a backfill, and the reason is a date
 --

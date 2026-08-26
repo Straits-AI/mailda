@@ -1,7 +1,10 @@
 -- Send circuit breakers: three windowed rates, one latched domain pause (#66, §18, Layer 5).
 --
--- Additive (#10 expand/contract): two indexes, one new table with its own indexes, and one column
--- rename on approvals. No DROP TABLE, no DROP COLUMN, no bookmark gate.
+-- phase: contract
+--
+-- **Not additive**, for the reason `0021` is not: the column rename on `approvals` breaks code still reading
+-- the old name, so this cannot run ahead of its deploy. Two indexes and a new table are expansion; the
+-- rename is what sets the phase, and one contracting statement sets it for the whole file.
 --
 -- ## Two kinds of breaker, and the split decides what this file contains
 --

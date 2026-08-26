@@ -1406,6 +1406,20 @@ was told the check had happened elsewhere. A test required those words to be in 
 so the suite held the claim in place. The CLI exists now; the plan still cannot be checked by
 anything, and the finding says so.
 
+**The deploy order was wrong, and the reason given for it was false.** `mailda deploy` deployed the
+Worker and *then* applied migrations, so new code served requests against a schema that did not yet
+have what it needed — and if the migration failed, the incompatible Worker stayed deployed while the
+health check was optional. The stated reason was that *"the Worker bundles them"*. It does not:
+`wrangler d1 migrations apply` reads the `.sql` files from `migrations/` and needs no deployed Worker
+at all. But reversing the two is *also* unsafe, because a migration that drops, renames or narrows
+breaks the code currently serving — no order makes both safe. What does is splitting migrations by
+phase, and the convention for that existed as prose in **five of thirty-nine files** and was **wrong
+on both of the five that contracted**: two migrations call themselves "Additive (#10 expand/contract)"
+above a `RENAME COLUMN`, which breaks code reading the old name. The phase is derived from the
+statements now, and `mailda deploy` uploads a canary, checks it, and only then moves traffic — so a
+failed check needs no rollback, because traffic never moved.
+([#98](https://github.com/Straits-AI/mailda/issues/98))
+
 **Clearing a gate is not the same as sending.** An approved message still sat in the outbox.
 The sweeper that dispatches mail is armed by *sealing*, and three separate acts move a message
 from gated to sendable — an approval completing, a Butler's send being released, a retry — none of

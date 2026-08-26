@@ -33,12 +33,29 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
+import { contractingAmong, previewUrlFrom, shouldPromote, versionIdFrom } from "./deploy-parse.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
 
 function fail(message) {
   process.stderr.write(`\n${message}\n\n`);
   process.exit(1);
+}
+
+/**
+ * Runs a command and **captures** its output, for the one step that has to read wrangler's answer.
+ *
+ * `run` below keeps the operator's terminal attached, which is right for everything an operator watches. The
+ * canary upload is different: its version id is the thing the next two steps act on, so it has to be parsed.
+ * The output is echoed as well, because a step whose output vanishes is a step nobody can debug.
+ */
+function capture(command, args, { cwd = workerDir } = {}) {
+  const outcome = spawnSync(command, args, { cwd, encoding: "utf8", env: process.env });
+  if (outcome.error !== undefined) fail(`could not run ${command}: ${outcome.error.message}`);
+  const text = `${outcome.stdout ?? ""}${outcome.stderr ?? ""}`;
+  process.stdout.write(text);
+  return { status: outcome.status ?? 1, text };
 }
 
 /** Runs a command with the operator's terminal attached, so wrangler's prompts and output are theirs. */
@@ -130,48 +147,173 @@ async function doctor(argv) {
   process.exit(verdict === "refuse" ? 2 : verdict === "degraded" ? 1 : 0);
 }
 
+/**
+ * The canary's verdict, without exiting the process.
+ *
+ * `doctor` above ends in `process.exit`, which is right for a command somebody runs and wrong for a gate in
+ * the middle of a sequence — exiting there would leave a canary uploaded, unpromoted and unexplained. This
+ * asks the same route and returns the word, so the caller decides what a `degraded` means.
+ *
+ * Deliberately **unauthenticated**. A canary has never been signed into and `MAILDA_EMAIL` would sign in to
+ * the *live* Node, not this version — so the reduced report (`withoutDataFindings`) is what this reads, which
+ * is the right amount: it carries every `infrastructure` finding, including the bindings and schema checks
+ * that are what a fresh version can get wrong.
+ */
+async function doctorVerdict(origin) {
+  const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
+    headers: { accept: "application/json" },
+  }).catch((error) => fail(`could not reach the canary at ${origin}: ${error.message}`));
+  const text = await response.text();
+  if (!response.ok && response.status !== 503) {
+    fail(
+      `the canary answered ${response.status} at /api/doctor\n${text.slice(0, 400)}\n\n`
+      + "  why      an unreachable or unreadable canary is not a version to move traffic to\n"
+      + "  fix      the previous version is still serving; nothing was promoted",
+    );
+  }
+  let report;
+  try {
+    report = JSON.parse(text);
+  } catch {
+    fail(`the canary's report was not JSON:\n${text.slice(0, 400)}`);
+  }
+  for (const finding of report.findings ?? []) {
+    if (!finding.ok) process.stdout.write(`   ${finding.severity}  ${finding.check}  ${finding.detail}\n`);
+  }
+  return report.verdict ?? "refuse";
+}
+
 /* ------------------------------------------------------------------ deploy ------------------------- */
 
 /**
- * The four steps an operator currently types by hand, in the order that works.
+ * Expand, canary, check, shift (#98).
  *
- * The order is the whole value. Migrations after the deploy, because the Worker bundles them and a schema
- * ahead of the code it serves is a Node answering requests it cannot honour. The queue consumer after both,
- * because it attaches to a queue the deploy provisions — and out of band, because a consumer cannot name a
- * queue whose name Cloudflare derives (`queue-provisioning.md`). Doctor last, because it is the only step
- * that can tell you whether the other three worked.
+ * ## What the previous order got wrong, and why swapping it was not the fix
+ *
+ * It deployed the Worker and *then* applied migrations, so new code served requests against a schema that
+ * did not yet have what it needed — and if the migration failed, the incompatible Worker stayed deployed
+ * while `doctor` was optional. The reason given was that *"the Worker bundles them"*. That is false:
+ * `wrangler d1 migrations apply` reads the `.sql` files from `migrations/` and needs no deployed Worker.
+ *
+ * Simply reversing it is also unsafe, and that is the substance of this change rather than a caveat. A
+ * migration that **drops, renames or narrows** breaks the code that is *currently* serving, so applying it
+ * first opens the same window pointing the other way. No order makes both safe. What does is splitting
+ * migrations by phase — `test/node/migration-phase-world.test.ts` derives the phase from the statements
+ * rather than trusting a comment, because the comment convention it replaces was observed by five of
+ * thirty-nine files and was **wrong on both of the five that contracted**.
+ *
+ * ## The rollback is that traffic never moved
+ *
+ * `wrangler versions upload` publishes a version and shifts **no traffic**. So the sequence is: expand,
+ * upload, check the canary, and only then `versions deploy` to shift. A failed check needs no undo — the
+ * previous version is still the one serving, which is a stronger guarantee than a rollback step that has to
+ * run correctly during an incident.
+ *
+ * `doctor` against the canary is therefore not the closing courtesy it used to be. It is the gate that
+ * decides whether traffic moves, which is why it can no longer be skipped by omitting `--url`.
  *
  * **It does not refuse Workers Free**, and the README no longer says it does. A Worker cannot read its
  * account's plan and this CLI has no documented endpoint for it either; the honest state is unverified,
- * which is now what `doctor` reports.
+ * which is what `doctor` reports.
  */
 async function deploy(argv) {
-  const steps = [
-    ["deploying the Worker", "npx", ["wrangler", "deploy"]],
-    ["applying migrations", "npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote"]],
-    ["attaching the delivery-events consumer", "node", ["scripts/attach-queue-consumer.mjs"]],
-  ];
+  const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
 
-  for (const [what, command, args] of steps) {
-    process.stdout.write(`\n== ${what}\n`);
-    const status = run(command, args);
-    if (status !== 0) {
-      fail(`${what} failed (exit ${status}). Nothing after this step ran.`);
-    }
+  /*
+   * Expansion first, because it is safe ahead of the code by construction, and refuse a contraction unless
+   * the operator said so. A pending `-- phase: contract` migration applied here would break the version
+   * currently serving — before the canary has even been uploaded, and while nothing has gone wrong yet.
+   */
+  process.stdout.write("\n== checking which migrations are pending\n");
+  const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote"]);
+  if (pending.status !== 0) fail(`could not list migrations (exit ${pending.status}).`);
+  const contractions = contractingAmong(pending.text, resolve(workerDir, "migrations"));
+  if (contractions.length > 0 && !contracting) {
+    fail(
+      `refusing to apply a contracting migration: ${contractions.join(", ")}\n\n`
+      + "  why      it drops, renames or narrows something, so it breaks the version currently serving —\n"
+      + "           which is still the version serving until the canary below is checked and promoted.\n"
+      + "  fix      deploy the expansion and the new code first, then run `mailda deploy --contract` in a\n"
+      + "           later release, once you no longer want to roll back to the version that needs the old\n"
+      + "           shape. Or split the migration so the contraction is its own file.",
+    );
+  }
+
+  process.stdout.write("\n== applying migrations\n");
+  if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote"]) !== 0) {
+    fail("applying migrations failed. Nothing was deployed, so the version currently serving is unchanged.");
+  }
+
+  /*
+   * The canary. `--preview-alias` gives it a stable hostname to check, rather than a per-version URL that
+   * would have to be scraped out of wrangler's prose.
+   */
+  process.stdout.write("\n== uploading a canary version (no traffic)\n");
+  const uploaded = capture("npx", [
+    "wrangler", "versions", "upload", "--preview-alias", "canary", "--message", "mailda deploy",
+  ]);
+  if (uploaded.status !== 0) {
+    fail(`uploading the canary failed (exit ${uploaded.status}). No traffic moved.`);
+  }
+  const version = versionIdFrom(uploaded.text);
+  const canaryUrl = previewUrlFrom(uploaded.text);
+  if (version === null) {
+    fail(
+      "could not find the new version's id in wrangler's output.\n\n"
+      + "  why      the id is what promotes this version, and guessing it would promote something else.\n"
+      + "  fix      the canary is uploaded and serving no traffic, so nothing is broken. Read the id from\n"
+      + "           the output above and finish with `wrangler versions deploy <id>@100`.",
+    );
+  }
+
+  /*
+   * The gate. Against the **canary**, not the live Node: checking the version that is already serving would
+   * pass whatever the new one does, which is the shape of a check that reads as a check.
+   */
+  if (canaryUrl === null) {
+    fail(
+      "could not find the canary's preview URL in wrangler's output.\n\n"
+      + "  why      the canary cannot be checked without one, and promoting an unchecked version is the\n"
+      + "           thing this sequence exists to prevent.\n"
+      + `  fix      the canary is uploaded and serving no traffic. Check it by hand, then promote with\n`
+      + `           \`wrangler versions deploy ${version}@100\`.`,
+    );
+  }
+  process.stdout.write(`\n== asking the canary how it is (${canaryUrl})\n`);
+  const verdict = await doctorVerdict(canaryUrl);
+  if (!shouldPromote(verdict)) {
+    fail(
+      `the canary reports \`${verdict}\`, so traffic was not moved.\n\n`
+      + "  why      the version that was serving before this command ran is still the one serving. There is\n"
+      + "           nothing to roll back, which is why the canary is uploaded before it is promoted.\n"
+      + "  fix      read the findings above. To promote it anyway once you have decided the finding is\n"
+      + `           acceptable: \`wrangler versions deploy ${version}@100\`.`,
+    );
+  }
+
+  process.stdout.write("\n== moving traffic to the checked version\n");
+  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes"]) !== 0) {
+    fail("promoting the canary failed. The previous version is still serving.");
+  }
+
+  /*
+   * The consumer last, because it attaches to a queue the deploy provisions — and out of band, because a
+   * consumer cannot name a queue whose name Cloudflare derives (`queue-provisioning.md`).
+   */
+  process.stdout.write("\n== attaching the delivery-events consumer\n");
+  if (run("node", ["scripts/attach-queue-consumer.mjs"]) !== 0) {
+    fail("attaching the consumer failed. The new version is live but delivery outcomes are unobserved.");
   }
 
   const origin = flag(argv, "url") ?? process.env.MAILDA_URL ?? null;
-  if (origin === null) {
-    process.stdout.write(
-      "\n== skipping the health check\n"
-      + "   Pass --url https://your-node.workers.dev to finish with `mailda doctor`.\n"
-      + "   A deploy that ran is not a Node that works, and only the Node can tell you which it is.\n",
-    );
-    return;
+  if (origin !== null) {
+    process.stdout.write("\n== asking the live Node how it is\n");
+    await doctor(["--url", origin]);
   }
-  process.stdout.write("\n== asking the Node how it is\n");
-  await doctor(["--url", origin]);
 }
+
+
+
 
 /* ------------------------------------------------------------------ claim-secret ------------------- */
 
