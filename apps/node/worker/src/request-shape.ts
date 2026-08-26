@@ -44,18 +44,44 @@ import { CallerError, unprocessable } from "./errors.ts";
  * generated client already carries. `handleMcp` re-enters this Worker's own `fetch`, so the MCP surface is
  * covered by the same check rather than by a second copy of it.
  *
- * The cost is one extra parse of a body already being parsed downstream, and only on the routes that
- * declare a closed set. Zod on the request path is the decision `docs/receipts/runtime-validator.md`
- * measured and took.
+ * The cost is one extra parse of a body already being parsed downstream, on the **eight** routes that
+ * declare a request schema — not the two that declare a closed set, which is what this said first and is
+ * the sharper-sounding claim. The guard is `spec?.request === undefined`, so six routes pay a parse that can
+ * never refuse anything. That is the honest figure and it is accepted rather than optimised: narrowing the
+ * guard to "has a closed set somewhere in it" means walking the schema on every request to decide whether to
+ * parse it, which is more work than the parse. Zod on the request path is the decision
+ * `docs/receipts/runtime-validator.md` measured and took.
  *
  * ## What would make this wrong again
  *
  * A route that grows a request schema and is never reached by this function — which reads exactly like a
  * route that is covered. `apps/node/worker/test/node/request-shape-world.test.ts` is the closed world that
  * fails when that happens.
+ *
+ * ## The one kind of bad *value* this does refuse, and why it is not a change of job
+ *
+ * Values are the handler's: `E_BAD_POLICY_OUTCOME` says more about `"alow"` than a schema can, and this
+ * boundary deliberately stays out of that. There is exactly one exception and it was found by review after
+ * the first version shipped — **a closed set that is not an object at all.**
+ *
+ * `{"conditions": "mailbox_id=x"}` is not a bad field inside the set; it is a value with no fields, so no
+ * key can be unrecognised, so "no unknown keys" passes vacuously. It then reaches `conditionsFrom`, whose
+ * first line is `if (typeof raw !== "object" || raw === null) return {}` — five NULLs, a rule matching every
+ * send in the organization, reported as created. That is #93's exact harm surviving #93's fix, and one
+ * misplaced quote mark reaches it.
+ *
+ * So this refuses a closed set whose position holds a non-object. It is not the handler's to catch — the
+ * handler's contract is that a *bad field* is its business, and here there are no fields — and it is not a
+ * step toward validating values: nothing here checks that `mailboxId` is a ULID or that `outcome` is one of
+ * three words. The rule is narrower than it looks: **a check that cannot run must not report a pass.**
  */
 
-/** One place a body named something a closed set does not have. */
+/**
+ * One place a body did not match a closed set.
+ *
+ * `keys` empty means the position was not an **object at all** — see `unknownFields` for why that is this
+ * function's business rather than the handler's.
+ */
 interface UnknownField {
   readonly path: readonly PropertyKey[];
   readonly keys: readonly string[];
@@ -79,7 +105,17 @@ function unknownFields(issues: readonly Issue[], base: readonly PropertyKey[] = 
     // `path` is the object that did not recognise the key, not the key itself — which is exactly the
     // position the closed set has to be read from.
     if (issue.code === "unrecognized_keys") found.push({ path, keys: issue.keys });
-    else if (issue.code === "invalid_union") {
+    /*
+     * A position that should hold a closed set and holds something with no fields at all. Reported with no
+     * keys, because there are none — the message says the position is not an object rather than listing
+     * fields it does not have.
+     *
+     * Guarded on `expected === "object"` so this stays about closed sets. A `name` that arrived as a number
+     * is an ordinary bad value and still the handler's, which refuses it by name.
+     */
+    else if (issue.code === "invalid_type" && issue.expected === "object") {
+      found.push({ path, keys: [] });
+    } else if (issue.code === "invalid_union") {
       for (const branch of issue.errors) {
         if (branch.length > 0 && branch.every((one) => one.code === "unrecognized_keys")) {
           found.push(...unknownFields(branch, path));
@@ -185,6 +221,27 @@ function nearMiss(key: string, known: readonly string[]): string | null {
 function refusal(spec: RouteSpec, field: UnknownField): CallerError {
   const set = closedSetAt(spec.request, field.path);
   const prefix = field.path.map(String);
+
+  /*
+   * The no-fields case: this position holds something that is not an object, so there is no key to name.
+   * Said as its own sentence rather than squeezed into the wording above, because "`conditions` is not a
+   * field it has" would be false and confusing — `conditions` is exactly a field it has.
+   */
+  if (field.keys.length === 0) {
+    const at = prefix.length === 0 ? "the request body" : prefix.join(".");
+    return unprocessable(set?.code ?? "E_REQUEST_FIELD_UNKNOWN", {
+      what: `${spec.method} ${spec.path} was sent ${at} as something that is not an object`,
+      why: "this position holds a closed set of fields, and a value with no fields cannot be checked "
+        + "against one — so accepting it would report a pass for a check that never ran. A `conditions` "
+        + "that is not an object is stored as no conditions at all, which is a rule matching every send in "
+        + "the organization (#93)",
+      fix: set === null
+        ? `send ${at} as an object, or omit it`
+        : `send ${at} as an object with any of: ${set.known.join(", ")} — or omit it entirely, which is `
+          + "what an unconstrained rule is spelled as",
+    });
+  }
+
   const where = field.keys.map((key) => [...prefix, key].join(".")).join(", ");
   // Suggested only when there is one key to suggest for: with two, "did you mean" would silently be about
   // whichever came first.

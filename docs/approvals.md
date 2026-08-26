@@ -86,6 +86,15 @@ replaced by any single approver, in a rule whose author believed they had writte
 `E_POLICY_STAGE_FIELD_UNKNOWN` and it names the three fields that exist. `teamId` is accepted as a spelling of
 `team` because the route always accepted both.
 
+One qualification, because the sentence above was unqualified and the behaviour is not. A stage is a union —
+a bare number, or an object — and an unknown key is reported only from a branch that failed on *nothing else*.
+So `{count: 1, teem: finance}` is refused by name, and `{count: "one", teem: finance}` is refused for the
+`count` instead: the object branch failed on a type as well, and a branch that never described the value
+should not be reporting which fields it lacks. The caller fixes `count`, resubmits, and then hears about
+`teem`. Two round trips rather than one, and no version of it accepts the stage quietly — which is the
+property that matters. The same one-position-at-a-time limit is why a body with unknown keys in two places
+names the first.
+
 **The order is on the stages, not on the people.** That is what makes an order expressible at all: a set
 defined by a relation has no natural sequence, and naming people in a policy would widen authority. Each
 stage's membership stays derived from relations; only the stages are ordered.

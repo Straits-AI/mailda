@@ -71,6 +71,32 @@ interface Tool {
  * draft 2020-12, which is what MCP uses — so there is no lossy conversion, the same reason `send-mail.ts`
  * gave for choosing that target in #3.
  */
+/**
+ * Zod metadata this Node keeps for itself, removed on the way out.
+ *
+ * `.meta({ refusal: "E_…" })` in `packages/contract/src/schemas.ts` tells `request-shape.ts` which code to
+ * refuse a closed set with (#93). It lives on the schema deliberately — a side table keyed by route would be
+ * the correspondence problem `errors.ts` already rejected — and `z.toJSONSchema` faithfully copies it into
+ * the published tool schema, where an agent found `"refusal":"E_POLICY_FIELD_UNKNOWN"` sitting in what is
+ * supposed to be a description of the *input*.
+ *
+ * It is not a secret; every code here is in a public repository and the Skill quotes several. It is simply
+ * **not the caller's**, and a wire format that carries a server's internal wiring is one that callers start
+ * depending on. Stripped at the single point where an internal shape becomes a published one, rather than by
+ * withholding the metadata from the schema that needs it.
+ */
+const INTERNAL_KEYS = new Set(["refusal"]);
+
+function published(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(published);
+  if (typeof node !== "object" || node === null) return node;
+  return Object.fromEntries(
+    Object.entries(node)
+      .filter(([key]) => !INTERNAL_KEYS.has(key))
+      .map(([key, value]) => [key, published(value)]),
+  );
+}
+
 export function tools(): Tool[] {
   const all: readonly RouteSpec[] = ROUTES;
   const byName = new Map(all.map((spec) => [`${spec.method} ${spec.path}`, spec]));
@@ -84,7 +110,9 @@ export function tools(): Tool[] {
       properties[parameter] = { type: "string", description: `The ${parameter} this acts on.` };
     }
     if (spec.request !== undefined) {
-      properties["body"] = z.toJSONSchema(spec.request, { target: "draft-2020-12", io: "input" });
+      properties["body"] = published(
+        z.toJSONSchema(spec.request, { target: "draft-2020-12", io: "input" }),
+      );
     }
 
     return {

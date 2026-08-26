@@ -98,4 +98,47 @@ describe("a real Node refuses a field outside a closed set, before it does anyth
     expect(wellFormed.status).toBe(401);
   });
 
+  it("refuses a closed set that is not an object, which no unknown key can be found in", async () => {
+    /*
+     * **The first version of this boundary let this through**, and it is #93's own harm surviving #93's fix.
+     * Found by review, not by this suite, which is worth recording: every test here sent a *misspelled
+     * field*, so all of them exercised the one path that worked.
+     *
+     * The mechanism: `conditions` as a string produces `invalid_type`, not `unrecognized_keys`. The version
+     * that surfaced only unrecognised keys therefore found nothing to refuse, returned, and let the body
+     * reach `conditionsFrom` — whose first line turns a non-object into `{}`, which is five NULLs, which is
+     * a policy version matching every send in the organization, reported as created. One misplaced quote
+     * mark in a client, and a governance rule silently becomes unconditional.
+     *
+     * The rule this closes is narrower than "validate values": a check that **cannot run** must not report
+     * a pass. There are no fields here to be unknown, so "no unknown fields" was vacuous rather than clean.
+     */
+    for (const conditions of ["mailbox_id=mbx_1", 7, true, ["mailboxId"]]) {
+      const response = await SELF.fetch(`${ORIGIN}/api/policies`, {
+        method: "POST",
+        body: JSON.stringify({ name: "n", outcome: "deny", conditions }),
+      });
+      const body = await response.json() as { error?: string; message?: string };
+      expect(response.status, `conditions as ${JSON.stringify(conditions)} was accepted`).toBe(422);
+      // The same code as a misspelled field: it is the same closed set, refused for a different reason.
+      expect(body.error).toBe("E_POLICY_CONDITION_UNKNOWN");
+      // And the message says what is wrong rather than listing fields the value could not have had.
+      expect(body.message).toMatch(/not an object/);
+      expect(body.message).toMatch(/mailboxId/);
+    }
+  });
+
+  it("still lets an omitted closed set through, because absent is how unconstrained is spelled", async () => {
+    /*
+     * The other side of the same line, and the reason the refusal above is about `null`-vs-object rather
+     * than about presence. A policy with no `conditions` at all is the legitimate way to write a rule that
+     * catches everything — #93 is about that happening **by accident**, not about forbidding it. A boundary
+     * that refused an absent set would have made the deliberate case unreachable.
+     */
+    const omitted = await SELF.fetch(`${ORIGIN}/api/policies`, {
+      method: "POST",
+      body: JSON.stringify({ name: "n", outcome: "deny" }),
+    });
+    expect(omitted.status, "an unconditional rule can no longer be written on purpose").toBe(401);
+  });
 });
