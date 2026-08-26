@@ -1,14 +1,16 @@
 ---
 id: react-shell-bundle
 kind: measured-tripwire
-measured_on: 2026-08-08
+measured_on: 2026-08-26
 stale_when: >
   react, react-dom, @tanstack/react-router or @tanstack/react-query change major version; the esbuild
   target moves below es2022; a fourth runtime dependency is added to the authenticated application; the
-  pre-authentication surface starts loading the bundle rather than importing it on sign-in
+  pre-authentication surface starts loading the bundle rather than importing it on sign-in; or the built
+  bundle moves more than 10% from the recorded figure for any reason, including screens being added —
+  the clause above watched only the dependencies, and the number is mostly application code
 values:
-  shell.bundle_bytes: 331949
-  shell.bundle_gzip_bytes: 103792
+  shell.bundle_bytes: 515386
+  shell.bundle_gzip_bytes: 149676
   shell.pre_auth_bundle_bytes: 0
 ---
 
@@ -19,15 +21,43 @@ composer and nobody had priced either half.
 
 | | Raw | Gzip |
 |:--|---:|---:|
-| React + react-dom alone | 194,035 | 60,530 |
-| **with TanStack Router and Query** | **331,949** | **103,792** |
+| React + react-dom alone (8 Aug) | 194,035 | 60,530 |
+| with TanStack Router and Query (8 Aug) | 331,949 | 103,792 |
+| **the shell as it now is (26 Aug)** | **515,386** | **149,676** |
 
 Reproduce it by running the build, which prints both numbers:
 
 ```sh
 pnpm --filter @mailda/worker run build:client
-# app bundle: 331949 bytes raw, 103792 bytes gzip -> ./generated/app.bundle.client.js
+# app bundle: 515386 bytes raw, 149676 bytes gzip -> ./generated/app.bundle.client.js
 ```
+
+## Re-measured 26 August 2026, because it had rotted and something leaned on it
+
+Found while reviewing #97, which cited this receipt as the authority for what the bundle costs somebody
+waiting for it. The recorded figure was **331,949** and the build was producing **515,386** — a drift of
+**+55%**, eighteen days old.
+
+Nothing was wrong with the measurement. What was wrong is what the `stale_when` clause watched. Every
+condition in it named a **dependency** — a major version, the esbuild target, a fourth runtime dependency —
+and the bundle grew because the *application* grew: twelve screens, the composer, passkey registration, the
+Butler editor, the transport form. So the clause could not fire, and a number sat here reading as current
+while the thing it measured moved by half again.
+
+The clause now also fires on the figure itself moving 10%, which is the only condition that could have
+caught this. A receipt whose triggers all point away from its own number is a receipt that goes stale
+quietly, and that is worse than no receipt because it still reads as verified.
+
+Two things that did **not** change, and they are the load-bearing halves:
+
+- `shell.pre_auth_bundle_bytes` is still **0**. Sign-in, first-run claim and a locked-out `doctor` load
+  none of it, and `test/shell-split.test.ts` is what holds that rather than this file.
+- The argument below still holds at the new size, because it never depended on the figure being small — it
+  depended on nobody paying it before they are signed in.
+
+**No automated drift check exists for these three values.** Benchmarks re-run nightly per AGENTS.md, but
+these are build outputs rather than timings and nothing compares them to the build. That absence is why
+this went unnoticed for eighteen days, and it is the real gap here rather than the number.
 
 The Router and Query halves cost **137,914 raw / 43,262 gzip** between them — more than the whole of
 React's runtime in gzip terms, which is worth knowing before treating either as free. They are §25's

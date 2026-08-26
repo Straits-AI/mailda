@@ -106,6 +106,101 @@ describe("every response carries the browser policy", () => {
   });
 });
 
+/**
+ * `no-store` on the exit that had forgotten it.
+ *
+ * This is the change's *second* claim and it shipped asserted by nothing. `noStore` moved out of the try
+ * alongside `withSecurityHeaders`, on the stated grounds that the three error returns each had to remember
+ * it and **the unhandled-500 return did not** — so the response to the worst thing that can happen to a
+ * request was the one response a shared cache was free to keep. That is a good argument and a testable one,
+ * and a relocation justified by a defect nobody demonstrates is the same shape as the defect: a claim with
+ * nothing behind it.
+ *
+ * The 500 is reached with a `CATALOG` that throws rather than by dropping tables, which is how
+ * `audit.test.ts` provokes the same class. It touches no storage, so it cannot leave this file's later tests
+ * running against a schema that is not there.
+ */
+describe("the cache directive survives the exits, including the one nobody wrote it on", () => {
+  const brokenCatalog = {
+    ...testEnv,
+    CATALOG: { prepare: () => { throw new Error("db gone"); } },
+  } as unknown as Env;
+
+  /**
+   * `tolerateBackgroundFailure` settles the `waitUntil` work and swallows *its* error, deliberately.
+   *
+   * A request that dies on the catalog also schedules background work against the same broken catalog —
+   * `trimLogs`, the sweeper — and `waitOnExecutionContext` re-throws whatever those threw. Two ways to get
+   * that wrong, and the first version got both:
+   *
+   *   - letting it throw fails this test for a reason it is not testing (the response was already produced
+   *     and already carried the right headers);
+   *   - *not settling at all* leaves a rejected promise behind, which surfaces as an unhandled rejection and
+   *     makes the whole suite exit non-zero while every test reports as passing. That is worse than a
+   *     failure, because it fails somewhere else.
+   *
+   * So it is settled and the error is caught at exactly one call site, where the broken catalog is the point.
+   * This is the one place in this file a `catch` does not re-raise, and AGENTS.md's rule is about production
+   * code surfacing operational state — here the swallowed thing is the fixture, not the subject.
+   */
+  async function through(
+    env: Env, path: string, init?: RequestInit, tolerateBackgroundFailure = false,
+  ): Promise<Response> {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new Request(`https://node.example${path}`, init), env, ctx);
+    if (tolerateBackgroundFailure) await waitOnExecutionContext(ctx).catch(() => {});
+    else await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  it("puts no-store on an unhandled 500, which is the return that had none", async () => {
+    /*
+     * `redeem` rather than an authenticated route, and the reason is the interesting part: with a broken
+     * catalog, `principalFor` answers **401** having asked it nothing, so every session-gated path proves
+     * only that an unauthenticated request is refused. Redeem is the one unauthenticated *write* — the
+     * person using it has no account yet (#83) — so a well-formed body gets past validation and reaches the
+     * catalog, where the throw becomes the unhandled return this test is about.
+     */
+    const response = await through(brokenCatalog, "/api/invitations/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        secret: "inv_whatever_this_is_not_checked_yet", password: "a-long-enough-passphrase",
+      }),
+    }, true);
+    expect(response.status, "the probe did not reach the unhandled return").toBe(500);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("vary")).toBe("cookie");
+    // And the browser policy on the same response, since both moved together for the same reason.
+    expect(policyOf(response).get("frame-ancestors")).toEqual(["'none'"]);
+  });
+
+  it("puts it on a thrown refusal and on a 404 under /api/ too", async () => {
+    /*
+     * The other two `/api/` exits. `no-store` matters most on exactly the responses that say why something
+     * was refused, because those are the ones naming a resource — §5C's whole concern — and a shared cache
+     * holding one answers the next person's question with somebody else's refusal.
+     */
+    const refused = await through(testEnv, "/api/invitations/redeem", { method: "POST", body: "{}" });
+    expect(refused.status).toBe(422);
+    expect(refused.headers.get("cache-control")).toBe("no-store");
+
+    const missing = await through(testEnv, "/api/nothing-here");
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("still leaves the client assets cacheable, which is the point of the path test", async () => {
+    // `noStore` guards on `/api/`, and that guard is load-bearing rather than incidental: the shell and its
+    // assets are meant to be cached briefly, and a wrapper that forgot the guard would make every page load
+    // fetch the bundle again.
+    const asset = await through(testEnv, "/app/app.js");
+    expect(asset.headers.get("cache-control")).not.toBe("no-store");
+    // …while still carrying the browser policy, which is not path-conditional.
+    expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
 describe("the policy says what it needs to say", () => {
   it("refuses framing on the shell, which is where clickjacking lands", async () => {
     // The shell is the document with the buttons in it. `frame-ancestors` is the only directive here that

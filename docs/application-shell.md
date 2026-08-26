@@ -283,9 +283,16 @@ The composer reads its hold window from that module too, and the alternative is 
 built first and looked better: the composer *is* bundled by esbuild here, so it can `import { BUDGETS }`
 directly. That ships the whole 218-entry table to a browser to deliver one integer — **+7,960 bytes raw,
 +2,783 gzip** measured against `react-shell-bundle.md`, whose subject is precisely what this bundle costs
-somebody waiting for it — and gives the interface two sources for numbers that must agree with the Node. It
-also failed #90's draft-flush test, because that test sits on a 1,499 ms boundary and a slower module graph
-for the screen it mounts moves the boundary. So `/app/config.js` joins `/app/session.js` and
+somebody waiting for it — and gives the interface two sources for numbers that must agree with the Node.
+
+It also failed #90's draft-flush test when it was tried, and that reason has since **expired**. The test then
+ran on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where wall-clock time also advances the fake clock,
+so a slower module graph genuinely could push it past the 1,499 ms boundary it sits on. That was the test
+being flaky rather than the import being expensive, and the flake is fixed at its root — the clock now moves
+only when a test moves it. The bundle cost is what keeps this alternative withdrawn; the test failure was a
+symptom of something else and should not be read as evidence.
+
+So `/app/config.js` joins `/app/session.js` and
 `/app/delivery.js` as an esbuild external, with hand-written types in `src/client/app/types/` and a stub at
 `test/client/config-stub.ts` built from the same budgets the Worker reads.
 

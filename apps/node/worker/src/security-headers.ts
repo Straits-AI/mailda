@@ -56,6 +56,19 @@ import { BUDGETS } from "@mailda/budgets";
  * directive list, in one test, so the frame and the policy that has to permit it cannot drift apart in two
  * files that never mention each other. The header the Node actually sends is asserted from a real response
  * rather than from this constant, so exporting it does not become a way for the suite to agree with itself.
+ *
+ * ## A violation of this policy is invisible to the operator, and that is a deliberate absence
+ *
+ * There is no `report-uri` and no `report-to`, so when a browser refuses something here nobody on the Node
+ * ever hears about it. That is a real cost and it is named rather than left to be discovered: the tests
+ * below prove the policy *permits* what this interface does, and nothing anywhere would notice if a future
+ * screen quietly needed something the policy refuses. The symptom would be a control that does nothing.
+ *
+ * The reason it is absent is that a report endpoint is a place the customer's browsers send data about the
+ * customer's users, and for a Node whose whole premise is that the customer owns the data (ADR 7) "where do
+ * these reports go" is not a question with an obvious answer — a Mailda-hosted collector is precisely the
+ * hostage ADR 7 rules out, and a self-hosted one is a route that accepts unauthenticated writes. So it is
+ * deferred with the question written down, which is the difference between a decision and an oversight.
  */
 export const CONTENT_SECURITY_POLICY = [
   // Everything not named below is refused, which is what makes the named ones the whole list. No

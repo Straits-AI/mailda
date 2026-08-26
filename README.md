@@ -1786,8 +1786,14 @@ That module is now the browser's **one** channel for a receipt-derived number, i
 window, which also retired a `?? 15` fallback standing in for a receipt. The obvious alternative — the
 composer is bundled here, so let it `import { BUDGETS }` — was built, measured and withdrawn: it put the
 whole 218-entry table in the shell bundle for one integer (+7,960 bytes raw, +2,783 gzip) and gave the
-interface a second source for figures that must agree with the Node. It also broke #90's draft-flush test,
-because slowing that screen's module graph moved a 1,499 ms boundary the test sits on.
+interface a second source for figures that must agree with the Node.
+
+It also broke #90's draft-flush test at the time, by slowing that screen's module graph enough to cross the
+1,499 ms boundary the test sits on — and that half of the argument has since **expired**, which is worth
+recording rather than deleting. The test was on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where
+wall-clock time advances the fake clock, so it really was sensitive to how long a module graph takes to
+load. That was a flaky test rather than a cost of the import, and it is now fixed at the root: the clock
+moves only when a test moves it. So the bundle size is the whole reason this alternative stays withdrawn.
 
 **`frame-src 'self'`, not `'none'` — though not for the reason the ticket gave.** The reader renders sanitised
 mail into a `sandbox=""` `srcdoc` frame, and the expectation was that `'none'` would break it. Driven through

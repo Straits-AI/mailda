@@ -1116,9 +1116,14 @@ export function page(): string {
  *
  * The stylesheet and the config module are here for a third: **the document must contain no inline script
  * and no inline style**, or the CSP in `security-headers.ts` has to permit inline ones and stops meaning
- * anything. `content-type` per entry rather than one for all of them, because `nosniff` now ships on every
- * response — a stylesheet served as `text/javascript` would previously have limped along and is now
- * refused outright, which is the correct direction and worth stating.
+ * anything.
+ *
+ * `content-type` per entry rather than one for all of them, simply because they are three different types
+ * and a shared value would be wrong for at least one. It is **not** `nosniff` that makes this matter, which
+ * is what this comment said first: a standards-mode document already refuses a `<link rel=stylesheet>` whose
+ * MIME type is not CSS, and has for years, with or without the header. What `nosniff` adds is elsewhere —
+ * it stops a *response* being reinterpreted as a type it did not declare, which is why it ships on the
+ * download routes rather than why it ships on these.
  */
 const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); readonly type: string }> = {
   "/app/app.js": { source: appScript, type: "text/javascript; charset=utf-8" },
