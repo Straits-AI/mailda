@@ -183,6 +183,56 @@ async function doctorVerdict(origin) {
   return report.verdict ?? "refuse";
 }
 
+/**
+ * `--env=""`, on every wrangler call that takes it.
+ *
+ * `wrangler.jsonc` declares a named environment for the test suite — named environments do not inherit
+ * bindings, so it duplicates the top level deliberately. With more than one environment defined and none
+ * named, wrangler warns and picks the top level; the warning exists because picking is a guess. An empty
+ * string names the top level explicitly, so `mailda deploy` can never act on the test environment because
+ * somebody's shell had `CLOUDFLARE_ENV` set.
+ */
+const ENV = ["--env", ""];
+
+/**
+ * Whether this account has no `mailda` Worker yet.
+ *
+ * **Found by running the drill, not by reading**, and it broke the sequence this file shipped with. On a
+ * fresh account:
+ *
+ *   - `wrangler d1 migrations apply` fails with *"Couldn't find an auto-provisioned D1 DB named
+ *     'mailda-catalog' … Run 'wrangler deploy' to provision it"*, because `wrangler.jsonc` declares its D1
+ *     and R2 bindings with **no ids and no names** — ADR 24 requires the repository to be byte-identical
+ *     across installs, so the resources are provisioned from the deploy;
+ *   - and `wrangler versions upload` fails with *"You cannot upload a new version of a Worker that does not
+ *     yet exist"*.
+ *
+ * So neither of the first two steps of the expand-canary-check-shift sequence can run first on a new Node,
+ * and the sequence as shipped would have failed every customer's very first deploy. A plain `wrangler
+ * deploy` is the only thing that can go first — and it is *safe* there for the reason the canary exists:
+ * there is no previous version to protect and no user to serve a broken one to.
+ *
+ * ## Ambiguity refuses rather than guesses
+ *
+ * A network failure would also make this probe fail, and treating that as "first install" would send an
+ * **existing** Node down the direct-deploy path — skipping the canary, on a Node with users. So only
+ * wrangler's own words for absence count; anything else stops the command.
+ */
+function firstInstall() {
+  const probe = capture("npx", ["wrangler", "versions", "list", ...ENV]);
+  if (probe.status === 0) return false;
+  if (/does not yet exist|workers\.api\.error\.script_not_found|\[code: 10007\]/i.test(probe.text)) return true;
+  fail(
+    "could not tell whether this account already has a Mailda Worker.\n\n"
+    + "  why      the two paths differ: a first install deploys directly, and every later one uploads a\n"
+    + "           canary and checks it before moving traffic. Guessing wrong on an existing Node would\n"
+    + "           skip the check, so this refuses rather than picks.\n"
+    + "  fix      check `wrangler whoami` and CLOUDFLARE_ACCOUNT_ID, then re-run. wrangler said:\n"
+    + `           ${probe.text.trim().split("\n").slice(-3).join(" ")}`,
+  );
+  return true;
+}
+
 /* ------------------------------------------------------------------ deploy ------------------------- */
 
 /**
@@ -241,12 +291,41 @@ async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
 
   /*
+   * **Is there anything here yet?** Measured against a real account rather than assumed, and it changed this
+   * whole function — see `firstInstall` for what the drill found.
+   */
+  const first = firstInstall();
+  if (first) {
+    process.stdout.write(
+      "\n== first install: no Worker exists yet\n"
+      + "   Deploying directly. There is no previous version to protect, so there is nothing a canary could\n"
+      + "   roll back to and nothing a migration could break — and the bindings do not exist until a deploy\n"
+      + "   provisions them, which is why neither step below can come first.\n",
+    );
+    if (run("npx", ["wrangler", "deploy", ...ENV]) !== 0) fail("the first deploy failed.");
+    process.stdout.write("\n== applying migrations for the first time\n");
+    if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...ENV]) !== 0) {
+      fail("applying migrations failed. The Worker is deployed against an empty schema — re-run to finish.");
+    }
+    process.stdout.write("\n== attaching the delivery-events consumer on a new Node\n");
+    if (run("node", ["scripts/attach-queue-consumer.mjs"]) !== 0) {
+      fail("attaching the consumer failed. Delivery outcomes will be unobserved until it is.");
+    }
+    const origin = flag(argv, "url") ?? process.env.MAILDA_URL ?? null;
+    if (origin !== null) {
+      process.stdout.write("\n== asking the Node how it is\n");
+      await doctor(["--url", origin]);
+    }
+    return;
+  }
+
+  /*
    * Expansion first, because it is safe ahead of the code by construction, and refuse a contraction unless
    * the operator said so. A pending `-- phase: contract` migration applied here would break the version
    * currently serving — before the canary has even been uploaded, and while nothing has gone wrong yet.
    */
   process.stdout.write("\n== checking which migrations are pending\n");
-  const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote"]);
+  const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...ENV]);
   if (pending.status !== 0) fail(`could not list migrations (exit ${pending.status}).`);
   const contractions = contractingAmong(pending.text, resolve(workerDir, "migrations"));
   if (contractions.length > 0 && !contracting) {
@@ -261,7 +340,7 @@ async function deploy(argv) {
   }
 
   process.stdout.write("\n== applying migrations\n");
-  if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote"]) !== 0) {
+  if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...ENV]) !== 0) {
     fail("applying migrations failed. Nothing was deployed, so the version currently serving is unchanged.");
   }
 
@@ -271,7 +350,7 @@ async function deploy(argv) {
    */
   process.stdout.write("\n== uploading a canary version (no traffic)\n");
   const uploaded = capture("npx", [
-    "wrangler", "versions", "upload", "--preview-alias", "canary", "--message", "mailda deploy",
+    "wrangler", "versions", "upload", "--preview-alias", "canary", "--message", "mailda deploy", ...ENV,
   ]);
   if (uploaded.status !== 0) {
     fail(`uploading the canary failed (exit ${uploaded.status}). No traffic moved.`);
@@ -313,7 +392,7 @@ async function deploy(argv) {
   }
 
   process.stdout.write("\n== moving traffic to the checked version\n");
-  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes"]) !== 0) {
+  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes", ...ENV]) !== 0) {
     fail("promoting the canary failed. The previous version is still serving.");
   }
 

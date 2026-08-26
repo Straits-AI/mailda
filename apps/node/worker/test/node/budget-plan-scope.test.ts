@@ -582,6 +582,17 @@ const FIGURES: Record<string, Classification> = {
     "provisioning.r2_requires_interactive_confirmation",
   ),
 
+  // docs/receipts/deploy-drill-live-account.md
+  ...bothPlans(
+    "what wrangler and the Workers platform do during a deploy: whether an upload shifts traffic, whether "
+      + "it can create a Worker, whether auto-provisioned bindings exist before one, and whether a second "
+      + "script may claim an account-level Workflow. Plan-independent — these are the deploy API's own "
+      + "semantics, and the drill that measured them ran on one account without changing plan",
+    "deploy.versions_upload_shifts_traffic", "deploy.versions_upload_creates_worker",
+    "deploy.migrations_before_first_deploy", "deploy.workflow_name_is_account_level",
+    "deploy.second_node_reassigns_workflow",
+  ),
+
   // docs/receipts/react-shell-bundle.md
   ...mailda("the bytes Mailda's own shell ships", "shell.bundle_bytes", "shell.bundle_gzip_bytes", "shell.pre_auth_bundle_bytes"),
 

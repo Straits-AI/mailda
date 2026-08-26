@@ -166,6 +166,12 @@ export const NON_BINDING_FIELDS: Record<string, { why: string; topLevelOnly?: tr
   rules: { why: "module rules for non-JS imports (.client.js served as Text)" },
   build: { why: "the client build wrangler runs before upload (ADR 30)" },
   triggers: { why: "cron schedules; they arrive as a scheduled event, never as a property of env" },
+  preview_urls: {
+    why: "whether an uploaded version is reachable at <alias>-<worker>.<subdomain>.workers.dev — a routing "
+      + "toggle, not a binding. Declared rather than left to a default because Cloudflare changed that "
+      + "default three times in two months, and `mailda deploy`'s canary gate cannot check a version it "
+      + "cannot reach (#98)",
+  },
   // Not a leaf: `unclassifiedKeys` descends into every value under it, so the reason given here is a
   // behaviour of this module rather than a promise about one. Naming only `env.test` would have left a
   // second environment unclassified — #71's hole one level down.

@@ -9,6 +9,20 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
+  /*
+   * Preview URLs, declared rather than inherited (#98).
+   *
+   * `mailda deploy` uploads a canary version and checks it before moving traffic, and the canary is only
+   * reachable at `<alias>-<worker>.<subdomain>.workers.dev` if preview URLs are on. Cloudflare's default for
+   * this setting has changed **three times since September 2025** — enabled, then disabled, then "matches
+   * `workers_dev`" — so a Node relying on the default is a Node whose deploy gate works or does not depending
+   * on which wrangler an operator has. Measured: with neither setting declared and wrangler 4.118.0, the
+   * alias answered 404 and the canary could not be checked at all.
+   *
+   * Not account-specific, so declaring it keeps ADR 24's byte-identical repository intact.
+   */
+  "preview_urls": true,
+
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
 
@@ -154,7 +168,21 @@
     // given a value from config. ADR 28 removed that binding entirely, so there is nothing left to
     // omit: the vault generates its own keys and works identically in tests and in production.
     "test": {
-      "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
+      /*
+   * Preview URLs, declared rather than inherited (#98).
+   *
+   * `mailda deploy` uploads a canary version and checks it before moving traffic, and the canary is only
+   * reachable at `<alias>-<worker>.<subdomain>.workers.dev` if preview URLs are on. Cloudflare's default for
+   * this setting has changed **three times since September 2025** — enabled, then disabled, then "matches
+   * `workers_dev`" — so a Node relying on the default is a Node whose deploy gate works or does not depending
+   * on which wrangler an operator has. Measured: with neither setting declared and wrangler 4.118.0, the
+   * alias answered 404 and the canary could not be checked at all.
+   *
+   * Not account-specific, so declaring it keeps ADR 24's byte-identical repository intact.
+   */
+  "preview_urls": true,
+
+  "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],
 
   // Outbound (ADR 23, ADR 33). The unrestricted form carries **no account-specific value**, so unlike

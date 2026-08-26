@@ -3,7 +3,22 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const cliPath = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
-const cli = readFileSync(cliPath, "utf8");
+
+/**
+ * The CLI's **code**, with comments stripped.
+ *
+ * Necessary, and a standing reminder of what lexical tests cost. The order assertion below searches for the
+ * text each step prints, and `firstInstall`'s own documentation *names those steps in prose* while explaining
+ * why they cannot come first — so a search over the raw file found the comment before the code and reported
+ * the order backwards. A test that reads source has to read only the part that runs.
+ */
+const cli = readFileSync(cliPath, "utf8")
+  .split("\n")
+  .filter((line) => {
+    const t = line.trimStart();
+    return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
+  })
+  .join("\n");
 
 /*
  * The parsers come from `deploy-parse.mjs`, not from `mailda.mjs`. That file dispatches on `process.argv` at
@@ -38,14 +53,25 @@ const { previewUrlFrom, shouldPromote, versionIdFrom } =
  *     not true of that one part and a reader should not have to discover it mid-rollout.
  */
 
-/** The order of the steps, by the string each one prints. */
+/**
+ * The order of the canary path's steps, by the **exact banner** each one prints.
+ *
+ * The trailing `\\n` is load-bearing and was learned twice. Searching for `"applying migrations"` also
+ * matches the first-install branch's `"applying migrations for the first time"`, and
+ * `"attaching the delivery-events consumer"` matches `"…on a new Node"` — so a substring search reported the
+ * steps in the first-install branch's order and the assertion failed against correct code. Anchoring on the
+ * terminator makes each banner match exactly one call site.
+ *
+ * That is twice in this file that a lexical assertion has been fooled by a substring, which is the standing
+ * argument for the value-level tests below it.
+ */
 const STEPS = [
-  "checking which migrations are pending",
-  "applying migrations",
-  "uploading a canary version",
-  "asking the canary how it is",
-  "moving traffic to the checked version",
-  "attaching the delivery-events consumer",
+  "== checking which migrations are pending\\n",
+  "== applying migrations\\n",
+  "== uploading a canary version",
+  "== asking the canary how it is",
+  "== moving traffic to the checked version\\n",
+  "== attaching the delivery-events consumer\\n",
 ];
 
 describe("expand, canary, check, then shift", () => {
@@ -67,7 +93,8 @@ describe("expand, canary, check, then shift", () => {
   it("applies migrations before it uploads anything", () => {
     // Stated on its own because it is the defect: new code served against a schema that did not have what
     // it needed, and a failed migration left the incompatible Worker deployed.
-    expect(cli.indexOf("applying migrations")).toBeLessThan(cli.indexOf("wrangler\", \"versions\", \"upload"));
+    expect(cli.indexOf("== applying migrations\\n"))
+      .toBeLessThan(cli.indexOf("wrangler\", \"versions\", \"upload"));
   });
 
   it("consults the promotion gate before moving traffic", () => {
@@ -103,7 +130,7 @@ describe("expand, canary, check, then shift", () => {
     // is still serving, before the canary has even been uploaded.
     expect(cli).toContain("refusing to apply a contracting migration");
     const refusal = cli.indexOf("refusing to apply a contracting migration");
-    const apply = cli.indexOf("applying migrations");
+    const apply = cli.indexOf("== applying migrations\\n");
     expect(refusal, "the refusal comes after the migrations are applied").toBeLessThan(apply);
   });
 });
