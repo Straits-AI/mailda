@@ -304,6 +304,16 @@ export async function redeemForVault(
         + "nothing but a code can open",
     });
   }
+  /*
+   * **This check is the message, not the guarantee**, and `scripts/mutants.mjs` is what established that:
+   * removing it entirely leaves every test passing, because the compare-and-swap below refuses the same code
+   * for the same reason. What is lost without it is the *date* — "already used, on 2026-08-26" instead of
+   * "used by another request while this one was running", which is a worse sentence for somebody holding a
+   * list of ten codes and trying to work out which they have spent.
+   *
+   * Kept deliberately, and labelled, because a surviving mutant here is a reader's question and this is the
+   * answer: the guard is redundant on purpose, and the redundancy buys a better refusal.
+   */
   if (row.redeemed_at !== null) {
     throw unprocessable("E_RECOVERY_CODE_SPENT", {
       what: `that recovery code was already used, on ${row.redeemed_at}`,

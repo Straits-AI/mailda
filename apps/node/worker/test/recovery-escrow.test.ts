@@ -235,6 +235,35 @@ describe("a code is spent once, and not on a failure", () => {
     expect((await escrowState(testEnv, ORG))!.unredeemed).toBe(10);
   });
 
+  it("lets exactly one of two concurrent redemptions win", async () => {
+    /*
+     * **Found by `scripts/mutants.mjs`, not by reading.** Removing the `changes === 0` guard left every test
+     * passing, because nothing exercised two redemptions at once — a real coverage gap in the branch that
+     * exists precisely for a race.
+     *
+     * The spend is a conditional `UPDATE … WHERE redeemed_at IS NULL` inside a `batch`, which D1 runs as one
+     * transaction, so the second writer changes no rows. That is this repository's usual compare-and-swap and
+     * the conflict is the signal — but a signal nothing had ever produced is a signal nobody had checked.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+
+    const both = await Promise.allSettled([
+      redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+      redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+    ]);
+    const won = both.filter((one) => one.status === "fulfilled");
+    const lost = both.filter((one) => one.status === "rejected");
+
+    expect(won, "both redemptions succeeded, so the code was spent twice").toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(String((lost[0] as PromiseRejectedResult).reason)).toMatch(/E_RECOVERY_CODE_SPENT/);
+    // One spend, not two — the row cannot be redeemed by both.
+    expect((await escrowState(testEnv, ORG))!.unredeemed).toBe(9);
+    // And the vault was restored, by whichever won.
+    expect((await vault(testEnv).inventory()).content).toBeGreaterThan(0);
+  });
+
   it("refuses the same code twice", async () => {
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     await loseTheVault();

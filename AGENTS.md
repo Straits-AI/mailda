@@ -125,6 +125,40 @@ At review, a literal number in a diff is answered with one question: **where's t
 An acceptable answer is a receipt ID, an adapter capability field, or "it's `0`/`1` and
 means none/one".
 
+### 2b. Every assertion needs to be able to fail
+
+A test that passes against the code it was written to catch is worse than no test, for the same reason an
+unverified number is worse than a blank: it ends the question. The suite reports it as coverage and the next
+reader stops looking.
+
+This is not a hypothetical. **Eight of them were found in a single week**, all by hand-mutating the fix and
+re-running the test, none by reading:
+
+| what the test claimed | why it passed anyway |
+|:--|:--|
+| MCP forwards a page cursor | an empty page reads the same whether or not it forwarded |
+| the escrow is not openable from the table | it tried the wrong attack — the route, not the ciphertext |
+| the parser keeps its balance at any depth | balanced nesting never reaches the capped counter |
+| the deploy gate refuses a bad canary | `if (false && verdict !== "ok")` satisfied both lexical clauses |
+| the deploy steps run in order | a renamed banner still matched as a substring |
+| the empty inbox hides no reassurance | also true of a loading screen |
+| the vault does not overwrite a live key | nothing asserted it at all |
+| the SDK is regenerated from the contract | a top-level side effect regenerated it first |
+
+So: **after writing an assertion, break the line it covers and watch that assertion fail.** Restore it. If it
+did not fail, the assertion is about something else than you think.
+
+`pnpm --filter @mailda/worker mutants <source> <test>` automates the loop for one file pair, weakening one
+line at a time. It **reports** rather than gates: a surviving mutant is often a legitimately unreachable
+branch or a deliberate redundancy, and telling those from a real gap is a reader's judgement. Two rules for
+reading its output — a mutant that does not compile measured nothing, and a survivor you decide is fine gets
+a comment saying so, because the next person will run it too.
+
+The related failure worth naming beside this: **a module with a top-level side effect cannot be imported by
+the thing that checks it.** The SDK generator's `writeFileSync` regenerated the file before the test could
+read a hand edit; `mailda.mjs` dispatches on `argv`, so its parsers had to move to a file of their own. The
+seam is the pure part in one module and the effect in another.
+
 ### 3. A limit developers can hit is a limit they must see
 
 Developers will not read our code. Their agents read our errors. An agent can fix
@@ -258,6 +292,8 @@ longer matches the code is deleted or remeasured, never left to rot.
 5. The layer below still works.
 6. Blueprint, README and technical docs reflect what the code now does.
 7. You can answer "why is this here?" for every line, in one sentence, without reading it again.
+8. Every new assertion has been seen to fail. Break the line it covers, watch it go red, restore it — or run
+   `pnpm --filter @mailda/worker mutants <source> <test>` and read the survivors.
 
 ---
 
