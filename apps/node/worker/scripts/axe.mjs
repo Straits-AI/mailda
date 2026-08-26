@@ -149,7 +149,26 @@ let checked = 0;
  * which would be the worse half of having two sweeps at all.
  */
 async function audit(page, label) {
-  await page.addScriptTag({ content: AXE });
+  /*
+   * Injected through the debugger rather than as a `<script>` element, and that changed with #97.
+   *
+   * `page.addScriptTag({ content: AXE })` creates a real inline script in the document, so the Node's
+   * `script-src 'self'` refuses it and every screen below reported `axe is not defined`. **That is the
+   * policy working**, not a harness to work around: an inline script is exactly what a CSP exists to stop,
+   * and the application ships none. `page.evaluate` runs through Chrome DevTools Protocol, which is not
+   * page script and is not subject to the page's policy — the right seam for a harness, because it needs no
+   * relaxation of the thing it is measuring.
+   *
+   * `context.bypassCSP` is the other way and is deliberately not used: it would disable enforcement for the
+   * *application* too, so a screen broken by the CSP — the one browser-level regression this harness is now
+   * positioned to notice — would keep rendering and keep passing.
+   *
+   * The expression ends in a check rather than in axe's own completion value: a library evaluated for its
+   * side effect returns whatever its last statement happened to be, which may not be serialisable, and
+   * `false` here would mean the injection silently did nothing.
+   */
+  const injected = await page.evaluate(`${AXE}\n;typeof axe === "object" && typeof axe.run === "function"`);
+  if (injected !== true) throw new Error("axe-core did not load into the page; nothing below was measured");
   const aa = await page.evaluate(
     `axe.run(document, { runOnly: { type: "tag", values: ${JSON.stringify(AA_TAGS)} } })`,
   );

@@ -1763,6 +1763,52 @@ process — same guards, same audit entry, same refusals — authenticated by th
 trail names the person who set it going rather than a machine.
 See [`docs/machine-surfaces.md`](./docs/machine-surfaces.md).
 
+## The document is defended now, and not only the message inside it (#97)
+
+The Node sent **no security headers at all**: no CSP, no `frame-ancestors`, no `nosniff`, no HSTS, no
+`Referrer-Policy`. The reason that went unnoticed is worth more than the fix. The message reader's sandboxed
+iframe is a real, well-reasoned defence and is documented as one — so it read as *the* browser-security
+story, when it only protects the document from the mail. Every governance control here is a button — approve,
+release, lift, grant — and an application any origin may frame turns a button into a signature.
+
+One policy, set in `withSecurityHeaders` and applied in `fetch`, which every response already passed
+through: `default-src 'none'`, `script-src 'self'`, `style-src 'self'`, `frame-ancestors 'none'`,
+`base-uri 'none'`, `nosniff`, `no-referrer` and HSTS. Two of those need saying out loud.
+
+**`script-src 'self'` cost the shell its inline code, which is the whole point.** `MAILDA_CONFIG` shipped as
+an inline `<script>` and the stylesheet as an inline `<style>`; keeping either needs `'unsafe-inline'`, which
+permits exactly what the directive exists to stop, or a per-response nonce that the header and the document
+must agree on forever. So the config is a same-origin ES module at `/app/config.js` — a module rather than
+a JSON endpoint because `session.client.js` reads it at module evaluation, and an async bootstrap in the file
+whose job is that nobody sees a 401 is a worse trade than an import. The stylesheet is `/app/app.css`.
+
+That module is now the browser's **one** channel for a receipt-derived number, including the composer's hold
+window, which also retired a `?? 15` fallback standing in for a receipt. The obvious alternative — the
+composer is bundled here, so let it `import { BUDGETS }` — was built, measured and withdrawn: it put the
+whole 218-entry table in the shell bundle for one integer (+7,960 bytes raw, +2,783 gzip) and gave the
+interface a second source for figures that must agree with the Node. It also broke #90's draft-flush test,
+because slowing that screen's module graph moved a 1,499 ms boundary the test sits on.
+
+**`frame-src 'self'`, not `'none'` — though not for the reason the ticket gave.** The reader renders sanitised
+mail into a `sandbox=""` `srcdoc` frame, and the expectation was that `'none'` would break it. Driven through
+a real Chromium, it does not: that frame renders under `'self'`, under `'none'`, and under no `frame-src` at
+all, because a `srcdoc` navigation inherits its parent's policy instead of being matched against a source
+list. `'self'` stays anyway, and the comment says why — only one engine was measured, and `'self'` is the true
+description of what this application frames, where `'none'` would be a claim that it frames nothing. What
+*does* matter is that the frame **inherits** this policy, which is safe rather than lucky: the sanitiser
+already strips `<style>`, every `style` attribute and `src` on images, so the mail HTML asks for nothing
+`default-src 'none'` refuses — asserted against the sanitiser's real output, not a fixture.
+
+**HSTS is one year and says nothing about subdomains.** `docs/receipts/hsts-max-age.md` records why: the
+preload list's minimum is the only externally stated figure in the mechanism, and `includeSubDomains` from a
+Node at an apex domain would assert HTTPS for hosts Mailda never saw, for a year, on a customer's behalf.
+A domain-wide claim belongs to the domain's owner, who has a zone setting for it.
+
+The accessibility harness broke on the CSP, which was the useful signal: it injected axe-core as an inline
+`<script>`. It now injects through the debugger instead — and deliberately not with `bypassCSP`, which would
+have disabled enforcement for the application too and hidden the one regression the harness is now placed to
+notice.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

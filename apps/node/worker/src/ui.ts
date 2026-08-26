@@ -32,47 +32,20 @@ import { EXPIRY_COOKIE } from "./auth/session.ts";
  * design is built to it rather than around it.
  */
 /**
- * JSON safe to embed in a `<script>` element.
+ * The whole stylesheet, served at `/app/app.css` rather than written into the document (#97).
  *
- * `</script>` inside a JSON string ends the element early, whatever the JSON says. Nothing in this
- * config is attacker-controlled — it is generated budgets and a constant cookie name — so this is not
- * a live vulnerability. It is here because the *shape* is the one that becomes one the first time
- * something dynamic is added, and the fix costs a line. `<` is escaped as a unicode sequence, which is
- * valid JSON and inert in HTML.
+ * It was a `<style>` element in the head, and there was nothing wrong with that until the Node acquired a
+ * Content-Security-Policy. `style-src 'self'` refuses an inline stylesheet, and the two ways to keep one
+ * are `'unsafe-inline'` — which makes the directive decorative — and a per-response nonce, which means the
+ * policy and the document have to agree on a random value on every response forever. Serving the bytes
+ * from this origin needs neither: the CSS is the same for every viewer, so it is a file, and saying so
+ * costs one request that is then cached.
+ *
+ * Still CSS inside a TypeScript template literal, and the two hazards that pairing has cost real time are
+ * unchanged — a backtick in a comment ends the literal, a stray comment terminator silently discards the
+ * rule after it. `test/node/stylesheet-hazards.test.ts` reads this constant by name and fails on either.
  */
-function safeJson(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, "\\u003c");
-}
-
-export function page(): string {
-  const config = {
-    refreshMarginSeconds: BUDGETS["auth.access_token_refresh_margin_seconds"],
-    accessTtlSeconds: BUDGETS["auth.access_token_ttl_seconds"],
-    expiryCookie: EXPIRY_COOKIE,
-    // The composer tells a person how long they have to stop a send. That number is the hold window, and
-    // it comes from the receipt-generated budget rather than being written into the interface — a figure
-    // typed into a UI is exactly the drift `pnpm receipts` exists to prevent, and the prototype already
-    // showed it happening: its mock said 18 seconds against a measured 15.
-    holdWindowSeconds: BUDGETS["send.hold_window_default_seconds"],
-  };
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<!--
-  Inline, as a data: URI, for the same reason there is no webfont: a page whose premise is custody must not
-  fetch anything from anywhere. It is also the cheapest fix for a real defect — with no icon declared, every
-  browser asked for /favicon.ico and every load logged a 404, so the console of a working Node had an error
-  in it permanently and anybody debugging had one false lead before they started.
-
-  An instrument lamp: the amber signal dot, on nothing.
--->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23e9a35c'/%3E%3C/svg%3E">
-<title>Mailda</title>
-<style>
+const SHELL_CSS = `
 :root {
   --ground: #0a0e13;
   --ground-2: #10161e;
@@ -1045,7 +1018,80 @@ body.shell main#app {
 /* The pick control sits with the state word rather than in a column of its own: a case is picked *as* a
    state, and a bare checkbox column reads as a table that wants bulk actions it does not have. */
 .case-pick { display: inline-flex; align-items: baseline; gap: .5rem; cursor: pointer; }
-</style>
+`;
+
+/**
+ * The values a browser needs and cannot work out for itself, as an ES module served from this origin (#97).
+ *
+ * ## Why this is not an inline script any more
+ *
+ * It shipped as `<script>window.MAILDA_CONFIG = {…}</script>` in the document. That is the one line that
+ * decides whether this Node's CSP is real: keeping it needs either `script-src 'unsafe-inline'`, which
+ * permits every injected script the directive exists to stop, or a per-response nonce shared between the
+ * header and the document. A nonce is a correspondence to maintain — and one whose failure mode is a nonce
+ * repeated across a cached document, which is worse than not having tried.
+ *
+ * ## Why a module rather than the JSON endpoint the ticket also offered
+ *
+ * `session.client.js` reads these at **module evaluation** to size the refresh margin and find the expiry
+ * cookie. A `fetch` for JSON makes that asynchronous, which means the token lifecycle either waits on a
+ * request or starts with the wrong numbers — in the file whose entire job is that a signed-in person never
+ * sees a 401. An `import` keeps it synchronous, and a same-origin module *is* a same-origin endpoint:
+ * `script-src 'self'` covers it with no nonce and nothing per-response to get wrong.
+ *
+ * ## What is in it, and what left
+ *
+ * Every receipt-derived figure the browser reads, and nothing else. `accessTtlSeconds` left because nothing
+ * read it — a config field with no reader is a claim that something is configurable when it is not.
+ *
+ * `holdWindowSeconds` stayed, and it is the interesting one, because the composer *is* bundled by esbuild
+ * from this repository and could import `@mailda/budgets` directly. Measured, that costs **+7,960 bytes raw
+ * / +2,783 gzip** in the shell bundle to deliver one integer, because the whole 218-entry table comes with
+ * it — against `docs/receipts/react-shell-bundle.md`, whose subject is what that bundle costs somebody
+ * waiting for it. It would also give the browser two channels for the same kind of number, one baked in at
+ * build and one served at runtime, so a figure in the interface disagreeing with the Node would have two
+ * places to look. One channel, therefore, for bundled and unbundled readers alike.
+ *
+ * The defaults left with the global. `config.refreshMarginSeconds ?? 120` was two unreceipted literals
+ * standing in for a `window` property that might not be there; a static import cannot be absent, so the
+ * fallbacks are gone rather than merely unused.
+ */
+function configModule(): string {
+  const config = {
+    refreshMarginSeconds: BUDGETS["auth.access_token_refresh_margin_seconds"],
+    expiryCookie: EXPIRY_COOKIE,
+    // The composer tells a person how long they have to stop a send. That is the hold window, and it comes
+    // from the receipt-generated budget rather than being typed into the interface — exactly the drift
+    // `pnpm receipts` exists to prevent, and the prototype already showed it happening: its mock said 18
+    // seconds against a measured 15.
+    holdWindowSeconds: BUDGETS["send.hold_window_default_seconds"],
+  };
+  // `<` escaped as \\u003c: valid JSON, valid JavaScript, and inert if this string is ever interpolated
+  // into markup by something that does not know it was not meant to be. Nothing in here is
+  // attacker-controlled — a generated budget and a constant cookie name — so this is not a live
+  // vulnerability, and it stays because the *shape* becomes one the first time the config holds
+  // something dynamic.
+  return `export const CONFIG = ${JSON.stringify(config).replace(/</g, "\\u003c")};\n`;
+}
+
+export function page(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<!--
+  Inline, as a data: URI, for the same reason there is no webfont: a page whose premise is custody must not
+  fetch anything from anywhere. It is also the cheapest fix for a real defect — with no icon declared, every
+  browser asked for /favicon.ico and every load logged a 404, so the console of a working Node had an error
+  in it permanently and anybody debugging had one false lead before they started.
+
+  An instrument lamp: the amber signal dot, on nothing.
+-->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23e9a35c'/%3E%3C/svg%3E">
+<title>Mailda</title>
+<link rel="stylesheet" href="/app/app.css">
 </head>
 <body>
 <div class="rack">
@@ -1056,38 +1102,48 @@ body.shell main#app {
 </div>
 <main id="app"></main>
 
-<script>window.MAILDA_CONFIG = ${safeJson(config)};</script>
 <script type="module" src="/app/app.js"></script>
 </body>
 </html>`;
 }
 
 /**
- * Browser scripts, served as real files rather than inlined.
+ * Browser assets, served as real files rather than inlined.
  *
- * Two practical reasons: the module graph works (`app.js` imports `./session.js` and the browser
- * resolves it against the same directory), and the sources stay lintable `.js` on disk instead of
+ * Two practical reasons for the scripts: the module graph works (`app.js` imports `./session.js` and the
+ * browser resolves it against the same directory), and the sources stay lintable `.js` on disk instead of
  * becoming strings inside a template literal.
+ *
+ * The stylesheet and the config module are here for a third: **the document must contain no inline script
+ * and no inline style**, or the CSP in `security-headers.ts` has to permit inline ones and stops meaning
+ * anything. `content-type` per entry rather than one for all of them, because `nosniff` now ships on every
+ * response — a stylesheet served as `text/javascript` would previously have limped along and is now
+ * refused outright, which is the correct direction and worth stating.
  */
-const CLIENT_SCRIPTS: Record<string, string> = {
-  "/app/app.js": appScript,
-  "/app/session.js": sessionScript,
+const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); readonly type: string }> = {
+  "/app/app.js": { source: appScript, type: "text/javascript; charset=utf-8" },
+  "/app/session.js": { source: sessionScript, type: "text/javascript; charset=utf-8" },
   // The delivery vocabulary and the rule about which outcomes a reader is shown. A separate module so a
   // test can evaluate it — `app.client.js` touches `document` at load, so nothing could reach it there,
   // and the one rule that decides whether a bounce is visible was the one rule with no coverage.
-  "/app/delivery.js": deliveryScript,
+  "/app/delivery.js": { source: deliveryScript, type: "text/javascript; charset=utf-8" },
   // The React application (ADR 30). Imported dynamically by `app.client.js` once somebody is signed in,
   // so the screens an operator needs when the Node is broken never wait on a hundred kilobytes of it.
-  "/app/shell.js": shellBundle,
+  "/app/shell.js": { source: shellBundle, type: "text/javascript; charset=utf-8" },
+  "/app/app.css": { source: SHELL_CSS, type: "text/css; charset=utf-8" },
+  // A function rather than a string, because this one is generated. Held as the generator instead of its
+  // result so there is no module-level value to go stale, and no empty string sitting in this record for a
+  // special case elsewhere to fill in.
+  "/app/config.js": { source: configModule, type: "text/javascript; charset=utf-8" },
 };
 
-export function clientScript(pathname: string): Response | null {
-  const source = CLIENT_SCRIPTS[pathname] ?? null;
-  if (source === null) return null;
+export function clientAsset(pathname: string): Response | null {
+  const asset = CLIENT_ASSETS[pathname] ?? null;
+  if (asset === null) return null;
 
-  return new Response(source, {
+  return new Response(typeof asset.source === "function" ? asset.source() : asset.source, {
     headers: {
-      "content-type": "text/javascript; charset=utf-8",
+      "content-type": asset.type,
       // Short, because these ship inside the Worker: a deploy should take effect on the next load,
       // or an OTA update (ADR 24) appears to have silently not happened.
       "cache-control": "public, max-age=60",

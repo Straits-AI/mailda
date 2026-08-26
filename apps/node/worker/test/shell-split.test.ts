@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { APP_ROUTES, isAppRoute } from "../src/app-routes.ts";
-import { clientScript, page } from "../src/ui.ts";
+import { clientAsset, page } from "../src/ui.ts";
 
 /**
  * ADR 30's split, asserted rather than described.
@@ -30,13 +30,13 @@ describe("the pre-authentication surface loads no bundle (ADR 30)", () => {
 
   it("still serves the bundle, on its own path, for the dynamic import to reach", () => {
     // The other half: a split that dropped the bundle entirely would also pass the assertions above.
-    const shell = clientScript("/app/shell.js");
+    const shell = clientAsset("/app/shell.js");
     expect(shell).not.toBeNull();
     expect(shell!.headers.get("content-type")).toContain("text/javascript");
   });
 
   it("reaches the bundle by dynamic import rather than a static one", async () => {
-    const source = await clientScript("/app/app.js")!.text();
+    const source = await clientAsset("/app/app.js")!.text();
     // A static `import ... from "/app/shell.js"` would make the bundle a hard dependency of the
     // pre-authentication screens even though nothing there uses it.
     expect(source).not.toMatch(/^import .*\/app\/shell\.js/m);
@@ -64,7 +64,7 @@ describe("application routes", () => {
     // a route with no screen is a compile error. What that cannot catch is the list being edited to
     // include something the shell has no component for at all — which this notices, because the bundle
     // would then contain a path the map never mentions.
-    const bundle = await clientScript("/app/shell.js")!.text();
+    const bundle = await clientAsset("/app/shell.js")!.text();
     for (const route of APP_ROUTES) expect(bundle).toContain(JSON.stringify(route));
   });
 });

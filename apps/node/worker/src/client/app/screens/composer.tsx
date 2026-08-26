@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { apiFetch } from "/app/session.js";
+import { CONFIG } from "/app/config.js";
 
 import { useMailboxes } from "../api.ts";
 
@@ -34,10 +35,30 @@ import { useMailboxes } from "../api.ts";
  * message. A person's name in the From line would tell every correspondent who works here.
  */
 
-/** The hold window, from the receipt-generated budget by way of `window.MAILDA_CONFIG`. Never a literal. */
+/**
+ * The hold window, from the receipt-generated budget by way of `/app/config.js`. Never a literal.
+ *
+ * It used to arrive on `window.MAILDA_CONFIG`, set by an inline `<script>` in the served document, and #97
+ * removed that script: an inline one is what makes a CSP decorative. The same two values now ship as a
+ * same-origin ES module, so this reads them from an import instead of off the window — and the `?? 15`
+ * went with the global, a literal standing in for a budget inside the function whose comment said never a
+ * literal, live for exactly as long as a `window` property might have been absent.
+ *
+ * ## Why through the served module rather than `import { BUDGETS } from "@mailda/budgets"`
+ *
+ * That was the first shape and it is the obvious one — this screen *is* bundled by esbuild from this
+ * repository, so the generated module is genuinely in scope. It was measured and withdrawn. Pulling
+ * `BUDGETS` in for one integer put the whole 218-entry table in the shell bundle: **+7,960 bytes raw,
+ * +2,783 gzip** (`pnpm --filter @mailda/worker run build:client`, before and after), against a receipt
+ * whose whole subject is what this bundle costs a person waiting for it. It also gave the browser two
+ * channels for receipt-derived numbers — one baked in at build, one served at runtime — which is two
+ * places to look when a number in the interface disagrees with the Node.
+ *
+ * So there is one channel: `/app/config.js` carries every figure the browser needs, whether the reader is
+ * bundled or not, and `test/security-headers.test.ts` asserts each field against the budget it came from.
+ */
 function holdWindowSeconds(): number {
-  const config = (window as unknown as { MAILDA_CONFIG?: { holdWindowSeconds?: number } }).MAILDA_CONFIG;
-  return config?.holdWindowSeconds ?? 15;
+  return CONFIG.holdWindowSeconds;
 }
 
 /**

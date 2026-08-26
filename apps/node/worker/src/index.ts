@@ -73,7 +73,8 @@ import { chooseTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
 import { resealBatch } from "./reseal.ts";
 import { safeFilename } from "./outbound/headers.ts";
-import { clientScript, page } from "./ui.ts";
+import { withSecurityHeaders } from "./security-headers.ts";
+import { clientAsset, page } from "./ui.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
 export { KeyVault } from "./keyvault.ts";
@@ -272,72 +273,87 @@ const handler = {
     ctx.waitUntil(armSweeper(env));
   },
 
+  /**
+   * Every response this Node gives a browser leaves through here, which is why the two response-wide
+   * headers are applied here and nowhere else (#97).
+   *
+   * `withSecurityHeaders` moved in one level from where `noStore` used to sit, and so did `noStore`. Both
+   * used to be applied *inside* the try, which meant the three error returns each had to remember them —
+   * and the unhandled-500 return did not, so the response for the worst thing that can happen to a request
+   * was the one response with no cache directive on it. A wrapper around the whole thing cannot be
+   * forgotten by a return statement that has not been written yet.
+   */
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const clock = createSystemCtx();
-    const requestId = clock.id("req");
-    try {
-      return noStore(new URL(request.url), await route(request, env, ctx));
-    } catch (error) {
-      // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
-      // The status travels with the throw (see errors.ts) rather than living in a table here that has
-      // to be kept in agreement — the correspondence problem ADR 35 rejected for the effect key.
-      // Lost mail is not a bug in the request path, and reporting it as one hides the only fact that
-      // matters. The message carries §24's four-part shape — what, why, and the reconciler to run — and
-      // until now the generic handler replaced all of it with "this Node failed to handle the request".
-      // Still logged, because data loss must be visible to `doctor` and not only to whoever was looking
-      // at the screen.
-      if (error instanceof EvidenceMissing) {
-        ctx.waitUntil(
-          log(env, clock, {
-            level: "error",
-            event: "evidence.missing",
-            message: error.message.split("\n")[0] ?? "evidence missing",
-            requestId,
-            detail: { blobKey: error.blobKey, path: new URL(request.url).pathname },
-          }).then(() => trimLogs(env)).then(() => undefined),
-        );
-        return noStore(
-          new URL(request.url),
-          Response.json(
-            { error: "evidence_missing", message: error.message, requestId },
-            { status: 500 },
-          ),
-        );
-      }
-
-      if (error instanceof CallerError) {
-        return noStore(
-          new URL(request.url),
-          Response.json({ error: error.code, message: error.message }, { status: error.status }),
-        );
-      }
-
-      // Recorded where the Node itself can read it, not only in Cloudflare's dashboard — an operator
-      // should not have to leave the product to find out why it misbehaved. `waitUntil` so a log write
-      // never delays the response, and the request id is returned so a person can quote it.
-      ctx.waitUntil(
-        log(env, clock, {
-          level: "error",
-          event: "request.unhandled",
-          message: (error as Error).message.split("\n")[0] ?? "unknown",
-          requestId,
-          detail: { path: new URL(request.url).pathname, stack: (error as Error).stack?.slice(0, 1500) },
-        }).then(() => trimLogs(env)).then(() => undefined),
-      );
-      console.error("E_UNHANDLED", requestId, (error as Error).stack ?? String(error));
-      return Response.json(
-        {
-          error: "internal",
-          message: "This Node failed to handle the request. Its operator can find this in the log.",
-          requestId,
-        },
-        { status: 500 },
-      );
-    }
+    const url = new URL(request.url);
+    return withSecurityHeaders(noStore(url, await answer(request, env, ctx)));
   },
 };
 
 export default handler;
+
+/**
+ * The request, answered — routing plus the four ways a request can fail.
+ *
+ * Split out of `fetch` so the wrapper above has something to wrap. Nothing here sets a header that every
+ * response carries; that is the point of the split.
+ */
+async function answer(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const clock = createSystemCtx();
+  const requestId = clock.id("req");
+  try {
+    return await route(request, env, ctx);
+  } catch (error) {
+    // A caller error is not a fault: it has a remedy, and the caller is the one who can apply it.
+    // The status travels with the throw (see errors.ts) rather than living in a table here that has
+    // to be kept in agreement — the correspondence problem ADR 35 rejected for the effect key.
+    // Lost mail is not a bug in the request path, and reporting it as one hides the only fact that
+    // matters. The message carries §24's four-part shape — what, why, and the reconciler to run — and
+    // until now the generic handler replaced all of it with "this Node failed to handle the request".
+    // Still logged, because data loss must be visible to `doctor` and not only to whoever was looking
+    // at the screen.
+    if (error instanceof EvidenceMissing) {
+      ctx.waitUntil(
+        log(env, clock, {
+          level: "error",
+          event: "evidence.missing",
+          message: error.message.split("\n")[0] ?? "evidence missing",
+          requestId,
+          detail: { blobKey: error.blobKey, path: new URL(request.url).pathname },
+        }).then(() => trimLogs(env)).then(() => undefined),
+      );
+      return Response.json(
+        { error: "evidence_missing", message: error.message, requestId },
+        { status: 500 },
+      );
+    }
+
+    if (error instanceof CallerError) {
+      return Response.json({ error: error.code, message: error.message }, { status: error.status });
+    }
+
+    // Recorded where the Node itself can read it, not only in Cloudflare's dashboard — an operator
+    // should not have to leave the product to find out why it misbehaved. `waitUntil` so a log write
+    // never delays the response, and the request id is returned so a person can quote it.
+    ctx.waitUntil(
+      log(env, clock, {
+        level: "error",
+        event: "request.unhandled",
+        message: (error as Error).message.split("\n")[0] ?? "unknown",
+        requestId,
+        detail: { path: new URL(request.url).pathname, stack: (error as Error).stack?.slice(0, 1500) },
+      }).then(() => trimLogs(env)).then(() => undefined),
+    );
+    console.error("E_UNHANDLED", requestId, (error as Error).stack ?? String(error));
+    return Response.json(
+      {
+        error: "internal",
+        message: "This Node failed to handle the request. Its operator can find this in the log.",
+        requestId,
+      },
+      { status: 500 },
+    );
+  }
+}
 
 async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   {
@@ -2680,8 +2696,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       });
     }
 
-    const script = clientScript(url.pathname);
-    if (script !== null) return script;
+    const asset = clientAsset(url.pathname);
+    if (asset !== null) return asset;
 
     // Every route the application owns returns the page, because the shell routes on the client and a
     // bookmarked `/outbox` must not 404. The list is shared with `main.tsx` rather than duplicated
@@ -2706,8 +2722,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
  *
  * Applied centrally rather than per-route, because a header that every future handler has to
  * remember is a header that will be forgotten — the same structural-over-disciplined choice as
- * #4's binding rule. `/health` and the client scripts are deliberately excluded: one is
+ * #4's binding rule. `/health` and the client assets are deliberately excluded: one is
  * non-disclosive by design and the other is meant to be cached briefly.
+ *
+ * Since #97 it is applied one level further out, in `fetch` rather than inside the try, because the
+ * error returns were each remembering it separately and the unhandled-500 return had forgotten.
  */
 function noStore(url: URL, response: Response): Response {
   if (!url.pathname.startsWith("/api/")) return response;

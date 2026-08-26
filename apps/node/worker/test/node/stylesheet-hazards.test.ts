@@ -44,12 +44,25 @@ const stylesheetSources = [
   join(import.meta.dirname, "..", "..", "src", "ui.ts"),
 ];
 
-/** Every `<style>…</style>` region in a source file, since one file may render more than one document. */
+/**
+ * Every CSS region in a source file, since one file may hold more than one.
+ *
+ * Two shapes, and the second is why this comment exists. The stylesheet used to be a `<style>` element
+ * inside the served document; #97 moved it into a named constant served at `/app/app.css`, because a CSP
+ * worth having refuses an inline stylesheet. **The hazards did not move with it** — the CSS is still a
+ * TypeScript template literal, so a backtick still ends the literal and a stray comment terminator still
+ * discards the rule after it. Only the delimiter changed.
+ *
+ * Both patterns are kept rather than the old one replaced: an inline `<style>` in a future document would
+ * carry the same two hazards, and a guard that stopped seeing the shape it was written for is how this
+ * check comes to pass by finding nothing. The `it` below fails on zero regions for exactly that reason.
+ */
 function stylesheets(source: string): string[] {
   const blocks: string[] = [];
-  const pattern = /<style>([\s\S]*?)<\/style>/g;
-  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    blocks.push(match[1]!);
+  for (const pattern of [/<style>([\s\S]*?)<\/style>/g, /const SHELL_CSS = `([\s\S]*?)`;/g]) {
+    for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+      blocks.push(match[1]!);
+    }
   }
   return blocks;
 }

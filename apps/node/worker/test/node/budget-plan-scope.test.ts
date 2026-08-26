@@ -440,6 +440,16 @@ const FIGURES: Record<string, Classification> = {
     "mime.max_header_bytes", "mime.max_references_depth",
   ),
 
+  // docs/receipts/hsts-max-age.md
+  ...bothPlans(
+    // The provider is **the browser**, not Cloudflare, which is why this reads oddly against the rest of the
+    // table and is filed here anyway: it is a figure somebody else publishes, identical for every Node on
+    // every plan, and the plan is not an input to it in either direction. The receipt says why it cannot be
+    // adapter capability data — a browser tells a server nothing about its HSTS policy, so there is no probe.
+    "the HSTS preload list's stated minimum max-age; a browser-side figure, and Cloudflare's plan is not an input",
+    "security.hsts_max_age_seconds",
+  ),
+
   // docs/receipts/passkey-verification.md
   ...mailda(
     // Not plan-scoped, for the same reason the YAML figures are not: this is what one dependency costs
