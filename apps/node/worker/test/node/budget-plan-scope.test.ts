@@ -593,6 +593,17 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/d1-fts5-search.md
+  ...bothPlans(
+    "which SQLite compile-time options D1's build ships — FTS5 itself, contentless tables, "
+      + "`contentless_delete`, and whether `snippet()` degrades to null. A compiled binary is the same "
+      + "binary on both plans: Cloudflare's D1 limits page scopes storage and row counts by plan and says "
+      + "nothing about the SQL surface, and a feature present on paid and absent on free would be a "
+      + "different engine rather than a different quota",
+    "search.d1_supports_fts5", "search.contentless_index_matches", "search.contentless_stores_body",
+    "search.contentless_delete_supported", "search.contentless_snippet_returns_null",
+  ),
+
   // docs/receipts/react-shell-bundle.md
   ...mailda("the bytes Mailda's own shell ships", "shell.bundle_bytes", "shell.bundle_gzip_bytes", "shell.pre_auth_bundle_bytes"),
 
