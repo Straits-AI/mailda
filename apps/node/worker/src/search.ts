@@ -120,46 +120,41 @@ export function indexMessage(env: Env, messageId: string): D1PreparedStatement {
 }
 
 /**
- * How many messages one backfill pass indexes.
+ * The **body** index row for a message, as a statement for the same batch (#107 L2).
  *
- * Small because it is bounded by a *statement*, not by a scan: the pass is one `INSERT … SELECT` with a
- * `LIMIT`, so the cost is the limit and the work per row is an index write. It runs from the scheduled handler
- * every minute and is resumable, so a Node with a long archive catches up over a few passes rather than
- * risking one invocation that has to finish.
+ * ## Addressed by rowid, which is why this cannot be an `INSERT … SELECT` like `indexMessage`
+ *
+ * `message_body_search` is contentless, so it stores no column values — an `UNINDEXED` column carrying the
+ * message id reads back `null` (measured; `migrations/0041_body_search.sql` records why). The row's identity
+ * is therefore its **rowid, set equal to `messages.rowid`**, and every read joins `messages` on it.
+ *
+ * The body text comes from the parsed message rather than from a column, so the value is bound — but the
+ * *rowid* is still selected from `messages`, which keeps the property that made `indexMessage` safe: if the
+ * message row was not created, the `SELECT` returns nothing, the `INSERT` writes nothing, and no index row
+ * can point at a message that does not exist.
+ *
+ * `INSERT OR REPLACE` on the rowid, not plain `INSERT`. A backfill and an ingest can reach the same message —
+ * the backfill selects messages with no index row, and a redelivery racing it could index one in between —
+ * and two rows for one rowid is not a state FTS5 should be asked to hold. Replacing is idempotent and makes
+ * "index this message" mean the same thing whoever calls it.
  */
-const BACKFILL_LIMIT = 500;
+export function indexBody(env: Env, messageId: string, body: string): D1PreparedStatement {
+  return env.CATALOG.prepare(
+    `INSERT OR REPLACE INTO message_body_search (rowid, body)
+     SELECT rowid, ? FROM messages WHERE id = ?`,
+  ).bind(body, messageId);
+}
 
 /**
- * Indexes messages that arrived before the index existed. Returns how many it wrote.
+ * Marks the body index as finished with a message, whether or not it produced a row.
  *
- * ## Why this is one statement rather than a read-then-write loop
- *
- * `INSERT … SELECT … WHERE NOT EXISTS … LIMIT` never brings a row into the Worker, so a pass costs one D1
- * query regardless of the limit, and there is no window between deciding to index a message and indexing it.
- * The `NOT EXISTS` makes it **idempotent and resumable**: running it twice indexes nothing twice, and running
- * it after a partial pass continues where that pass stopped without recording a cursor anywhere.
- *
- * That last property is the reason there is no state to lose. A backfill with a stored position is a backfill
- * that can silently skip a range when the position is written before the work commits; here the absence of an
- * index row *is* the position.
- *
- * ## What it deliberately does not do
- *
- * It does not read R2 and it does not decrypt anything, because `subject` and `from_addr` are columns of
- * `messages` in plaintext. The body index that #105 puts at L2 will have to, and its backfill will be a
- * genuinely different and more expensive thing — which is why this one is not written to be reused for it.
- *
- * It also does not report progress to anybody. `doctor` counts what is left, so the boundary is visible as a
- * number an operator can read rather than as a log line that scrolls past.
+ * Separate from `indexBody` and always issued, which is the point: a message with no readable body gets this
+ * and no index row, and that is the only way the backfill can tell *"not reached yet"* from *"reached, and
+ * there was nothing there"*. Without it the empty-body case is selected by every pass forever and the backlog
+ * figure never reaches zero — reporting outstanding work that no amount of work removes.
  */
-export async function backfillSearchIndex(env: Env): Promise<number> {
-  const outcome = await env.CATALOG.prepare(
-    `INSERT INTO message_search (subject, from_addr, message_id, org_id)
-     SELECT subject, from_addr, id, org_id FROM messages m
-      WHERE NOT EXISTS (SELECT 1 FROM message_search s WHERE s.message_id = m.id)
-      LIMIT ?`,
-  ).bind(BACKFILL_LIMIT).run();
-  return outcome.meta.changes ?? 0;
+export function markBodyIndexed(env: Env, messageId: string, at: string): D1PreparedStatement {
+  return env.CATALOG.prepare("UPDATE messages SET body_indexed_at = ? WHERE id = ?").bind(at, messageId);
 }
 
 /**
@@ -176,21 +171,10 @@ export async function unindexedMessages(env: Env): Promise<number> {
   return row?.n ?? 0;
 }
 
-/*
- * ## There is no `unindexMessage`, and that is the honest state rather than an omission
- *
- * #105 requires that the index row die with the message. **Nothing in this Node deletes a message row** —
- * `grep -rE "DELETE\s+FROM\s+messages" src/` finds none, and content deletion today means the single
- * `EVIDENCE.delete` in `reconcile.ts`, which destroys an R2 blob and leaves `messages` intact. So the rule
- * has no event to attach to yet.
- *
- * A `unindexMessage` written now would be a function nobody calls, and a `DELETE FROM message_search` in this
- * file would put an entry in `content-deletion-world.test.ts`'s inventory describing a deletion that happens
- * nowhere. Both are this repository's recurring shape from the other direction: not a comment claiming a
- * property the code lacks, but code implying a lifecycle the product does not have.
- *
- * The obligation is enforced instead by `test/node/search-scope-world.test.ts`, which asserts that nothing
- * deletes a message today. That assertion **fails on the day somebody adds message deletion**, and its
- * failure message carries the rule — so the requirement is met by a check that cannot be satisfied by
- * forgetting, rather than by a function waiting to be wired up correctly by whoever gets there next.
- */
+/** How many messages the body index has not reached — the number `doctor` reports. */
+export async function unindexedBodies(env: Env): Promise<number> {
+  const row = await env.CATALOG.prepare(
+    "SELECT count(*) AS n FROM messages WHERE body_indexed_at IS NULL AND blob_key IS NOT NULL",
+  ).first<{ n: number }>();
+  return row?.n ?? 0;
+}

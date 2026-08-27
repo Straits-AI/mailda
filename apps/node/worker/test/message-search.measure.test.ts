@@ -5,7 +5,7 @@ import { assertWithinBudget, BUDGETS } from "@mailda/budgets";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { messagePageQuery } from "../src/authz-read.ts";
-import { ftsQuery, indexMessage } from "../src/search.ts";
+import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
 import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
@@ -28,11 +28,14 @@ import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
  * and the cursor, on the argument that a semi-join leaves `ingress_receipts` driving so a searched page pages
  * like an unsearched one. Measured on this corpus:
  *
- * | shape | rare term (12 hits) | common term (1,188 hits) |
+ * | shape (subjects only, as first measured) | rare term (12 hits) | common term (1,188 hits) |
  * |:--|--:|--:|
  * | time-driven, match as a filter | **3,640** | 2,584 |
  * | index-driven, `ORDER BY rank` | **64** | **258** |
  * | index-driven, `ORDER BY accepted_at` | 63 | **5,943** |
+ *
+ * Those figures are one arm. The shipped query is a **union of two** — subjects and bodies, authorized
+ * differently — so the real cost is roughly double: **150** and **616** against a 1,000-row budget.
  *
  * Ordering by time while filtering by match costs **O(corpus), not O(matches)** — filling a page of the twelve
  * newest matching messages walks all 1,200 receipts, because the time index knows nothing about which match.
@@ -134,6 +137,20 @@ beforeAll(async () => {
       `sender-${n}@supplier.example.net`, acceptedAt, acceptedAt, receiptId, acceptedAt,
       `${receiptId}@example.net`, `cnv_srch${String(n).padStart(22, "0")}`));
     statements.push(indexMessage(testEnv, messageId));
+    /*
+     * **A body for every message, and the figures depend on it.** The first version of this fixture indexed
+     * only subjects, so the body arm of the union probed an empty index and the measurement reported a cost
+     * the shipped query would never have — a receipt describing a corpus that does not exist.
+     *
+     * The body text mirrors the subject's selectivity: the rare term is rare in bodies too and the common one
+     * is common. The first attempt put `demurrage` in every body — including the ones saying a claim was
+     * *not* raised — which made the "rare" term match all 1,200 bodies and reported 372 rows for what was
+     * supposed to be the cheap case. A fixture whose two terms have the same selectivity measures one thing
+     * twice.
+     */
+    statements.push(indexBody(testEnv, messageId, n % RARE_EVERY === 0
+      ? `demurrage was claimed on booking ${n} and the container held`
+      : `container ${n} cleared and the shipment was released on time`));
   }
   // Batched in chunks: one 3,600-statement batch exceeds what D1 will accept in a single call.
   for (let at2 = 0; at2 < statements.length; at2 += 300) {
@@ -245,10 +262,18 @@ describe("what a searched page costs", () => {
      */
     const common = await cost("shipment");
     expect(common.rows).toBe(BUDGETS["messages.page_size"] + 1);
+    /*
+     * **Twenty, not ten, and the doubling is the union.** Each arm seeks the receipt, its address, its message
+     * and its case per row it returns, so one arm is about four reads per row and two arms about eight, plus
+     * the two index scans and the outer sort. Measured at 616 for 51 rows — a little over twelve each.
+     *
+     * The bound is what would catch the failure this file exists for: a plan that sorted the *match set*
+     * rather than taking the top of it read 5,943 here, which is 116 per row and nowhere near twenty.
+     */
     expect(
       common.rowsRead,
-      "a page of a common term now costs more than ten reads per row returned — the plan is sorting the "
-      + "whole match set rather than taking the top of it",
-    ).toBeLessThan(common.rows * 10);
+      "a page of a common term now costs more than twenty reads per row returned — a plan sorting the whole "
+      + "match set rather than taking the top of it, which is the shape this design replaced",
+    ).toBeLessThan(common.rows * 20);
   });
 });

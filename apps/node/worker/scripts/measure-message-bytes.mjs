@@ -104,13 +104,17 @@ function messagesSql(from, count) {
       `'${rfc}','${ulid("thr", i)}','${SUBJECT}','customer${i % 500}@example-supplier.com',` +
       `'2026-08-0${(i % 9) + 1}T12:00:00.000Z','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `'${ulid("rcp", i)}','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
-      `${i % 3 === 0 ? "NULL" : `'${rfc}'`},'${rfc}',NULL,'${ulid("cnv", i)}')`,
+      `${i % 3 === 0 ? "NULL" : `'${rfc}'`},'${rfc}',NULL,'${ulid("cnv", i)}',` +
+      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z')`,
     );
   }
   return chunked(rows,
     `INSERT INTO messages (id,org_id,time_bucket,blob_key,blob_sha256,blob_bytes,rfc_message_id,` +
     `thread_id,subject,from_addr,sent_at,received_at,ingress_receipt_id,created_at,in_reply_to,` +
-    `thread_root_rfc_id,parse_error,conversation_id)`);
+    // `body_indexed_at` is **populated**, not left null. A null column costs about a byte and a
+    // populated one costs an ISO timestamp — and on a Node that has run its backfill every row has
+    // one, so measuring nulls would understate the deployed table.
+    `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at)`);
 }
 
 /**
@@ -135,14 +139,27 @@ function deliveriesSql(from, count, suffix) {
     `sent_at,created_at)`);
 }
 
-/** The two measured tables and every index on them, copied from the migrations. */
+/**
+ * The two measured tables and every index on them, copied from the migrations.
+ *
+ * **A third copy of this schema, and the only one nothing guards.** `test/schema-drift.test.ts` compares its
+ * own copy against the migrated database and fails when they diverge — that is what caught
+ * `body_indexed_at`. This one is compared against nothing, so when #107 L2 added that column the script went
+ * on measuring the old shape and reported an unchanged figure. The number looked like good news and was
+ * measuring a table that no longer exists.
+ *
+ * Left as a copy rather than read from `migrations/`, because the script builds a *scratch* database with only
+ * these two tables and applying 41 migrations to get them would measure a different thing. But the hazard is
+ * now written down where the next person editing a migration will find it.
+ */
 const SCHEMA = `
 CREATE TABLE messages (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, time_bucket TEXT NOT NULL, blob_key TEXT NOT NULL,
   blob_sha256 TEXT NOT NULL, blob_bytes INTEGER NOT NULL, rfc_message_id TEXT NOT NULL,
   thread_id TEXT NOT NULL, subject TEXT NOT NULL, from_addr TEXT NOT NULL, sent_at TEXT NOT NULL,
   received_at TEXT NOT NULL, ingress_receipt_id TEXT NOT NULL, created_at TEXT NOT NULL,
-  in_reply_to TEXT, thread_root_rfc_id TEXT, parse_error TEXT, conversation_id TEXT
+  in_reply_to TEXT, thread_root_rfc_id TEXT, parse_error TEXT, conversation_id TEXT,
+  body_indexed_at TEXT
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);

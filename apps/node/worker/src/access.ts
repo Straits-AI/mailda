@@ -216,6 +216,29 @@ export const RELATIONS_FOR_METADATA = [
   "mailbox.metadata.read", "mailbox.content.read",
 ] as const satisfies readonly MailboxRelation[];
 
+/**
+ * Every standing relation that permits searching a message's **body** (#107 L2).
+ *
+ * One relation, and the omission is the point: **`mailbox.metadata.read` is not here.** That relation is sold
+ * as *"See that mail exists — senders, subjects, when. Not the message itself."* Telling somebody the word
+ * *demurrage* occurs in message X discloses the message itself, a word at a time — and a determined caller
+ * with a dictionary and a metadata relation could reconstruct a great deal of it. The row that comes back
+ * carries only metadata, which is exactly what makes the leak easy to miss: the *response* is within the
+ * relation and the *question answered* is not.
+ *
+ * So this is a separate constant from `RELATIONS_FOR_METADATA` rather than a subset expression like
+ * `.filter(…)`. A filter would compute one list from the other and couple them: adding a third read relation
+ * to the metadata list would silently decide whether it can search bodies too, and that decision belongs to
+ * whoever adds it. Two lists mean two deliberate edits.
+ *
+ * `messagePageQuery` uses both in one statement, per mailbox — so a reader holding `content.read` on one
+ * mailbox and `metadata.read` on another searches bodies in the first and subjects in the second, which is
+ * the only answer that neither over-grants nor refuses the whole search.
+ */
+export const BODY_SEARCH_RELATIONS = [
+  "mailbox.content.read",
+] as const satisfies readonly MailboxRelation[];
+
 export function isGrantable(relation: string): relation is Grantable {
   return Object.hasOwn(GRANTABLE, relation)
     && GRANTABLE[relation as Relation].conferredBy === "admin_grant";

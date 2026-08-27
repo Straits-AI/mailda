@@ -143,3 +143,35 @@ account.
 
 `doctor` reports no `search_index_backlog` finding here, which is correct rather than missing: the check
 returns nothing when there is no organization, the same way `inbound_routing` and `recovery_escrow` do.
+
+## The contentless form, confirmed through the migration path, 27 August 2026
+
+`migrations/0041_body_search.sql` applied to the same live Node. The probes above used `wrangler d1 execute`;
+this is the contentless table arriving the way a real Node gets it, and it carries the one fact that is
+cheapest to check and worst to get wrong.
+
+**Five tables, not six.** The subject index (content-bearing, 0040) produced six; this produced five:
+
+```
+message_body_search        message_body_search_config    message_body_search_data
+message_body_search_docsize                              message_body_search_idx
+```
+
+`message_body_search_content` **does not exist** — confirmed by reading `sqlite_master` on the deployed
+database. That absence is what `content=''` looks like from the schema, and it is the cheapest available proof
+that a D1 dump does not contain message bodies. Asserted in `test/message-search.test.ts` with the *subject*
+index as the control, so the check discriminates rather than being true of any name it is handed.
+
+Then the shipped shapes on real D1:
+
+```
+INSERT INTO message_body_search (rowid, body) VALUES (999001, 'the cabotage rules were disputed at length');
+SELECT rowid, body … MATCH '"cabotage"*'   →  rowid 999001,  body NULL
+DELETE … WHERE rowid = 999001              →  changes 4,  table empty
+```
+
+Prefix matching works, the body reads back **null**, and delete-by-rowid works — the three properties the
+design rests on, in the database that will hold real mail. `messages.body_indexed_at` is present.
+
+The probe row was deleted and the table confirmed empty. `doctor` reports neither backlog finding on this
+Node, correctly: both return nothing without an organization, and it is deliberately unclaimed.

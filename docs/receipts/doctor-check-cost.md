@@ -15,22 +15,31 @@ values:
   doctor.max_subrequests_per_run: 220
 ---
 
-## Correction, 27 August 2026: the search-index check, one new subrequest — and a baseline that had drifted unrecorded (#107)
+## Correction, 27 August 2026: two search-index checks, two new subrequests — and a baseline that had drifted unrecorded (#107)
 
-`search_index_backlog` counts messages not yet in the metadata search index, so a person searching for
-last month's mail can tell *"no such message"* from *"this Node is still catching up"*. It is one aggregate
-query with no R2 and no per-row cost.
+`search_index_backlog` and `body_index_backlog` count the messages not yet in each search index, so a person
+searching for last month's mail can tell *"no such message"* from *"this Node is still catching up"*. Each is
+one aggregate query with no R2 and no per-row cost.
 
 Measured by removing the check and re-running the same fixtures in the same session:
 
 ```
 without   subrequests=26  d1=20  r2=6  findings=23
-with      subrequests=27  d1=21  r2=6  findings=24
+with      subrequests=28  d1=22  r2=6  findings=25
 ```
 
-**+1 subrequest, +1 D1 query, +1 finding.** The Butler-bearing fixtures moved the same way — 46→47, 48→49,
-49→50 — so it is a fixed cost and not one that grows with anything. Against `doctor.max_subrequests_per_run
-= 220` the deployed run now sits at 27, which is 8.1× inside the tripwire. The figure does not move.
+**+2 subrequests, +2 D1 queries, +2 findings** — one for the subject index's backlog and one for the body
+index's. It was +1 when only the subject index existed; #107's second layer added `body_index_backlog` on the
+same day, and this correction records the pair rather than pretending the first measurement is still current.
+
+**Two findings rather than one number, deliberately.** The two backfills have different costs and different
+failure modes: the subject index catches up 500 messages a minute from one D1 statement, and the body index 25
+because each one is an R2 read, a key unwrap, a decryption and a MIME parse. On any real archive the second
+figure falls twenty times more slowly, and a combined number would look alarming while nothing was wrong — so
+an operator gets two numbers and can tell which is stuck.
+
+Against `doctor.max_subrequests_per_run = 220` the deployed run now sits at 28, which is 7.9× inside the
+tripwire. The figure does not move.
 
 `unindexedMessages` is one prepare and one execution, and `search.ts` is now listed in
 `doctor-meter-honesty.test.ts`'s `DOCTOR_PATH`. That file also holds two **writes** — `indexMessage` and

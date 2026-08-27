@@ -2,7 +2,7 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-08-12
+re_measured_on: 2026-08-27
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
@@ -14,6 +14,47 @@ values:
   shard.plan_stop_messages: 5592405
   shard.plan_route_messages: 5921370
 ---
+
+## Re-measured 27 August 2026: `body_indexed_at` added, and the figure did not move
+
+#107 L2 added `messages.body_indexed_at`, which fired this receipt's `stale_when` — *"the messages or
+mailbox_items schema changes"* — through `test/schema-drift.test.ts`. Re-measured with the script, and
+**1,632.3 bytes per message, unchanged to the tenth of a byte.**
+
+That is a real result and not a skipped measurement, but it needs its reasoning shown, because "we added a
+column and nothing changed" is the shape of a measurement that did not happen.
+
+**The first run genuinely did not measure the change.** `scripts/measure-message-bytes.mjs` **restates** the
+schema rather than reading `migrations/`, and that copy is compared against nothing — `schema-drift.test.ts`
+guards the *test's* copy, not the script's. So the first re-run built the old table and reported an unchanged
+figure that was unchanged because the column was absent. A third copy of a schema, and the only one with no
+tripwire on it; the script now says so in the comment above its `SCHEMA` constant.
+
+**With the column present and populated it is still 1,632.3.** Populated, not null — a null column costs about
+a byte of row header and a Node that has run its backfill has an ISO timestamp on every row, so measuring
+nulls would have understated the deployed table.
+
+The explanation is page slack, and it is the one consistent with every figure in the table:
+
+| stage | reported |
+|:--|--:|
+| schema only | 57,344 |
+| + 2,000 messages | 3,325,952 |
+| + 2,000 more | 6,590,464 |
+
+`database_size` is reported in **4,096-byte pages**. At ~1,632 bytes a row, a page holds two rows and carries
+roughly 830 bytes of slack. Adding ~25 bytes per row adds ~50 bytes per page, which fits in that slack
+without allocating a single new page — so the total is byte-identical, twice, across two independently
+created scratch databases.
+
+**What this means for the instrument, stated because the next small column will look free too.** This
+measurement's resolution is a page, and at this row size that is about 830 bytes of headroom per two rows.
+Any addition below that is invisible to it. So *"the figure did not move"* here means **"this column fits in
+space already paid for"** — not that it is free in principle, and not that the next one will be. The figure
+that would move is one that pushes a row past the point where two no longer share a page, and nothing here
+knows how close the current row is to that boundary.
+
+`values:` is therefore unchanged, and the shard arithmetic below it stands.
 
 **Measured:** against **real remote D1**, not miniflare. A scratch database in a live
 Cloudflare account on the **Workers Free** plan, seeded through

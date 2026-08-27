@@ -141,6 +141,30 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       + "created the row is audited on ingress_receipts, and reading it is audited as supervised.query.",
   },
   message_search_config: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  /*
+   * The **body** index and its four shadow tables (#107 L2).
+   *
+   * Exempt for the same reason `message_search` is — derived from a message by one statement, recording no
+   * act of its own, with the delivery audited on `ingress_receipts` and the reading audited as
+   * `supervised.query`. But the derivation is looser and worth stating: this holds *tokens extracted from* a
+   * body rather than a copy of a column, so it is one step further from the message than the metadata index
+   * and cannot be regenerated from D1 alone. Rebuilding it needs the evidence in R2 and the vault key.
+   *
+   * **Four shadow tables, not five**, and the difference is evidence rather than trivia. A content-bearing
+   * FTS5 table gets `_content`; a contentless one does not, because there is no document to store. So the
+   * absence of `message_body_search_content` from this list is what `content=''` looks like from the
+   * schema — asserted directly in `test/message-search.test.ts`, since it is the cheapest available proof
+   * that the option is in force and that a D1 dump does not contain everybody's mail.
+   */
+  message_body_search: {
+    exempt: "Tokens extracted from a message body, derived by one statement and recording no act of its "
+      + "own; the delivery is audited on ingress_receipts and reading it is audited as supervised.query. "
+      + "Stores no document — a contentless FTS5 index, which is what keeps ADR 28's guarantee narrow.",
+  },
+  message_body_search_config: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_body_search_data: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_body_search_docsize: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_body_search_idx: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   message_search_content: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   message_search_data: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   message_search_docsize: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },

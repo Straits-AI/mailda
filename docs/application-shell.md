@@ -109,11 +109,30 @@ unfiltered view is the one that shows it. Filtering to fewer rows than exist is 
 be. A `mailbox.content.read` listing is the real answer and inventing one for a filter would be a permission
 surface added for a convenience.
 
-### Searching subjects and senders (#107)
+### Searching subjects, senders and bodies (#107)
 
 `?q=` on the same listing, with a field in the inbox heading beside the mailbox selector. Words that must
-**all** appear in a subject line or a sender address; the last word matches as a prefix, so a part-typed word
-narrows rather than finding nothing.
+**all** appear in a subject line, a sender address, or a message body; the last word matches as a prefix, so a
+part-typed word narrows rather than finding nothing.
+
+**Bodies are a second index with a stronger authorization, and the query is a union of two arms.** The subject
+and sender index answers to `mailbox.metadata.read` or `mailbox.content.read`; the body index answers to
+`content.read` alone, because telling somebody *"the word demurrage occurs in message X"* discloses the
+message itself one word at a time, even though the row returned carries only metadata. That is per **mailbox**
+— a reader with `content.read` on Enquiries and `metadata.read` on Accounts gets body matches from the first
+and subject matches from the second, in one page, from one statement. A request-level check could not express
+that without either over-granting or refusing the whole search.
+
+**The union is ordered by arrival and each arm by relevance, and that is forced.** bm25 rank is computed from
+term frequency within one index, so a subject hit's rank and a body hit's rank are on different scales and
+ordering the union by rank would be arithmetic on unrelated quantities. Each arm takes its own best matches;
+the union — at most twice the page size — is sorted by arrival, which costs nothing over a hundred rows.
+
+**A query whose words are split across the two indexes matches nothing.** FTS5 requires every term to appear
+in the same document, and a subject and a body are two documents in two tables. Searching `hapag cabotage`
+fails even when `hapag` is the subject and `cabotage` is the text. Fixing it means one index holding both,
+which is exactly what the authorization split forbids — so the limitation is the price of the boundary, and it
+is asserted in the suite so it stays deliberate.
 
 **It is the same endpoint, not a new one.** `GET /api/messages` already carries authorization in the same
 statement as the read (ADR 11), §7's per-page record naming the ids returned, a stable keyset cursor and the
@@ -151,7 +170,16 @@ Five decisions worth having written down:
   offer a reader the inbound-routing check because they misspelled a supplier's name. It names what was
   searched and offers a way to clear it — a search with no exit is a mailbox that looks empty for ever.
 
-**What the index is, and why it costs nothing against ADR 28.** `subject` and `from_addr` have been plaintext
+**What the body index costs against ADR 28, and what it does not.** It is *contentless* — `content=''` — so
+it stores the inverted index and no copy of any document. A D1 dump therefore lets somebody **confirm a
+guess** (that a word appears in a message) and not read the message; bodies stay in R2, encrypted. ADR 28 was
+amended in the same change to say exactly that, because its argument turned on the claim that DO-held keys
+defend against a D1 dump, and this narrows it. Two consequences are enforced rather than described: body
+search needs `content.read`, and there are **no body excerpts** in a result list — `snippet()` returns `null`
+on a contentless table, so showing the matching line means fetching and decrypting the message, which is an
+authorized read.
+
+**The subject index costs nothing against ADR 28.** `subject` and `from_addr` have been plaintext
 columns of `messages` since migration 0002, so an FTS5 index over them discloses nothing a D1 dump did not
 already disclose. It is therefore an ordinary content-bearing FTS5 table, which buys working `snippet()` —
 measured: the contentless form returns `null` rather than an error, so highlights would have shipped blank

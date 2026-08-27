@@ -74,7 +74,7 @@ import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
-import { backfillSearchIndex } from "./search.ts";
+import { backfillBodyIndex, backfillSearchIndex } from "./search-backfill.ts";
 import { resealBatch } from "./reseal.ts";
 import { safeFilename } from "./outbound/headers.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
@@ -211,6 +211,36 @@ const handler = {
         await log(env, clock, {
           level: "warn",
           event: "search.backfill_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+        }).catch(() => undefined);
+      }
+
+      try {
+        /*
+         * The body index's backfill (#107 L2), which is a different animal from the one above.
+         *
+         * That one is a single `INSERT … SELECT` inside D1. This one reads R2, unwraps a vault key, decrypts
+         * and parses MIME **per message**, so it is bounded to 25 a minute rather than 500 and a long archive
+         * catches up over hours. `doctor`'s `body_index_backlog` is what makes that visible instead of
+         * mysterious.
+         *
+         * Its own try block, so a failure here does not stop the metadata backfill or the notice sweep — the
+         * two indexes catch up independently and one being stuck is not a reason for the other to be.
+         */
+        const bodies = await backfillBodyIndex(env, clock);
+        if (bodies > 0) {
+          await log(env, clock, {
+            level: "info",
+            event: "search.bodies_backfilled",
+            message: `Indexed the bodies of ${bodies} message(s) that predate the body index.`,
+            orgId,
+            detail: { settled: bodies },
+          });
+        }
+      } catch (error) {
+        await log(env, clock, {
+          level: "warn",
+          event: "search.body_backfill_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
         }).catch(() => undefined);
       }

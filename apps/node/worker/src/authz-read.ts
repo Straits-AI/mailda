@@ -1,7 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
-import { RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
+import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
 import { ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
@@ -828,17 +828,6 @@ export function messagePageQuery(args: {
   limit: number;
 }): { sql: string; params: unknown[] } {
   const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
-  /*
-   * **Bound, not interpolated, and derived rather than spelled.** This predicate read
-   * `relation = 'mailbox.content.read'` for four months while the header below claimed the columns were what
-   * `mailbox.metadata.read` covers — so somebody holding exactly the relation the access UI describes as
-   * *"See that mail exists"* got an empty inbox, which is indistinguishable from having no mail.
-   *
-   * The list comes from `RELATIONS_FOR_METADATA` so a renamed relation is a type error rather than a
-   * predicate that matches no tuple. A literal inside a SQL string is the one place in this file that no type
-   * could reach, which is exactly where the hole was.
-   */
-  const metadataRelationPlaceholders = RELATIONS_FOR_METADATA.map(() => "?").join(", ");
   const filters: string[] = [];
   const filterParams: unknown[] = [];
   if (args.page.mailboxId !== null) {
@@ -895,13 +884,16 @@ export function messagePageQuery(args: {
    * (#95), and a search that authorized slightly differently from the listing would be a second read surface
    * over the same mail — which is what #107 refused to build as a separate endpoint in the first place.
    */
-  const authorized = `AND (sg.grant_id IS NOT NULL
+  const authorizedBy = (relations: readonly MailboxRelation[]) => ({
+    sql: `AND (sg.grant_id IS NOT NULL
              OR a.mailbox_id IN (
                SELECT object_id FROM relationship_tuples
                 WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
-                  AND object_type = 'mailbox' AND relation IN (${metadataRelationPlaceholders})
-             ))`;
-  const authorizedParams = [args.orgId, ...args.subjects, ...RELATIONS_FOR_METADATA];
+                  AND object_type = 'mailbox' AND relation IN (${relations.map(() => "?").join(", ")})
+             ))`,
+    params: [args.orgId, ...args.subjects, ...relations],
+  });
+  const authorized = authorizedBy(RELATIONS_FOR_METADATA);
 
   if (args.page.q !== null) {
     /*
@@ -935,31 +927,98 @@ export function messagePageQuery(args: {
      * The cursor predicate above is skipped for the same reason: a position in a time ordering means nothing
      * in a ranked one.
      */
+    /*
+     * ## Two arms, because a body match and a subject match are not the same authority (#107 L2)
+     *
+     * `mailbox.metadata.read` is sold as *"See that mail exists — senders, subjects, when. Not the message
+     * itself."* Telling somebody that the word *demurrage* occurs in message X **discloses the message
+     * itself**, one word at a time, even though the row returned carries only metadata. So the body index is
+     * reachable only with `mailbox.content.read`, and the metadata index with either.
+     *
+     * That is per **mailbox**, which is why this is one statement rather than a decision taken once per
+     * request: a reader holding `content.read` on Enquiries and `metadata.read` on Accounts gets body matches
+     * from the first and subject matches from the second, in one page. A request-level check could not express
+     * that without either over-granting or refusing the whole search.
+     *
+     * Both arms carry the supervised arm too, so a grant reaches bodies exactly as it reaches subjects —
+     * `SCOPES_FOR_METADATA` is what `listMessages` asks for, and #63 settled that a supervised *query* is the
+     * first act a grant must permit.
+     *
+     * ## Why the union is ordered by time and each arm by rank
+     *
+     * bm25 rank is **not comparable across two FTS tables**: it is computed from term frequency within one
+     * index, so a subject hit's rank and a body hit's rank are numbers on different scales and ordering the
+     * union by `rank` would be arithmetic on unrelated quantities. Merging them by relevance honestly would
+     * need a scoring function this project has no way to calibrate.
+     *
+     * So each arm takes its own best matches by rank, and the union — at most twice the page size, so a
+     * hundred rows — is sorted by arrival. The claim the interface then makes is exactly what happened: the
+     * best matches from each index, newest first. The outer sort is over a hundred rows and costs nothing;
+     * what would be expensive is sorting the *match set*, which is the 5,943-row shape L1 measured and
+     * rejected.
+     *
+     * `UNION` rather than `UNION ALL`, because a message whose subject and body both match appears in both
+     * arms and must appear once. The column lists are identical by construction — `columns` is spelled once —
+     * which is what makes the deduplication exact rather than approximate.
+     */
+    const metadataArm = authorizedBy(RELATIONS_FOR_METADATA);
+    const bodyArm = authorizedBy(BODY_SEARCH_RELATIONS);
     return {
-      sql: `SELECT ${columns}
-       FROM message_search s
-       JOIN messages m ON m.id = s.message_id
-       JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
-       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-       LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
-      WHERE s.message_search MATCH ? AND s.org_id = ?
-        AND r.org_id = ?
-        ${filters.join("\n        ")}
-        ${authorized}
-      ORDER BY rank
+      sql: `SELECT * FROM (
+        SELECT ${columns}
+         FROM message_search s
+         JOIN messages m ON m.id = s.message_id
+         JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
+         JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+         LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+        WHERE s.message_search MATCH ? AND s.org_id = ?
+          AND r.org_id = ?
+          ${filters.join("\n          ")}
+          ${metadataArm.sql}
+        ORDER BY rank
+        LIMIT ?
+      )
+      UNION
+      SELECT * FROM (
+        SELECT ${columns}
+         FROM message_body_search b
+         JOIN messages m ON m.rowid = b.rowid
+         JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
+         JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+         LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+        WHERE b.message_body_search MATCH ?
+          AND r.org_id = ?
+          ${filters.join("\n          ")}
+          ${bodyArm.sql}
+        ORDER BY rank
+        LIMIT ?
+      )
+      ORDER BY accepted_at DESC, id DESC
       LIMIT ?`,
       /*
-       * **Textual order, and the FROM clause is not the order.** The supervised subquery is interpolated into a
-       * `LEFT JOIN`, which comes before the `WHERE` in the statement text — so its placeholders bind first,
-       * ahead of the `MATCH` even though the FTS table is named first in the `FROM`.
+       * **Textual order, and the FROM clause is not the order.** The supervised subquery is interpolated into
+       * a `LEFT JOIN`, which comes before the `WHERE` in the statement text — so its placeholders bind first
+       * in each arm, ahead of the `MATCH` even though the FTS table is named first in the `FROM`.
        *
        * Got this wrong on the first attempt by binding the `MATCH` first, and the failure mode is worth
        * recording: the query returned **zero rows** for every term rather than raising. A misordered bind is a
        * search that silently finds nothing, which is indistinguishable from a mailbox with no matching mail.
+       *
+       * The supervised params appear **twice** because the subquery does. A shared fragment used in two arms
+       * is two sets of placeholders, and forgetting the second set is the same silent-zero-rows failure.
+       *
+       * The body arm binds no `org_id` of its own: a contentless table cannot hold one, so the join to
+       * `messages` is what scopes it. `test/node/search-scope-world.test.ts` has a separate rule for that.
        */
       params: [
+        // metadata arm
         ...args.supervised.params, args.page.q, args.orgId, args.orgId, ...filterParams,
-        ...authorizedParams, args.limit,
+        ...metadataArm.params, args.limit,
+        // body arm
+        ...args.supervised.params, args.page.q, args.orgId, ...filterParams,
+        ...bodyArm.params, args.limit,
+        // the outer page
+        args.limit,
       ],
     };
   }
@@ -972,7 +1031,7 @@ export function messagePageQuery(args: {
        LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
       WHERE r.org_id = ?
         ${filters.join("\n        ")}
-        ${authorized}
+        ${authorized.sql}
       ORDER BY r.accepted_at DESC, r.id DESC
       LIMIT ?`,
     // `id DESC` beside the timestamp is the tie-break the cursor needs to be total. One delivery to two
@@ -980,7 +1039,7 @@ export function messagePageQuery(args: {
     // their relative position to the planner would let a page boundary fall between them differently on the
     // two queries that span it — dropping one and repeating the other.
     params: [
-      ...args.supervised.params, args.orgId, ...filterParams, ...authorizedParams, args.limit,
+      ...args.supervised.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
     ],
   };
 }

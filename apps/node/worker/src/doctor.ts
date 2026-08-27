@@ -5,7 +5,7 @@ import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { escrowState } from "./recovery.ts";
-import { unindexedMessages } from "./search.ts";
+import { unindexedBodies, unindexedMessages } from "./search.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
 import { decidersByMailbox } from "./deciders.ts";
@@ -2192,6 +2192,8 @@ async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding
     }];
   }
 
+  const bodies = await unindexedBodies(env).catch(() => null);
+
   return [{
     check: "search_index_backlog",
     severity: "report",
@@ -2204,6 +2206,32 @@ async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding
     fix: backlog === 0
       ? undefined
       : "nothing — this falls on its own. If it stops falling, check the logs for `search.backfill_failed`",
+  }, {
+    /*
+     * The body index's own backlog, reported separately (#107 L2).
+     *
+     * **Two findings rather than one number**, because the two backfills have different costs and different
+     * failure modes and an operator watching a single figure could not tell which was stuck. The metadata
+     * backfill is one D1 statement doing 500 a minute; this one reads R2, unwraps a key, decrypts and parses
+     * per message, doing 25 — so on any real archive this figure falls twenty times more slowly, and a
+     * combined number would look alarming while nothing was wrong.
+     */
+    check: "body_index_backlog",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: true,
+    detail: bodies === null
+      ? "The catalog could not be read, so this report cannot say how much mail is searchable by its contents."
+      : bodies === 0
+        ? "Every message on this Node has been through the body index."
+        : `${bodies} message(s) have not been through the body index, so a search will not match words in `
+          + "their text. Their subjects and senders are searchable, and they are reachable by paging. The "
+          + "scheduled backfill settles 25 a minute — it reads and decrypts each message, which is why it is "
+          + "slower than the subject index's.",
+    fix: bodies === null || bodies === 0
+      ? undefined
+      : "nothing — this falls on its own, slowly. If it stops falling, check the logs for "
+        + "`search.body_backfill_failed`",
   }];
 }
 

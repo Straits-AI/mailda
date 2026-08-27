@@ -125,7 +125,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 | **Deployment is unproven** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). Nobody has run it against a second Cloudflare account, so the assumption the whole rollback rests on — that `versions upload` shifts no traffic — is documented and unverified. |
 | **Two Nodes in one account is unmeasured** | The Workflow binding is a fixed account-level name (#99). Production and staging in one account is a normal configuration and this has never been tried. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
-| **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91, and search over subjects and senders in #107; body search, and the rest, have not. |
+| **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; search over subjects, senders and message bodies in #107. The rest has not. |
 | **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
 
 What it is genuinely good for now: a controlled design-partner alpha, a non-critical shared mailbox, and
@@ -1646,13 +1646,21 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   sees. The Node can send, which is what makes emailing it tempting — and it would mean posting a
   credential to an address nobody has verified, from a mailbox whose sending capability is itself
   unverified.
-- **Search covers subjects and senders, not message bodies.** Typing words into the inbox finds mail by what
-  its subject says and who sent it (#107). Bodies are a separate index with a real disclosure cost — the
-  subject and sender were already plaintext columns in D1, so indexing them reveals nothing a database dump
-  did not already reveal, while indexing body text would — and that is a later layer, scoped in
-  [#105](https://github.com/Straits-AI/mailda/issues/105). Attachment contents are not indexed at all and are
-  not planned to be: there is no document parser on the ingest path and adding one would be a new attack
-  surface for a search feature.
+- **Search covers subjects, senders and message bodies. Attachments are not indexed.** Body search requires
+  `mailbox.content.read`; the weaker `mailbox.metadata.read` reaches subjects and senders only, because
+  answering *"the word X occurs in message Y"* discloses the message itself one word at a time. Attachment
+  contents are not indexed and are not planned to be — there is no document parser on the ingest path, and
+  adding one would be a new attack surface for a search feature.
+- **A search whose words are split between a subject and a body finds nothing.** Every word of a query has to
+  appear in the same index, and the subject index and the body index are separate — which is what keeps the
+  authorization boundary above enforceable. Searching `hapag cabotage` fails even when `hapag` is in a
+  message's subject and `cabotage` is in its text; each word alone finds it. This is the price of the
+  boundary, and it is stated rather than left to be discovered.
+- **The body index makes a D1 dump slightly more revealing, and ADR 28 was amended to say so.** It is
+  *contentless* — the inverted index without any copy of the documents — so a dump lets somebody confirm that
+  a given word appears in a given message, and not read the message. Bodies stay in R2, encrypted. There are
+  no body excerpts in search results for the same reason: showing the matching line means fetching and
+  decrypting the message, which is an authorized read rather than a free one.
 - **A search returns one page of the best matches, and there is no way to reach the fifty-first.** Narrowing
   the words is the only route. Relevance ordering is bm25, which depends on how often a term appears across
   the whole corpus — so it shifts every time mail arrives, and a cursor into a ranked list would skip and
@@ -1660,9 +1668,14 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   time while filtering by a term costs O(corpus) rather than O(matches), and a rare search read 3,640 rows
   against a 1,000-row budget before the plan was driven from the index instead.
   ([receipt](./docs/receipts/message-search-cost.md))
-- **Mail that arrived before the index existed is searchable only once the backfill reaches it.** A scheduled
-  pass indexes 500 messages a minute and `doctor`'s `search_index_backlog` says how many are left, so the gap
-  is a number an operator can read rather than a silence. Unindexed mail is still reachable by paging.
+- **Mail that arrived before the indexes existed is searchable only once the backfill reaches it.** Two
+  backfills with very different speeds: subjects and senders go 500 a minute because it is one statement
+  inside D1, and bodies go **25** a minute because each one is an R2 read, a key unwrap, a decryption and a
+  MIME parse. `doctor` reports `search_index_backlog` and `body_index_backlog` separately for that reason — a
+  single figure would look alarming while nothing was wrong. Unindexed mail stays reachable by paging.
+- **A message whose body cannot be parsed is never searchable by its contents.** It is settled as done rather
+  than retried, because an unreadable body does not become readable next minute and a pass that retries it
+  forever never reaches the mail behind it. The message stays listed, readable and findable by subject.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
   time order until it has found enough belonging to it — measured at 2,410 rows read to return 3 messages from
   a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization

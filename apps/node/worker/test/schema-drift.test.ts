@@ -34,6 +34,23 @@ const MEASURED_SHAPE = {
       // 4 August. This guard cannot catch that: it watches the schema, not whether the receipt agrees with
       // itself. Its `stale_when` now names that case.
       "conversation_id",
+      /*
+       * Added by migration 0041 (#107 L2's body index). Re-measured against real remote D1 on 27 August 2026
+       * *before* this constant was touched, as the two notes above insist — and the figure **did not move**:
+       * 1,632 bytes per message, unchanged to the tenth of a byte.
+       *
+       * The explanation is page slack, and the receipt carries it: `database_size` is reported in 4,096-byte
+       * pages, two ~1,632-byte rows share a page with roughly 830 bytes spare, and a populated ISO timestamp
+       * per row fits in that without allocating a page. So *"it did not move"* means "this column fits in
+       * space already paid for", not that it is free in principle.
+       *
+       * **The first re-run measured nothing**, which is why the reasoning is spelled out here as well as in
+       * the receipt: `scripts/measure-message-bytes.mjs` **restates** this schema rather than reading it, so
+       * it built the old table and reported an unchanged figure that was unchanged because the column was
+       * absent. That copy is guarded by nothing — this test guards *this* copy — and the script now says so
+       * above its own `SCHEMA` constant. A third copy of a schema is a third thing to keep true.
+       */
+      "body_indexed_at",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",

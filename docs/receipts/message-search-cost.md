@@ -3,11 +3,12 @@ id: message-search-cost
 kind: measured-tripwire
 measured_on: 2026-08-27
 stale_when: >
-  messagePageQuery's searched plan stops being driven by the message_search virtual table; the ORDER BY on
-  that plan changes from rank; messages.page_size moves; RELATIONS_FOR_METADATA gains a relation; the index
-  gains an indexed column, since MATCH then spans more text per row; or authz.list.max_rows_read moves
+  either arm of messagePageQuery's searched plan stops being driven by its virtual table; an arm's inner
+  ORDER BY changes from rank; a third arm is added; messages.page_size moves; RELATIONS_FOR_METADATA or
+  BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
+  text per row; or authz.list.max_rows_read moves
 values:
-  search.max_rows_read_per_page: 258
+  search.max_rows_read_per_page: 616
 ---
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -25,17 +26,34 @@ common one is the worst case, where the index excludes nothing and the page is t
 `rows_read`, not milliseconds, for the reason `authz-check-rows-read.md` established: `performance.now()`
 inside workerd is clamped by the Spectre mitigation, and D1 bills on rows scanned.
 
-## The three shapes
+## What ships, and what it costs
 
-| shape | rare term (12 hits) | common term (1,188 hits) |
+A searched page is a **union of two arms** — one over the subject/sender index, one over the body index —
+each driven by its own virtual table, each `ORDER BY rank LIMIT n`, with the union sorted by arrival.
+
+| | rare term (12 hits) | common term (1,188 hits) |
+|:--|--:|--:|
+| plain unsearched page, for comparison | 208 | 208 |
+| **shipped: two arms** | **150** | **616** |
+
+Against `authz.list.max_rows_read = 1000`. A rare search still costs **less than not searching**, which is
+what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 616 is
+the tight one — 61% of the budget — and it is the figure `search.max_rows_read_per_page` pins.
+
+About twelve rows read per row returned, which is the arithmetic working: each arm seeks the receipt, its
+address, its message and its case for every row it returns, so two arms are roughly eight, plus two index
+scans and the outer sort of at most a hundred rows.
+
+### Three shapes were measured before this one, on subjects alone
+
+| shape (one arm, subjects only) | rare term | common term |
 |:--|--:|--:|
 | time-driven, match as a filter | **3,640** | 2,584 |
-| **index-driven, `ORDER BY rank`** — shipped | **64** | **258** |
+| index-driven, `ORDER BY rank` | **64** | **258** |
 | index-driven, `ORDER BY accepted_at` | 63 | **5,943** |
 
-Against `authz.list.max_rows_read = 1000`, **only the middle row is inside the budget for both terms.** The
-plain unsearched page reads 208, so a rare search now costs less than not searching — which is what an index
-is for, and is asserted as a direction rather than only as a ceiling.
+Only the middle row was inside the budget for both terms, and doubling it for the second arm is where 150 and
+616 come from.
 
 ## Why the first shape was chosen, and why it was wrong
 
@@ -72,6 +90,13 @@ common term for exactly that reason: all 1,188 matches must be materialised befo
 
 So a searched page is **one page of the best matches, with no cursor**. `next_cursor` is always null for a
 search, and the interface says *"best matches — narrow the words to see others"* when a page comes back full.
+
+**The union is ordered by arrival rather than by rank, and that is forced.** bm25 rank is computed from term
+frequency within one index, so a subject hit's rank and a body hit's rank are numbers on different scales —
+ordering the union by `rank` would be arithmetic on unrelated quantities. Each arm therefore takes its own
+best matches by rank, and the union, which is at most twice the page size, is sorted by `accepted_at`. That
+sort is over a hundred rows and costs nothing; what would be expensive is sorting the match set, which is the
+5,943 shape above.
 
 **This is the same answer the search scoping had already chosen, for an unrelated reason** — bm25 rank depends
 on corpus-wide term frequency, so it shifts every time mail arrives, and a cursor into a ranked list would
@@ -112,12 +137,44 @@ indistinguishable from a mailbox with no matching mail, so this would have shipp
 with no error anywhere to explain it. It was caught because the measurement asserts the rare term matches more
 than one row — an anti-vacuity check written for a different reason entirely.
 
+## A fixture with no bodies measured a query that does not exist
+
+The first version of this measurement indexed only subjects, so the body arm probed an empty index and the
+figures came back at 77 and 310. Those are the costs of a union whose second arm never matches anything —
+which is no Node anybody will run.
+
+With bodies indexed at the same selectivity as the subjects, the real figures are 150 and 616. Recorded
+because the mistake is easy to repeat and reads as good news: a search index measured against a corpus that
+was never indexed reports the cost of finding nothing.
+
+The second version then made it wrong the other way. Every body said either *"demurrage was claimed"* or
+*"cleared without a demurrage claim being raised"* — so the **rare** term matched all 1,200 bodies and
+reported 372 rows for what was supposed to be the cheap case. A fixture whose two terms have the same
+selectivity measures one thing twice.
+
+## Cross-index queries cannot match, which is the price of the authorization boundary
+
+FTS5 requires every term of a query to appear in the same indexed document, and a subject and a body are two
+documents in two tables. So a search for *"hapag cabotage"* finds nothing even when `hapag` is in a message's
+subject and `cabotage` is in its body.
+
+Fixing it means one index holding subject and body together — which is exactly what the authorization split
+forbids, because then a `mailbox.metadata.read` holder's subject search would match body words. **The
+limitation is the price of the boundary**, and it is asserted in `test/message-search.test.ts` so it stays
+deliberate rather than being discovered by somebody whose search mysteriously fails.
+
 ## What is not measured here
 
-- **Body search.** This index holds `subject` and `from_addr` only. Message bodies are a separate index with a
-  real disclosure cost, and it is a later layer — see `d1-fts5-search.md` for the contentless form it needs.
-- **The backfill's cost at scale.** `backfillSearchIndex` is one `INSERT … SELECT … LIMIT 500` per scheduled
-  run, so its cost is the limit and it is bounded by construction rather than by measurement. What is not
-  established is how long a large archive takes to catch up, because no Node here has one.
+- **The body backfill's cost at scale.** It is bounded by construction — 25 messages per scheduled run, each
+  an R2 read, a key unwrap, a decryption and a MIME parse — but how long a large archive takes to catch up is
+  not established, because no Node here has one. `doctor`'s `body_index_backlog` is what makes it visible on
+  one that does.
+- **The metadata backfill's cost at scale.** One `INSERT … SELECT … LIMIT 500` per run, so its cost is the
+  limit. Same gap for the same reason.
+- **Index size per message.** How many bytes a body's postings add to D1 is not measured here, and it is the
+  figure that decides whether a large Node approaches D1's 10 GB ceiling. Named as absent rather than
+  estimated.
+- **How the figures move with corpus size.** 1,200 deliveries shows the ranked plan does not track the match
+  set and the time-ordered one does. It does not establish the curve.
 - **How the figures move with corpus size.** 1,200 deliveries is enough to show that the ranked plan does not
   track the match set and the time-ordered one does. It does not establish the curve.

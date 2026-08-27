@@ -8,7 +8,8 @@ import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
 import { log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
-import { indexMessage } from "./search.ts";
+import { indexBody, indexMessage, markBodyIndexed } from "./search.ts";
+import { indexableText } from "./search-body.ts";
 
 /**
  * Turning an accepted receipt into message metadata and a mailbox delivery (#27).
@@ -94,6 +95,19 @@ export async function materialiseReceipt(
   const messageId = ctx.id("msg");
   const at = new Date(ctx.now()).toISOString();
 
+  /*
+   * The body, as words for the search index (#107 L2).
+   *
+   * **No extra R2 read**: `raw` was already fetched above to parse the headers, so indexing the body costs
+   * parsing rather than a round trip. That is the reason this happens at ingest rather than in a later pass —
+   * a message is never again this cheap to index.
+   *
+   * `indexableText` returns null and never throws: a body that cannot be parsed is still a message, and §24
+   * forbids letting that block delivery. Such a message is unsearchable by its contents and stays reachable
+   * by paging and by subject, which is the same position `renderBody` takes when it reports `unparsed`.
+   */
+  const bodyWords = await indexableText(raw);
+
   // A message with no readable Message-ID still needs a stable identity to thread on, and it must be
   // one that survives re-parsing. The receipt id is derived, unique and already in hand.
   const rfcMessageId = headers.messageId ?? `receipt.${receipt.id}@invalid`;
@@ -153,6 +167,19 @@ export async function materialiseReceipt(
      * the two statements agree by construction rather than by both being correct.
      */
     indexMessage(env, messageId),
+    /*
+     * The body index, in the same batch and after the message for the same reason (#107 L2). Omitted
+     * entirely when there is nothing to index — an empty index row can never match, and it would still be
+     * counted as indexed, which would make the backfill's remaining-work figure a lie.
+     */
+    ...(bodyWords === null ? [] : [indexBody(env, messageId, bodyWords)]),
+    /*
+     * Settled either way, in the same batch. A message with no readable body gets this and no index row,
+     * which is the only thing that tells the backfill "reached, and there was nothing there" apart from "not
+     * reached yet" — without it, every headers-only message is selected by every pass forever and the backlog
+     * figure reports work that no amount of work removes.
+     */
+    markBodyIndexed(env, messageId, at),
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO mailbox_items
          (id, org_id, mailbox_id, time_bucket, message_id, change_number, flags, sent_at, created_at)

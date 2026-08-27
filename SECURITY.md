@@ -38,6 +38,12 @@ as known, and each has an issue or a source comment explaining the reasoning:
   is Cloudflare's infrastructure. This defends against a D1 dump and a configuration leak, not against the
   platform — ADR 28 states that explicitly, and it is why Secrets Store was rejected as offering nothing
   extra.
+- **A D1 dump reveals which words occur in which message.** The body search index is *contentless*: it stores
+  the inverted index and no copy of any document, so a dump lets somebody **confirm a guess** — that a given
+  word appears in a given message — and with a dictionary and patience, learn a good deal that way. It does
+  not yield the text, the order of the words, or anything about a message whose words cannot be guessed. This
+  is the narrowing ADR 28 took on 27 August 2026 and it is deliberate, not an oversight. Body search itself
+  requires `mailbox.content.read`; the weaker `mailbox.metadata.read` reaches subjects and senders only.
 - **No attachment scanning, spam filtering or URL detonation.** Inbound mail is stored as evidence and
   sanitised for display. It is not screened. A public mailbox on a production Node should not be accepting
   attachments yet.

@@ -105,8 +105,8 @@ refusal, which fails safe — it does not promote, it says the canary is uploade
 it prints the exact `wrangler versions deploy` command. So the sequence degrades to "upload, then promote by
 hand after checking yourself", which is weaker than designed and not dangerous.
 
-**Observed a second time on 27 August 2026**, deploying migration 0040 and the search feature to the same
-Node. Same result, same refusal, and the refusal did what it was written to do: it printed
+**Observed a second and third time on 27 August 2026**, deploying migrations 0040 and 0041 with the two
+search layers to the same Node. Same result, same refusal, and the refusal did what it was written to do: it printed
 `wrangler versions deploy <id>@100`, the previous version kept serving 100% of traffic throughout, and the
 schema change ahead of it was additive so nothing was serving against a schema it did not understand. The
 sequence degrading to *"upload, check by hand, promote"* is now a measured property of this account rather

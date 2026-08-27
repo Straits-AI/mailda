@@ -7,7 +7,8 @@ import { createSystemCtx } from "@mailda/runtime";
 import { messagePageQuery } from "../src/authz-read.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
-import { ftsQuery, indexMessage } from "../src/search.ts";
+import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
+import { indexableText, wordsFromHtml } from "../src/search-body.ts";
 import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
@@ -37,6 +38,8 @@ const OTHER_ORG = "org_search_other";
 const READER = "usr_search_reader";
 /** Holds nothing, so authorization can be shown to still apply to a searched page. */
 const STRANGER = "usr_search_stranger";
+/** Holds `mailbox.metadata.read` only — may search subjects, must not search bodies (#107 L2). */
+const METADATA_ONLY = "usr_search_metadata_only";
 const MAILBOX = "mbx_search";
 const OTHER_MAILBOX = "mbx_search_other";
 const ADDRESS = "in@search.example";
@@ -77,6 +80,10 @@ beforeAll(async () => {
       `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,?,?,?,?)`,
     ).bind(ctx.id("rt"), org, READER, "mailbox.content.read", "mailbox", id, AT),
+    testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), org, METADATA_ONLY, "mailbox.metadata.read", "mailbox", id, AT),
   ];
   statements.push(...mailbox(ORG, MAILBOX, ADDRESS), ...mailbox(OTHER_ORG, OTHER_MAILBOX, OTHER_ADDRESS));
 
@@ -101,6 +108,21 @@ beforeAll(async () => {
         `${receiptId}@example.net`, ctx.id("thr"), subject, from, AT, AT, receiptId, AT,
         `${receiptId}@example.net`, ctx.id("cnv")));
       out.push(indexMessage(testEnv, messageId));
+      /*
+       * **`cabotage` appears in no subject anywhere**, so a match on it can only have come from the body
+       * index. The first fixture used `bunkering`, which is also a word in the ingest test's subject further
+       * down this file — so a metadata-only reader legitimately matched it through the *subject* arm and the
+       * authorization test appeared to fail. The corpus was ambiguous, not the predicate.
+       *
+       * `DEMURRAGE`'s body additionally repeats the word in its own subject, which is what makes the
+       * deduplication case below reachable: one message, both arms, one row.
+       */
+      out.push(indexBody(
+        testEnv, messageId,
+        receiptId === DEMURRAGE
+          ? "cabotage rules disputed, and the demurrage position restated"
+          : `cabotage rules disputed for ${receiptId}`,
+      ));
     }
     return out;
   };
@@ -243,6 +265,8 @@ describe("keeping the index and the messages table in agreement", () => {
     const receiptId = await accept("rcpt_search_ingest0000000001");
     expect((await materialiseReceipt(testEnv, ctx, receiptId)).status).toBe("created");
 
+    // `bunkering` is this message's *subject*. No body in the fixture carries it, so this is the
+    // metadata arm answering — which is what "real mail is searchable" needs to mean at minimum.
     expect(await search("bunkering")).toEqual([receiptId]);
   });
 
@@ -270,5 +294,195 @@ describe("keeping the index and the messages table in agreement", () => {
         WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = s.message_id)`,
     ).first<{ n: number }>();
     expect(orphans?.n, "the index holds rows for messages that do not exist").toBe(0);
+  });
+});
+
+describe("searching message bodies, which is a stronger authority than searching subjects", () => {
+  it("finds a message by a word that appears only in its body", async () => {
+    /*
+     * The premise for everything below: the body arm works at all, and the word really is body-only. The
+     * second assertion is what makes the first mean something — if `bunkering` were in a subject, every case
+     * in this block would pass through the metadata arm and prove nothing about bodies.
+     */
+    expect((await search("cabotage")).sort()).toEqual([DEMURRAGE, INVOICE].sort());
+    const inSubjects = await testEnv.CATALOG.prepare(
+      "SELECT count(*) AS n FROM message_search WHERE message_search MATCH ?",
+    ).bind(ftsQuery("cabotage")).first<{ n: number }>();
+    expect(inSubjects?.n, "the word is in a subject, so the body arm is not what answered").toBe(0);
+  });
+
+  it("refuses a body search to a holder of mailbox.metadata.read, on a word that does match", async () => {
+    /*
+     * **The authorization boundary this layer exists to draw.** `metadata.read` is sold as "See that mail
+     * exists — senders, subjects, when. Not the message itself", and answering *"the word bunkering occurs in
+     * message X"* discloses the message itself a word at a time.
+     *
+     * The term is deliberately one that **does** match for a `content.read` holder — asserted directly above
+     * this line — so a refusal here cannot be the empty result any nonsense word would produce.
+     */
+    expect(await search("cabotage", METADATA_ONLY)).toEqual([]);
+  });
+
+  it("still lets that reader search subjects, so the refusal is scoped and not a revocation", async () => {
+    /*
+     * The other half. A metadata reader who could search nothing would also pass the assertion above, and
+     * that would be #106 all over again — a relation that grants less than it says.
+     */
+    expect(await search("demurrage", METADATA_ONLY)).toEqual([DEMURRAGE]);
+  });
+
+  it("returns a message matching in both indexes exactly once", async () => {
+    /*
+     * `UNION` rather than `UNION ALL`. `demurrage` is in DEMURRAGE's subject *and* in its body, so it matches
+     * in both arms — and a duplicated row in a result list is the kind of defect that reads as a rendering
+     * bug for a week. Checked by length as well as by value, because `toEqual` on a two-element array with
+     * both elements equal would not obviously read as a duplicate.
+     */
+    const both = await search("demurrage");
+    expect(both).toEqual([DEMURRAGE]);
+    expect(both.length, "a message matching both indexes came back twice").toBe(1);
+  });
+
+  it("cannot match a query whose words are split across subject and body", async () => {
+    /*
+     * **A real limitation, asserted so it stays deliberate.** FTS5 requires every term of a query to appear in
+     * the same indexed document, and the subject and the body are two documents in two tables. So `hapag` (in
+     * DEMURRAGE's subject) and `cabotage` (in its body) match nothing together, even though both are true of
+     * that one message.
+     *
+     * Fixing it means one index holding subject and body together — which is exactly what the authorization
+     * split forbids, because then a `metadata.read` holder's subject search would match body words. The
+     * limitation is the price of the boundary, and it is written into the docs rather than discovered by a
+     * user whose search mysteriously finds nothing.
+     */
+    expect(await search("hapag cabotage")).toEqual([]);
+    // Each half alone finds it, which is what makes the line above a limitation rather than a broken fixture.
+    expect(await search("hapag")).toEqual([DEMURRAGE]);
+    expect(await search("cabotage")).toContain(DEMURRAGE);
+  });
+
+  it("has no content shadow table, which is what content='' looks like in the schema", async () => {
+    /*
+     * The cheapest available proof that the contentless option is in force, and a falsifiable one: a
+     * content-bearing FTS5 table gets a `_content` shadow table to store documents in, and a contentless one
+     * does not. `message_search` (subjects, content-bearing) has six tables; this has five.
+     *
+     * Worth asserting separately from the `SELECT body IS NULL` check below, because the two fail in
+     * different ways. A future edit that dropped `content=''` would make `body` readable *and* create this
+     * table — and if somebody ever "fixed" the null by populating a column, this assertion is the one that
+     * would still catch the storage.
+     */
+    const content = await testEnv.CATALOG.prepare(
+      "SELECT count(*) AS n FROM sqlite_master WHERE name = 'message_body_search_content'",
+    ).first<{ n: number }>();
+    expect(content?.n, "the body index has a content table — content='' is not in force and a D1 dump "
+      + "now contains message bodies").toBe(0);
+
+    // The control: the *metadata* index does have one, so the assertion above is discriminating rather than
+    // just true of every name it is handed.
+    const metadata = await testEnv.CATALOG.prepare(
+      "SELECT count(*) AS n FROM sqlite_master WHERE name = 'message_search_content'",
+    ).first<{ n: number }>();
+    expect(metadata?.n, "the metadata index lost its content table — this test can no longer tell the two "
+      + "storage forms apart").toBe(1);
+  });
+
+  it("cannot read body text back out of the index, which is what the contentless form is for", async () => {
+    /*
+     * ADR 28's amended claim, asserted rather than described. The index discloses *which words occur in which
+     * message*; it must not disclose the message. If this ever returns text, the migration lost `content=''`
+     * and a D1 dump now contains everybody's mail.
+     */
+    const row = await testEnv.CATALOG.prepare("SELECT body FROM message_body_search LIMIT 1")
+      .first<{ body: string | null }>();
+    expect(row, "the body index is empty — the assertion below would hold vacuously").not.toBeNull();
+    expect(row?.body, "the body index is storing message text").toBeNull();
+  });
+});
+
+describe("what reaches the body index", () => {
+  it("indexes plain-text mail, which is the ordinary case and was the one nothing covered", async () => {
+    /*
+     * **Added because mutation testing found it missing.** Every case in this block exercised HTML, so
+     * inverting `if (extracted.text !== null)` — or deleting the guard — left the whole suite green while
+     * making text-only mail silently unsearchable by its contents. The most common shape of business mail,
+     * and the tests had nothing to say about it.
+     *
+     * Recorded rather than quietly fixed: this is the third vacuity in this ticket that reading did not find
+     * and `scripts/mutants.mjs` did, which is the argument AGENTS.md principle 2b makes.
+     */
+    const plain = new TextEncoder().encode([
+      "From: a@b.example", "To: in@search.example", "Subject: Plain",
+      "Content-Type: text/plain; charset=utf-8", "",
+      "The demurrage clause was invoked on tuesday.",
+    ].join("\r\n"));
+    const words = await indexableText(plain);
+    expect(words, "a text/plain body produced nothing to index").not.toBeNull();
+    expect(words!.toLowerCase()).toContain("demurrage");
+    expect(words!.toLowerCase()).toContain("tuesday");
+  });
+
+  it("indexes both parts when a message carries text and HTML", async () => {
+    /*
+     * The pair that makes the two cases above distinguishable from each other. A multipart/alternative message
+     * is supposed to say the same thing twice and usually does — but "supposed to" does a lot of work in a
+     * mail system, and a sender whose HTML says more than their text would otherwise lose the extra words.
+     */
+    const both = new TextEncoder().encode([
+      "From: a@b.example", "To: in@search.example", "Subject: Both",
+      'Content-Type: multipart/alternative; boundary="x"', "",
+      "--x", "Content-Type: text/plain; charset=utf-8", "", "plaintextonlyword", "",
+      "--x", "Content-Type: text/html; charset=utf-8", "", "<p>htmlonlyword</p>", "",
+      "--x--", "",
+    ].join("\r\n"));
+    const words = await indexableText(both);
+    expect(words!.toLowerCase()).toContain("plaintextonlyword");
+    expect(words!.toLowerCase()).toContain("htmlonlyword");
+  });
+
+  it("indexes HTML-only mail, which is the case that would silently never match", async () => {
+    /*
+     * A great deal of real mail has no plain-text part. Indexing only `extracted.text` would make it
+     * unsearchable while everything looked fine — the failure shape this repository keeps finding.
+     */
+    const html = new TextEncoder().encode([
+      "From: a@b.example", "To: in@search.example", "Subject: HTML only",
+      "Content-Type: text/html; charset=utf-8", "",
+      "<html><head><style>.x{font-family:sans-serif}</style></head>",
+      "<body><p>The&nbsp;demurrage clause was <b>invoked</b></p></body></html>",
+    ].join("\r\n"));
+    const words = await indexableText(html);
+    expect(words).not.toBeNull();
+    expect(words!.toLowerCase()).toContain("demurrage");
+    expect(words!.toLowerCase()).toContain("invoked");
+  });
+
+  it("keeps stylesheet and script contents out, so they do not become words", () => {
+    /*
+     * Not tidiness. A mail template's CSS is thousands of tokens, and bm25 ranking is computed from term
+     * frequency across the index — so indexing `sans-serif` once per HTML message degrades ranking for every
+     * real word as well as wasting space.
+     */
+    const words = wordsFromHtml(
+      "<style>.a{color:#fff}</style><script>var x=1</script><p>actual prose</p>",
+    );
+    expect(words).toBe("actual prose");
+  });
+
+  it("makes a tag a word boundary rather than deleting it", () => {
+    // `a<br>b` is two words. Deleting the tag would make it one, and neither would then match.
+    expect(wordsFromHtml("<p>alpha</p><p>beta</p>")).toBe("alpha beta");
+    expect(wordsFromHtml("alpha<br>beta")).toBe("alpha beta");
+  });
+
+  it("returns null for a message with no body at all, so no empty row is written", async () => {
+    /*
+     * An empty index row can never match, takes space, and would still be counted as indexed — which would
+     * make the backfill's remaining-work figure a lie.
+     */
+    const headersOnly = new TextEncoder().encode(
+      "From: a@b.example\r\nTo: in@search.example\r\nSubject: nothing\r\n\r\n",
+    );
+    expect(await indexableText(headersOnly)).toBeNull();
   });
 });
