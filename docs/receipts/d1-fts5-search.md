@@ -95,3 +95,51 @@ decrypting it — which is a `mailbox.content.read` operation and authorized as 
 per-result authorized fetch, bounded by the page size, and never a free read out of the index. Which is the
 correct answer on privacy grounds anyway: the cheap path would have let a caller with metadata rights read
 body text out of an index, and the platform has removed that path by not having it.
+
+## Confirmed through the migration path on a live Node, 27 August 2026
+
+Everything above was probed with `wrangler d1 execute`, which is not how a Node gets its schema. A migration
+is raw SQL applied through `batch()`, and `CREATE VIRTUAL TABLE` is a shape this repository's migration path
+had never carried — so it was run for real before anything was built on top of it.
+
+`migrations/0040_message_search.sql` applied to the live Node in account `dc8d1b7d…` via
+`mailda deploy` → `wrangler d1 migrations apply`:
+
+```
+0040_message_search.sql   ✅
+```
+
+The ledger moved to `0040_message_search.sql`, and `sqlite_master` shows **six** tables where the migration
+names one:
+
+| table | what it is |
+|:--|:--|
+| `message_search` | the virtual table the migration declares |
+| `message_search_config`, `message_search_content`, `message_search_data`, `message_search_docsize`, `message_search_idx` | FTS5's own storage, created and maintained by SQLite |
+
+That count is why `test/audit-coverage.test.ts` classifies six rather than one: a closed world over tables sees
+what SQLite creates, not what the migration wrote. A seventh appearing would mean the table's options changed.
+
+Then the shipped query shapes, against that table on real D1 — using the exact expression `ftsQuery` emits
+rather than a hand-written one:
+
+```
+MATCH '"demur"*'  AND org_id = 'org_live_probe'  ORDER BY rank
+  → msg_live_probe
+  → snippet(): [Demurrage] on the Hapag booking
+```
+
+Prefix matching, org scoping, rank ordering and **real highlighting** all work in the deployed database. The
+probe row was deleted afterwards and the table confirmed empty.
+
+### What this does not establish
+
+**Search has not been exercised through the Worker against real mail.** That needs a claimed Node with a
+session, and this Node is deliberately unclaimed. Every probe above is D1-level plus the deployed route
+answering `401` rather than `500` for `?q=demurrage`, `?q=` with a malformed cursor, and `?q=AND NOT ( *` —
+which shows authorization precedes parsing and the operators reach nothing, and does **not** show that a
+signed-in reader gets the right rows. That part is covered by 1,264 tests in workerd and by nothing on this
+account.
+
+`doctor` reports no `search_index_backlog` finding here, which is correct rather than missing: the check
+returns nothing when there is no organization, the same way `inbound_routing` and `recovery_escrow` do.
