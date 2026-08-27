@@ -201,7 +201,7 @@
       // scope declares, and deployability.test.ts walks every key path in every environment, so a workflow
       // name that stopped matching the Worker's name would fail there wherever it appeared.
       "workflows": [
-        { "binding": "BUTLER_RUNS", "name": "mailda-butler-runs", "class_name": "ButlerRun" }
+        { "binding": "BUTLER_RUNS", "name": "mailda-test-butler-runs", "class_name": "ButlerRun" }
       ],
       // No queue name and no consumers block, for the reasons given at the top level — and duplicated
       // rather than inherited because named environments inherit nothing. What holds this copy to the one

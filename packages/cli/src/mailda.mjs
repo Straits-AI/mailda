@@ -30,6 +30,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -233,6 +234,71 @@ function firstInstall() {
   return true;
 }
 
+/**
+ * Refuses to deploy if this account's Butler Workflow already belongs to another Worker (#99).
+ *
+ * ## The theft this stops, measured rather than supposed
+ *
+ * Every other resource a Node provisions derives its name from the Worker's, so a second Node collides with
+ * nothing — `mailda2-catalog`, `mailda2-evidence`, `mailda2-sending-events`. The Workflow's name is written
+ * in `wrangler.jsonc` because Cloudflare **requires** it on the binding, and a Workflow is owned by exactly
+ * one script.
+ *
+ * Drilled on a live account (`deploy-drill-live-account.md`): deploying a second Node beside the first
+ * **succeeded, exit 0, no warning**, and ownership of `mailda-butler-runs` moved from `mailda` to `mailda2`.
+ * The first Node kept a binding pointing at a Workflow now served by the second Node's code against the
+ * second Node's bindings — a cross-Node execution path into another organization's D1. It does not refuse;
+ * it reassigns.
+ *
+ * ## Why here as well as in a test
+ *
+ * `test/node/workflow-name-world.test.ts` holds the naming rule for this repository. It cannot help an
+ * operator who edits `wrangler.jsonc`, changes the Worker name, forgets the Workflow, and runs `mailda
+ * deploy` without running a suite. This check asks the **account** rather than the file, so it sees who
+ * actually owns the Workflow rather than what the config intends.
+ *
+ * Not fatal when the answer cannot be read. `wrangler workflows list` needs a permission a deploy token may
+ * not carry, and refusing every deploy because a *diagnostic* was unavailable is the wrong trade — a warning
+ * that names what went unchecked is. The reverse of `firstInstall`, deliberately: there, being wrong means
+ * skipping the canary on a live Node, so ambiguity stops the command.
+ */
+function refuseIfWorkflowBelongsElsewhere() {
+  const config = readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8");
+  const workerName = /"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
+  const workflowName = /"workflows"[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
+  if (workerName === null || workflowName === null) return;
+
+  const listed = capture("npx", ["wrangler", "workflows", "list"]);
+  if (listed.status !== 0) {
+    process.stdout.write(
+      `\n   note: could not read this account's Workflows, so whether \`${workflowName}\` already belongs to\n`
+      + "         another Worker went unchecked. If a second Node in this account shares that name, this\n"
+      + "         deploy will take its Butler engine without saying so (#99).\n",
+    );
+    return;
+  }
+
+  /*
+   * `wrangler workflows list` prints a table; the row is `│ <name> │ <script> │ …`. Matched on the workflow's
+   * own name so a second, unrelated Workflow in the account cannot be mistaken for this one.
+   */
+  const row = listed.text.split("\n").find((line) => line.includes(workflowName));
+  const owner = row?.split("│").map((cell) => cell.trim()).filter(Boolean)[1] ?? null;
+  if (owner !== null && owner !== workerName) {
+    fail(
+      `refusing to deploy: the Workflow \`${workflowName}\` belongs to the Worker \`${owner}\`, and this\n`
+      + `config deploys \`${workerName}\`.\n\n`
+      + "  why      a Workflow is owned by exactly one script. Deploying would move it to this Worker —\n"
+      + `           silently, with no warning from wrangler — and \`${owner}\` would keep a BUTLER_RUNS\n`
+      + "           binding pointing at a Workflow now running this Node's code against this Node's\n"
+      + "           bindings. That is one organization's Butler runs executing inside another's.\n"
+      + "  fix      give this Node its own Workflow: in wrangler.jsonc, set the workflows entry's `name`\n"
+      + `           to \`${workerName}-butler-runs\`, so it derives from the Worker name the way every other\n`
+      + "           resource here already does. Then deploy again.",
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ deploy ------------------------- */
 
 /**
@@ -294,6 +360,8 @@ async function deploy(argv) {
    * **Is there anything here yet?** Measured against a real account rather than assumed, and it changed this
    * whole function — see `firstInstall` for what the drill found.
    */
+  refuseIfWorkflowBelongsElsewhere();
+
   const first = firstInstall();
   if (first) {
     process.stdout.write(
