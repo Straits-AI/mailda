@@ -125,7 +125,7 @@ const BODY_BACKFILL_LIMIT = 25;
  *
  * A read that fails for a *transient* reason is settled too, which is the cost of that choice and is stated
  * rather than hidden: such a message stays unsearchable by body until something re-indexes it, and nothing
- * does yet. Recorded in `docs/receipts/body-search-cost.md` under what is not built.
+ * does yet. Recorded in `docs/receipts/message-search-cost.md` under what is not built.
  */
 export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
   const due = await env.CATALOG.prepare(

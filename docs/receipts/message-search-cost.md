@@ -169,6 +169,14 @@ deliberate rather than being discovered by somebody whose search mysteriously fa
   an R2 read, a key unwrap, a decryption and a MIME parse — but how long a large archive takes to catch up is
   not established, because no Node here has one. `doctor`'s `body_index_backlog` is what makes it visible on
   one that does.
+- **Nothing re-indexes a message whose body failed to read transiently.** `backfillBodyIndex` settles every
+  message it reaches, including the ones whose evidence could not be fetched or parsed, because an unreadable
+  body does not become readable next minute and a pass that retries it forever never reaches the mail behind
+  it. The cost of that choice: a message whose read failed for a *recoverable* reason — a momentary R2 error,
+  a vault hiccup — stays unsearchable by its body until something re-indexes it, and **nothing does**. It is
+  still listed, readable, and findable by subject and sender. Clearing `body_indexed_at` is what a repair
+  would do; no route or command exposes that, so today the repair is a `wrangler d1 execute` by an operator
+  who knows to.
 - **The metadata backfill's cost at scale.** One `INSERT … SELECT … LIMIT 500` per run, so its cost is the
   limit. Same gap for the same reason.
 - **Index size per message.** How many bytes a body's postings add to D1 is not measured here, and it is the
