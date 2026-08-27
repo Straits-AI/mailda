@@ -118,6 +118,33 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * the thing an investigator needs to be able to ask about.
    */
   invitations: { actions: ["access.invited", "access.joined"] },
+  /*
+   * The search index and FTS5's five shadow tables (#107).
+   *
+   * **Derived state, and the only table here whose contents are a function of another table.** Every row is
+   * `SELECT subject, from_addr, id, org_id FROM messages` — `indexMessage` is literally that statement, so
+   * the index has no opinion of its own and nothing it holds is a fact this Node decided. The act that put
+   * mail here is the delivery, which `ingress_receipts` already records; auditing the index as well would put
+   * a second permanent row in the chain for every message received, saying the same thing twice.
+   *
+   * **Reading it is audited, which is where the accountability actually lives.** A search is a listing, so it
+   * goes through `listMessages` and a supervised reader's query produces a `supervised.query` entry naming
+   * the ids that page returned (§7). Searching is not a quieter way to see subject lines than paging is.
+   *
+   * The five `message_search_*` tables are FTS5's own storage — the inverted index, docsize, config and
+   * content. No migration names them and no statement in `src/` touches them; SQLite creates and maintains
+   * them for the virtual table. They are listed rather than filtered out by a pattern so that a *sixth*
+   * appearing — which would mean the table's options changed — fails here and gets read by somebody.
+   */
+  message_search: {
+    exempt: "Derived from messages by one statement, so it records no act of its own; the delivery that "
+      + "created the row is audited on ingress_receipts, and reading it is audited as supervised.query.",
+  },
+  message_search_config: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_search_content: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_search_data: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_search_docsize: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  message_search_idx: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   addresses: { exempt: "Set at claim time and never since; claim itself is audited by node_claim." },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },

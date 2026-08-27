@@ -283,6 +283,21 @@ confusingly.
 generated `getCases()` can only ever produce that route's 400. It is written down in `RouteSpec.query` rather
 than fixed in passing: #91 was the message listing, and a second route's refusal deserves its own ticket.
 
+**`q` joined them in #107, and it changes what a response means.** `GET /api/messages?q=` searches subjects and
+sender addresses, and the four surfaces learned it from the one declaration exactly as #91 intended. Two things
+a client has to know, both of them in the parameter's description because a generated client is all some
+callers will read:
+
+- **It is not a query language.** Operators are read as words — `AND` finds mail containing "AND" — because
+  passing a search box's contents to FTS5's `MATCH` unaltered makes ordinary typing a syntax error rather than
+  a search. The Node rebuilds the expression from letters and numbers; a caller cannot reach the operators
+  even deliberately.
+- **`next_cursor` is always `null` for a searched request**, and the two parameters therefore do not compose:
+  `?q=` with `?cursor=` ignores the cursor. A search answers one capped page ordered by relevance, and bm25
+  rank shifts as mail arrives, so a cursor into it would skip and repeat rows silently. A caller wanting the
+  next fifty has to narrow the words — there is no paging to offer, which is why the field is null rather than
+  a position that would half-work.
+
 ### Responses are validated by default
 
 That is the difference between the SDK and a wrapper around `fetch`. A Node that has drifted is caught at the

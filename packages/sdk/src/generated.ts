@@ -345,9 +345,11 @@ export class GeneratedClient extends Transport {
    *
    * @param query.mailbox Only this mailbox's mail. Omit for every mailbox you may read.
    *
+   * @param query.q Words that must all appear in the subject or sender address. The last word matches as a prefix, so a part-typed word narrows. Not a query language: operators are read as words.
+   *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 

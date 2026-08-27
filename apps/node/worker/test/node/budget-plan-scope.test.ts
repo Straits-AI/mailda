@@ -593,6 +593,12 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/message-search-cost.md
+  ...mailda(
+    "rows read by Mailda's own searched-page statement, measured against a seeded corpus",
+    "search.max_rows_read_per_page",
+  ),
+
   // docs/receipts/d1-fts5-search.md
   ...bothPlans(
     "which SQLite compile-time options D1's build ships — FTS5 itself, contentless tables, "

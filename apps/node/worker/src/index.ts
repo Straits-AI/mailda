@@ -74,6 +74,7 @@ import { sealManifest } from "./outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "./outbound/retry.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { formatReconcile, reconcileEvidence } from "./reconcile.ts";
+import { backfillSearchIndex } from "./search.ts";
 import { resealBatch } from "./reseal.ts";
 import { safeFilename } from "./outbound/headers.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
@@ -179,6 +180,37 @@ const handler = {
         await log(env, clock, {
           level: "error",
           event: "sla.sweep_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+        }).catch(() => undefined);
+      }
+
+      try {
+        /*
+         * Catching the search index up on mail that arrived before it existed (#107).
+         *
+         * Bounded and resumable, so this is safe to run every minute forever: once the archive is indexed it
+         * writes nothing and costs one query. Logged **only when it did something**, for the reason the notice
+         * sweep below gives — an idle Node should write nothing — and at `info`, because a backfill making
+         * progress is not a fault.
+         *
+         * A failure here is `warn` rather than `error`: unindexed mail is unsearchable, not lost, and it stays
+         * reachable by paging. `doctor`'s `search_index_backlog` is what says how much is outstanding, so the
+         * gap is a number an operator can read rather than a log line that scrolls past.
+         */
+        const indexed = await backfillSearchIndex(env);
+        if (indexed > 0) {
+          await log(env, clock, {
+            level: "info",
+            event: "search.backfilled",
+            message: `Indexed ${indexed} message(s) that arrived before the search index existed.`,
+            orgId,
+            detail: { indexed },
+          });
+        }
+      } catch (error) {
+        await log(env, clock, {
+          level: "warn",
+          event: "search.backfill_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
         }).catch(() => undefined);
       }

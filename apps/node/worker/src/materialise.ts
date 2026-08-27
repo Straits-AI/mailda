@@ -8,6 +8,7 @@ import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
 import { log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
+import { indexMessage } from "./search.ts";
 
 /**
  * Turning an accepted receipt into message metadata and a mailbox delivery (#27).
@@ -138,6 +139,20 @@ export async function materialiseReceipt(
       headers.subject, headers.from, sentAtValue, receipt.accepted_at, receipt.id, at,
       headers.inReplyTo, threadRoot, parseError ?? null, conversationId,
     ),
+    /*
+     * The search index, immediately after the row it is derived from and inside the same batch (#107).
+     *
+     * **Position is load-bearing.** `indexMessage` is an `INSERT … SELECT … FROM messages WHERE id = ?`, so
+     * it must run after the insert above or it selects nothing and the message is silently unsearchable. D1
+     * runs a batch's statements in order in one transaction, which is what makes reading the previous
+     * statement's write both possible and atomic with it.
+     *
+     * That shape is also what handles the redelivery above: `INSERT OR IGNORE` against `msg_by_receipt` means
+     * a second delivery of the same receipt mints a fresh `msg_…` id and writes no row, and a search insert
+     * binding its own values would then index an id that belongs to nothing. Selecting from `messages` makes
+     * the two statements agree by construction rather than by both being correct.
+     */
+    indexMessage(env, messageId),
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO mailbox_items
          (id, org_id, mailbox_id, time_bucket, message_id, change_number, flags, sent_at, created_at)

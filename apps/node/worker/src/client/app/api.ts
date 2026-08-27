@@ -260,17 +260,28 @@ export interface MessagesPage {
  * the client half of what #91's cursor design is for: the Node re-runs the authorization for every page, and
  * this must not hold a page long enough to make that pointless.
  */
-export function useMessages(page?: { cursor?: string | null; mailbox?: string | null }):
-UseQueryResult<MessagesPage, Error> {
+export function useMessages(
+  page?: { cursor?: string | null; mailbox?: string | null; q?: string | null },
+): UseQueryResult<MessagesPage, Error> {
   const cursor = page?.cursor ?? null;
   const mailbox = page?.mailbox ?? null;
+  /*
+   * The search term goes to the Node **as typed** (#107).
+   *
+   * No trimming, no tokenizing and no validation here. `ftsQuery` on the Node turns typing into an FTS5
+   * expression, and a client that pre-processed it would be a second opinion about what a search means —
+   * which is how the SDK and the shell end up searching differently for the same words. The empty string is
+   * normalised to null only so it does not become a query-key variant that fetches the same page twice.
+   */
+  const q = page?.q === undefined || page.q === null || page.q.trim() === "" ? null : page.q;
   const search = new URLSearchParams();
   if (cursor !== null) search.set(MESSAGE_PAGE_PARAMS.cursor, cursor);
   if (mailbox !== null) search.set(MESSAGE_PAGE_PARAMS.mailbox, mailbox);
+  if (q !== null) search.set(MESSAGE_PAGE_PARAMS.q, q);
   const query = search.toString();
 
   return useQuery({
-    queryKey: ["messages", cursor, mailbox],
+    queryKey: ["messages", cursor, mailbox, q],
     queryFn: () => read<MessagesPage>(`${GET("/api/messages")}${query === "" ? "" : `?${query}`}`),
     ...AUTHORIZATION_SENSITIVE,
   });

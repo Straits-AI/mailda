@@ -125,7 +125,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 | **Deployment is unproven** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). Nobody has run it against a second Cloudflare account, so the assumption the whole rollback rests on — that `versions upload` shifts no traffic — is documented and unverified. |
 | **Two Nodes in one account is unmeasured** | The Workflow binding is a fixed account-level name (#99). Production and staging in one account is a normal configuration and this has never been tried. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
-| **The mail client is thin** | No search, no threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; the rest has not. |
+| **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91, and search over subjects and senders in #107; body search, and the rest, have not. |
 | **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
 
 What it is genuinely good for now: a controlled design-partner alpha, a non-critical shared mailbox, and
@@ -1646,11 +1646,23 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   sees. The Node can send, which is what makes emailing it tempting — and it would mean posting a
   credential to an address nobody has verified, from a mailbox whose sending capability is itself
   unverified.
-- **There is no search, so pagination is the only way to an old message.** Reaching one means paging back to
-  it, newest first. Search is a much larger question — what is indexed, whether the index is authorized the
-  same way the rows are — and an FTS index over subjects costs per-message storage the shard arithmetic would
-  have to be re-measured for. Pagination is what makes the existing list honest; it does not make an old
-  message findable by what it says.
+- **Search covers subjects and senders, not message bodies.** Typing words into the inbox finds mail by what
+  its subject says and who sent it (#107). Bodies are a separate index with a real disclosure cost — the
+  subject and sender were already plaintext columns in D1, so indexing them reveals nothing a database dump
+  did not already reveal, while indexing body text would — and that is a later layer, scoped in
+  [#105](https://github.com/Straits-AI/mailda/issues/105). Attachment contents are not indexed at all and are
+  not planned to be: there is no document parser on the ingest path and adding one would be a new attack
+  surface for a search feature.
+- **A search returns one page of the best matches, and there is no way to reach the fifty-first.** Narrowing
+  the words is the only route. Relevance ordering is bm25, which depends on how often a term appears across
+  the whole corpus — so it shifts every time mail arrives, and a cursor into a ranked list would skip and
+  repeat rows without saying so. The cost measurement landed on the same answer independently: ordering by
+  time while filtering by a term costs O(corpus) rather than O(matches), and a rare search read 3,640 rows
+  against a 1,000-row budget before the plan was driven from the index instead.
+  ([receipt](./docs/receipts/message-search-cost.md))
+- **Mail that arrived before the index existed is searchable only once the backfill reaches it.** A scheduled
+  pass indexes 500 messages a minute and `doctor`'s `search_index_backlog` says how many are left, so the gap
+  is a number an operator can read rather than a silence. Unindexed mail is still reachable by paging.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
   time order until it has found enough belonging to it — measured at 2,410 rows read to return 3 messages from
   a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization

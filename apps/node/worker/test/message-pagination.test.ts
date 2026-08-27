@@ -6,6 +6,7 @@ import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
 import { listMessages } from "../src/authz-read.ts";
+import { indexMessage } from "../src/search.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { login } from "../src/auth/session.ts";
 import { decideApproval } from "../src/approvals.ts";
@@ -170,6 +171,7 @@ beforeEach(async () => {
   const statements = [];
   for (let n = 0; n < PER_MAILBOX * addresses.length; n++) {
     const receiptId = ctx.id("rcpt");
+    const messageId = ctx.id("msg");
     const acceptedAt = new Date(AUGUST_20 - Math.floor(n / 2) * 60_000).toISOString();
     statements.push(testEnv.CATALOG.prepare(
       `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
@@ -180,9 +182,12 @@ beforeEach(async () => {
       `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id,
          thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
          conversation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).bind(ctx.id("msg"), ORG, "2026-08", `${ORG}/raw/${receiptId}`, "0".repeat(64), 1024,
+    ).bind(messageId, ORG, "2026-08", `${ORG}/raw/${receiptId}`, "0".repeat(64), 1024,
       `<paging-${n}@outside.example>`, ctx.id("thr"), `message ${n}`, `sender${n}@outside.example`,
       acceptedAt, acceptedAt, receiptId, acceptedAt, null));
+    // Indexed, so the searched-page cases below have a corpus. Every subject carries the word "message", so
+    // a search for it matches everything and fills a page — which is what makes the cursor assertion sharp.
+    statements.push(indexMessage(testEnv, messageId));
   }
   for (let start = 0; start < statements.length; start += 100) {
     await testEnv.CATALOG.batch(statements.slice(start, start + 100));
@@ -193,6 +198,66 @@ beforeEach(async () => {
   // Two people who are not the reader, so a supervised request below can be approved twice.
   await tuple(ANA, "approval.decide", "mailbox", MAILBOX_NEVER);
   await tuple(BEN, "approval.decide", "mailbox", MAILBOX_NEVER);
+});
+
+
+/* ------------------------------------------------- a searched page is not a position in a listing --- */
+
+describe("a searched page offers no cursor, because rank is not a position", () => {
+  /*
+   * The property, and it lives here rather than in `message-search.test.ts` because it is about
+   * `next_cursor` — the field this file owns.
+   *
+   * A searched page is ordered by bm25 rank, which depends on how often a term occurs across the whole
+   * corpus. So it shifts every time mail arrives, and a cursor into it would name a position in an ordering
+   * that no longer exists — skipping rows and repeating others, silently. The Node therefore returns null,
+   * and the interface renders no pager.
+   *
+   * **The client cannot hold this property**, which is why it is asserted here. `test/client/` stubs the API,
+   * so the pager test there is answered by a fixture that supplies `next_cursor` itself — it proves the
+   * interface honours a null, not that the Node produces one. Found by mutating the suppression away and
+   * watching the client suite fail somewhere unrelated.
+   */
+  it("returns a cursor on a full unsearched page, so the null below is the search's doing", async () => {
+    /*
+     * The control, and it runs first. Without it, "a searched page has no cursor" would pass against a corpus
+     * too small to fill a page, a broken fixture, or a listing that never returns a cursor at all.
+     */
+    const token = await sessionFor(READER);
+    const plain = await page(token);
+    expect(plain.messages).toHaveLength(PAGE);
+    expect(plain.next_cursor, "the unsearched listing returns no cursor — the fixture cannot fill a page")
+      .not.toBeNull();
+  });
+
+  it("returns null on a searched page that is equally full", async () => {
+    /*
+     * `message` is in every seeded subject, so this matches the whole corpus and the page comes back full —
+     * which is the case that matters. A search matching *fewer* rows than a page would return null anyway,
+     * for the ordinary reason, and would prove nothing about the suppression.
+     */
+    const token = await sessionFor(READER);
+    const searched = await page(token, { [MESSAGE_PAGE_PARAMS.q]: "message" });
+    expect(searched.messages).toHaveLength(PAGE);
+    expect(searched.next_cursor, "a searched page offered a cursor into a ranked ordering").toBeNull();
+  });
+
+  it("ignores a cursor sent alongside a term rather than half-honouring it", async () => {
+    /*
+     * The two parameters do not compose, and the documented behaviour is that the cursor is ignored. Asserted
+     * because the alternative — applying a time cursor to a ranked listing — is the failure that produces an
+     * arbitrary page, and because `docs/api-contract.md` now tells callers this and a promise in a document
+     * with nothing enforcing it is what #103 is about.
+     */
+    const token = await sessionFor(READER);
+    const first = await page(token);
+    const withCursor = await page(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "message",
+      [MESSAGE_PAGE_PARAMS.cursor]: first.next_cursor!,
+    });
+    const withoutCursor = await page(token, { [MESSAGE_PAGE_PARAMS.q]: "message" });
+    expect(withCursor.messages.map((row) => row.id)).toEqual(withoutCursor.messages.map((row) => row.id));
+  });
 });
 
 /* ------------------------------------------------------- the test the cursor design exists for --- */

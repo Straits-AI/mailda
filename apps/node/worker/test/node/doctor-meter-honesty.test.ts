@@ -68,6 +68,17 @@ const DOCTOR_PATH = [
    * argument has to be that those calls are unreachable from here rather than that they do not exist.
    */
   "recovery.ts",
+  /*
+   * Added with #107's `search_index_backlog` check: `unindexedMessages` is one aggregate query on the doctor
+   * path, so it is one prepare that must be one execution.
+   *
+   * `backfillSearchIndex` and `indexMessage` in the same file **write**, and this guard reads the *file* — so
+   * the argument has to be the one `recovery.ts` makes, that they are unreachable from here rather than that
+   * they do not exist. `runDoctor` calls neither: the backfill runs only from the scheduled handler and
+   * `indexMessage` only from the ingest batch. A doctor run that wrote to the search index would be a health
+   * check with a side effect, which is the thing this guard's existence is an argument against.
+   */
+  "search.ts",
   // Added with #64's lift: `legal_hold_unliftable` asks who could approve one, which is
   // `decidersByMailbox` — one prepare, one execution, no write. It lives in a file of its own **because** of
   // this guard: the same function used to sit in `approvals.ts`, which binds prepared statements to names in

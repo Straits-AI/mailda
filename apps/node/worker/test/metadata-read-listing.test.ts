@@ -19,9 +19,11 @@ import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
  * `listMessages`' own header says the same thing — *"the columns returned are subject line, sender address
  * and size, which is what `mailbox.metadata.read` covers"*.
  *
- * `messagePageQuery`'s standing-relation arm reads `AND relation = 'mailbox.content.read'`. One relation,
- * spelled once. So the question this file asks is whether the relation the product sells as *"see that mail
- * exists"* returns any mail, and it is asked of the shipped builder rather than of a copy.
+ * `messagePageQuery`'s standing-relation arm **read** `AND relation = 'mailbox.content.read'` — one
+ * relation, spelled once, inside a SQL string where no type could reach it. So the question this file asks
+ * is whether the relation the product sells as *"see that mail exists"* returns any mail, and it is asked
+ * of the shipped builder rather than of a copy. It failed when written (#106) and now passes; it stays
+ * because the predicate is one edit away from being narrowed again.
  *
  * It is the shape this repository keeps finding — a comment asserting a property the code below it does not
  * have (#103) — so it is asked rather than assumed, and it is asked **before** search is built on top of this
@@ -47,7 +49,7 @@ async function pageFor(subject: string): Promise<string[]> {
     orgId: ORG,
     subjects: [subject],
     supervised: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_METADATA),
-    page: { after: null, mailboxId: null },
+    page: { after: null, mailboxId: null, q: null },
     limit: 51,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();

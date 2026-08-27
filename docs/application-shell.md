@@ -109,6 +109,67 @@ unfiltered view is the one that shows it. Filtering to fewer rows than exist is 
 be. A `mailbox.content.read` listing is the real answer and inventing one for a filter would be a permission
 surface added for a convenience.
 
+### Searching subjects and senders (#107)
+
+`?q=` on the same listing, with a field in the inbox heading beside the mailbox selector. Words that must
+**all** appear in a subject line or a sender address; the last word matches as a prefix, so a part-typed word
+narrows rather than finding nothing.
+
+**It is the same endpoint, not a new one.** `GET /api/messages` already carries authorization in the same
+statement as the read (ADR 11), §7's per-page record naming the ids returned, a stable keyset cursor and the
+mailbox filter. A `/api/search` route would need its own copy of all four, and `original-bytes-world.test.ts`
+exists because two routes serving the same bytes authorized differently for four months. The column list and
+the authorization predicate are shared between the two plans inside one builder, so they cannot diverge.
+
+Five decisions worth having written down:
+
+- **A searched page is a different query plan, and finding that out took three measurements.** It was built
+  first as one plan — the match added to the listing as another `WHERE` predicate, keeping the time ordering
+  and the cursor. That reads correctly and is 57× too slow: ordering by time while filtering by a term costs
+  **O(corpus), not O(matches)**, because filling a page with the twelve newest matching messages walks all
+  1,200 receipts. A rare term read 3,640 rows against a 1,000-row budget. The shipped plan is driven by the
+  index, ordered by `rank`, and capped: 64 rows for the same search, which is *less than the unsearched page's
+  208*. ([receipt](./receipts/message-search-cost.md))
+- **So there is no pagination for a search, and the screen says so.** A full page reads *"best matches —
+  narrow the words to see others"*. This is also what the scoping decided for an unrelated reason — bm25 rank
+  shifts as mail arrives, so a rank-ordered cursor would skip and repeat rows silently — and the two arguments
+  landing in the same place is the only reason the cost measurement did not have to reopen a decision.
+- **The field submits; it does not search as you type.** Every keystroke reaching the Node would be one
+  authorization and, for a supervised reader, one `supervised.query` audit entry **per keystroke**, recording
+  mail nobody looked at against `audit.max_detail_bytes`. §7 records acts and typing is not an act. Asserted
+  by counting requests, because a test that only checked the final request would pass against the wrong
+  implementation.
+- **`MATCH` is a query language, so nothing the user types reaches it.** Measured against a live D1 before
+  the sanitiser was written: `AND`, `NOT`, `a OR`, `foo(`, `NEAR(`, `*` and `sub:x` each return
+  `fts5: syntax error`. A search box that 500s when somebody types the word "AND" is the feature not working.
+  `ftsQuery` keeps letters and numbers, drops everything else and quotes each token, so the expression is
+  rebuilt rather than escaped — escaping means enumerating what is dangerous, and that list is the one that
+  ends up an entry short. The consequence is that advanced syntax is unavailable, which is deliberate: a mail
+  search that reads `NOT` as an operator will one day fail to find a message whose subject contains "not".
+- **An empty search result is a third empty screen.** The inbox already distinguished *nothing has arrived*
+  from *nothing is older than this page*; a search that matched nothing is neither, and saying the first would
+  offer a reader the inbound-routing check because they misspelled a supplier's name. It names what was
+  searched and offers a way to clear it — a search with no exit is a mailbox that looks empty for ever.
+
+**What the index is, and why it costs nothing against ADR 28.** `subject` and `from_addr` have been plaintext
+columns of `messages` since migration 0002, so an FTS5 index over them discloses nothing a D1 dump did not
+already disclose. It is therefore an ordinary content-bearing FTS5 table, which buys working `snippet()` —
+measured: the contentless form returns `null` rather than an error, so highlights would have shipped blank
+with nothing failing. Body search is the opposite case and needs the contentless form, because there
+duplicating the text into D1 *is* the disclosure. ([receipt](./receipts/d1-fts5-search.md))
+
+**The index row is derived, not copied.** `indexMessage` is `INSERT … SELECT subject, from_addr FROM messages
+WHERE id = ?`, in the same batch as the message. Delivery is at-least-once and the message insert is
+`INSERT OR IGNORE`, so a redelivery mints a fresh `msg_…` id and writes no row — an index write binding its
+own copy of the values would index an id belonging to no message, which no deletion path could ever reach.
+Selecting from the table makes that impossible rather than merely unlikely.
+
+**A legal hold needs no code in the search subsystem.** The index row's lifetime is derived from the
+message's, and `assertNotHeld` already refuses to delete a held message, so a hold pins the index as a
+consequence of a rule enforced in one place. There is no `if (held)` here to forget. And nothing yet deletes a
+message row at all — `search-scope-world.test.ts` asserts that, so the day one appears the assertion fails and
+carries the rule with it, which is stronger than a delete function nobody calls.
+
 ## The honesty rules live outside React
 
 `delivery.client.js` is DOM-free, served at `/app/delivery.js`, and imported by the shell **at runtime

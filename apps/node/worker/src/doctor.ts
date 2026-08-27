@@ -5,6 +5,7 @@ import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { escrowState } from "./recovery.ts";
+import { unindexedMessages } from "./search.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
 import { decidersByMailbox } from "./deciders.ts";
@@ -289,6 +290,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkTransportAdapters(env)),
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
+    ...(await checkSearchIndex(env, claim?.org_id ?? null)),
   );
 
 
@@ -2153,6 +2155,58 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
  *
  * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
  */
+/**
+ * How much mail is not searchable yet (#107).
+ *
+ * ## Why this is a finding rather than a log line
+ *
+ * The search index was added after this product had already been receiving mail, so on any existing Node
+ * there is a period during which a search is **honestly incomplete**. A person searching for a message from
+ * last month and finding nothing has no way to tell "no such mail" from "not indexed yet", and those are
+ * different answers — the first is information and the second is a Node still catching up.
+ *
+ * The backfill runs from the scheduled handler every minute and logs when it makes progress, but a log line
+ * scrolls past and answers the question only for whoever is watching at the time. A count answers it whenever
+ * somebody asks.
+ *
+ * ## `report`, not `degraded`
+ *
+ * Unindexed mail is unsearchable, not lost: it is still reachable by paging, which is what the listing is for.
+ * So a backlog is a fact about this Node rather than a fault in it, and `ok` is true — a fresh install with no
+ * mail at all and a Node three passes from finishing are both fine, and neither should colour a health check
+ * red. What would be a fault is a backlog that stops falling, and that is visible from two reports rather than
+ * from one, which is a thing this check cannot honestly claim to detect.
+ */
+async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+
+  const backlog = await unindexedMessages(env).catch(() => null);
+  if (backlog === null) {
+    return [{
+      check: "search_index_backlog",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say how much mail is searchable.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+
+  return [{
+    check: "search_index_backlog",
+    severity: "report",
+    discloses: "infrastructure",
+    ok: true,
+    detail: backlog === 0
+      ? "Every message on this Node is in the search index."
+      : `${backlog} message(s) are not in the search index yet, so a search will not find them. They are `
+        + "still reachable by paging the mailbox. The scheduled backfill indexes up to 500 a minute.",
+    fix: backlog === 0
+      ? undefined
+      : "nothing — this falls on its own. If it stops falling, check the logs for `search.backfill_failed`",
+  }];
+}
+
 async function checkInboundRouting(env: Env, orgId: string | null): Promise<Finding[]> {
   if (orgId === null) return [];
 

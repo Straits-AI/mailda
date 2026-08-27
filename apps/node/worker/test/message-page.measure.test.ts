@@ -71,7 +71,9 @@ async function pageCost(options: {
     orgId: ORG,
     subjects: [READER],
     supervised: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
-    page: { after: options.after, mailboxId: options.mailboxId },
+    // `q: null` — this file prices the plain listing. Search has its own receipt and its own measurement,
+    // because a searched page is a different plan and averaging the two would describe neither.
+    page: { after: options.after, mailboxId: options.mailboxId, q: null },
     limit: options.limit,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)

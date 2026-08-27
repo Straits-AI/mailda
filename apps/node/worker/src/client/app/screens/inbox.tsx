@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiFetch } from "/app/session.js";
 
+import { BUDGETS } from "@mailda/budgets";
+
 import { Nothing } from "../chrome.tsx";
 import { type MessageRow, claimCase, stealCase, useMailboxes, useMessages } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
@@ -179,6 +181,72 @@ function MailboxFilter({ chosen, onChoose }: {
 }
 
 /**
+ * The search field (#107).
+ *
+ * ## A form, submitted — not search-as-you-type
+ *
+ * Every keystroke reaching the Node would be one authorization and, for a supervised reader, one
+ * `supervised.query` audit entry **per keystroke** — recording mail they never looked at, against
+ * `audit.max_detail_bytes`, on the hot read path. §7 records acts and typing is not an act. The same argument
+ * `usePages` makes for one page being one request applies letter by letter here.
+ *
+ * So it submits. A form also gets the Enter key, a labelled control and a real submit button for nothing,
+ * which is the accessible answer as well as the cheap one.
+ *
+ * ## The term is not interpreted here
+ *
+ * No trimming, no tokenizing, no "did you mean". The Node's `ftsQuery` decides what a search means, and a
+ * client with its own opinion is how the shell and the SDK end up disagreeing about the same words. What this
+ * does own is the **clear** affordance: a search with no way out is a mailbox that looks empty for ever.
+ */
+function SearchField({ term, onSearch }: {
+  term: string | null;
+  onSearch: (next: string | null) => void;
+}) {
+  /*
+   * Local state, so typing does not refetch. `term` is what has been *asked*; `draft` is what is being typed,
+   * and keeping them apart is what makes this a form rather than a subscription to the keyboard.
+   */
+  const [draft, setDraft] = useState(term ?? "");
+
+  return (
+    <form
+      className="inbox-search"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSearch(draft.trim() === "" ? null : draft);
+      }}
+    >
+      <label htmlFor="inbox-q" className="dim">search</label>
+      {" "}
+      <input
+        id="inbox-q"
+        type="search"
+        value={draft}
+        placeholder="sender or subject"
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      {" "}
+      <button type="submit">Search</button>
+      {term === null ? null : (
+        <>
+          {" "}
+          <button
+            type="button"
+            onClick={() => {
+              setDraft("");
+              onSearch(null);
+            }}
+          >
+            Clear
+          </button>
+        </>
+      )}
+    </form>
+  );
+}
+
+/**
  * The control that starts one, and the mailbox it will be sent from.
  *
  * The mailbox is **chosen, never inferred**. `From` is the mailbox (ADR 36) and `send.propose` is held per
@@ -307,14 +375,26 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
  * The stack is component state and is meant to be: it is a scroll position, not a fact about the mailbox, and
  * a reload landing on the newest page is the right behaviour rather than a lost one.
  */
+/**
+ * What a full page looks like, so "capped" can be distinguished from "that is all there was".
+ *
+ * From `BUDGETS` rather than written here: `messages.page_size` is a measured tripwire
+ * (`docs/receipts/message-page-size.md`) and a client with its own copy would tell the reader a page was
+ * capped at a number the Node had stopped using.
+ */
+const PAGE_FULL = BUDGETS["messages.page_size"];
+
 function usePages() {
   /** The cursors used to reach the current page. Empty means the newest one. */
   const [stack, setStack] = useState<string[]>([]);
   /** Which mailbox the listing is narrowed to, or null for every mailbox this reader may see. */
   const [mailbox, setMailbox] = useState<string | null>(null);
+  /** What has been searched for, or null for the unsearched listing (#107). */
+  const [term, setTerm] = useState<string | null>(null);
   return {
     cursor: stack[stack.length - 1] ?? null,
     mailbox,
+    term,
     /** 1-based, for the reader. Never presented as "of N": nothing here knows N and nothing counted it. */
     number: stack.length + 1,
     older: (next: string) => setStack((was) => [...was, next]),
@@ -333,12 +413,26 @@ function usePages() {
       setMailbox(next);
       setStack([]);
     },
+    /**
+     * Searching **resets the position**, for exactly the reason `narrowTo` does and worth stating rather than
+     * leaving to the reader of the line above.
+     *
+     * A cursor is a position in one ordering, and a search is a different listing. The row the cursor names
+     * may not be in the results at all, so keeping it would produce a page from somewhere arbitrary — and the
+     * Node cannot catch it, because the cursor is well-formed and the authorization re-runs. It answers
+     * correctly for a question nobody asked, which is the failure mode `messagePageRequest` refuses a
+     * *malformed* cursor to avoid.
+     */
+    searchFor: (next: string | null) => {
+      setTerm(next);
+      setStack([]);
+    },
   };
 }
 
 export function Inbox() {
   const pages = usePages();
-  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox });
+  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox, q: pages.term });
   const [selected, setSelected] = useState<string | null>(null);
   const [composing, setComposing] = useState<ComposerContext | null>(null);
   /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
@@ -391,6 +485,7 @@ export function Inbox() {
       <h1>Inbox</h1>
       <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
       <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
+      <SearchField term={pages.term} onSearch={pages.searchFor} />
       {/*
         `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
         `{n} messages` was true only while the listing returned everything there was; against a page it
@@ -401,6 +496,23 @@ export function Inbox() {
         <p className="dim mono">
           {messages.data.messages.length} shown{pages.number === 1 ? "" : ` · page ${pages.number}`}
           {pages.mailbox === null ? "" : " · one mailbox"}
+          {/*
+            A searched page says so, because `3 shown` over a mailbox of nine hundred is only honest if the
+            reader can see that a filter is on. The empty case is the one that matters: without this, a search
+            that matched nothing is a screen indistinguishable from an empty mailbox.
+
+            **A full page of results says it is capped**, and this is the honest form of a decision rather than
+            a nicety. A search returns one page of the best matches by relevance and there is no way to page
+            further, because bm25 rank shifts as mail arrives and a cursor into a ranked list would skip and
+            repeat rows silently. So a reader seeing exactly a page's worth needs to know that narrowing the
+            words is how to see different mail — otherwise "50 shown" reads as "50 matches", which is a claim
+            nothing here can make.
+          */}
+          {pages.term === null
+            ? ""
+            : messages.data.messages.length < PAGE_FULL
+              ? " · searched"
+              : " · best matches — narrow the words to see others"}
         </p>
       ) : null}
     </header>
@@ -434,7 +546,35 @@ export function Inbox() {
     return (
       <>
         {heading}
-        {pages.number === 1 ? (
+        {pages.term !== null ? (
+          /*
+            A search that matched nothing, which is a **third** empty and the reason this branch comes first
+            (#107).
+
+            The two below are statements about the Node and about the page. This one is a statement about the
+            words: mail may well have arrived and be sitting on page one unsearched. Saying "no messages are
+            visible to you yet" here would be false, and offering the routing check would send somebody to
+            diagnose their DNS because they misspelled a supplier's name.
+
+            So it names the term back, says what was searched, and offers the way out — a search with no
+            clear affordance is a mailbox that stays empty for ever. `unfiltered` is deliberately **not**
+            passed: this list is filtered, by the search and by authorization both, and claiming nothing has
+            been hidden would be the exact opposite of true.
+          */
+          <>
+            <Nothing
+              kind="empty"
+              detail={`No mail matches those words in a subject or sender address${
+                pages.mailbox === null ? "" : ", in this mailbox"
+              }. Every word has to appear, and only subjects and senders are searched — not message bodies.`}
+            />
+            <p className="row-actions">
+              <button type="button" className="linkish" onClick={() => pages.searchFor(null)}>
+                clear the search
+              </button>
+            </p>
+          </>
+        ) : pages.number === 1 ? (
           /*
             What an empty list means, and nothing further (#101).
 

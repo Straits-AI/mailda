@@ -109,7 +109,7 @@ export interface RouteSpec {
  * spelling it in three places would be a way to reintroduce it one refactor later. Path templates are
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
-export const MESSAGE_PAGE_PARAMS = { cursor: "cursor", mailbox: "mailbox" } as const;
+export const MESSAGE_PAGE_PARAMS = { cursor: "cursor", mailbox: "mailbox", q: "q" } as const;
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -227,6 +227,11 @@ export const ROUTES = [
       {
         name: MESSAGE_PAGE_PARAMS.mailbox,
         description: "Only this mailbox's mail. Omit for every mailbox you may read.",
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.q,
+        description: "Words that must all appear in the subject or sender address. The last word matches as "
+          + "a prefix, so a part-typed word narrows. Not a query language: operators are read as words.",
       },
     ],
     response: S.messageListResponse,

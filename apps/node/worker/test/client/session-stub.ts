@@ -42,6 +42,16 @@ let mailboxes: StubMailbox[] = ONE_MAILBOX;
 /** The inbox list. Empty by default, which is the state most of these tests are about. */
 let messages: unknown[] = [];
 let handler: Handler = () => undefined;
+/**
+ * Per-path answers, which is what most suites actually want.
+ *
+ * `answerWith` hands a test every call; `answerDrafts` hands it one family. Neither composes, so a suite
+ * needing to answer *two* paths had to write the routing itself — and the version that gets written in a
+ * hurry answers `/api/messages` and forgets `/api/mailboxes`, which fails somewhere unrelated to the
+ * assertion. A map keyed by path prefix composes by construction: each `answer` call replaces its own route
+ * and leaves the others alone.
+ */
+const routes = new Map<string, (url: string) => unknown>();
 
 /**
  * What every call other than the mailbox list answers.
@@ -67,6 +77,26 @@ export function answerDrafts(next: (call: Call) => Promise<Response> | Response)
   handler = (call) => (call.path.startsWith("/api/drafts") ? next(call) : undefined);
 }
 
+/**
+ * Answer one path prefix with a JSON body, leaving every other route alone.
+ *
+ * The callback receives the **full path including the query string**, because that is usually the thing under
+ * test — whether a filter, a cursor or a search term reached the Node at all.
+ */
+export function answer(prefix: string, body: (url: string) => unknown): void {
+  routes.set(prefix, body);
+}
+
+/**
+ * Every request made to a path prefix, in order, with query strings intact.
+ *
+ * Returns paths rather than `Call` objects because the count and the query string are what assertions are
+ * about — and a test that wants to prove a request was *not* made needs a list it can measure the length of.
+ */
+export function seen(prefix: string): string[] {
+  return calls.filter((call) => call.path.startsWith(prefix)).map((call) => call.path);
+}
+
 export function answerMailboxes(rows: StubMailbox[]): void {
   mailboxes = rows;
 }
@@ -80,6 +110,7 @@ export function reset(): void {
   mailboxes = ONE_MAILBOX;
   messages = [];
   handler = () => undefined;
+  routes.clear();
 }
 
 /**
@@ -108,6 +139,14 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
    */
   const answered = await handler(call);
   if (answered !== undefined) return answered;
+  /*
+   * Per-path answers come after `answerWith` and before the scenery defaults, which is the same ordering rule
+   * the comment above establishes: an explicit instruction beats a default, and the more specific instruction
+   * beats the more general one.
+   */
+  for (const [prefix, body] of routes) {
+    if (call.path.startsWith(prefix)) return Response.json(body(call.path));
+  }
   if (path.startsWith("/api/mailboxes")) return Response.json({ mailboxes });
   if (path.startsWith("/api/messages")) return Response.json({ messages });
   /*

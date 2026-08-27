@@ -1,7 +1,7 @@
 ---
 id: doctor-check-cost
 kind: measured-tripwire
-measured_on: 2026-08-05
+measured_on: 2026-08-27
 stale_when: >
   Cloudflare changes the per-invocation subrequest ceiling on either plan again, the Worker starts declaring a
   limits.subrequests block (which would override the platform default), R2 head stops counting as a
@@ -14,6 +14,47 @@ values:
   doctor.free.max_subrequests: 1000
   doctor.max_subrequests_per_run: 220
 ---
+
+## Correction, 27 August 2026: the search-index check, one new subrequest — and a baseline that had drifted unrecorded (#107)
+
+`search_index_backlog` counts messages not yet in the metadata search index, so a person searching for
+last month's mail can tell *"no such message"* from *"this Node is still catching up"*. It is one aggregate
+query with no R2 and no per-row cost.
+
+Measured by removing the check and re-running the same fixtures in the same session:
+
+```
+without   subrequests=26  d1=20  r2=6  findings=23
+with      subrequests=27  d1=21  r2=6  findings=24
+```
+
+**+1 subrequest, +1 D1 query, +1 finding.** The Butler-bearing fixtures moved the same way — 46→47, 48→49,
+49→50 — so it is a fixed cost and not one that grows with anything. Against `doctor.max_subrequests_per_run
+= 220` the deployed run now sits at 27, which is 8.1× inside the tripwire. The figure does not move.
+
+`unindexedMessages` is one prepare and one execution, and `search.ts` is now listed in
+`doctor-meter-honesty.test.ts`'s `DOCTOR_PATH`. That file also holds two **writes** — `indexMessage` and
+`backfillSearchIndex` — which `runDoctor` never reaches: the first runs only in the ingest batch and the
+second only from the scheduled handler. The guard reads the file rather than the call graph, so the argument
+has to be that they are unreachable from here rather than that they do not exist, which is the same argument
+`recovery.ts` carries.
+
+### The baseline was already stale by three subrequests, and that is worth recording
+
+The correction below records `with subrequests=23 d1=17 r2=6 findings=20` as of 21 August. The measured
+baseline immediately before *this* change was **26 / 20 / 6 / 23** — three subrequests and three findings
+higher, on the same fixtures.
+
+So checks were added between those two dates without this receipt being corrected, and `stale_when` names
+exactly that case: *"including any new fixed-cost check, which is what made the 4 August figure stale"*. The
+tripwire did not fire because 220 is generous, which is precisely how a measured figure rots — the assertion
+that guards it is a ceiling, and a ceiling says nothing while there is headroom. What this correction can
+honestly do is record the current baseline and the delta it measured; attributing the three to particular
+checks after the fact would be reconstruction, and this file is for measurements.
+
+**What would have caught it:** an assertion on the *number* rather than on the ceiling. Not proposed here as
+a change, because a run cost that must be updated on every legitimate new check is the kind of assertion that
+gets muted — but the alternative is this paragraph, and it is the second time this file has had to write one.
 
 ## Correction, 21 August 2026: three new checks, one new subrequest — and a second that a Node without Butlers never spends (#75)
 

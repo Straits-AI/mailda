@@ -2,6 +2,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
+import { ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
@@ -698,6 +699,15 @@ export interface MessagePage {
   after: { at: string; id: string } | null;
   /** Bound the page to one mailbox, or null for every mailbox this reader may read. */
   mailboxId: string | null;
+  /**
+   * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
+   *
+   * **Already rebuilt, never the caller's text.** The raw parameter is turned into a quoted expression at the
+   * edge, because `MATCH` is a query language in which ordinary typing — `AND`, `10:30`, `foo(` — is a syntax
+   * error rather than a search that finds nothing. Typed as the built expression so a later caller cannot
+   * hand this field a person's keystrokes and have it reach the index.
+   */
+  q: string | null;
 }
 
 /**
@@ -758,7 +768,18 @@ const CURSOR_ID = idPattern(ID_PREFIXES.ingressReceipt);
 export function messagePageRequest(url: URL): MessagePage {
   const raw = url.searchParams.get(MESSAGE_PAGE_PARAMS.cursor);
   const mailboxId = url.searchParams.get(MESSAGE_PAGE_PARAMS.mailbox);
-  if (raw === null) return { after: null, mailboxId };
+  /*
+   * The search term is **rebuilt here rather than validated**, which is the opposite of the cursor beside it,
+   * and the difference is which party made the string.
+   *
+   * A malformed cursor is refused because a client mangled a value this Node handed it, so there is a bug to
+   * report. `q` is a person typing into a box: there is no malformed input, only words. `ftsQuery` keeps the
+   * letters and numbers and drops everything else, so `AND`, `10:30` and `foo(` are searches rather than the
+   * `fts5: syntax error` they would be if forwarded — and a blank or punctuation-only box yields `null`,
+   * meaning no predicate at all rather than a filter matching nothing.
+   */
+  const q = ftsQuery(url.searchParams.get(MESSAGE_PAGE_PARAMS.q));
+  if (raw === null) return { after: null, mailboxId, q };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -774,7 +795,7 @@ export function messagePageRequest(url: URL): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId };
+  return { after: { at: instant, id }, mailboxId, q };
 }
 
 /**
@@ -824,7 +845,7 @@ export function messagePageQuery(args: {
     filters.push("AND a.mailbox_id = ?");
     filterParams.push(args.page.mailboxId);
   }
-  if (args.page.after !== null) {
+  if (args.page.after !== null && args.page.q === null) {
     /*
      * Two predicates for one comparison, and the split is what makes the index work.
      *
@@ -842,36 +863,116 @@ export function messagePageQuery(args: {
     filterParams.push(args.page.after.at, args.page.after.at, args.page.after.id);
   }
 
-  return {
-    // `case_id` travels with the message so the reply button can claim in one act (#42). Without it the
-    // interface would have to fetch a queue to find the case for the message it is already showing, and
-    // "claim then compose" would be two round trips wearing one gesture.
-    //
-    // Correlated on the delivery's own mailbox, so it is the case in *this* queue — a conversation reaching
-    // two mailboxes has a case in each, and the one that matters is the one belonging to the mailbox this
-    // reader is looking at.
-    //
-    // `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
-    // one join rather than from a second question. It is stripped from the response below: the row shape is a
-    // client contract (`MessageRow`), and an undeclared column is a field somebody starts depending on.
-    sql: `SELECT r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
+  /*
+   * The columns, spelled once for both plans below.
+   *
+   * `MessageRow` is a client contract, so a searched page and a plain one must return the same shape or the
+   * interface renders two different things depending on whether somebody typed in a box. Two column lists
+   * would be two places for that to drift, which is the divergence `original-bytes-world.test.ts` exists
+   * because of.
+   *
+   * `case_id` travels with the message so the reply button can claim in one act (#42) — without it the
+   * interface would fetch a queue to find the case for the message it is already showing, and "claim then
+   * compose" would be two round trips wearing one gesture. Correlated on the delivery's own mailbox, so it is
+   * the case in *this* queue: a conversation reaching two mailboxes has a case in each.
+   *
+   * `sg.grant_id` is the supervised half of the authorization **and** the attribution the record needs, from
+   * one join rather than a second question. It is stripped from the response: an undeclared column is a field
+   * somebody starts depending on.
+   */
+  const columns = `r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
             a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
             m.conversation_id, sg.grant_id AS supervised_grant_id,
             (SELECT c.id FROM cases c
               WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
-                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id
+                AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id`;
+
+  /*
+   * Who may see a row, spelled once for both plans — a standing relation or a live supervised grant.
+   *
+   * **Shared deliberately and not by tidiness.** Two plans with two copies of an authorization predicate is
+   * precisely the shape that let `authorizeExport` and the outbound bytes route diverge for four months
+   * (#95), and a search that authorized slightly differently from the listing would be a second read surface
+   * over the same mail — which is what #107 refused to build as a separate endpoint in the first place.
+   */
+  const authorized = `AND (sg.grant_id IS NOT NULL
+             OR a.mailbox_id IN (
+               SELECT object_id FROM relationship_tuples
+                WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
+                  AND object_type = 'mailbox' AND relation IN (${metadataRelationPlaceholders})
+             ))`;
+  const authorizedParams = [args.orgId, ...args.subjects, ...RELATIONS_FOR_METADATA];
+
+  if (args.page.q !== null) {
+    /*
+     * ## A searched page is a different plan, driven by the index, ranked and capped
+     *
+     * This was first built the other way — the match as one more predicate on the listing, keeping the
+     * `accepted_at` ordering and the keyset cursor — on the argument that a semi-join leaves
+     * `ingress_receipts` driving and so a searched page pages exactly like an unsearched one. That argument
+     * was wrong, and measurement is the only reason anybody knows:
+     *
+     * | shape, 1,200 deliveries | rare term (12 hits) | common term (1,188 hits) |
+     * |:--|--:|--:|
+     * | time-driven, match as a filter | **3,640** | 2,584 |
+     * | index-driven, `ORDER BY rank` | **51** | **206** |
+     * | index-driven, `ORDER BY accepted_at` | 63 | **5,943** |
+     *
+     * Ordering by time while filtering by match costs **O(corpus), not O(matches)**: to fill a page of the
+     * twelve newest matching messages the scan walks all 1,200 receipts in time order, because nothing about
+     * the time index knows which of them match. `AS MATERIALIZED` on the subquery did not help — it removed
+     * the repeated match and left the walk, which was the expensive half.
+     *
+     * And ordering the *index-driven* plan by time is worse again on a common term: 5,943, because every one
+     * of 1,188 matches has to be fetched and sorted before fifty can be returned.
+     *
+     * `ORDER BY rank LIMIT n` is the only shape inside `authz.list.max_rows_read` for both — which is exactly
+     * what the search scoping decided for its own reason (bm25 rank shifts as mail arrives, so a rank-ordered
+     * cursor skips and repeats rows silently). The cost argument and the correctness argument land on the same
+     * design, and this comment records that the correctness one was reached first and believed on its own.
+     *
+     * **So a searched page has no cursor and returns one page.** `listMessages` sets `next_cursor` to null.
+     * The cursor predicate above is skipped for the same reason: a position in a time ordering means nothing
+     * in a ranked one.
+     */
+    return {
+      sql: `SELECT ${columns}
+       FROM message_search s
+       JOIN messages m ON m.id = s.message_id
+       JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
+       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+       LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+      WHERE s.message_search MATCH ? AND s.org_id = ?
+        AND r.org_id = ?
+        ${filters.join("\n        ")}
+        ${authorized}
+      ORDER BY rank
+      LIMIT ?`,
+      /*
+       * **Textual order, and the FROM clause is not the order.** The supervised subquery is interpolated into a
+       * `LEFT JOIN`, which comes before the `WHERE` in the statement text — so its placeholders bind first,
+       * ahead of the `MATCH` even though the FTS table is named first in the `FROM`.
+       *
+       * Got this wrong on the first attempt by binding the `MATCH` first, and the failure mode is worth
+       * recording: the query returned **zero rows** for every term rather than raising. A misordered bind is a
+       * search that silently finds nothing, which is indistinguishable from a mailbox with no matching mail.
+       */
+      params: [
+        ...args.supervised.params, args.page.q, args.orgId, args.orgId, ...filterParams,
+        ...authorizedParams, args.limit,
+      ],
+    };
+  }
+
+  return {
+    sql: `SELECT ${columns}
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
        LEFT JOIN messages m ON m.ingress_receipt_id = r.id
        LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
       WHERE r.org_id = ?
         ${filters.join("\n        ")}
-        AND (sg.grant_id IS NOT NULL
-             OR a.mailbox_id IN (
-               SELECT object_id FROM relationship_tuples
-                WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
-                  AND object_type = 'mailbox' AND relation IN (${metadataRelationPlaceholders})
-             ))
+        ${authorized}
       ORDER BY r.accepted_at DESC, r.id DESC
       LIMIT ?`,
     // `id DESC` beside the timestamp is the tie-break the cursor needs to be total. One delivery to two
@@ -879,8 +980,7 @@ export function messagePageQuery(args: {
     // their relative position to the planner would let a page boundary fall between them differently on the
     // two queries that span it — dropping one and repeating the other.
     params: [
-      ...args.supervised.params, args.orgId, ...filterParams, args.orgId, ...args.subjects,
-      ...RELATIONS_FOR_METADATA, args.limit,
+      ...args.supervised.params, args.orgId, ...filterParams, ...authorizedParams, args.limit,
     ],
   };
 }
@@ -1024,7 +1124,17 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
      * "this is all the mail". A row this reader may not see is not counted, and a grant expiring a second
      * from now would change the answer — so the field is a position to resume from rather than a statement
      * about the archive. The interface renders it as a control that exists or does not, never as a count.
+     *
+     * **Always null for a searched page** (#107), and this is a property of the ordering rather than a
+     * limitation anybody chose to accept. A searched page is ordered by bm25 rank, and rank depends on
+     * corpus-wide term frequency — so it shifts every time mail arrives, which in a mail system is
+     * continuously. A cursor into a ranked list would therefore skip and repeat rows **silently**, which is
+     * the failure mode this repository keeps finding rather than a rough edge.
+     *
+     * So a search answers one capped page of the best matches and says so. Narrowing the words is the way to
+     * see different mail, not paging. `messagePageQuery` skips the cursor predicate for the same reason: a
+     * position in a time ordering means nothing in a ranked one.
      */
-    next_cursor: more ? cursorOf(listed[listed.length - 1]!) : null,
+    next_cursor: page.q === null && more ? cursorOf(listed[listed.length - 1]!) : null,
   });
 }
