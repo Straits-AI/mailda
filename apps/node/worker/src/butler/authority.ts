@@ -1,6 +1,6 @@
 import { LOOKUP_ENTITIES } from "@mailda/butler-ast";
 
-import type { MailboxRelation } from "../access.ts";
+import { RELATIONS_FOR_METADATA, type MailboxRelation } from "../access.ts";
 import { readableSubjects } from "../authz-read.ts";
 import { ceilingAddresses } from "./ceiling.ts";
 import { ButlerFault } from "./expr.ts";
@@ -95,8 +95,14 @@ import type { ReadOnlyEnv } from "../read-only.ts";
  * | `draft` | none — the author must be the Butler | `drafts.author_user_id` is the only reader a draft has (0012), and Layer 3 has not decided what sharing one means |
  */
 
-/** Metadata or content, which is the pair the queue's own reads accept. */
-const READABLE: readonly MailboxRelation[] = ["mailbox.metadata.read", "mailbox.content.read"];
+/**
+ * Metadata or content, which is the pair the queue's own reads accept.
+ *
+ * `RELATIONS_FOR_METADATA` rather than the pair written again: this was one of three copies, and the third
+ * one — a SQL literal in `messagePageQuery` — had only `content.read` and silently emptied the inbox of
+ * anybody holding `metadata.read`.
+ */
+const READABLE = RELATIONS_FOR_METADATA;
 
 /** What one `lookup` may put into a run's state, per entity. Closed, and closed by the compiler. */
 const PROJECTION: { [K in (typeof LOOKUP_ENTITIES)[number]]: readonly string[] } = {

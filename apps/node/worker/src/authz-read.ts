@@ -1,7 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
-import type { MailboxRelation } from "./access.ts";
+import { RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
@@ -33,7 +33,7 @@ import {
  * |:--|:--|:--|:--|
  * | `mayRead` | `mailbox.content.read` | scope `content` | Reading the bytes is what a supervised read is for. |
  * | `mayReadMetadata` | `metadata.read` or `content.read` | scope `metadata` or `content` | Content is the stronger authority on both sides. |
- * | `listMessages` | `mailbox.content.read` | scope `metadata` or `content` | An investigation starts with a query; a grant that could not list would be a grant nobody could use. |
+ * | `listMessages` | `metadata.read` or `content.read` | scope `metadata` or `content` | An investigation starts with a query; a grant that could not list would be a grant nobody could use. The standing arm read `content.read` alone for four months while this table said otherwise — `RELATIONS_FOR_METADATA`. |
  * | `holdsStandingRead` | `mailbox.content.read` | **no** | The gate in front of `mergeConversations`. Reading is not restructuring. |
  * | `maySend` | `send.propose` | **no** | Reading somebody's mail is not authority to write as them. |
  * | `mailboxesWithRelation` | the named relation | **no** | Only ever asked about `send.propose`, and a supervised grant is not a relation this returns. |
@@ -352,7 +352,7 @@ export async function mayReadMetadata(
   who: Principal,
   mailboxId: string,
 ): Promise<Authority> {
-  return hasAnyRelation(env, who, ["mailbox.metadata.read", "mailbox.content.read"], mailboxId, {
+  return hasAnyRelation(env, who, RELATIONS_FOR_METADATA, mailboxId, {
     scopes: SCOPES_FOR_METADATA,
     at: new Date(ctx.now()).toISOString(),
   });
@@ -807,6 +807,17 @@ export function messagePageQuery(args: {
   limit: number;
 }): { sql: string; params: unknown[] } {
   const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
+  /*
+   * **Bound, not interpolated, and derived rather than spelled.** This predicate read
+   * `relation = 'mailbox.content.read'` for four months while the header below claimed the columns were what
+   * `mailbox.metadata.read` covers — so somebody holding exactly the relation the access UI describes as
+   * *"See that mail exists"* got an empty inbox, which is indistinguishable from having no mail.
+   *
+   * The list comes from `RELATIONS_FOR_METADATA` so a renamed relation is a type error rather than a
+   * predicate that matches no tuple. A literal inside a SQL string is the one place in this file that no type
+   * could reach, which is exactly where the hole was.
+   */
+  const metadataRelationPlaceholders = RELATIONS_FOR_METADATA.map(() => "?").join(", ");
   const filters: string[] = [];
   const filterParams: unknown[] = [];
   if (args.page.mailboxId !== null) {
@@ -859,7 +870,7 @@ export function messagePageQuery(args: {
              OR a.mailbox_id IN (
                SELECT object_id FROM relationship_tuples
                 WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
-                  AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+                  AND object_type = 'mailbox' AND relation IN (${metadataRelationPlaceholders})
              ))
       ORDER BY r.accepted_at DESC, r.id DESC
       LIMIT ?`,
@@ -867,7 +878,10 @@ export function messagePageQuery(args: {
     // addresses of the same mailbox arrives as two receipts sharing a millisecond, and an ordering that left
     // their relative position to the planner would let a page boundary fall between them differently on the
     // two queries that span it — dropping one and repeating the other.
-    params: [...args.supervised.params, args.orgId, ...filterParams, args.orgId, ...args.subjects, args.limit],
+    params: [
+      ...args.supervised.params, args.orgId, ...filterParams, args.orgId, ...args.subjects,
+      ...RELATIONS_FOR_METADATA, args.limit,
+    ],
   };
 }
 

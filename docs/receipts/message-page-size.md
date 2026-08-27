@@ -1,11 +1,12 @@
 ---
 id: message-page-size
 kind: measured-tripwire
-measured_on: 2026-08-26
+measured_on: 2026-08-27
 stale_when: >
   the ir_org_accepted index is dropped or reordered; messagePageQuery gains a join, a correlated subquery or
-  a predicate, since the per-row cost below is four index seeks and each one of those adds another; a sibling
-  field is added to the supervised.query entry's detail, which lowers how many ids one entry holds;
+  a predicate, since the per-row cost below is four index seeks and each one of those adds another;
+  RELATIONS_FOR_METADATA gains or loses a relation, since the tuple sub-select probes one row per relation;
+  a sibling field is added to the supervised.query entry's detail, which lowers how many ids one entry holds;
   audit.max_detail_bytes moves; or authz.list.max_rows_read moves
 values:
   messages.page_size: 50
@@ -23,6 +24,14 @@ number stays 50 and now has a reason, a ceiling above it, and a condition that w
 query that ships. `authz-check-rows-read.md` records what happens when they do not: it says of this very
 listing *"gained a `UNION` inside its mailbox sub-select and is not separately priced here"*.
 
+**Every figure here rose by exactly 2 on 27 August 2026**, and the cause is worth a line rather than a
+silent re-measure. `messagePageQuery`'s standing-relation arm read `AND relation = 'mailbox.content.read'` —
+one relation — while its own header claimed the columns were what `mailbox.metadata.read` covers. So somebody
+holding exactly the relation the access UI sells as *"See that mail exists"* was shown an empty inbox. The
+predicate now reads `IN (?, ?)` from `RELATIONS_FOR_METADATA`, the sub-select probes one row per relation,
+and every figure below moved by the one extra probe. Nothing about the row shape changed, which is why the
+byte columns did not move.
+
 Corpus: 1,200 deliveries across three mailboxes, one reader holding `mailbox.content.read` on all three,
 realistic field widths (64-character digests, RFC message-ids, a 62-character subject, typed-prefix ULIDs).
 Every fourth delivery shares its predecessor's `accepted_at`, because one message to two addresses of one
@@ -38,14 +47,15 @@ pressure, and a direct test of whether the index is used.
 
 | page size | rows read, page 1 | rows read, one mailbox | body bytes |
 |---:|---:|---:|---:|
-| 25 | 108 | 132 | 12,351 |
-| **50** | **208** | **258** | **24,226** |
-| 100 | 408 | 508 | 47,976 |
-| 200 | 808 | **1,008** | 95,473 |
+| 25 | 110 | 134 | 12,351 |
+| **50** | **210** | **260** | **24,226** |
+| 100 | 410 | 510 | 47,976 |
+| 200 | 810 | **1,010** | 95,473 |
 
 Four seeks per returned row — the receipt, its address, its message, its case — plus the page's one probe
-row and the tuple sub-select. So `rows_read ≈ 4 × (size + 1) + 4`, and `authz.list.max_rows_read = 1000`
-puts the cost ceiling a little under **200**: at 200 a page bounded to one mailbox already reads 1,008.
+row and the tuple sub-select, which probes **two** relations. So `rows_read ≈ 4 × (size + 1) + 6`, and
+`authz.list.max_rows_read = 1000` puts the cost ceiling a little under **200**: at 200 a page bounded to one
+mailbox already reads 1,010.
 
 **These figures were not reproducible when first recorded**, and the fix was in the corpus rather than in
 the table. The keyset order is `(accepted_at, id)`, every fourth delivery in the fixture shares a timestamp
@@ -64,14 +74,14 @@ in mailbox A, so filling 51 rows takes about 76 receipts.
 
 | | rows read |
 |:--|---:|
-| page 1 | 208 |
-| page 20 | 210 |
-| page 1, **without** `ir_org_accepted` | 6,004 |
-| page 5, without `ir_org_accepted` | 5,204 |
+| page 1 | 210 |
+| page 20 | 212 |
+| page 1, **without** `ir_org_accepted` | 6,006 |
+| page 5, without `ir_org_accepted` | 5,206 |
 
 **The index is load-bearing and it did not exist.** `ingress_receipts` has been ordered by `accepted_at`
 since Layer 1 and carried no index on it — only the primary key and `ir_derived_key` on `(org_id,
-provider_event_id)`. So *every inbox load already scanned the whole table and sorted it*: 6,004 rows read on
+provider_event_id)`. So *every inbox load already scanned the whole table and sorted it*: 6,006 rows read on
 1,200 deliveries, against a 1,000-row budget, on the first page. That was invisible because the fixtures have
 three messages in them. Migration `0038_inbox_page_order.sql` adds `(org_id, accepted_at, id)`, and the
 measurement above is with and without it in the same run.
@@ -107,7 +117,7 @@ order is read out of it rather than sorted afterwards.
 
 **`messages.page_size = 50`**, from the tighter of two ceilings:
 
-- **The list budget** allows a little under 200. That is the cost ceiling, and 50 sits 4.8× inside it (208
+- **The list budget** allows a little under 200. That is the cost ceiling, and 50 sits 4.8× inside it (210
   rows against 1,000).
 - **One supervised query, one audit entry** allows **57**, measured by asking `buildSupervisedQuery` where it
   splits rather than by arithmetic. §7 records each listing as an act; a page whose id list will not fit
@@ -129,7 +139,7 @@ against the ceilings rather than against how much a person likes scrolling.
 ## What this does not fix, with the number so nobody has to guess
 
 **A page bounded to a quiet mailbox is bounded by the archive, not by the page.** Measured: a mailbox holding
-the 3 oldest deliveries of 1,200 answers its 3 rows correctly and reads **2,410** — the whole corpus, twice,
+the 3 oldest deliveries of 1,200 answers its 3 rows correctly and reads **2,412** — the whole corpus, twice,
 because the ordering is `accepted_at` and the mailbox is reached through `addresses`.
 
 This is **not** something the mailbox filter introduced. The authorization predicate has the same shape, so a

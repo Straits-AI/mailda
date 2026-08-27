@@ -66,6 +66,11 @@ type ConferredBy = "admin_grant" | "supervised_grant";
  * hole `mailbox.metadata.read` was. A grantable relation nothing checks and a checked relation nobody can hold
  * are the same defect from opposite ends.
  *
+ * **The past tense in that sentence was premature, and the correction is `RELATIONS_FOR_METADATA` below.**
+ * The queue was taught this relation; the message listing was not, for four months. There is a third state
+ * between "nothing checks it" and "something checks it" — *some* things check it — and it is the hardest of
+ * the three to see, because whichever surface you look at first works.
+ *
  * `as const satisfies` rather than a type annotation, so `keyof` is the five literal keys and not `string`. A
  * `Record<string, …>` annotation would have made every helper below accept any string it was handed, and the
  * failure mode is a typo that grants nothing and reports success.
@@ -179,6 +184,37 @@ export type MailboxRelation = {
 
 /** The one relation no tuple carries. Named once, so nothing spells it twice. */
 export const SUPERVISED_RELATION = "supervised.read" as const satisfies Relation;
+
+/**
+ * Every standing relation that permits reading a message's **metadata** — subject, sender, size, when.
+ *
+ * `mailbox.content.read` is here because it is strictly stronger: somebody who may read the bytes may
+ * certainly know a message arrived. So this is the pair, and `mailbox.metadata.read` alone is the interesting
+ * member — it is the relation the access UI sells as *"See that mail exists — senders, subjects, when. Not
+ * the message itself."*
+ *
+ * ## Why this is a constant rather than a list written where it is needed
+ *
+ * It was written in two places and needed in three, and the third is how the hole survived. `mayReadMetadata`
+ * had the pair and gated the queue on it. `butler/authority.ts` had the pair. **`messagePageQuery`'s
+ * standing-relation arm read `AND relation = 'mailbox.content.read'`** — one relation, spelled once, inside a
+ * SQL string where no type could reach it — while its own header claimed *"the columns returned are subject
+ * line, sender address and size, which is what `mailbox.metadata.read` covers"*.
+ *
+ * So a person granted exactly the relation the interface describes could open the queue and saw an inbox
+ * indistinguishable from an empty mailbox. Not a refusal they could report — mail that was not there.
+ *
+ * The comment above about `mailbox.metadata.read` being a hole that *"was"* is what makes this worth a
+ * paragraph: the relation was added to close a real leak in the queue, that half was finished, and the past
+ * tense was written before the listing had been taught the same thing. A relation that grants *some* of what
+ * it says is harder to notice than one that grants nothing, because the surface you check first works.
+ *
+ * `satisfies readonly MailboxRelation[]` so a renamed relation is a type error at every site rather than a
+ * predicate that matches no tuple and denies quietly — the failure `MailboxRelation` itself exists to stop.
+ */
+export const RELATIONS_FOR_METADATA = [
+  "mailbox.metadata.read", "mailbox.content.read",
+] as const satisfies readonly MailboxRelation[];
 
 export function isGrantable(relation: string): relation is Grantable {
   return Object.hasOwn(GRANTABLE, relation)
