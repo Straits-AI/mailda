@@ -130,7 +130,14 @@
   // silently defeats every tool that would otherwise check it.
   // fallthrough keeps wrangler's default Text rules (.sql, .html, .txt) in effect; without it
   // this rule replaces them entirely.
-  "rules": [{ "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true }],
+  //
+  // `Data` gives the woff2 files as ArrayBuffers so `ui.ts` can serve them from this origin. The interface
+  // now loads webfonts and they are **all local** — `fonts/README.md` records why that is a product rule
+  // and not a preference, and why Satoshi is named in the stack but not in the directory.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.client.js"], "fallthrough": true },
+    { "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }
+  ],
 
   // The authenticated application is React and therefore needs a build (ADR 30). This belongs to
   // wrangler rather than to `pnpm run deploy`, because a one-click install runs `npx wrangler deploy`

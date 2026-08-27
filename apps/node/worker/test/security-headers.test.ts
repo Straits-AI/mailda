@@ -235,6 +235,21 @@ describe("the policy says what it needs to say", () => {
     expect(JSON.stringify([...policy])).not.toContain("unsafe-");
   });
 
+  it("permits fonts from this origin and nowhere else", async () => {
+    /*
+     * The directive that did not exist until the interface acquired webfonts, and the one most likely to be
+     * widened by somebody reaching for Google Fonts or a CDN. Mailda's premise is custody: a page about
+     * owning your mail must not hand a third party every viewer's IP address on every load, and
+     * `fonts/README.md` records that this is why Satoshi is named in the type stack and never shipped.
+     *
+     * Asserted as an exact match rather than "contains 'self'", so an added host fails. A policy that lists
+     * `'self'` **and** a CDN is not a narrower policy than one listing the CDN alone.
+     */
+    const policy = policyOf(await fetchPath("/"));
+    expect(policy.get("font-src"), "font-src is missing, so it falls back to default-src 'none' and the "
+      + "interface's own fonts are refused").toEqual(["'self'"]);
+  });
+
   it("names the receipt's max-age and claims nothing about subdomains", async () => {
     const hsts = (await fetchPath("/")).headers.get("strict-transport-security");
     expect(hsts).toBe(`max-age=${BUDGETS["security.hsts_max_age_seconds"]}`);

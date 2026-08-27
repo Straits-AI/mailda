@@ -593,6 +593,12 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/contrast-tokens.md — the three the brand palette added
+  ...mailda(
+    "contrast ratios between Mailda's own design tokens. A Cloudflare plan does not have a colour",
+    "contrast.accent_text_light_worst", "contrast.accent_text_dark_worst", "contrast.accent_ui_worst",
+  ),
+
   // docs/receipts/message-search-cost.md
   ...mailda(
     "rows read by Mailda's own searched-page statement, measured against a seeded corpus",
@@ -612,6 +618,12 @@ const FIGURES: Record<string, Classification> = {
 
   // docs/receipts/react-shell-bundle.md
   ...mailda("the bytes Mailda's own shell ships", "shell.bundle_bytes", "shell.bundle_gzip_bytes", "shell.pre_auth_bundle_bytes"),
+
+  // docs/receipts/react-shell-bundle.md — the webfonts, added with the branding
+  ...mailda(
+    "bytes of typeface this Node serves from its own origin. A Cloudflare plan does not change a font file",
+    "shell.font_bytes",
+  ),
 
   // docs/receipts/runtime-validator.md
   ...mailda(

@@ -1396,6 +1396,34 @@ rotation that does not sign anyone out. Everything else in the contract above is
 
 ---
 
+## The interface wears the brand, and three of the brand's own numbers did not survive contact
+
+The Mailda identity — Ink, Flow Blue, Sky, Mist, White; Satoshi and Inter; a continuous-line M with a blue
+dot — is applied to the shell. Light is the default theme now, which is the brand's own ground, and dark
+follows the system. What is worth knowing is where the brand sheet and an accessible, custody-respecting
+product disagreed, because in each case the resolution is written down rather than fudged:
+
+- **Flow Blue cannot carry body text on Mist or Sky.** Measured: 4.53:1 on white — AA by three
+  hundredths — then 4.11 and 3.87, which fail. So the accent is two tokens split by use: the brand hex for
+  fills, borders, focus rings and the mark's dot, and a five-percent-darker same-hue blue for anything a
+  person reads. ([receipt](./docs/receipts/contrast-tokens.md))
+- **Satoshi is named in the type stack and never shipped.** Its licence allows self-hosting and forbids
+  modifying and redistributing — and this repository *is* how customers get updates, so committing it would
+  redistribute it to every one of them from a public URL. A designer with it installed sees the brand
+  exactly; everybody else gets Plus Jakarta Sans, served from this Node.
+  ([provenance](./apps/node/worker/fonts/README.md))
+- **The brand supplies no warning, error or healthy colour**, and a mail product needs all three. Those are
+  kept from the previous palette, verified against the new grounds, and labelled as an extension of the brand
+  rather than part of it.
+
+The interface now loads four webfonts where it previously loaded none, and the rule that forbade them is
+intact: it was never about webfonts, it was about third parties. All four are same-origin under a
+`font-src 'self'` policy that a test asserts is exactly that — adding a CDN host fails it.
+
+**The logo mark in this repository is a reconstruction traced from raster artwork**, and `src/brand.ts` says
+so in its first paragraph. It is fine at interface sizes and should not be used for print or an app icon
+until the real vector replaces it, which is a one-line change.
+
 ## What's distinctive about how it's built
 
 **Every number has a receipt.** No limit, timeout, threshold or budget enters the codebase

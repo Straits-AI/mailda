@@ -2,9 +2,17 @@ import { BUDGETS } from "@mailda/budgets";
 
 import appScript from "./client/app.client.js";
 import shellBundle from "../generated/app.bundle.client.js";
+// The webfonts, as ArrayBuffers via wrangler's `Data` rule. Served from this origin and never fetched from
+// anywhere else — `fonts/README.md` records why that is a product rule, and why Satoshi is in the stack and
+// not in the directory.
+import interRegular from "../fonts/inter-400.woff2";
+import interMedium from "../fonts/inter-500.woff2";
+import jakartaSemibold from "../fonts/jakarta-600.woff2";
+import jakartaBold from "../fonts/jakarta-700.woff2";
 import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
+import { faviconDataUri, markSvg } from "./brand.ts";
 
 /**
  * The Node's interface shell.
@@ -47,40 +55,103 @@ import { EXPIRY_COOKIE } from "./auth/session.ts";
  */
 const SHELL_CSS = `
 :root {
-  --ground: #0a0e13;
-  --ground-2: #10161e;
-  --rule: rgba(226, 215, 195, .13);
-  --rule-strong: rgba(226, 215, 195, .30);
-  --text: #e6dfd2;
-  --dim: rgba(230, 223, 210, .52);
-  --signal: #e9a35c;
-  --alarm: #e8695c;
-  --live: #86c9a4;
+  /* Mailda's palette (src/brand.ts holds the same five values for the generated SVGs — the favicon and
+     the app icon are strings, so they cannot read a CSS variable). Light is the default now, which is the
+     brand's own ground; dark is the media query below. That is the reverse of what this stylesheet did
+     when it was an instrument panel, and the meta color-scheme in the document was flipped with it. */
+  --ground: #F2F4F7;        /* Mist */
+  --ground-2: #FFFFFF;      /* White */
+  --sky: #E6EEF7;           /* Sky — quiet fills, selected rows */
+  --text: #0F1720;          /* Ink */
 
-  /* Editorial serif for prose, monospace for every figure. Two families, used with discipline —
-     labels are the monospace at small size with wide tracking, which is what gives the panel its
-     instrument character without introducing a third face. */
-  --display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, Georgia, serif;
+  /* .66, and the number is measured rather than chosen. AA wants 4.5:1 for normal text and every label on
+     this interface is normal text at .655rem; .60 gives 4.58 on Mist but 4.48 on Sky, which fails on the
+     brand's own third ground. .66 gives 5.40 / 5.61 / 5.26 across Mist, White and Sky.
+     See docs/receipts/contrast-tokens.md. */
+  --dim: rgba(15, 23, 32, .66);
+  --rule: rgba(15, 23, 32, .10);
+  --rule-strong: rgba(15, 23, 32, .22);
+
+  /* Flow Blue, and it is **not a small-text colour on anything but pure white**: 4.53:1 on white — which
+     passes AA by 0.03 — then 4.11 on Mist and 3.87 on Sky, both failing. So --accent is for the things
+     that need 3:1 (fills, borders, focus rings, icons, the dot) and --accent-text carries the same hue
+     five percent darker for anything a person reads. Splitting them is the honest way to keep the brand
+     colour and pass AA; using one token for both would mean either failing contrast or shipping a blue
+     that is not the brand's. */
+  --accent: #4C77B8;
+  --accent-text: #436BA8;
+
+  /* Attention, error, healthy. The brand sheet has no colour for any of these — it is Ink, one blue and
+     three neutrals — so they are an extension rather than a mapping, kept from the previous palette
+     because all three were already contrast-tuned and all three pass on the new grounds (5.22 / 6.10 /
+     5.44 on Mist). --warn was called --signal and carried two jobs: brand emphasis and warning. The
+     brand splitting the first out is what made the second nameable. */
+  --warn: #9A5410;
+  --alarm: #A5342A;
+  --live: #2F6F4E;
+
+  /* Satoshi first and never shipped — fonts/README.md records why: its licence permits self-hosting and
+     forbids redistribution, and this repository *is* the distribution channel (ADR 24). A designer with it
+     installed sees the brand exactly; everybody else gets Plus Jakarta Sans, which is the closest OFL face
+     to it and is served from this origin. Inter is the brand's body face and is served the same way.
+     Nothing is fetched from a third party, which is the rule the fonts changed the mechanism of but not
+     the substance of. */
+  --display: Satoshi, "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Kept. The brand names no monospace and this product needs one: every figure on this interface is
+     tabular by a rule older than the branding — "every number carries a receipt" is not a typographic
+     preference, and a proportional 8 beside a proportional 3 in a column of costs is unreadable. */
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --ground: #f1ece0;
-    --ground-2: #fbf8f1;
-    --rule: rgba(26, 22, 16, .16);
-    --rule-strong: rgba(26, 22, 16, .34);
-    --text: #1b1712;
-    /* .68, not the dark theme's .52. Measured: .58 gave 4.15:1 against --ground and 4.29:1 against
-       --ground-2, both under AA's 4.5 for normal text — and every label on this interface is normal
-       text at .655rem. .68 gives 5.71:1 / 5.98:1. See docs/receipts/contrast-tokens.md; the two
-       themes need different alphas because dark text on a light ground is not the mirror of the
-       reverse. axe cannot catch this, which is the other half of that receipt. */
-    --dim: rgba(27, 23, 18, .68);
-    --signal: #9a5410;
-    --alarm: #a5342a;
-    --live: #2f6f4e;
+    --ground: #0F1720;       /* Ink becomes the ground */
+    --ground-2: #16202B;     /* lifted one step, for surfaces that sit above it */
+    --sky: #1C2836;
+    --text: #E8EDF3;
+    /* .60 rather than light's .66, and the asymmetry is real rather than an oversight: light text on a
+       dark ground and dark text on a light one are not mirror images. .55 already passes here (5.36 /
+       5.15); .60 takes it to 6.15 / 5.86 for margin. */
+    --dim: rgba(232, 237, 243, .60);
+    --rule: rgba(232, 237, 243, .12);
+    --rule-strong: rgba(232, 237, 243, .26);
+
+    /* Flow Blue reads 3.99:1 on Ink — fine for a border or a focus ring, short of AA for text. So the dark
+       theme lifts the accent rather than keeping the brand hex and failing quietly: #6E93CC is 5.76 on Ink
+       and 5.26 on the lifted surface, and both tokens can then be the same value. */
+    --accent: #6E93CC;
+    --accent-text: #6E93CC;
+
+    --warn: #E9A35C;
+    --alarm: #E8695C;
+    --live: #86C9A4;
   }
+}
+
+/* The four faces this Node serves, from its own origin (fonts/README.md).
+   font-display: swap on purpose: the alternative is a page that shows nothing until 71 KB has arrived,
+   and on a Node whose whole job is showing somebody their mail, text that arrives in a fallback and then
+   settles is better than text that is briefly absent. */
+@font-face {
+  font-family: Inter;
+  src: url("/app/fonts/inter-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: Inter;
+  src: url("/app/fonts/inter-500.woff2") format("woff2");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/app/fonts/jakarta-600.woff2") format("woff2");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/app/fonts/jakarta-700.woff2") format("woff2");
+  font-weight: 700; font-style: normal; font-display: swap;
 }
 
 * { box-sizing: border-box; }
@@ -92,7 +163,9 @@ body {
   min-height: 100vh;
   background: var(--ground);
   color: var(--text);
-  font: 400 16px/1.6 var(--display);
+  /* Inter for body copy, per the brand. The display face is for headings and the wordmark only —
+     previously this line set the serif for everything, which is what made the old shell editorial. */
+  font: 400 16px/1.6 var(--body);
   /* Faint top-lit gradient, so the panel has depth rather than reading as flat fill. */
   background-image: linear-gradient(180deg, color-mix(in oklab, var(--ground-2) 70%, transparent), transparent 38rem);
 }
@@ -131,17 +204,30 @@ body::before {
   flex-wrap: wrap;
 }
 
+/* The lockup: symbol then word, per the brand sheet's primary logo.
+   It used to be MAIL-DA in letter-spaced uppercase with the second half in the accent colour, which was
+   the instrument panel's idea of a wordmark. The brand sets it as one word in the display face at bold,
+   slightly tightened, with the symbol carrying the colour — so the accent lives in the dot rather than in
+   half the letters. */
 .wordmark {
+  display: flex;
+  align-items: center;
+  /* The brand sheet's clear-space rule is the height of the blue dot. The dot is 3.6 units in a 60-unit
+     viewBox, so at a 26px mark that is about 1.6px — too small to be the whole gap at this size, and the
+     rule is a minimum rather than a target. .5rem sits comfortably above it. */
+  gap: .5rem;
   font-family: var(--display);
+  font-weight: 700;
   font-size: 1.15rem;
-  letter-spacing: .22em;
-  text-transform: uppercase;
+  letter-spacing: -.015em;
   margin: 0;
   padding-right: clamp(.9rem, 3vw, 2rem);
   border-right: 1px solid var(--rule);
   white-space: nowrap;
+  color: var(--text);
 }
-.wordmark span { color: var(--signal); }
+/* The mark inherits ink from the lockup; its dot is the accent, set in the SVG itself. */
+.wordmark svg { flex: none; }
 
 #status {
   display: flex;
@@ -158,7 +244,7 @@ body::before {
 #status .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 #status .key { opacity: .6; }
 #status .num { color: var(--text); font-variant-numeric: tabular-nums; }
-#status .session { color: var(--signal); font-variant-numeric: tabular-nums; }
+#status .session { color: var(--accent); font-variant-numeric: tabular-nums; }
 
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .dot.live { background: var(--live); animation: pulse 2.8s ease-out infinite; }
@@ -212,7 +298,10 @@ main {
 
 h1 {
   font-family: var(--display);
-  font-weight: 400;
+  /* 700, not 400. The old serif carried a display size at book weight; a geometric sans does not — at
+     3rem, Plus Jakarta Sans 400 reads as an outline rather than a heading, and the brand's own wordmark is
+     bold. Only weights 600 and 700 are served, so nothing here can ask for one that is not there. */
+  font-weight: 700;
   font-size: clamp(1.9rem, 4.6vw, 3rem);
   line-height: 1.1;
   letter-spacing: -.018em;
@@ -255,8 +344,8 @@ h1 {
   position: absolute;
   top: -1px; right: -1px;
   width: 13px; height: 13px;
-  border-top: 1px solid var(--signal);
-  border-right: 1px solid var(--signal);
+  border-top: 1px solid var(--accent);
+  border-right: 1px solid var(--accent);
 }
 .panel h2 {
   font-family: var(--mono);
@@ -292,8 +381,8 @@ input {
 input::placeholder { color: color-mix(in oklab, var(--dim) 60%, transparent); }
 input:focus {
   outline: 0;
-  border-bottom-color: var(--signal);
-  background: color-mix(in oklab, var(--signal) 5%, transparent);
+  border-bottom-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
 }
 
 button.primary {
@@ -301,8 +390,8 @@ button.primary {
   letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--ground);
-  background: var(--signal);
-  border: 1px solid var(--signal);
+  background: var(--accent);
+  border: 1px solid var(--accent);
   padding: .8rem 1.3rem;
   cursor: pointer;
   justify-self: start;
@@ -345,11 +434,11 @@ button.primary:disabled { opacity: .55; cursor: progress; }
  * by the investigator, and the cheapest way to hold that is for nothing in the interface to be able to
  * clear it.
  *
- * No colour of its own: it borrows --signal through .notice.told, so the contrast tokens this stylesheet
+ * No colour of its own: it borrows --warn through .notice.told, so the contrast tokens this stylesheet
  * is checked against (test/node/contrast.test.ts) are unchanged by it.
  */
 .notices { display: grid; gap: .4rem; margin: 0 0 1.2rem; }
-.notice.told { border-left-color: var(--signal); color: var(--text); }
+.notice.told { border-left-color: var(--warn); color: var(--text); }
 .notice .told-meta { color: var(--dim); }
 
 /* ---- ledger ----------------------------------------------------------------------------- */
@@ -530,12 +619,12 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.dim { color: var(--dim); }
 
 tr.entry { cursor: pointer; transition: background-color .14s; }
-tr.entry:hover, tr.entry:focus-visible { background: color-mix(in oklab, var(--signal) 6%, transparent); outline: 0; }
-tr.entry:focus-visible td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
-tr.entry.open { background: color-mix(in oklab, var(--signal) 7%, transparent); }
+tr.entry:hover, tr.entry:focus-visible { background: color-mix(in oklab, var(--accent) 6%, transparent); outline: 0; }
+tr.entry:focus-visible td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+tr.entry.open { background: color-mix(in oklab, var(--accent) 7%, transparent); }
 tr.entry.open td { border-bottom-color: transparent; }
 
-tr.detail td { padding: .2rem .7rem 1.1rem; background: color-mix(in oklab, var(--signal) 4%, transparent); }
+tr.detail td { padding: .2rem .7rem 1.1rem; background: color-mix(in oklab, var(--accent) 4%, transparent); }
 tr.detail dl {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -582,7 +671,7 @@ textarea {
   width: 100%;
   resize: vertical;
 }
-textarea:focus { outline: 0; border-color: var(--signal); }
+textarea:focus { outline: 0; border-color: var(--accent); }
 
 /* One colour per state, because §16 requires a state to mean the same thing everywhere and a reader
    should not have to remember which grey means which. */
@@ -595,19 +684,19 @@ textarea:focus { outline: 0; border-color: var(--signal); }
   border: 1px solid var(--rule-strong);
   white-space: nowrap;
 }
-.state-held           { border-color: var(--signal); color: var(--signal); }
+.state-held           { border-color: var(--warn); color: var(--warn); }
 .state-handed_over    { border-color: var(--live); color: var(--live); }
 .state-cancelled      { color: var(--dim); }
-.state-throttled      { border-color: var(--signal); color: var(--signal); }
+.state-throttled      { border-color: var(--warn); color: var(--warn); }
 .state-refused        { border-color: var(--alarm); color: var(--alarm); }
 /* Reuses --alarm rather than introducing a token: a new colour would need its own contrast
    measurement (docs/receipts/contrast-tokens.md) for no gain — "did not leave, needs a person" is the
    same signal as refused. */
 .state-withheld       { border-color: var(--alarm); color: var(--alarm); }
-/* A policy gate (#60). --signal rather than --alarm, and rather than a new token: a gated send is waiting
+/* A policy gate (#60). --warn rather than --alarm, and rather than a new token: a gated send is waiting
    on a person, which is the same signal as held, and a fifth colour would need its own contrast
    measurement in docs/receipts/contrast-tokens.md for no gain. */
-.state-awaiting       { border-color: var(--signal); color: var(--signal); }
+.state-awaiting       { border-color: var(--warn); color: var(--warn); }
 /* The reason chip beside a state. Deliberately unpainted apart from the default rule colour: the state
    already carries the signal, and two coloured chips side by side would make the reader compare them. */
 .state-reason         { color: var(--dim); }
@@ -619,7 +708,7 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 .delivery-bounced     { border-color: var(--alarm); color: var(--alarm); }
 .delivery-failed      { border-color: var(--alarm); color: var(--alarm); }
 .delivery-rejected    { border-color: var(--alarm); color: var(--alarm); }
-.delivery-deferred    { border-color: var(--signal); color: var(--signal); }
+.delivery-deferred    { border-color: var(--warn); color: var(--warn); }
 /* Unobserved is deliberately the quietest thing on the row. It is not a warning and not a success; it is
    the absence of news, and styling it loudly would make silence look like a finding. */
 .delivery-unobserved  { color: var(--dim); }
@@ -653,14 +742,17 @@ textarea:focus { outline: 0; border-color: var(--signal); }
 .state-suppressed     { border-color: var(--alarm); color: var(--alarm); }
 .state-outcome_unknown{ border-color: var(--alarm); color: var(--alarm); }
 .state-audit-ok       { border-color: var(--live); color: var(--live); }
-.state-audit-refused  { border-color: var(--signal); color: var(--signal); }
+.state-audit-refused  { border-color: var(--warn); color: var(--warn); }
 .state-audit-failed   { border-color: var(--alarm); color: var(--alarm); }
 .state-log-info       { color: var(--dim); }
-.state-log-warn       { border-color: var(--signal); color: var(--signal); }
+.state-log-warn       { border-color: var(--warn); color: var(--warn); }
 .state-log-error      { border-color: var(--alarm); color: var(--alarm); }
 
-a { color: var(--signal); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--signal) 40%, transparent); }
-a:hover { border-bottom-color: var(--signal); }
+/* --accent-text, not --accent: a link is small text and Flow Blue is 4.11:1 on Mist. The underline
+   stays the lighter accent, because a 1px rule needs 3:1 rather than 4.5:1 and the brand hue reads
+   better there. */
+a { color: var(--accent-text); text-decoration: none; border-bottom: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); }
+a:hover { border-bottom-color: var(--accent); }
 tbody a { font-size: .8rem; }
 /* ---- variant B: the application shell (ADR 30) ------------------------------------------- */
 
@@ -708,7 +800,7 @@ tbody a { font-size: .8rem; }
   border-left: 2px solid transparent;
 }
 .rail-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
-.rail-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+.rail-row.current { border-left-color: var(--accent); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
 .rail-row .num { font-family: var(--mono); font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--dim); }
 .rail-name { font-size: .95rem; }
 .rail-note { padding: .2rem 1rem .4rem 1rem; }
@@ -733,17 +825,17 @@ tbody a { font-size: .8rem; }
 .instrument-bar .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 .instrument-bar .key { opacity: .6; }
 .instrument-bar .num { color: var(--text); font-variant-numeric: tabular-nums; }
-.instrument-bar .session { color: var(--signal); font-variant-numeric: tabular-nums; }
+.instrument-bar .session { color: var(--accent); font-variant-numeric: tabular-nums; }
 .instrument-bar a.linkish { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); }
 .bar-spacer { margin-left: auto; }
 
 /* doctor's three verdicts, reusing the existing signal tokens so contrast-tokens.md stays valid
    without re-measuring. */
 .verdict-ok       { border-color: var(--live);   color: var(--live); }
-.verdict-degraded { border-color: var(--signal); color: var(--signal); }
+.verdict-degraded { border-color: var(--warn); color: var(--warn); }
 .verdict-refuse   { border-color: var(--alarm);  color: var(--alarm); }
 .severity-refuse   { border-color: var(--alarm);  color: var(--alarm); }
-.severity-degraded { border-color: var(--signal); color: var(--signal); }
+.severity-degraded { border-color: var(--warn); color: var(--warn); }
 .severity-report   { color: var(--dim); }
 
 /* ---- list and reading pane --------------------------------------------------------------- */
@@ -764,7 +856,7 @@ tbody a { font-size: .8rem; }
 }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
-.message-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .message-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -781,7 +873,7 @@ tbody a { font-size: .8rem; }
   cursor: pointer;
 }
 .message-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
-.message-row.current { border-left-color: var(--signal); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
+.message-row.current { border-left-color: var(--accent); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
 .message-from { font-size: .74rem; color: var(--dim); }
 .message-subject { font-size: .98rem; }
 .message-when { font-size: .68rem; }
@@ -821,7 +913,7 @@ tbody a { font-size: .8rem; }
   background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
   text-align: left; cursor: pointer; width: 100%;
 }
-.row-toggle:hover { color: var(--signal); }
+.row-toggle:hover { color: var(--accent); }
 /* ---- the docked composer ----------------------------------------------------------------- */
 
 /* Docked rather than a route, so replying does not move the original off screen. For invoice and
@@ -848,7 +940,7 @@ tbody a { font-size: .8rem; }
   font-size: .63rem;
   letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--signal);
+  color: var(--accent);
 }
 
 .row-actions { margin: .2rem 0 1rem 0; }
@@ -921,18 +1013,18 @@ body.shell main#app {
 
 /* Three claim states, and colour is NOT what distinguishes them.
 
-   contrast-tokens.md proves exactly one token, --dim. --signal, --alarm and --live have never been
-   measured, so Blueprint 5C/5D's rule that colour must not be the only channel is doing real work here
+   contrast-tokens.md now proves --dim and both accent tokens. --warn, --alarm and --live are still
+   unmeasured, so Blueprint 5C/5D's rule that colour must not be the only channel is doing real work here
    rather than being satisfied incidentally: every row states its state in a word, and the two claimed
    states differ in weight and in a left marker as well as in hue. */
 .case-unclaimed { border-color: var(--rule-strong); color: var(--text); }
 .case-yours     { border-color: var(--live);   color: var(--live); }
-.case-held      { border-color: var(--signal); color: var(--signal); }
+.case-held      { border-color: var(--warn); color: var(--warn); }
 
 .case-row td { vertical-align: baseline; }
 /* A marker, not a fill: a tinted row would put the state in colour alone. */
 .case-row.mine td:first-child   { box-shadow: inset 2px 0 0 var(--live); }
-.case-row.theirs td:first-child { box-shadow: inset 2px 0 0 var(--signal); }
+.case-row.theirs td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 .case-subject { font-size: .95rem; }
 .case-count { font-size: .68rem; }
 /* The withheld-content placeholder. A word in mono, so it cannot be mistaken for a subject line that happens
@@ -994,10 +1086,11 @@ body.shell main#app {
 .rail-mine { color: var(--live); }
 /* ---- the first-response clock ------------------------------------------------------------- */
 
-/* Each carries a word, so none of them depends on colour being measured. --signal and --alarm are still
-   unproven (contrast-tokens.md proves --dim only), which is now the third feature shaped by that gap. */
+/* Each carries a word, so none of them depends on colour being measured. --warn and --alarm are still
+   unproven (contrast-tokens.md proves --dim and the accent pair), which is the third feature shaped by
+   that gap. */
 .clock-answered { border-color: var(--live);   color: var(--live); }
-.clock-due      { border-color: var(--signal); color: var(--signal); }
+.clock-due      { border-color: var(--warn); color: var(--warn); }
 .clock-breached { border-color: var(--alarm);  color: var(--alarm); }
 
 .queue-target { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
@@ -1080,23 +1173,25 @@ export function page(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="light dark">
 <!--
   Inline, as a data: URI, for the same reason there is no webfont: a page whose premise is custody must not
   fetch anything from anywhere. It is also the cheapest fix for a real defect — with no icon declared, every
   browser asked for /favicon.ico and every load logged a 404, so the console of a working Node had an error
   in it permanently and anybody debugging had one false lead before they started.
 
-  An instrument lamp: the amber signal dot, on nothing.
+  The Mailda symbol on a rounded ink tile (src/brand.ts). At 16px the stroke detail is past what the
+  reconstruction in that file can honestly carry, which its header says plainly — a real vector should
+  replace it before anybody treats this icon as final.
 -->
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='7' fill='%23e9a35c'/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="${faviconDataUri()}">
 <title>Mailda</title>
 <link rel="stylesheet" href="/app/app.css">
 </head>
 <body>
 <div class="rack">
   <div class="rack-inner">
-    <p class="wordmark">Mail<span>da</span></p>
+    <p class="wordmark">${markSvg({ size: 26 })}<span>Mailda</span></p>
     <div id="status"></div>
   </div>
 </div>
@@ -1142,7 +1237,34 @@ const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); 
   "/app/config.js": { source: configModule, type: "text/javascript; charset=utf-8" },
 };
 
+/**
+ * The webfonts, kept apart from `CLIENT_ASSETS` for two reasons that are both about them being bytes.
+ *
+ * They are `ArrayBuffer`s rather than strings, so they cannot share that record's type. And they want the
+ * **opposite cache policy**: the assets above are 60 seconds, so an OTA update (ADR 24) takes effect on the
+ * next load rather than appearing to have silently not happened. A font file never changes — the name
+ * carries the family and the weight, and a new weight is a new name — so it is immutable for a year, and
+ * paying 71 KB on every load to keep a freshness guarantee that cannot apply would be a waste with no
+ * upside.
+ */
+const FONT_FILES: Record<string, ArrayBuffer> = {
+  "/app/fonts/inter-400.woff2": interRegular,
+  "/app/fonts/inter-500.woff2": interMedium,
+  "/app/fonts/jakarta-600.woff2": jakartaSemibold,
+  "/app/fonts/jakarta-700.woff2": jakartaBold,
+};
+
 export function clientAsset(pathname: string): Response | null {
+  const font = FONT_FILES[pathname] ?? null;
+  if (font !== null) {
+    return new Response(font, {
+      headers: {
+        "content-type": "font/woff2",
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  }
+
   const asset = CLIENT_ASSETS[pathname] ?? null;
   if (asset === null) return null;
 

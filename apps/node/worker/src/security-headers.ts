@@ -71,12 +71,17 @@ import { BUDGETS } from "@mailda/budgets";
  * deferred with the question written down, which is the difference between a decision and an oversight.
  */
 export const CONTENT_SECURITY_POLICY = [
-  // Everything not named below is refused, which is what makes the named ones the whole list. No
-  // `font-src`: the interface loads no webfont, on purpose (`ui.ts`), so a policy permitting one would
-  // describe an interface we do not ship.
+  // Everything not named below is refused, which is what makes the named ones the whole list.
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self'",
+  // `font-src 'self'` and nothing more. This directive used to be **absent**, and the comment here said the
+  // interface loads no webfont so a policy permitting one would describe an interface we do not ship. The
+  // interface now loads four, and the substance of that reasoning is unchanged rather than abandoned: they
+  // are served from this origin, so the directive stays as narrow as it can be. `'self'` and not a CDN is
+  // the whole point — a page about owning your mail must not hand a third party every viewer's IP address,
+  // and `fonts/README.md` records that this is why Satoshi is named in the stack and never shipped.
+  "font-src 'self'",
   // `data:` for the favicon and the grain texture, both inline SVG in `ui.ts` for the same custody reason
   // the fonts are local: a page about owning your mail must not fetch anything from anywhere.
   "img-src 'self' data:",

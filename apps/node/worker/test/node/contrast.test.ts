@@ -64,9 +64,15 @@ function hex(value: string): [number, number, number] {
  * `scope` picks the theme, since the light values live inside a media query.
  */
 function token(name: string, scope: "dark" | "light"): string {
-  // The dark tokens are the first `:root` block; the light ones are inside the media query.
-  const light = uiSource.indexOf("@media (prefers-color-scheme: light)");
-  const region = scope === "dark" ? uiSource.slice(0, light) : uiSource.slice(light);
+  /*
+   * **Light is the default `:root` block and dark is inside the media query** — the reverse of what this
+   * parser assumed until the brand landed, because the brand's ground is light. Keyed off the media query's
+   * own text so that flipping the themes again fails loudly here rather than silently reading the wrong
+   * block and reporting the wrong theme's ratios as passing.
+   */
+  const dark = uiSource.indexOf("@media (prefers-color-scheme: dark)");
+  if (dark === -1) throw new Error("no dark-theme media query in src/ui.ts — which theme is which?");
+  const region = scope === "light" ? uiSource.slice(0, dark) : uiSource.slice(dark);
   const found = new RegExp(`--${name}:\\s*([^;]+);`).exec(region);
   if (found === null) throw new Error(`--${name} not found in the ${scope} theme of src/ui.ts`);
   return found[1]!.trim();
@@ -82,15 +88,34 @@ function rgba(value: string): { rgb: [number, number, number]; alpha: number } {
   };
 }
 
-/** Every point on the gradient, reduced to the two endpoints that bound it. */
+/**
+ * The three surfaces a token can land on.
+ *
+ * `sky` joined the two gradient endpoints with the brand palette, and it is not decoration: it is the
+ * darkest of the light grounds, so it is where every figure bottoms out. `--dim` at .60 alpha clears 4.58
+ * on Mist and **4.48 on Sky** — a fail by two hundredths, on a ground that would not have been checked at
+ * all if this list had stayed at two.
+ */
+const GROUNDS = ["ground", "ground-2", "sky"] as const;
+
+/** The worst contrast a translucent token reaches across every ground. */
+function worstTranslucent(name: string, scope: "dark" | "light"): number {
+  const value = rgba(token(name, scope));
+  return Math.min(...GROUNDS.map((ground) => {
+    const behind = hex(token(ground, scope));
+    return contrast(over(value.rgb, value.alpha, behind), behind);
+  }));
+}
+
+/** The worst contrast a solid token reaches across every ground. */
+function worstSolid(name: string, scope: "dark" | "light"): number {
+  const value = hex(token(name, scope));
+  return Math.min(...GROUNDS.map((ground) => contrast(value, hex(token(ground, scope)))));
+}
+
+/** Kept under its old name because the failure message reads better, and it is still the dim token. */
 function worstAgainstGradient(scope: "dark" | "light"): number {
-  const dim = rgba(token("dim", scope));
-  return Math.min(
-    ...(["ground", "ground-2"] as const).map((name) => {
-      const ground = hex(token(name, scope));
-      return contrast(over(dim.rgb, dim.alpha, ground), ground);
-    }),
-  );
+  return worstTranslucent("dim", scope);
 }
 
 describe("token contrast (WCAG 2.2 AA)", () => {
@@ -111,12 +136,39 @@ describe("token contrast (WCAG 2.2 AA)", () => {
     expect(round(worstAgainstGradient("light"))).toBe(BUDGETS["contrast.dim_light_worst"]);
   });
 
-  it("keeps the dark margin visible, because it clears AA by 0.01", () => {
-    // Deliberately not fixed: it passes, and changing a shipped design on a pass is not justified.
-    // Deliberately not silent either — any nudge to --ground-2 breaks AA, and a limit developers can
-    // hit is a limit they must see. This test is that visibility.
-    const margin = worstAgainstGradient("dark") - AA_NORMAL;
-    expect(margin).toBeGreaterThanOrEqual(0);
-    expect(margin).toBeLessThan(0.1);
+  for (const scope of ["dark", "light"] as const) {
+    it(`--accent-text clears AA against every ${scope} ground`, () => {
+      /*
+       * The token that exists because the brand's accent could not do this job. Flow Blue is 4.53:1 on
+       * white — AA by 0.03 — and 4.11 on Mist, 3.87 on Sky. So anything a person *reads* in brand blue uses
+       * this darker token, and this is the assertion that keeps them apart.
+       */
+      expect(worstSolid("accent-text", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+  }
+
+  it("keeps --accent above the threshold for the things it is actually used for", () => {
+    /*
+     * `--accent` is the brand hex and is **not** a text colour: fills, borders, focus rings, icons and the
+     * mark's dot. Those are non-text contrast, which WCAG puts at 3:1, and it clears that on every ground
+     * in both themes.
+     *
+     * Asserted at the large/UI threshold rather than the normal one **on purpose**, and the failure this
+     * guards is somebody "simplifying" the two accent tokens back into one: that would put 3.87:1 blue
+     * behind body text on Sky. `test/node/stylesheet-hazards.test.ts` cannot see it and axe would only
+     * catch it on a page that happened to render it.
+     */
+    for (const scope of ["dark", "light"] as const) {
+      expect(worstSolid("accent", scope), `--accent fails 3:1 in the ${scope} theme`)
+        .toBeGreaterThanOrEqual(BUDGETS["contrast.aa_large_ratio"] / 100);
+    }
+  });
+
+  it("matches the accent ratios the receipt recorded", () => {
+    const round = (n: number) => Math.round(n * 100);
+    expect(round(worstSolid("accent-text", "light"))).toBe(BUDGETS["contrast.accent_text_light_worst"]);
+    expect(round(worstSolid("accent-text", "dark"))).toBe(BUDGETS["contrast.accent_text_dark_worst"]);
+    expect(round(Math.min(worstSolid("accent", "light"), worstSolid("accent", "dark"))))
+      .toBe(BUDGETS["contrast.accent_ui_worst"]);
   });
 });

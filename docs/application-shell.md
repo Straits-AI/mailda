@@ -44,6 +44,69 @@ in it, and Layer 3 adds rows rather than a shape.**
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
   a reader's eye rests, and the counts belong beside the mailboxes they describe.
 
+## The brand, and the four decisions it forced (#branding)
+
+The Mailda identity landed as a brand sheet: **Ink `#0F1720`**, **Flow Blue `#4C77B8`**, Sky, Mist, White;
+Satoshi for headings and Inter for body; a continuous-line M with a blue dot. The interface before it was a
+dark "instrument panel" — cream on near-black, an editorial serif, one amber signal colour. Applying the
+brand was therefore a repaint rather than a token swap, and four things could not simply be mapped across.
+
+### Flow Blue is not a text colour on two of the brand's own three grounds
+
+Measured before anything was designed with it: **4.53:1 on white**, which clears AA for normal text by
+**0.03**, then **4.11 on Mist** and **3.87 on Sky**, which fail. The brand's accent cannot carry body-size
+text on the brand's own page ground.
+
+So the accent is **two tokens split by use**, not one token compromised in value. `--accent` is the brand hex
+for fills, borders, focus rings, icons and the mark's dot — non-text contrast, 3:1, worst case 3.87.
+`--accent-text` is `#436BA8`, the same hue and saturation five percent darker, for anything a person reads —
+worst case 4.59. The dark theme lifts both to `#6E93CC`, because Flow Blue is 3.99:1 on Ink.
+([receipt](./receipts/contrast-tokens.md))
+
+### `--signal` was doing two jobs, and the brand is what made that visible
+
+One amber token carried the wordmark, focus rings, hover, selected rows **and** every warning state — a held
+send, a throttled domain, a degraded check. The brand supplies an accent and **no** warning colour, so the
+two meanings had to come apart: `--accent` took the identity and interaction half, `--warn` kept the amber for
+attention. Forty-four uses, split by what each one meant rather than by find-and-replace.
+
+The brand also supplies no error or healthy colour. `--alarm` and `--live` are kept from the old palette
+rather than invented, because both were already contrast-tuned and both pass on the new grounds. That is an
+extension of the brand, and it is named as one.
+
+### Satoshi is in the type stack and is not in the repository
+
+Its licence permits self-hosting and forbids modifying and redistributing. Read against Mailda that second
+clause is the operative one: **this repository is the distribution channel** — ADR 24 has customers clone and
+merge from it — so a font committed here is redistributed from a public URL to every customer, and subsetting
+it for size is precisely the modification the licence names.
+
+So `--display` is `Satoshi, "Plus Jakarta Sans", …`: a designer with Satoshi installed sees the brand exactly,
+everybody else gets the closest OFL face, served from this origin. Inter is the brand's body face and is
+served the same way. Four faces, 72 KB, `font-display: swap`, cached for a year.
+
+**The no-webfont rule was about third parties, not about webfonts.** `ui.ts` said for months that the
+interface loads none, because "a page that fetches a font from a third party hands that third party every
+viewer's IP address on every load". These are same-origin under `font-src 'self'`, which
+`test/security-headers.test.ts` asserts is exactly that and nothing more — an added CDN host fails, and a
+policy listing `'self'` *and* a CDN is not narrower than one listing the CDN alone. The mechanism changed and
+the rule did not. ([provenance](../apps/node/worker/fonts/README.md))
+
+### The mark in the repository is a reconstruction
+
+`src/brand.ts` holds the symbol as an SVG path traced by eye from the brand sheet's rasters, because that is
+what was available. It reads correctly at 24–40 px and it is **not** the authored artwork — the curve
+tensions, the stroke weight and the loop's proportions are approximations, and the file's header says so
+before anything else.
+
+It is one edit to replace: `MARK_PATH` and `MARK_VIEWBOX` are the only values describing the geometry, and
+the shell, the favicon and the app icon all derive from `markSvg()`. Until the real vector lands, the mark
+should not be used for print, an app-store icon, or anything a customer reads as the identity.
+
+The **wordmark is real text**, not a path — selectable, translatable and readable by a screen reader, where a
+traced word is a picture of a word. The cost is that it renders in Plus Jakarta Sans wherever Satoshi is
+absent, which is the right trade inside the product and the wrong one for a logo file handed to a printer.
+
 ## Paging the inbox (#91)
 
 The list had no way to reach anything older than the newest fifty, so this screen gained the smallest control
