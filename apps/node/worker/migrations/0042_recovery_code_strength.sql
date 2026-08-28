@@ -1,0 +1,19 @@
+-- Recording how many characters a recovery code carries, so an 80-bit set is detectable (audit, ADR 29).
+-- Additive (#10 expand/contract): one column, no DROP.
+--
+-- ## Why a column and not arithmetic
+--
+-- `formatCode` mapped one base32 character per source byte, so sixteen random bytes became sixteen
+-- characters. A base32 character carries five bits: 16 x 5 = 80, against ADR 29's stated 128. The encoder is
+-- fixed and emits 26, but **a hash is one-way** -- the codes already minted cannot be upgraded, re-derived or
+-- inspected. Nothing about a stored row says how strong the code behind it was.
+--
+-- So the strength is recorded at mint time. New rows carry 26; rows written before this migration carry NULL,
+-- which is exactly what "minted by the old encoder" means and is why the column is nullable rather than
+-- defaulted. A default of 26 would have relabelled every legacy code as strong, which is the one thing this
+-- column exists to prevent.
+--
+-- `doctor` reads it as `recovery_code_strength` and asks the operator to mint a fresh set. That is the only
+-- available remedy: the escrow is opened by the code's plaintext, so a stronger code means a new escrow, and
+-- a new escrow means new codes the operator has to write down. It cannot be done for them.
+ALTER TABLE recovery_codes ADD COLUMN code_characters INTEGER;

@@ -8,7 +8,7 @@ stale_when: >
   BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
   text per row; or authz.list.max_rows_read moves
 values:
-  search.max_rows_read_per_page: 616
+  search.max_rows_read_per_page: 720
 ---
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -34,15 +34,37 @@ each driven by its own virtual table, each `ORDER BY rank LIMIT n`, with the uni
 | | rare term (12 hits) | common term (1,188 hits) |
 |:--|--:|--:|
 | plain unsearched page, for comparison | 208 | 208 |
-| **shipped: two arms** | **150** | **616** |
+| **shipped: two arms, two grant scopes** | **176** | **720** |
 
 Against `authz.list.max_rows_read = 1000`. A rare search still costs **less than not searching**, which is
-what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 616 is
-the tight one — 61% of the budget — and it is the figure `search.max_rows_read_per_page` pins.
+what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 720 is
+the tight one — 72% of the budget — and it is the figure `search.max_rows_read_per_page` pins.
 
-About twelve rows read per row returned, which is the arithmetic working: each arm seeks the receipt, its
-address, its message and its case for every row it returns, so two arms are roughly eight, plus two index
-scans and the outer sort of at most a hundred rows.
+### 616 → 720, and the extra 104 rows bought a closed authorization hole
+
+Each arm now joins **two** supervised-grant subqueries rather than one. That is not an optimisation anybody
+would choose; it is what closing a confidentiality defect cost.
+
+The searched page has two arms because a body match and a subject match are different authorities. The
+*standing relations* were split correctly from the start — subject on `metadata.read` or `content.read`, body
+on `content.read` alone. The **supervised grants were not**: `listMessages` built one subquery from
+`SCOPES_FOR_METADATA`, which is `["metadata", "content"]`, and both arms tested it. So a grant of scope
+`metadata` reached the body index and became a membership oracle over content — *does "bankruptcy" occur in
+any message* — one query at a time, returning the subject and sender of whatever matched.
+
+Every test covered standing relations, so the arms looked correctly separated. Nothing exercised the second
+authorization mechanism against the second index, and a third-party audit found it rather than this suite.
+
+Each arm now joins the metadata-scoped subquery **and** the content-scoped one: the first authorizes the
+subject arm, the second authorizes the body arm, and both arms attribute
+`COALESCE(sgc.grant_id, sgm.grant_id)`. The COALESCE is not decoration — `liveGrantsBySubject` names
+`MIN(id)` per mailbox, so a reader holding both grant kinds gets a different id from each subquery, and a
+message matching subject *and* body would come back **twice** from `UNION`, differing only in a column the
+response strips. Naming the stronger grant in both arms makes them agree.
+
+**72% of the budget is the number to watch.** It is inside, and it has less headroom than anything else this
+receipt records. A third arm, or a third read relation, would need re-measuring before it shipped rather
+than after.
 
 ### Three shapes were measured before this one, on subjects alone
 

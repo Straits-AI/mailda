@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { messagePageQuery } from "../src/authz-read.ts";
-import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
+import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
  * What `mailbox.metadata.read` actually gets you from the message listing.
@@ -48,7 +48,10 @@ async function pageFor(subject: string): Promise<string[]> {
   const query = messagePageQuery({
     orgId: ORG,
     subjects: [subject],
-    supervised: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_METADATA),
+    supervised: {
+      metadata: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_METADATA),
+      content: liveGrantsBySubject(ORG, subject, AT, SCOPES_FOR_CONTENT),
+    },
     page: { after: null, mailboxId: null, q: null },
     limit: 51,
   });

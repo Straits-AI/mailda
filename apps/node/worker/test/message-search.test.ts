@@ -9,7 +9,7 @@ import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
 import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
 import { indexableText, wordsFromHtml } from "../src/search-body.ts";
-import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
+import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
  * Finding mail by sender and subject, through the query that ships (#107).
@@ -40,6 +40,12 @@ const READER = "usr_search_reader";
 const STRANGER = "usr_search_stranger";
 /** Holds `mailbox.metadata.read` only — may search subjects, must not search bodies (#107 L2). */
 const METADATA_ONLY = "usr_search_metadata_only";
+/** Holds no standing relation and a supervised grant of scope `metadata` only. */
+const SUPERVISED_METADATA = "usr_search_sup_metadata";
+/** Holds no standing relation and a supervised grant of scope `content`. */
+const SUPERVISED_CONTENT = "usr_search_sup_content";
+/** Holds **both** grants on one mailbox, which is the case that can defeat the union's deduplication. */
+const SUPERVISED_BOTH = "usr_search_sup_both";
 const MAILBOX = "mbx_search";
 const OTHER_MAILBOX = "mbx_search_other";
 const ADDRESS = "in@search.example";
@@ -59,7 +65,10 @@ async function search(term: string | null, who = READER, org = ORG): Promise<str
   const query = messagePageQuery({
     orgId: org,
     subjects: [who],
-    supervised: liveGrantsBySubject(org, who, AT, SCOPES_FOR_METADATA),
+    supervised: {
+      metadata: liveGrantsBySubject(org, who, AT, SCOPES_FOR_METADATA),
+      content: liveGrantsBySubject(org, who, AT, SCOPES_FOR_CONTENT),
+    },
     page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term) },
     limit: 51,
   });
@@ -134,6 +143,23 @@ beforeAll(async () => {
     ...deliver(OTHER_ORG, FOREIGN, OTHER_ADDRESS, "Demurrage in another org", "ops@elsewhere.example"),
   );
   await testEnv.CATALOG.batch(statements);
+
+  /*
+   * Two supervised grants on the same mailbox, differing only in scope. §7's grants are the *other* way to
+   * reach mail, and the whole question below is whether the search arms tell them apart the way the standing
+   * relations do.
+   */
+  const grant = (subject: string, scope: string) => testEnv.CATALOG.prepare(
+    `INSERT INTO supervised_grants
+       (id, org_id, subject_id, mailbox_id, scope, matter_id, requested_at, expires_at, granted_at)
+     VALUES (?,?,?,?,?,NULL,?,?,?)`,
+  ).bind(ctx.id("sgr"), ORG, subject, MAILBOX, scope, AT, "2027-01-01T00:00:00.000Z", AT);
+  await testEnv.CATALOG.batch([
+    grant(SUPERVISED_METADATA, "metadata"),
+    grant(SUPERVISED_CONTENT, "content"),
+    grant(SUPERVISED_BOTH, "metadata"),
+    grant(SUPERVISED_BOTH, "content"),
+  ]);
 });
 
 describe("searching the message listing", () => {
@@ -484,5 +510,68 @@ describe("what reaches the body index", () => {
       "From: a@b.example\r\nTo: in@search.example\r\nSubject: nothing\r\n\r\n",
     );
     expect(await indexableText(headersOnly)).toBeNull();
+  });
+});
+
+describe("a supervised grant reaches exactly as far as its scope, in search too", () => {
+  /*
+   * ## The hole this block was written to prove
+   *
+   * The standing relations are split correctly: the subject arm accepts `metadata.read` or `content.read`,
+   * the body arm accepts `content.read` alone. **The supervised arm was not split with them.**
+   * `listMessages` builds one grant subquery on `SCOPES_FOR_METADATA` — which is `["metadata", "content"]` —
+   * and both arms carry the same `sg.grant_id IS NOT NULL`.
+   *
+   * So a grant of scope `metadata` reached the body index. It never returns body text, but it answers
+   * *"does this word occur in any message"* — a membership oracle over content, one query at a time:
+   * bankruptcy, termination, an account number, a person's name. Repeated, it identifies the message and
+   * hands over its subject and sender. That is precisely the line `BODY_SEARCH_RELATIONS` exists to draw,
+   * crossed by the other of the two ways to authorize a read.
+   *
+   * Found by a third-party audit, not by this suite. Worth recording why: every test here used *standing
+   * relations*, so the arms looked correctly separated. The supervised path is the second authorization
+   * mechanism and nothing exercised it against the second index.
+   */
+  it("gives a content-scoped grant the body index, which is the control", async () => {
+    // First, so that a refusal below cannot be the empty result any unreachable mailbox would produce.
+    expect((await search("cabotage", SUPERVISED_CONTENT)).sort())
+      .toEqual([DEMURRAGE, INVOICE].sort());
+  });
+
+  it("gives a metadata-scoped grant the subject index", async () => {
+    // The other control: this grant works. A refusal below is therefore about the *arm*, not the grant.
+    expect(await search("demurrage", SUPERVISED_METADATA)).toEqual([DEMURRAGE]);
+  });
+
+  it("refuses a metadata-scoped grant the body index", async () => {
+    /*
+     * The assertion. `cabotage` is body-only — asserted against `message_search` elsewhere in this file — so
+     * a result here can only have come through the body arm, which a metadata grant must not reach.
+     */
+    expect(
+      await search("cabotage", SUPERVISED_METADATA),
+      "a supervised grant of scope metadata reached the body index: it can now ask whether any word occurs "
+      + "in a message body, one query at a time",
+    ).toEqual([]);
+  });
+
+  it("returns one row for a message matching both arms under two grants at once", async () => {
+    /*
+     * The case that can defeat `UNION`'s deduplication, and it is not hypothetical — two rows in
+     * `supervised_grants` for one person and one mailbox is representable and legitimate.
+     *
+     * `liveGrantsBySubject` names `MIN(id)` per mailbox, so the metadata-scoped subquery (whose scope list
+     * is `["metadata", "content"]`) and the content-scoped one can pick **different** grants. Both arms then
+     * match `demurrage` — it is in DEMURRAGE's subject and in its body — and the rows differ only in the
+     * attribution column, which `UNION` treats as two distinct rows and the response then strips. The reader
+     * sees the same message twice for no visible reason.
+     *
+     * `COALESCE(sgc.grant_id, sgm.grant_id)` is what makes the two arms agree, and this is the assertion
+     * that holds it. Checked by length as well as value, because `toEqual` on `[x, x]` does not obviously
+     * read as a duplicate.
+     */
+    const rows = await search("demurrage", SUPERVISED_BOTH);
+    expect(rows, "a message matching both arms came back twice under two live grants").toEqual([DEMURRAGE]);
+    expect(rows.length).toBe(1);
   });
 });

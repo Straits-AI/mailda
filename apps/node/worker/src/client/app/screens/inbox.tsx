@@ -223,7 +223,7 @@ function SearchField({ term, onSearch }: {
         id="inbox-q"
         type="search"
         value={draft}
-        placeholder="sender or subject"
+        placeholder="sender, subject or message text"
         onChange={(event) => setDraft(event.target.value)}
       />
       {" "}
@@ -564,9 +564,11 @@ export function Inbox() {
           <>
             <Nothing
               kind="empty"
-              detail={`No mail matches those words in a subject or sender address${
-                pages.mailbox === null ? "" : ", in this mailbox"
-              }. Every word has to appear, and only subjects and senders are searched — not message bodies.`}
+              detail={`No mail matches those words${
+                pages.mailbox === null ? "" : " in this mailbox"
+              }. Every word has to appear, and it has to appear in the same place — a word from a subject `
+                + "and a word from a message's text will not match together. Message text is searched only "
+                + "in mailboxes where you can read content; elsewhere this searched subjects and senders."}
             />
             <p className="row-actions">
               <button type="button" className="linkish" onClick={() => pages.searchFor(null)}>

@@ -5,7 +5,9 @@ import { createSystemCtx } from "@mailda/runtime";
 
 import { runDoctor, type Finding } from "../src/doctor.ts";
 import { aesKeyFrom, vault } from "../src/keyvault.ts";
-import { codeHash, escrowState, mintRecoveryCodes, redeemForVault } from "../src/recovery.ts";
+import {
+  CODE_CHARACTERS, codeHash, escrowState, formatCode, mintRecoveryCodes, normaliseCode, redeemForVault,
+} from "../src/recovery.ts";
 
 /**
  * ADR 29's recovery codes, carrying ADR 28's key escrow (#92).
@@ -514,5 +516,60 @@ describe("the trail is what makes an unauthenticated route accountable", () => {
     const detail = (await entries()).at(-1)!.detail;
     expect(detail).toMatch(/escrowedContent/);
     expect(detail, "the trail claims a restore rather than an escrow").not.toMatch(/"restored"/);
+  });
+});
+
+describe("a recovery code carries the 128 bits ADR 29 promises", () => {
+  /*
+   * ## The bug this block exists because of
+   *
+   * `formatCode` mapped **one base32 character per source byte**: sixteen random bytes became sixteen
+   * characters, and a base32 character carries five bits. 16 × 5 = **80 bits**, against a stated contract of
+   * 128 — 48 bits discarded, silently, while the constant said `CODE_BYTES = 16` and the comment beside it
+   * claimed 26 characters.
+   *
+   * Nothing looked wrong: 256 divides evenly by 32 so there was no modulo bias, and every test used codes of
+   * the length the bug produced. It was found by a third-party audit doing the arithmetic.
+   *
+   * These codes open the escrow holding the keys to all of an organization's mail, so the assertions below
+   * are about the *encoding* rather than about any behaviour — an encoder that loses entropy passes every
+   * behavioural test there is, because the codes still work.
+   */
+  it("emits 26 characters for 16 bytes, which is what 128 bits needs in base32", async () => {
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    for (const code of minted.codes) {
+      expect(normaliseCode(code).length, `a code is ${normaliseCode(code).length} characters, so it carries `
+        + `${normaliseCode(code).length * 5} bits and not 128`).toBe(CODE_CHARACTERS);
+    }
+  });
+
+  it("changes the code when any single input bit changes, so no input bits are dropped", () => {
+    /*
+     * The property the length assertion alone cannot prove. A 26-character encoder that still ignored some
+     * input — padding the extra characters with a constant, say — would pass the count and lose the entropy
+     * anyway.
+     *
+     * Flipping one bit of one byte must change the output. Checked across every byte position and both a low
+     * and a high bit, which is 32 distinct inputs and covers the packing boundaries where a shift-by-five
+     * encoder actually goes wrong.
+     */
+    const base = new Uint8Array(16);
+    const encoded = (b: Uint8Array) => normaliseCode(formatCode(b));
+    const original = encoded(base);
+    for (let byte = 0; byte < 16; byte++) {
+      for (const bit of [0, 7]) {
+        const flipped = new Uint8Array(base);
+        flipped[byte] = (flipped[byte] ?? 0) ^ (1 << bit);
+        expect(encoded(flipped), `flipping bit ${bit} of byte ${byte} did not change the code, so that bit `
+          + "never reaches the output").not.toBe(original);
+      }
+    }
+  });
+
+  it("gives every one of the ten codes a distinct value", async () => {
+    // Cheap, and it is the assertion that would catch an encoder returning a constant — which is the
+    // degenerate case both assertions above would otherwise miss between them.
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(new Set(minted.codes).size).toBe(minted.codes.length);
   });
 });

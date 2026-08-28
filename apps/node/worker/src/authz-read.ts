@@ -821,8 +821,25 @@ export function messagePageRequest(url: URL): MessagePage {
 export function messagePageQuery(args: {
   orgId: string;
   subjects: readonly string[];
-  /** This reader's live grants, from `liveGrantsBySubject` — the only source of a grant id here (§7). */
-  supervised: { sql: string; params: unknown[] };
+  /**
+   * This reader's live grants, **scoped twice** — the only source of a grant id here (§7).
+   *
+   * Two subqueries rather than one, and the reason is a hole this shipped with. A supervised grant is the
+   * *other* way to reach mail, and the searched page's two arms require different standing relations —
+   * subject on `metadata.read` or `content.read`, body on `content.read` alone. The grant arm did not
+   * follow: both arms tested one subquery built from `SCOPES_FOR_METADATA`, which is
+   * `["metadata", "content"]`. So a grant of scope `metadata` reached the body index and became a
+   * membership oracle over content — *does "bankruptcy" occur in any message* — one query at a time.
+   *
+   * Every test covered standing relations, so the arms looked correctly separated. Nothing exercised the
+   * second authorization mechanism against the second index.
+   */
+  supervised: {
+    /** Scope `metadata` or `content`. Authorizes the subject index and the unsearched listing. */
+    metadata: { sql: string; params: unknown[] };
+    /** Scope `content` only. Authorizes the body index, and nothing else may. */
+    content: { sql: string; params: unknown[] };
+  };
   page: MessagePage;
   /** How many rows to ask for. `listMessages` asks for the page plus one probe row — see `next_cursor`. */
   limit: number;
@@ -877,6 +894,26 @@ export function messagePageQuery(args: {
                 AND c.mailbox_id = a.mailbox_id LIMIT 1) AS case_id`;
 
   /*
+   * The searched page's columns, which differ from the listing's in exactly one place: attribution.
+   *
+   * **Both arms must name the same grant for the same message, or `UNION` cannot deduplicate it.**
+   * `liveGrantsBySubject` picks `MIN(id)` per mailbox, so a reader holding both a metadata grant and a
+   * content grant would get one id from the metadata-scoped subquery and possibly another from the
+   * content-scoped one — and a message matching subject *and* body would come back twice, as two rows
+   * differing only in a column the response strips.
+   *
+   * `COALESCE(sgc.grant_id, sgm.grant_id)` makes the two agree by naming the **stronger** grant whenever one
+   * covers the mailbox. That is also the better trail entry: it names the access that would have permitted
+   * the most, which is the direction this function already chose when it decided to attribute a row to a
+   * grant without asking whether a standing relation would also have sufficed.
+   */
+  const searchedColumns = columns.replace(
+    "sg.grant_id AS supervised_grant_id",
+    "COALESCE(sgc.grant_id, sgm.grant_id) AS supervised_grant_id",
+  );
+
+
+  /*
    * Who may see a row, spelled once for both plans — a standing relation or a live supervised grant.
    *
    * **Shared deliberately and not by tidiness.** Two plans with two copies of an authorization predicate is
@@ -884,8 +921,8 @@ export function messagePageQuery(args: {
    * (#95), and a search that authorized slightly differently from the listing would be a second read surface
    * over the same mail — which is what #107 refused to build as a separate endpoint in the first place.
    */
-  const authorizedBy = (relations: readonly MailboxRelation[]) => ({
-    sql: `AND (sg.grant_id IS NOT NULL
+  const authorizedBy = (relations: readonly MailboxRelation[], grantAlias = "sg") => ({
+    sql: `AND (${grantAlias}.grant_id IS NOT NULL
              OR a.mailbox_id IN (
                SELECT object_id FROM relationship_tuples
                 WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
@@ -961,16 +998,17 @@ export function messagePageQuery(args: {
      * arms and must appear once. The column lists are identical by construction — `columns` is spelled once —
      * which is what makes the deduplication exact rather than approximate.
      */
-    const metadataArm = authorizedBy(RELATIONS_FOR_METADATA);
-    const bodyArm = authorizedBy(BODY_SEARCH_RELATIONS);
+    const metadataArm = authorizedBy(RELATIONS_FOR_METADATA, "sgm");
+    const bodyArm = authorizedBy(BODY_SEARCH_RELATIONS, "sgc");
     return {
       sql: `SELECT * FROM (
-        SELECT ${columns}
+        SELECT ${searchedColumns}
          FROM message_search s
          JOIN messages m ON m.id = s.message_id
          JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
          JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-         LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+         LEFT JOIN (${args.supervised.metadata.sql}) sgm ON sgm.mailbox_id = a.mailbox_id
+         LEFT JOIN (${args.supervised.content.sql}) sgc ON sgc.mailbox_id = a.mailbox_id
         WHERE s.message_search MATCH ? AND s.org_id = ?
           AND r.org_id = ?
           ${filters.join("\n          ")}
@@ -980,12 +1018,13 @@ export function messagePageQuery(args: {
       )
       UNION
       SELECT * FROM (
-        SELECT ${columns}
+        SELECT ${searchedColumns}
          FROM message_body_search b
          JOIN messages m ON m.rowid = b.rowid
          JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
          JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-         LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+         LEFT JOIN (${args.supervised.metadata.sql}) sgm ON sgm.mailbox_id = a.mailbox_id
+         LEFT JOIN (${args.supervised.content.sql}) sgc ON sgc.mailbox_id = a.mailbox_id
         WHERE b.message_body_search MATCH ?
           AND r.org_id = ?
           ${filters.join("\n          ")}
@@ -1011,11 +1050,13 @@ export function messagePageQuery(args: {
        * `messages` is what scopes it. `test/node/search-scope-world.test.ts` has a separate rule for that.
        */
       params: [
-        // metadata arm
-        ...args.supervised.params, args.page.q, args.orgId, args.orgId, ...filterParams,
+        // metadata arm: both grant subqueries, then the match, then the two org predicates
+        ...args.supervised.metadata.params, ...args.supervised.content.params,
+        args.page.q, args.orgId, args.orgId, ...filterParams,
         ...metadataArm.params, args.limit,
-        // body arm
-        ...args.supervised.params, args.page.q, args.orgId, ...filterParams,
+        // body arm: the same two subqueries again, because the same fragments appear twice
+        ...args.supervised.metadata.params, ...args.supervised.content.params,
+        args.page.q, args.orgId, ...filterParams,
         ...bodyArm.params, args.limit,
         // the outer page
         args.limit,
@@ -1028,7 +1069,7 @@ export function messagePageQuery(args: {
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
        LEFT JOIN messages m ON m.ingress_receipt_id = r.id
-       LEFT JOIN (${args.supervised.sql}) sg ON sg.mailbox_id = a.mailbox_id
+       LEFT JOIN (${args.supervised.metadata.sql}) sg ON sg.mailbox_id = a.mailbox_id
       WHERE r.org_id = ?
         ${filters.join("\n        ")}
         ${authorized.sql}
@@ -1039,7 +1080,7 @@ export function messagePageQuery(args: {
     // their relative position to the planner would let a page boundary fall between them differently on the
     // two queries that span it — dropping one and repeating the other.
     params: [
-      ...args.supervised.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
+      ...args.supervised.metadata.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
     ],
   };
 }
@@ -1125,9 +1166,16 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // of that shape here would be a second thing to keep in step. Parsed before the query so a bad cursor costs
   // one round trip rather than a page.
   const page = messagePageRequest(new URL(request.url));
-  const supervised = liveGrantsBySubject(
-    who.orgId, who.userId, new Date(ctx.now()).toISOString(), SCOPES_FOR_METADATA,
-  );
+  /*
+   * Both scopes, built once and handed to the builder together. The searched page needs them separate — a
+   * grant of scope `metadata` must reach the subject index and not the body index — and building only the
+   * wider one here is how that boundary was crossed in the first place.
+   */
+  const grantsAt = new Date(ctx.now()).toISOString();
+  const supervised = {
+    metadata: liveGrantsBySubject(who.orgId, who.userId, grantsAt, SCOPES_FOR_METADATA),
+    content: liveGrantsBySubject(who.orgId, who.userId, grantsAt, SCOPES_FOR_CONTENT),
+  };
 
   const size = BUDGETS["messages.page_size"];
   // Authorization is inside the query, not a filter applied afterwards — §5 forbids

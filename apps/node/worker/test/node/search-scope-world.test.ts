@@ -206,7 +206,24 @@ describe("every read of the search index names the organization it is reading fo
      */
     const source = readFileSync(join(workerDir, "src/authz-read.ts"), "utf8");
     expect(source, "the body arm no longer names BODY_SEARCH_RELATIONS")
-      .toMatch(/authorizedBy\(BODY_SEARCH_RELATIONS\)/);
+      .toMatch(/authorizedBy\(BODY_SEARCH_RELATIONS, "sgc"\)/);
+
+    /*
+     * **And the grant half, which is where this rule was blind.** Standing relations were split correctly
+     * from the start; the supervised arm was not. One subquery built from `SCOPES_FOR_METADATA` — which is
+     * `["metadata", "content"]` — authorized *both* index arms, so a grant of scope `metadata` reached the
+     * body index and became a membership oracle over message text.
+     *
+     * This file asserted the relation split and said nothing about the grant split, so it passed throughout.
+     * A closed world that guards one of two authorization mechanisms is a closed world with a door in it.
+     */
+    expect(source, "the metadata arm no longer authorizes on the metadata-scoped grant subquery")
+      .toMatch(/authorizedBy\(RELATIONS_FOR_METADATA, "sgm"\)/);
+    expect(
+      /content: liveGrantsBySubject\([^)]*SCOPES_FOR_CONTENT\)/.test(source),
+      "listMessages no longer builds a content-scoped grant subquery, so the body arm is authorized by a "
+      + "grant list that includes scope metadata",
+    ).toBe(true);
 
     const access = readFileSync(join(workerDir, "src/access.ts"), "utf8");
     const declaration = /export const BODY_SEARCH_RELATIONS = \[([\s\S]*?)\]/.exec(access)?.[1] ?? "";

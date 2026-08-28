@@ -2100,12 +2100,30 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
   const stale = inventory !== null
     && (state.content < inventory.content || state.credential < inventory.credential);
 
+  /*
+   * Codes minted before the encoder carried its full 128 bits (audit, ADR 29). `formatCode` emitted one
+   * base32 character per source byte, so sixteen random bytes became sixteen characters — 80 bits, not 128.
+   *
+   * **A hash is one-way, so this cannot be repaired for the operator.** The escrow is opened by the code's
+   * plaintext, which this Node has never held; a stronger code means a new escrow, and a new escrow means
+   * codes somebody has to write down. So the finding asks, and asks at `degraded` rather than `report`,
+   * because a weak code is a live weakness in the one artifact that can decrypt all of an organization's
+   * mail and it will not fix itself.
+   */
+  const weak = state.weak > 0;
+
   return [{
     check: "recovery_escrow",
-    severity: stale ? "degraded" : "report",
+    severity: stale || weak ? "degraded" : "report",
     discloses: "data",
-    ok: !stale && state.unredeemed > 0,
-    detail: stale
+    ok: !stale && !weak && state.unredeemed > 0,
+    detail: weak
+      ? `${state.weak} of ${state.unredeemed} unspent recovery codes were minted by an encoder that carried `
+        + "**80 bits and not the 128 ADR 29 states**: it rendered one base32 character per random byte, so "
+        + "sixteen bytes became sixteen characters. These codes open the escrow holding the keys to all of "
+        + "this organization's mail. They cannot be upgraded — this Node keeps a hash and never held the "
+        + "plaintext — so the remedy is a fresh set."
+      : stale
       ? `The escrow carries content generation ${state.content} and credential generation `
         + `${state.credential}; the vault is now at ${inventory.content} and ${inventory.credential}. A `
         + "restore from these codes would recover mail sealed before the rotation and **not** mail sealed "
@@ -2115,7 +2133,11 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
         + `${state.content} and credential generation ${state.credential} — current. The codes themselves `
         + "are not here and cannot be: this Node keeps a hash that recognises one and an escrow only the "
         + "code itself opens.",
-    ...(stale
+    ...(weak
+      ? { fix: "mint a fresh set of codes and store them. The old set keeps working until you do, because a "
+          + "weak code is still better than no code — but it is the weaker of the two states and this "
+          + "finding stays degraded until it is replaced" }
+      : stale
       ? { fix: "mint a fresh set of codes, which re-escrows every generation the vault now holds and "
           + "invalidates the old set. The previously printed codes stop working, which is the point" }
       : state.unredeemed === 0

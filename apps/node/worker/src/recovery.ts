@@ -54,7 +54,8 @@ import { aesKeyFrom, vault, type KeyPurpose } from "./keyvault.ts";
 const CODE_COUNT = 10;
 
 /**
- * ADR 29: 128-bit codes. Sixteen bytes, rendered as 26 Crockford-ish base32 characters.
+ * ADR 29: 128-bit codes. Sixteen bytes, rendered as 26 Crockford-ish base32 characters — and `formatCode`
+ * below carries the account of how that rendering lost 48 of them for a while.
  *
  * Not a receipt value for the same reason `CODE_COUNT` is not: it is quoted from the decision rather than
  * measured from anything. The blueprint says *"ten single-use 128-bit codes, plain SHA-256"*, and the
@@ -86,15 +87,57 @@ interface EscrowedVault {
 }
 
 /**
+ * How many characters 128 bits needs in base32, and the invariant the encoder below is checked against.
+ *
+ * `ceil(128 / 5) = 26`. The last character carries three bits of padding, which is ordinary for base32 and
+ * costs nothing — what matters is that 26 is **not** 16.
+ */
+export const CODE_CHARACTERS = 26;
+
+/**
  * A code, formatted so a person can write it on paper and type it back.
  *
  * Grouped in fours with hyphens. The hyphens are cosmetic and stripped before hashing, so a code typed
  * without them still works — a recovery path that rejects a correctly-remembered secret over punctuation is
  * a recovery path that fails when it is needed.
+ *
+ * ## This discarded 48 of its 128 bits, and the comment above it said otherwise
+ *
+ * The first implementation was one line: `for (const byte of bytes) out += ULID_ALPHABET[byte % 32]`. One
+ * base32 character per source byte — so sixteen random bytes became **sixteen characters**, and a base32
+ * character carries five bits. 16 × 5 = **80 bits**, not 128, while the constant above it was named
+ * `CODE_BYTES = 16` and the comment beside it claimed "26 Crockford-ish base32 characters".
+ *
+ * There was no modulo bias — 256 divides evenly by 32 — so nothing about the output looked wrong. The
+ * entropy was simply thrown away, and every test used codes of the length the bug produced.
+ *
+ * These codes open the escrow holding the keys to **all of an organization's mail**. 80 bits is not
+ * trivially guessable and it is not what ADR 29 promises, and the gap between a stated security contract and
+ * the shipped one is the thing this repository exists to keep at zero.
+ *
+ * **Exported for the test**, for the reason `messagePageQuery` is: minted codes use random bytes, so the
+ * only way to assert that a given input bit reaches the output is to feed known bytes to the *shipped*
+ * encoder. A test with its own copy of this loop would assert that its copy is correct.
+ *
+ * The encoder now packs bits properly: an accumulator takes bytes eight bits at a time and emits a character
+ * whenever five are available, with the remaining three padded at the end. `value` never exceeds thirteen
+ * bits because it is drained on every iteration, so the shifts stay well inside a 32-bit integer.
  */
-function formatCode(bytes: Uint8Array): string {
+export function formatCode(bytes: Uint8Array): string {
   let out = "";
-  for (const byte of bytes) out += ULID_ALPHABET[byte % ULID_ALPHABET.length];
+  let value = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += ULID_ALPHABET[(value >>> bits) & 31];
+    }
+  }
+  // The tail. 128 is not a multiple of 5, so three bits are left; padding them is what makes the last
+  // character carry them rather than lose them.
+  if (bits > 0) out += ULID_ALPHABET[(value << (5 - bits)) & 31];
   return (out.match(/.{1,4}/g) ?? []).join("-");
 }
 
@@ -234,9 +277,13 @@ export async function mintRecoveryCodes(env: Env, ctx: Ctx, orgId: string): Prom
       env.CATALOG.prepare("DELETE FROM recovery_codes WHERE org_id = ?").bind(orgId),
       ...rows.map((row) => env.CATALOG.prepare(
         `INSERT INTO recovery_codes
-           (id, org_id, code_hash, escrow, content_generation, credential_generation, created_at)
-         VALUES (?,?,?,?,?,?,?)`,
-      ).bind(row.id, orgId, row.hash, row.blob, current.content, current.credential, at)),
+           (id, org_id, code_hash, escrow, content_generation, credential_generation, created_at,
+            code_characters)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      // `CODE_CHARACTERS` rather than a literal, and rather than measuring `row.code`: the column records
+      // what the encoder promises, so a future encoder that silently shortened its output would disagree
+      // with the constant and fail `recovery-escrow.test.ts` rather than write a comfortable number here.
+      ).bind(row.id, orgId, row.hash, row.blob, current.content, current.credential, at, CODE_CHARACTERS)),
     ],
   );
 
@@ -389,19 +436,30 @@ export async function redeemForVault(
 
 /** What `doctor` reports. Counts and generations only — never a hash, and certainly never a code. */
 export async function escrowState(env: Env, orgId: string): Promise<{
-  total: number; unredeemed: number; content: number; credential: number;
+  total: number; unredeemed: number; content: number; credential: number; weak: number;
 } | null> {
   const row = await env.CATALOG.prepare(
     `SELECT COUNT(*) AS total,
             SUM(CASE WHEN redeemed_at IS NULL THEN 1 ELSE 0 END) AS unredeemed,
-            MAX(content_generation) AS content, MAX(credential_generation) AS credential
+            MAX(content_generation) AS content, MAX(credential_generation) AS credential,
+            /*
+             * Codes still spendable that were minted before the encoder carried its full 128 bits. NULL is
+             * the legacy marker -- migration 0042 added the column without a default precisely so that
+             * existing rows say "unknown" rather than being relabelled as strong. The inequality covers a
+             * future encoder that shortens rather than lengthens.
+             */
+            SUM(CASE WHEN redeemed_at IS NULL
+                      AND (code_characters IS NULL OR code_characters < ?)
+                     THEN 1 ELSE 0 END) AS weak
        FROM recovery_codes WHERE org_id = ?`,
-  ).bind(orgId).first<{ total: number; unredeemed: number; content: number; credential: number }>();
+  ).bind(CODE_CHARACTERS, orgId)
+    .first<{ total: number; unredeemed: number; content: number; credential: number; weak: number }>();
   if (row === null || Number(row.total) === 0) return null;
   return {
     total: Number(row.total),
     unredeemed: Number(row.unredeemed ?? 0),
     content: Number(row.content ?? 0),
     credential: Number(row.credential ?? 0),
+    weak: Number(row.weak ?? 0),
   };
 }

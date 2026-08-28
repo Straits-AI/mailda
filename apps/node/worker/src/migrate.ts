@@ -39,6 +39,7 @@ import m0038 from "../migrations/0038_inbox_page_order.sql";
 import m0039 from "../migrations/0039_recovery_codes.sql";
 import m0040 from "../migrations/0040_message_search.sql";
 import m0041 from "../migrations/0041_body_search.sql";
+import m0042 from "../migrations/0042_recovery_code_strength.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -134,6 +135,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0039_recovery_codes.sql", sql: m0039 },
   { name: "0040_message_search.sql", sql: m0040 },
   { name: "0041_body_search.sql", sql: m0041 },
+  { name: "0042_recovery_code_strength.sql", sql: m0042 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

@@ -115,11 +115,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "Writes or edits something a person can change back. A draft is not a send, a Butler draft is not a "
     + "published one, and a matter is a folder rather than an act on anybody's mail.",
     "PUT /api/drafts",
-    "DELETE /api/drafts/:draftId",
     "POST /api/butlers",
     "PUT /api/butlers/:butlerId/draft",
     "POST /api/matters",
-    "POST /api/matters/:matterId/close",
     "POST /api/policies",
     "PUT /api/policies/:policyId/draft",
   ),
@@ -129,12 +127,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "be able to ask before a person publishes one (#87).",
     "POST /api/butlers/:butlerId/simulate",
   ),
-  ...changing("act",
-    "Case work is what a shared mailbox is for, and every one of these is reversible by the next person: a "
-    + "claim can be stolen, a release re-taken, a close re-opened. The collision they exist to prevent is "
-    + "two people replying, which is a reason to *record* who holds a case rather than to withhold it.",
-    "POST /api/cases/:caseId/:action",
-  ),
+
   ...changing("act",
     "Cancelling stops a send that has not left, and the direction is what makes it safe: an over-eager "
     + "machine cancelling produces a message that was not sent, which a person can write again — the "
@@ -144,13 +137,48 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/sends/:sendId/cancel",
   ),
   ...changing("act",
-    "Verifying the audit chain and asking what would be dispatched both read the world and change nothing "
-    + "a person would need to undo. `dispatch` hands over what was already due — it starts nothing new.",
+    "Verifying the audit chain reads the world and changes nothing a person would need to undo.",
     "POST /api/audit/verify",
-    "POST /api/sends/dispatch",
   ),
 
   // ---- governed: more than one person, or nobody can undo it ---------------------------------------
+  /*
+   * Four routes moved here from `act` on 28 August 2026, after an audit read the tier's own rule back to it:
+   * **`act` means a person can undo it.** Each of these was classified by its shape — a DELETE on a draft, a
+   * POST that files something — rather than by what it does, and each fails the rule.
+   */
+  ...changing("governed",
+    "Discarding a draft destroys text somebody wrote. \"They can type it again\" is not undo, and the body is "
+    + "collected from R2 by the reconciler afterwards — there is nothing to restore from. An agent tidying "
+    + "drafts is an agent deleting a person's unfinished work.",
+    "DELETE /api/drafts/:draftId",
+  ),
+  ...changing("governed",
+    "Closing a matter is one-way. `matters.ts` has openMatter and closeMatter and no reopen, and the closure "
+    + "stamps the time from which employee-notification obligations become due (§7). A resumed investigation "
+    + "needs a new matter, so this is a governance event rather than filing.",
+    "POST /api/matters/:matterId/close",
+  ),
+  ...changing("governed",
+    "This route carries claim, steal, release **and close**, and close is irreversible: `cases.ts` has no "
+    + "reopen and the state guards read `state != 'closed'`. Its previous entry here said 'a close can be "
+    + "re-opened', which is this repository's recurring defect — prose asserting a property the code below "
+    + "it does not have — in the file that decides what a machine may do.\n\nWithheld whole rather than in "
+    + "part, because the tier is per route and this route bundles the reversible with the irreversible. That "
+    + "costs an agent `claim`, which is genuinely useful and genuinely safe; restoring it means splitting "
+    + "the route or making curation parameter-aware, and neither is a thing to do while closing a hole.",
+    "POST /api/cases/:caseId/:action",
+  ),
+  ...changing("governed",
+    "Dispatch hands every due send to the transport **now**. It starts no new send, which is what its "
+    + "previous entry said, and that is not the question the tier asks: mail leaves, and mail leaving is the "
+    + "one act in this product nobody can undo.\n\nIt also contradicted a promise made three files away. "
+    + "The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this "
+    + "one sent. A guarantee stated in a handshake and broken by a capability list is worse than no "
+    + "guarantee, because a client has been told it can stop checking.",
+    "POST /api/sends/dispatch",
+  ),
+
   ...changing("governed",
     "Mail leaving is the one act in this product nobody can undo. Sealing commits a message to policy and "
     + "the dispatcher takes it from there; a cancellation is a race, not a reversal.",

@@ -6,7 +6,7 @@ import { createSystemCtx } from "@mailda/runtime";
 
 import { messagePageQuery } from "../src/authz-read.ts";
 import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
-import { liveGrantsBySubject, SCOPES_FOR_METADATA } from "../src/supervised.ts";
+import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
 /**
  * What a searched page costs, against the same budget the plain listing lives inside (#107).
@@ -70,7 +70,10 @@ async function cost(term: string | null, mailboxId: string | null = null): Promi
   const query = messagePageQuery({
     orgId: ORG,
     subjects: [READER],
-    supervised: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
+    supervised: {
+      metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
+      content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
+    },
     page: { after: null, mailboxId, q: term === null ? null : ftsQuery(term) },
     limit: BUDGETS["messages.page_size"] + 1,
   });
@@ -82,7 +85,10 @@ async function planFor(term: string | null): Promise<string> {
   const query = messagePageQuery({
     orgId: ORG,
     subjects: [READER],
-    supervised: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
+    supervised: {
+      metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
+      content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
+    },
     page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term) },
     limit: BUDGETS["messages.page_size"] + 1,
   });

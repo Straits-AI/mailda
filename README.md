@@ -1676,7 +1676,11 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   unverified.
 - **Search covers subjects, senders and message bodies. Attachments are not indexed.** Body search requires
   `mailbox.content.read`; the weaker `mailbox.metadata.read` reaches subjects and senders only, because
-  answering *"the word X occurs in message Y"* discloses the message itself one word at a time. Attachment
+  answering *"the word X occurs in message Y"* discloses the message itself one word at a time. That applies
+  to **supervised grants too** — a grant of scope `metadata` reaches subjects and not text. It did not at
+  first: one grant subquery authorized both index arms, and a metadata grant could ask whether any word
+  occurred in any message. Found by an external audit, not by the suite, because every test used standing
+  relations and nothing exercised the second authorization mechanism against the second index. Attachment
   contents are not indexed and are not planned to be — there is no document parser on the ingest path, and
   adding one would be a new attack surface for a search feature.
 - **A search whose words are split between a subject and a body finds nothing.** Every word of a query has to
