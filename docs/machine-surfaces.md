@@ -150,14 +150,52 @@ agt_ token → actor = agt_x,    delegator = usr_ana
 effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live tuples of the sponsor
 ```
 
-The second and third are `relationship_tuples` with an `agt_` subject and `butler/authority.ts`'s existing
-intersection, reused rather than reimplemented. That is also why there is no table of mailboxes: **an agent's
-resource ceiling is its tuples**, conferred by an administrator through the same door as every other relation.
+The second term is `relationship_tuples` with an `agt_` subject. That is also why there is no table of
+mailboxes: **an agent's resource ceiling is its tuples**, conferred by an administrator through the same door
+as every other relation.
 
 The action ceiling is pinned at mint and there is deliberately no route that widens one — §16's *"new grants
 do not silently expand a published Butler"*, applied to a second principal kind. It is enforced in
 `principalFor`, so it binds against a REST route as well as the tool that wraps it; a ceiling checked only
 where tools are dispatched is one any caller steps around by calling the route directly.
+
+An action is grantable only if `agentGrantableActions()` names it, which is `exposureOf`'s `read` and `act`
+tiers and nothing else. Deriving the list from the route registry rather than restating it means a route
+reclassified to `governed` leaves every agent's reachable set on the same commit; a hand-written list would
+have gone on permitting it.
+
+### The third term was stated and not enforced
+
+The sponsor sentence — *a human cannot delegate more authority than they continue to hold* — was in the
+header of the file that was supposed to keep it, and nothing kept it. `principalFor` set `delegatorUserId`,
+the audit trail recorded it, and no query read it. So an agent went on reading a mailbox after its sponsor's
+relation was revoked, after the sponsor left the team that granted it, and where the sponsor had never held it.
+
+`delegation.ts` is the third term, and two things about its shape were decided the hard way.
+
+**It is derived from the subject, not threaded through the call.** The first fix read `who.delegatorUserId`,
+which works exactly as far as a `Principal` travels — and `isAdmin` takes a bare identifier that thirty callers
+pass `who.userId` into, `mailboxQueues` takes `(orgId, userId)`, and `outbound/manifest.ts` re-checks the
+author's authority at seal time from a *column*, with no `Principal` in reach and never going to have one. So
+the sponsor is looked up from the identifier's typed prefix, the way `kindOfActor` derives an actor's kind —
+the decision this repository already credits with making attribution structural instead of remembered.
+`delegatorUserId` stays, because the trail needs the sponsor recorded rather than re-derived (a derived trail's
+answers move when somebody reassigns an agent). Two mechanisms that must agree, and a test that says they do.
+
+**It is an intersection, and each term of the `EXISTS` is load-bearing.** `AND EXISTS`, not another subject in
+the `IN` list, or the sponsor's row satisfies the predicate alone and the agent holds whatever the sponsor
+holds. Same relation, or an agent's `content.read` rides on a sponsor's `metadata.read` and reads bytes the
+sponsor cannot. Same object, or a sponsor with one mailbox of their own licenses an agent across the
+organization. All three were found by mutating the clause; the assertions written before each term existed
+passed without it.
+
+Fixing the single-object check covered mailbox read, `send.propose` and `ediscovery.export`, because all three
+land in `hasAnyRelation` — and it covered **one route**. The listing, both arms of the search, the dispatch
+sweep, the case queues, the sends listing, the notifications feed, the seal-time parent check and `isAdmin` all
+kept their old predicates and every test passed. `test/node/delegated-authority-world.test.ts` is the answer to
+that class: it enumerates every predicate reading the table and fails until each is classified as intersected
+(and its source actually carries a term) or exempt with a stated reason. A behavioural test covers a predicate
+somebody remembered; the defect is the predicate nobody remembered.
 
 ### The credential is opaque, not a signature
 

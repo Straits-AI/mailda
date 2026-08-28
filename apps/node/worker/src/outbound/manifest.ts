@@ -6,6 +6,7 @@ import { type AuditEvent, auditedBatchMany } from "../audit.ts";
 import { describeShortfall, planApproval, teamsNamedBy, type Shortfall } from "../approvals.ts";
 import { decidersOf, rostersOf } from "../deciders.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
+import { sponsorTerm } from "../delegation.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
@@ -506,6 +507,16 @@ export async function sealManifest(
     // the inbox would not have shown them.
     const subjects = await readableSubjects(env, { orgId, userId: composition.authorUserId });
     const placeholders = subjects.map(() => "?").join(", ");
+    /*
+     * The sponsor term (#109), and this is the site that decided how it is resolved. There is no `Principal`
+     * here and there was never going to be one: sealing happens after the composition is stored, and the
+     * author is a column. A term threaded through the request as `who.delegatorUserId` could not reach this
+     * query, and an agent's reply would have threaded onto a parent its sponsor cannot read — putting a
+     * `Message-ID` the sponsor never had access to into an outgoing header, where it leaves the building.
+     *
+     * `delegation.ts` derives the sponsor from the subject instead, so a bare `authorUserId` is enough.
+     */
+    const sponsor = await sponsorTerm(env, orgId, composition.authorUserId, "t");
     const parent = await env.CATALOG.prepare(
       `SELECT m.rfc_message_id, m.blob_key
          FROM messages m
@@ -513,13 +524,14 @@ export async function sealManifest(
          JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
         WHERE m.org_id = ? AND m.id = ?
           AND a.mailbox_id IN (
-            SELECT object_id FROM relationship_tuples
-             WHERE org_id = ? AND subject_id IN (${placeholders})
-               AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+            SELECT t.object_id FROM relationship_tuples t
+             WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
+               AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
+               ${sponsor.sql}
           )
         LIMIT 1`,
     )
-      .bind(orgId, composition.inReplyToMessageId, orgId, ...subjects)
+      .bind(orgId, composition.inReplyToMessageId, orgId, ...subjects, ...sponsor.params)
       .first<{ rfc_message_id: string; blob_key: string }>();
     // Refused rather than silently ignored, and **not-found rather than forbidden**: §5C requires an
     // invisible thing and an absent one to answer alike, which is what stops this being the oracle described

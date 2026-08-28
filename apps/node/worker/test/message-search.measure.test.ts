@@ -68,6 +68,7 @@ interface Cost { rowsRead: number; rows: number }
 
 async function cost(term: string | null, mailboxId: string | null = null): Promise<Cost> {
   const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [READER],
     supervised: {
@@ -83,6 +84,7 @@ async function cost(term: string | null, mailboxId: string | null = null): Promi
 
 async function planFor(term: string | null): Promise<string> {
   const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [READER],
     supervised: {

@@ -2,6 +2,7 @@ import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { auditedBatch, recordDisclosure } from "./audit.ts";
 import { mayReadMetadata, maySend, readableSubjects } from "./authz-read.ts";
+import { sponsorTerm } from "./delegation.ts";
 import { buildSupervisedQuery } from "./supervised.ts";
 
 /**
@@ -454,6 +455,12 @@ export interface MailboxQueue {
  */
 export async function mailboxQueues(env: Env, orgId: string, userId: string): Promise<MailboxQueue[]> {
   const subjects = await readableSubjects(env, { orgId, userId });
+  /*
+   * The sponsor term (#109), because `GET /api/cases` is a route an agent may hold and this is the query that
+   * decides which mailboxes it sees a queue for. Unintersected, an agent would be offered work to claim in a
+   * mailbox its sponsor cannot send from — and claiming is an act, not a read.
+   */
+  const sponsor = await sponsorTerm(env, orgId, userId, "t");
   const placeholders = subjects.map(() => "?").join(", ");
 
   const { results } = await env.CATALOG.prepare(
@@ -478,13 +485,14 @@ export async function mailboxQueues(env: Env, orgId: string, userId: string): Pr
        FROM mailboxes m
       WHERE m.org_id = ?
         AND m.id IN (
-          SELECT object_id FROM relationship_tuples
-           WHERE org_id = ? AND subject_id IN (${placeholders})
-             AND object_type = 'mailbox' AND relation = 'send.propose'
+          SELECT t.object_id FROM relationship_tuples t
+           WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
+             AND t.object_type = 'mailbox' AND t.relation = 'send.propose'
+             ${sponsor.sql}
         )
       ORDER BY m.name`,
   )
-    .bind(userId, orgId, orgId, ...subjects)
+    .bind(userId, orgId, orgId, ...subjects, ...sponsor.params)
     .all<MailboxQueue>();
   return results;
 }

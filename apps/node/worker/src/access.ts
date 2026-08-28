@@ -1,6 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
+import { sponsorOf } from "./delegation.ts";
 import { CallerError, notFound, unprocessable } from "./errors.ts";
 
 /**
@@ -257,16 +258,50 @@ export function conferredBySupervision(relation: string): Relation | null {
     : null;
 }
 
-/** Does this principal hold `org.admin` on their own organization? */
+/**
+ * Does this principal hold `org.admin` on their own organization?
+ *
+ * ## The sponsor term, enforced here rather than at thirty call sites
+ *
+ * An agent (#109) may hold no more authority than the human who sponsored it continues to hold. Every other
+ * relation family evaluates that intersection in `authz-read.ts`, which takes a `Principal` and can see the
+ * delegator. This function takes a bare identifier, and thirty callers pass `who.userId` into it — so an agent
+ * granted `org.admin` was an administrator, whatever its sponsor was, and two of the routes an agent may hold
+ * (`POST /api/butlers`, `POST /api/policies`) are gated on exactly this call. An agent would have created
+ * standing automation for an organization on the authority of a sponsor who could not.
+ *
+ * Widening the signature to a `Principal` was the first instinct and is the worse fix: thirty call sites is
+ * thirty chances to pass the wrong thing, and the ones in `index.ts` would keep compiling either way. The
+ * subject already carries what is needed — a typed-prefix ULID (#6) — so the check can recognize an agent
+ * itself and resolve the sponsor. One place, no signature, and no caller can forget.
+ *
+ * The derivation itself lives in `delegation.ts`, which every other relation family also reads — so the four
+ * families the audit named (mailbox read, send/propose, export, organization-admin) evaluate one rule rather
+ * than four copies of it. `sponsorOf` returns before preparing a statement for a `usr_…` subject, so a human
+ * administrator pays a regular-expression test and nothing else.
+ */
 export async function isAdmin(env: Env, orgId: string, userId: string): Promise<boolean> {
-  const row = await env.CATALOG.prepare(
+  const holds = async (subjectId: string) => await env.CATALOG.prepare(
     `SELECT 1 FROM relationship_tuples
       WHERE org_id = ? AND subject_id = ? AND object_type = 'organization'
         AND relation = 'org.admin' AND object_id = ? LIMIT 1`,
   )
-    .bind(orgId, userId, orgId)
-    .first();
-  return row !== null;
+    .bind(orgId, subjectId, orgId)
+    .first() !== null;
+
+  if (!(await holds(userId))) return false;
+
+  /*
+   * The sponsor term. `sponsorOf` returns `null` for a human — which is nearly every caller, and costs one
+   * regular-expression test — and `undefined` for an agent whose sponsor cannot be established, which is
+   * refused rather than waved through.
+   *
+   * `sponsorOf` rather than `sponsorTerm`: `org.admin` needs the sponsor **alone**. A team subject holding
+   * `org.admin` is not a shape `grant` produces, so the team arm would widen this for nothing.
+   */
+  const sponsor = await sponsorOf(env, orgId, userId);
+  if (sponsor === null) return true;
+  return sponsor !== undefined && await holds(sponsor);
 }
 
 /**

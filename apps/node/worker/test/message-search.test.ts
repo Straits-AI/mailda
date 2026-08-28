@@ -73,6 +73,7 @@ const FOREIGN = "rcpt_search000000000000000004";
 
 async function search(term: string | null, who = READER, org = ORG): Promise<string[]> {
   const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: org,
     subjects: [who],
     supervised: {
@@ -616,6 +617,7 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
      * Found by the same external audit, in the matrix cell the first round of fixtures did not combine.
      */
     const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
       orgId: ORG,
       subjects: [STANDING_PLUS_META_GRANT],
       supervised: {

@@ -3,6 +3,7 @@ import { BUDGETS } from "@mailda/budgets";
 
 import type { AuditGate } from "./audit.ts";
 import type { Principal } from "./authz-read.ts";
+import { sponsorTerm } from "./delegation.ts";
 
 /**
  * Durable notifications: the obligation to tell somebody something, as a **row** (#63 part B, #61, §7).
@@ -296,6 +297,12 @@ export interface Notification {
 export async function notificationsFor(env: Env, who: Principal, subjects: readonly string[]):
 Promise<Notification[]> {
   const placeholders = subjects.map(() => "?").join(", ");
+  /*
+   * The sponsor term (#109). A mailbox-wide notice names the mailbox and its matter, so an agent reading these
+   * unintersected would learn which mailboxes have matters open and what is due on them — the shape of the
+   * work, without the mail. `delegation.ts` states the rule; inert for a human.
+   */
+  const sponsor = await sponsorTerm(env, who.orgId, who.userId, "t");
   const { results } = await env.CATALOG.prepare(
     `SELECT ${COLUMNS} FROM notifications n
       WHERE n.org_id = ? AND n.delivered_at IS NOT NULL
@@ -304,9 +311,10 @@ Promise<Notification[]> {
                    SELECT 1 FROM relationship_tuples t
                     WHERE t.org_id = n.org_id AND t.subject_id IN (${placeholders})
                       AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
-                      AND t.object_id = n.mailbox_id)))
+                      AND t.object_id = n.mailbox_id
+                      ${sponsor.sql})))
       ORDER BY n.due_at DESC, n.id DESC LIMIT 50`,
-  ).bind(who.orgId, who.userId, ...subjects).all<{
+  ).bind(who.orgId, who.userId, ...subjects, ...sponsor.params).all<{
     id: string; kind: NotificationKind; subject_id: string; user_id: string | null;
     mailbox_id: string | null; matter_id: string | null; created_at: string;
     due_at: string | null; delivered_at: string | null; body: string | null;

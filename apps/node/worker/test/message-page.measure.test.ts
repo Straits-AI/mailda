@@ -68,6 +68,7 @@ async function pageCost(options: {
   limit: number;
 }): Promise<Cost & { keys: Array<{ at: string; id: string }>; bytes: number }> {
   const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [READER],
     supervised: {

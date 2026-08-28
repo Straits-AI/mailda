@@ -1406,13 +1406,36 @@ Three things bound what one can reach, and two of them already existed:
 
     effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live tuples of the sponsor
 
-The last two are ordinary relationship tuples and the intersection Butlers already use, so an agent's resource
-ceiling *is* its tuples — conferred by an administrator through the same door as every other relation. The
-action ceiling is the new part, and there is deliberately no route that widens one.
+The middle term is ordinary relationship tuples, so an agent's resource ceiling *is* its tuples — conferred by
+an administrator through the same door as every other relation. The action ceiling is pinned at mint, derived
+from the route registry's `read` and `act` tiers rather than restated, so a route reclassified as `governed`
+leaves every agent's reachable set on the same commit. There is deliberately no route that widens one.
 
 Minting is administrator-only and the sponsor is named rather than assumed, so the person who authorises a
 machine identity need not be the person whose authority it borrows. All three agent routes are withheld from
 machines: an agent that could mint agents escapes its own ceiling in a single call.
+
+### The sponsor term was written down before it was enforced
+
+The third term was the whole point and it constrained nothing. `principalFor` set the delegator, the trail
+recorded it, and no authorization query read it — so an agent kept reading a mailbox after its sponsor's
+relation was revoked, after the sponsor left the team that granted it, and where the sponsor had never held it
+at all. The sentence *a human cannot delegate more authority than they continue to hold* was false in the
+header of the file responsible for it.
+
+It is now one clause in one module, and the two decisions worth knowing:
+
+- **The sponsor is derived from the identifier, not passed along with the request.** A threaded field reaches
+  as far as a `Principal` travels, and three of the places that needed it have no `Principal` to travel in —
+  `isAdmin` takes a bare id that thirty callers feed, and the send path re-checks the author's authority at
+  seal time from a database column. Deriving it from the typed-prefix ULID is the same move that made actor
+  attribution structural instead of remembered.
+- **Fixing the one check fixed one route.** Mailbox read, send and export all land in the same check, which
+  made the fix look complete; the listing, both arms of search, the dispatch sweep, the case queues, the sends
+  listing, the notifications feed and the admin check each had their own predicate, and every test passed. A
+  tripwire now enumerates every predicate that reads the table and fails until each one is classified as
+  intersected — with its source checked for the term, so registering a name is not enough — or exempt with a
+  written reason. Three of the clause's own terms were found by deleting them and watching nothing fail.
 
 **This is not an AI capability.** Whether the thing holding the credential is a language model, a script or a
 cron job is outside it. The `llm.*` nodes remain declared and refused, and calling Mailda AI-native today

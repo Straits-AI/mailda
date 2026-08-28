@@ -1,3 +1,4 @@
+import { agentGrantableActions } from "@mailda/contract/agent";
 import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
@@ -149,6 +150,35 @@ export async function mintAgent(
       why: "the ceiling is pinned at mint and cannot be widened, so an agent created with nothing can never "
         + "do anything — and the route that would widen it does not exist on purpose",
       fix: "name the capabilities this agent needs, from the machine capability list",
+    });
+  }
+
+  /*
+   * The ceiling is checked against the **curation table**, not merely stored (audit P0-2).
+   *
+   * `packages/contract/src/agent.ts` classifies every route and only `read` and `act` reach a machine. That
+   * classification bound one consumer — the MCP tool list — and this route accepted arbitrary strings, so an
+   * administrator could hand an agent `POST /api/agents` and it would mint agents, escaping its own pinned
+   * ceiling in one call. Sealing a send was reachable the same way, and sealing is `governed` because it is
+   * the one act nobody can undo.
+   *
+   * Generated from the table rather than validated against a copy of it, which is the difference between one
+   * source of truth and two that agree until somebody edits one.
+   *
+   * **Refused regardless of who asks.** An administrator's authority is to delegate what they hold, not to
+   * widen what a machine class may ever do — so there is no override, and `assertAdmin` passing above does
+   * not make this reachable.
+   */
+  const grantable = new Set(agentGrantableActions());
+  const withheld = [...new Set(input.actions)].filter((action) => !grantable.has(action));
+  if (withheld.length > 0) {
+    throw unprocessable("E_AGENT_ACTION_WITHHELD", {
+      what: `these capabilities are not grantable to a machine: ${withheld.join(", ")}`,
+      why: "the machine capability list is curated by exposure tier, and only read and reversible act routes "
+        + "reach an agent. A route that is governed, operator or a surface is withheld from every machine — "
+        + "an agent that could mint agents or seal a send would step around its own ceiling",
+      fix: "grant capabilities from the machine capability list. An unclassified route is withheld too, "
+        + "because a ceiling cannot name what the contract does not describe",
     });
   }
 

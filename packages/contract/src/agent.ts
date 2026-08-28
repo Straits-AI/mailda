@@ -352,6 +352,33 @@ export function exposureOf(spec: RouteSpec): Classification {
  * Sorted by path so the list is stable — a Skill regenerated in a different order would produce a diff that
  * says nothing, and a diff that says nothing is one nobody reads.
  */
+/**
+ * Every route a machine credential may be granted, as `"METHOD /path"`.
+ *
+ * ## Why this exists as its own export
+ *
+ * The curation table below decides what a machine may do, and until #109 L2 it bound **one** consumer: the
+ * MCP tool list. An agent's pinned ceiling accepted arbitrary strings, so an administrator could grant
+ * `POST /api/agents` — an agent that mints agents escapes its own ceiling in a single call — or
+ * `POST /api/sends/seal`, which is `governed` because sealing is the one act nobody can undo.
+ *
+ * The classification was right and reached nothing. So the ceiling is now generated from it rather than
+ * validated against a copy of it, which is the difference between one source of truth and two that agree
+ * until somebody edits one.
+ *
+ * `read` and `act` only. Anything `governed`, `operator` or `surface` is withheld from a machine **regardless
+ * of who asks** — an administrator's authority is to delegate what they hold, not to widen what a machine
+ * class may ever do.
+ */
+export function agentGrantableActions(): readonly string[] {
+  const all: readonly RouteSpec[] = ROUTES;
+  return all
+    .map((spec) => ({ spec, classification: exposureOf(spec) }))
+    .filter(({ classification }) => classification.tier === "read" || classification.tier === "act")
+    .map(({ spec }) => `${spec.method} ${spec.path}`)
+    .sort();
+}
+
 export function agentCapabilities(nameFor: (spec: RouteSpec) => string): AgentCapability[] {
   const all: readonly RouteSpec[] = ROUTES;
   return all

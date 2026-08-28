@@ -3,6 +3,7 @@ import { MESSAGE_PAGE_PARAMS, specFor } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
 import { agentFor } from "./agents.ts";
+import { sponsorTerm, type SponsorTerm } from "./delegation.ts";
 import { ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
@@ -245,14 +246,34 @@ async function hasAnyRelation(
   const placeholders = subjects.map(() => "?").join(", ");
   const relationPlaceholders = relations.map(() => "?").join(", ");
 
+  /*
+   * ## The sponsor's half of the intersection (#109, audit P0-1)
+   *
+   * `agents.ts` states the rule and this is where it is kept:
+   *
+   *     effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live tuples of the sponsor
+   *
+   * The third term **was not enforced.** `principalFor` returned the agent as `userId` and the sponsor as
+   * `delegatorUserId`, and this function resolved subjects from `who.userId` alone — so the sponsor appeared
+   * in the audit trail and constrained nothing. An agent kept reading a mailbox after its sponsor's relation
+   * was revoked, after the sponsor left the team that granted it, and where the sponsor never held it at all.
+   * The sentence the sponsor exists for — *a human cannot delegate more authority than they continue to
+   * hold* — was false, in a file whose header asserted it.
+   *
+   * One extra query, and only when a delegator is present: a human principal reaches the statement #11
+   * measured, byte for byte, and pays nothing for a term that does not apply to them.
+   */
+  const sponsor = await sponsorTerm(env, who.orgId, who.userId, "a");
+
   // `NULL AS grant_id` rather than `1`, so both arms have one column of the same name and the row that comes
   // back says **which** arm answered. A standing relation is not a grant, and the difference decides whether
   // an entry is owed — conflating them would either record an ordinary read as supervised or fail to record a
   // supervised one, and only the second is a defect that hides.
-  const standing = `SELECT NULL AS grant_id FROM relationship_tuples
-      WHERE org_id = ? AND subject_id IN (${placeholders})
-        AND object_type = 'mailbox' AND relation IN (${relationPlaceholders}) AND object_id = ?`;
-  const standingParams = [who.orgId, ...subjects, ...relations, mailboxId];
+  const standing = `SELECT NULL AS grant_id FROM relationship_tuples a
+      WHERE a.org_id = ? AND a.subject_id IN (${placeholders})
+        AND a.object_type = 'mailbox' AND a.relation IN (${relationPlaceholders}) AND a.object_id = ?
+        ${sponsor.sql}`;
+  const standingParams = [who.orgId, ...subjects, ...relations, mailboxId, ...sponsor.params];
 
   // One statement, two arms, `LIMIT 1` over the compound — so a caller holding the standing relation stops at
   // the first arm and a supervised reader is answered without a second round trip.
@@ -311,12 +332,21 @@ export async function mailboxesWithRelation(
 ): Promise<string[]> {
   const subjects = await readableSubjects(env, who);
   const placeholders = subjects.map(() => "?").join(", ");
+  /*
+   * The sponsor term, because the paragraph above promises this sweep and `hasAnyRelation` cannot disagree
+   * about what somebody holds — and for a moment they did. The check gained the intersection first and this
+   * did not, which would have let a dispatch sweep hand an agent a mailbox that the very next check refused:
+   * not a leak, but a system giving two answers to one question, which is how the leak arrives later when
+   * somebody trusts the cheaper one.
+   */
+  const sponsor = await sponsorTerm(env, who.orgId, who.userId, "t");
   const { results } = await env.CATALOG.prepare(
-    `SELECT DISTINCT object_id FROM relationship_tuples
-      WHERE org_id = ? AND subject_id IN (${placeholders})
-        AND object_type = 'mailbox' AND relation = ?`,
+    `SELECT DISTINCT t.object_id FROM relationship_tuples t
+      WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
+        AND t.object_type = 'mailbox' AND t.relation = ?
+        ${sponsor.sql}`,
   )
-    .bind(who.orgId, ...subjects, relation)
+    .bind(who.orgId, ...subjects, relation, ...sponsor.params)
     .all<{ object_id: string }>();
   return results.map((row) => row.object_id);
 }
@@ -880,6 +910,17 @@ export function messagePageQuery(args: {
   orgId: string;
   subjects: readonly string[];
   /**
+   * The **third term** of a delegated principal's authority — see `delegation.ts`. Inert for a human.
+   *
+   * `agents.ts` states the rule — `effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live
+   * tuples of the sponsor` — and `hasAnyRelation` keeps it for a single object. The listing builds its own
+   * tuple predicate and did not see a delegator at all, so closing only the single-object hole would have left
+   * the more dangerous half open: a check refuses one message, and a page hands over the subject lines and
+   * sender addresses of every mailbox the agent holds a relation on, whether or not its sponsor could reach
+   * them. Search is worse again, because a query is a question about content.
+   */
+  sponsor: SponsorTerm;
+  /**
    * This reader's live grants, **scoped twice** — the only source of a grant id here (§7).
    *
    * Two subqueries rather than one, and the reason is a hole this shipped with. A supervised grant is the
@@ -1027,14 +1068,20 @@ export function messagePageQuery(args: {
    * (#95), and a search that authorized slightly differently from the listing would be a second read surface
    * over the same mail — which is what #107 refused to build as a separate endpoint in the first place.
    */
+  /*
+   * The sponsor's half of the intersection — `delegation.ts` states the shape and why each term of it is
+   * load-bearing. The supervised arm needs no equivalent: a grant is issued to a named subject for a named
+   * message, so an agent cannot hold one unless somebody issued it one.
+   */
   const authorizedBy = (relations: readonly MailboxRelation[], grantAlias = "sg") => ({
     sql: `AND (${grantAlias}.grant_id IS NOT NULL
              OR a.mailbox_id IN (
-               SELECT object_id FROM relationship_tuples
-                WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
-                  AND object_type = 'mailbox' AND relation IN (${relations.map(() => "?").join(", ")})
+               SELECT t.object_id FROM relationship_tuples t
+                WHERE t.org_id = ? AND t.subject_id IN (${subjectPlaceholders})
+                  AND t.object_type = 'mailbox' AND t.relation IN (${relations.map(() => "?").join(", ")})
+                  ${args.sponsor.sql}
              ))`,
-    params: [args.orgId, ...args.subjects, ...relations],
+    params: [args.orgId, ...args.subjects, ...relations, ...args.sponsor.params],
   });
   const authorized = authorizedBy(RELATIONS_FOR_METADATA);
 
@@ -1293,6 +1340,11 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   const query = messagePageQuery({
     orgId: who.orgId,
     subjects,
+    /*
+     * Empty for a human, and no query. An agent pays one extra read for the term that makes its sponsor a
+     * ceiling rather than a label in the audit trail.
+     */
+    sponsor: await sponsorTerm(env, who.orgId, who.userId, "t"),
     supervised,
     page,
     // One row past the page, and it is never returned. It is the difference between `next_cursor` meaning

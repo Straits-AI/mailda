@@ -62,6 +62,7 @@ import {
   REFRESH_COOKIE,
   type IssuedSession,
 } from "./auth/session.ts";
+import { sponsorTerm } from "./delegation.ts";
 import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
 import { releaseButlerSend } from "./butler/release.ts";
 import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
@@ -2281,6 +2282,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // `listMessages` both do. A relation held through a team is held.
       const subjects = await readableSubjects(env, who);
       const subjectPlaceholders = subjects.map(() => "?").join(", ");
+      /*
+       * The sponsor term (#109), because `GET /api/sends` is a route an agent may hold. A manifest carries the
+       * subject line and every envelope recipient of an outgoing message, so this is content rather than
+       * metadata — an unintersected read here is a worse leak than the inbox listing.
+       */
+      const sponsor = await sponsorTerm(env, who.orgId, who.userId, "t");
       const rows = await env.CATALOG.prepare(
         // `has_submitted` rather than the key itself: the interface needs to know whether the bytes are
         // producible, and an R2 key is not something a client has any business holding. Without it the
@@ -2302,12 +2309,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
            FROM send_manifests
           WHERE org_id = ?
             AND mailbox_id IN (
-              SELECT object_id FROM relationship_tuples
-               WHERE org_id = ? AND subject_id IN (${subjectPlaceholders})
-                 AND object_type = 'mailbox' AND relation = 'mailbox.content.read'
+              SELECT t.object_id FROM relationship_tuples t
+               WHERE t.org_id = ? AND t.subject_id IN (${subjectPlaceholders})
+                 AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
+                 ${sponsor.sql}
             )
           ORDER BY sealed_at DESC LIMIT 50`,
-      ).bind(who.orgId, who.orgId, ...subjects).all<Record<string, unknown>>();
+      ).bind(who.orgId, who.orgId, ...subjects, ...sponsor.params).all<Record<string, unknown>>();
 
       // Recipients travel with the sends rather than behind a second request per row.
       //

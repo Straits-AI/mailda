@@ -46,6 +46,7 @@ const AT = "2026-08-20T09:00:00.000Z";
 
 async function pageFor(subject: string): Promise<string[]> {
   const query = messagePageQuery({
+    sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [subject],
     supervised: {
