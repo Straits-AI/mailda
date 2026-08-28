@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -149,5 +151,51 @@ describe("nothing that needs two people is offered to something that can only be
     for (const entry of withheldCapabilities()) {
       expect(entry.why.length, entry.route).toBeGreaterThan(40);
     }
+  });
+});
+
+describe("the tier table in docs/machine-surfaces.md counts what exposureOf counts", () => {
+  /*
+   * That table's five numbers were **all wrong at the same time** — 41/12/25/17/1 against an actual
+   * 39/9/29/25/1 — and nothing had ever checked them. A table of counts in a document whose subject is *what a
+   * machine may do* reads as evidence that the set is known, so the failure mode is not an inaccuracy: it is a
+   * reader believing the curation has been counted when it has not.
+   *
+   * Parsed out of the document rather than restated here, because a second copy in this file would be the same
+   * defect one level down. The tripwire's job is to make the prose and the code disagree loudly, not to become
+   * a third place the number lives.
+   */
+  const doc = readFileSync(
+    new URL("../../../../../docs/machine-surfaces.md", import.meta.url).pathname,
+    "utf8",
+  );
+
+  function documented(): Record<string, number> {
+    const rows: Record<string, number> = {};
+    for (const line of doc.split("\n")) {
+      const match = /^\|\s*`(read|act|governed|operator|surface)`\s*\|.*\|\s*(\d+)\s*\|$/.exec(line.trim());
+      if (match !== null) rows[match[1]!] = Number(match[2]);
+    }
+    return rows;
+  }
+
+  it("finds the table, so a rewritten document cannot pass by matching nothing", () => {
+    // The control. If the table moves or its shape changes, this file must fail rather than quietly stop
+    // checking — which is how the counts got five layers out of date in the first place.
+    expect(Object.keys(documented()).sort()).toEqual(
+      ["act", "governed", "operator", "read", "surface"],
+    );
+  });
+
+  it("agrees with the classification on every tier", () => {
+    const actual: Record<string, number> = {};
+    for (const spec of ALL) {
+      const tier = exposureOf(spec).tier;
+      actual[tier] = (actual[tier] ?? 0) + 1;
+    }
+    expect(
+      documented(),
+      "docs/machine-surfaces.md states tier counts that no longer match the route registry",
+    ).toEqual(actual);
   });
 });

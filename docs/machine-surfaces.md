@@ -16,11 +16,16 @@ would come to disagree about which acts are safe, which is the worst thing they 
 
 | tier | offered | what it is | count |
 |:--|:--|:--|--:|
-| `read` | yes | answers a question, changes nothing | 41 |
-| `act` | yes | changes something, and a person can undo it | 12 |
-| `governed` | **no** | needs more than one person, or cannot be undone | 25 |
-| `operator` | **no** | installation, credentials, maintenance | 17 |
+| `read` | yes | answers a question, changes nothing | 39 |
+| `act` | yes | changes something, and a person can undo it | 9 |
+| `governed` | **no** | needs more than one person, or cannot be undone | 29 |
+| `operator` | **no** | installation, credentials, maintenance | 25 |
 | `surface` | **no** | the machine surface itself | 1 |
+
+
+These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
+after every row of this table was found to be wrong at once — 41/12/25/17 against an actual 39/9/29/25. A table
+of counts in a document about completeness reads as evidence of completeness, and nothing was watching it.
 
 **Reads are derived, with one named exception.** Every `GET` is `read` by construction, because writing
 ninety judgements where one rule suffices is how a registry acquires an entry that disagrees with its own
