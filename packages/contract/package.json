@@ -27,6 +27,7 @@
     "./send-mail": "./src/send-mail.ts",
     "./schemas": "./src/schemas.ts",
     "./agent": "./src/agent.ts",
+    "./capability": "./src/capability.ts",
     "./naming": "./src/naming.ts"
   }
 }

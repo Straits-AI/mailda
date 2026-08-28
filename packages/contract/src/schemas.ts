@@ -1377,22 +1377,67 @@ export const agentSummary = z.object({
   createdAt: z.string().min(1),
   expiresAt: z.string().min(1),
   revokedAt: z.string().nullable(),
+  /**
+   * The pinned ceiling as it is **enforced**: route strings.
+   *
+   * Kept alongside `held` rather than replaced by it, and that is deliberate. This is the answer to *"what is
+   * actually checked"*, and a surface that showed only capability names would be one step removed from the
+   * thing enforced — with no way for an operator to see a route the vocabulary no longer names.
+   */
   actions: z.array(z.string().min(1)),
+  /**
+   * The same ceiling in capability terms, with `held` against `total`.
+   *
+   * Held-of-total rather than a bare name, because the routes are what is pinned. A stored capability resolved
+   * at check time would silently widen every agent holding it the day somebody added a route to it — §16's
+   * rule for Butlers, applied unchanged — so an agent minted before a capability grew genuinely holds part of
+   * it. `4 of 5` is the truth; `mail.read` would imply a fifth route the agent does not have and never will.
+   */
+  held: z.array(z.object({
+    id: z.string().min(1),
+    says: z.string().min(1),
+    reachesContent: z.boolean(),
+    held: z.number().int().positive(),
+    total: z.number().int().positive(),
+  }).strict()),
+  /**
+   * Pinned routes belonging to no current capability. Normally empty; non-empty after a route is renamed.
+   *
+   * Present and required, because dropping it would under-report a live ceiling: the authority is still in
+   * `agent_actions` and still checked, so hiding it is the one thing this must not do.
+   */
+  unnamed: z.array(z.string().min(1)),
 }).strict();
 
 export const agentListResponse = z.object({ agents: z.array(agentSummary) }).strict();
 
+/** The capability vocabulary, so a client never restates it. */
+export const agentCapabilityListResponse = z.object({
+  capabilities: z.array(z.object({
+    id: z.string().min(1),
+    says: z.string().min(1),
+    reachesContent: z.boolean(),
+    routes: z.array(z.string().min(1)).min(1),
+  }).strict()),
+}).strict();
+
 /**
  * Minting one.
  *
- * `actions` is the pinned ceiling and is required: an agent with an empty one can do nothing, and there is no
- * route that widens it later. `sponsorUserId` defaults to the caller, which is the common case and the one an
- * administrator setting up their own automation wants.
+ * `capabilities` is the pinned ceiling and is required: an agent with an empty one can do nothing, and there
+ * is no route that widens it later. `sponsorUserId` defaults to the caller, which is the common case and the
+ * one an administrator setting up their own automation wants.
+ *
+ * **Capability ids, not route strings.** It took routes once, which made every mint a translation from a
+ * policy question into a routing table — and a ceiling assembled by hand has no completeness, so an
+ * administrator granting three of the four routes reading mail needs created an agent that worked until it
+ * did not. The names are expanded at mint and the expansion is what gets stored; `capability.ts` carries the
+ * argument for why that is pinning rather than indirection.
  */
 export const agentMintRequest = z.object({
   name: z.string().min(1),
   sponsorUserId: z.string().min(1).optional(),
-  actions: z.array(z.string().min(1)).min(1),
+  capabilities: z.array(z.string().min(1)).min(1),
   lifetimeDays: z.number().int().positive().optional(),
 }).strict().meta({ refusal: "E_AGENT_FIELD_UNKNOWN" });
 

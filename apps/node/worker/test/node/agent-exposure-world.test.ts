@@ -39,7 +39,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are three", () => {
+  it("derives read for every GET but the named exceptions, and there are four", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -52,12 +52,19 @@ describe("every route is classified, and a new one cannot default", () => {
      * purpose is to feed the repair route beside it. A read that exists to decide a write belongs with the
      * write.
      *
-     * `GET /api/agents` is the sharpest of the three. It enumerates every machine identity on the Node with
+     * `GET /api/agents` is the sharpest of the four. It enumerates every machine identity on the Node with
      * its sponsor and its reach — which is a map of how to escalate, and exactly what an agent looking for a
      * wider ceiling would read first.
+     *
+     * `GET /api/agent-capabilities` is the same reasoning about the other half. It publishes the vocabulary a
+     * ceiling is chosen from — every name, and the routes behind each one — so a machine reading it is reading
+     * the list of what machines may be granted. That is the map from the other direction, and it is withheld
+     * for the same reason `GET /api/agents` is.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
-    expect(exceptions.sort()).toEqual(["GET /api/agents", "GET /api/search/failed", "GET /index.html"]);
+    expect(exceptions.sort()).toEqual([
+      "GET /api/agent-capabilities", "GET /api/agents", "GET /api/search/failed", "GET /index.html",
+    ]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {
       const expected = exceptions.includes(`GET ${spec.path}`) ? "operator" : "read";

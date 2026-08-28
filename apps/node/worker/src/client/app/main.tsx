@@ -12,6 +12,7 @@ import { APP_ROUTES } from "../../app-routes.ts";
 import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
+import { Agents } from "./screens/agents.tsx";
 import { Butlers } from "./screens/butlers.tsx";
 import { Approvals } from "./screens/approvals.tsx";
 import { Policies } from "./screens/policies.tsx";
@@ -74,6 +75,7 @@ const SCREENS: Record<(typeof APP_ROUTES)[number], () => React.JSX.Element> = {
   "/people": People,
   "/matters": Matters,
   "/butlers": Butlers,
+  "/agents": Agents,
   "/limits": Limits,
   "/outbox": Outbox,
   "/audit": Audit,

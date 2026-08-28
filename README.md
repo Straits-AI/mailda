@@ -1451,6 +1451,24 @@ function". A delegator is the same kind of fact. An explicitly passed value stil
 sponsor comes from its pinned ceiling — better information than a lookup, and the answer that must not drift.
 A person acting for themselves pays no query for any of it: the derivation returns on a prefix test.
 
+### Choosing what a machine may do, in the product's words
+
+The mint surface took route strings, so setting up an agent meant composing a routing table by hand — and a
+hand-assembled ceiling has no completeness: reading mail takes four routes, and granting three produces an
+agent that works until it needs the fourth. Named capabilities now cover **every** grantable route, each with a
+sentence saying what granting it does and a flag for whether it reaches the **content** of mail rather than
+only its metadata.
+
+Capabilities are **expanded at mint and the routes are what get stored**. Storing the name and resolving it per
+request would mean adding a route to a capability silently widened every agent already holding it — §16's rule
+broken — so the expansion is pinned. The consequence is visible rather than hidden: an agent minted before a
+capability grew shows `4 of 5` in the interface, because that is what it holds. A closed-world test requires
+every grantable route to belong to exactly one capability, so a new route cannot quietly become
+grantable-in-principle and unconferrable in practice.
+
+There is a screen for it now — `/agents` — with no edit control, because there is no route behind one.
+Re-minting is how a ceiling changes, and it issues a new token with a new expiry.
+
 **This is not an AI capability.** Whether the thing holding the credential is a language model, a script or a
 cron job is outside it. The `llm.*` nodes remain declared and refused, and calling Mailda AI-native today
 would still be a claim about intent.

@@ -335,6 +335,20 @@ describe("the ledgers answer what the contract says they do", () => {
     expect(read.entries.length).toBeGreaterThan(0);
   });
 
+  it("GET /api/agent-capabilities, which the mint surface is chosen from", async () => {
+    /*
+     * Live, not only schema-covered. The vocabulary is published so the interface does not restate it, and a
+     * route that answers out of shape would put the client back to guessing — which is the thing publishing
+     * it was meant to stop.
+     */
+    const held = await cookie();
+    const read = await answers("GET", "/api/agent-capabilities", { cookie: held }) as {
+      capabilities: { id: string; routes: string[] }[];
+    };
+    expect(read.capabilities.length).toBeGreaterThan(5);
+    expect(read.capabilities.every((one) => one.routes.length > 0)).toBe(true);
+  });
+
   it("GET /api/logs, with an entry the logger produced", async () => {
     /*
      * Through `log()` rather than an `INSERT`, and the first version of this test got that wrong: it wrote
@@ -1524,8 +1538,12 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * #107 named clearing a column by hand as the only repair, and now there is a door. The last three are
      * the agent credential (#109 L2) — mint, list and revoke, all `operator`, because an agent that could
      * mint agents escapes its own pinned ceiling in a single call.
+     *
+     * The 99th is `GET /api/agent-capabilities`: the vocabulary an agent's ceiling is chosen from, published
+     * so the interface offering it does not carry a second copy. `operator`, like the three above it — a
+     * machine reading the list of what machines may be granted is reading a map of how to escalate.
      */
-    expect(coverage.total).toBe(98);
+    expect(coverage.total).toBe(99);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

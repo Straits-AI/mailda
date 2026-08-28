@@ -8,6 +8,7 @@ import { auditedBatch, verifyChain } from "../src/audit.ts";
 import { mailboxQueues } from "../src/cases.ts";
 import { notificationsFor } from "../src/notifications.ts";
 import { agentGrantableActions } from "@mailda/contract/agent";
+import { capabilityIds, routesFor } from "@mailda/contract/capability";
 
 import { agentFor, listAgents, mintAgent, revokeAgent } from "../src/agents.ts";
 import {
@@ -41,7 +42,7 @@ const ADMIN = "usr_agents_admin";
 const SPONSOR = "usr_agents_sponsor";
 const OUTSIDER = "usr_agents_outsider";
 
-const AGENT_READS = "GET /api/messages";
+const AGENT_READS = "mail.read";
 const AGENT_CANNOT = "POST /api/sends/seal";
 
 /** `mayRead` records a supervised act when a grant answers, so it takes one rather than accepting null. */
@@ -77,7 +78,7 @@ describe("minting is an administrator's act, and the sponsor is named rather tha
      * one is a governance event.
      */
     await expect(mintAgent(testEnv, createSystemCtx(), ORG, OUTSIDER, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     })).rejects.toThrow();
   });
 
@@ -88,7 +89,7 @@ describe("minting is an administrator's act, and the sponsor is named rather tha
      * themselves is one person deciding both halves of a delegation.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     expect(minted.agent.sponsorUserId).toBe(SPONSOR);
     expect(minted.agent.createdBy).toBe(ADMIN);
@@ -101,7 +102,7 @@ describe("minting is an administrator's act, and the sponsor is named rather tha
      * anything. Refusing at mint is cheaper than explaining later why the credential somebody made is inert.
      */
     await expect(mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "empty", sponsorUserId: SPONSOR, actions: [],
+      name: "empty", sponsorUserId: SPONSOR, capabilities: [],
     })).rejects.toThrow(/E_AGENT_NO_ACTIONS/);
   });
 
@@ -111,7 +112,7 @@ describe("minting is an administrator's act, and the sponsor is named rather tha
      * credential in a table designed to be read — and the trail is what an investigation reads.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     const entry = await testEnv.CATALOG.prepare(
       "SELECT actor_user_id, subject, detail FROM audit_entries WHERE action = 'agent.minted' LIMIT 1",
@@ -132,7 +133,7 @@ describe("the credential resolves to a principal that names both parties", () =>
      * nothing passed; `delegatorUserId` is the sponsor, so every act the request writes records both.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
     expect(who?.userId).toBe(minted.agent.id);
@@ -151,7 +152,7 @@ describe("the credential resolves to a principal that names both parties", () =>
      * no refresh to shorten its life with.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     expect(await agentFor(testEnv, createSystemCtx(), minted.token)).not.toBeNull();
 
@@ -166,7 +167,7 @@ describe("the credential resolves to a principal that names both parties", () =>
      */
     const ctx = createSystemCtx();
     const minted = await mintAgent(testEnv, ctx, ORG, ADMIN, {
-      name: "short", sponsorUserId: SPONSOR, actions: [AGENT_READS], lifetimeDays: 1,
+      name: "short", sponsorUserId: SPONSOR, capabilities: [AGENT_READS], lifetimeDays: 1,
     });
     const later = { ...ctx, now: () => ctx.now() + 2 * 86_400_000 };
     expect(await agentFor(testEnv, later, minted.token)).toBeNull();
@@ -176,7 +177,7 @@ describe("the credential resolves to a principal that names both parties", () =>
     // A column rather than a delete. An audit entry naming an identifier nothing can explain is a trail that
     // decays into identifiers.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, minted.agent.id);
     const listed = await listAgents(testEnv, ORG);
@@ -189,7 +190,7 @@ describe("the credential resolves to a principal that names both parties", () =>
 describe("the pinned ceiling binds on every surface, not only on tools", () => {
   it("admits a request to a route in the ceiling", async () => {
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "triage", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "triage", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
     expect(who, "a route inside the ceiling was refused").not.toBeNull();
@@ -205,7 +206,7 @@ describe("the pinned ceiling binds on every surface, not only on tools", () => {
      * the two would send a machine to re-authenticate over something no new token can fix.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await expect(
       principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/sends/seal", "POST")),
@@ -216,7 +217,7 @@ describe("the pinned ceiling binds on every surface, not only on tools", () => {
     // An agent's ceiling names routes, so it cannot hold one that has no name. The refusal is the same,
     // because "not in your ceiling" is the true answer either way.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await expect(
       principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/nothing-here")),
@@ -230,12 +231,14 @@ describe("the pinned ceiling binds on every surface, not only on tools", () => {
      * this repository today and the rows are the mechanism.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     const rows = await testEnv.CATALOG.prepare(
       "SELECT action FROM agent_actions WHERE agent_id = ?",
     ).bind(minted.agent.id).all<{ action: string }>();
-    expect(rows.results.map((r) => r.action)).toEqual([AGENT_READS]);
+    // The **expansion**, not the capability name: `agent_actions` stores routes, because a stored capability
+    // resolved at check time would silently widen every existing agent the day somebody added a route to it.
+    expect(rows.results.map((r) => r.action)).toEqual(routesFor([AGENT_READS]).routes);
     expect(rows.results.map((r) => r.action)).not.toContain(AGENT_CANNOT);
   });
 });
@@ -269,7 +272,7 @@ describe("the sponsor is a live ceiling, not a label on the trail", () => {
      * that can read nothing would satisfy the assertions for the wrong reason.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
@@ -285,7 +288,7 @@ describe("the sponsor is a live ceiling, not a label on the trail", () => {
      * this passes the check, and the sponsor is a label rather than a ceiling.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "overreach", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "overreach", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     // The sponsor is deliberately granted nothing.
@@ -306,7 +309,7 @@ describe("the sponsor is a live ceiling, not a label on the trail", () => {
      * offboarding checklist cannot see.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
@@ -325,7 +328,7 @@ describe("the sponsor is a live ceiling, not a label on the trail", () => {
   it("refuses when the agent's own relation is revoked and the sponsor's remains", async () => {
     // The other direction, so the intersection is shown to be an AND rather than a swap of which side counts.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
 
@@ -336,39 +339,49 @@ describe("the sponsor is a live ceiling, not a label on the trail", () => {
 });
 
 describe("the pinned ceiling cannot name a capability machines are withheld", () => {
-  it("refuses to mint an agent that could mint agents", async () => {
+  it("expands the whole vocabulary to nothing a machine may not hold", async () => {
     /*
-     * **The escalation the curation table exists to prevent.** `packages/contract/src/agent.ts` classifies
-     * every route, and only `read` and `act` reach a machine — `POST /api/agents` is `operator` precisely
-     * because an agent that can mint agents escapes its own pinned ceiling in one call.
+     * P0-2, asserted through the real mint path rather than through the input validation it used to have.
      *
-     * The mint accepted arbitrary strings, so that classification bound the MCP tool list and nothing else.
-     * An administrator could hand an agent the route directly.
+     * The route once took route strings, so an administrator could hand an agent `POST /api/agents` and it
+     * would mint agents, escaping its own pinned ceiling in one call. Sealing a send was reachable the same
+     * way, and sealing is `governed` because it is the one act nobody can undo. Those inputs are now
+     * unexpressible — the surface takes capability ids — so the test that matters is the one this replaces
+     * them with: **whatever the vocabulary expands to must be within the tiers.**
+     *
+     * Every capability at once, which is the widest ceiling anybody can ask for. `capability-world` asserts
+     * the same property statically; this asserts it through `mintAgent`, because a check that lives only in a
+     * test file does not run on a Node.
      */
-    await expect(mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "escalator", sponsorUserId: SPONSOR, actions: ["POST /api/agents"],
-    })).rejects.toThrow(/E_AGENT_ACTION_WITHHELD/);
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "widest", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
+    });
+    const grantable = new Set(agentGrantableActions());
+    const overreach = minted.agent.actions.filter((action) => !grantable.has(action));
+    expect(overreach, "the vocabulary conferred authority no machine may hold").toEqual([]);
+    expect(minted.agent.actions.length, "the widest ceiling is empty, so nothing is being checked")
+      .toBeGreaterThan(20);
   });
 
-  it("refuses a governed capability, which no machine may hold", async () => {
-    // Sealing a send is the one act nobody can undo, and it is `governed` for that reason.
-    await expect(mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "sender", sponsorUserId: SPONSOR, actions: ["POST /api/sends/seal"],
-    })).rejects.toThrow(/E_AGENT_ACTION_WITHHELD/);
-  });
-
-  it("refuses a route the curation table does not classify at all", async () => {
-    await expect(mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "invented", sponsorUserId: SPONSOR, actions: ["POST /api/does-not-exist"],
-    })).rejects.toThrow(/E_AGENT_ACTION_WITHHELD/);
+  it("refuses a capability name it does not have", async () => {
+    /*
+     * Refused rather than dropped. Ignoring an unknown name would mint an agent narrower than was asked for,
+     * and an under-privileged credential fails later — in the middle of something, looking like a bug rather
+     * than like a ceiling somebody chose.
+     */
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "invented", sponsorUserId: SPONSOR, capabilities: ["mail.read", "mail.exfiltrate"],
+      }),
+    ).rejects.toThrow("E_AGENT_CAPABILITY_UNKNOWN");
   });
 
   it("still admits the capabilities a machine is meant to have", async () => {
     // The control. A ceiling that refused everything would satisfy all three assertions above.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "reader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
-    expect(minted.agent.actions).toEqual([AGENT_READS]);
+    expect(minted.agent.actions).toEqual(routesFor([AGENT_READS]).routes);
   });
 });
 
@@ -447,7 +460,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
   it("lists mail when the agent and sponsor both hold the relation, so a refusal below means something", async () => {
     await seedMail();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "lister", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "lister", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
@@ -459,7 +472,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
   it("lists nothing when the sponsor does not hold the relation", async () => {
     await seedMail();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "overreach", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "overreach", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     // The sponsor holds nothing.
@@ -480,7 +493,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
     await seedBody();
 
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "prober", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "prober", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
@@ -508,7 +521,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
      */
     await seedBody();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "escalator", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "escalator", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     await tuple(SPONSOR, "mailbox.metadata.read", "mailbox", MAILBOX);
@@ -552,7 +565,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
     ]);
 
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "spreader", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "spreader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", other);
@@ -575,7 +588,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
      */
     await seedBody();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "router", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "router", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "mailbox.content.read", "mailbox", MAILBOX);
 
@@ -603,7 +616,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
      */
     await seedMail();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "dispatcher", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "dispatcher", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "send.propose", "mailbox", MAILBOX);
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
@@ -630,7 +643,7 @@ describe("organization-admin is intersected with the sponsor as well", () => {
    */
   it("refuses an agent holding org.admin whose sponsor does not hold it", async () => {
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "usurper", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "usurper", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "org.admin", "organization", ORG);
 
@@ -645,7 +658,7 @@ describe("organization-admin is intersected with the sponsor as well", () => {
     // The control. Without this, deleting the whole agent branch and returning false for every `agt_` would
     // pass the test above — a refusal that is right by accident is not the rule.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "deputy", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "deputy", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, "org.admin", "organization", ORG);
     await tuple(SPONSOR, "org.admin", "organization", ORG);
@@ -657,7 +670,7 @@ describe("organization-admin is intersected with the sponsor as well", () => {
     // The other direction: the intersection is an AND, so the sponsor's relation alone confers nothing. If
     // the sponsor check were written as a fallback rather than a second term, this would pass.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "borrower", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "borrower", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(SPONSOR, "org.admin", "organization", ORG);
 
@@ -703,7 +716,7 @@ describe("the surfaces beyond the inbox are intersected too", () => {
   async function agentOn(name: string, relation: string) {
     await seedMailbox();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name, sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name, sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await tuple(minted.agent.id, relation, "mailbox", MAILBOX);
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
@@ -757,7 +770,7 @@ describe("the mint and revoke routes validate what they are handed", () => {
      * probing identifiers would write themselves a trail of revocations that did not happen.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "twice", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "twice", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, minted.agent.id);
     await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, minted.agent.id);
@@ -786,13 +799,13 @@ describe("the mint and revoke routes validate what they are handed", () => {
     const tooMany = Array.from({ length: agentGrantableActions().length + 1 }, () => AGENT_READS);
     await expect(
       mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-        name: "greedy", sponsorUserId: SPONSOR, actions: tooMany,
+        name: "greedy", sponsorUserId: SPONSOR, capabilities: tooMany,
       }),
     ).rejects.toThrow("E_AGENT_ACTIONS_UNBOUNDED");
 
     // The control: the whole curated list is a legitimate ceiling and must still mint.
     const all = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "everything", sponsorUserId: SPONSOR, actions: agentGrantableActions(),
+      name: "everything", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
     });
     expect(all.agent.actions.length).toBe(agentGrantableActions().length);
   });
@@ -808,7 +821,7 @@ describe("the mint and revoke routes validate what they are handed", () => {
     for (const days of [0, -1, Number.NaN]) {
       await expect(
         mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-          name: `bad-${days}`, sponsorUserId: SPONSOR, actions: [AGENT_READS], lifetimeDays: days,
+          name: `bad-${days}`, sponsorUserId: SPONSOR, capabilities: [AGENT_READS], lifetimeDays: days,
         }),
         `lifetimeDays ${days} was accepted`,
       ).rejects.toThrow("E_AGENT_LIFETIME_INVALID");
@@ -816,7 +829,7 @@ describe("the mint and revoke routes validate what they are handed", () => {
 
     // The control: a sensible lifetime still mints, and is still capped at the maximum.
     const ok = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "sensible", sponsorUserId: SPONSOR, actions: [AGENT_READS], lifetimeDays: 3,
+      name: "sensible", sponsorUserId: SPONSOR, capabilities: [AGENT_READS], lifetimeDays: 3,
     });
     expect(Date.parse(ok.agent.expiresAt)).toBeGreaterThan(createSystemCtx().now());
   });
@@ -842,7 +855,7 @@ describe("an agent's act names its sponsor without the call site remembering to 
    */
   it("derives the delegator from the actor when the call site does not pass one", async () => {
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "actor", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "actor", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await auditedBatch(testEnv, createSystemCtx(), ORG, {
       action: "supervised.opened",
@@ -867,7 +880,7 @@ describe("an agent's act names its sponsor without the call site remembering to 
     // A Butler's sponsor comes from its pinned ceiling rather than from a lookup, and `butler/effects.ts`
     // passes it. Derivation must not overwrite an answer a caller had better information for.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "explicit", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "explicit", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await auditedBatch(testEnv, createSystemCtx(), ORG, {
       action: "supervised.opened",
@@ -917,7 +930,7 @@ describe("an agent's act names its sponsor without the call site remembering to 
      * contrivance.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "routed", sponsorUserId: SPONSOR, actions: [AGENT_READS, "GET /api/audit"],
+      name: "routed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS, "audit.read"],
     });
     await auditedBatch(testEnv, createSystemCtx(), ORG, {
       action: "supervised.opened", outcome: "ok", actorUserId: minted.agent.id,
@@ -942,7 +955,7 @@ describe("an agent's act names its sponsor without the call site remembering to 
     // would break verification rather than merely misreport. Asserted, because "it is in the hash" is the
     // reason the column is trustworthy at all.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "chained", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+      name: "chained", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await auditedBatch(testEnv, createSystemCtx(), ORG, {
       action: "supervised.opened", outcome: "ok", actorUserId: minted.agent.id, subject: "rcpt_p1four00000000000000001",

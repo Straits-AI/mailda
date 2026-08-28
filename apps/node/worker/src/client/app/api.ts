@@ -1318,3 +1318,93 @@ export async function invite(
     message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
   };
 }
+
+/** One capability an agent may be granted, as this Node's own vocabulary describes it. */
+export interface CapabilityRow {
+  id: string;
+  says: string;
+  /** Whether exercising it reaches the **content** of mail rather than only its metadata. */
+  reachesContent: boolean;
+  routes: string[];
+}
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  sponsorUserId: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  /** The pinned ceiling as it is enforced: route strings. */
+  actions: string[];
+  /**
+   * The same ceiling in capability terms, with `held` against `total`.
+   *
+   * Held-of-total rather than a name, because a stored capability resolved later would silently widen every
+   * agent that held it the day somebody added a route — so the routes are what is pinned, and an agent minted
+   * before a capability grew genuinely holds part of it. `4 of 5` is the truth; `mail.read` would imply a
+   * fifth route the agent does not have and, the ceiling being pinned, never will.
+   */
+  held: { id: string; says: string; reachesContent: boolean; held: number; total: number }[];
+  /** Pinned routes belonging to no current capability — a rename, normally empty. Shown, never dropped. */
+  unnamed: string[];
+}
+
+export function useAgentCapabilities(): UseQueryResult<{ capabilities: CapabilityRow[] }, Error> {
+  return useQuery({
+    queryKey: ["agent-capabilities"],
+    queryFn: () => read<{ capabilities: CapabilityRow[] }>(GET("/api/agent-capabilities")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export function useAgents(): UseQueryResult<{ agents: AgentRow[] }, Error> {
+  return useQuery({
+    queryKey: ["agents"],
+    queryFn: () => read<{ agents: AgentRow[] }>(GET("/api/agents")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * Mints an agent and returns the token **once**.
+ *
+ * Only its hash is stored and there is no refresh, so a caller that discards this value has to re-mint. The
+ * screen therefore shows it immediately with the sentence that it will not be shown again — the same shape as
+ * `invite`, and for the same reason.
+ */
+export async function mintAgent(input: {
+  name: string;
+  sponsorUserId: string;
+  capabilities: string[];
+  lifetimeDays?: number;
+}): Promise<{ ok: true; token: string; agent: AgentRow; notice: string } | { ok: false; message: string }> {
+  const response = await apiFetch(at("POST", "/api/agents"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) {
+    return {
+      ok: true,
+      token: String(parsed?.token),
+      agent: parsed?.agent as AgentRow,
+      notice: String(parsed?.notice ?? ""),
+    };
+  }
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
+export async function revokeAgent(agentId: string): Promise<{ ok: boolean; message: string }> {
+  const response = await apiFetch(at("DELETE", "/api/agents/:agentId", { agentId }), { method: "DELETE" });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  return {
+    ok: response.ok,
+    message: String(parsed?.message ?? parsed?.error ?? (response.ok ? "Revoked." : `Answered ${response.status}.`)),
+  };
+}

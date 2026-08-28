@@ -277,13 +277,32 @@ describe("TypeScript block comments are balanced, so a doc comment cannot end ea
           if (c === "*" && next === "/") { state = "code"; previous = ""; i += 1; }
           break;
 
+        /*
+         * The two quoted states **recover at a newline**, for the reason the regex state already gives below:
+         * an unterminated single- or double-quoted string on one line is a syntax error the build catches, so
+         * recovering here can mask nothing — and not recovering lets one misjudged `/` swallow the rest of the
+         * file.
+         *
+         * That is not hypothetical. `screens/agents.tsx` has `</span></td>` on one line, where the `/` after
+         * `<` is indistinguishable from a regex opener to this heuristic; the regex state then ended at the
+         * *second* slash, left `previous` as `/`, and a later apostrophe in ordinary prose — `the Node's own
+         * revoke` — opened a single-quoted string that ran to the end of the file. The stray was reported
+         * seven lines away from anything that caused it.
+         *
+         * The header above says a misjudged `/` "can only cause a false positive, which costs one line of
+         * rewriting rather than an afternoon". True about the cost of the *fix* and wrong about the cost of
+         * the *diagnosis*, which is the half this file exists to reduce: the reported line was innocent, and
+         * the cause was a JSX closing tag with no apostrophe anywhere near it.
+         */
         case "single":
           if (c === "\\") { i += 1; break; }
+          if (c === "\n") { state = "code"; break; }
           if (c === "'") { state = "code"; previous = "'"; }
           break;
 
         case "double":
           if (c === "\\") { i += 1; break; }
+          if (c === "\n") { state = "code"; break; }
           if (c === '"') { state = "code"; previous = '"'; }
           break;
 
@@ -325,6 +344,17 @@ describe("TypeScript block comments are balanced, so a doc comment cannot end ea
     expect(strayTerminators("const u = `x${ [1].map((n) => `${n}*/`).join('') }y`;\n")).toEqual([]);
     // Division by a parenthesised expression, which the regex heuristic must not read as a regex opener.
     expect(strayTerminators("const v = (a + b) / (c * d);\n")).toEqual([]);
+    /*
+     * JSX, and the case that made the quoted states recover at a newline. Two closing tags on one line put
+     * the heuristic through regex state and out the other side with `previous` set to `/`; the apostrophe on
+     * the next line then opened a string that, before the fix, ran to the end of the file and reported a
+     * stray at whatever innocent line held the next terminator.
+     */
+    expect(strayTerminators('<td><span>x</span></td>\n/* the Node\'s own comment */\nconst a = 1;\n'))
+      .toEqual([]);
+    expect(strayTerminators("<Thing kind=\"loading\" />;\n/* it's fine */\n")).toEqual([]);
+    // And an unterminated quote does not hide a real stray on a later line.
+    expect(strayTerminators("const s = 'unterminated\nconst t = 1;\n*/\n")).toEqual([3]);
   });
 
   it("has no stray comment terminator anywhere in src", () => {

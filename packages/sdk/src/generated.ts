@@ -78,6 +78,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What an agent may be granted, in this Node's own vocabulary
+   *
+   * `GET /api/agent-capabilities`
+   */
+  async getAgentCapabilities(): Promise<z.infer<typeof S.agentCapabilityListResponse>> {
+    return await this.json("GET", "/api/agent-capabilities", {}, undefined) as z.infer<typeof S.agentCapabilityListResponse>;
+  }
+
+  /**
    * Withdraw an agent's credential immediately
    *
    * `DELETE /api/agents/:agentId`

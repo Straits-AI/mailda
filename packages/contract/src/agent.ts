@@ -297,6 +297,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/agents",
     "GET /api/agents",
+    "GET /api/agent-capabilities",
     "DELETE /api/agents/:agentId",
   ),
   ...changing("operator",

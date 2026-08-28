@@ -1,4 +1,5 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
+import { capabilityIds, routesFor } from "@mailda/contract/capability";
 import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
@@ -125,7 +126,20 @@ export async function mintAgent(
   ctx: Ctx,
   orgId: string,
   createdBy: string,
-  input: { name: string; sponsorUserId: string; actions: readonly string[]; lifetimeDays?: number },
+  input: {
+    name: string;
+    sponsorUserId: string;
+    /**
+     * **Capability ids**, not route strings. Expanded here and the expansion is what gets stored.
+     *
+     * `capability.ts` carries the argument for both halves. The short version: an administrator deciding what
+     * a machine may do is answering *"may it read mail?"*, not composing a routing table — and expanding at
+     * mint rather than resolving at check time is §16's pinning rule, since a stored `mail.read` resolved
+     * later would silently widen every existing agent the day somebody added a route to that capability.
+     */
+    capabilities: readonly string[];
+    lifetimeDays?: number;
+  },
 ): Promise<MintedAgent> {
   await assertAdmin(env, orgId, createdBy);
 
@@ -141,27 +155,27 @@ export async function mintAgent(
   /*
    * Bounded **before** anything is done per entry.
    *
-   * Every action is deduplicated and checked against the curated list below, so the *stored* ceiling was
-   * always sane whatever arrived — but the deduplication builds a `Set` from the raw array, so the work is
-   * the caller's array length rather than the ceiling's. A million repetitions of one legitimate route
-   * deduplicates to a ceiling of one and does a million entries of work getting there.
+   * Every entry is deduplicated and expanded below, so the *stored* ceiling was always sane whatever arrived
+   * — but the deduplication builds a `Set` from the raw array, so the work is the caller's array length
+   * rather than the ceiling's. A million repetitions of one legitimate name deduplicates to a ceiling of one
+   * and does a million entries of work getting there.
    *
-   * The bound is `agentGrantableActions().length`, derived rather than chosen: a hardcoded number would start
-   * refusing legitimate ceilings the moment the curated list grew past it, and that refusal would read as a
-   * permissions bug rather than as a limit. Asking for more distinct actions than exist is not a ceiling
+   * The bound is `capabilityIds().length`, derived rather than chosen: a hardcoded number would start
+   * refusing legitimate ceilings the moment the vocabulary grew past it, and that refusal would read as a
+   * permissions bug rather than as a limit. Asking for more distinct capabilities than exist is not a ceiling
    * anybody can mean.
    */
-  const ceilingSize = agentGrantableActions().length;
-  if (input.actions.length > ceilingSize) {
+  const ceilingSize = capabilityIds().length;
+  if (input.capabilities.length > ceilingSize) {
     throw unprocessable("E_AGENT_ACTIONS_UNBOUNDED", {
-      what: `${input.actions.length} capabilities were requested and only ${ceilingSize} exist`,
-      why: "the machine capability list is finite, so a longer list is either repetition or a mistake. It is "
+      what: `${input.capabilities.length} capabilities were requested and only ${ceilingSize} exist`,
+      why: "the capability vocabulary is finite, so a longer list is either repetition or a mistake. It is "
         + "refused before the list is read rather than deduplicated quietly, because a request nobody could "
         + "have meant is worth an answer",
-      fix: "send each capability once, from the machine capability list",
+      fix: "send each capability once, from GET /api/agent-capabilities",
     });
   }
-  if (input.actions.length === 0) {
+  if (input.capabilities.length === 0) {
     /*
      * Refused rather than minted empty. An agent with no ceiling can do nothing, so creating one is either a
      * mistake or a placeholder somebody intends to widen later — and widening is exactly what the pinned
@@ -172,36 +186,33 @@ export async function mintAgent(
       what: "an agent was requested with an empty action ceiling",
       why: "the ceiling is pinned at mint and cannot be widened, so an agent created with nothing can never "
         + "do anything — and the route that would widen it does not exist on purpose",
-      fix: "name the capabilities this agent needs, from the machine capability list",
+      fix: "name the capabilities this agent needs, from GET /api/agent-capabilities",
     });
   }
 
   /*
-   * The ceiling is checked against the **curation table**, not merely stored (audit P0-2).
+   * The ceiling is **expanded from the vocabulary**, so nothing arbitrary can be stored (audit P0-2, and the
+   * capability layer after it).
    *
-   * `packages/contract/src/agent.ts` classifies every route and only `read` and `act` reach a machine. That
-   * classification bound one consumer — the MCP tool list — and this route accepted arbitrary strings, so an
-   * administrator could hand an agent `POST /api/agents` and it would mint agents, escaping its own pinned
-   * ceiling in one call. Sealing a send was reachable the same way, and sealing is `governed` because it is
-   * the one act nobody can undo.
+   * This route once took route strings and stored them, so an administrator could hand an agent
+   * `POST /api/agents` and it would mint agents, escaping its own pinned ceiling in one call. That was fixed
+   * by validating against `agentGrantableActions()`; taking capabilities instead makes the same guarantee
+   * structurally, because a capability can only name a grantable route —
+   * `test/node/capability-world.test.ts` fails otherwise.
    *
-   * Generated from the table rather than validated against a copy of it, which is the difference between one
-   * source of truth and two that agree until somebody edits one.
-   *
-   * **Refused regardless of who asks.** An administrator's authority is to delegate what they hold, not to
-   * widen what a machine class may ever do — so there is no override, and `assertAdmin` passing above does
-   * not make this reachable.
+   * An unknown id is **refused rather than dropped**. Dropping one would mint an agent narrower than was
+   * asked for, and an under-privileged credential fails later, in the middle of something, looking like a bug
+   * rather than like a ceiling.
    */
-  const grantable = new Set(agentGrantableActions());
-  const withheld = [...new Set(input.actions)].filter((action) => !grantable.has(action));
-  if (withheld.length > 0) {
-    throw unprocessable("E_AGENT_ACTION_WITHHELD", {
-      what: `these capabilities are not grantable to a machine: ${withheld.join(", ")}`,
-      why: "the machine capability list is curated by exposure tier, and only read and reversible act routes "
-        + "reach an agent. A route that is governed, operator or a surface is withheld from every machine — "
-        + "an agent that could mint agents or seal a send would step around its own ceiling",
-      fix: "grant capabilities from the machine capability list. An unclassified route is withheld too, "
-        + "because a ceiling cannot name what the contract does not describe",
+  const wanted = [...new Set(input.capabilities)];
+  const expansion = routesFor(wanted);
+  if (expansion.unknown.length > 0) {
+    throw unprocessable("E_AGENT_CAPABILITY_UNKNOWN", {
+      what: `this Node has no capability named: ${expansion.unknown.join(", ")}`,
+      why: "an agent's ceiling is chosen from a fixed vocabulary rather than written as routes, so a name "
+        + "outside it cannot be expanded into anything. Accepting it would mint a credential narrower than "
+        + "you asked for and you would find out later",
+      fix: "choose from GET /api/agent-capabilities",
     });
   }
 
@@ -216,8 +227,8 @@ export async function mintAgent(
    * to want and shortening it silently is the documented behaviour; asking for a life of `NaN` is not
    * anything.
    */
-  const requested = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
-  if (!Number.isFinite(requested) || requested <= 0) {
+  const lifetime = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
+  if (!Number.isFinite(lifetime) || lifetime <= 0) {
     throw unprocessable("E_AGENT_LIFETIME_INVALID", {
       what: `a lifetime of ${String(input.lifetimeDays)} days is not a length of time`,
       why: "an agent's expiry is the thing that makes the credential temporary, so it has to be a positive "
@@ -226,13 +237,37 @@ export async function mintAgent(
       fix: `pass a positive number of days, up to ${MAX_LIFETIME_DAYS}`,
     });
   }
-  const days = Math.min(requested, MAX_LIFETIME_DAYS);
+  const days = Math.min(lifetime, MAX_LIFETIME_DAYS);
   const at = new Date(ctx.now()).toISOString();
   const expiresAt = new Date(ctx.now() + days * 86_400_000).toISOString();
   const id = ctx.id(ID_PREFIXES.agent);
   const token = mintToken();
   const tokenHash = await sha256Hex(token);
-  const actions = [...new Set(input.actions)];
+  /*
+   * The expansion is checked against the tiers **as well**, and this is a backstop rather than a second
+   * opinion.
+   *
+   * `test/node/capability-world.test.ts` asserts no capability names a route outside
+   * `agentGrantableActions()`, so this cannot fire on a tree whose tests pass. It is kept because the thing it
+   * guards is P0-2 — an agent granted `POST /api/agents` mints agents and escapes its own pinned ceiling in
+   * one call — and a check that only exists in a test file is a check that does not run in production. The
+   * capability vocabulary is hand-written; a route reclassified to `governed` without the vocabulary
+   * following would otherwise be conferred by a Node whose tests nobody ran.
+   */
+  const grantable = new Set(agentGrantableActions());
+  const withheld = expansion.routes.filter((route) => !grantable.has(route));
+  if (withheld.length > 0) {
+    throw unprocessable("E_AGENT_ACTION_WITHHELD", {
+      what: `these capabilities expand to authority no machine may hold: ${withheld.join(", ")}`,
+      why: "only read and reversible act routes reach an agent. A capability naming anything else is a "
+        + "mistake in this Node's own vocabulary rather than in your request — the exposure tiers are the "
+        + "authority and the vocabulary has drifted from them",
+      fix: "report this: a capability in packages/contract/src/capability.ts names a withheld route, which "
+        + "test/node/capability-world.test.ts exists to catch",
+    });
+  }
+
+  const actions = expansion.routes;
 
   /*
    * `auditedBatch`, so the identity and the record of its creation commit together. An agent that exists with

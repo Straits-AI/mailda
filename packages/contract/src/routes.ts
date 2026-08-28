@@ -132,6 +132,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
   { method: "POST", path: "/api/agents", summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
   { method: "GET", path: "/api/agents", summary: "Every agent in this organization", response: S.agentListResponse },
+  { method: "GET", path: "/api/agent-capabilities", summary: "What an agent may be granted, in this Node's own vocabulary", response: S.agentCapabilityListResponse },
   { method: "DELETE", path: "/api/agents/:agentId", summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
   { method: "GET", path: "/api/search/failed", summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
   { method: "POST", path: "/api/search/repair", summary: "Put named messages back in the body index's queue", request: S.searchRepairRequest, response: S.searchRepairedResponse },

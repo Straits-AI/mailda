@@ -265,6 +265,16 @@ export function Rail() {
           </Link>
         </li>
         <li>
+          {/*
+            * Beside Butlers, because the two are the same question from different directions: what acts
+            * without a person present, and under whose authority. Refused to anybody without `org.admin` as a
+            * 404, like Butlers, so the link is shown to everyone and the screen gives the answer.
+            */}
+          <Link to="/agents" className="rail-row" activeProps={{ className: "rail-row current" }}>
+            <span className="rail-name">Agents</span>
+          </Link>
+        </li>
+        <li>
           {/* Beside the outbox, because it is the answer to "why is nothing going out". */}
           <Link to="/limits" className="rail-row" activeProps={{ className: "rail-row current" }}>
             <span className="rail-name">Limits</span>

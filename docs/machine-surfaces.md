@@ -19,7 +19,7 @@ would come to disagree about which acts are safe, which is the worst thing they 
 | `read` | yes | answers a question, changes nothing | 39 |
 | `act` | yes | changes something, and a person can undo it | 9 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 29 |
-| `operator` | **no** | installation, credentials, maintenance | 25 |
+| `operator` | **no** | installation, credentials, maintenance | 26 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 
@@ -251,6 +251,46 @@ Three details:
 The audit table in the interface showed no actor at all before this: not the identifier, not the kind, not the
 delegator. It now reads `agt_… for usr_…` in one cell, because those are one answer and splitting them across
 columns invites a reader to take the first without the second.
+
+### A ceiling is chosen in the product's words, not in HTTP
+
+`POST /api/agents` shipped taking route strings, so minting a credential meant composing
+`["GET /api/messages", "GET /api/messages/:receiptId/body", …]` by hand. Two costs, and the second is the one
+that bites:
+
+1. An administrator deciding what a machine may do is answering *"may it read mail? may it draft a reply?"* —
+   not writing a routing table. The translation is where a mistake goes invisible, because nothing about
+   `POST /api/matters` says whether granting it is a small thing.
+2. **A ceiling assembled by hand has no completeness.** Reading mail takes four routes; grant three and the
+   agent works until it needs the fourth, which arrives later as a refusal in the middle of something and
+   reads as a bug rather than as a ceiling somebody chose.
+
+`packages/contract/src/capability.ts` names a capability for **every** grantable route — the count is not
+stated here on purpose, because a hand-written number in a document about completeness is what the tier table
+above got wrong five times over; the guarantee is enforced instead, below. `GET /api/agent-capabilities`
+publishes the vocabulary so the interface carries no second copy.
+
+**Expanded at mint, and the expansion is what is stored.** The tempting design stores `mail.read` and resolves
+it per request — which would be §16's rule broken: *new grants do not silently expand a published Butler*, and
+a stored capability resolved at check time would widen **every existing agent** the day somebody added a route
+to it. So the routes are pinned. Adding a route to a capability affects only agents minted afterwards, and
+renaming a route leaves an agent holding a string that matches nothing rather than one that matches something
+else. Both fail the safe way. It also meant **no schema change** — `agent_actions` already held routes.
+
+**Read back as held-of-total.** An agent minted before a capability grew holds part of it, so the interface
+shows `4 of 5` rather than the capability's name. A name would imply the fifth route, which the agent does not
+have and — the ceiling being pinned, with no route that widens one — never will. Routes belonging to no current
+capability are shown too, never dropped: the authority is still pinned and still checked, so hiding it would
+under-report a live ceiling.
+
+**`reachesContent` is marked, not inferred.** §7's whole model turns on metadata against content, and
+`export.read` reaches message bytes while sounding administrative. That is the one fact somebody choosing must
+not have to guess.
+
+`test/node/capability-world.test.ts` requires every grantable route to belong to **exactly one** capability. A
+route in none would be grantable in principle and unconferrable in practice, with nothing reporting it; a route
+in two would make a ceiling ambiguous to revoke. The first is the likely one, because it happens by not doing
+something.
 
 ### What this is not
 

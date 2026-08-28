@@ -1,5 +1,6 @@
 import { createSystemCtx, ID_PREFIXES, idPattern } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
+import { heldCapabilities, offerableCapabilities } from "@mailda/contract/capability";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
@@ -2470,12 +2471,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         );
       }
       const body = (await request.json().catch(() => ({}))) as {
-        name?: string; sponsorUserId?: string; actions?: string[]; lifetimeDays?: number;
+        name?: string; sponsorUserId?: string; capabilities?: string[]; lifetimeDays?: number;
       };
       const minted = await mintAgent(env, clock, who.orgId, who.userId, {
         name: body.name ?? "",
         sponsorUserId: body.sponsorUserId ?? who.userId,
-        actions: body.actions ?? [],
+        capabilities: body.capabilities ?? [],
         ...(body.lifetimeDays === undefined ? {} : { lifetimeDays: body.lifetimeDays }),
       });
       return Response.json({
@@ -2484,6 +2485,27 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         notice: "This token is shown once and cannot be shown again. It expires on "
           + `${minted.agent.expiresAt} and there is no refresh — re-mint to renew.`,
       });
+    }
+
+    /*
+     * The vocabulary itself, so a client does not restate it. An interface offering capabilities has to know
+     * their names and what each one says, and a copy in the client would be the second place that answer
+     * lives — the divergence `packages/contract/src/agent.ts` exists to prevent for the tier question, and
+     * the same argument applies here.
+     *
+     * `operator`, like the three routes below it: a machine reading the list of what machines may be granted
+     * is reading a map of how to escalate.
+     */
+    if (url.pathname === "/api/agent-capabilities" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to read the capability list.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      return Response.json({ capabilities: offerableCapabilities() });
     }
 
     if (url.pathname === "/api/agents" && request.method === "GET") {
@@ -2495,7 +2517,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         );
       }
       await assertAdmin(env, who.orgId, who.userId);
-      return Response.json({ agents: await listAgents(env, who.orgId) });
+      /*
+       * The ceiling comes back as capabilities **and** as the routes actually pinned. `heldCapabilities`
+       * reports held-of-total rather than a bare name, because an agent minted before a capability grew holds
+       * fewer routes than the capability now lists — and a name alone would imply authority the pinned
+       * ceiling does not carry and never will.
+       */
+      const agents = await listAgents(env, who.orgId);
+      return Response.json({
+        agents: agents.map((agent) => ({ ...agent, ...heldCapabilities(agent.actions) })),
+      });
     }
 
     /*

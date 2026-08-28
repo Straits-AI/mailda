@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 52 capabilities
+## What you can do — 48 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -81,23 +81,19 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postButlers` | Create a Butler and its first draft |
 | `putButlersByButlerIdDraft` | Replace a Butler's draft |
 | `postButlersByButlerIdSimulate` | Dry-run a Butler: walk it, cause nothing, report what a live run would do |
-| `postCasesByCaseIdByAction` | Claim, steal, release or close a case |
 | `putDrafts` | Save a draft |
-| `deleteDraftsByDraftId` | Discard a draft |
 | `postMatters` | Open a matter |
-| `postMattersByMatterIdClose` | Close a matter |
 | `postPolicies` | Create a policy |
 | `putPoliciesByPolicyIdDraft` | Replace a policy's draft |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
-| `postSendsDispatch` | Hand every due send to the transport now |
 
-## What you cannot do, and why — 44 withheld
+## What you cannot do, and why — 56 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
 them independently of this document.
 
-### Governed — needs more than one person, or cannot be undone (25)
+### Governed — needs more than one person, or cannot be undone (29)
 
 You are acting inside one person's session. Mailda counts **distinct people**, not credentials or requests,
 so you are that one person and can never be the second. These are not permissions you might be granted.
@@ -105,6 +101,10 @@ so you are that one person and can never be the second. These are not permission
 - **`deleteAccess`, `deleteTeamsByTeamIdMembers`, `postAccess`, `postInvitations`, `postTeams`, `postTeamsByTeamIdMembers`, `postTeamsByTeamIdRename`**
 
   Who may do what. Granting, revoking, inviting and team membership all change what somebody can reach afterwards, and a machine widening its own principal's authority is the shape this tier exists for.
+
+- **`deleteDraftsByDraftId`**
+
+  Discarding a draft destroys text somebody wrote. "They can type it again" is not undo, and the body is collected from R2 by the reconciler afterwards — there is nothing to restore from. An agent tidying drafts is an agent deleting a person's unfinished work.
 
 - **`postApprovalsByApprovalIdDecide`, `postApprovalsByApprovalIdWithdraw`, `postSendsBySendIdRelease`, `postSendsBySendIdReleaseHold`**
 
@@ -118,6 +118,12 @@ so you are that one person and can never be the second. These are not permission
 
   Publishing is the versioning event: it makes a program live, and a Butler proposes sends from other people's mailboxes without a person present. Drafting is an `act` and publishing is not, which is exactly the line #49's draft-then-publish lifecycle draws.
 
+- **`postCasesByCaseIdByAction`**
+
+  This route carries claim, steal, release **and close**, and close is irreversible: `cases.ts` has no reopen and the state guards read `state != 'closed'`. Its previous entry here said 'a close can be re-opened', which is this repository's recurring defect — prose asserting a property the code below it does not have — in the file that decides what a machine may do.
+
+  Withheld whole rather than in part, because the tier is per route and this route bundles the reversible with the irreversible. That costs an agent `claim`, which is genuinely useful and genuinely safe; restoring it means splitting the route or making curation parameter-aware, and neither is a thing to do while closing a hole.
+
 - **`postConversationsMerge`**
 
   Merging two conversations repoints every message in one at the other. There is no unmerge.
@@ -126,11 +132,25 @@ so you are that one person and can never be the second. These are not permission
 
   Preservation and its release. A hold is what stops evidence being destroyed, an export is the most consequential read this Node performs (§7), and supervised access reads somebody else's mail. Each needs two people who are not the asker.
 
+- **`postMattersByMatterIdClose`**
+
+  Closing a matter is one-way. `matters.ts` has openMatter and closeMatter and no reopen, and the closure stamps the time from which employee-notification obligations become due (§7). A resumed investigation needs a new matter, so this is a governance event rather than filing.
+
 - **`postSends`, `postSendsBySendIdRetry`**
 
   Mail leaving is the one act in this product nobody can undo. Sealing commits a message to policy and the dispatcher takes it from there; a cancellation is a race, not a reversal.
 
-### Operator — running the Node rather than using it (18)
+- **`postSendsDispatch`**
+
+  Dispatch hands every due send to the transport **now**. It starts no new send, which is what its previous entry said, and that is not the question the tier asks: mail leaves, and mail leaving is the one act in this product nobody can undo.
+
+  It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
+
+### Operator — running the Node rather than using it (26)
+
+- **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getSearchFailed`, `postAgents`, `postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryCodesConfirm`, `postRecoveryCodesRotate`, `postRecoveryRedeem`, `postSearchRepair`**
+
+  Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
 
 - **`deleteAuthPasskeys`, `postAuthLogin`, `postAuthLogout`, `postAuthLogoutEverywhere`, `postAuthPasskeys`, `postAuthPasskeysChallenge`, `postAuthPasskeysVerify`, `postAuthRefresh`, `postAuthRotateSigningKey`, `putTransport`**
 
@@ -143,10 +163,6 @@ so you are that one person and can never be the second. These are not permission
 - **`patchMailboxesByMailboxId`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
-
-- **`postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryRedeem`**
-
-  Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
 
 ## Three things worth knowing before you act
 
