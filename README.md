@@ -1396,6 +1396,25 @@ rotation that does not sign anyone out. Everything else in the contract above is
 
 ---
 
+## An act a machine performed now names the human accountable for it
+
+The audit trail had one actor field. A Butler's entry correctly said *"`btl_x` sealed this"* — the kind is
+derived from the identifier's prefix, so that half has been structural since Layer 4 — and could not say who
+sponsored it. The sponsor was recoverable only by reading the Butler's **current** `sponsor_user_id`, which
+can be reassigned, so the trail's answer to *"who was accountable for this act"* changed months after the act,
+outside the hash chain that exists to stop exactly that.
+
+Entries now carry a delegator, and it is inside the hashed form — a field the chain did not cover would be one
+an operator with database access could rewrite undetected, and "who was accountable" is precisely the answer
+somebody would want to change. Adding it to a live chain works because the delegator is appended only when
+present, so every hash written before the column existed still recomputes to itself.
+
+This is the first layer of [#109](https://github.com/Straits-AI/mailda/issues/109), and it is worth having on
+its own: it fixes a shipped gap for Butlers rather than preparing for something. It also removes the premise
+of the decision that withheld an agent credential — `mcp.ts` argued a token would make "every act land in the
+audit trail under a machine rather than under the person who set it going", which is correct while there is
+one actor field and is not an argument once there are two.
+
 ## The interface wears the brand, and three of the brand's own numbers did not survive contact
 
 The Mailda identity — Ink, Flow Blue, Sky, Mist, White; Satoshi and Inter; a continuous-line M with a blue

@@ -1,0 +1,35 @@
+-- Who was accountable for an act a machine performed (#109 L1). Additive: one column, no DROP.
+--
+-- ## The gap, which is already shipped rather than hypothetical
+--
+-- `audit_entries` has one actor. `kindOfActor` derives the kind from the identifier's prefix, so a Butler's
+-- entry correctly reads "btl_xyz sealed this" with no call site passing anything -- that half works and is
+-- deliberately structural.
+--
+-- What it cannot say is **who sponsored the Butler whose act this was**. That is recoverable today only by
+-- reading the Butler version's current `sponsor_user_id`, and a sponsor can be reassigned -- so the trail's
+-- answer to "who was accountable for this act" changes months later. An audit trail whose answers move is
+-- what the hash chain exists to prevent, and this moves outside the chain entirely.
+--
+-- ## Why this is not an agent feature
+--
+-- #109 charts a delegated agent principal, and the obvious reading is that a delegator column is part of it.
+-- It is the other way round: the column fixes a live gap for **Butlers**, which shipped at Layer 4, and the
+-- agent is its second consumer. Building it here means the agent credential adds a principal kind rather than
+-- an attribution mechanism.
+--
+-- It also removes the premise of the decision that withheld an agent credential. `mcp.ts` argued that a token
+-- would make "every act land in the audit trail under a machine rather than under the person who set it
+-- going" -- correct while there was one actor field, and not an argument against the credential once there
+-- are two.
+--
+-- ## Null is the common case and the honest default
+--
+-- A person acting for themselves has no delegator. Most entries will carry null forever, and a default of
+-- anything else would assert a delegation nobody made.
+ALTER TABLE audit_entries ADD COLUMN delegator_user_id TEXT;
+
+-- Existing rows keep null. A Butler entry written before this migration genuinely has no recorded delegator,
+-- and backfilling one from the version's current sponsor would invent the very answer this column exists to
+-- stop drifting -- it would record today's sponsor as having been accountable for an act from March.
+CREATE INDEX audit_by_delegator ON audit_entries (org_id, delegator_user_id, at);

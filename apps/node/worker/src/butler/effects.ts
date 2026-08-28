@@ -514,6 +514,13 @@ export async function proposeSend(
     const sealed = await sealManifest(env, ctx, butler.orgId, {
       mailboxId: draft.mailboxId,
       authorUserId: butler.butlerId,
+      /*
+       * The Butler is the actor and its sponsor is who answers for it (#109 L1). Before this, the trail said
+       * `btl_x` sealed a message and the sponsor was recoverable only from the version's *current*
+       * `sponsor_user_id` — so reassigning a Butler changed the recorded answer to "who was accountable"
+       * for acts from months earlier.
+       */
+      delegatorUserId: butler.ceiling.sponsorUserId,
       inReplyToMessageId: draft.inReplyToMessageId ?? undefined,
       to: draft.to,
       cc: draft.cc.length === 0 ? undefined : draft.cc,

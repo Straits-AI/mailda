@@ -46,7 +46,7 @@ const GENESIS = "0".repeat(64);
  * program somebody wrote, so collapsing it into `node` would make *"which Butler did this"* unanswerable —
  * the exact question §23 exists to answer. The argument in full is in `src/butler/principal.ts`.
  */
-export type ActorKind = "user" | "node" | "installer" | "butler";
+export type ActorKind = "user" | "node" | "installer" | "butler" | "agent";
 export type Outcome = "ok" | "refused" | "failed";
 
 /**
@@ -694,6 +694,19 @@ export interface AuditEvent<A extends AuditAction = AuditAction> {
   outcome: Outcome;
   actorUserId?: string | null;
   actorKind?: ActorKind;
+  /**
+   * The human accountable for an act a machine performed (#109 L1).
+   *
+   * **Not the actor.** `actorUserId` is the machine — a `btl_` or an `agt_` — and this is the person whose
+   * authority it borrowed. A person acting for themselves leaves it absent, which is the common case and why
+   * it is optional rather than nullable-with-a-default.
+   *
+   * It exists because the trail could not answer *"who was accountable for this"* about a Butler's act. The
+   * sponsor was recoverable only by reading the Butler version's **current** `sponsor_user_id`, so the answer
+   * changed when somebody reassigned the Butler months later — an audit trail whose answers move, outside the
+   * chain that exists to stop exactly that.
+   */
+  delegatorUserId?: string | null;
   subject?: string | null;
   detail?: Record<string, unknown>;
 }
@@ -717,7 +730,14 @@ export interface AuditEvent<A extends AuditAction = AuditAction> {
  */
 function kindOfActor(actorUserId: string | null): ActorKind {
   if (actorUserId === null) return "node";
-  return idPattern(ID_PREFIXES.butler).test(actorUserId) ? "butler" : "user";
+  /*
+   * Derived from the prefix, which is why adding a principal kind is three lines rather than a mechanism.
+   * The reasoning above generalises without change: a call site that had to pass the kind would be correct
+   * the day it was written and wrong the first time a new caller appeared.
+   */
+  if (idPattern(ID_PREFIXES.butler).test(actorUserId)) return "butler";
+  if (idPattern(ID_PREFIXES.agent).test(actorUserId)) return "agent";
+  return "user";
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -735,11 +755,25 @@ async function sha256Hex(text: string): Promise<string> {
 function canonical(entry: {
   seq: number; at: string; actorUserId: string | null; actorKind: string;
   action: string; subject: string | null; outcome: string; detail: string | null;
+  delegatorUserId?: string | null;
 }): string {
+  /*
+   * The delegator is **appended, and only when there is one** (#109 L1).
+   *
+   * Appended rather than placed with the other actor fields, because the chain runs over rows already
+   * written. A field inserted anywhere earlier changes the canonical string of every historical entry, so
+   * recomputing their hashes would no longer match what is stored and `verify` would report the entire trail
+   * tampered with — which is the one output this mechanism must never produce falsely. An entry with no
+   * delegator appends nothing and hashes exactly as it did before the column existed.
+   *
+   * It carries its own separator for the same reason the join has one: `\x1f` cannot occur in a typed ULID
+   * or in JSON detail, so appending it keeps the boundary unambiguous rather than trusting that no detail
+   * string ever ends the way a delegator begins.
+   */
   return [
     entry.seq, entry.at, entry.actorUserId ?? "", entry.actorKind,
     entry.action, entry.subject ?? "", entry.outcome, entry.detail ?? "",
-  ].join("");
+  ].join("\x1f") + (entry.delegatorUserId == null ? "" : `\x1f${entry.delegatorUserId}`);
 }
 
 const UTF8 = new TextEncoder();
@@ -907,7 +941,8 @@ async function buildEntries(
 
   const at = new Date(ctx.now()).toISOString();
   const columns =
-    "(id, org_id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, prev_hash, hash)";
+    "(id, org_id, seq, at, actor_user_id, actor_kind, delegator_user_id, action, subject, outcome, "
+    + "detail, prev_hash, hash)";
 
   const statements: D1PreparedStatement[] = [];
   const entries: AppendedEntry[] = [];
@@ -923,6 +958,7 @@ async function buildEntries(
       seq, at,
       actorUserId: event.actorUserId ?? null,
       actorKind,
+      delegatorUserId: event.delegatorUserId ?? null,
       action: event.action,
       subject: event.subject ?? null,
       outcome: event.outcome,
@@ -931,15 +967,15 @@ async function buildEntries(
     const hash = await sha256Hex(prevHash + canonical(fields));
     const id = ctx.id("aud");
 
-    const values = [id, orgId, seq, at, fields.actorUserId, actorKind, event.action, fields.subject,
-      event.outcome, detail, prevHash, hash];
+    const values = [id, orgId, seq, at, fields.actorUserId, actorKind, fields.delegatorUserId,
+      event.action, fields.subject, event.outcome, detail, prevHash, hash];
 
     statements.push(gate === undefined
-      ? env.CATALOG.prepare(`INSERT INTO audit_entries ${columns} VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      ? env.CATALOG.prepare(`INSERT INTO audit_entries ${columns} VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .bind(...values)
       : env.CATALOG.prepare(
           `INSERT INTO audit_entries ${columns}
-           SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (${gate.sql})`,
+           SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (${gate.sql})`,
         ).bind(...values, ...gate.params));
     entries.push({ id, seq, hash });
     prevHash = hash;
@@ -1124,7 +1160,8 @@ export interface ChainVerdict {
 
 export async function verifyChain(env: Env, orgId: string, from = 1): Promise<ChainVerdict> {
   const rows = await env.CATALOG.prepare(
-    `SELECT id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, prev_hash, hash
+    `SELECT id, seq, at, actor_user_id, actor_kind, delegator_user_id, action, subject, outcome, detail,
+            prev_hash, hash
        FROM audit_entries WHERE org_id = ? AND seq >= ? ORDER BY seq LIMIT ?`,
   )
     .bind(orgId, from, VERIFY_BATCH)
@@ -1176,6 +1213,16 @@ export async function verifyChain(env: Env, orgId: string, from = 1): Promise<Ch
       subject: row.subject === null ? null : String(row.subject),
       outcome: String(row.outcome),
       detail: row.detail === null ? null : String(row.detail),
+      /*
+       * Read and re-hashed, which is the point of putting it in `canonical` at all: a delegator the chain
+       * did not cover would be a field an operator with database access could rewrite without detection —
+       * and "who was accountable" is precisely the answer somebody would want to change.
+       *
+       * Historical entries have null here and `canonical` appends nothing for null, so every hash written
+       * before migration 0045 still recomputes to itself. That is the property that let this column be added
+       * to a live chain at all.
+       */
+      delegatorUserId: row.delegator_user_id === null ? null : String(row.delegator_user_id),
     }));
     if (recomputed !== String(row.hash)) {
       return {

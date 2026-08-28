@@ -82,6 +82,17 @@ export interface Composition {
   mailboxId: string;
   authorUserId: string;
   /**
+   * The human accountable when `authorUserId` is a machine (#109 L1).
+   *
+   * A person composing for themselves leaves this absent. A Butler sets it to its sponsor, so the audit
+   * entries this seal writes say *"`btl_x` sealed this, sponsored by `usr_ana`"* rather than naming the
+   * Butler and leaving the second half to be recovered later from a `sponsor_user_id` that can change.
+   *
+   * Passed rather than derived: looking it up here would read the Butler's **current** sponsor, which is the
+   * drift the column exists to stop.
+   */
+  delegatorUserId?: string | null;
+  /**
    * Which of the mailbox's addresses to send as. Required when the mailbox has more than one.
    *
    * A mailbox may have several addresses — `addresses` is unique on the address, **not** on `mailbox_id` —
@@ -776,6 +787,7 @@ export async function sealManifest(
     action: "send.sealed",
     outcome: "ok",
     actorUserId: composition.authorUserId,
+    delegatorUserId: composition.delegatorUserId ?? null,
     subject: manifestId,
     // Recipients and subject are the *action*, not the content — but they are still the most
     // sensitive thing here, so only counts and the mailbox go in. §12 keeps the rest in R2.
@@ -830,6 +842,7 @@ export async function sealManifest(
     // send is waiting, and `ok` is what the trail's other gates record.
     outcome: "ok",
     actorUserId: composition.authorUserId,
+    delegatorUserId: composition.delegatorUserId ?? null,
     subject: manifestId,
     detail: {
       breaker: breakerGate.breaker,

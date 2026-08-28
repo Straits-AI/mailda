@@ -82,6 +82,17 @@ export const ID_PREFIXES = {
    * that taught this registry its lesson was `case_` versus `cas_`.
    */
   recoveryCode: "rcv",
+  /**
+   * A delegated agent principal (#109). Registered before anything mints one, which is the exception to this
+   * registry's stated rule and has a reason: `kindOfActor` in `audit.ts` **derives** an actor's kind from its
+   * prefix, so the check exists the moment the prefix does. That is what makes attribution structural rather
+   * than something each call site remembers — and it is why adding a principal kind to this product is three
+   * lines rather than a mechanism.
+   *
+   * `agt`, not `agn` or `ag`: `btl` is the neighbouring machine principal and the pair that taught this
+   * registry its lesson was `case_` versus `cas_`. Three letters, one of them not shared with anything here.
+   */
+  agent: "agt",
 } as const;
 
 /**

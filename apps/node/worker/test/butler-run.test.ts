@@ -363,6 +363,37 @@ describe("a Butler's principal is the Butler", () => {
     expect(sealed?.actor_user_id).not.toBe(ADMIN);
   });
 
+  it("names the sponsor as accountable, which the trail could not say at all until #109", async () => {
+    /*
+     * The other half of the same entry, and the reason it needed a column.
+     *
+     * The actor has been right since Layer 4: `kindOfActor` derives `butler` from the `btl_` prefix, so this
+     * entry has always said *which program* sealed the message. What it could not say is **who answered for
+     * it** — the sponsor was recoverable only by reading the Butler version's `sponsor_user_id`, and that
+     * can be reassigned. So the trail's answer to "who was accountable for this act" changed months after
+     * the act, outside the hash chain that exists to stop exactly that.
+     *
+     * Asserted against the actor as well, because the two must not collapse: a delegator equal to the actor
+     * would mean the machine vouching for itself.
+     */
+    const ctx = createSystemCtx();
+    const ids = await published(ctx, "acknowledge", ACKNOWLEDGE, "security_guard");
+    await grantTo(ctx, ids.butlerId, "send.propose");
+    await grantTo(ctx, ids.butlerId, "mailbox.content.read");
+    const delivery = await aDelivery(ctx);
+
+    await run(ids, delivery, inlineSteps());
+
+    const sealed = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, delegator_user_id FROM audit_entries
+        WHERE action = 'send.sealed' ORDER BY seq DESC LIMIT 1`,
+    ).first<{ actor_user_id: string; delegator_user_id: string | null }>();
+
+    expect(sealed?.delegator_user_id, "the seal names no accountable human").not.toBeNull();
+    expect(sealed?.delegator_user_id, "the delegator is the actor, so the machine vouches for itself")
+      .not.toBe(sealed?.actor_user_id);
+  });
+
   it("answers *which version* from the run record, which is the only place that answers it", async () => {
     /*
      * `principal.ts` says authority attaches to the `btl_` and attribution names the `btv_`, and the loose
