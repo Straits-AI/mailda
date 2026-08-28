@@ -60,6 +60,24 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Messages the body index failed on, with the reason for each
+   *
+   * `GET /api/search/failed`
+   */
+  async getSearchFailed(): Promise<z.infer<typeof S.searchFailedResponse>> {
+    return await this.json("GET", "/api/search/failed", {}, undefined) as z.infer<typeof S.searchFailedResponse>;
+  }
+
+  /**
+   * Put named messages back in the body index's queue
+   *
+   * `POST /api/search/repair`
+   */
+  async postSearchRepair(body: z.infer<typeof S.searchRepairRequest>): Promise<z.infer<typeof S.searchRepairedResponse>> {
+    return await this.json("POST", "/api/search/repair", {}, body) as z.infer<typeof S.searchRepairedResponse>;
+  }
+
+  /**
    * Mint a replacement set of ten recovery codes, shown once
    *
    * `POST /api/recovery-codes/rotate`

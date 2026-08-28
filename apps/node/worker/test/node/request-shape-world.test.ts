@@ -70,15 +70,23 @@ describe("every closed set the contract declares is a closed set the boundary en
      * Zod's internals; if the walk stopped finding objects — a Zod upgrade renaming `catchall`, a bad
      * refactor — every one of them would pass over nothing and report the world closed.
      *
-     * A floor rather than an equality, so a seventh closed set does not need this line edited — and the
-     * routes and positions are named below, so a walk that found *different* things fails too. There are six
-     * today: a body, its conditions and its stage shape, twice over.
+     * A floor rather than an equality, so an eighth closed set does not need this line edited — and the
+     * routes and positions are named below, so a walk that found *different* things fails too. There are
+     * seven today: a policy body, its conditions and its stage shape, twice over, and the search repair body.
      */
     const sets = closedSets();
     expect(sets.length).toBeGreaterThan(3);
     expect(new Set(sets.map((set) => `${set.spec.method} ${set.spec.path}`))).toEqual(new Set([
       "POST /api/policies",
       "PUT /api/policies/:policyId/draft",
+      /*
+       * Repairing the body index (0044). Strict, and the argument is the same shape as the policy body's: the
+       * payload is a list of message ids and nothing else, so a misspelled key is a caller believing they
+       * scoped a repair when they asked for one over an empty list. The route already refuses an empty list
+       * with a 422 naming the listing route, and a silently-dropped `messageIds` would reach that refusal
+       * looking like a caller who passed nothing on purpose.
+       */
+      "POST /api/search/repair",
     ]));
     expect(sets.some((set) => set.path.join(".") === "conditions")).toBe(true);
     expect(sets.some((set) => set.path.join(".") === "stages.0")).toBe(true);
@@ -274,7 +282,9 @@ describe("strictness is decided per route, not turned on globally", () => {
         strict.push(name);
       }
     }
-    expect(strict.sort()).toEqual(["POST /api/policies", "PUT /api/policies/:policyId/draft"]);
+    expect(strict.sort()).toEqual([
+      "POST /api/policies", "POST /api/search/repair", "PUT /api/policies/:policyId/draft",
+    ]);
     expect(tolerant.sort()).toEqual([
       "POST /api/auth/login",
       "POST /api/auth/passkeys/challenge",

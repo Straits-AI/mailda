@@ -73,7 +73,22 @@ export function wordsFromHtml(html: string): string {
 }
 
 /**
- * The text to index for one message, or `null` when there is nothing to index.
+ * What one message offers the body index.
+ *
+ * Three outcomes rather than `string | null`, because the caller has to tell **"there was nothing to
+ * index"** from **"this could not be read"** — and the old signature could not. Both produced `null`, so the
+ * backfill settled them identically and a message whose body failed to parse was recorded as benign.
+ */
+export type IndexableBody =
+  /** Text to index. */
+  | { readonly kind: "text"; readonly text: string }
+  /** Read and parsed, and there is no body text. A headers-only message. Terminal and ordinary. */
+  | { readonly kind: "empty" }
+  /** The parser could not read it. Terminal and worth an operator knowing, unlike `empty`. */
+  | { readonly kind: "unparseable"; readonly why: string };
+
+/**
+ * The text to index for one message.
  *
  * **Both parts when both exist**, rather than preferring one. A multipart/alternative message is supposed to
  * carry the same content twice, and usually does — but "supposed to" is doing a lot of work in a mail system,
@@ -81,25 +96,30 @@ export function wordsFromHtml(html: string): string {
  * duplication costs index size and nothing else: FTS5 stores a posting per distinct term per row, so a word
  * appearing in both parts is one entry either way.
  *
- * `null` rather than an empty string for a message with no body, so the caller writes no row at all. An empty
- * index row is a row that can never match, taking space and appearing in every count of what has been
- * indexed — which would make the backfill's progress figure a lie.
+ * ## A parse failure is reported rather than swallowed
+ *
+ * This used to `return null` from the `catch`, on the reasoning that §24 forbids letting an unparseable body
+ * block delivery. That half is still true and still enforced — the caller writes the message either way. What
+ * was wrong is that it made an unreadable body indistinguishable from an absent one, so the backfill marked
+ * both as finished and the failure left no trace. The `why` travels back so the state machine can record it
+ * and `doctor` can count it.
  */
-export async function indexableText(raw: Uint8Array): Promise<string | null> {
+export async function indexableText(raw: Uint8Array): Promise<IndexableBody> {
   let extracted;
   try {
     extracted = await extractBody(raw);
-  } catch {
+  } catch (error) {
     /*
      * §24 forbids losing accepted mail, and an unparseable body is still a message. It is not searchable by
      * its contents, and it stays reachable by paging and by subject — the same position `renderBody` takes
      * when it reports `unparsed` rather than pretending the message is empty.
      *
-     * Swallowed here rather than thrown, and this is the one place in the ingest batch where that is right:
-     * a message whose body cannot be parsed must still be **delivered**. Raising would make an unparseable
-     * body block the mailbox item, which is the failure §24 names.
+     * Still not thrown, and this is the one place in the ingest batch where that is right: a message whose
+     * body cannot be parsed must still be **delivered**. Raising would make an unparseable body block the
+     * mailbox item, which is the failure §24 names. What changed is that it is now *reported* rather than
+     * silently equal to having no body.
      */
-    return null;
+    return { kind: "unparseable", why: (error as Error).message.split("\n")[0] ?? "unknown parse failure" };
   }
 
   const parts: string[] = [];
@@ -107,6 +127,6 @@ export async function indexableText(raw: Uint8Array): Promise<string | null> {
   if (extracted.html !== null) parts.push(wordsFromHtml(extracted.html));
 
   const joined = parts.join(" ").trim();
-  if (joined === "") return null;
-  return joined.slice(0, MAX_INDEXED);
+  if (joined === "") return { kind: "empty" };
+  return { kind: "text", text: joined.slice(0, MAX_INDEXED) };
 }

@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { getEvidence, runKeyCache } from "./evidence-store.ts";
-import { indexBody, markBodyIndexed } from "./search.ts";
+import { afterFailedAttempt, indexBody, settleBodyIndex } from "./search.ts";
 import { indexableText } from "./search-body.ts";
 
 /**
@@ -128,33 +128,57 @@ const BODY_BACKFILL_LIMIT = 25;
  * does yet. Recorded in `docs/receipts/message-search-cost.md` under what is not built.
  */
 export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
+  const at = new Date(ctx.now()).toISOString();
+  /*
+   * Pending first, then retryables whose time has come — and **newest first within each**, which is a guess
+   * about what people search for and worth naming as one. A reader looking for something is far more often
+   * looking for recent mail, so a Node catching up becomes useful from the top down.
+   *
+   * `msg_body_index_due` covers the predicate. Ordering by state name happens to put `pending` before
+   * `retryable`, which is the order this wants, and it is spelled out rather than relied on: a message that
+   * has never been tried should not wait behind one that has failed five times.
+   */
   const due = await env.CATALOG.prepare(
-    `SELECT id, blob_key FROM messages
-      WHERE body_indexed_at IS NULL AND blob_key IS NOT NULL
-      ORDER BY received_at DESC
+    `SELECT id, blob_key, body_index_attempts AS attempts FROM messages
+      WHERE blob_key IS NOT NULL
+        AND (body_index_state = 'pending'
+             OR (body_index_state = 'retryable' AND body_index_next_attempt_at <= ?))
+      ORDER BY CASE body_index_state WHEN 'pending' THEN 0 ELSE 1 END, received_at DESC
       LIMIT ?`,
-  ).bind(BODY_BACKFILL_LIMIT).all<{ id: string; blob_key: string }>();
+  ).bind(at, BODY_BACKFILL_LIMIT).all<{ id: string; blob_key: string; attempts: number }>();
   if (due.results.length === 0) return 0;
 
-  /*
-   * Newest first, which is a guess about what people search for and worth naming as one. A reader looking for
-   * something is far more often looking for recent mail, so a Node catching up becomes useful from the top
-   * down rather than from the archive forward.
-   */
-  const at = new Date(ctx.now()).toISOString();
   const cache = runKeyCache();
   const statements: D1PreparedStatement[] = [];
   for (const message of due.results) {
-    let words: string | null = null;
+    /*
+     * The two failure classes, told apart by **where** they come from rather than by inspecting an error
+     * string. Reaching the evidence is R2 and the vault: recoverable, and retried. Parsing what came back is
+     * deterministic: the same bytes will fail the same way next minute, so retrying is spending the pass on a
+     * message that cannot succeed while the mail behind it waits.
+     *
+     * This is the distinction the previous design could not make. It settled both, so one momentary R2 error
+     * made a message permanently unsearchable by its text with no record of why.
+     */
+    let raw: Uint8Array;
     try {
-      words = await indexableText(await getEvidence(env, message.blob_key, cache));
-    } catch {
-      // Settled with no row: see the header. An unreadable body does not become readable next minute, and a
-      // pass that retries it forever never reaches the mail behind it.
-      words = null;
+      raw = await getEvidence(env, message.blob_key, cache);
+    } catch (error) {
+      const why = (error as Error).message.split("\n")[0] ?? "unreadable evidence";
+      statements.push(settleBodyIndex(env, message.id, afterFailedAttempt(message.attempts + 1, why), at));
+      continue;
     }
-    if (words !== null) statements.push(indexBody(env, message.id, words));
-    statements.push(markBodyIndexed(env, message.id, at));
+
+    const body = await indexableText(raw);
+    if (body.kind === "text") {
+      statements.push(indexBody(env, message.id, body.text));
+      statements.push(settleBodyIndex(env, message.id, { state: "indexed" }, at));
+    } else if (body.kind === "empty") {
+      statements.push(settleBodyIndex(env, message.id, { state: "empty" }, at));
+    } else {
+      // Deterministic: no retry, and the reason is kept so `doctor` can count it and an operator can see it.
+      statements.push(settleBodyIndex(env, message.id, { state: "unindexable", error: body.why }, at));
+    }
   }
   await env.CATALOG.batch(statements);
   return due.results.length;

@@ -51,9 +51,26 @@ const MEASURED_SHAPE = {
        * above its own `SCHEMA` constant. A third copy of a schema is a third thing to keep true.
        */
       "body_indexed_at",
+      /*
+       * Added by migration 0044 (#107's body-index state machine). Re-measured against real remote D1 on
+       * 28 August 2026 *before* this constant was touched, and the figure **moved**: 1,632 → 1,649 bytes per
+       * message, which is 68,000 messages of shard capacity.
+       *
+       * The split is the interesting part. The four columns cost nothing measurable — two are NOT NULL with
+       * defaults, so every row carries them, and they fit in the page slack this comment's neighbour
+       * describes. The **index** cost all 17 bytes: `msg_body_index_due` is a second B-tree with an entry per
+       * row and cannot hide in slack.
+       *
+       * The measuring script was wrong twice on the way there, both times in the direction of good news: the
+       * first run omitted the columns, the second omitted the index. It restates this schema rather than
+       * reading `migrations/`, which its own comment has warned about since the last time.
+       */
+      "body_index_state", "body_index_attempts", "body_index_error", "body_index_next_attempt_at",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",
+      // 0044's selector, and the one thing in that migration that cost measurable bytes.
+      "msg_body_index_due",
     ],
   },
   mailbox_items: {

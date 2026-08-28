@@ -1514,14 +1514,16 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     /*
-     * 93 of 98 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
+     * 95 of 100 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
      * specifies rather than this contract (`EXTERNALLY_SPECIFIED`). Both are excluded from the denominator,
      * because a target counting routes no schema can describe is one nobody aims at.
      *
      * The 92nd and 93rd are `POST /api/recovery-codes/rotate` and `.../confirm` — the operator path that
-     * `doctor` had been naming since #92 with nothing behind it.
+     * `doctor` had been naming since #92 with nothing behind it. The 94th and 95th are
+     * `GET /api/search/failed` and `POST /api/search/repair`, which is the same story: the receipt for
+     * #107 named clearing a column by hand as the only repair, and now there is a door.
      */
-    expect(coverage.total).toBe(93);
+    expect(coverage.total).toBe(95);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

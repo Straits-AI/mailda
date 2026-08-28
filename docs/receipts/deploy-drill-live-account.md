@@ -116,3 +116,38 @@ than a prediction — weaker than designed, and not dangerous.
 account has never had enabled, or something about a Worker whose first version predates the alias. Recorded
 as unknown rather than guessed at, because the next person to touch #98 needs to know the difference between
 "we measured this and it is broken" and "we measured this and do not know why".
+
+## An unexplained D1 API failure during migration, 28 August 2026
+
+Not given a `values` key, because it is a **negative result whose cause is not established** and a number
+would imply otherwise.
+
+Applying migrations 0042–0044 through `mailda deploy` printed the three names twice and then:
+
+```
+✘ [ERROR] A request to the Cloudflare API
+  (/accounts/…/d1/database/…/query) failed.
+```
+
+with no further detail. Re-running immediately reported **"No migrations to apply!"**, and the schema was
+verified correct afterwards: the ledger at `0044_body_index_state.sql`, the four new `body_index_*` columns
+and `msg_body_index_due` present on `messages`, and both new columns on `recovery_codes`. So the migrations
+applied and the error arrived after them.
+
+**What is not established** is which request failed or why. The candidates are the final `UPDATE` in 0044,
+some part of the deploy step that follows migration, or a transient API failure with no relationship to
+either. It did not reproduce, and it cannot now — the migrations are applied and the path is idempotent.
+
+**Why this Node cannot answer it.** `messages` is empty here, so 0044's classifying `UPDATE` had nothing to
+touch: it would have succeeded trivially whether or not it ran. The one place the question matters is a Node
+with mail, and this Node deliberately has none.
+
+**What would settle it**, and is worth doing before this migration reaches a Node with an archive: apply
+0044 to a scratch database seeded with messages in both states, and check the classification actually ran
+rather than leaving every row on the column default. A migration recorded as applied whose last statement
+silently did nothing is the shape of failure that shows up months later as "search never found old mail" —
+and D1 does not wrap a migration file in a transaction, so it is representable rather than theoretical.
+
+Recorded as unknown rather than guessed at, for the reason the preview-URL section above gives: the next
+person to touch this needs to know the difference between *"we measured this and it is broken"* and
+*"we measured this and do not know why"*.

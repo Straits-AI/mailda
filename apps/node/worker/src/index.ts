@@ -11,6 +11,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 
 import { claimNode } from "./claim.ts";
 import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
+import { failedBodyIndex, repairBodyIndex } from "./search.ts";
 import { migrate } from "./migrate.ts";
 import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
@@ -2437,6 +2438,70 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const restored = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
       return Response.json(restored);
+    }
+
+    /*
+     * Listing and repairing what the body index failed on (0044).
+     *
+     * ## Why this is a route rather than a documented SQL statement
+     *
+     * The receipt for #107 L2 said, in as many words, that repairing a message meant clearing
+     * `body_indexed_at` by hand and that no route exposed it. An operator whose search cannot find a message
+     * they know exists was being handed a `wrangler d1 execute` — which is not a repair path, it is an
+     * invitation to write an `UPDATE` with no `WHERE` at three in the morning.
+     *
+     * ## GET lists with reasons; POST re-queues by id
+     *
+     * Two shapes rather than a single "repair everything", because the reasons matter. Some failures are
+     * deterministic — a body no parser will ever read — and repairing those spends attempts on messages that
+     * cannot succeed. So the list comes back with the error against each id, and the caller decides.
+     *
+     * Administrator-gated: it re-queues work for the whole organization's mail, and the ids it takes name
+     * messages the caller may not otherwise be able to read. The `org_id` in `repairBodyIndex`'s predicate is
+     * what keeps an id from another organization inert rather than merely unlikely.
+     */
+    if (url.pathname === "/api/search/failed" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to read the search index's failures.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      return Response.json({ failed: await failedBodyIndex(env, who.orgId, BUDGETS["messages.page_size"]) });
+    }
+
+    if (url.pathname === "/api/search/repair" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to repair the search index.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      const body = (await request.json().catch(() => ({}))) as { messageIds?: string[] };
+      const ids = (body.messageIds ?? []).slice(0, BUDGETS["messages.page_size"]);
+      if (ids.length === 0) {
+        return Response.json(
+          {
+            error: "unprocessable",
+            what: "no message ids to repair",
+            why: "repair is per message rather than a sweep. A sweep would re-queue the messages that are "
+              + "deterministically unparseable along with the ones worth retrying, and spend the backfill's "
+              + "budget on work that cannot succeed.",
+            fix: `GET /api/search/failed lists them with the reason each failed; pass the ids worth retrying`,
+          },
+          { status: 422 },
+        );
+      }
+      const outcome = await repairBodyIndex(env, who.orgId, ids).run();
+      return Response.json({
+        requeued: outcome.meta.changes ?? 0,
+        message: "Queued for the next backfill pass, which runs every minute and settles 25 messages. "
+          + "Attempt counts were reset, so each gets a full set of retries again.",
+      });
     }
 
     /*

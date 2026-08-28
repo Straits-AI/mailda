@@ -37,14 +37,21 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there is one", () => {
+  it("derives read for every GET but the named exceptions, and there are two", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
-     * exception set is asserted as **exactly one** — `GET /index.html`, the interface shell — because an
-     * exception list that can grow quietly is the derivation turning back into a table one entry at a time.
+     * exception set is asserted **exactly**, because an exception list that can grow quietly is the
+     * derivation turning back into a table one entry at a time.
+     *
+     * `GET /index.html` is the interface shell — a page rather than a question anybody would ask a Node.
+     *
+     * `GET /api/search/failed` was added with 0044's repair path and is the more interesting of the two: it
+     * *is* a read, and it is classified `operator` anyway. What it reads is maintenance state across the
+     * whole organization's mail — message ids the caller may hold no relation to — and its only purpose is
+     * to feed the repair route beside it. A read that exists to decide a write belongs with the write.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
-    expect(exceptions).toEqual(["GET /index.html"]);
+    expect(exceptions.sort()).toEqual(["GET /api/search/failed", "GET /index.html"]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {
       const expected = exceptions.includes(`GET ${spec.path}`) ? "operator" : "read";

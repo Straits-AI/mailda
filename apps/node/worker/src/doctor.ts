@@ -5,7 +5,7 @@ import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { escrowState } from "./recovery.ts";
-import { unindexedBodies, unindexedMessages } from "./search.ts";
+import { bodyIndexState, unindexedMessages } from "./search.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
 import { decidersByMailbox } from "./deciders.ts";
@@ -2231,7 +2231,7 @@ async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding
     }];
   }
 
-  const bodies = await unindexedBodies(env).catch(() => null);
+  const bodies = await bodyIndexState(env).catch(() => null);
 
   return [{
     check: "search_index_backlog",
@@ -2247,13 +2247,13 @@ async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding
       : "nothing — this falls on its own. If it stops falling, check the logs for `search.backfill_failed`",
   }, {
     /*
-     * The body index's own backlog, reported separately (#107 L2).
+     * The body index's backlog, reported separately from the subject index's (#107 L2).
      *
      * **Two findings rather than one number**, because the two backfills have different costs and different
-     * failure modes and an operator watching a single figure could not tell which was stuck. The metadata
-     * backfill is one D1 statement doing 500 a minute; this one reads R2, unwraps a key, decrypts and parses
-     * per message, doing 25 — so on any real archive this figure falls twenty times more slowly, and a
-     * combined number would look alarming while nothing was wrong.
+     * failure modes and an operator watching a single figure could not tell which was stuck. The subject
+     * index catches up 500 messages a minute from one D1 statement; this one reads R2, unwraps a key,
+     * decrypts and parses per message, doing 25 — so on any real archive it falls twenty times more slowly,
+     * and a combined number would look alarming while nothing was wrong.
      */
     check: "body_index_backlog",
     severity: "report",
@@ -2261,16 +2261,47 @@ async function checkSearchIndex(env: Env, orgId: string | null): Promise<Finding
     ok: true,
     detail: bodies === null
       ? "The catalog could not be read, so this report cannot say how much mail is searchable by its contents."
-      : bodies === 0
+      : bodies.pending === 0
         ? "Every message on this Node has been through the body index."
-        : `${bodies} message(s) have not been through the body index, so a search will not match words in `
-          + "their text. Their subjects and senders are searchable, and they are reachable by paging. The "
-          + "scheduled backfill settles 25 a minute — it reads and decrypts each message, which is why it is "
-          + "slower than the subject index's.",
-    fix: bodies === null || bodies === 0
+        : `${bodies.pending} message(s) have not been through the body index yet, so a search will not match `
+          + "words in their text. Their subjects and senders are searchable and they are reachable by "
+          + "paging. The scheduled backfill settles 25 a minute — it reads and decrypts each message, which "
+          + "is why it is slower than the subject index's.",
+    fix: bodies === null || bodies.pending === 0
       ? undefined
       : "nothing — this falls on its own, slowly. If it stops falling, check the logs for "
         + "`search.body_backfill_failed`",
+  }, {
+    /*
+     * Messages the body index **failed** on, which is a different question from how much is left (0044).
+     *
+     * The previous design had one "finished" timestamp, so a message whose evidence could not be fetched was
+     * settled exactly like one that had no body — permanently unsearchable by its text, with no record of
+     * why and no supported repair. This finding is the visible half of fixing that: `retryable` is a Node
+     * working through a transient problem, `unindexable` is one that has stopped trying or cannot parse.
+     *
+     * `degraded` only for `unindexable`. A retryable message is not a fault — it is a Node doing what it was
+     * built to do, and reporting it red would train an operator to ignore the finding during exactly the
+     * incident it exists for.
+     */
+    check: "body_index_failed",
+    severity: bodies !== null && bodies.unindexable > 0 ? "degraded" : "report",
+    discloses: "infrastructure",
+    ok: bodies === null || bodies.unindexable === 0,
+    detail: bodies === null
+      ? "The catalog could not be read, so this report cannot say whether the body index has failed on "
+        + "anything."
+      : bodies.unindexable === 0 && bodies.retryable === 0
+        ? "The body index has failed on nothing."
+        : `${bodies.unindexable} message(s) the body index has given up on and ${bodies.retryable} it is `
+          + "still retrying. A message it gave up on is unsearchable by its text and is otherwise "
+          + "untouched — listed, readable, and findable by subject and sender. Some are simply unparseable "
+          + "and will stay that way; the rest are reads that failed on every attempt and are worth retrying "
+          + "once whatever broke is fixed.",
+    fix: bodies === null || bodies.unindexable === 0
+      ? undefined
+      : "`mailda search repair` lists them with the reason each failed and puts them back in the queue. "
+        + "Fix the cause first — a repair that runs into the same failure spends its attempts again",
   }];
 }
 

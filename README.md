@@ -1705,9 +1705,13 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   inside D1, and bodies go **25** a minute because each one is an R2 read, a key unwrap, a decryption and a
   MIME parse. `doctor` reports `search_index_backlog` and `body_index_backlog` separately for that reason — a
   single figure would look alarming while nothing was wrong. Unindexed mail stays reachable by paging.
-- **A message whose body cannot be parsed is never searchable by its contents.** It is settled as done rather
-  than retried, because an unreadable body does not become readable next minute and a pass that retries it
-  forever never reaches the mail behind it. The message stays listed, readable and findable by subject.
+- **A message whose body cannot be *parsed* is never searchable by its contents; one whose evidence could not
+  be *read* is retried.** Those were the same thing until the state machine landed, which meant a momentary
+  R2 error made a message permanently unsearchable with no record of why. A read failure now backs off from
+  one minute to sixteen, gives up after six attempts, and keeps the reason. `doctor`'s `body_index_failed`
+  reports what it gave up on and `mailda search list` shows why each one failed; `mailda search repair` puts
+  chosen messages back in the queue. Repair is per message rather than a sweep, because some failures are
+  deterministic and retrying those spends the backfill's budget on work that cannot succeed.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
   time order until it has found enough belonging to it — measured at 2,410 rows read to return 3 messages from
   a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization

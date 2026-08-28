@@ -271,6 +271,18 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/recovery-codes/rotate",
     "POST /api/recovery-codes/confirm",
+    /*
+     * Repairing the body index (0044). `operator` because it is maintenance of the Node rather than work on
+     * anybody's mail: it re-queues indexing, changes nothing a reader can see, and its listing names message
+     * ids across the whole organization — including mail the caller may hold no relation to.
+     *
+     * A machine could safely *call* it. The reason it is withheld anyway is that deciding **which** failures
+     * are worth retrying is the whole job: some are deterministically unparseable and repairing those spends
+     * the backfill's budget on work that cannot succeed. An agent handed the list would retry all of them,
+     * which is the behaviour the route's 422 exists to refuse from a human.
+     */
+    "GET /api/search/failed",
+    "POST /api/search/repair",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

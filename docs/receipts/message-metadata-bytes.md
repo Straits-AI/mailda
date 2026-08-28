@@ -2,18 +2,55 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-08-27
+re_measured_on: 2026-08-28
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
   measurement in this file, or D1's per-database ceiling moves from 10 GB
 values:
-  message.metadata.bytes_per_message: 1632
+  message.metadata.bytes_per_message: 1649
   message.metadata.bytes_per_extra_delivery: 410
-  shard.plan_warn_messages: 4605510
-  shard.plan_stop_messages: 5592405
-  shard.plan_route_messages: 5921370
+  shard.plan_warn_messages: 4558030
+  shard.plan_stop_messages: 5534751
+  shard.plan_route_messages: 5860325
 ---
+
+
+## Re-measured 28 August 2026: the body index's state machine, and an index that was not free
+
+#107's state machine (`0044`) added four columns to `messages` and one index. **1,632 → 1,649 bytes per
+message**, and the split between those two causes is the finding.
+
+**The four columns cost nothing measurable.** Two are `NOT NULL DEFAULT`, so every row carries them, and the
+figure did not move — the same page-slack explanation as `body_indexed_at` below: `database_size` is reported
+in 4,096-byte pages, two ~1,632-byte rows share one with roughly 830 bytes spare, and a short state string
+plus an integer fit in space already paid for.
+
+**The index cost 17 bytes a message.** `msg_body_index_due` on `(body_index_state,
+body_index_next_attempt_at)` is a second B-tree with an entry per row, and unlike a column it cannot hide in
+slack. That is 68,000 messages of shard capacity — about 1% — and it is the third time this receipt has
+recorded an index doing this. The note below already says **"two indexes cost 1.4 million messages of
+headroom"**; this is a third, and it is smaller only because the columns it covers are narrow.
+
+Worth stating because the trade was made without the number in hand: the index exists so the backfill can
+find `pending` and due `retryable` messages without scanning `messages`, which on a Node with millions of
+rows is the difference between a bounded pass and a full scan every minute. It is the right trade. It was not
+a free one, and the shard thresholds moved.
+
+### The measuring script was wrong twice more, in the way its own comment predicted
+
+`scripts/measure-message-bytes.mjs` restates this schema rather than reading `migrations/`, and the comment
+above its `SCHEMA` constant — added on 27 August after the same thing happened — says so. It happened twice
+more in one sitting:
+
+1. The first re-run omitted all four new columns and reported 1,632 unchanged.
+2. The second added the columns and still reported 1,632 unchanged, because it omitted the **index**.
+
+Only the third run measured the shape a Node actually has. Each intermediate result looked like good news,
+which is exactly what makes this failure mode expensive: a measurement that omits something reports that the
+thing costs nothing. The guard remains what it was — `test/schema-drift.test.ts` compares its own copy against
+the migrated database and is what forces a re-measure at all — and it does not watch the script's copy, which
+is now a documented hazard rather than a discovered one.
 
 ## Re-measured 27 August 2026: `body_indexed_at` added, and the figure did not move
 
@@ -180,17 +217,17 @@ ULIDs at their true 30-character width (#6). 20 mailboxes, quarterly time bucket
 elsewhere at 90% — three numbers that until now had no measurement behind them. Against
 D1's 10 GB per-database ceiling (receipt: `d1-platform-limits`):
 
-Divisor: **1,632 bytes per message**, from the 12 August measurement above. Every figure in this table is
+Divisor: **1,649 bytes per message**, from the 28 August measurement above. Every figure in this table is
 that ceiling divided by that number, so it can be checked in one line.
 
 | Threshold | Bytes | Messages |
 |---|---:|---:|
-| Shard capacity | 10,737,418,240 | 6,579,300 |
-| 70% — warn and plan the next shard | 7,516,192,768 | **4,605,510** |
-| 85% — stop optional bulky projections | 9,126,805,504 | **5,592,405** |
-| 90% — route new metadata to a new shard | 9,663,676,416 | **5,921,370** |
+| Shard capacity | 10,737,418,240 | 6,511,472 |
+| 70% — warn and plan the next shard | 7,516,192,768 | **4,558,030** |
+| 85% — stop optional bulky projections | 9,126,805,504 | **5,534,751** |
+| 90% — route new metadata to a new shard | 9,663,676,416 | **5,860,325** |
 
-**A single shard holds roughly 6.6 million messages** — down from 7.1 million after threading, and from 8.5
+**A single shard holds roughly 6.5 million messages** — down from 7.1 million after threading, and from 8.5
 million before it. For most organisations that is still years of mail, which remains the useful
 thing to know: sharding is not a day-one problem, and the planner should say so rather than
 implying it is imminent. But the direction matters. **Two indexes cost 1.4 million messages

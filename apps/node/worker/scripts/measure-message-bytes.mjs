@@ -105,7 +105,7 @@ function messagesSql(from, count) {
       `'2026-08-0${(i % 9) + 1}T12:00:00.000Z','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `'${ulid("rcp", i)}','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `${i % 3 === 0 ? "NULL" : `'${rfc}'`},'${rfc}',NULL,'${ulid("cnv", i)}',` +
-      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z')`,
+      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0)`,
     );
   }
   return chunked(rows,
@@ -114,7 +114,11 @@ function messagesSql(from, count) {
     // `body_indexed_at` is **populated**, not left null. A null column costs about a byte and a
     // populated one costs an ISO timestamp — and on a Node that has run its backfill every row has
     // one, so measuring nulls would understate the deployed table.
-    `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at)`);
+    // `body_index_state` and `body_index_attempts` are NOT NULL with defaults, so **every** row carries
+    // them on a real Node — a measurement that omitted them would price a table nobody has. The nullable
+    // error and retry columns are left null, which is their state for all but a handful of messages.
+    `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
+    `body_index_attempts)`);
 }
 
 /**
@@ -159,13 +163,20 @@ CREATE TABLE messages (
   thread_id TEXT NOT NULL, subject TEXT NOT NULL, from_addr TEXT NOT NULL, sent_at TEXT NOT NULL,
   received_at TEXT NOT NULL, ingress_receipt_id TEXT NOT NULL, created_at TEXT NOT NULL,
   in_reply_to TEXT, thread_root_rfc_id TEXT, parse_error TEXT, conversation_id TEXT,
-  body_indexed_at TEXT
+  body_indexed_at TEXT,
+  body_index_state TEXT NOT NULL DEFAULT 'pending',
+  body_index_attempts INTEGER NOT NULL DEFAULT 0,
+  body_index_error TEXT,
+  body_index_next_attempt_at TEXT
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);
 CREATE INDEX msg_by_root ON messages (org_id, thread_root_rfc_id, sent_at);
 CREATE INDEX msg_by_rfc_id ON messages (org_id, rfc_message_id);
 CREATE INDEX msg_by_conversation ON messages (org_id, conversation_id, sent_at);
+-- The backfill's selector (0044). An index costs bytes per row like any other, so a measurement omitting it
+-- would price a table nobody has -- which is what the two rounds before this one did with the columns.
+CREATE INDEX msg_body_index_due ON messages (body_index_state, body_index_next_attempt_at);
 CREATE TABLE mailbox_items (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, mailbox_id TEXT NOT NULL, time_bucket TEXT NOT NULL,
   message_id TEXT NOT NULL, change_number INTEGER NOT NULL, flags INTEGER NOT NULL,
@@ -203,7 +214,7 @@ try {
   console.log("\nStage                                            database_size");
   stage("Empty database");
   runSql(SCHEMA);
-  stage("Schema only (2 tables, 8 indexes)");
+  stage("Schema only (2 tables, 9 indexes)");
   runSql(messagesSql(0, BATCH) + deliveriesSql(0, BATCH, 0));
   const afterFirst = stage(`+ ${BATCH} messages, 1 delivery each`);
   runSql(messagesSql(BATCH, BATCH) + deliveriesSql(BATCH, BATCH, 0));

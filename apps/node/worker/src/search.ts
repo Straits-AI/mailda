@@ -146,15 +146,105 @@ export function indexBody(env: Env, messageId: string, body: string): D1Prepared
 }
 
 /**
- * Marks the body index as finished with a message, whether or not it produced a row.
+ * Where a message stands with the body index (`migrations/0044_body_index_state.sql`).
  *
- * Separate from `indexBody` and always issued, which is the point: a message with no readable body gets this
- * and no index row, and that is the only way the backfill can tell *"not reached yet"* from *"reached, and
- * there was nothing there"*. Without it the empty-body case is selected by every pass forever and the backlog
- * figure never reaches zero — reporting outstanding work that no amount of work removes.
+ * `empty` and `unindexable` are both terminal and are deliberately not one state: *"eleven messages have no
+ * body text"* is ordinary, and *"eleven messages could not be parsed"* is something an operator should look
+ * at. A single "finished" state is what the previous design had, and it is why a transient read failure could
+ * make a message permanently unsearchable with no record of why.
  */
-export function markBodyIndexed(env: Env, messageId: string, at: string): D1PreparedStatement {
-  return env.CATALOG.prepare("UPDATE messages SET body_indexed_at = ? WHERE id = ?").bind(at, messageId);
+export type BodyIndexState = "pending" | "indexed" | "empty" | "unindexable" | "retryable";
+
+/**
+ * How many times a recoverable failure is retried before it is called permanent.
+ *
+ * Bounded, because "retry until it works" is a pass that spends its whole budget on the same failure forever
+ * and never reaches the mail behind it. Six attempts across the backoff below is about half an hour of
+ * patience, which covers an R2 blip or a vault restart and does not cover a message that is simply broken.
+ *
+ * When it runs out the state becomes `unindexable` with the error kept — **not** `empty`. "We stopped trying"
+ * is a different fact from "there was nothing there", and repair exists for exactly the messages this
+ * boundary gives up on.
+ */
+export const BODY_INDEX_MAX_ATTEMPTS = 6;
+
+/**
+ * When to try again, given how many attempts have already failed.
+ *
+ * Exponential from one minute, capped at sixteen. The cap matters more than the curve: an uncapped doubling
+ * reaches days by attempt eleven, and a message nobody retries for a day is a message nobody retries.
+ */
+export function nextAttemptAt(now: number, attempts: number): string {
+  const minutes = Math.min(2 ** Math.max(0, attempts - 1), 16);
+  return new Date(now + minutes * 60_000).toISOString();
+}
+
+/**
+ * Records the outcome of one attempt at a message's body.
+ *
+ * Every terminal outcome clears the retry fields and `retryable` is the only one that sets them. A transition
+ * leaving `body_index_next_attempt_at` behind on a terminal state would make the selector's comparison
+ * meaningful for a message that is finished.
+ */
+export function settleBodyIndex(
+  env: Env,
+  messageId: string,
+  outcome:
+    | { state: "indexed" | "empty" }
+    | { state: "unindexable"; error: string }
+    | { state: "retryable"; error: string; attempts: number },
+  at: string,
+): D1PreparedStatement {
+  if (outcome.state === "retryable") {
+    return env.CATALOG.prepare(
+      `UPDATE messages
+          SET body_index_state = 'retryable', body_index_attempts = ?, body_index_error = ?,
+              body_index_next_attempt_at = ?, body_indexed_at = NULL
+        WHERE id = ?`,
+    ).bind(outcome.attempts, outcome.error, nextAttemptAt(Date.parse(at), outcome.attempts), messageId);
+  }
+  return env.CATALOG.prepare(
+    `UPDATE messages
+        SET body_index_state = ?, body_index_error = ?, body_index_next_attempt_at = NULL,
+            body_indexed_at = ?
+      WHERE id = ?`,
+  ).bind(outcome.state, outcome.state === "unindexable" ? outcome.error : null, at, messageId);
+}
+
+/**
+ * Whether a recoverable failure has run out of patience.
+ *
+ * Exported so the backfill and its test agree on the boundary rather than each having an opinion about it.
+ */
+export function afterFailedAttempt(
+  attempts: number,
+  error: string,
+): { state: "retryable"; error: string; attempts: number } | { state: "unindexable"; error: string } {
+  if (attempts >= BODY_INDEX_MAX_ATTEMPTS) {
+    // The count is in the message on purpose: "gave up" and "could not parse" are both `unindexable`, and an
+    // operator deciding whether to repair needs to know which one they are looking at.
+    return { state: "unindexable", error: `abandoned after ${attempts} attempts: ${error}` };
+  }
+  return { state: "retryable", error, attempts };
+}
+
+/**
+ * Puts messages back in the queue, whatever state they reached.
+ *
+ * One statement rather than a delete-and-reindex: the index rows are keyed on `messages.rowid`, so
+ * `indexBody`'s `INSERT OR REPLACE` overwrites cleanly on the next pass. Resetting the counter matters — a
+ * message that exhausted its attempts an hour ago should get a full set again rather than be abandoned
+ * immediately.
+ *
+ * Scoped by `org_id` as well as by id, so a caller holding one organization's ids cannot reach another's.
+ */
+export function repairBodyIndex(env: Env, orgId: string, messageIds: readonly string[]): D1PreparedStatement {
+  return env.CATALOG.prepare(
+    `UPDATE messages
+        SET body_index_state = 'pending', body_index_attempts = 0, body_index_error = NULL,
+            body_index_next_attempt_at = NULL, body_indexed_at = NULL
+      WHERE org_id = ? AND id IN (${messageIds.map(() => "?").join(", ")})`,
+  ).bind(orgId, ...messageIds);
 }
 
 /**
@@ -171,10 +261,49 @@ export async function unindexedMessages(env: Env): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** How many messages the body index has not reached — the number `doctor` reports. */
-export async function unindexedBodies(env: Env): Promise<number> {
-  const row = await env.CATALOG.prepare(
-    "SELECT count(*) AS n FROM messages WHERE body_indexed_at IS NULL AND blob_key IS NOT NULL",
-  ).first<{ n: number }>();
-  return row?.n ?? 0;
+/**
+ * What the body index has and has not reached, by state.
+ *
+ * One query rather than five, because `doctor` reports on a subrequest budget it has to report on — and a
+ * caller asking five times could see four counts from one moment and one from another.
+ *
+ * This replaced `unindexedBodies`, which counted `body_indexed_at IS NULL` and therefore answered one
+ * question — "how much is left" — for a design that now has three different answers behind it: not reached,
+ * failing and retrying, and given up on.
+ */
+export async function bodyIndexState(env: Env): Promise<Record<BodyIndexState, number>> {
+  const rows = await env.CATALOG.prepare(
+    `SELECT body_index_state AS state, COUNT(*) AS n FROM messages
+      WHERE blob_key IS NOT NULL GROUP BY body_index_state`,
+  ).all<{ state: string; n: number }>();
+  const counts: Record<BodyIndexState, number> = {
+    pending: 0, indexed: 0, empty: 0, unindexable: 0, retryable: 0,
+  };
+  for (const row of rows.results) {
+    if (row.state in counts) counts[row.state as BodyIndexState] = Number(row.n);
+  }
+  return counts;
+}
+
+/**
+ * The messages an operator would repair, newest first, with why each failed.
+ *
+ * Bounded, and returning the reason: "eleven messages failed" is a number nobody can act on. The repair path
+ * takes message ids, so this is what a caller passes to it — which is the difference between a diagnostic and
+ * a `wrangler d1 execute` an operator has to compose themselves.
+ */
+export async function failedBodyIndex(
+  env: Env,
+  orgId: string,
+  limit: number,
+): Promise<{ messageId: string; state: string; attempts: number; error: string | null }[]> {
+  const rows = await env.CATALOG.prepare(
+    `SELECT id, body_index_state AS state, body_index_attempts AS attempts, body_index_error AS error
+       FROM messages
+      WHERE org_id = ? AND body_index_state IN ('unindexable', 'retryable')
+      ORDER BY received_at DESC LIMIT ?`,
+  ).bind(orgId, limit).all<{ id: string; state: string; attempts: number; error: string | null }>();
+  return rows.results.map((row) => ({
+    messageId: row.id, state: row.state, attempts: Number(row.attempts), error: row.error,
+  }));
 }

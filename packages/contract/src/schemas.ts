@@ -1331,6 +1331,32 @@ export const recoveryCodesConfirmedResponse = z.object({
   message: z.string().min(1),
 }).strict();
 
+/**
+ * What the body index failed on, with the reason against each id.
+ *
+ * The reason is the payload's point. "Eleven messages failed" is a number nobody can act on; a caller has to
+ * see which are deterministically unparseable — repairing those spends attempts on work that cannot
+ * succeed — and which are reads that failed on every try and are worth another once the cause is fixed.
+ */
+export const searchFailedResponse = z.object({
+  failed: z.array(z.object({
+    messageId: z.string().min(1),
+    state: z.enum(["unindexable", "retryable"]),
+    attempts: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+  }).strict()),
+}).strict();
+
+/** Message ids to put back in the body index's queue. Per message, never a sweep. */
+export const searchRepairRequest = z.object({
+  messageIds: z.array(z.string().min(1)),
+}).strict().meta({ refusal: "E_SEARCH_REPAIR_FIELD" });
+
+export const searchRepairedResponse = z.object({
+  requeued: z.number().int().nonnegative(),
+  message: z.string().min(1),
+}).strict();
+
 /** A recovery code, as typed. Hyphens and case are cosmetic and normalised by the Node. */
 export const redeemRecoveryRequest = z.object({
   code: z.string().min(1),

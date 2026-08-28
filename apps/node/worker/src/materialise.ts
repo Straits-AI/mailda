@@ -8,7 +8,7 @@ import { bucketFor } from "./ingress.ts";
 import { parseHeaders } from "./mime.ts";
 import { log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
-import { indexBody, indexMessage, markBodyIndexed } from "./search.ts";
+import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
 import { indexableText } from "./search-body.ts";
 
 /**
@@ -172,14 +172,26 @@ export async function materialiseReceipt(
      * entirely when there is nothing to index — an empty index row can never match, and it would still be
      * counted as indexed, which would make the backfill's remaining-work figure a lie.
      */
-    ...(bodyWords === null ? [] : [indexBody(env, messageId, bodyWords)]),
+    ...(bodyWords.kind === "text" ? [indexBody(env, messageId, bodyWords.text)] : []),
     /*
-     * Settled either way, in the same batch. A message with no readable body gets this and no index row,
-     * which is the only thing that tells the backfill "reached, and there was nothing there" apart from "not
-     * reached yet" — without it, every headers-only message is selected by every pass forever and the backlog
-     * figure reports work that no amount of work removes.
+     * Settled either way, in the same batch, and settled to the state that is **true** rather than to one
+     * "finished" value. A headers-only message is `empty`; one whose body the parser could not read is
+     * `unindexable` with the reason kept. Both are terminal, and separating them is what lets `doctor` say
+     * "eleven messages could not be parsed" — which is actionable — instead of burying it in a count of
+     * messages with no body text, which is not.
+     *
+     * There is no `retryable` here on purpose: ingest already holds the bytes, so the only failure reachable
+     * at this point is the parser's, and that is deterministic. Retrying it next minute would re-read the
+     * same bytes and fail the same way.
      */
-    markBodyIndexed(env, messageId, at),
+    settleBodyIndex(
+      env,
+      messageId,
+      bodyWords.kind === "unparseable"
+        ? { state: "unindexable", error: bodyWords.why }
+        : { state: bodyWords.kind === "text" ? "indexed" : "empty" },
+      at,
+    ),
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO mailbox_items
          (id, org_id, mailbox_id, time_bucket, message_id, change_number, flags, sent_at, created_at)

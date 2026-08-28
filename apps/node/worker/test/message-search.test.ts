@@ -7,7 +7,10 @@ import { createSystemCtx } from "@mailda/runtime";
 import { messagePageQuery } from "../src/authz-read.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
-import { ftsQuery, indexBody, indexMessage } from "../src/search.ts";
+import {
+  bodyIndexState, failedBodyIndex, ftsQuery, indexBody, indexMessage, repairBodyIndex,
+} from "../src/search.ts";
+import { backfillBodyIndex } from "../src/search-backfill.ts";
 import { indexableText, wordsFromHtml } from "../src/search-body.ts";
 import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "../src/supervised.ts";
 
@@ -454,10 +457,11 @@ describe("what reaches the body index", () => {
       "Content-Type: text/plain; charset=utf-8", "",
       "The demurrage clause was invoked on tuesday.",
     ].join("\r\n"));
-    const words = await indexableText(plain);
-    expect(words, "a text/plain body produced nothing to index").not.toBeNull();
-    expect(words!.toLowerCase()).toContain("demurrage");
-    expect(words!.toLowerCase()).toContain("tuesday");
+    const body = await indexableText(plain);
+    expect(body.kind, "a text/plain body produced nothing to index").toBe("text");
+    const words = body.kind === "text" ? body.text.toLowerCase() : "";
+    expect(words).toContain("demurrage");
+    expect(words).toContain("tuesday");
   });
 
   it("indexes both parts when a message carries text and HTML", async () => {
@@ -473,9 +477,10 @@ describe("what reaches the body index", () => {
       "--x", "Content-Type: text/html; charset=utf-8", "", "<p>htmlonlyword</p>", "",
       "--x--", "",
     ].join("\r\n"));
-    const words = await indexableText(both);
-    expect(words!.toLowerCase()).toContain("plaintextonlyword");
-    expect(words!.toLowerCase()).toContain("htmlonlyword");
+    const body = await indexableText(both);
+    const words = body.kind === "text" ? body.text.toLowerCase() : "";
+    expect(words).toContain("plaintextonlyword");
+    expect(words).toContain("htmlonlyword");
   });
 
   it("indexes HTML-only mail, which is the case that would silently never match", async () => {
@@ -489,10 +494,11 @@ describe("what reaches the body index", () => {
       "<html><head><style>.x{font-family:sans-serif}</style></head>",
       "<body><p>The&nbsp;demurrage clause was <b>invoked</b></p></body></html>",
     ].join("\r\n"));
-    const words = await indexableText(html);
-    expect(words).not.toBeNull();
-    expect(words!.toLowerCase()).toContain("demurrage");
-    expect(words!.toLowerCase()).toContain("invoked");
+    const body = await indexableText(html);
+    expect(body.kind).toBe("text");
+    const words = body.kind === "text" ? body.text.toLowerCase() : "";
+    expect(words).toContain("demurrage");
+    expect(words).toContain("invoked");
   });
 
   it("keeps stylesheet and script contents out, so they do not become words", () => {
@@ -521,7 +527,9 @@ describe("what reaches the body index", () => {
     const headersOnly = new TextEncoder().encode(
       "From: a@b.example\r\nTo: in@search.example\r\nSubject: nothing\r\n\r\n",
     );
-    expect(await indexableText(headersOnly)).toBeNull();
+    // `empty`, not `unparseable`: the parser read it fine and there is no body. The distinction is the
+    // whole point of the state machine — one is ordinary and the other wants an operator's attention.
+    expect((await indexableText(headersOnly)).kind).toBe("empty");
   });
 });
 
@@ -630,5 +638,103 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
         + "it — the audit trail would name the wrong authority for a content disclosure",
       ).toBeNull();
     }
+  });
+});
+
+describe("a failed body read is retried; a failed parse is not", () => {
+  /*
+   * The behaviour the state machine exists for, driven through `backfillBodyIndex` rather than through the
+   * transition functions — `test/body-index-state.test.ts` covers the boundary arithmetic, and this covers
+   * whether the pass actually classifies what it meets.
+   *
+   * The distinction is made by **where** the failure comes from rather than by inspecting an error string.
+   * Reaching the evidence is R2 and the vault: recoverable. Parsing what came back is deterministic — the
+   * same bytes fail the same way next minute, so retrying spends the pass on a message that cannot succeed
+   * while the mail behind it waits.
+   */
+  const stateOf = async (messageId: string) => testEnv.CATALOG.prepare(
+    `SELECT body_index_state AS state, body_index_attempts AS attempts, body_index_error AS error,
+            body_index_next_attempt_at AS next
+       FROM messages WHERE id = ?`,
+  ).bind(messageId).first<{ state: string; attempts: number; error: string | null; next: string | null }>();
+
+  it("marks a message whose evidence cannot be read as retryable, with a time to try again", async () => {
+    /*
+     * The blob key points at nothing, so `getEvidence` throws — which is the transient class. Before 0044
+     * this message was settled and never looked at again.
+     */
+    const ctx = createSystemCtx();
+    const receiptId = "rcpt_missing_evidence00000001";
+    const messageId = "msg_missing_evidence000000001";
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
+           blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(receiptId, ORG, `evt_${receiptId}`, "x@y.example", ADDRESS, 10,
+        `${ORG}/raw/does-not-exist`, "0".repeat(64), AT),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id,
+           thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
+           thread_root_rfc_id, conversation_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(messageId, ORG, "2026-Q3", `${ORG}/raw/does-not-exist`, "0".repeat(64), 10,
+        `${receiptId}@example.net`, ctx.id("thr"), "Missing evidence", "x@y.example", AT, AT, receiptId, AT,
+        `${receiptId}@example.net`, ctx.id("cnv")),
+    ]);
+
+    await backfillBodyIndex(testEnv, ctx);
+    const after = await stateOf(messageId);
+    expect(after?.state, "an unreadable body was not marked retryable").toBe("retryable");
+    expect(after?.attempts).toBe(1);
+    expect(after?.error, "no reason was recorded, so an operator cannot tell why").not.toBeNull();
+    expect(after?.next, "no next attempt was scheduled, so nothing will retry it").not.toBeNull();
+  });
+
+  it("does not pick the same message up again before its next attempt is due", async () => {
+    /*
+     * The half that makes the backoff real. Without the `<=` on `body_index_next_attempt_at`, a failing
+     * message is retried on the very next pass — which is the every-minute pass spending its budget on the
+     * same object while the archive waits.
+     */
+    const ctx = createSystemCtx();
+    const before = await stateOf("msg_missing_evidence000000001");
+    await backfillBodyIndex(testEnv, ctx);
+    const after = await stateOf("msg_missing_evidence000000001");
+    expect(after?.attempts, "the message was retried before its scheduled time").toBe(before?.attempts);
+  });
+
+  it("counts the states apart, so doctor can report failures separately from work remaining", async () => {
+    const counts = await bodyIndexState(testEnv);
+    expect(counts.retryable, "the failing message is not counted as retryable").toBeGreaterThan(0);
+    // And the ones that succeeded are not lumped in with it.
+    expect(counts.indexed, "nothing is recorded as indexed, so the fixture never worked").toBeGreaterThan(0);
+  });
+
+  it("lists a failure with its reason, and repair puts it back in the queue", async () => {
+    /*
+     * The operator path, end to end. `doctor` names `mailda search repair`; before 0044 the only route was
+     * clearing a column by hand, which the receipt admitted and which is not a repair path.
+     */
+    const failed = await failedBodyIndex(testEnv, ORG, 50);
+    expect(failed.length, "nothing is listed as failed, so there is nothing to repair").toBeGreaterThan(0);
+    expect(failed[0]!.error, "a failure is listed without a reason").not.toBeNull();
+
+    await repairBodyIndex(testEnv, ORG, failed.map((row) => row.messageId)).run();
+    const after = await stateOf(failed[0]!.messageId);
+    expect(after?.state, "repair did not return the message to the queue").toBe("pending");
+    // The counter is reset, so a message that exhausted its attempts gets a full set again rather than being
+    // abandoned on the next failure.
+    expect(after?.attempts).toBe(0);
+    expect(after?.error).toBeNull();
+  });
+
+  it("cannot be repaired from another organization", async () => {
+    // The `org_id` in the predicate is what makes a leaked id inert rather than merely unlikely.
+    const ctx = createSystemCtx();
+    await backfillBodyIndex(testEnv, ctx);
+    const before = await stateOf("msg_missing_evidence000000001");
+    await repairBodyIndex(testEnv, OTHER_ORG, ["msg_missing_evidence000000001"]).run();
+    const after = await stateOf("msg_missing_evidence000000001");
+    expect(after?.state, "another organization repaired this message").toBe(before?.state);
   });
 });
