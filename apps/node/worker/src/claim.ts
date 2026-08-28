@@ -153,7 +153,13 @@ export async function claimNode(
    * without an escrow already has content that cannot be recovered.
    */
   const session = await issueSession(env, ctx, { orgId, userId });
-  const escrow = await mintRecoveryCodes(env, ctx, orgId);
+  /*
+   * Attributed to the person claiming, not to the Node. The session is issued on the line above, so a
+   * comment here once saying "the claim path has no session yet" was describing an earlier shape of this
+   * function — and it justified recording the mint of the one artifact that decrypts an organization's mail
+   * as an act with no author.
+   */
+  const escrow = await mintRecoveryCodes(env, ctx, orgId, { actorUserId: userId });
   return { status: "claimed", orgId, userId, session, recoveryCodes: escrow.codes };
 }
 

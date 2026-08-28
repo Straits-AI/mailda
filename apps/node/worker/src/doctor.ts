@@ -2120,8 +2120,12 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
    * think is pedantic: the rows are there, the hashes are good, the escrow is current. What is missing is any
    * evidence that the plaintext reached a human — and from this Node's side a lost mint response looks
    * exactly like a stored one, which is why it has to be asserted rather than assumed.
+   *
+   * `confirmed === 0` and not `unconfirmed > 0`, since audit P1-2 let an active sheet outlive a rotation. Two
+   * sets can now be present, and an operator holding the active one while a fresh pending one waits is
+   * **recoverable** — the older form went degraded on exactly that state, which is the healthy one.
    */
-  const unconfirmed = state.unconfirmed > 0 && state.unredeemed > 0;
+  const unconfirmed = state.confirmed === 0 && state.unredeemed > 0;
 
   return [{
     check: "recovery_escrow",

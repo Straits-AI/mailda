@@ -76,14 +76,24 @@ export const AUDIT_ACTIONS = {
    * installs keys and leaves no trace is exactly what §7 exists to forbid, so the trail is what makes the
    * exposure acceptable rather than merely bounded.
    *
-   * Neither entry can name a person, and that is recorded rather than hidden: the actor is the code, and
-   * whoever holds a code is who this Node believes them to be. The subject is the code's row id — never the
-   * code, never its hash — so "which of the ten was spent, and when" is answerable without the trail
-   * carrying anything that opens the escrow.
+   * `recovery.vault_restored` cannot name a person, and that is recorded rather than hidden: the actor is the
+   * code, and whoever holds a code is who this Node believes them to be. The subject is the code's row id —
+   * never the code, never its hash — so "which of the ten was spent, and when" is answerable without the
+   * trail carrying anything that opens the escrow.
+   *
+   * Minting and confirming **can** name a person and now do. Minting recorded `actorKind: "node"` on the
+   * argument that the claim path has no session, which had stopped being true — `claim.ts` issues one on the
+   * line above — and never applied to `POST /api/recovery-codes/rotate` at all. Rotating the artifact that
+   * decrypts an organization's mail was the least attributable act in the product and the least attributed.
    */
   "recovery.codes_minted": {
-    says: "A set of ten recovery codes was minted and the key vault escrowed under them; any previous set "
-      + "stopped working.",
+    says: "A set of ten recovery codes was minted and the key vault escrowed under them. Names the set. Any "
+      + "previous set that nobody had confirmed holding stopped working; a confirmed one keeps working until "
+      + "this set is confirmed in its turn.",
+  },
+  "recovery.codes_confirmed": {
+    says: "Somebody proved they hold a set of recovery codes, without spending one — and every other set was "
+      + "retired, which deletes the copies of the key vault sealed under those codes. Names both sets.",
   },
   "recovery.vault_restored": {
     says: "A recovery code was spent to restore key material into the vault. Names the generations put back "

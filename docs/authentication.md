@@ -341,6 +341,45 @@ Three things the mechanism reports rather than hides:
   session keys — and an unauthenticated route that installs keys without a trace is what §7 forbids. The
   subject is the code's row id, never the code and never its hash.
 
+### A sheet is a set, and a rotation no longer destroys the one somebody holds
+
+`recovery_codes` held rows for an organization and nothing more, so *"the current set"* meant *"every row"*.
+Two defects came out of that single absence, and neither was fixable without a set identity (migration 0047,
+prefix `pad_`):
+
+- **Rotation deleted the working set to insert its replacement.** One batch made that atomic, so a partial
+  write was impossible — but a *lost response* is not, and it is the ordinary failure. The operator who never
+  sees the new sheet holds an old one that no longer works and a new one they have never read; the escrow stays
+  perfectly intact and becomes unreachable by anybody. A confirmed sheet now survives a rotation and is retired
+  only when its replacement is **confirmed**. What a rotation still replaces is an *unconfirmed* sheet, which
+  nobody proved they hold — that bounds the table at one pending sheet plus one active one instead of leaving
+  another sealed copy of the vault behind on every press of the button.
+- **Confirmation was org-wide.** It verified a code against the current rows and then marked every unconfirmed
+  row in the organization. A rotation landing between the two statements marked the *new* sheet as held on the
+  strength of a code from the old one. It is now conditional on the set the code belongs to, so a set that has
+  since been replaced marks nothing and the count says so.
+
+Three details that are load-bearing rather than incidental:
+
+- **Retirement is a deletion, not a state.** Each row carries the vault *sealed under its own code*, so a
+  retired row left in the table is the vault still openable by the old sheet — the exact thing somebody
+  rotating their codes is trying to stop being true. A `retired_at` column would have recorded the intent and
+  kept the capability.
+- **`set_id IS ?` and `IS NOT ?`, never `=` and `<>`.** Migration 0047 leaves pre-existing rows with a NULL
+  `set_id` — one legacy set per organization, nothing to classify and no identifier to invent. `<>` against
+  NULL is NULL, so the `=` forms would retire nothing on the first rotation after an upgrade: two live sheets,
+  and the vault still open to codes the operator was just told were retired. That is the most likely path
+  through the predicate, not an edge.
+- **`doctor` asks whether a sheet is *held*, not whether any row is unconfirmed.** With two sets able to
+  coexist, an operator holding the active sheet while a fresh one waits is recoverable — and the older
+  condition went `degraded` on precisely that state. Staleness is judged on the confirmed sheet's generations
+  too, since a pending sheet carrying the current generation says nothing about whether anybody can use it.
+
+Minting is also **attributed** now. It recorded `actorKind: "node"` on the reasoning that the claim path has
+no session — which had stopped being true, since `claim.ts` issues one on the line above, and never applied to
+`POST /api/recovery-codes/rotate` at all. Rotating the one artifact that can decrypt an organization's mail was
+the least attributable act in the product and the least attributed.
+
 **Signing in with a recovery code is deliberately not built.** ADR 29 gives the codes two jobs and this is
 the second. The first needs step-up, rate limiting and an audited session-issuance path, and shipping the
 vault half first closes ADR 28's gate without waiting on any of it. Redemption issues no session and grants

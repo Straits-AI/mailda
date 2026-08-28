@@ -2620,14 +2620,21 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         );
       }
       await assertAdmin(env, who.orgId, who.userId);
-      const minted = await mintRecoveryCodes(env, clock, who.orgId);
+      const minted = await mintRecoveryCodes(env, clock, who.orgId, {
+        // Audit P1-2: rotating recovery codes is an administrator's act and the trail recorded it as the
+        // Node's. `delegatorUserId` carries through so an agent rotating them names the sponsor too.
+        actorUserId: who.userId,
+        delegatorUserId: who.delegatorUserId,
+      });
       return Response.json({
         codes: minted.codes,
         escrowed: minted.escrowedGenerations,
         // Said in the response rather than only in the docs, because this is the one moment the plaintext
         // exists and the client is what an operator is looking at.
+        set: minted.setId,
         notice: "These ten codes are shown once and cannot be shown again. Store them, then confirm one so "
-          + "this Node knows you have them — until you do, `doctor` reports the set unconfirmed.",
+          + "this Node knows you have them. Until you do, `doctor` reports the set unconfirmed and the "
+          + "previous sheet keeps working — confirming this one retires it.",
       });
     }
 
@@ -2641,12 +2648,25 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       await assertAdmin(env, who.orgId, who.userId);
       const body = (await request.json().catch(() => ({}))) as Record<string, string>;
-      const outcome = await confirmRecoveryCodes(env, clock, who.orgId, body.code ?? "");
+      const outcome = await confirmRecoveryCodes(env, clock, who.orgId, body.code ?? "", {
+        actorUserId: who.userId,
+        delegatorUserId: who.delegatorUserId,
+      });
       return Response.json({
         ...outcome,
-        // The count is the number of rows marked, which is the whole set — confirmation is per set, because
-        // one code proven is proof the sheet arrived and typing ten is 260 characters for a checkbox.
-        message: `Confirmed. ${outcome.confirmed} code(s) marked as held; none were spent.`,
+        /*
+         * The count is the number of rows marked, which is the whole set — confirmation is per set, because
+         * one code proven is proof the sheet arrived and typing ten is 260 characters for a checkbox.
+         *
+         * `alreadyConfirmed` is its own message rather than a count of zero. A genuine code from the set that
+         * is already active is neither a success to celebrate nor a failure to chase, and the difference an
+         * operator needs to know is whether the *other* sheet is now dead.
+         */
+        message: outcome.alreadyConfirmed
+          ? "That code is from the set already confirmed for this Node. Nothing changed, and any newer "
+            + "unconfirmed sheet is still waiting to be confirmed."
+          : `Confirmed. ${outcome.confirmed} code(s) marked as held; none were spent. Any previous sheet is `
+            + "now retired and will no longer open this vault.",
       });
     }
 

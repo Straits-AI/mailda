@@ -53,6 +53,7 @@ async function rejectsWith(promise: Promise<unknown>, pattern: RegExp): Promise<
 const testEnv = env as unknown as Env;
 const ORG = "org_recovery";
 const ORIGIN = "https://node";
+const USER = "usr_recovery0000000000000001";
 
 function find(findings: Finding[], check: string): Finding {
   const found = findings.find((one) => one.check === check);
@@ -68,6 +69,14 @@ function find(findings: Finding[], check: string): Finding {
  * anything holding the stub, and "only tests call it" is a convention rather than a guarantee. This reaches
  * the same storage from outside, which is what the test pool exists for.
  */
+/** How many distinct sheets are present. The whole of P1-2 is that this can legitimately be two. */
+async function heldSets(): Promise<number> {
+  const row = await testEnv.CATALOG.prepare(
+    "SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes WHERE org_id = ?",
+  ).bind(ORG).first<{ sets: number }>();
+  return Number(row?.sets ?? 0);
+}
+
 async function loseTheVault(): Promise<void> {
   await runInDurableObject(vault(testEnv), async (_instance, state) => {
     await state.storage.deleteAll();
@@ -75,7 +84,9 @@ async function loseTheVault(): Promise<void> {
 }
 
 beforeEach(async () => {
-  for (const table of ["recovery_codes", "node_claim"]) {
+  // `audit_entries` included since confirmation became an audited act: the assertions below count
+  // entries, and this file mints and confirms in most of its cases.
+  for (const table of ["recovery_codes", "node_claim", "audit_entries"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -660,5 +671,294 @@ describe("an operator can replace a set, and a set nobody holds is not healthy",
     const after = (await runDoctor(testEnv, createSystemCtx())).findings
       .find((f: Finding) => f.check === "recovery_escrow");
     expect(after?.ok, "a confirmed, current, strong set is still not reported healthy").toBe(true);
+  });
+});
+
+describe("a set has an identity, and a rotation no longer destroys the sheet somebody holds", () => {
+  /*
+   * Two defects, one absence: **a set of recovery codes had no identity**. `recovery_codes` held rows for an
+   * organization and nothing more, so "the current set" meant "every row", and both the confirmation and the
+   * rotation were written in those terms.
+   *
+   * 1. Rotation deleted the working set before inserting its replacement. The batch made that atomic, so a
+   *    partial write was impossible — but a **lost response** is not, and it is the ordinary failure: the
+   *    operator who never sees the new sheet holds an old one that no longer works and a new one they have
+   *    never read. The escrow stays perfectly intact and becomes unreachable by anybody.
+   * 2. Confirmation verified a code against the current rows and then ran
+   *    `UPDATE … SET confirmed_at = ? WHERE org_id = ? AND confirmed_at IS NULL` — org-wide. There was no way
+   *    to write it correctly, because there was nothing to name a set with.
+   *
+   * The second only becomes *observable* once two sets can coexist, which is why the first assertion below is
+   * the one that failed on the old code and the rest were unexpressible.
+   */
+  it("keeps the previous sheet spendable until the replacement is confirmed", async () => {
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    await loseTheVault();
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, first.codes[1]!);
+    expect(
+      outcome.restored.content.length + outcome.restored.credential.length,
+      "a rotation destroyed the only sheet anybody is known to hold, for one nobody has confirmed",
+    ).toBeGreaterThan(0);
+  });
+
+  it("retires the previous sheet once the replacement is confirmed, and not before", async () => {
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    // Before: both sheets are live, which is the previous assertion from the other side.
+    expect(await heldSets(), "the two sheets did not coexist, so retirement below proves nothing").toBe(2);
+
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!);
+    await loseTheVault();
+
+    /*
+     * Retirement is a **deletion** rather than a state, and this is why. Each row carries the vault sealed
+     * under its own code, so a retired row left in the table is the vault still openable by the old sheet —
+     * exactly what somebody rotating their codes is trying to stop being true. A `retired_at` column would
+     * have recorded the intent and kept the capability.
+     */
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, first.codes[1]!),
+      "an old sheet still opens the vault after its replacement was confirmed",
+    ).rejects.toThrow("E_RECOVERY_CODE_UNKNOWN");
+
+    // The control: the confirmed sheet works, so the refusal above is retirement rather than a broken mint.
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, second.codes[1]!);
+    expect(outcome.restored.content.length + outcome.restored.credential.length).toBeGreaterThan(0);
+  });
+
+  it("marks only the set whose code was typed", async () => {
+    /*
+     * The org-wide UPDATE, from the direction that can see it. With two sets present, confirming a code from
+     * the pending one under the old statement would have marked **both** — and the old set was already
+     * confirmed, so the visible symptom was the reverse: a code from the *old* sheet marking the new one.
+     * Either way the count is the tell, and a count is only checkable once a set has a name.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const outcome = await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!);
+    expect(outcome.confirmed, "confirmation marked rows outside the set it verified against").toBe(10);
+    expect(outcome.alreadyConfirmed).toBe(false);
+  });
+
+  it("does not retire a pending sheet when somebody re-types a code from the active one", async () => {
+    /*
+     * The case that made `alreadyConfirmed` a distinct answer rather than a count of zero. An operator typing
+     * a code from the set that is already active is saying *"I still have this sheet"* — true, and it changes
+     * nothing. Falling through to the retirement would have destroyed the pending replacement on the strength
+     * of a confirmation of something else entirely.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const outcome = await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[1]!);
+    expect(outcome.alreadyConfirmed).toBe(true);
+    expect(outcome.confirmed).toBe(0);
+    expect(await heldSets(), "re-confirming the active sheet retired the pending one").toBe(2);
+
+    // And the pending sheet is still confirmable, which is what "changes nothing" has to mean.
+    expect((await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!)).confirmed).toBe(10);
+  });
+
+  it("bounds the table at one pending sheet, whatever the button is pressed", async () => {
+    // An unconfirmed sheet is replaced rather than kept: nobody proved they hold it, so nothing is lost — and
+    // without this, every press of rotate would leave another sealed copy of the vault in the table.
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    for (let n = 0; n < 3; n++) await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(await heldSets(), "each rotation left another sealed copy of the vault behind").toBe(2);
+  });
+
+  it("confirms only the set it verified, even with two unconfirmed sheets present", async () => {
+    /*
+     * The race, constructed by hand rather than waited for.
+     *
+     * `mintRecoveryCodes` bounds the table at one pending sheet, so this state does not arise from calling the
+     * public functions in sequence — it arises from **two requests interleaving**: confirmation reads a code
+     * and finds its set pending, a rotation lands between the read and the write, and the write goes to
+     * whatever is unconfirmed by then. Under the org-wide `WHERE confirmed_at IS NULL` that is the *new*
+     * sheet, marked held on the strength of a code from a set that no longer exists.
+     *
+     * Firing the two concurrently and hoping for the interleaving would be a test that passes for reasons
+     * nobody controls. Building the intermediate state directly is deterministic and asserts the same
+     * predicate: confirmation must mark the set whose code was typed and no other.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    /*
+     * The first sheet put back to pending, which is the state the interleaving produces: confirmation has
+     * read a code and not yet written, so from the database's side that set is still unconfirmed while the
+     * rotation's replacement is unconfirmed too.
+     */
+    await testEnv.CATALOG.prepare("UPDATE recovery_codes SET confirmed_at = NULL WHERE org_id = ? AND set_id IS ?")
+      .bind(ORG, first.setId).run();
+    expect(await heldSets(), "the two unconfirmed sheets did not coexist").toBe(2);
+
+    const outcome = await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!);
+    expect(outcome.confirmed, "confirmation marked rows beyond the set whose code was typed").toBe(10);
+
+    const marked = await testEnv.CATALOG.prepare(
+      "SELECT DISTINCT set_id FROM recovery_codes WHERE org_id = ? AND confirmed_at IS NOT NULL",
+    ).bind(ORG).all<{ set_id: string | null }>();
+    expect(
+      marked.results.map((row) => row.set_id),
+      "a sheet was marked as held on the strength of a code from a different sheet",
+    ).toEqual([second.setId]);
+  });
+
+  it("retires a legacy sheet, whose set_id is NULL", async () => {
+    /*
+     * Migration 0047 leaves every pre-existing row with a NULL `set_id` — one legacy set per organization,
+     * with nothing to classify and no identifier to invent. So the retirement predicate meets NULL on the
+     * first rotation after an upgrade, on every installed Node, which makes this the *most likely* path
+     * through it rather than an edge.
+     *
+     * `set_id <> ?` evaluates to NULL against a NULL row, which is not true, so the legacy sheet would
+     * survive its own replacement: two live sheets, and the vault still openable by codes the operator has
+     * just been told are retired. `IS NOT` is SQLite's null-safe form and the reason `recovery.ts` says so at
+     * both sites.
+     */
+    const legacy = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, legacy.codes[0]!);
+    // Exactly what an upgraded Node looks like: rows that predate the column.
+    await testEnv.CATALOG.prepare("UPDATE recovery_codes SET set_id = NULL WHERE org_id = ?")
+      .bind(ORG).run();
+
+    const replacement = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(await heldSets(), "the legacy sheet was not kept across the rotation").toBe(2);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, replacement.codes[0]!);
+
+    expect(await heldSets(), "the legacy sheet outlived its own replacement").toBe(1);
+    await loseTheVault();
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, legacy.codes[1]!),
+      "a legacy sheet still opens the vault after being told it was retired",
+    ).rejects.toThrow("E_RECOVERY_CODE_UNKNOWN");
+  });
+
+  it("records the confirmation, because it deletes copies of the key vault", async () => {
+    /*
+     * Confirming used to write nothing to the trail, and it reads like a checkbox — which is why nobody
+     * noticed. It changes whether this Node is recoverable, and since retirement is a delete it **destroys
+     * copies of the key vault**, one per code on the retired sheet. An act that removes the ability to
+     * decrypt an organization's mail leaving no entry is what §7 forbids.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!, { actorUserId: USER });
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!, { actorUserId: USER });
+
+    const entries = await testEnv.CATALOG.prepare(
+      `SELECT action, actor_user_id, actor_kind, detail FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.codes_confirmed' ORDER BY seq`,
+    ).bind(ORG).all<{ action: string; actor_user_id: string; actor_kind: string; detail: string }>();
+
+    expect(entries.results.length, "confirming wrote nothing to the trail").toBe(2);
+    expect(entries.results[1]!.actor_user_id, "recorded as the Node rather than the person who typed it")
+      .toBe(USER);
+    expect(entries.results[1]!.actor_kind).toBe("user");
+    // The retirement is countable from the entry, which is the part somebody investigating a lost sheet needs.
+    expect(JSON.parse(entries.results[1]!.detail)).toMatchObject({ set: second.setId, retired: 1 });
+    expect(JSON.parse(entries.results[0]!.detail), "the first confirmation retired a sheet that never existed")
+      .toMatchObject({ retired: 0 });
+  });
+
+  it("writes no entry for a confirmation that changed nothing", async () => {
+    /*
+     * The gate. An entry claiming a retirement that did not happen is worse than no entry — the trail would
+     * say a sheet was destroyed while it is still in the table and still opens the vault. Re-typing a code
+     * from the active sheet is the reachable version of that.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!, { actorUserId: USER });
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[1]!, { actorUserId: USER });
+
+    const count = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'recovery.codes_confirmed'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(count?.n), "a second entry claims a retirement that did not happen").toBe(1);
+  });
+
+  it("names the person who rotated, not the Node", async () => {
+    // Rotating the one artifact that decrypts an organization's mail was recorded as a machine act.
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG, { actorUserId: USER });
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, actor_kind FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.codes_minted' ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG).first<{ actor_user_id: string; actor_kind: string }>();
+    expect(entry?.actor_user_id).toBe(USER);
+    expect(entry?.actor_kind).toBe("user");
+
+    // The control: a caller with nobody to attribute to still records the act, as the Node.
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const unattributed = await testEnv.CATALOG.prepare(
+      `SELECT actor_kind FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.codes_minted' ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG).first<{ actor_kind: string }>();
+    expect(unattributed?.actor_kind).toBe("node");
+  });
+
+  it("reports the escrow healthy while a confirmed sheet is held and a fresh one waits", async () => {
+    /*
+     * The false alarm this change could have introduced. `doctor` went degraded on `unconfirmed > 0`, and
+     * after letting an active sheet outlive a rotation that state is the **healthy** one — the operator holds
+     * the active sheet and simply has not confirmed the new one. A check that cries wolf on the recoverable
+     * case is the one people learn to ignore.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const state = await escrowState(testEnv, ORG);
+    expect(state?.confirmed, "the confirmed sheet stopped counting as held").toBe(10);
+    expect(state?.unconfirmed, "the pending sheet is not visible at all").toBe(10);
+
+    const escrow = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
+    expect(escrow.ok, `degraded over a recoverable Node: ${escrow.detail}`).toBe(true);
+  });
+
+  it("judges staleness on the sheet the operator holds, not the newest one on file", async () => {
+    /*
+     * The two coexisting sets carry **different generations**, and only one of them can be used by anybody.
+     *
+     * Sequence: a sheet is minted and confirmed; the vault rotates, leaving that sheet behind; a fresh sheet
+     * is minted, escrowing the new generation, and nobody has confirmed it. Taking `MAX(content_generation)`
+     * across both sets then reports the escrow current — on the strength of a sheet that may never have
+     * arrived — while the only sheet anybody has proved they hold restores mail sealed before the rotation and
+     * not since. That is a half recovery reported as a whole one, which is failure mode 2 in this file's
+     * header, reintroduced by letting two sets coexist.
+     */
+    const held = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, held.codes[0]!);
+    await vault(testEnv).rotate("content");
+    const fresh = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    expect(
+      fresh.escrowedGenerations.content,
+      "the fresh sheet did not escrow the newer generation, so there is nothing to be misled by",
+    ).toBeGreaterThan(held.escrowedGenerations.content);
+
+    const escrow = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
+    expect(
+      escrow.ok,
+      "reported a current escrow while the only confirmed sheet is a generation behind",
+    ).toBe(false);
+    expect(escrow.detail).toContain("half recovery");
+  });
+
+  it("still reports degraded when nothing at all has been confirmed", async () => {
+    // The control for the assertion above. Without it, `ok: true` unconditionally would pass.
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const escrow = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
+    expect(escrow.ok, "an escrow nobody has proved they hold reported healthy").toBe(false);
+    expect(escrow.detail).toContain("nobody has confirmed holding one");
   });
 });

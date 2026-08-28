@@ -93,6 +93,20 @@ export const ID_PREFIXES = {
    * registry its lesson was `case_` versus `cas_`. Three letters, one of them not shared with anything here.
    */
   agent: "agt",
+  /**
+   * One printed sheet of recovery codes, as a set (audit P1-2).
+   *
+   * Registered because `recovery_codes` rows had no set identity, and both defects that followed were
+   * unfixable without one: confirmation could only be written org-wide, so a rotation landing mid-confirmation
+   * marked a sheet nobody had read as held; and rotation had to destroy the working set to make room for the
+   * replacement, because two sets could not be told apart to coexist.
+   *
+   * `pad`, and not `rcs` or `rcw`: `rcv` is the row's own prefix and sits directly above this entry, so a
+   * three-letter neighbour differing in one character is the `case_`/`cas_` mistake with the lesson written
+   * beside it. A one-time pad is also what the artifact is — ten single-use codes on a sheet — so the word
+   * carries meaning rather than being chosen for distance alone.
+   */
+  recoveryPad: "pad",
 } as const;
 
 /**

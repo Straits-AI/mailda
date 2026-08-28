@@ -77,6 +77,11 @@ const CODE_BYTES = 16;
 export interface MintedCodes {
   /** The ten codes, in plaintext, **once**. Nothing stores these and nothing can produce them again. */
   readonly codes: readonly string[];
+  /**
+   * Which set these are, so a caller can say *"confirm this sheet"* rather than *"confirm whatever is
+   * current"* — the distinction that was missing and that both P1-2 defects came out of.
+   */
+  readonly setId: string;
   readonly escrowedGenerations: { readonly content: number; readonly credential: number };
 }
 
@@ -237,7 +242,16 @@ async function readVault(env: Env): Promise<EscrowedVault> {
  * The plaintext codes are returned **once**. Nothing stores them, so nothing can reproduce them: the same
  * sentence `claim-secret` already prints, and the reason a lost set is re-minted rather than recovered.
  */
-export async function mintRecoveryCodes(env: Env, ctx: Ctx, orgId: string): Promise<MintedCodes> {
+export async function mintRecoveryCodes(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  /**
+   * Who asked, when anybody did. Omitted by `claim.ts`, which has no session to attribute to and mints the
+   * first set as part of installing the Node.
+   */
+  actor?: { actorUserId: string; delegatorUserId?: string | null },
+): Promise<MintedCodes> {
   const escrowed = await readVault(env);
   const payload = JSON.stringify(escrowed);
   const at = new Date(ctx.now()).toISOString();
@@ -263,33 +277,58 @@ export async function mintRecoveryCodes(env: Env, ctx: Ctx, orgId: string): Prom
    * One batch, so a Node is never left holding a partial set. D1's `batch` is one transaction, and the
    * delete travels with the inserts — a failure between them would otherwise destroy a working escrow to
    * make room for one that never arrived.
+   *
+   * ## The delete is `confirmed_at IS NULL`, and that is the whole of audit P1-2
+   *
+   * It used to be every row for the organization, which made the batch's atomicity beside the point. A
+   * partial write was impossible; a **lost response** was not, and it is the ordinary failure: the operator
+   * who never sees the new sheet is left holding an old one that no longer works and a new one they have
+   * never read. The escrow stays perfectly intact and becomes unreachable by anybody.
+   *
+   * So a confirmed set survives a rotation and is retired by `confirmRecoveryCodes` once its replacement is
+   * proven held. What this delete still removes is an **unconfirmed** set: nobody proved they hold it, so
+   * nothing is lost by replacing it, and it bounds the table at one pending set plus one active one rather
+   * than accumulating a sheet per press of the button.
+   *
+   * `set_id` is what makes any of it expressible. Before it, "the current set" meant "every row for this
+   * org", and there was no way to write either statement correctly.
    */
+  const setId = ctx.id(ID_PREFIXES.recoveryPad);
   await auditedBatch(
     env, ctx, orgId,
     {
       action: "recovery.codes_minted",
       outcome: "ok",
-      // No person. The claim path has no session yet and re-minting is an operator act with a code, not a
-      // login — recorded as the Node rather than attributed to somebody who cannot be identified.
-      actorKind: "node",
-      detail: { codes: rows.length, content: current.content, credential: current.credential },
+      /*
+       * The person, when there is one. `/api/recovery-codes/rotate` is an authenticated administrator's act
+       * and recording it as the Node made the trail say a machine rotated the one artifact that can decrypt
+       * an organization's mail — the least attributable act in the product, recorded least. `claim.ts` has no
+       * session and passes nothing, which is the case the old comment described and the only one it fitted.
+       */
+      ...(actor ?? { actorKind: "node" as const }),
+      detail: {
+        codes: rows.length, set: setId, content: current.content, credential: current.credential,
+      },
     },
     (entry) => [
       entry,
-      env.CATALOG.prepare("DELETE FROM recovery_codes WHERE org_id = ?").bind(orgId),
+      env.CATALOG.prepare(
+        "DELETE FROM recovery_codes WHERE org_id = ? AND confirmed_at IS NULL",
+      ).bind(orgId),
       ...rows.map((row) => env.CATALOG.prepare(
         `INSERT INTO recovery_codes
            (id, org_id, code_hash, escrow, content_generation, credential_generation, created_at,
-            code_characters)
-         VALUES (?,?,?,?,?,?,?,?)`,
+            code_characters, set_id)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
       // `CODE_CHARACTERS` rather than a literal, and rather than measuring `row.code`: the column records
       // what the encoder promises, so a future encoder that silently shortened its output would disagree
       // with the constant and fail `recovery-escrow.test.ts` rather than write a comfortable number here.
-      ).bind(row.id, orgId, row.hash, row.blob, current.content, current.credential, at, CODE_CHARACTERS)),
+      ).bind(row.id, orgId, row.hash, row.blob, current.content, current.credential, at, CODE_CHARACTERS,
+        setId)),
     ],
   );
 
-  return { codes, escrowedGenerations: current };
+  return { codes, setId, escrowedGenerations: current };
 }
 
 /**
@@ -436,41 +475,71 @@ export async function redeemForVault(
   return { restored, conflicted };
 }
 
-/** What `doctor` reports. Counts and generations only — never a hash, and certainly never a code. */
+/**
+ * What `doctor` reports. Counts and generations only — never a hash, and certainly never a code.
+ *
+ * ## Two sets can be present, and the counts have to say which is which
+ *
+ * Since audit P1-2 a confirmed set survives a rotation until its replacement is confirmed, so an organization
+ * can hold one **active** sheet and one **pending** one at the same time. The old shape reported `unconfirmed`
+ * and `doctor` went degraded on `unconfirmed > 0` — which after that change would fire on a Node the operator
+ * can recover perfectly, because they hold the active sheet and simply have not confirmed the new one yet. A
+ * monitoring check that cries wolf on the healthy case is the one people learn to ignore.
+ *
+ * So the question is answered directly: `confirmed` is the number of unspent codes **somebody has proved they
+ * hold**. Zero of those is the unhealthy state, whatever the row count says.
+ */
 export async function escrowState(env: Env, orgId: string): Promise<{
   total: number; unredeemed: number; content: number; credential: number; weak: number;
-  unconfirmed: number;
+  unconfirmed: number; confirmed: number;
 } | null> {
   const row = await env.CATALOG.prepare(
     `SELECT COUNT(*) AS total,
             SUM(CASE WHEN redeemed_at IS NULL THEN 1 ELSE 0 END) AS unredeemed,
-            MAX(content_generation) AS content, MAX(credential_generation) AS credential,
+            /*
+             * Generations twice: across every present set, and across the confirmed one alone. The staleness
+             * finding is about the restore an operator can actually perform, so it has to be judged on the
+             * sheet they have proved they hold -- a pending set carrying the current generation says nothing
+             * about whether anybody can use it.
+             */
+            MAX(content_generation) AS content,
+            MAX(credential_generation) AS credential,
+            MAX(CASE WHEN confirmed_at IS NOT NULL THEN content_generation END) AS held_content,
+            MAX(CASE WHEN confirmed_at IS NOT NULL THEN credential_generation END) AS held_credential,
             /*
              * Codes still spendable that were minted before the encoder carried its full 128 bits. NULL is
              * the legacy marker -- migration 0042 added the column without a default precisely so that
              * existing rows say "unknown" rather than being relabelled as strong. The inequality covers a
              * future encoder that shortens rather than lengthens.
+             *
+             * Counted across **both** sets on purpose: redeemForVault accepts a code from any present set,
+             * so a weak code in the pending sheet is a live weakness even when the active one is strong.
              */
             SUM(CASE WHEN redeemed_at IS NULL
                       AND (code_characters IS NULL OR code_characters < ?)
                      THEN 1 ELSE 0 END) AS weak,
             -- Codes nobody has proved they hold. Migration 0043 records why an unconfirmed set is not
             -- healthy: from this Node's side a lost mint response is indistinguishable from a stored one.
-            SUM(CASE WHEN redeemed_at IS NULL AND confirmed_at IS NULL THEN 1 ELSE 0 END) AS unconfirmed
+            SUM(CASE WHEN redeemed_at IS NULL AND confirmed_at IS NULL THEN 1 ELSE 0 END) AS unconfirmed,
+            -- And the answer to the question that actually decides health: is any of it proven held?
+            SUM(CASE WHEN redeemed_at IS NULL AND confirmed_at IS NOT NULL THEN 1 ELSE 0 END) AS confirmed
        FROM recovery_codes WHERE org_id = ?`,
   ).bind(CODE_CHARACTERS, orgId)
     .first<{
       total: number; unredeemed: number; content: number; credential: number; weak: number;
-      unconfirmed: number;
+      unconfirmed: number; confirmed: number;
+      held_content: number | null; held_credential: number | null;
     }>();
   if (row === null || Number(row.total) === 0) return null;
   return {
     total: Number(row.total),
     unredeemed: Number(row.unredeemed ?? 0),
-    content: Number(row.content ?? 0),
-    credential: Number(row.credential ?? 0),
+    // The held set's generations when there is one, so staleness is judged on the restore that is available.
+    content: Number(row.held_content ?? row.content ?? 0),
+    credential: Number(row.held_credential ?? row.credential ?? 0),
     weak: Number(row.weak ?? 0),
     unconfirmed: Number(row.unconfirmed ?? 0),
+    confirmed: Number(row.confirmed ?? 0),
   };
 }
 
@@ -502,11 +571,14 @@ export async function confirmRecoveryCodes(
   ctx: Ctx,
   orgId: string,
   code: string,
-): Promise<{ confirmed: number }> {
+  /** Who typed it. Omitted only by callers with no session; the route always has one. */
+  actor?: { actorUserId: string; delegatorUserId?: string | null },
+): Promise<{ confirmed: number; alreadyConfirmed: boolean }> {
   const hash = await codeHash(normaliseCode(code));
   const row = await env.CATALOG.prepare(
-    "SELECT id FROM recovery_codes WHERE org_id = ? AND code_hash = ? AND redeemed_at IS NULL LIMIT 1",
-  ).bind(orgId, hash).first<{ id: string }>();
+    `SELECT id, set_id, confirmed_at FROM recovery_codes
+      WHERE org_id = ? AND code_hash = ? AND redeemed_at IS NULL LIMIT 1`,
+  ).bind(orgId, hash).first<{ id: string; set_id: string | null; confirmed_at: string | null }>();
 
   if (row === null) {
     /*
@@ -524,9 +596,85 @@ export async function confirmRecoveryCodes(
     });
   }
 
+  /*
+   * Already held. Nothing to mark and — the load-bearing half — **nothing to retire**.
+   *
+   * An operator typing a code from the set that is already active is saying *"I still have this sheet"*, which
+   * is true and changes nothing. Falling through would run the retirement below and destroy a pending
+   * replacement on the strength of a confirmation of something else. Reported rather than refused, because
+   * the code was genuine and a refusal would send somebody looking for a problem that is not there.
+   */
+  if (row.confirmed_at !== null) return { confirmed: 0, alreadyConfirmed: true };
+
   const at = new Date(ctx.now()).toISOString();
-  const done = await env.CATALOG.prepare(
-    "UPDATE recovery_codes SET confirmed_at = ? WHERE org_id = ? AND confirmed_at IS NULL",
-  ).bind(at, orgId).run();
-  return { confirmed: done.meta.changes ?? 0 };
+  /*
+   * One batch: the set is confirmed and every other set is retired together, or neither happens.
+   *
+   * **`set_id IS ?` and `IS NOT ?`, not `=` and `<>`.** SQLite's `IS` is the null-safe comparison, and
+   * `set_id` is nullable because migration 0047 leaves pre-migration rows as the legacy set. `= NULL` is
+   * `NULL`, which is not true, so an `=` here would confirm nothing for a legacy set and — far worse — the
+   * `<>` form would retire nothing, leaving both sheets live and the vault openable by a sheet the operator
+   * has just replaced.
+   *
+   * **Retirement is a delete rather than a state**, and that is the point of it. Each row carries the vault
+   * *sealed under its own code*, so a retired row left in the table is the vault still openable by the old
+   * sheet — exactly what somebody rotating their codes is trying to stop being true. A `retired_at` column
+   * would have recorded the intent and kept the capability.
+   *
+   * The UPDATE is conditional on `confirmed_at IS NULL`, which is this repository's compare-and-swap: two
+   * operators confirming the same sheet at once cannot both retire the other set, because the second one's
+   * update changes nothing and the count says so.
+   */
+  const retiring = await env.CATALOG.prepare(
+    "SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes WHERE org_id = ? AND set_id IS NOT ?",
+  ).bind(orgId, row.set_id).first<{ sets: number }>();
+
+  /*
+   * Through `auditedBatch`, and the trail is the reason rather than the batch.
+   *
+   * Confirming used to write nothing. It changes whether this Node is recoverable, and — since retirement is
+   * a delete — it **destroys copies of the key vault**, one per code on the retired sheet. An act that
+   * removes the ability to decrypt an organization's mail leaving no entry is what §7 forbids, and it went
+   * unnoticed because the act reads like a checkbox.
+   *
+   * The gate makes the entry conditional on the set still being pending, so a confirmation that loses a race
+   * to another one records nothing rather than claiming a retirement it did not perform. The entry precedes
+   * the statements that change the predicate, which `AuditGate` requires.
+   *
+   * **No test in this repository reaches that gate, and this says so rather than implying otherwise.** The
+   * early return above means a sequential caller whose set is already confirmed never gets here, and the
+   * `UPDATE`'s predicate is the same one the `SELECT` just satisfied — so in a single-threaded world the
+   * update always changes rows and the gate always fires. It exists for the interleaving: pending at read
+   * time, confirmed or retired by write time. What *is* tested is the mechanism —
+   * `test/audit.test.ts` asserts the chain stays contiguous when a gated entry does not fire — and the
+   * predicate is the same one the `UPDATE` carries three lines below, so the two cannot disagree about what
+   * "still pending" means.
+   */
+  const { results } = await auditedBatch<unknown>(
+    env, ctx, orgId,
+    {
+      action: "recovery.codes_confirmed",
+      outcome: "ok",
+      actorKind: actor === undefined ? "node" : undefined,
+      ...(actor ?? {}),
+      subject: row.id,
+      detail: { set: row.set_id, retired: Number(retiring?.sets ?? 0) },
+    },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare(
+        `UPDATE recovery_codes SET confirmed_at = ?
+          WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL`,
+      ).bind(at, orgId, row.set_id),
+      env.CATALOG.prepare(
+        "DELETE FROM recovery_codes WHERE org_id = ? AND set_id IS NOT ?",
+      ).bind(orgId, row.set_id),
+    ],
+    {
+      sql: "SELECT 1 FROM recovery_codes WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL",
+      params: [orgId, row.set_id],
+    },
+  );
+
+  return { confirmed: results[1]?.meta.changes ?? 0, alreadyConfirmed: false };
 }

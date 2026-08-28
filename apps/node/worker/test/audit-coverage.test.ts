@@ -36,7 +36,9 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * the row id, never the code and never its hash, so "which of the ten was spent, and when" is answerable
    * from a trail that carries nothing able to open the escrow.
    */
-  recovery_codes: { actions: ["recovery.codes_minted", "recovery.vault_restored"] },
+  recovery_codes: {
+    actions: ["recovery.codes_minted", "recovery.codes_confirmed", "recovery.vault_restored"],
+  },
   send_manifests: {
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",
