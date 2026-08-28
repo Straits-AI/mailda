@@ -60,6 +60,33 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Mint a delegated agent, returning its token once
+   *
+   * `POST /api/agents`
+   */
+  async postAgents(body: z.infer<typeof S.agentMintRequest>): Promise<z.infer<typeof S.agentMintedResponse>> {
+    return await this.json("POST", "/api/agents", {}, body) as z.infer<typeof S.agentMintedResponse>;
+  }
+
+  /**
+   * Every agent in this organization
+   *
+   * `GET /api/agents`
+   */
+  async getAgents(): Promise<z.infer<typeof S.agentListResponse>> {
+    return await this.json("GET", "/api/agents", {}, undefined) as z.infer<typeof S.agentListResponse>;
+  }
+
+  /**
+   * Withdraw an agent's credential immediately
+   *
+   * `DELETE /api/agents/:agentId`
+   */
+  async deleteAgentsByAgentId(params: { agentId: string }, body?: unknown): Promise<z.infer<typeof S.agentRevokedResponse>> {
+    return await this.json("DELETE", "/api/agents/:agentId", params, body) as z.infer<typeof S.agentRevokedResponse>;
+  }
+
+  /**
    * Messages the body index failed on, with the reason for each
    *
    * `GET /api/search/failed`

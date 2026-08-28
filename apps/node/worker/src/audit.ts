@@ -651,6 +651,22 @@ export const AUDIT_ACTIONS = {
   "auth.passkey_revoked": {
     says: "Somebody removed a passkey from their account.",
   },
+
+  /**
+   * Creating a delegated agent principal (#109 L2).
+   *
+   * A machine identity that acts on mail, so its creation is a governance event rather than configuration —
+   * and the entry names the sponsor, because the interesting question later is not *who made this* but
+   * *whose authority does it borrow*. The token is never in the detail and must never be.
+   */
+  "agent.minted": {
+    says: "An administrator created an agent: a machine identity acting under a named person's authority.",
+  },
+
+  /** Withdrawing one. Immediate, and the half somebody reaches for when a credential has leaked. */
+  "agent.revoked": {
+    says: "An administrator withdrew an agent's credential. It stops working on the next request.",
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

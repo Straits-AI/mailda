@@ -72,11 +72,19 @@ describe("every closed set the contract declares is a closed set the boundary en
      *
      * A floor rather than an equality, so an eighth closed set does not need this line edited — and the
      * routes and positions are named below, so a walk that found *different* things fails too. There are
-     * seven today: a policy body, its conditions and its stage shape, twice over, and the search repair body.
+     * eight today: a policy body, its conditions and its stage shape, twice over, the search repair body and
+     * the agent mint body.
      */
     const sets = closedSets();
     expect(sets.length).toBeGreaterThan(3);
     expect(new Set(sets.map((set) => `${set.spec.method} ${set.spec.path}`))).toEqual(new Set([
+      /*
+       * Minting an agent (#109 L2). Strict, and the argument is stronger than the policy body's: the payload
+       * names a sponsor and a pinned ceiling, and a misspelled `actions` key silently dropped would mint a
+       * credential with an empty ceiling — refused by `E_AGENT_NO_ACTIONS`, which is the right refusal for
+       * the wrong reason and tells the caller nothing about the typo.
+       */
+      "POST /api/agents",
       "POST /api/policies",
       "PUT /api/policies/:policyId/draft",
       /*
@@ -283,7 +291,8 @@ describe("strictness is decided per route, not turned on globally", () => {
       }
     }
     expect(strict.sort()).toEqual([
-      "POST /api/policies", "POST /api/search/repair", "PUT /api/policies/:policyId/draft",
+      "POST /api/agents", "POST /api/policies", "POST /api/search/repair",
+      "PUT /api/policies/:policyId/draft",
     ]);
     expect(tolerant.sort()).toEqual([
       "POST /api/auth/login",

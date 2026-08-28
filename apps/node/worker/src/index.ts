@@ -1,4 +1,4 @@
-import { createSystemCtx } from "@mailda/runtime";
+import { createSystemCtx, ID_PREFIXES, idPattern } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
@@ -12,6 +12,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 import { claimNode } from "./claim.ts";
 import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
+import { listAgents, mintAgent, revokeAgent } from "./agents.ts";
 import { migrate } from "./migrate.ts";
 import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
@@ -2438,6 +2439,79 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const restored = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
       return Response.json(restored);
+    }
+
+    /*
+     * Delegated agent principals (#109 L2).
+     *
+     * Administrator-gated, and the sponsor is a parameter rather than the caller — so the person who
+     * authorises a machine identity need not be the person whose authority it borrows. That separation is
+     * what supervised grants already have, and it matters here for the same reason: an administrator minting
+     * an agent for themselves is one person deciding both halves of a delegation.
+     *
+     * The token is in the mint's response and nowhere else. Nothing stores it, nothing can produce it again,
+     * and there is no route that widens an agent's ceiling afterwards — re-minting is the only way to change
+     * what one may do, which is what "pinned" means here.
+     */
+    if (url.pathname === "/api/agents" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to mint an agent.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      const body = (await request.json().catch(() => ({}))) as {
+        name?: string; sponsorUserId?: string; actions?: string[]; lifetimeDays?: number;
+      };
+      const minted = await mintAgent(env, clock, who.orgId, who.userId, {
+        name: body.name ?? "",
+        sponsorUserId: body.sponsorUserId ?? who.userId,
+        actions: body.actions ?? [],
+        ...(body.lifetimeDays === undefined ? {} : { lifetimeDays: body.lifetimeDays }),
+      });
+      return Response.json({
+        agent: minted.agent,
+        token: minted.token,
+        notice: "This token is shown once and cannot be shown again. It expires on "
+          + `${minted.agent.expiresAt} and there is no refresh — re-mint to renew.`,
+      });
+    }
+
+    if (url.pathname === "/api/agents" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to list agents.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      return Response.json({ agents: await listAgents(env, who.orgId) });
+    }
+
+    /*
+     * The id pattern comes from the registry, never written here. `id-prefix-world.test.ts` refused the
+     * hand-written alphabet this line first carried — which is the check earning its place for the third
+     * time, and the reason it exists: `case_` and `cas_` came to disagree exactly this way.
+     */
+    const revokeAgentPath = new RegExp(`^/api/agents/(${idPattern(ID_PREFIXES.agent).source.slice(1, -1)})$`)
+      .exec(url.pathname);
+    if (revokeAgentPath !== null && request.method === "DELETE") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to revoke an agent.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await revokeAgent(env, clock, who.orgId, who.userId, revokeAgentPath[1]!);
+      return Response.json({
+        revoked: true,
+        // A column rather than a delete, so the trail's references to this id still resolve to a name and a
+        // sponsor. An audit entry naming an identifier nothing can explain is a trail that decays.
+        message: "Withdrawn. The credential stops working on the next request; the agent's history remains.",
+      });
     }
 
     /*

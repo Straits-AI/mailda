@@ -1,7 +1,7 @@
 ---
 id: doctor-check-cost
 kind: measured-tripwire
-measured_on: 2026-08-27
+measured_on: 2026-08-28
 stale_when: >
   Cloudflare changes the per-invocation subrequest ceiling on either plan again, the Worker starts declaring a
   limits.subrequests block (which would override the platform default), R2 head stops counting as a
@@ -14,6 +14,20 @@ values:
   doctor.free.max_subrequests: 1000
   doctor.max_subrequests_per_run: 220
 ---
+
+## Correction, 28 August 2026: a third search finding that costs no subrequest
+
+`body_index_failed` (#107's state machine) reports what the body index gave up on, separately from how much
+work is left. Measured on the same fixture: **28 subrequests, 26 findings** — one more finding and **the same
+cost**.
+
+That is not luck. `bodyIndexState` replaced `unindexedBodies` and answers a `GROUP BY` over the same table in
+one query, so two findings now come from where one did. A second query would have been the obvious
+implementation and would have cost a subrequest for a number the first query already had.
+
+Worth recording because the previous correction's figure — `findings=25` — went stale the moment the state
+machine landed, and a receipt that quietly disagrees with the suite is the thing this file has now written
+three paragraphs about.
 
 ## Correction, 27 August 2026: two search-index checks, two new subrequests — and a baseline that had drifted unrecorded (#107)
 

@@ -124,3 +124,61 @@ throws away the only part an agent can use.
 A tool that is not on the list *is* a protocol error (`-32602`): that is a mistake about this server rather
 than an answer from it, and telling the two apart is how an agent learns which to retry. Asking for
 `postSends` — a real route, deliberately withheld — gets `no tool named postSends`.
+
+## Agents act in their own right now, under a named person's authority (#109)
+
+The MCP surface used to authenticate with the caller's session and nothing else, and `mcp.ts` gave a real
+argument for it: an MCP-specific token would mean "every act would land in the audit trail under a machine
+rather than under the person who set it going".
+
+**That argument was correct given one actor field, and it is not an argument once there are two.** The trail
+now carries a delegator, so an agent's act lands under the agent *and* under the human accountable for it —
+strictly more than the session path recorded. `audit_entries.delegator_user_id` is inside the hash chain, and
+it was added to a live chain without invalidating history because it is appended only when present.
+
+Both paths stay open, by decision. A person driving a tool by hand is not pretending to be a machine, and the
+delegator is what tells the two apart:
+
+```
+session    → actor = usr_ana,  delegator = null
+agt_ token → actor = agt_x,    delegator = usr_ana
+```
+
+### Three terms bound an agent, and two were already built
+
+```
+effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live tuples of the sponsor
+```
+
+The second and third are `relationship_tuples` with an `agt_` subject and `butler/authority.ts`'s existing
+intersection, reused rather than reimplemented. That is also why there is no table of mailboxes: **an agent's
+resource ceiling is its tuples**, conferred by an administrator through the same door as every other relation.
+
+The action ceiling is pinned at mint and there is deliberately no route that widens one — §16's *"new grants
+do not silently expand a published Butler"*, applied to a second principal kind. It is enforced in
+`principalFor`, so it binds against a REST route as well as the tool that wraps it; a ceiling checked only
+where tools are dispatched is one any caller steps around by calling the route directly.
+
+### The credential is opaque, not a signature
+
+ADR 27 puts authority in a short-lived signature and revocation in the database, which is right for a session
+with a refresh. An agent has **no refresh** — a refreshable agent token is a permanent one with extra steps —
+so its credential is long-lived, and a long-lived signature cannot be withdrawn before it expires. An opaque
+secret checked against a stored hash makes revocation a column and expiry a comparison. The cost is a database
+read per agent request, and it is the right way round.
+
+### Minting is an administrator's act, and the sponsor is a parameter
+
+`access.ts` confers every relation by `admin_grant`, so a second door with different rules would be two
+stories about who may delegate authority. The sponsor is named rather than assumed, so the person who
+authorises the identity need not be the person whose authority it borrows — an administrator minting an agent
+for themselves is one person deciding both halves.
+
+All three agent routes are `operator` and reach no machine. An agent that could mint agents escapes its own
+ceiling in a single call, and one that could list them holds a map of how to escalate.
+
+### What this is not
+
+Not an AI capability. Whether the holder is a language model, a script or a colleague's cron job is outside
+it. The `llm.*` nodes and the model control plane are a different and later thing, and conflating them is how
+"agent-native" becomes a claim about intent.

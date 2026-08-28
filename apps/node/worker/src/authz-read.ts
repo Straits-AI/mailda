@@ -1,11 +1,12 @@
 import { BUDGETS } from "@mailda/budgets";
-import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
+import { MESSAGE_PAGE_PARAMS, specFor } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
+import { agentFor } from "./agents.ts";
 import { ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
-import { unprocessable } from "./errors.ts";
+import { CallerError, unprocessable } from "./errors.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 import {
@@ -95,7 +96,21 @@ import {
 
 export interface Principal {
   orgId: string;
+  /**
+   * Who is acting. A `usr_` for a person, an `agt_` for a delegated agent (#109 L2).
+   *
+   * The prefix is what makes attribution work with no further mechanism: `kindOfActor` derives the audit
+   * entry's `actorKind` from it, exactly as it derives `butler` from a `btl_`.
+   */
   userId: string;
+  /**
+   * The human accountable, when `userId` is a machine.
+   *
+   * Absent for a person acting for themselves, which is nearly every principal this Node builds. Set to the
+   * sponsor when an agent token authenticated the request, and carried into every audit entry the request
+   * writes (0045) — so the trail answers *"was this Ana or her agent"* rather than leaving it to be inferred.
+   */
+  delegatorUserId?: string | null;
 }
 
 /**
@@ -138,8 +153,51 @@ export async function principalFor(env: Env, ctx: Ctx, request: Request): Promis
   if (token === null || token === "") return null;
 
   const verified = await verifyAccessToken(env, token, ctx.now());
-  if (!verified.ok) return null;
-  return { orgId: verified.claims.org, userId: verified.claims.sub };
+  if (verified.ok) return { orgId: verified.claims.org, userId: verified.claims.sub };
+
+  /*
+   * Not a session token. It may be an agent's, which is a different credential kind entirely: opaque rather
+   * than signed, long-lived rather than refreshed, and checked against the database on every request so a
+   * revocation takes effect immediately (#109 L2, `agents.ts` on why it is not a signature).
+   *
+   * **Tried second, and only after the signature fails.** A session is the overwhelmingly common case and
+   * costs no query; putting the database read first would price every human request for a credential kind
+   * almost none of them use.
+   *
+   * Both paths stay open by decision: a person driving a tool by hand is not pretending to be a machine, and
+   * the delegator field is what tells the two apart in the trail.
+   */
+  const agent = await agentFor(env, ctx, token);
+  if (agent === null) return null;
+
+  /*
+   * The pinned action ceiling, enforced **here** rather than on the MCP surface.
+   *
+   * An agent's credential is a bearer token: it works against `/api/messages` exactly as it works against a
+   * tool call, because MCP re-enters this router rather than reaching past it. So a ceiling checked only
+   * where tools are dispatched would be a ceiling any caller could step around by using the REST route the
+   * tool wraps — which is not a narrower surface, it is the same surface with a longer path to it.
+   *
+   * Refused rather than returning null. Null means *not signed in*, and this caller is: the credential is
+   * valid, current and unrevoked, and the answer is that it does not reach this route. Collapsing the two
+   * would send a machine to re-authenticate over something no new token can fix.
+   *
+   * A route the contract does not describe is refused too. `specFor` returning null means an undeclared
+   * path, and an agent whose ceiling names routes cannot hold one that has no name.
+   */
+  const spec = specFor(request.method, new URL(request.url).pathname);
+  const wanted = spec === null ? null : `${spec.method} ${spec.path}`;
+  if (wanted === null || !agent.actions.includes(wanted)) {
+    throw new CallerError("E_AGENT_ACTION_NOT_PERMITTED", 403, {
+      what: `this agent's ceiling does not include ${wanted ?? `${request.method} on an undeclared route`}`,
+      why: "an agent's capabilities are pinned when it is minted and cannot be widened afterwards — there is "
+        + "deliberately no route that adds one, because a ceiling that grows is one nobody can state by "
+        + "reading it",
+      fix: "mint a new agent naming the capabilities it needs, or use a session if a person is driving",
+    });
+  }
+
+  return { orgId: agent.orgId, userId: agent.userId, delegatorUserId: agent.delegatorUserId };
 }
 
 /**

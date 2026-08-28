@@ -1396,6 +1396,28 @@ rotation that does not sign anyone out. Everything else in the contract above is
 
 ---
 
+## A machine can act in its own right now, under a named person's authority
+
+An agent holds its own credential: an opaque token, an action ceiling pinned when it is minted, a hard expiry
+with no refresh, and revocation that takes effect on the next request. Its acts land in the audit trail under
+the agent **and** under the human accountable for it.
+
+Three things bound what one can reach, and two of them already existed:
+
+    effective(agent) = pinned action ceiling ∩ live tuples of the agent ∩ live tuples of the sponsor
+
+The last two are ordinary relationship tuples and the intersection Butlers already use, so an agent's resource
+ceiling *is* its tuples — conferred by an administrator through the same door as every other relation. The
+action ceiling is the new part, and there is deliberately no route that widens one.
+
+Minting is administrator-only and the sponsor is named rather than assumed, so the person who authorises a
+machine identity need not be the person whose authority it borrows. All three agent routes are withheld from
+machines: an agent that could mint agents escapes its own ceiling in a single call.
+
+**This is not an AI capability.** Whether the thing holding the credential is a language model, a script or a
+cron job is outside it. The `llm.*` nodes remain declared and refused, and calling Mailda AI-native today
+would still be a claim about intent.
+
 ## An act a machine performed now names the human accountable for it
 
 The audit trail had one actor field. A Butler's entry correctly said *"`btl_x` sealed this"* — the kind is

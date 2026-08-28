@@ -169,6 +169,26 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   message_search_data: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   message_search_docsize: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
   message_search_idx: { exempt: "FTS5 shadow table. Maintained by SQLite, named by no migration." },
+  /*
+   * A delegated agent principal (#109 L2). **Audited, not exempt** — creating a machine identity that acts on
+   * mail is a governance event, and the entry names the sponsor because the question somebody asks later is
+   * not who made it but whose authority it borrows.
+   *
+   * The token is never in the detail. What the trail carries is that an agent was made, by whom, for whom,
+   * how far it reaches and when it expires — everything except the secret, which exists in one HTTP response
+   * and nowhere else.
+   */
+  agents: { actions: ["agent.minted", "agent.revoked"] },
+  /*
+   * The pinned ceiling. Exempt because it is written once, inside the same audited batch as the agent, and
+   * `agent.minted`'s detail already names every action in it. A second entry would record the same decision
+   * twice — and there is deliberately no route that adds a row later, because a ceiling that could grow is
+   * one nobody can state by reading it.
+   */
+  agent_actions: {
+    exempt: "Written once inside agents' own audited mint, and named in that entry's detail. Nothing widens "
+      + "it afterwards: the route that would does not exist, which is what 'pinned' means here.",
+  },
   addresses: { exempt: "Set at claim time and never since; claim itself is audited by node_claim." },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },

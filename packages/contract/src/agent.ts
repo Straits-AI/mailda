@@ -283,6 +283,21 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "GET /api/search/failed",
     "POST /api/search/repair",
+    /*
+     * Minting, listing and revoking agents (#109 L2). `operator`, and this is the one classification in this
+     * file that would be dangerous to get wrong in the other direction.
+     *
+     * An agent that could mint agents is an agent that can escape its own ceiling: the pinned action list is
+     * the whole mechanism, and a machine able to create a second machine with a wider one has stepped around
+     * it in a single call. The expiry goes the same way — a credential that can mint its successor does not
+     * expire, it renews itself in the dark, which is precisely what refusing a refresh was for.
+     *
+     * Listing is withheld with them rather than treated as an ordinary read: it enumerates every machine
+     * identity on the Node with its sponsor and its reach, which is a map of how to escalate.
+     */
+    "POST /api/agents",
+    "GET /api/agents",
+    "DELETE /api/agents/:agentId",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

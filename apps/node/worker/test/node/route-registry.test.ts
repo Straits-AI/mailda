@@ -63,6 +63,30 @@ function servedPaths(): Set<string> {
       match[1]!.slice(2, -2).replace(/\\\//g, "/"),
     ));
   }
+
+  /*
+   * A second idiom: `new RegExp(\`^…\`)` built from the identifier registry.
+   *
+   * It exists because the two rules this file and `id-prefix-world.test.ts` enforce collided. A literal
+   * regex is what this scanner reads, and writing one for `/api/agents/:agentId` means spelling the ULID
+   * alphabet by hand — which that file refuses by name, and refuses for a reason: `case_` and `cas_` came to
+   * disagree exactly that way. So the route composes its pattern from `idPattern(ID_PREFIXES.agent)` and this
+   * scanner learned to see it.
+   *
+   * The interpolation is reduced to a captured segment before anonymising: what the pattern *matches* is one
+   * path segment, and which alphabet it accepts is not this file's question.
+   */
+  for (const line of source.split("\n")) {
+    const match = /new RegExp\(`(\^.{0,300}?\$)`\)/.exec(line);
+    if (match === null) continue;
+    found.add(anonymise(
+      match[1]!.slice(1, -1)
+        // The interpolation with its own capture group, so the result is one captured segment rather than a
+        // group wrapping a group — which is what produced `/api/agents/(:x)` on the first attempt.
+        .replace(/\(\$\{[^}]*\}\)/g, "([^/]+)")
+        .replace(/\$\{[^}]*\}/g, "([^/]+)"),
+    ));
+  }
   return found;
 }
 

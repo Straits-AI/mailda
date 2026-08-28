@@ -1357,6 +1357,46 @@ export const searchRepairedResponse = z.object({
   message: z.string().min(1),
 }).strict();
 
+/** A delegated agent principal (#109 L2). Never the token, and never its hash. */
+export const agentSummary = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  sponsorUserId: z.string().min(1),
+  createdBy: z.string().min(1),
+  createdAt: z.string().min(1),
+  expiresAt: z.string().min(1),
+  revokedAt: z.string().nullable(),
+  actions: z.array(z.string().min(1)),
+}).strict();
+
+export const agentListResponse = z.object({ agents: z.array(agentSummary) }).strict();
+
+/**
+ * Minting one.
+ *
+ * `actions` is the pinned ceiling and is required: an agent with an empty one can do nothing, and there is no
+ * route that widens it later. `sponsorUserId` defaults to the caller, which is the common case and the one an
+ * administrator setting up their own automation wants.
+ */
+export const agentMintRequest = z.object({
+  name: z.string().min(1),
+  sponsorUserId: z.string().min(1).optional(),
+  actions: z.array(z.string().min(1)).min(1),
+  lifetimeDays: z.number().int().positive().optional(),
+}).strict().meta({ refusal: "E_AGENT_FIELD_UNKNOWN" });
+
+/** The one moment the token exists. Nothing stores it and nothing can produce it again. */
+export const agentMintedResponse = z.object({
+  agent: agentSummary,
+  token: z.string().min(1),
+  notice: z.string().min(1),
+}).strict();
+
+export const agentRevokedResponse = z.object({
+  revoked: z.literal(true),
+  message: z.string().min(1),
+}).strict();
+
 /** A recovery code, as typed. Hyphens and case are cosmetic and normalised by the Node. */
 export const redeemRecoveryRequest = z.object({
   code: z.string().min(1),
