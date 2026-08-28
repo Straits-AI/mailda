@@ -2,16 +2,12 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-08-28
+re_measured_on: 2026-08-29
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
-  measurement in this file, or D1's per-database ceiling moves from 10 GB.
-  FIRED AND NOT YET SATISFIED: migration 0048. See the first section of this file.
+  measurement in this file, or D1's per-database ceiling moves from 10 GB
 values:
-  # OWED: migration 0048 changed this schema and this figure was not re-measured. See the section at the
-  # top of the body. The number below is the 28 August measurement of the *previous* shape, and the direction
-  # of the error is known to be optimistic.
   message.metadata.bytes_per_message: 1649
   message.metadata.bytes_per_extra_delivery: 410
   shard.plan_warn_messages: 4558030
@@ -20,36 +16,60 @@ values:
 ---
 
 
-## Owed: migration 0048's body-index lease has not been measured
+## Re-measured 29 August 2026: the body-index lease, and the figure held
 
-Every other section in this file records a measurement. This one records a **debt**, which is the only honest
-thing to put here — a receipt whose figure quietly outlives its schema is the exact landmine the `stale_when`
-clause and `test/schema-drift.test.ts` exist to prevent, and the guard has been updated to the new shape
-without the measurement that is supposed to precede it.
+Migration 0048 (audit P1-3) added `body_index_lease_until` and `body_index_attempt_version` to `messages`, and
+**replaced** `msg_body_index_due` with a three-column version rather than adding a second index.
+**1,648.6 bytes per message — unchanged**, and an extra delivery unchanged at 409.6.
 
-**What changed.** `migrations/0048_body_index_lease.sql` adds `body_index_lease_until` (TEXT, null on every
-settled row) and `body_index_attempt_version` (INTEGER NOT NULL DEFAULT 0, so carried by every row), and
-**replaces** `msg_body_index_due` with a three-column version rather than adding a second index.
+| stage | reported | previous round |
+|:--|--:|--:|
+| empty database | 12,288 | 12,288 |
+| schema only (2 tables, 9 indexes) | 61,440 | 57,344 |
+| + 2,000 messages, one delivery each | 3,375,104 | — |
+| + 2,000 more messages | 6,672,384 | — |
+| + 2,000 extra deliveries only | 7,491,584 | — |
 
-**Why it was not measured.** The measurement requires a scratch database in a live Cloudflare account and
-`--remote` execution: D1 refuses `PRAGMA page_count`, so `wrangler d1 info --json` is the only honest source
-and there is no local equivalent. That is an account credential the change that fired this clause did not have.
+**The schema alone grew by exactly one 4,096-byte page**, and that is the whole visible cost: a wider index
+entry needs a wider B-tree, and the root page is where that showed up. Per *row* it is invisible, which is
+what the marginal figure measures — 3,297,280 bytes across 2,000 messages.
 
-**What is knowable without it.** The section below measured the previous addition and found the four columns
-free and the *index* responsible for all 17 bytes — an index carries an entry per row and cannot hide in page
-slack. This change adds no new index, so the shape of that result suggests a small delta. It does not suggest
-zero: a three-column index entry is wider than a two-column one, and this file's own warning is that *"the
-next small column will look free too"*, because the instrument's resolution is a 4,096-byte page.
+**Why this one was free where 0044's index was not.** The previous round's index was a **second** B-tree with
+an entry per row, and 17 bytes a message is what a new per-row structure costs. This round adds no structure:
+the same index gains a nullable third column that is NULL on every settled row, and a NULL in an index entry
+costs a serial type in the entry header rather than payload. Two columns on the table are the same story —
+`body_index_lease_until` NULL everywhere and `body_index_attempt_version` an integer `0`, which SQLite stores
+as a header-only serial type with no payload bytes at all.
 
-**To settle it:**
+**What this does not establish.** The instrument's resolution is a page, and this file has said since 27
+August that *"the next small column will look free too"*. `1,648.6` against the previous `1,649` is a
+difference of four tenths of a byte, which is noise at page granularity rather than a measured decrease. The
+honest reading is *"this change fits in space already paid for"*, not *"nullable columns are free"* — and the
+figure that will move is the one pushing a row past the point where two no longer share a page. Nothing here
+knows how close the current row is to that boundary.
 
-```
-CLOUDFLARE_ACCOUNT_ID=<id> node apps/node/worker/scripts/measure-message-bytes.mjs
-```
+`values:` is therefore unchanged and the shard arithmetic below it stands.
 
-Then update `values:` and the `re_measured_on` date, remove this section, and — as every note in
-`test/schema-drift.test.ts` insists — check that `values:` derives its shard thresholds from the figure
-measured here rather than from an older one.
+### The script was wrong once more, and now something watches it
+
+`scripts/measure-message-bytes.mjs` restates this schema rather than reading `migrations/`, and it omitted
+`body_index_attempt_version` from its corpus — the **fourth** round in a row it has left something out, and
+the fourth time the omission would have reported the missing thing as free. It was caught by reading the
+script before running it rather than by anything failing.
+
+So the third copy is now guarded. `test/node/byte-measurement-corpus.test.ts` compares the script's `SCHEMA`
+against `test/schema-drift.test.ts`'s `MEASURED_SHAPE` — columns in declaration order, indexes, and every
+`NOT NULL` column's presence in the `INSERT`, since a column that exists in the scratch table and not in the
+corpus takes its default and gets priced at zero. `MEASURED_SHAPE` is already pinned to the migrated database
+by the drift guard, so the two compose: drift catches the schema moving, and this catches the script failing
+to follow.
+
+Four rounds of a comment warning about a hazard did not prevent the hazard a fourth time. That is the whole
+argument for the check.
+
+**Measured:** against **real remote D1**, not miniflare. A scratch database in a live Cloudflare account on
+the **Workers Free** plan, seeded through `wrangler d1 execute --remote`, with size read from
+`wrangler d1 info --json`. The database was deleted after measurement.
 
 ## Re-measured 28 August 2026: the body index's state machine, and an index that was not free
 

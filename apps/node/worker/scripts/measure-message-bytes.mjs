@@ -105,7 +105,7 @@ function messagesSql(from, count) {
       `'2026-08-0${(i % 9) + 1}T12:00:00.000Z','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `'${ulid("rcp", i)}','2026-08-0${(i % 9) + 1}T12:00:04.000Z',` +
       `${i % 3 === 0 ? "NULL" : `'${rfc}'`},'${rfc}',NULL,'${ulid("cnv", i)}',` +
-      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0)`,
+      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0,0)`,
     );
   }
   return chunked(rows,
@@ -123,7 +123,7 @@ function messagesSql(from, count) {
     // them on a real Node — a measurement that omitted them would price a table nobody has. The nullable
     // error and retry columns are left null, which is their state for all but a handful of messages.
     `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
-    `body_index_attempts)`);
+    `body_index_attempts,body_index_attempt_version)`);
 }
 
 /**
@@ -183,7 +183,8 @@ CREATE INDEX msg_by_rfc_id ON messages (org_id, rfc_message_id);
 CREATE INDEX msg_by_conversation ON messages (org_id, conversation_id, sent_at);
 -- The backfill's selector (0044). An index costs bytes per row like any other, so a measurement omitting it
 -- would price a table nobody has -- which is what the two rounds before this one did with the columns.
-CREATE INDEX msg_body_index_due ON messages (body_index_state, body_index_next_attempt_at);
+CREATE INDEX msg_body_index_due
+  ON messages (body_index_state, body_index_lease_until, body_index_next_attempt_at);
 CREATE TABLE mailbox_items (
   id TEXT PRIMARY KEY, org_id TEXT NOT NULL, mailbox_id TEXT NOT NULL, time_bucket TEXT NOT NULL,
   message_id TEXT NOT NULL, change_number INTEGER NOT NULL, flags INTEGER NOT NULL,

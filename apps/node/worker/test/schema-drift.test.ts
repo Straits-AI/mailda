@@ -67,27 +67,24 @@ const MEASURED_SHAPE = {
        */
       "body_index_state", "body_index_attempts", "body_index_error", "body_index_next_attempt_at",
       /*
-       * Added by migration 0048 (audit P1-3's body-index lease). **NOT re-measured**, and this constant was
-       * updated anyway — which every note above this one says not to do. So the exception is written down
-       * rather than left to be inferred from a green test.
+       * Added by migration 0048 (audit P1-3's body-index lease). Re-measured against real remote D1 on
+       * 29 August 2026 *before* this constant was touched, as every note above insists — and the figure held
+       * at **1,649 bytes per message**.
        *
-       * The measurement needs a scratch database in a live Cloudflare account and `--remote` execution: D1
-       * refuses `PRAGMA page_count`, so `wrangler d1 info --json` is the only honest source and there is no
-       * local equivalent. Whoever holds that account has to run it:
+       * The contrast with the note above is the finding. That round's `msg_body_index_due` was a **second**
+       * B-tree with an entry per row and cost 17 bytes a message. This round adds no structure: the same index
+       * gains a nullable third column, NULL on every settled row, and a NULL costs a serial type in the entry
+       * header rather than payload. The two table columns are the same story — one NULL everywhere and one an
+       * integer `0`, which SQLite stores header-only with no payload at all. The *schema* grew by exactly one
+       * page, which is the wider B-tree's root, and per row that is invisible.
        *
-       *     CLOUDFLARE_ACCOUNT_ID=<id> node scripts/measure-message-bytes.mjs
+       * Read the receipt for what this does not establish: at page granularity, 1,648.6 against 1,649 is noise
+       * rather than a decrease, and "fits in space already paid for" is not "nullable columns are free".
        *
-       * What is known without measuring, and what is not. The note above measured the previous addition and
-       * found the columns free and the **index** responsible for all 17 bytes — an index has an entry per row
-       * and cannot hide in page slack. This migration adds two columns and **replaces** `msg_body_index_due`
-       * with a three-column version rather than adding a second index, so the shape of the last result says
-       * the delta should be small. It does not say it is zero: a wider index entry is a wider B-tree, and the
-       * receipt's own warning is that *"the next small column will look free too"* because this instrument's
-       * resolution is a 4,096-byte page.
-       *
-       * `docs/receipts/message-metadata-bytes.md` records the debt in its `stale_when` and its body, so the
-       * figure does not read as current. Until it is re-run, §11B's shard thresholds are derived from a
-       * measurement of the previous schema — and the direction of the error is known to be optimistic.
+       * The script omitted `body_index_attempt_version` from its corpus — a fourth round in a row of leaving
+       * something out, and a fourth time the omission would have priced the missing thing at zero. Caught by
+       * reading it rather than by anything failing, so
+       * `test/node/byte-measurement-corpus.test.ts` now compares the script's schema against this constant.
        */
       "body_index_lease_until", "body_index_attempt_version",
     ],
