@@ -66,6 +66,30 @@ const MEASURED_SHAPE = {
        * reading `migrations/`, which its own comment has warned about since the last time.
        */
       "body_index_state", "body_index_attempts", "body_index_error", "body_index_next_attempt_at",
+      /*
+       * Added by migration 0048 (audit P1-3's body-index lease). **NOT re-measured**, and this constant was
+       * updated anyway — which every note above this one says not to do. So the exception is written down
+       * rather than left to be inferred from a green test.
+       *
+       * The measurement needs a scratch database in a live Cloudflare account and `--remote` execution: D1
+       * refuses `PRAGMA page_count`, so `wrangler d1 info --json` is the only honest source and there is no
+       * local equivalent. Whoever holds that account has to run it:
+       *
+       *     CLOUDFLARE_ACCOUNT_ID=<id> node scripts/measure-message-bytes.mjs
+       *
+       * What is known without measuring, and what is not. The note above measured the previous addition and
+       * found the columns free and the **index** responsible for all 17 bytes — an index has an entry per row
+       * and cannot hide in page slack. This migration adds two columns and **replaces** `msg_body_index_due`
+       * with a three-column version rather than adding a second index, so the shape of the last result says
+       * the delta should be small. It does not say it is zero: a wider index entry is a wider B-tree, and the
+       * receipt's own warning is that *"the next small column will look free too"* because this instrument's
+       * resolution is a 4,096-byte page.
+       *
+       * `docs/receipts/message-metadata-bytes.md` records the debt in its `stale_when` and its body, so the
+       * figure does not read as current. Until it is re-run, §11B's shard thresholds are derived from a
+       * measurement of the previous schema — and the direction of the error is known to be optimistic.
+       */
+      "body_index_lease_until", "body_index_attempt_version",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",

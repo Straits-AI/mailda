@@ -194,21 +194,102 @@ export function settleBodyIndex(
     | { state: "unindexable"; error: string }
     | { state: "retryable"; error: string; attempts: number },
   at: string,
+  /**
+   * The `body_index_attempt_version` this settlement is answering for — from `claimBodyIndexBatch` on the
+   * backfill path, and `0` from `materialise.ts`, which settles a message it created moments earlier in the
+   * same batch and which nothing can have claimed.
+   *
+   * **Required, and that is the point.** It was optional first, defaulting to no comparison, and mutating the
+   * one call site that supplies it — deleting the argument in `search-backfill.ts` — left every test passing.
+   * The clause was correct and unreached, which is this repository's recurring defect wearing a different hat.
+   * A required parameter turns that mutation into a compile error, which is a stronger guarantee than a test:
+   * there is nothing to remember and no way to forget.
+   */
+  version: number,
 ): D1PreparedStatement {
+  /*
+   * The compare-and-swap. A lease bounds how long two passes can overlap; this is what makes the write correct
+   * when the bound is *exceeded* — a slow pass whose lease lapsed, whose rows were re-claimed and re-settled
+   * by a later pass, cannot then overwrite the newer answer with its stale one.
+   *
+   * Bound as a value rather than interpolated into the statement text, so a version that somehow arrived as a
+   * string cannot become a comparison that is always false — a statement that succeeds and changes no rows is
+   * the failure this codebase keeps meeting, and it does not raise.
+   */
+
   if (outcome.state === "retryable") {
     return env.CATALOG.prepare(
       `UPDATE messages
           SET body_index_state = 'retryable', body_index_attempts = ?, body_index_error = ?,
-              body_index_next_attempt_at = ?, body_indexed_at = NULL
-        WHERE id = ?`,
-    ).bind(outcome.attempts, outcome.error, nextAttemptAt(Date.parse(at), outcome.attempts), messageId);
+              body_index_next_attempt_at = ?, body_indexed_at = NULL,
+              body_index_lease_until = NULL
+        WHERE id = ? AND body_index_attempt_version = ?`,
+    ).bind(
+      outcome.attempts, outcome.error, nextAttemptAt(Date.parse(at), outcome.attempts), messageId,
+      version,
+    );
   }
   return env.CATALOG.prepare(
     `UPDATE messages
         SET body_index_state = ?, body_index_error = ?, body_index_next_attempt_at = NULL,
-            body_indexed_at = ?
-      WHERE id = ?`,
-  ).bind(outcome.state, outcome.state === "unindexable" ? outcome.error : null, at, messageId);
+            body_indexed_at = ?, body_index_lease_until = NULL
+      WHERE id = ? AND body_index_attempt_version = ?`,
+  ).bind(
+    outcome.state, outcome.state === "unindexable" ? outcome.error : null, at, messageId, version,
+  );
+}
+
+/**
+ * How long a claim on a message lasts.
+ *
+ * Five minutes, against a pass that is expected to take seconds. The number is not a guess about how long the
+ * work takes — it is how long a **dead** pass parks its rows, since a pass that crashes or is evicted never
+ * clears its lease and the rows wait this long before anybody else may try. Long enough that a slow pass is
+ * not overtaken by the next cron tick in the ordinary case; short enough that a crash costs one tick's worth
+ * of progress rather than a day's.
+ *
+ * The compare-and-swap is what makes the exact value uncritical. Choosing this badly costs throughput; it
+ * cannot cost correctness, because a lapsed lease's settlement is refused by the version rather than applied.
+ */
+export const BODY_INDEX_LEASE_MS = 5 * 60_000;
+
+/**
+ * Claims up to `limit` messages for one body-index pass, and returns what it claimed.
+ *
+ * `UPDATE … RETURNING`, which is **one statement that both selects and claims** — so there is no window
+ * between deciding to index a message and marking it as being indexed. That window was the defect: the state
+ * stayed `pending` for the whole of a pass's R2 reads and parses, so the next cron tick a minute later
+ * selected the same rows.
+ *
+ * D1 supports `RETURNING`; measured rather than assumed, in `docs/receipts/d1-fts5-search.md`.
+ *
+ * The subquery orders and limits, and the outer `UPDATE` claims exactly that set. Ordering inside a bare
+ * `UPDATE … LIMIT` is not something SQLite guarantees for the *set chosen*, and "newest first" is a promise
+ * this pass makes to readers — see `backfillBodyIndex` on why a Node catching up becomes useful from the top
+ * down.
+ */
+export function claimBodyIndexBatch(
+  env: Env,
+  at: string,
+  limit: number,
+): D1PreparedStatement {
+  const until = new Date(Date.parse(at) + BODY_INDEX_LEASE_MS).toISOString();
+  return env.CATALOG.prepare(
+    `UPDATE messages
+        SET body_index_lease_until = ?,
+            body_index_attempt_version = body_index_attempt_version + 1
+      WHERE id IN (
+        SELECT id FROM messages
+         WHERE blob_key IS NOT NULL
+           AND (body_index_state = 'pending'
+                OR (body_index_state = 'retryable' AND body_index_next_attempt_at <= ?))
+           AND (body_index_lease_until IS NULL OR body_index_lease_until <= ?)
+         ORDER BY CASE body_index_state WHEN 'pending' THEN 0 ELSE 1 END, received_at DESC
+         LIMIT ?
+      )
+      RETURNING id, blob_key, body_index_attempts AS attempts,
+                body_index_attempt_version AS version`,
+  ).bind(until, at, at, limit);
 }
 
 /**
@@ -229,22 +310,52 @@ export function afterFailedAttempt(
 }
 
 /**
- * Puts messages back in the queue, whatever state they reached.
+ * Puts messages back in the queue, whatever state they reached — and takes them out of the index first.
  *
- * One statement rather than a delete-and-reindex: the index rows are keyed on `messages.rowid`, so
- * `indexBody`'s `INSERT OR REPLACE` overwrites cleanly on the next pass. Resetting the counter matters — a
- * message that exhausted its attempts an hour ago should get a full set again rather than be abandoned
- * immediately.
+ * ## Two statements, because one was wrong
+ *
+ * This was a single `UPDATE`, and its comment argued the index row could stay because `indexBody`'s
+ * `INSERT OR REPLACE` overwrites on the next pass. That is true **only when the next pass finds text**. A
+ * re-parse settling `empty` or `unindexable` runs no `indexBody` at all, so the old text survived for ever:
+ * `bodyIndexState` reported a message that had never been indexed while searching its body still returned it.
+ * The state column and the index disagreed, and the state column was the one an operator reads.
+ *
+ * Repair is also not restricted to failed messages — the predicate is `org_id` and `id` and nothing else — so
+ * the disagreement is reachable by repairing anything at all, not only by repairing something broken.
+ *
+ * The delete is possible because `migrations/0041_body_search.sql` sets `contentless_delete=1`. A contentless
+ * FTS5 table cannot otherwise have a row removed by rowid, and that option was set for this.
+ *
+ * Resetting the counter matters — a message that exhausted its attempts an hour ago should get a full set
+ * again rather than be abandoned immediately. Clearing the lease matters for the same reason: a message
+ * repaired while a pass held a claim on it would otherwise wait out that claim before anybody retried.
+ *
+ * Returns statements for the caller to combine, rather than executing them here. This file is on the doctor
+ * path, and `test/node/doctor-meter-honesty.test.ts` forbids the batching call in any file that is — the rule
+ * is lexical on the file rather than an argument about reachability, which is also why this paragraph does not
+ * spell the method name it is talking about.
  *
  * Scoped by `org_id` as well as by id, so a caller holding one organization's ids cannot reach another's.
  */
-export function repairBodyIndex(env: Env, orgId: string, messageIds: readonly string[]): D1PreparedStatement {
-  return env.CATALOG.prepare(
-    `UPDATE messages
-        SET body_index_state = 'pending', body_index_attempts = 0, body_index_error = NULL,
-            body_index_next_attempt_at = NULL, body_indexed_at = NULL
-      WHERE org_id = ? AND id IN (${messageIds.map(() => "?").join(", ")})`,
-  ).bind(orgId, ...messageIds);
+export function repairBodyIndex(
+  env: Env,
+  orgId: string,
+  messageIds: readonly string[],
+): D1PreparedStatement[] {
+  const placeholders = messageIds.map(() => "?").join(", ");
+  return [
+    env.CATALOG.prepare(
+      `DELETE FROM message_body_search
+        WHERE rowid IN (SELECT rowid FROM messages WHERE org_id = ? AND id IN (${placeholders}))`,
+    ).bind(orgId, ...messageIds),
+    env.CATALOG.prepare(
+      `UPDATE messages
+          SET body_index_state = 'pending', body_index_attempts = 0, body_index_error = NULL,
+              body_index_next_attempt_at = NULL, body_indexed_at = NULL,
+              body_index_lease_until = NULL
+        WHERE org_id = ? AND id IN (${placeholders})`,
+    ).bind(orgId, ...messageIds),
+  ];
 }
 
 /**

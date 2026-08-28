@@ -8,7 +8,9 @@ import { messagePageQuery } from "../src/authz-read.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
 import {
-  bodyIndexState, failedBodyIndex, ftsQuery, indexBody, indexMessage, repairBodyIndex,
+  BODY_INDEX_LEASE_MS, bodyIndexState, claimBodyIndexBatch, failedBodyIndex, ftsQuery, indexBody,
+  indexMessage,
+  repairBodyIndex, settleBodyIndex,
 } from "../src/search.ts";
 import { backfillBodyIndex } from "../src/search-backfill.ts";
 import { indexableText, wordsFromHtml } from "../src/search-body.ts";
@@ -721,7 +723,7 @@ describe("a failed body read is retried; a failed parse is not", () => {
     expect(failed.length, "nothing is listed as failed, so there is nothing to repair").toBeGreaterThan(0);
     expect(failed[0]!.error, "a failure is listed without a reason").not.toBeNull();
 
-    await repairBodyIndex(testEnv, ORG, failed.map((row) => row.messageId)).run();
+    await testEnv.CATALOG.batch(repairBodyIndex(testEnv, ORG, failed.map((row) => row.messageId)));
     const after = await stateOf(failed[0]!.messageId);
     expect(after?.state, "repair did not return the message to the queue").toBe("pending");
     // The counter is reset, so a message that exhausted its attempts gets a full set again rather than being
@@ -735,8 +737,213 @@ describe("a failed body read is retried; a failed parse is not", () => {
     const ctx = createSystemCtx();
     await backfillBodyIndex(testEnv, ctx);
     const before = await stateOf("msg_missing_evidence000000001");
-    await repairBodyIndex(testEnv, OTHER_ORG, ["msg_missing_evidence000000001"]).run();
+    await testEnv.CATALOG.batch(repairBodyIndex(testEnv, OTHER_ORG, ["msg_missing_evidence000000001"]));
     const after = await stateOf("msg_missing_evidence000000001");
     expect(after?.state, "another organization repaired this message").toBe(before?.state);
   });
 });
+
+describe("the body index and the state column cannot disagree (audit P1-3)", () => {
+  /*
+   * Two defects, both about the pass that fills the body index rather than about the index itself.
+   */
+  it("removes a repaired message from the index, so the state is not a claim the index contradicts", async () => {
+    /*
+     * `repairBodyIndex` set the state back to `pending` and left the index row in place. Its comment argued
+     * that was safe because `indexBody`'s `INSERT OR REPLACE` overwrites on the next pass — which is true
+     * **only when the next pass finds text**. A re-parse that settles `empty` or `unindexable` runs no
+     * `indexBody` at all, so the old text survives for ever: `bodyIndexState` reports a message that was
+     * never indexed, and searching its body returns it.
+     *
+     * Repair is also not restricted to failed messages — the statement filters on `org_id` and `id` and
+     * nothing else — so this is reachable by repairing anything.
+     */
+    const messageId = "msg_repairstale00000000000001";
+    await seedRepairable(messageId, "cabotage");
+
+    // The control: the term is really in the index, so the absence below is the repair and not a bad fixture.
+    expect(await bodySearchFinds("cabotage"), "the fixture never indexed anything").toContain(messageId);
+
+    await testEnv.CATALOG.batch(repairBodyIndex(testEnv, ORG, [messageId]));
+    const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
+      .bind(messageId).first<{ s: string }>();
+    expect(state?.s, "repair did not reset the state").toBe("pending");
+    expect(
+      await bodySearchFinds("cabotage"),
+      "the state column says this message was never indexed and the index still answers for it",
+    ).not.toContain(messageId);
+  });
+
+  it("skips a message another pass is holding, and picks it up once the lease lapses", async () => {
+    /*
+     * The deterministic half. The concurrent case below reproduces the real interleaving and does so reliably
+     * in this environment, but it rests on scheduling — so the lease's two properties are also asserted
+     * against a claim held by hand: a live lease is skipped, and a lapsed one is not.
+     *
+     * The second half is what stops a lease being a deadlock. A pass that crashes or is evicted never clears
+     * its claim, so without expiry those rows would be parked for ever and the backlog would never empty.
+     */
+    const messageId = "msg_leaseheld0000000000000001";
+    await seedRepairable(messageId, null);
+    const held = async (until: string) => {
+      await testEnv.CATALOG.prepare(
+        "UPDATE messages SET body_index_lease_until = ? WHERE id = ?",
+      ).bind(until, messageId).run();
+    };
+
+    /*
+     * Asserted on **this message's** claim counter rather than on the pass's return value: other cases in this
+     * file leave messages due, so the count is not a statement about the one message under test. A test that
+     * read the total would pass or fail depending on what ran before it.
+     */
+    const claims = async () => Number((await testEnv.CATALOG.prepare(
+      "SELECT body_index_attempt_version AS v FROM messages WHERE id = ?",
+    ).bind(messageId).first<{ v: number }>())?.v ?? -1);
+
+    await held("2099-01-01T00:00:00.000Z");
+    const before = await claims();
+    await backfillBodyIndex(testEnv, createSystemCtx());
+    expect(await claims(), "a pass took a message another pass is holding").toBe(before);
+
+    await held("2000-01-01T00:00:00.000Z");
+    await backfillBodyIndex(testEnv, createSystemCtx());
+    expect(
+      await claims(),
+      "a lapsed lease parked the message for ever, so a crashed pass would stall the backlog",
+    ).toBe(before + 1);
+  });
+
+  it("clears the lease on repair, so a repaired message does not wait out somebody else's claim", async () => {
+    /*
+     * Repair means "try this again now". A message repaired while a pass held a claim on it would otherwise
+     * sit unselectable until that claim lapsed — up to `BODY_INDEX_LEASE_MS` of doing nothing, for an operator
+     * who has just asked for the opposite. The reachable version is the ordinary one: the pass that failed
+     * this message is often the one still holding it.
+     */
+    const messageId = "msg_repairleased00000000001";
+    await seedRepairable(messageId, null);
+    await testEnv.CATALOG.prepare(
+      "UPDATE messages SET body_index_lease_until = ? WHERE id = ?",
+    ).bind("2099-01-01T00:00:00.000Z", messageId).run();
+
+    await testEnv.CATALOG.batch(repairBodyIndex(testEnv, ORG, [messageId]));
+
+    const lease = await testEnv.CATALOG.prepare(
+      "SELECT body_index_lease_until AS until FROM messages WHERE id = ?",
+    ).bind(messageId).first<{ until: string | null }>();
+    expect(lease?.until, "repair left a live claim on the message it just queued").toBeNull();
+
+    // And the claim actually reaches it, which is what "cleared" has to mean.
+    const claimed = await claimBodyIndexBatch(testEnv, AT, 50)
+      .all<{ id: string }>();
+    expect(claimed.results.map((row) => row.id)).toContain(messageId);
+  });
+
+  it("refuses a settlement from a pass whose claim was taken over", async () => {
+    /*
+     * The compare-and-swap, which is the half a lease cannot do. A lease bounds how long two passes overlap;
+     * this is what makes the write correct when the bound is **exceeded** — a slow pass whose lease lapsed,
+     * whose message was re-claimed and re-settled by a later pass, must not then overwrite the newer answer.
+     *
+     * Asserted against `settleBodyIndex` directly, holding the version the first claim returned while the row
+     * has moved on. That is exactly the state a lapsed-lease overlap produces, and there is no way to reach it
+     * by calling the pass twice, because the second call is what advances the version.
+     */
+    const messageId = "msg_casstale00000000000000001";
+    await seedRepairable(messageId, null);
+    const claimed = await claimBodyIndexBatch(testEnv, AT, 5)
+      .all<{ id: string; version: number }>();
+    const mine = claimed.results.find((row) => row.id === messageId);
+    expect(mine, "the claim returned nothing, so there is no version to go stale").toBeDefined();
+
+    /*
+     * A later pass claims it again — at an instant past the first lease's expiry, because that is what a lapse
+     * is. Claiming at `AT` would find a live lease and skip, which is the *other* property and the reason the
+     * first draft of this test asserted nothing: the version never advanced, so the stale settlement was
+     * simply the current one.
+     */
+    const afterLapse = new Date(Date.parse(AT) + BODY_INDEX_LEASE_MS + 1_000).toISOString();
+    await claimBodyIndexBatch(testEnv, afterLapse, 5).all();
+    await settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine!.version).run();
+
+    const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
+      .bind(messageId).first<{ s: string }>();
+    expect(
+      state?.s,
+      "a pass whose claim had been taken over wrote its stale answer over the newer one",
+    ).toBe("pending");
+
+    // The control: the same settlement with the current version does land, so the refusal above is the
+    // comparison and not a broken statement.
+    const current = await testEnv.CATALOG.prepare(
+      "SELECT body_index_attempt_version AS v FROM messages WHERE id = ?",
+    ).bind(messageId).first<{ v: number }>();
+    await settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, current!.v).run();
+    const after = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
+      .bind(messageId).first<{ s: string }>();
+    expect(after?.s).toBe("indexed");
+  });
+
+  it("does not hand the same message to two overlapping passes", async () => {
+    /*
+     * The pass runs from cron every minute and costs, per message, an R2 read plus a vault unwrap plus a MIME
+     * parse. A pass that takes longer than a minute overlaps the next one, and the selector had nothing to
+     * stop the second claiming the same rows — the state is still `pending` until the first pass's batch
+     * commits at the very end.
+     *
+     * The wasted work is not the defect. `body_index_attempts` is computed as `attempts + 1` from a value read
+     * at selection time, so two overlapping passes both write `attempts = 1`: the counter stops advancing, and
+     * `BODY_INDEX_MAX_ATTEMPTS` — the bound that exists so a pass cannot spend its whole budget on the same
+     * failure for ever — never trips. A permanently failing message would be retried without end while the
+     * mail behind it waits.
+     */
+    const messageId = "msg_leased000000000000000001";
+    await seedRepairable(messageId, null);
+
+    const [first, second] = await Promise.all([
+      backfillBodyIndex(testEnv, createSystemCtx()),
+      backfillBodyIndex(testEnv, createSystemCtx()),
+    ]);
+    expect(first + second, "neither pass saw the message, so nothing is being asserted").toBeGreaterThan(0);
+    expect(
+      Math.min(first, second),
+      "both passes claimed the same message; each will settle it and one settlement is lost",
+    ).toBe(0);
+  });
+});
+
+/**
+ * A message with a body-index state, and optionally an index row, for the two P1-3 cases.
+ *
+ * `blob_key` points at nothing in R2 when `indexedText` is null — which is the failing-read case the second
+ * test needs, and gets it without a fixture that has to be told to fail.
+ */
+async function seedRepairable(messageId: string, indexedText: string | null): Promise<void> {
+  const ctx = createSystemCtx();
+  const receiptId = `rcpt_${messageId.slice(4, 27)}`;
+  await testEnv.CATALOG.batch([
+    testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+         raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(receiptId, ORG, `evt_${receiptId}`, "x@y.example", ADDRESS, 100,
+      `${ORG}/raw/${receiptId}`, "0".repeat(64), AT),
+    testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes,
+         rfc_message_id, thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
+         thread_root_rfc_id, conversation_id, body_index_state)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(messageId, ORG, "2026-Q3", `${ORG}/raw/${receiptId}`, "0".repeat(64), 100,
+      `${receiptId}@example.net`, ctx.id("thr"), "Repairable", "x@y.example", AT, AT, receiptId, AT,
+      `${receiptId}@example.net`, ctx.id("cnv"), indexedText === null ? "pending" : "indexed"),
+  ]);
+  if (indexedText !== null) await indexBody(testEnv, messageId, indexedText).run();
+}
+
+/** Which messages the body index answers for a term — the index alone, not the authorized listing. */
+async function bodySearchFinds(term: string): Promise<string[]> {
+  const rows = await testEnv.CATALOG.prepare(
+    `SELECT m.id FROM message_body_search b JOIN messages m ON m.rowid = b.rowid
+      WHERE b.message_body_search MATCH ?`,
+  ).bind(ftsQuery(term)).all<{ id: string }>();
+  return rows.results.map((row) => row.id);
+}

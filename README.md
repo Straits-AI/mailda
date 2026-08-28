@@ -1776,6 +1776,21 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   reports what it gave up on and `mailda search list` shows why each one failed; `mailda search repair` puts
   chosen messages back in the queue. Repair is per message rather than a sweep, because some failures are
   deterministic and retrying those spends the backfill's budget on work that cannot succeed.
+- **The pass claims what it works on, and settles under compare-and-swap.** The pass runs every minute and
+  costs an R2 read plus a decryption plus a MIME parse per message, so it can take longer than a minute — and
+  the next tick used to select the same rows, because the state stayed `pending` until the first pass committed
+  at the very end. The wasted work was not the defect: attempts were counted as `read value + 1`, so two
+  overlapping passes both wrote `attempts = 1`, the counter stopped advancing, and the six-attempt bound that
+  exists so a pass cannot spend its budget on one failure for ever never tripped. Selection is now one
+  `UPDATE … RETURNING` that picks the batch and leases it in the same statement, and each settlement is
+  conditional on the claim version it was given — so a slow pass whose lease lapsed cannot overwrite the newer
+  answer with its stale one. The version parameter is *required* rather than optional, because making it
+  optional left the one call site free to drop it and every test still passed.
+- **Repairing a message takes it out of the index first.** Leaving the row was argued safe on the grounds that
+  the next pass overwrites it — true only when that pass finds text. A re-parse settling `empty` writes nothing,
+  so the old terms went on answering for a message whose state column said it had never been indexed. The
+  index and the state column now agree, and repair clears any live claim so the message does not wait out the
+  lease of the pass that failed it.
 - **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
   time order until it has found enough belonging to it — measured at 2,410 rows read to return 3 messages from
   a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization

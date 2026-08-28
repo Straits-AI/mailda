@@ -107,19 +107,39 @@ const SITES: Site[] = [
       + "path only ever deletes where redeemed_at IS NULL.",
   },
   {
+    file: "src/search.ts",
+    target: "message_body_search",
+    content: false,
+    why:
+      "A body-index row, dropped by `repairBodyIndex` so a message goes back into the queue with nothing " +
+      "stale left behind (audit P1-3). Not content, and the reason is exact rather than convenient: the " +
+      "table is **contentless** FTS5 (`content=''`, migration 0041), so it holds a term index and not the " +
+      "text, and every row in it is derivable from the message it points at by re-running one pass. Deleting " +
+      "one costs searchability by body until the next pass, which is the state a repaired message is being " +
+      "put into deliberately. What made the delete necessary is the opposite failure: leaving the row was " +
+      "argued safe because `INSERT OR REPLACE` overwrites on the next pass, which holds only when that pass " +
+      "finds text — a re-parse settling `empty` runs no insert at all, so the old terms answered for a " +
+      "message the state column said had never been indexed. No legal-hold guard, because nothing here " +
+      "destroys anything a hold preserves: the message, its bytes and its metadata are untouched.",
+  },
+  {
     file: "src/recovery.ts",
     target: "recovery_codes",
     content: false,
     why:
-      "The previous set of ADR 29 codes, replaced when a fresh set is minted (#92). Not content — a code " +
-      "hash and an escrow blob, no message and no attribution. But it is the closest thing in this table to " +
-      "content, and the distinction is worth being exact about: deleting these destroys no mail and destroys " +
-      "the *ability to recover* mail if the vault is later lost. What makes it safe is that the delete " +
-      "travels in the **same `batch` as the ten inserts that replace it**, so there is no window in which a " +
-      "Node has no escrow; D1's batch is one transaction, and a failure rolls the delete back with it. What " +
-      "makes it necessary is that a stale escrow is worse than none: ten codes that open a vault two " +
-      "generations behind restore a Node that cannot read its recent mail, and leaving them alongside a " +
-      "current set means somebody picks one during an incident.",
+      "A set of ADR 29 codes retired (#92, audit P1-2). Two sites, one table: `mintRecoveryCodes` drops any " +
+      "**unconfirmed** set when a fresh one is minted, and `confirmRecoveryCodes` drops every *other* set " +
+      "once somebody proves they hold the new one. Not content — a code hash and an escrow blob, no message " +
+      "and no attribution. But it is the closest thing in this table to content and the distinction is worth " +
+      "being exact about: deleting these destroys no mail and destroys the *ability to recover* mail if the " +
+      "vault is later lost. Two things make it safe. Each delete travels in the same transaction as what " +
+      "replaces or confirms the surviving set, so there is no window in which a Node has no escrow. And a " +
+      "**confirmed** set is never dropped by a rotation, only by the confirmation of its successor — which " +
+      "is the P1-2 fix: the older form deleted the working set to make room for one the operator might never " +
+      "have received, leaving the escrow intact and unreachable by anybody. The delete is also why " +
+      "retirement is a deletion rather than a `retired_at` column: each row carries the vault sealed under " +
+      "its own code, so a row left behind is the vault still openable by a sheet the operator was just told " +
+      "was retired."
   },
   {
     file: "src/auth/session.ts",

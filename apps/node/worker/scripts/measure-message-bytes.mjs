@@ -114,7 +114,12 @@ function messagesSql(from, count) {
     // `body_indexed_at` is **populated**, not left null. A null column costs about a byte and a
     // populated one costs an ISO timestamp — and on a Node that has run its backfill every row has
     // one, so measuring nulls would understate the deployed table.
-    // `body_index_state` and `body_index_attempts` are NOT NULL with defaults, so **every** row carries
+    // `body_index_lease_until` is left null on purpose, unlike `body_indexed_at`: a lease is held for five
+    // minutes out of a message's whole life, so a settled table has it null on every row and populating it
+    // here would measure a state no deployed Node is ever in for more than a moment.
+    //
+    // `body_index_state`, `body_index_attempts` and `body_index_attempt_version` are NOT NULL with defaults,
+    // so **every** row carries
     // them on a real Node — a measurement that omitted them would price a table nobody has. The nullable
     // error and retry columns are left null, which is their state for all but a handful of messages.
     `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
@@ -167,7 +172,9 @@ CREATE TABLE messages (
   body_index_state TEXT NOT NULL DEFAULT 'pending',
   body_index_attempts INTEGER NOT NULL DEFAULT 0,
   body_index_error TEXT,
-  body_index_next_attempt_at TEXT
+  body_index_next_attempt_at TEXT,
+  body_index_lease_until TEXT,
+  body_index_attempt_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);

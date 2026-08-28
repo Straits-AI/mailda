@@ -21,16 +21,20 @@ import { ULID_ALPHABET, ULID_BODY_CHARS } from "./ctx.ts";
  * ## What this registry does and does not cover, stated because a partial registry that reads as total is
  * the failure it exists to prevent
  *
- * `ctx.id()` mints **35** distinct prefixes today and this registry names five. That is deliberate, not a
- * backlog. A prefix spelled in exactly one place cannot diverge from anything — there is no second
- * spelling to disagree with. The divergence class only exists when a prefix is *validated* somewhere:
- * a contract schema, an AST, a route parameter. Those are the five, and the rule that keeps the set
- * complete is enforced rather than remembered: `test/node/id-prefix-world.test.ts` fails on any
- * hand-written prefixed-ULID pattern anywhere under `packages` or the Worker's `src`, so a sixth
- * validated prefix has to arrive through here.
+ * `ctx.id()` is called with **52** distinct string literals elsewhere in this repository, and this registry
+ * names ten. That is deliberate, not a backlog. A prefix spelled in exactly one place cannot diverge from
+ * anything — there is no second spelling to disagree with. The divergence class only exists when a prefix is
+ * *checked* somewhere: a contract schema, an AST, a route parameter, an actor-kind derivation. The rule that keeps the set complete is enforced rather than remembered:
+ * `test/node/id-prefix-world.test.ts` fails on any hand-written prefixed-ULID pattern anywhere under
+ * `packages` or the Worker's `src`, so the next checked prefix has to arrive through here.
  *
- * `ctx.id(prefix: string)` stays open on purpose. Narrowing it to this union would reject the thirty
- * unregistered prefixes and force every one of them into a registry that buys them nothing.
+ * Both counts are measured — `grep -rhoE 'ctx\.id\("[a-z]+"\)' apps packages | sort -u | wc -l` for the
+ * first — because the earlier version of this paragraph said "35 … names five" and had been wrong on both
+ * halves for several layers. A stale count in a paragraph about completeness reads as evidence of
+ * completeness.
+ *
+ * `ctx.id(prefix: string)` stays open on purpose. Narrowing it to this union would reject the other
+ * forty-two and force every one of them into a registry that buys them nothing.
  *
  * ## A second divergence, found by the check rather than by reading
  *

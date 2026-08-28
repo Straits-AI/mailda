@@ -6,8 +6,12 @@ re_measured_on: 2026-08-28
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
-  measurement in this file, or D1's per-database ceiling moves from 10 GB
+  measurement in this file, or D1's per-database ceiling moves from 10 GB.
+  FIRED AND NOT YET SATISFIED: migration 0048. See the first section of this file.
 values:
+  # OWED: migration 0048 changed this schema and this figure was not re-measured. See the section at the
+  # top of the body. The number below is the 28 August measurement of the *previous* shape, and the direction
+  # of the error is known to be optimistic.
   message.metadata.bytes_per_message: 1649
   message.metadata.bytes_per_extra_delivery: 410
   shard.plan_warn_messages: 4558030
@@ -15,6 +19,37 @@ values:
   shard.plan_route_messages: 5860325
 ---
 
+
+## Owed: migration 0048's body-index lease has not been measured
+
+Every other section in this file records a measurement. This one records a **debt**, which is the only honest
+thing to put here — a receipt whose figure quietly outlives its schema is the exact landmine the `stale_when`
+clause and `test/schema-drift.test.ts` exist to prevent, and the guard has been updated to the new shape
+without the measurement that is supposed to precede it.
+
+**What changed.** `migrations/0048_body_index_lease.sql` adds `body_index_lease_until` (TEXT, null on every
+settled row) and `body_index_attempt_version` (INTEGER NOT NULL DEFAULT 0, so carried by every row), and
+**replaces** `msg_body_index_due` with a three-column version rather than adding a second index.
+
+**Why it was not measured.** The measurement requires a scratch database in a live Cloudflare account and
+`--remote` execution: D1 refuses `PRAGMA page_count`, so `wrangler d1 info --json` is the only honest source
+and there is no local equivalent. That is an account credential the change that fired this clause did not have.
+
+**What is knowable without it.** The section below measured the previous addition and found the four columns
+free and the *index* responsible for all 17 bytes — an index carries an entry per row and cannot hide in page
+slack. This change adds no new index, so the shape of that result suggests a small delta. It does not suggest
+zero: a three-column index entry is wider than a two-column one, and this file's own warning is that *"the
+next small column will look free too"*, because the instrument's resolution is a 4,096-byte page.
+
+**To settle it:**
+
+```
+CLOUDFLARE_ACCOUNT_ID=<id> node apps/node/worker/scripts/measure-message-bytes.mjs
+```
+
+Then update `values:` and the `re_measured_on` date, remove this section, and — as every note in
+`test/schema-drift.test.ts` insists — check that `values:` derives its shard thresholds from the figure
+measured here rather than from an older one.
 
 ## Re-measured 28 August 2026: the body index's state machine, and an index that was not free
 

@@ -191,6 +191,13 @@ export async function materialiseReceipt(
         ? { state: "unindexable", error: bodyWords.why }
         : { state: bodyWords.kind === "text" ? "indexed" : "empty" },
       at,
+      /*
+       * Claim zero. The message row is inserted by this same batch, so nothing can be holding a lease on it
+       * and the comparison is trivially satisfied — but it is made rather than skipped, because
+       * `settleBodyIndex` requires it and that requirement is what stopped the backfill silently dropping the
+       * compare-and-swap. A parameter that some callers may omit is one every caller may omit.
+       */
+      0,
     ),
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO mailbox_items

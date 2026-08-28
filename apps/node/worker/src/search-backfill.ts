@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { getEvidence, runKeyCache } from "./evidence-store.ts";
-import { afterFailedAttempt, indexBody, settleBodyIndex } from "./search.ts";
+import { afterFailedAttempt, claimBodyIndexBatch, indexBody, settleBodyIndex } from "./search.ts";
 import { indexableText } from "./search-body.ts";
 
 /**
@@ -130,22 +130,17 @@ const BODY_BACKFILL_LIMIT = 25;
 export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
   const at = new Date(ctx.now()).toISOString();
   /*
+   * **Claimed, not selected.** `claimBodyIndexBatch` is one `UPDATE … RETURNING` that picks the batch and
+   * stamps a lease on it in the same statement, so there is no window between deciding to index a message and
+   * marking it as being indexed. That window is why this pass could hand the same message to two overlapping
+   * cron ticks — see the migration, and `search.ts` on why the version matters as well as the lease.
+   *
    * Pending first, then retryables whose time has come — and **newest first within each**, which is a guess
    * about what people search for and worth naming as one. A reader looking for something is far more often
    * looking for recent mail, so a Node catching up becomes useful from the top down.
-   *
-   * `msg_body_index_due` covers the predicate. Ordering by state name happens to put `pending` before
-   * `retryable`, which is the order this wants, and it is spelled out rather than relied on: a message that
-   * has never been tried should not wait behind one that has failed five times.
    */
-  const due = await env.CATALOG.prepare(
-    `SELECT id, blob_key, body_index_attempts AS attempts FROM messages
-      WHERE blob_key IS NOT NULL
-        AND (body_index_state = 'pending'
-             OR (body_index_state = 'retryable' AND body_index_next_attempt_at <= ?))
-      ORDER BY CASE body_index_state WHEN 'pending' THEN 0 ELSE 1 END, received_at DESC
-      LIMIT ?`,
-  ).bind(at, BODY_BACKFILL_LIMIT).all<{ id: string; blob_key: string; attempts: number }>();
+  const due = await claimBodyIndexBatch(env, at, BODY_BACKFILL_LIMIT)
+    .all<{ id: string; blob_key: string; attempts: number; version: number }>();
   if (due.results.length === 0) return 0;
 
   const cache = runKeyCache();
@@ -165,19 +160,19 @@ export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
       raw = await getEvidence(env, message.blob_key, cache);
     } catch (error) {
       const why = (error as Error).message.split("\n")[0] ?? "unreadable evidence";
-      statements.push(settleBodyIndex(env, message.id, afterFailedAttempt(message.attempts + 1, why), at));
+      statements.push(settleBodyIndex(env, message.id, afterFailedAttempt(message.attempts + 1, why), at, message.version));
       continue;
     }
 
     const body = await indexableText(raw);
     if (body.kind === "text") {
       statements.push(indexBody(env, message.id, body.text));
-      statements.push(settleBodyIndex(env, message.id, { state: "indexed" }, at));
+      statements.push(settleBodyIndex(env, message.id, { state: "indexed" }, at, message.version));
     } else if (body.kind === "empty") {
-      statements.push(settleBodyIndex(env, message.id, { state: "empty" }, at));
+      statements.push(settleBodyIndex(env, message.id, { state: "empty" }, at, message.version));
     } else {
       // Deterministic: no retry, and the reason is kept so `doctor` can count it and an operator can see it.
-      statements.push(settleBodyIndex(env, message.id, { state: "unindexable", error: body.why }, at));
+      statements.push(settleBodyIndex(env, message.id, { state: "unindexable", error: body.why }, at, message.version));
     }
   }
   await env.CATALOG.batch(statements);

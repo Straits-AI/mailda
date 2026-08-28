@@ -2578,7 +2578,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
           { status: 422 },
         );
       }
-      const outcome = await repairBodyIndex(env, who.orgId, ids).run();
+      /*
+       * Two statements in one batch: the index rows go and the state resets together. A repair that deleted
+       * the rows and then failed to reset the state would leave messages unsearchable with nothing queued to
+       * put them back.
+       */
+      const results = await env.CATALOG.batch(repairBodyIndex(env, who.orgId, ids));
+      const outcome = results[1]!;
       return Response.json({
         requeued: outcome.meta.changes ?? 0,
         message: "Queued for the next backfill pass, which runs every minute and settles 25 messages. "
