@@ -253,6 +253,24 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * a mistyped code would burn the escrow it was trying to use.
      */
     "POST /api/recovery/redeem",
+    /*
+     * Minting a replacement set and confirming one was received (audit, 0042/0043). `operator` for the same
+     * reason redeem is, arriving from the other direction: minting **destroys** the current set atomically
+     * and returns the replacement plaintext once, in a response nothing can reproduce.
+     *
+     * An agent calling rotate would invalidate the ten codes an operator has on paper and receive their
+     * successors into a transcript — a denial of recovery and a disclosure of the last resort, in one call.
+     * That there is a human behind the session does not help: they did not read the codes, and by the time
+     * they notice, the old sheet is already dead.
+     *
+     * Confirm is here rather than in `read` because it is not a read: it writes `confirmed_at` across the
+     * set, and what it asserts is *that a person holds the paper*. A machine confirming on somebody's behalf
+     * is the one assertion in this product a machine cannot honestly make — it would turn `doctor`'s
+     * unconfirmed finding green while nobody had the codes, which is precisely the silent state 0043 exists
+     * to prevent.
+     */
+    "POST /api/recovery-codes/rotate",
+    "POST /api/recovery-codes/confirm",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

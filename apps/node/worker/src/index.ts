@@ -10,7 +10,7 @@ import {
 import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/passkey-verify.ts";
 
 import { claimNode } from "./claim.ts";
-import { redeemForVault } from "./recovery.ts";
+import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
 import { migrate } from "./migrate.ts";
 import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
@@ -2437,6 +2437,70 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const restored = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
       return Response.json(restored);
+    }
+
+    /*
+     * Minting a replacement set of recovery codes, and confirming one was received (audit, 0042/0043).
+     *
+     * ## Why these exist as routes at all
+     *
+     * `mintRecoveryCodes` has always been callable again — it replaces the set atomically and re-escrows
+     * every generation the vault now holds — and it was reachable from **exactly one place**: the initial
+     * claim. So `doctor` could tell an operator to "mint a fresh set" with no supported way to do it, which
+     * is a refusal that names no door. Migration 0042 made that acute by marking every pre-audit set as
+     * carrying 80 bits rather than 128.
+     *
+     * ## Administrator-gated, unlike redeem
+     *
+     * `/api/recovery/redeem` above is deliberately unauthenticated, because the state it exists for has no
+     * verifiable session keys. These two are the opposite case: the Node is working, somebody is signed in,
+     * and minting replaces the only artifact that can recover the vault. An unauthenticated mint would let
+     * anybody who could reach the Node invalidate its recovery codes — a denial of recovery, silently, with
+     * the plaintext going to whoever asked.
+     *
+     * ## The plaintext is in the response and nowhere else
+     *
+     * Ten codes, once. Nothing stores them and nothing can produce them again, which is the property that
+     * makes the escrow worth having and also the reason `confirm` exists: a lost response leaves this Node
+     * looking exactly as it would if they had been written down.
+     */
+    if (url.pathname === "/api/recovery-codes/rotate" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to mint recovery codes.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      const minted = await mintRecoveryCodes(env, clock, who.orgId);
+      return Response.json({
+        codes: minted.codes,
+        escrowed: minted.escrowedGenerations,
+        // Said in the response rather than only in the docs, because this is the one moment the plaintext
+        // exists and the client is what an operator is looking at.
+        notice: "These ten codes are shown once and cannot be shown again. Store them, then confirm one so "
+          + "this Node knows you have them — until you do, `doctor` reports the set unconfirmed.",
+      });
+    }
+
+    if (url.pathname === "/api/recovery-codes/confirm" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to confirm a recovery code.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      const body = (await request.json().catch(() => ({}))) as Record<string, string>;
+      const outcome = await confirmRecoveryCodes(env, clock, who.orgId, body.code ?? "");
+      return Response.json({
+        ...outcome,
+        // The count is the number of rows marked, which is the whole set — confirmation is per set, because
+        // one code proven is proof the sheet arrived and typing ten is 260 characters for a checkbox.
+        message: `Confirmed. ${outcome.confirmed} code(s) marked as held; none were spent.`,
+      });
     }
 
     // ---- Session lifecycle -------------------------------------------------------------

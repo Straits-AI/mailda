@@ -287,6 +287,14 @@ describe("strictness is decided per route, not turned on globally", () => {
        * is refused by name — `E_RECOVERY_CODE_UNKNOWN` — rather than quietly becoming an unconstrained
        * anything, which is the failure #93 exists to prevent and the reason the policy routes are strict.
        */
+      /*
+       * Confirming a recovery code shares the redeem route's request schema, so it inherits its tolerance —
+       * and the reasoning carries across intact: the body is one credential, an extra field changes nothing,
+       * and a wrong or missing code is refused by name (`E_RECOVERY_CODE_UNKNOWN`) rather than becoming an
+       * unconstrained anything. It is listed separately rather than derived from the shared schema, because
+       * two routes sharing a shape today is not an argument that they always will.
+       */
+      "POST /api/recovery-codes/confirm",
       "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
       "PUT /api/transport",

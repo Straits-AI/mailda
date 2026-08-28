@@ -2112,12 +2112,26 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
    */
   const weak = state.weak > 0;
 
+  /*
+   * A set nobody has proved they hold (0043). Degraded, and it is the finding an operator is most likely to
+   * think is pedantic: the rows are there, the hashes are good, the escrow is current. What is missing is any
+   * evidence that the plaintext reached a human — and from this Node's side a lost mint response looks
+   * exactly like a stored one, which is why it has to be asserted rather than assumed.
+   */
+  const unconfirmed = state.unconfirmed > 0 && state.unredeemed > 0;
+
   return [{
     check: "recovery_escrow",
-    severity: stale || weak ? "degraded" : "report",
+    severity: stale || weak || unconfirmed ? "degraded" : "report",
     discloses: "data",
-    ok: !stale && !weak && state.unredeemed > 0,
-    detail: weak
+    ok: !stale && !weak && !unconfirmed && state.unredeemed > 0,
+    detail: unconfirmed && !weak && !stale
+      ? `${state.unredeemed} recovery codes exist and **nobody has confirmed holding one**. The codes are `
+        + "returned once by the mint and cannot be produced again, so a response that was lost or a terminal "
+        + "that was closed leaves this Node looking exactly as it would if they had been written down. Until "
+        + "one is typed back, this organization may have no way to recover its keys and no way to find out "
+        + "except during the incident."
+      : weak
       ? `${state.weak} of ${state.unredeemed} unspent recovery codes were minted by an encoder that carried `
         + "**80 bits and not the 128 ADR 29 states**: it rendered one base32 character per random byte, so "
         + "sixteen bytes became sixteen characters. These codes open the escrow holding the keys to all of "
@@ -2133,7 +2147,10 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
         + `${state.content} and credential generation ${state.credential} — current. The codes themselves `
         + "are not here and cannot be: this Node keeps a hash that recognises one and an escrow only the "
         + "code itself opens.",
-    ...(weak
+    ...(unconfirmed && !weak && !stale
+      ? { fix: "run `mailda recovery-codes confirm` and type one of the codes. It is compared and not spent, "
+          + "so all ten stay usable. If none of them match, the printout is from a replaced set — mint again" }
+      : weak
       ? { fix: "mint a fresh set of codes and store them. The old set keeps working until you do, because a "
           + "weak code is still better than no code — but it is the weaker of the two states and this "
           + "finding stays degraded until it is replaced" }

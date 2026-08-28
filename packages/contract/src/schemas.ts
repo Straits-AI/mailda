@@ -1309,6 +1309,28 @@ export const vaultRestoredResponse = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * Ten fresh recovery codes, shown once (audit follow-up to ADR 29).
+ *
+ * `codes` is the only place the plaintext ever exists. Nothing stores it and nothing can produce it again, so
+ * a client that discards this response has discarded the organization's ability to recover its vault — which
+ * is why `notice` is in the payload rather than only in a document, and why `confirm` exists.
+ */
+export const recoveryCodesMintedResponse = z.object({
+  codes: z.array(z.string().min(1)),
+  escrowed: z.object({
+    content: z.number().int().nonnegative(),
+    credential: z.number().int().nonnegative(),
+  }).strict(),
+  notice: z.string().min(1),
+}).strict();
+
+/** Proof that an operator holds one of the codes. Compared, never spent. */
+export const recoveryCodesConfirmedResponse = z.object({
+  confirmed: z.number().int().nonnegative(),
+  message: z.string().min(1),
+}).strict();
+
 /** A recovery code, as typed. Hyphens and case are cosmetic and normalised by the Node. */
 export const redeemRecoveryRequest = z.object({
   code: z.string().min(1),

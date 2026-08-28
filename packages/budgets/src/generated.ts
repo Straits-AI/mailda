@@ -179,7 +179,7 @@ export const BUDGETS = {
   "shard.plan_stop_messages": 5592405,
   "shard.plan_warn_messages": 4605510,
   "messages.page_size": 50,
-  "search.max_rows_read_per_page": 720,
+  "search.max_rows_read_per_page": 771,
   "mime.max_header_bytes": 65536,
   "mime.max_references_depth": 50,
   "mime.postal_mime_bundle_kib": 107,

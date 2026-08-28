@@ -60,6 +60,24 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Mint a replacement set of ten recovery codes, shown once
+   *
+   * `POST /api/recovery-codes/rotate`
+   */
+  async postRecoveryCodesRotate(body?: unknown): Promise<z.infer<typeof S.recoveryCodesMintedResponse>> {
+    return await this.json("POST", "/api/recovery-codes/rotate", {}, body) as z.infer<typeof S.recoveryCodesMintedResponse>;
+  }
+
+  /**
+   * Prove an operator holds one of the current recovery codes, without spending it
+   *
+   * `POST /api/recovery-codes/confirm`
+   */
+  async postRecoveryCodesConfirm(body: z.infer<typeof S.redeemRecoveryRequest>): Promise<z.infer<typeof S.recoveryCodesConfirmedResponse>> {
+    return await this.json("POST", "/api/recovery-codes/confirm", {}, body) as z.infer<typeof S.recoveryCodesConfirmedResponse>;
+  }
+
+  /**
    * Apply pending migrations
    *
    * `POST /api/prepare`

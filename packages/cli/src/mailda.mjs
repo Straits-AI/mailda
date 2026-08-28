@@ -509,6 +509,97 @@ function setPassword(argv) {
   process.exit(run("node", ["--experimental-strip-types", "scripts/set-password.mjs", email]));
 }
 
+/**
+ * Minting a replacement set of recovery codes, and confirming one landed.
+ *
+ * ## Why this is a command and not a dashboard button
+ *
+ * `doctor` tells an operator to "mint a fresh set" — it has since #92, and migration 0042 made it say so to
+ * every Node whose codes predate the encoder fix. Until now there was **no supported way to do it**: the mint
+ * was reachable from the initial claim and from nothing else, so the instruction named no door.
+ *
+ * ## Two steps on purpose
+ *
+ * The plaintext is returned once and cannot be produced again. If that response is lost — a closed terminal,
+ * a dropped connection — this Node looks exactly as it would if the codes had been written down: ten rows,
+ * good hashes, current escrow. `doctor` would report health over an organization that cannot recover, and it
+ * would find out during the incident.
+ *
+ * So `rotate` prints and `confirm` proves. Confirmation compares a code against its stored hash and does
+ * **not** spend it, so all ten stay usable; until it happens, `doctor` holds the finding at degraded.
+ *
+ * Credentials come from the environment, which is this file's rule throughout: a password on a command line
+ * ends up in shell history, and the thing being protected here is the last resort.
+ */
+async function recoveryCodes(argv) {
+  const action = argv[0];
+  if (action !== "rotate" && action !== "confirm") {
+    fail("usage: mailda recovery-codes rotate|confirm --url https://your-node.workers.dev\n"
+      + "  rotate   mint ten replacement codes and print them once\n"
+      + "  confirm  type one back, proving you hold the set. Compared, never spent\n"
+      + "  why      the codes open the escrow holding this Node's content and credential keys. They are\n"
+      + "           shown once, so an unconfirmed set is one nobody can prove reached a human\n"
+      + "  fix      set MAILDA_EMAIL and MAILDA_PASSWORD, then pass --url");
+  }
+
+  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
+  if (origin === "") fail("pass --url https://your-node.workers.dev, or set MAILDA_URL");
+
+  const email = process.env.MAILDA_EMAIL;
+  const password = process.env.MAILDA_PASSWORD;
+  if (email === undefined || password === undefined) {
+    fail("set MAILDA_EMAIL and MAILDA_PASSWORD\n"
+      + "  why      both routes are administrator-only: minting destroys the current set, and confirming\n"
+      + "           asserts that a person holds the replacement\n"
+      + "  fix      export them, or use the dashboard");
+  }
+
+  const signIn = await fetch(`${origin}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+  if (!signIn.ok) fail(`sign-in failed (${signIn.status}) — these routes need an administrator`);
+  const token = (await signIn.json()).access_token;
+
+  const post = async (path, body) => {
+    const response = await fetch(`${origin}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(body ?? {}),
+    }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      fail(`${path} refused (${response.status})\n  ${payload.what ?? payload.message ?? "no detail"}`);
+    }
+    return payload;
+  };
+
+  if (action === "rotate") {
+    const { codes, notice } = await post("/api/recovery-codes/rotate");
+    process.stdout.write("\n== ten replacement recovery codes, shown once\n\n");
+    for (const code of codes) process.stdout.write(`   ${code}\n`);
+    process.stdout.write(`\n${notice}\n\n`);
+    /*
+     * The next step is printed rather than assumed. An operator who stops here has a Node that reports
+     * degraded and codes nothing has verified they hold, which is the state this command pair exists to
+     * remove — and it is exactly the state somebody reaches by reading the codes and closing the terminal.
+     */
+    process.stdout.write("   next: mailda recovery-codes confirm --url " + origin + "\n\n");
+    return;
+  }
+
+  const typed = flag(argv, "code");
+  if (typed === undefined) {
+    fail("pass --code <one of the codes>\n"
+      + "  why      confirmation is proof you hold the sheet. It compares against the stored hash and does\n"
+      + "           not spend the code, so all ten stay usable\n"
+      + "  fix      mailda recovery-codes confirm --url <origin> --code XXXX-XXXX-...");
+  }
+  const { message } = await post("/api/recovery-codes/confirm", { code: typed });
+  process.stdout.write(`\n${message}\n\n`);
+}
+
 /* ------------------------------------------------------------------ dispatch ----------------------- */
 
 const USAGE = `mailda — operate a Mailda Node
@@ -517,6 +608,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
   mailda claim-secret [--local]      write the install secret and print it once
   mailda set-password <email>        set a password from the terminal, never echoed
+  mailda recovery-codes rotate       mint ten replacement recovery codes, printed once
+  mailda recovery-codes confirm      prove you hold one; compared, never spent
 
 Two things this cannot verify, said here rather than discovered later:
 
@@ -534,6 +627,7 @@ switch (verb) {
   case "doctor": await doctor(rest); break;
   case "claim-secret": claimSecret(rest); break;
   case "set-password": setPassword(rest); break;
+  case "recovery-codes": await recoveryCodes(rest); break;
   default:
     process.stdout.write(USAGE);
     process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);

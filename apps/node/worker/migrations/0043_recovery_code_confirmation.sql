@@ -1,0 +1,24 @@
+-- Proof that somebody wrote the recovery codes down (audit follow-up to 0042). Additive: one column, no DROP.
+--
+-- ## The failure this closes, which is not the one it looks like
+--
+-- `mintRecoveryCodes` replaces the whole set in one batch: ten rows deleted, ten inserted, the plaintext
+-- returned **once** and never recoverable. If the HTTP response carrying that plaintext is lost, the operator
+-- holds neither the old codes nor the new ones.
+--
+-- That alone is survivable, and it is worth being precise about why: recovery codes are not the keys. The
+-- vault still holds them, so a lost response loses no mail -- it loses the *ability to recover* if the Durable
+-- Object later dies. And the remedy is to mint again, which replaces and returns a fresh set.
+--
+-- The unsurvivable version is the **silent** one. An operator mints, loses the response or closes the
+-- terminal, and does not notice. `doctor` counts ten unspent codes and reports health, because from the
+-- Node's side nothing is wrong: the rows exist, the hashes are good, the escrow is current. The operator
+-- believes they can recover and cannot, and they find out during the incident.
+--
+-- So a set is not healthy until somebody proves they hold one of its codes. `confirmed_at` is that proof, set
+-- by typing a code back -- which verifies against the stored hash without spending it, since redemption is a
+-- separate act with its own compare-and-swap.
+--
+-- Null on every existing row, which is correct rather than convenient: no operator has ever been asked to
+-- confirm, so no set has been confirmed, and a default would assert a proof nobody gave.
+ALTER TABLE recovery_codes ADD COLUMN confirmed_at TEXT;

@@ -6,7 +6,8 @@ import { createSystemCtx } from "@mailda/runtime";
 import { runDoctor, type Finding } from "../src/doctor.ts";
 import { aesKeyFrom, vault } from "../src/keyvault.ts";
 import {
-  CODE_CHARACTERS, codeHash, escrowState, formatCode, mintRecoveryCodes, normaliseCode, redeemForVault,
+  CODE_CHARACTERS, codeHash, confirmRecoveryCodes, escrowState, formatCode, mintRecoveryCodes,
+  normaliseCode, redeemForVault,
 } from "../src/recovery.ts";
 
 /**
@@ -367,8 +368,15 @@ describe("doctor says whether the escrow is there and current", () => {
     expect(report.verdict).toBe("degraded");
   });
 
-  it("reports it healthy once minted, without printing anything secret", async () => {
-    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+  it("reports it healthy once minted and confirmed, without printing anything secret", async () => {
+    /*
+     * **Confirmed, not merely minted**, which is a contract this test used to assert the other way. A set
+     * nobody has proved they hold is degraded (0043): the plaintext is returned once, so a lost response
+     * leaves this Node looking exactly as it would if the codes had been written down. Healthy now means
+     * strong, current *and* held.
+     */
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, minted.codes[0]!);
     const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
     expect(finding.ok).toBe(true);
     expect(finding.detail).toMatch(/10 of 10 recovery codes unspent/);
@@ -397,6 +405,9 @@ describe("doctor says whether the escrow is there and current", () => {
     const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     await vault(testEnv).rotate("content");
     const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    // Re-minting starts a fresh unconfirmed set, so the operator confirms again. That is the point of the
+    // step rather than an inconvenience: a rotation nobody wrote down is a rotation nobody can use.
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!);
 
     expect(find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow").ok).toBe(true);
     // The previous set is gone rather than left alongside, so nobody picks a stale code during an incident.
@@ -571,5 +582,83 @@ describe("a recovery code carries the 128 bits ADR 29 promises", () => {
     // degenerate case both assertions above would otherwise miss between them.
     const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
     expect(new Set(minted.codes).size).toBe(minted.codes.length);
+  });
+});
+
+describe("an operator can replace a set, and a set nobody holds is not healthy", () => {
+  /*
+   * ## Why this lifecycle exists
+   *
+   * `mintRecoveryCodes` was always callable again and was reachable from exactly one place: the initial
+   * claim. So `doctor` could tell an operator to "mint a fresh set" with no supported way to do it — a
+   * refusal naming no door — and migration 0042 made that acute by marking every pre-audit set as carrying
+   * 80 bits rather than 128.
+   *
+   * The confirmation half closes a quieter failure. Minting returns the plaintext **once**; if that response
+   * is lost, this Node looks exactly as it would if the codes had been written down — ten rows, good hashes,
+   * current escrow — and `doctor` reports health over an organization that cannot recover. It finds out
+   * during the incident.
+   */
+  it("replaces the whole set, so the old codes stop working", async () => {
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(new Set([...first.codes, ...second.codes]).size).toBe(first.codes.length * 2);
+
+    const state = await escrowState(testEnv, ORG);
+    // Ten, not twenty: the mint deletes before it inserts, in one batch.
+    expect(state?.total).toBe(second.codes.length);
+
+    // And the old sheet is dead rather than merely unlisted.
+    await expect(confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!))
+      .rejects.toThrow(/E_RECOVERY_CODE_UNKNOWN/);
+  });
+
+  it("reports a freshly minted set as unconfirmed, and confirming clears it", async () => {
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const before = await escrowState(testEnv, ORG);
+    expect(before?.unconfirmed, "a set nobody has confirmed reports as confirmed").toBe(before?.unredeemed);
+
+    const outcome = await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, minted.codes[3]!);
+    expect(outcome.confirmed).toBe(minted.codes.length);
+
+    const after = await escrowState(testEnv, ORG);
+    expect(after?.unconfirmed).toBe(0);
+  });
+
+  it("confirms without spending, so all ten stay usable", async () => {
+    /*
+     * The property that makes confirmation cheap enough to ask for. A confirmation that consumed a code
+     * would leave nine and the operator would reasonably wonder where the tenth went — and confirming twice
+     * would leave eight.
+     */
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, minted.codes[0]!);
+    const state = await escrowState(testEnv, ORG);
+    expect(state?.unredeemed).toBe(minted.codes.length);
+  });
+
+  it("refuses a wrong code the same way it refuses a replaced one, so it is not an oracle", async () => {
+    /*
+     * One refusal for "wrong", "already spent" and "from a replaced set". Distinguishing them would answer
+     * *that code exists* to somebody guessing — and an oracle behind authentication is still an oracle.
+     */
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await expect(confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA"))
+      .rejects.toThrow(/E_RECOVERY_CODE_UNKNOWN/);
+  });
+
+  it("makes doctor degraded while a set is unconfirmed, and healthy once it is not", async () => {
+    // The operator-visible half. A finding nobody sees is a finding that does not exist.
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const before = (await runDoctor(testEnv, createSystemCtx())).findings
+      .find((f: Finding) => f.check === "recovery_escrow");
+    expect(before?.severity, "an unconfirmed set does not show as degraded").toBe("degraded");
+    expect(before?.detail).toMatch(/confirm/i);
+
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, minted.codes[0]!);
+    const after = (await runDoctor(testEnv, createSystemCtx())).findings
+      .find((f: Finding) => f.check === "recovery_escrow");
+    expect(after?.ok, "a confirmed, current, strong set is still not reported healthy").toBe(true);
   });
 });

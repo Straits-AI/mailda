@@ -1714,6 +1714,15 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
   predicate has the same shape, so a reader who may see one mailbox in ten has always paid it. Fixing it means
   driving the listing from a per-mailbox ordering rather than from the evidence table, which is a change to
   what the inbox reads. ([receipt](./docs/receipts/message-page-size.md))
+- **Recovery codes minted before 28 August 2026 carry 80 bits, not 128, and cannot be upgraded.** The
+  encoder rendered one base32 character per random byte, so sixteen bytes became sixteen characters. New sets
+  are 26 characters and correct; a hash is one-way, so existing sets can only be *replaced*. `doctor` reports
+  them degraded and `mailda recovery-codes rotate` is the replacement path.
+- **A recovery code set nobody has confirmed is reported degraded.** Minting returns the plaintext once, so a
+  lost response leaves this Node looking exactly as it would if the codes had been written down — ten rows,
+  good hashes, current escrow — and health over an organization that cannot recover is the failure the whole
+  escrow exists to prevent. `mailda recovery-codes confirm` compares one code without spending it. A freshly
+  claimed Node is therefore degraded until an operator confirms, which is intended rather than noise.
 - **A person cannot be removed.** Deleting an account with audit entries, cases and sealed manifests
   attributed to it is a different question with its own answer, and guessing it would be worse than
   leaving it. Revoking every relation is the available act, and it takes effect on the next request.

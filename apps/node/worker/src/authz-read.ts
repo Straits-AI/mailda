@@ -907,10 +907,58 @@ export function messagePageQuery(args: {
    * the most, which is the direction this function already chose when it decided to attribute a row to a
    * grant without asking whether a standing relation would also have sufficed.
    */
-  const searchedColumns = columns.replace(
+  /*
+   * The subject arm may attribute either scope: a subject disclosure is what a `metadata` grant is *for*, and
+   * a `content` grant covers it too. Preferring the content grant keeps this arm's value equal to the body
+   * arm's whenever one exists, which is what lets the outer stage collapse a message matching both.
+   */
+  const subjectArmColumns = columns.replace(
     "sg.grant_id AS supervised_grant_id",
     "COALESCE(sgc.grant_id, sgm.grant_id) AS supervised_grant_id",
   );
+
+  /*
+   * The body arm may attribute **only** a content grant, and `NULL` is the meaningful answer rather than a
+   * missing one: it means a standing relation authorized this row and no supervised grant could have.
+   *
+   * This was `COALESCE(sgc, sgm)` in both arms, and that is an audit-integrity defect rather than a read
+   * one. A reader holding standing `content.read` *and* a supervised grant of scope `metadata` is authorized
+   * for a body match by the relation — and the COALESCE then attributed it to the metadata grant, so §7's
+   * trail named an authority that could not have permitted the disclosure it was recording. Nothing leaked;
+   * the trail lied, which for this product is the worse of the two.
+   */
+  const bodyArmColumns = columns.replace(
+    "sg.grant_id AS supervised_grant_id",
+    "sgc.grant_id AS supervised_grant_id",
+  );
+
+  /*
+   * The outer stage, and why it is `UNION ALL` plus `GROUP BY` rather than `UNION`.
+   *
+   * The two arms now project **different** attributions for the same message, so `UNION` would see two
+   * distinct rows and return the message twice — the duplication the previous fix removed, reintroduced by
+   * telling the truth about provenance. Collapsing on `id` and taking `MAX` of the attribution resolves it
+   * without discarding the distinction:
+   *
+   * | grants held | subject arm | body arm | MAX | correct? |
+   * |:--|:--|:--|:--|:--|
+   * | content (± metadata) | content | content | content | yes — a content grant authorized either match |
+   * | metadata only, both arms matched | metadata | NULL | metadata | yes — a subject disclosure did occur under it |
+   * | metadata only, body match only | — | NULL | NULL | yes — the standing relation authorized it, not the grant |
+   * | none | NULL | NULL | NULL | yes |
+   *
+   * The two arms can never both be non-null *and* differ, which is what makes `MAX` deterministic rather
+   * than a coin toss: the body arm is `sgc`, the subject arm is `sgc` whenever `sgc` exists, and `sgm` only
+   * when it does not — in which case the body arm is NULL and aggregation ignores it.
+   *
+   * Every other column is bare under the `GROUP BY`. That is safe here for a reason and not by convention:
+   * both arms reach the same receipt, address and message rows, so for a given `id` every non-attribution
+   * column is identical and SQLite's choice among identical values cannot be observed.
+   */
+  const groupedColumns = [
+    "id", "envelope_from", "envelope_to", "raw_bytes", "accepted_at", "mailbox_id", "message_id",
+    "subject", "from_addr", "parse_error", "conversation_id", "case_id",
+  ].join(", ");
 
 
   /*
@@ -1001,8 +1049,9 @@ export function messagePageQuery(args: {
     const metadataArm = authorizedBy(RELATIONS_FOR_METADATA, "sgm");
     const bodyArm = authorizedBy(BODY_SEARCH_RELATIONS, "sgc");
     return {
-      sql: `SELECT * FROM (
-        SELECT ${searchedColumns}
+      sql: `SELECT ${groupedColumns}, MAX(supervised_grant_id) AS supervised_grant_id FROM (
+        SELECT * FROM (
+        SELECT ${subjectArmColumns}
          FROM message_search s
          JOIN messages m ON m.id = s.message_id
          JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
@@ -1016,9 +1065,9 @@ export function messagePageQuery(args: {
         ORDER BY rank
         LIMIT ?
       )
-      UNION
+      UNION ALL
       SELECT * FROM (
-        SELECT ${searchedColumns}
+        SELECT ${bodyArmColumns}
          FROM message_body_search b
          JOIN messages m ON m.rowid = b.rowid
          JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
@@ -1031,7 +1080,8 @@ export function messagePageQuery(args: {
           ${bodyArm.sql}
         ORDER BY rank
         LIMIT ?
-      )
+      ))
+      GROUP BY id
       ORDER BY accepted_at DESC, id DESC
       LIMIT ?`,
       /*

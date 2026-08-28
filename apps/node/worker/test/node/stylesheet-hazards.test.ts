@@ -36,6 +36,31 @@ import { describe, expect, it } from "vitest";
  *
  * The invariant is exact: scanning the stylesheet left to right, every comment terminator must close a
  * comment that an opener opened, and no comment may be left open at the end.
+ *
+ * ## The class recurred three times in one week, and a general guard was attempted and rejected
+ *
+ * This file guards `SHELL_CSS` and only that constant. The same mistake then happened three more times, in
+ * three different files, with this warning on screen each time:
+ *
+ * | where | what the compiler said |
+ * |:--|:--|
+ * | `ui.ts` | nine backticks in CSS comments; `',' expected` at a line of prose |
+ * | `font-modules.d.ts` | a glob closed a JSDoc block early; `Module declaration names may only use quoted strings` |
+ * | `recovery.ts` | a backtick around a migration number in SQL commentary; `Octal literals are not allowed` |
+ *
+ * **All three were caught by `pnpm typecheck`, so none shipped.** The gap is not safety, it is that the error
+ * describes the wreckage rather than the cause — every time, the fix took longer than the mistake.
+ *
+ * A lexical guard over every template literal in `src/` was written and **thrown away**. Finding "inside a
+ * template literal" by tracking backtick parity cannot work in this repository: doc comments here are full of
+ * backticks around identifiers, and the walk cannot tell a delimiter from prose. It flagged 67 correct lines
+ * on a clean tree. A tripwire that fires on a healthy repository gets muted in a week, which would cost more
+ * than the confusing compiler message it was meant to improve — the same argument `scripts/mutants.mjs` makes
+ * about false kills.
+ *
+ * Doing it properly needs a TypeScript lexer to find the literals, and then the check is trivial. That is the
+ * shape of the real fix if this recurs a fourth time. Until then the rule is the one this file already
+ * states: **comments inside a template literal are written without backticks**, and the compiler is the net.
  */
 
 const srcDir = join(import.meta.dirname, "..", "..", "src");

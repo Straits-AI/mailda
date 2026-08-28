@@ -8,7 +8,7 @@ stale_when: >
   BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
   text per row; or authz.list.max_rows_read moves
 values:
-  search.max_rows_read_per_page: 720
+  search.max_rows_read_per_page: 771
 ---
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -34,13 +34,13 @@ each driven by its own virtual table, each `ORDER BY rank LIMIT n`, with the uni
 | | rare term (12 hits) | common term (1,188 hits) |
 |:--|--:|--:|
 | plain unsearched page, for comparison | 208 | 208 |
-| **shipped: two arms, two grant scopes** | **176** | **720** |
+| **shipped: two arms, two grant scopes, provenance-aware attribution** | **188** | **771** |
 
 Against `authz.list.max_rows_read = 1000`. A rare search still costs **less than not searching**, which is
-what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 720 is
-the tight one — 72% of the budget — and it is the figure `search.max_rows_read_per_page` pins.
+what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 771 is
+the tight one — **77% of the budget** — and it is the figure `search.max_rows_read_per_page` pins.
 
-### 616 → 720, and the extra 104 rows bought a closed authorization hole
+### 616 → 771 across two fixes, and every extra row bought a closed defect
 
 Each arm now joins **two** supervised-grant subqueries rather than one. That is not an optimisation anybody
 would choose; it is what closing a confidentiality defect cost.
@@ -62,9 +62,28 @@ subject arm, the second authorizes the body arm, and both arms attribute
 message matching subject *and* body would come back **twice** from `UNION`, differing only in a column the
 response strips. Naming the stronger grant in both arms makes them agree.
 
-**72% of the budget is the number to watch.** It is inside, and it has less headroom than anything else this
-receipt records. A third arm, or a third read relation, would need re-measuring before it shipped rather
-than after.
+### 720 → 771: telling the truth about *which* grant authorized a row
+
+The first fix attributed both arms with `COALESCE(sgc.grant_id, sgm.grant_id)` so the two would agree and
+`UNION` could deduplicate. That is wrong in one cell of the matrix, and the cell is not exotic: a reader
+holding standing `content.read` **and** a supervised grant of scope `metadata` is authorized for a body match
+by the *relation*, and the COALESCE then attributed it to the *grant* — so §7's trail recorded a content
+disclosure against an authority that could not have permitted it.
+
+Nothing leaked. The trail lied, which for this product is the worse of the two, and it was found by the same
+audit in the matrix cell the first round of fixtures did not combine.
+
+So each arm now projects only what could have authorized it — the subject arm either scope, the body arm a
+content grant or `NULL` — which makes the two arms disagree again and reintroduces the duplicate. The outer
+stage became `UNION ALL` collapsed by `GROUP BY id` with `MAX(supervised_grant_id)`, which resolves it
+without discarding the distinction: the arms can never both be non-null *and* differ, so `MAX` is
+deterministic rather than a coin toss.
+
+That aggregation is the 51 rows.
+
+**77% of the budget is the number to watch.** It is inside, and it has less headroom than anything else this
+receipt records — three fixes have each cost a little and none has given any back. A third arm, a third read
+relation, or another payload column would need re-measuring **before** it shipped rather than after.
 
 ### Three shapes were measured before this one, on subjects alone
 
@@ -206,5 +225,3 @@ deliberate rather than being discovered by somebody whose search mysteriously fa
   estimated.
 - **How the figures move with corpus size.** 1,200 deliveries shows the ranked plan does not track the match
   set and the time-ordered one does. It does not establish the curve.
-- **How the figures move with corpus size.** 1,200 deliveries is enough to show that the ranked plan does not
-  track the match set and the time-ordered one does. It does not establish the curve.

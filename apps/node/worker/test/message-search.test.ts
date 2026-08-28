@@ -46,6 +46,13 @@ const SUPERVISED_METADATA = "usr_search_sup_metadata";
 const SUPERVISED_CONTENT = "usr_search_sup_content";
 /** Holds **both** grants on one mailbox, which is the case that can defeat the union's deduplication. */
 const SUPERVISED_BOTH = "usr_search_sup_both";
+/**
+ * Standing `content.read` **and** a supervised grant of scope `metadata`.
+ *
+ * The attribution cell nothing covered: the standing relation authorizes a body match, and the only live
+ * grant is one that could not have.
+ */
+const STANDING_PLUS_META_GRANT = "usr_search_standing_meta";
 const MAILBOX = "mbx_search";
 const OTHER_MAILBOX = "mbx_search_other";
 const ADDRESS = "in@search.example";
@@ -159,6 +166,11 @@ beforeAll(async () => {
     grant(SUPERVISED_CONTENT, "content"),
     grant(SUPERVISED_BOTH, "metadata"),
     grant(SUPERVISED_BOTH, "content"),
+    grant(STANDING_PLUS_META_GRANT, "metadata"),
+    testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), ORG, STANDING_PLUS_META_GRANT, "mailbox.content.read", "mailbox", MAILBOX, AT),
   ]);
 });
 
@@ -573,5 +585,50 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
     const rows = await search("demurrage", SUPERVISED_BOTH);
     expect(rows, "a message matching both arms came back twice under two live grants").toEqual([DEMURRAGE]);
     expect(rows.length).toBe(1);
+  });
+
+  it("attributes a body match to no grant when only a standing relation could authorize it", async () => {
+    /*
+     * ## The attribution cell the first fix left open
+     *
+     * This reader holds standing `content.read` **and** a supervised grant of scope `metadata`. A body-only
+     * search is authorized — by the standing relation — and the metadata grant could not have authorized it.
+     *
+     * `COALESCE(sgc.grant_id, sgm.grant_id)` picks `sgm` here, because there is no content grant. So the row
+     * comes back attributed to a metadata-scoped grant for a **body** disclosure, and `listMessages` appends
+     * a `supervised.query` entry naming a grant that did not and could not permit what was disclosed.
+     *
+     * That is not a read-authority defect — nothing was disclosed that should not have been. It is an
+     * **audit-integrity** defect, which is worse in the one way that matters for this product: §7's trail is
+     * the artifact an investigation relies on, and an entry naming the wrong authority is a false statement
+     * in it. `docs/supervised-access.md` already says the trail over-records deliberately; over-recording a
+     * reader who could have read anyway is a spare line, and attributing a disclosure to a grant that could
+     * not have made it is a different thing.
+     *
+     * Found by the same external audit, in the matrix cell the first round of fixtures did not combine.
+     */
+    const query = messagePageQuery({
+      orgId: ORG,
+      subjects: [STANDING_PLUS_META_GRANT],
+      supervised: {
+        metadata: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_METADATA),
+        content: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_CONTENT),
+      },
+      page: { after: null, mailboxId: null, q: ftsQuery("cabotage") },
+      limit: 51,
+    });
+    const rows = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)
+      .all<{ id: string; supervised_grant_id: string | null }>();
+
+    // The read itself is fine: the standing relation authorizes it.
+    expect(rows.results.length, "the standing content relation no longer reaches the body index")
+      .toBeGreaterThan(0);
+    for (const row of rows.results) {
+      expect(
+        row.supervised_grant_id,
+        "a body match is attributed to a supervised grant of scope metadata, which could not have authorized "
+        + "it — the audit trail would name the wrong authority for a content disclosure",
+      ).toBeNull();
+    }
   });
 });

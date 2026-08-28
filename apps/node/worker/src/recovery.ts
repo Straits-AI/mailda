@@ -89,8 +89,10 @@ interface EscrowedVault {
 /**
  * How many characters 128 bits needs in base32, and the invariant the encoder below is checked against.
  *
- * `ceil(128 / 5) = 26`. The last character carries three bits of padding, which is ordinary for base32 and
- * costs nothing — what matters is that 26 is **not** 16.
+ * `ceil(128 / 5) = 26`. Twenty-five characters carry 125 bits, so the twenty-sixth carries the remaining
+ * **three data bits plus two of padding** — 26 x 5 = 130 bits of capacity for 128 of secret. Stated
+ * precisely because an earlier version of this comment said "three bits of padding", which is the same
+ * kind of arithmetic slip as the bug it describes.
  */
 export const CODE_CHARACTERS = 26;
 
@@ -437,6 +439,7 @@ export async function redeemForVault(
 /** What `doctor` reports. Counts and generations only — never a hash, and certainly never a code. */
 export async function escrowState(env: Env, orgId: string): Promise<{
   total: number; unredeemed: number; content: number; credential: number; weak: number;
+  unconfirmed: number;
 } | null> {
   const row = await env.CATALOG.prepare(
     `SELECT COUNT(*) AS total,
@@ -450,10 +453,16 @@ export async function escrowState(env: Env, orgId: string): Promise<{
              */
             SUM(CASE WHEN redeemed_at IS NULL
                       AND (code_characters IS NULL OR code_characters < ?)
-                     THEN 1 ELSE 0 END) AS weak
+                     THEN 1 ELSE 0 END) AS weak,
+            -- Codes nobody has proved they hold. Migration 0043 records why an unconfirmed set is not
+            -- healthy: from this Node's side a lost mint response is indistinguishable from a stored one.
+            SUM(CASE WHEN redeemed_at IS NULL AND confirmed_at IS NULL THEN 1 ELSE 0 END) AS unconfirmed
        FROM recovery_codes WHERE org_id = ?`,
   ).bind(CODE_CHARACTERS, orgId)
-    .first<{ total: number; unredeemed: number; content: number; credential: number; weak: number }>();
+    .first<{
+      total: number; unredeemed: number; content: number; credential: number; weak: number;
+      unconfirmed: number;
+    }>();
   if (row === null || Number(row.total) === 0) return null;
   return {
     total: Number(row.total),
@@ -461,5 +470,63 @@ export async function escrowState(env: Env, orgId: string): Promise<{
     content: Number(row.content ?? 0),
     credential: Number(row.credential ?? 0),
     weak: Number(row.weak ?? 0),
+    unconfirmed: Number(row.unconfirmed ?? 0),
   };
+}
+
+/**
+ * Proves an operator holds one of the codes just minted, without spending it.
+ *
+ * ## Why confirmation is a separate act from minting
+ *
+ * `mintRecoveryCodes` returns ten codes **once** and cannot produce them again. If that response is lost the
+ * operator holds nothing — and the Node cannot tell, because the rows, the hashes and the escrow are all
+ * exactly as they would be if the codes had been written down. `doctor` would report health over an
+ * organization that cannot recover.
+ *
+ * So a set is unhealthy until somebody types one code back. That is the cheapest available proof: it verifies
+ * against the stored hash, it requires having read the plaintext, and it costs the operator nothing they were
+ * not going to do anyway.
+ *
+ * ## Verifying is not redeeming, and the difference is deliberate
+ *
+ * `redeemForVault` spends a code and restores the vault; this only compares a hash. A confirmation that
+ * consumed a code would leave nine, and the operator would reasonably wonder what happened to the tenth —
+ * and an operator who confirms twice would be down to eight. Nothing is spent here.
+ *
+ * Confirmation is **per set, not per code**. One code proven is proof the sheet was received; asking for all
+ * ten would be asking somebody to type 260 characters to satisfy a checkbox.
+ */
+export async function confirmRecoveryCodes(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  code: string,
+): Promise<{ confirmed: number }> {
+  const hash = await codeHash(normaliseCode(code));
+  const row = await env.CATALOG.prepare(
+    "SELECT id FROM recovery_codes WHERE org_id = ? AND code_hash = ? AND redeemed_at IS NULL LIMIT 1",
+  ).bind(orgId, hash).first<{ id: string }>();
+
+  if (row === null) {
+    /*
+     * Deliberately the same refusal whether the code is wrong, already spent, or belongs to a set that has
+     * been replaced. A confirmation route that distinguished them would answer *"that code exists"* to
+     * somebody guessing, which is the one thing this route must not become — it is authenticated, but an
+     * oracle behind authentication is still an oracle.
+     */
+    throw unprocessable("E_RECOVERY_CODE_UNKNOWN", {
+      what: "that code does not match an unspent code in this Node's current set",
+      why: "confirmation compares against the current set only. A code from a set that has since been "
+        + "replaced will not match, and neither will one that has already been redeemed.",
+      fix: "type a code from the most recently printed set. If none of them match, mint a fresh set — the "
+        + "previous printout is no longer this Node's",
+    });
+  }
+
+  const at = new Date(ctx.now()).toISOString();
+  const done = await env.CATALOG.prepare(
+    "UPDATE recovery_codes SET confirmed_at = ? WHERE org_id = ? AND confirmed_at IS NULL",
+  ).bind(at, orgId).run();
+  return { confirmed: done.meta.changes ?? 0 };
 }

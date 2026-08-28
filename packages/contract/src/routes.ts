@@ -130,6 +130,8 @@ export const ROUTES = [
   { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", response: S.jwksResponse },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
   { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
+  { method: "POST", path: "/api/recovery-codes/rotate", summary: "Mint a replacement set of ten recovery codes, shown once", response: S.recoveryCodesMintedResponse },
+  { method: "POST", path: "/api/recovery-codes/confirm", summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
   {
     method: "POST", path: "/api/prepare",
     // Named for claiming and actually the migration endpoint — see `prepareResponse`.
