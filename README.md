@@ -1437,6 +1437,20 @@ It is now one clause in one module, and the two decisions worth knowing:
   intersected — with its source checked for the term, so registering a name is not enough — or exempt with a
   written reason. Three of the clause's own terms were found by deleting them and watching nothing fail.
 
+### The delegator was recorded by four call sites and readable by none
+
+The column shipped inside the hash chain and then sat almost unused: four audited acts in the whole product
+populated it, and `GET /api/audit` never selected it. So an agent's act named the machine and not the person,
+and the audit screen showed no actor at all — not the identifier, not the kind, not the delegator.
+
+It is now **derived from the actor's typed prefix** at write time and stored, rather than threaded through
+every audited operation as the review suggested. That argument was already in the file: deriving the actor's
+*kind* from its prefix is what made attribution structural, because a design where each call site passes it
+"would be correct on the day it was written and wrong the first time a new effect node called a fifth
+function". A delegator is the same kind of fact. An explicitly passed value still wins, since a Butler's
+sponsor comes from its pinned ceiling — better information than a lookup, and the answer that must not drift.
+A person acting for themselves pays no query for any of it: the derivation returns on a prefix test.
+
 **This is not an AI capability.** Whether the thing holding the credential is a language model, a script or a
 cron job is outside it. The `llm.*` nodes remain declared and refused, and calling Mailda AI-native today
 would still be a claim about intent.

@@ -1,11 +1,14 @@
-import { env } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
 import { assertAdmin, isAdmin } from "../src/access.ts";
+import { auditedBatch, verifyChain } from "../src/audit.ts";
 import { mailboxQueues } from "../src/cases.ts";
 import { notificationsFor } from "../src/notifications.ts";
+import { agentGrantableActions } from "@mailda/contract/agent";
+
 import { agentFor, listAgents, mintAgent, revokeAgent } from "../src/agents.ts";
 import {
   listMessages, mailboxesWithRelation, mayRead, maySend, messagePageQuery, principalFor,
@@ -741,5 +744,210 @@ describe("the surfaces beyond the inbox are intersected too", () => {
 
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
     expect(await ids(), "the notice is not reachable even when both hold the relation").toContain(noticeId);
+  });
+});
+
+describe("the mint and revoke routes validate what they are handed", () => {
+  it("writes no revocation entry for an agent that was not revoked", async () => {
+    /*
+     * The audit entry was unconditional while the `UPDATE` was conditional on `revoked_at IS NULL`, and a
+     * comment beside it explained that zero changes is not an error — which is true, and not the question.
+     * The trail recorded `agent.revoked` regardless, so a double-press wrote two entries for one withdrawal
+     * and a revoke of an identifier that never existed wrote an entry about nothing at all. An administrator
+     * probing identifiers would write themselves a trail of revocations that did not happen.
+     */
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "twice", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+    });
+    await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, minted.agent.id);
+    await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, minted.agent.id);
+    await revokeAgent(testEnv, createSystemCtx(), ORG, ADMIN, "agt_neverexisted000000000001");
+
+    const entries = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'agent.revoked'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(entries?.n), "the trail records revocations that did not happen").toBe(1);
+  });
+
+  it("refuses an action list longer than the number of grantable actions", async () => {
+    /*
+     * `actions` was unbounded. Every entry is deduplicated and checked against the curated list, so the
+     * *stored* ceiling was always sane — but the checking happens after a `Set` is built from the raw input,
+     * so the work is the caller's array length and not the ceiling's. The bound is derived from the curated
+     * list rather than picked, because a list that grows past a hardcoded number would start refusing valid
+     * ceilings and the failure would look like a permissions bug.
+     */
+    /*
+     * **Valid actions, repeated.** An array of made-up route strings is caught by the withheld check already,
+     * which is why the first draft of this test proved nothing: it failed with `E_AGENT_ACTION_WITHHELD` and
+     * looked like a pass. The reachable hazard is a large array of *legitimate* entries, which deduplicates
+     * to a ceiling of one and does all its work before that.
+     */
+    const tooMany = Array.from({ length: agentGrantableActions().length + 1 }, () => AGENT_READS);
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "greedy", sponsorUserId: SPONSOR, actions: tooMany,
+      }),
+    ).rejects.toThrow("E_AGENT_ACTIONS_UNBOUNDED");
+
+    // The control: the whole curated list is a legitimate ceiling and must still mint.
+    const all = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "everything", sponsorUserId: SPONSOR, actions: agentGrantableActions(),
+    });
+    expect(all.agent.actions.length).toBe(agentGrantableActions().length);
+  });
+
+  it("refuses a lifetime that is not a positive number of days", async () => {
+    /*
+     * `Math.min(input.lifetimeDays ?? DEFAULT, MAX)` accepts anything. `NaN` propagates through `Math.min`,
+     * reaches `new Date(NaN).toISOString()` and throws a bare `RangeError` — a 500 with no `what`, `why` or
+     * `fix`, for a request the caller could have been told about. Zero or a negative number is worse than an
+     * error: it mints a credential that is already expired, so the operator holds a token that fails on first
+     * use with no explanation of why.
+     */
+    for (const days of [0, -1, Number.NaN]) {
+      await expect(
+        mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+          name: `bad-${days}`, sponsorUserId: SPONSOR, actions: [AGENT_READS], lifetimeDays: days,
+        }),
+        `lifetimeDays ${days} was accepted`,
+      ).rejects.toThrow("E_AGENT_LIFETIME_INVALID");
+    }
+
+    // The control: a sensible lifetime still mints, and is still capped at the maximum.
+    const ok = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "sensible", sponsorUserId: SPONSOR, actions: [AGENT_READS], lifetimeDays: 3,
+    });
+    expect(Date.parse(ok.agent.expiresAt)).toBeGreaterThan(createSystemCtx().now());
+  });
+});
+
+describe("an agent's act names its sponsor without the call site remembering to say so", () => {
+  /*
+   * Audit P1-1. `audit_entries.delegator_user_id` exists, is inside the hashed form, and was populated by
+   * **four** call sites out of every audited act in the product. Everything else an agent does recorded
+   * `agt_…` as the actor and nothing as the delegator — so the trail could name the machine and not the person
+   * accountable for it, which is the exact gap the column was added to close.
+   *
+   * The audit's suggestion was a typed actor union threaded through every audited operation so the delegator
+   * could not be omitted. This file takes the other route, and the argument is already written in `audit.ts`
+   * beside `kindOfActor`: attribution derived from the identifier's typed prefix is *structural*, while a
+   * design where each call site passes it "would be correct on the day it was written and wrong the first time
+   * a new effect node called a fifth function". The delegator is the same shape of fact as the kind. Deriving
+   * it needs no signature to change and no caller to remember.
+   *
+   * Derived **at write time and stored**, which is what keeps faith with the column's own reasoning: a trail
+   * that re-derived the sponsor at *read* time would change its answer when somebody reassigned an agent
+   * months later, and an audit trail whose answers move is what the hash chain exists to prevent.
+   */
+  it("derives the delegator from the actor when the call site does not pass one", async () => {
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "actor", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+    });
+    await auditedBatch(testEnv, createSystemCtx(), ORG, {
+      action: "supervised.opened",
+      outcome: "ok",
+      actorUserId: minted.agent.id,
+      subject: "rcpt_p1one000000000000000001",
+    }, (entry) => [entry]);
+
+    const row = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, actor_kind, delegator_user_id FROM audit_entries
+        WHERE org_id = ? AND action = 'supervised.opened' ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG).first<{ actor_user_id: string; actor_kind: string; delegator_user_id: string | null }>();
+
+    expect(row?.actor_kind, "the kind is already derived and must stay so").toBe("agent");
+    expect(
+      row?.delegator_user_id,
+      "an agent's act named the machine and not the person accountable for it",
+    ).toBe(SPONSOR);
+  });
+
+  it("prefers a delegator the call site did pass, so the four existing ones do not change meaning", async () => {
+    // A Butler's sponsor comes from its pinned ceiling rather than from a lookup, and `butler/effects.ts`
+    // passes it. Derivation must not overwrite an answer a caller had better information for.
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "explicit", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+    });
+    await auditedBatch(testEnv, createSystemCtx(), ORG, {
+      action: "supervised.opened",
+      outcome: "ok",
+      actorUserId: minted.agent.id,
+      delegatorUserId: ADMIN,
+      subject: "rcpt_p1two000000000000000001",
+    }, (entry) => [entry]);
+
+    const row = await testEnv.CATALOG.prepare(
+      `SELECT delegator_user_id FROM audit_entries WHERE org_id = ? AND subject = ? LIMIT 1`,
+    ).bind(ORG, "rcpt_p1two000000000000000001").first<{ delegator_user_id: string | null }>();
+    expect(row?.delegator_user_id).toBe(ADMIN);
+  });
+
+  it("leaves a person's own act with no delegator, and asks the database nothing to find that out", async () => {
+    /*
+     * The control, and the cost. Nearly every audited act in this product is a person acting for themselves,
+     * so a derivation that cost a query per entry would be paid on the p95 send path for a field that is
+     * almost always null. A `usr_` prefix returns before any statement is prepared.
+     */
+    await auditedBatch(testEnv, createSystemCtx(), ORG, {
+      action: "supervised.opened",
+      outcome: "ok",
+      actorUserId: ADMIN,
+      subject: "rcpt_p1three00000000000000001",
+    }, (entry) => [entry]);
+
+    const row = await testEnv.CATALOG.prepare(
+      `SELECT actor_kind, delegator_user_id FROM audit_entries WHERE org_id = ? AND subject = ? LIMIT 1`,
+    ).bind(ORG, "rcpt_p1three00000000000000001")
+      .first<{ actor_kind: string; delegator_user_id: string | null }>();
+    expect(row?.actor_kind).toBe("user");
+    expect(row?.delegator_user_id, "a person acting for themselves was given a delegator").toBeNull();
+  });
+
+  it("hands the delegator back over the route, not only into the column", async () => {
+    /*
+     * The route's own half. `GET /api/audit` selected `actor_user_id` and `actor_kind` and **not**
+     * `delegator_user_id`, so the answer had been complete in the database and incomplete over the wire since
+     * the column shipped. The client test for this asserts the rendering against a stubbed payload, which by
+     * construction cannot notice a route that never sends the field — so the assertion has to be made here as
+     * well, against the real Worker.
+     *
+     * Through `SELF.fetch` with the agent's own bearer token: `GET /api/audit` is inside the machine ceiling,
+     * so an agent reading the trail and finding its own sponsor named is the real path rather than a
+     * contrivance.
+     */
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "routed", sponsorUserId: SPONSOR, actions: [AGENT_READS, "GET /api/audit"],
+    });
+    await auditedBatch(testEnv, createSystemCtx(), ORG, {
+      action: "supervised.opened", outcome: "ok", actorUserId: minted.agent.id,
+      subject: "rcpt_p1five00000000000000001",
+    }, (entry) => [entry]);
+
+    const response = await SELF.fetch("https://node.example/api/audit?action=supervised.opened", {
+      headers: { authorization: `Bearer ${minted.token}` },
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await response.json<{ entries: { subject: string; delegator_user_id: string | null }[] }>();
+    const entry = body.entries.find((row) => row.subject === "rcpt_p1five00000000000000001");
+    expect(entry, "the entry did not come back at all").toBeDefined();
+    expect(
+      entry?.delegator_user_id,
+      "the trail names the person in its own column and does not say so over the wire",
+    ).toBe(SPONSOR);
+  });
+
+  it("still verifies the chain, because the delegator is inside the hashed form", async () => {
+    // The derivation writes a field the hash covers, so a derived value that disagreed with what was hashed
+    // would break verification rather than merely misreport. Asserted, because "it is in the hash" is the
+    // reason the column is trustworthy at all.
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "chained", sponsorUserId: SPONSOR, actions: [AGENT_READS],
+    });
+    await auditedBatch(testEnv, createSystemCtx(), ORG, {
+      action: "supervised.opened", outcome: "ok", actorUserId: minted.agent.id, subject: "rcpt_p1four00000000000000001",
+    }, (entry) => [entry]);
+    const outcome = await verifyChain(testEnv, ORG);
+    expect(outcome.intact, `chain broken: ${JSON.stringify(outcome)}`).toBe(true);
   });
 });

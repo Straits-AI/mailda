@@ -335,6 +335,17 @@ export const auditRow = z.object({
   at: isoDate,
   actor_user_id: z.string().nullable(),
   actor_kind: z.string().min(1),
+  /**
+   * The person accountable for an act a machine performed; null when the actor is a person acting for
+   * themselves, which is nearly every entry.
+   *
+   * **Required, and nullable** — not optional. The column had been written and hashed into the chain since
+   * #109 L1 while the route selected it nowhere and no surface showed it, so the trail knew which human stood
+   * behind an `agt_` and no reader could ask (audit P1-1). Optional here would let a Node answer without the
+   * field and stay in contract, which is the same silence in a new place: a client cannot tell "nobody was
+   * delegated" apart from "this Node does not say".
+   */
+  delegator_user_id: z.string().nullable(),
   action: z.string().min(1),
   subject: z.string().nullable(),
   outcome: z.string().min(1),

@@ -2918,7 +2918,14 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       if (who === null) return unauthenticated();
       const action = url.searchParams.get("action");
       const rows = await env.CATALOG.prepare(
-        `SELECT id, seq, at, actor_user_id, actor_kind, action, subject, outcome, detail, hash
+        /*
+         * `delegator_user_id` is selected, and its absence was the second half of audit P1-1. The column was
+         * written, hashed into the chain and **read by nobody** — so the trail knew which person was
+         * accountable for a machine's act and no reader could ask it. A field inside the hash that no surface
+         * exposes is worse than a missing one: it looks like the question has been answered.
+         */
+        `SELECT id, seq, at, actor_user_id, actor_kind, delegator_user_id, action, subject, outcome, detail,
+                hash
            FROM audit_entries
           WHERE org_id = ?${action === null ? "" : " AND action = ?"}
           ORDER BY seq DESC LIMIT 200`,

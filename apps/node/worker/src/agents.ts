@@ -138,6 +138,29 @@ export async function mintAgent(
       fix: "pass a name describing what this agent is for",
     });
   }
+  /*
+   * Bounded **before** anything is done per entry.
+   *
+   * Every action is deduplicated and checked against the curated list below, so the *stored* ceiling was
+   * always sane whatever arrived — but the deduplication builds a `Set` from the raw array, so the work is
+   * the caller's array length rather than the ceiling's. A million repetitions of one legitimate route
+   * deduplicates to a ceiling of one and does a million entries of work getting there.
+   *
+   * The bound is `agentGrantableActions().length`, derived rather than chosen: a hardcoded number would start
+   * refusing legitimate ceilings the moment the curated list grew past it, and that refusal would read as a
+   * permissions bug rather than as a limit. Asking for more distinct actions than exist is not a ceiling
+   * anybody can mean.
+   */
+  const ceilingSize = agentGrantableActions().length;
+  if (input.actions.length > ceilingSize) {
+    throw unprocessable("E_AGENT_ACTIONS_UNBOUNDED", {
+      what: `${input.actions.length} capabilities were requested and only ${ceilingSize} exist`,
+      why: "the machine capability list is finite, so a longer list is either repetition or a mistake. It is "
+        + "refused before the list is read rather than deduplicated quietly, because a request nobody could "
+        + "have meant is worth an answer",
+      fix: "send each capability once, from the machine capability list",
+    });
+  }
   if (input.actions.length === 0) {
     /*
      * Refused rather than minted empty. An agent with no ceiling can do nothing, so creating one is either a
@@ -182,7 +205,28 @@ export async function mintAgent(
     });
   }
 
-  const days = Math.min(input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS, MAX_LIFETIME_DAYS);
+  /*
+   * Validated rather than clamped into shape. `Math.min` accepts anything: `NaN` propagates through it,
+   * reaches `new Date(NaN).toISOString()` and throws a bare `RangeError` — a 500 with no `what`, `why` or
+   * `fix` for a request the caller could simply have been told about. Zero and negatives are worse than an
+   * error, because they mint successfully: the operator is handed a credential that expired before they read
+   * it and finds out when it fails, with nothing to say why.
+   *
+   * The **cap** stays a clamp, deliberately. Asking for a longer life than the maximum is a reasonable thing
+   * to want and shortening it silently is the documented behaviour; asking for a life of `NaN` is not
+   * anything.
+   */
+  const requested = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
+  if (!Number.isFinite(requested) || requested <= 0) {
+    throw unprocessable("E_AGENT_LIFETIME_INVALID", {
+      what: `a lifetime of ${String(input.lifetimeDays)} days is not a length of time`,
+      why: "an agent's expiry is the thing that makes the credential temporary, so it has to be a positive "
+        + `number of days. Longer than ${MAX_LIFETIME_DAYS} is shortened to it rather than refused, because `
+        + "asking for more is a reasonable thing to want",
+      fix: `pass a positive number of days, up to ${MAX_LIFETIME_DAYS}`,
+    });
+  }
+  const days = Math.min(requested, MAX_LIFETIME_DAYS);
   const at = new Date(ctx.now()).toISOString();
   const expiresAt = new Date(ctx.now() + days * 86_400_000).toISOString();
   const id = ctx.id(ID_PREFIXES.agent);
@@ -268,7 +312,20 @@ export async function revokeAgent(env: Env, ctx: Ctx, orgId: string, actorUserId
 Promise<void> {
   await assertAdmin(env, orgId, actorUserId);
   const at = new Date(ctx.now()).toISOString();
-  const outcome = await auditedBatch(env, ctx, orgId, {
+  /*
+   * The entry is **gated on there being a live agent to revoke**.
+   *
+   * The `UPDATE` was already conditional on `revoked_at IS NULL` and a comment explained that zero changes is
+   * not an error — which is true, and was not the question. The entry was written regardless, so a second
+   * press recorded a second withdrawal of something already withdrawn, and a revoke of an identifier that
+   * never existed recorded a withdrawal of nothing at all. An administrator working through guessed
+   * identifiers would write themselves a trail of revocations that did not happen, in the one artifact whose
+   * value is that it did.
+   *
+   * Still not an error for the caller: they asked for the agent to be withdrawn and it is withdrawn. The
+   * difference is only in what the trail claims.
+   */
+  await auditedBatch(env, ctx, orgId, {
     action: "agent.revoked",
     outcome: "ok",
     actorUserId,
@@ -278,10 +335,10 @@ Promise<void> {
     env.CATALOG.prepare(
       "UPDATE agents SET revoked_at = ? WHERE org_id = ? AND id = ? AND revoked_at IS NULL",
     ).bind(at, orgId, agentId),
-  ]);
-  // The batch's second statement. Zero changes means it was already revoked or never existed, and neither is
-  // an error worth raising — the caller asked for it to be withdrawn and it is.
-  void outcome;
+  ], {
+    sql: "SELECT 1 FROM agents WHERE org_id = ? AND id = ? AND revoked_at IS NULL",
+    params: [orgId, agentId],
+  });
 }
 
 /** Every agent in this organization, newest first. Never the token, and never its hash. */

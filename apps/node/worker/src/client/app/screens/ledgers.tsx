@@ -5,7 +5,8 @@ import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipie
 
 import { Nothing } from "../chrome.tsx";
 import {
-  configureTransport, type SendRow, useAudit, useDoctor, useLogs, useSends, useTransport,
+  type AuditRow, configureTransport, type SendRow, useAudit, useDoctor, useLogs, useSends,
+  useTransport,
 } from "../api.ts";
 
 /**
@@ -272,6 +273,22 @@ export function Outbox() {
   );
 }
 
+/**
+ * Who an entry is attributed to, in one string.
+ *
+ * The table showed no actor at all — not the identifier, not the kind, not the delegator — so the interface
+ * answered *what happened* and never *who did it*, which is half of what an audit trail is for.
+ *
+ * A machine's entry reads `agt_… for usr_…`, because those two facts are one answer and splitting them across
+ * columns invites a reader to take the first without the second. `node` and `installer` have no identifier by
+ * construction — `audit.ts` says so on `actorKind` — so the kind is the whole label.
+ */
+function actorLabel(entry: AuditRow): string {
+  if (entry.actor_user_id === null) return entry.actor_kind;
+  if (entry.delegator_user_id === null) return entry.actor_user_id;
+  return `${entry.actor_user_id} for ${entry.delegator_user_id}`;
+}
+
 export function Audit() {
   const audit = useAudit();
   const [verdict, setVerdict] = useState<string | null>(null);
@@ -314,6 +331,7 @@ export function Audit() {
             <tr>
               <th scope="col" className="num">Seq</th>
               <th scope="col">Action</th>
+              <th scope="col">Actor</th>
               <th scope="col">Outcome</th>
               <th scope="col">Subject</th>
               <th scope="col" className="num">At</th>
@@ -324,6 +342,7 @@ export function Audit() {
               <tr key={entry.id}>
                 <td className="num mono dim">{entry.seq}</td>
                 <td className="mono">{entry.action}</td>
+                <td className="mono dim">{actorLabel(entry)}</td>
                 <td>
                   <span className={`state state-audit-${entry.outcome}`}>{entry.outcome}</span>
                 </td>

@@ -215,6 +215,38 @@ for themselves is one person deciding both halves.
 All three agent routes are `operator` and reach no machine. An agent that could mint agents escapes its own
 ceiling in a single call, and one that could list them holds a map of how to escalate.
 
+### The trail names the person, and now something can read it
+
+`audit_entries.delegator_user_id` shipped with L1, inside the hashed form. Two things then kept it a secret
+(audit P1-1): **four** call sites populated it out of every audited act in the product, and
+`GET /api/audit` did not select it. So an agent's act recorded `agt_…` as the actor and nothing as the
+delegator, and even where a delegator *was* recorded no reader could ask for it. A field inside the hash that
+no surface exposes is worse than a missing one — a missing field is an obvious gap, while a
+written-and-invisible one reads as a question already answered.
+
+The suggested remedy was a typed actor union threaded through every audited operation so the field could not be
+omitted. The fix took the other route, and the argument was already written in `audit.ts` beside `kindOfActor`:
+attribution derived from the identifier's typed prefix is *structural*, while a design where each call site
+passes it *"would be correct on the day it was written and wrong the first time a new effect node called a
+fifth function"*. A delegator is the same shape of fact as a kind. So it is derived from the actor's prefix,
+with nothing to thread and no caller who can forget — including callers that do not exist yet.
+
+Three details:
+
+- **Derived at write time and stored.** A trail that re-derived the sponsor when somebody *read* it would
+  change its answer the moment an agent was reassigned, and an audit trail whose answers move is what the
+  chain exists to prevent. Derived once, hashed, immutable — which is what this column's own docstring always
+  demanded.
+- **An explicit value wins.** `butler/effects.ts` passes a Butler's sponsor from its *pinned ceiling* — the
+  version's sponsor as published rather than as it stands now. That is better information than a lookup, and
+  precisely the answer that must not drift.
+- **It costs a person nothing.** `sponsorOf` returns on a regular-expression test before preparing a
+  statement, so a `usr_` actor — nearly every audited act — pays no query. An `agt_` pays one indexed read.
+
+The audit table in the interface showed no actor at all before this: not the identifier, not the kind, not the
+delegator. It now reads `agt_… for usr_…` in one cell, because those are one answer and splitting them across
+columns invites a reader to take the first without the second.
+
 ### What this is not
 
 Not an AI capability. Whether the holder is a language model, a script or a colleague's cron job is outside

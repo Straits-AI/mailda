@@ -1,6 +1,7 @@
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
+import { sponsorOf } from "./delegation.ts";
 import { unavailable } from "./errors.ts";
 
 /**
@@ -980,11 +981,43 @@ async function buildEntries(
     const actorKind: ActorKind = event.actorKind ?? kindOfActor(event.actorUserId ?? null);
     const detail = boundedDetail(event.detail);
 
+    /*
+     * The delegator, **derived when the call site did not say** (audit P1-1).
+     *
+     * The column existed, was inside the hashed form, and was populated by four call sites out of every
+     * audited act in this product. Everything else an agent did recorded `agt_…` as the actor and nothing as
+     * the delegator — so the trail named the machine and not the person accountable for it, which is the whole
+     * reason the column was added.
+     *
+     * The suggested remedy was a typed actor union threaded through every audited operation so the field could
+     * not be omitted. This is the other route, and the argument for it is already written above beside
+     * `kindOfActor`: attribution derived from the identifier's typed prefix is *structural*, while a design
+     * where each call site passes it "would be correct on the day it was written and wrong the first time a
+     * new effect node called a fifth function". A delegator is the same shape of fact as a kind, and the same
+     * reasoning applies without amendment. Nothing to thread, no signature to widen, and no caller who can
+     * forget — including callers that do not exist yet.
+     *
+     * **At write time, and stored.** That is what keeps faith with this field's own docstring: a trail that
+     * re-derived the sponsor when somebody *read* it would change its answer the moment an agent was
+     * reassigned, and an audit trail whose answers move is what the chain exists to prevent. Derived once,
+     * hashed, immutable.
+     *
+     * **An explicit value wins.** `butler/effects.ts` passes a Butler's sponsor from its *pinned ceiling*,
+     * which is the version's sponsor as published rather than as it stands now — better information than a
+     * lookup, and precisely the answer that must not drift.
+     *
+     * The cost is one indexed read for an `agt_` actor and **nothing at all** for a `usr_` one: `sponsorOf`
+     * returns on a regular-expression test before preparing a statement. Nearly every audited act is a person
+     * acting for themselves, so the p95 send path is unchanged.
+     */
+    const delegatorUserId = event.delegatorUserId
+      ?? (event.actorUserId == null ? null : (await sponsorOf(env, orgId, event.actorUserId)) ?? null);
+
     const fields = {
       seq, at,
       actorUserId: event.actorUserId ?? null,
       actorKind,
-      delegatorUserId: event.delegatorUserId ?? null,
+      delegatorUserId,
       action: event.action,
       subject: event.subject ?? null,
       outcome: event.outcome,
@@ -993,7 +1026,7 @@ async function buildEntries(
     const hash = await sha256Hex(prevHash + canonical(fields));
     const id = ctx.id("aud");
 
-    const values = [id, orgId, seq, at, fields.actorUserId, actorKind, fields.delegatorUserId,
+    const values = [id, orgId, seq, at, fields.actorUserId, actorKind, delegatorUserId,
       event.action, fields.subject, event.outcome, detail, prevHash, hash];
 
     statements.push(gate === undefined

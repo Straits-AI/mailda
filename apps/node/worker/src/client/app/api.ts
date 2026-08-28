@@ -164,6 +164,15 @@ export interface AuditRow {
   at: string;
   actor_user_id: string | null;
   actor_kind: string;
+  /**
+   * The person accountable for an act a machine performed. Null when the actor is a person acting for
+   * themselves, which is nearly every entry.
+   *
+   * The column had been written and hashed into the chain since #109 L1 and was exposed by no surface, so the
+   * trail knew which human stood behind an `agt_` and no reader could ask it (audit P1-1). A field inside the
+   * hash that nothing shows is worse than a missing one — it reads as a question already answered.
+   */
+  delegator_user_id: string | null;
   action: string;
   subject: string | null;
   outcome: string;
