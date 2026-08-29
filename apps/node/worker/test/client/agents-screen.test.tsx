@@ -93,13 +93,50 @@ function mount(agents: unknown[], minted?: unknown) {
       return Response.json({ revoked: true, message: "Revoked." });
     }
     if (call.path.startsWith("/api/agents")) return Response.json({ agents });
-    if (call.path.startsWith("/api/mailboxes")) {
-      return Response.json({ mailboxes: [{ id: "mbx_support", name: "Support", addresses: null }] });
+    if (call.path.startsWith("/api/people/") && call.path.endsWith("/mailboxes")) {
+      return Response.json({
+        mailboxes: [
+          {
+            mailboxId: "mbx_support",
+            mailboxName: "Support",
+            relations: ["mailbox.content.read", "message.export", "send.propose"],
+          },
+          {
+            mailboxId: "mbx_billing",
+            mailboxName: "Billing",
+            relations: ["mailbox.content.read", "message.export"],
+          },
+          // A mailbox the sponsor holds nothing on: listed, and not selectable.
+          { mailboxId: "mbx_legal", mailboxName: "Legal", relations: [] },
+        ],
+      });
+    }
+    if (call.path.startsWith("/api/people")) {
+      return Response.json({
+        people: [
+          { id: "usr_ana000000000000000001", email: "ana@example.com", created_at: "", relations: [] },
+          { id: "usr_ben000000000000000001", email: "ben@example.com", created_at: "", relations: [] },
+        ],
+      });
     }
     return undefined;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><Agents /></QueryClientProvider>);
+}
+
+/**
+ * Click one relation's checkbox **under a named mailbox**.
+ *
+ * Scoped, because the fixture has two mailboxes and every relation label appears under each. An unscoped
+ * `findByText("mailbox.content.read")` is ambiguous — and worse, when it was not ambiguous it silently meant
+ * "whichever mailbox rendered first", which is what let a per-mailbox requirement look satisfied.
+ */
+async function pick(relation: string, mailbox: string) {
+  const { fireEvent } = await import("@testing-library/react");
+  const box = (await screen.findByText(mailbox)).closest("div")!;
+  const label = [...box.querySelectorAll("label")].find((one) => one.textContent?.includes(relation))!;
+  fireEvent.click(label.querySelector("input")!);
 }
 
 beforeEach(() => {
@@ -264,11 +301,7 @@ describe("the mint form completes the authority, not only the credential", () =>
       target: { value: "triage" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
-    // The relation's own checkbox, reached through its label rather than by index — the capability
-    // checkboxes come first and their count is not this test's business.
-    const relation = (await screen.findByText("mailbox.content.read")).closest("label")!
-      .querySelector("input")!;
-    fireEvent.click(relation);
+    await pick("mailbox.content.read", "Support");
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     await waitFor(() => expect(posted.length).toBe(1));
@@ -283,8 +316,10 @@ describe("the mint form completes the authority, not only the credential", () =>
     // `mailbox.content.read` is the one somebody granting access is most likely to get wrong.
     mount([]);
     expect(
-      await screen.findByText("See that mail exists — senders, subjects, when. Not the message itself."),
-    ).toBeTruthy();
+      (await screen.findAllByText("See that mail exists — senders, subjects, when. Not the message itself."))
+        .length,
+      "the relation is offered with no description of what granting it does",
+    ).toBeGreaterThan(0);
   });
 
   it("names the relation a chosen capability is missing", async () => {
@@ -312,8 +347,7 @@ describe("the mint form completes the authority, not only the credential", () =>
     const { fireEvent } = await import("@testing-library/react");
     await screen.findByText("mail.read");
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
-    const wrong = (await screen.findByText("send.propose")).closest("label")!.querySelector("input")!;
-    fireEvent.click(wrong);
+    await pick("send.propose", "Support");
 
     expect(
       await screen.findByText(/needs mailbox\.content\.read and message\.export/),
@@ -327,10 +361,7 @@ describe("the mint form completes the authority, not only the credential", () =>
     const { fireEvent } = await import("@testing-library/react");
     await screen.findByText("mail.read");
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
-    for (const relation of ["mailbox.content.read", "message.export"]) {
-      const input = (await screen.findByText(relation)).closest("label")!.querySelector("input")!;
-      fireEvent.click(input);
-    }
+    for (const relation of ["mailbox.content.read", "message.export"]) await pick(relation, "Support");
     expect(screen.queryByText(/needs mailbox\.content\.read/)).toBeNull();
   });
 
@@ -395,5 +426,104 @@ describe("the list says where an agent reaches, and whether it still does", () =
     // rendering failure rather than as a fact.
     mount([agent({ grants: [] })]);
     expect(await screen.findByText("no mailbox")).toBeTruthy();
+  });
+});
+
+describe("a capability's relations must land on one mailbox, not be spread across two", () => {
+  /*
+   * The review collapsed every selected relation into one set, so `content.read` on Support plus
+   * `message.export` on Billing read as satisfying `mail.read` — and no mailbox had the two relations that
+   * route needs together. The condition is `∃m: content.read(m) ∧ export(m)`; what was tested was
+   * `(∃m₁: content.read(m₁)) ∧ (∃m₂: export(m₂))`, which is a different statement and a positive-looking
+   * review over a credential that does not work.
+   */
+  it("still warns when the two relations are on different mailboxes", async () => {
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+
+    await pick("mailbox.content.read", "Support");
+    await pick("message.export", "Billing");
+
+    expect(
+      await screen.findByText(/on the same mailbox/),
+      "relations spread across two mailboxes were accepted as satisfying one capability",
+    ).toBeTruthy();
+  });
+
+  it("clears once one mailbox carries both", async () => {
+    // The control. A warning that cannot be satisfied is one people mint through.
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+
+    await pick("mailbox.content.read", "Support");
+    await pick("message.export", "Support");
+
+    expect(screen.queryByText(/on the same mailbox/)).toBeNull();
+  });
+});
+
+describe("the mint form asks about the sponsor, not about the caller", () => {
+  /*
+   * It used `useMailboxes()` — the work-queue rail, which lists mailboxes the **caller** sends from. So an
+   * administrator could only select mailboxes they personally work in: a read-only sponsor's were
+   * unselectable, an export-only sponsor's were, and so was any mailbox administered by somebody who does not
+   * send from it. The form also always sent the signed-in user as sponsor, while the Node has supported
+   * naming somebody else since the layer shipped.
+   */
+  it("lists every mailbox with what the sponsor holds, including the ones they hold nothing on", async () => {
+    /*
+     * Listed and not selectable, rather than omitted. A form that hid them leaves an administrator concluding
+     * the mailbox was deleted — and "it is not here" and "you cannot use it here" are different answers.
+     */
+    mount([]);
+    expect(await screen.findByText("Legal")).toBeTruthy();
+    expect(screen.getByText("this person holds nothing here")).toBeTruthy();
+
+    const legal = screen.getByText("Legal").closest("div")!;
+    const inputs = [...legal.querySelectorAll("input")];
+    expect(inputs.length, "the mailbox rendered no relations at all").toBeGreaterThan(0);
+    expect(
+      inputs.every((one) => one.hasAttribute("disabled")),
+      "a relation the sponsor does not hold was selectable — the mint refuses it",
+    ).toBe(true);
+  });
+
+  it("offers only what the sponsor holds on each mailbox", async () => {
+    // Billing has no `send.propose` in the fixture: the backend would refuse that grant, so offering it would
+    // be an offer that fails at mint.
+    mount([]);
+    const billing = (await screen.findByText("Billing")).closest("div")!;
+    const propose = [...billing.querySelectorAll("label")]
+      .find((one) => one.textContent?.includes("send.propose"))!;
+    expect(propose.querySelector("input")!.hasAttribute("disabled")).toBe(true);
+
+    const support = screen.getByText("Support").closest("div")!;
+    const supportPropose = [...support.querySelectorAll("label")]
+      .find((one) => one.textContent?.includes("send.propose"))!;
+    expect(
+      supportPropose.querySelector("input")!.hasAttribute("disabled"),
+      "a relation the sponsor does hold was refused, so nothing can be minted",
+    ).toBe(false);
+  });
+
+  it("lets an administrator name somebody else as the sponsor", async () => {
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    const chooser = await screen.findByRole("combobox");
+    fireEvent.change(chooser, { target: { value: "usr_ben000000000000000001" } });
+
+    fireEvent.change(screen.getByPlaceholderText("what this agent is for"), { target: { value: "for ben" } });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
+
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(
+      posted[0],
+      "the form sent the signed-in user, so the Node's named-sponsor support was unreachable",
+    ).toMatchObject({ sponsorUserId: "usr_ben000000000000000001" });
   });
 });

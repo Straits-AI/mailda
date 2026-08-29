@@ -1,6 +1,6 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
 import type { MailboxRelation } from "./access.ts";
-import { capabilityIds, routesFor } from "@mailda/contract/capability";
+import { capabilityIds, offerableCapabilities, routesFor } from "@mailda/contract/capability";
 import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
@@ -279,6 +279,24 @@ export async function mintAgent(
    * rather than like a ceiling.
    */
   const wanted = [...new Set(input.capabilities)];
+  /*
+   * Offerable, not merely known. `routesFor` expands anything in the vocabulary, and a capability whose
+   * routes need `org.admin` or requester ownership expands into a ceiling no agent can satisfy — the
+   * credential mints and is refused on every route it names. The nine that did this are gone from the
+   * vocabulary; this is what stops the next one being conferred while somebody is still writing it.
+   */
+  const offerable = new Set(offerableCapabilities().map((one) => one.id));
+  const unusable = wanted.filter((id) => !offerable.has(id) && capabilityIds().includes(id));
+  if (unusable.length > 0) {
+    throw unprocessable("E_AGENT_CAPABILITY_UNUSABLE", {
+      what: `these capabilities cannot be given to a machine: ${unusable.join(", ")}`,
+      why: "their routes require authority no mint can confer — organization administration, or ownership of "
+        + "an artefact somebody else created. An agent granted one would authenticate and be refused on "
+        + "every route the capability names",
+      fix: "choose from GET /api/agent-capabilities, which lists only what an agent can actually be "
+        + "provisioned for",
+    });
+  }
   const expansion = routesFor(wanted);
   if (expansion.unknown.length > 0) {
     throw unprocessable("E_AGENT_CAPABILITY_UNKNOWN", {
@@ -608,6 +626,54 @@ Promise<void> {
     sql: "SELECT 1 FROM agents WHERE org_id = ? AND id = ? AND revoked_at IS NULL",
     params: [orgId, agentId],
   });
+}
+
+/**
+ * Every mailbox in the organization, with the relations a **named sponsor** holds on each.
+ *
+ * ## Why the mint screen cannot use the mailbox rail
+ *
+ * `GET /api/mailboxes` is the work queue: `mailboxQueues` lists mailboxes the *caller* holds `send.propose`
+ * on. The mint form used it, so an administrator could only select mailboxes they personally send from —
+ * excluding a read-only sponsor's mailboxes, an export-only sponsor's, and any mailbox the administrator
+ * administers without working in. Which is most of them, on a Node where administration and daily work are
+ * different jobs.
+ *
+ * It also asks about the wrong person. A ceiling is bounded by the **sponsor's** authority, so the question is
+ * *what can this sponsor reach* — and the form was answering *what can I reach*, then refusing at mint when
+ * the two differed.
+ *
+ * Team relations are included for the same reason they are everywhere else: a relation held through a team is
+ * held, and most people's access comes that way.
+ */
+export async function sponsorReach(env: Env, orgId: string, sponsorUserId: string): Promise<{
+  mailboxId: string; mailboxName: string; relations: string[];
+}[]> {
+  const rows = await env.CATALOG.prepare(
+    `SELECT m.id AS mailbox_id, m.name AS mailbox_name, t.relation
+       FROM mailboxes m
+       LEFT JOIN relationship_tuples t
+         ON t.org_id = m.org_id AND t.object_type = 'mailbox' AND t.object_id = m.id
+        AND t.subject_id IN (SELECT ? UNION SELECT team_id FROM team_members
+                                            WHERE org_id = ? AND user_id = ?)
+      WHERE m.org_id = ?
+      ORDER BY m.name, t.relation`,
+  ).bind(sponsorUserId, orgId, sponsorUserId, orgId)
+    .all<{ mailbox_id: string; mailbox_name: string; relation: string | null }>();
+
+  const byMailbox = new Map<string, { mailboxId: string; mailboxName: string; relations: string[] }>();
+  for (const row of rows.results) {
+    const held = byMailbox.get(row.mailbox_id)
+      ?? { mailboxId: row.mailbox_id, mailboxName: row.mailbox_name, relations: [] };
+    /*
+     * Every mailbox appears, including the ones the sponsor holds nothing on — a `LEFT JOIN` rather than an
+     * inner one. An administrator choosing needs to see that a mailbox exists and is *not* available, because
+     * the alternative is a form that silently omits it and a person who concludes it was deleted.
+     */
+    if (row.relation !== null) held.relations.push(row.relation);
+    byMailbox.set(row.mailbox_id, held);
+  }
+  return [...byMailbox.values()];
 }
 
 /**

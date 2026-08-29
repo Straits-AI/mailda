@@ -38,6 +38,9 @@ const SRC = new URL("../../src/", import.meta.url).pathname;
 /** Functions whose tuple predicate carries the sponsor term. Checked, not trusted — see below. */
 const INTERSECTED: Record<string, string> = {
   hasAnyRelation: "the single-object check: mailbox read, send.propose and ediscovery.export all land here",
+  readableMailboxes: "the readable catalogue, and it carries the sponsor term for the same reason the "
+    + "listing does: it answers *which mailboxes may I read*, so an agent naming one its sponsor cannot reach "
+    + "would be handed the id of a mailbox the very next request refuses.",
   mailboxesWithRelation: "the many-objects sweep, which must agree with hasAnyRelation and briefly did not",
   messagePageQuery: "the listing and both arms of the searched plan",
   isAdmin: "organization-admin, via sponsorOf — thirty callers pass a bare identifier into it",
@@ -69,6 +72,10 @@ const EXEMPT: Record<string, string> = {
     + "kind, worked out first and reached by a different route (`DISTINCT subject_id`).",
   effectiveOnMailbox: "the Butler's own intersection, as `effectiveOn`",
   metered: "`doctor` counting rows in a table by name. No predicate.",
+  sponsorReach: "the mint surface's catalogue: every mailbox with what a **named person** holds on it. It "
+    + "answers about somebody else's authority for an administrator choosing, not about a principal's own — "
+    + "and applying the sponsor term to it would be asking whether the sponsor's sponsor holds the relation, "
+    + "which is not a question. `org.admin` on the route is what bounds who may ask.",
   agentReach: "reports what each agent was granted and whether the sponsor still holds it — so it **computes** "
     + "the intersection rather than being bounded by one. It is the administrator's view of somebody else's "
     + "authority, not a principal reading their own: an agent asking this question would be asking about "

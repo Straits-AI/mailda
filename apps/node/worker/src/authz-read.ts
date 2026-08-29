@@ -387,6 +387,42 @@ export async function mailboxesWithRelation(
 }
 
 /**
+ * The mailboxes this principal may **read**, with their names.
+ *
+ * ## Why this exists beside `mailboxesWithRelation`
+ *
+ * `GET /api/mailboxes` is the work-queue rail: `mailboxQueues` lists mailboxes the caller holds `send.propose`
+ * on, with claim counts. That is right for the queue and wrong as a catalogue, and the agent capability
+ * vocabulary had it inside `mail.read` — so a read-only agent could open messages and received an **empty
+ * mailbox list**, with no product-level way to discover the ids it was allowed to read.
+ *
+ * Two questions, two routes. This one answers *which mailboxes may I read*, which is what a reader needs and
+ * what `mail.read` promises.
+ *
+ * `metadata.read` **or** `content.read`, matching `RELATIONS_FOR_METADATA` and the listing itself: somebody
+ * who may see that mail exists may see which mailbox it exists in, and a catalogue narrower than the listing
+ * would name fewer mailboxes than the reader can already page.
+ */
+export async function readableMailboxes(
+  env: Env,
+  who: Principal,
+): Promise<{ id: string; name: string }[]> {
+  const subjects = await readableSubjects(env, who);
+  const placeholders = subjects.map(() => "?").join(", ");
+  // The sponsor term, as everywhere a principal's own reach is computed — `delegation.ts` states the rule.
+  const sponsor = await sponsorTerm(env, who.orgId, who.userId, "t");
+  const { results } = await env.CATALOG.prepare(
+    `SELECT DISTINCT m.id, m.name FROM mailboxes m
+       JOIN relationship_tuples t ON t.org_id = m.org_id AND t.object_type = 'mailbox' AND t.object_id = m.id
+      WHERE m.org_id = ? AND t.subject_id IN (${placeholders})
+        AND t.relation IN ('mailbox.metadata.read', 'mailbox.content.read')
+        ${sponsor.sql}
+      ORDER BY m.name`,
+  ).bind(who.orgId, ...subjects, ...sponsor.params).all<{ id: string; name: string }>();
+  return results;
+}
+
+/**
  * May this principal read the **content** of mail in this mailbox — a standing relation, or a live supervised
  * grant wide enough to reach the bytes?
  *

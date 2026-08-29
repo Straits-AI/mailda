@@ -1,6 +1,6 @@
 import { createSystemCtx, ID_PREFIXES, idPattern } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
-import { heldCapabilities, offerableCapabilities } from "@mailda/contract/capability";
+import { heldCapabilities, offerableCapabilities, requiresOf } from "@mailda/contract/capability";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
@@ -13,7 +13,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 import { claimNode } from "./claim.ts";
 import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
-import { agentReach, listAgents, mintAgent, revokeAgent } from "./agents.ts";
+import { agentReach, listAgents, mintAgent, revokeAgent, sponsorReach } from "./agents.ts";
 import { migrate } from "./migrate.ts";
 import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
@@ -23,6 +23,7 @@ import { acceptInbound } from "./ingress.ts";
 import {
   listMessages, authorize, authorizeExport, authorizeSendExport, mailboxesWithRelation, maySend,
   principalFor, readableSubjects,
+  readableMailboxes,
 } from "./authz-read.ts";
 import { authorizeExportObject, exportsForReport, requestExport, runExport } from "./exports.ts";
 import { isAppRoute } from "./app-routes.ts";
@@ -695,6 +696,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * `claim` is what the reply button calls (#42) — claiming and opening the composer are one act, because
      * the guarantee lives in the compare-and-swap rather than in a separate gesture.
      */
+    /*
+     * The **readable** catalogue, which is a different question from the queue rail below it. `mail.read`
+     * used to contain that rail — so a read-only agent could open messages and got an empty mailbox list,
+     * with no way to discover the ids it was allowed to read.
+     */
+    if (url.pathname === "/api/mailboxes/readable" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      return Response.json({ mailboxes: await readableMailboxes(env, who) });
+    }
+
     if (url.pathname === "/api/mailboxes" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
@@ -724,6 +736,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * wearing a disguise"*. A queue belongs to one mailbox, so this route could never answer without it.
      */
     const queuePattern = idPattern(ID_PREFIXES.mailbox).source.slice(1, -1);
+    const personPattern = idPattern(ID_PREFIXES.user).source.slice(1, -1);
     // One line, because `test/node/route-registry.test.ts` reads this idiom per line: a constructor split
     // across lines is a served route the scanner cannot see, and the failure it reports is the opposite one.
     const mailboxQueue = new RegExp(`^/api/mailboxes/(${queuePattern})/cases$`).exec(url.pathname);
@@ -2572,7 +2585,28 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         );
       }
       await assertAdmin(env, who.orgId, who.userId);
-      return Response.json({ capabilities: offerableCapabilities() });
+      /*
+       * `requires` is **computed** and sent, rather than a field on the literal. The client needs it to warn
+       * per capability, and deriving it here keeps the one source in `authority.ts`: a client copy would be
+       * the correspondence table this whole layer removed.
+       */
+      return Response.json({
+        capabilities: offerableCapabilities().map((one) => ({ ...one, requires: requiresOf(one) })),
+      });
+    }
+
+    /*
+     * The administrator's resource catalogue for minting: every mailbox, with what the **named sponsor** holds
+     * on each. The form used the work-queue rail, which lists mailboxes the *caller* sends from — so a
+     * read-only sponsor's mailboxes were unselectable and an administrator could not provision an agent for a
+     * mailbox they administer but do not work in.
+     */
+    const sponsorMailboxes = new RegExp(`^/api/people/(${personPattern})/mailboxes$`).exec(url.pathname);
+    if (sponsorMailboxes !== null && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      await assertAdmin(env, who.orgId, who.userId);
+      return Response.json({ mailboxes: await sponsorReach(env, who.orgId, sponsorMailboxes[1]!) });
     }
 
     if (url.pathname === "/api/agents" && request.method === "GET") {

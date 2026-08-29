@@ -1759,3 +1759,35 @@ export const sendRetriedResponse = z.object({
   }).loose(),
   detail: z.string().min(1),
 }).loose();
+
+/**
+ * The mailboxes a caller may **read**, which is not the work-queue list.
+ *
+ * `GET /api/mailboxes` answers *where do I have work*, by `send.propose`. This answers *what may I read*, and
+ * they are different questions — the agent capability vocabulary had the first inside `mail.read`, so a
+ * read-only agent could open messages and received an empty catalogue.
+ */
+export const readableMailboxListResponse = z.object({
+  mailboxes: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+  }).strict()),
+}).strict();
+
+/**
+ * Every mailbox in the organization, with the relations a named sponsor holds on each.
+ *
+ * The mint form's resource catalogue. It used the work-queue list, which answers *what can the caller send
+ * from* — so a read-only sponsor's mailboxes were unselectable, and an administrator could not provision an
+ * agent for a mailbox they administer without working in.
+ *
+ * Mailboxes the sponsor holds nothing on are **included with an empty list**, deliberately: a form that
+ * omitted them would leave somebody concluding the mailbox had been deleted.
+ */
+export const sponsorMailboxListResponse = z.object({
+  mailboxes: z.array(z.object({
+    mailboxId: z.string().min(1),
+    mailboxName: z.string().min(1),
+    relations: z.array(z.string().min(1)),
+  }).strict()),
+}).strict();

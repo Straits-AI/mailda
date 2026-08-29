@@ -29,6 +29,7 @@
     "./agent": "./src/agent.ts",
     "./capability": "./src/capability.ts",
     "./relations": "./src/relations.ts",
+    "./authority": "./src/authority.ts",
     "./naming": "./src/naming.ts"
   }
 }

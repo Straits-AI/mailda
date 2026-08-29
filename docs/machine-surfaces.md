@@ -16,10 +16,10 @@ would come to disagree about which acts are safe, which is the worst thing they 
 
 | tier | offered | what it is | count |
 |:--|:--|:--|--:|
-| `read` | yes | answers a question, changes nothing | 37 |
+| `read` | yes | answers a question, changes nothing | 38 |
 | `act` | yes | changes something, and a person can undo it | 8 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 29 |
-| `operator` | **no** | installation, credentials, maintenance | 29 |
+| `operator` | **no** | installation, credentials, maintenance | 30 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 
@@ -291,6 +291,57 @@ not have to guess.
 route in none would be grantable in principle and unconferrable in practice, with nothing reporting it; a route
 in two would make a ceiling ambiguous to revoke. The first is the likely one, because it happens by not doing
 something.
+
+### Authority lives on the route, and everything else is derived from it
+
+Authorization is enforced per **route**; the capability vocabulary described it per **capability**, as a
+hand-written summary of a set of routes. Sixteen summaries of facts that live in handlers, and they drifted in
+three directions at once:
+
+| capability | said | the routes check |
+|:--|:--|:--|
+| `mail.read` | content read reaches the original `.eml` | that route checks `message.export` too |
+| `send.observe` | `mailbox.content.read` | `/submitted` checks `message.export` too |
+| nine others | no relation at all | `org.admin`, or ownership of somebody else's export |
+
+The last row is the one that mattered. Nine capabilities offered authority the product **cannot provision**:
+an administrator could select `butler.read`, mint the agent, and hand over a credential refused on every route
+it named.
+
+Each route now declares an `authority` — `none`, `organization`, `mailbox` with `allOf`/`anyOf`, or `export`
+with requester ownership — and the capability's requirements, the mint's validation, the interface's warnings
+and the tests are all read from it. `anyOf` contributes nothing to a requirement and `allOf` contributes all of
+it: a route satisfied by *either* of two relations cannot say which to grant, while one needing *both* must, or
+the mint hands over a credential that fails on its own promise.
+
+**`agentGrantableActions()` intersects the exposure tier with provisionability.** The tier says what kind of
+act a route is; the authority says whether a machine can ever be given what it requires. Twenty-eight routes
+are ordinary reads that check `org.admin`, and they were being offered. Deriving it here rather than adding a
+sixth tier keeps the table answering the question it was built for.
+
+The nine capabilities are gone as a *consequence* rather than by a list — their routes left the grantable set,
+so the closed world stopped requiring a home for them. Building any of them means deciding that agents may hold
+organization-scoped authority: recursive intersection through the sponsor, a depth bound, root attribution, and
+organization grants selectable at mint. That is a design, not a list entry.
+
+### The test that makes a capability a promise
+
+`test/agent-capabilities.test.ts` mints an agent with **exactly** what each capability declares and drives
+every route in it. Nothing may answer with an authority refusal, and the routes with real fixtures behind them
+must answer 200 — because §5C makes an invisible thing and an absent one answer alike, so a 404 on a
+non-existent id hides an under-provisioned caller. That last part is what makes it decisive: understating
+`mail.read`'s authority passed the weaker version.
+
+Two more things the route-level model fixed on the way:
+
+- **`GET /api/mailboxes` is the work queue**, listing mailboxes the caller holds `send.propose` on. It sat
+  inside `mail.read`, so a read-only agent could open messages and received an empty catalogue with no way to
+  discover the ids it could read. `GET /api/mailboxes/readable` answers the other question.
+- **The mint form used that same rail**, so an administrator could only select mailboxes they personally send
+  from, and always sent themselves as sponsor. It reads `GET /api/people/:userId/mailboxes` now — every
+  mailbox with what the **named sponsor** holds on it, with the rest listed and unselectable rather than
+  hidden. Requirements are evaluated per mailbox: `content.read` on one and `message.export` on another no
+  longer reads as satisfying a capability that needs both together.
 
 ### What this is not
 

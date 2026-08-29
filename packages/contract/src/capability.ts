@@ -1,4 +1,6 @@
 import { agentGrantableActions } from "./agent.ts";
+import { machineProvisionable, requiredRelations } from "./authority.ts";
+import { ROUTES, type RouteSpec } from "./routes.ts";
 import type { AgentGrantableRelation } from "./relations.ts";
 
 /**
@@ -64,35 +66,18 @@ export interface Capability {
    * would let "read mail" and "read about mail" look alike at the moment somebody is choosing between them.
    */
   readonly reachesContent: boolean;
-  /**
-   * The mailbox relations this capability's routes actually check, so nothing has to guess.
-   *
-   * Two things went wrong without it. The mint screen warned only when **zero** relations were chosen, so
-   * `mail.read` with `send.propose` reviewed as fine and produced an agent that cannot read anything. And a
-   * hand-written `NEEDS_A_MAILBOX` list in the client was a second correspondence table free to drift from
-   * this one — the exact shape the capability vocabulary was introduced to remove one level up.
-   *
-   * Empty means the capability reaches nothing mailbox-shaped: `health.read` and `identity.read` are real and
-   * common, and requiring a grant for them would make the ordinary diagnostic agent impossible to create.
-   *
-   * **Every relation listed is needed**, not any one of them. `mail.read` names `mailbox.content.read` *and*
-   * `message.export` because `GET /api/messages/:receiptId/raw` checks both — `hasAnyRelation` for the export
-   * and `mayRead` for the content — and the description used to promise the original bytes on content read
-   * alone.
-   */
-  readonly requires: readonly AgentGrantableRelation[];
   readonly routes: readonly string[];
 }
 
 export const CAPABILITIES: readonly Capability[] = [
   {
     id: "mail.read",
-    says: "Read mail: list it, open a message, and fetch the original bytes. The original `.eml` needs "
-      + "`message.export` as well as content read — the route checks both.",
+    says: "Read mail: list the mailboxes you may read, page their messages, open one, and fetch the "
+      + "original bytes. The original `.eml` needs `message.export` as well as content read — the route "
+      + "checks both.",
     reachesContent: true,
-    requires: ["mailbox.content.read", "message.export"],
     routes: [
-      "GET /api/mailboxes",
+      "GET /api/mailboxes/readable",
       "GET /api/messages",
       "GET /api/messages/:receiptId/body",
       "GET /api/messages/:receiptId/raw",
@@ -103,14 +88,13 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Write and revise drafts. Sending is not included and cannot be — sealing a send is withheld from "
       + "every machine.",
     reachesContent: true,
-    requires: ["send.propose"],
     routes: ["GET /api/drafts", "GET /api/drafts/:draftId", "PUT /api/drafts"],
   },
   {
     id: "send.observe",
-    says: "See what has been sent and how each delivery went.",
+    says: "See what has been sent, how each delivery went, and the bytes that were submitted. The submitted "
+      + "message needs `message.export` as well as content read, the same as an inbound original.",
     reachesContent: true,
-    requires: ["mailbox.content.read"],
     routes: ["GET /api/sends", "GET /api/sends/:sendId/submitted"],
   },
   {
@@ -118,112 +102,104 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Cancel a send that has not gone out yet. Its own capability rather than part of observing, because "
       + "it stops somebody else's message leaving.",
     reachesContent: false,
-    requires: ["send.propose"],
     routes: ["POST /api/sends/:sendId/cancel"],
   },
   {
     id: "queue.read",
-    says: "See the case queues: what is unclaimed, what is claimed, and what is assigned to whom.",
+    says: "See where there is work: the mailboxes you may send from, and each one's case queue.",
     reachesContent: false,
-    requires: ["send.propose"],
-    routes: ["GET /api/mailboxes/:mailboxId/cases"],
+    routes: ["GET /api/mailboxes", "GET /api/mailboxes/:mailboxId/cases"],
   },
   {
-    id: "matter.open",
-    says: "List matters and open new ones. Closing one is withheld — it settles what an investigation may "
-      + "still reach.",
+    id: "notice.read",
+    says: "Read the notices due on mailboxes you can read — what is waiting, and on which mailbox.",
     reachesContent: false,
-    requires: [],
-    routes: ["GET /api/matters", "POST /api/matters"],
-  },
-  {
-    id: "butler.read",
-    says: "Read Butlers, their versions and every run they have made, including a run's full trace.",
-    reachesContent: true,
-    requires: [],
-    routes: [
-      "GET /api/butler-pauses",
-      "GET /api/butler-runs",
-      "GET /api/butler-runs/:runId",
-      "GET /api/butler-runs/:runId/inspect",
-      "GET /api/butlers",
-      "GET /api/butlers/:butlerId",
-    ],
-  },
-  {
-    id: "butler.author",
-    says: "Draft and simulate Butlers. **Publishing is withheld** — a published Butler acts on its own, so "
-      + "putting one into force needs a person.",
-    reachesContent: false,
-    requires: [],
-    routes: ["POST /api/butlers", "POST /api/butlers/:butlerId/simulate", "PUT /api/butlers/:butlerId/draft"],
-  },
-  {
-    id: "policy.author",
-    says: "Read policies and draft changes to them. Putting a policy into force is withheld.",
-    reachesContent: false,
-    requires: [],
-    routes: ["GET /api/policies", "POST /api/policies", "PUT /api/policies/:policyId/draft"],
-  },
-  {
-    id: "directory.read",
-    says: "Read who is in this organization, which teams they are in, and what each of them may reach.",
-    reachesContent: false,
-    requires: [],
-    routes: [
-      "GET /api/access",
-      "GET /api/invitations",
-      "GET /api/people",
-      "GET /api/teams",
-      "GET /api/teams/:teamId",
-      "GET /api/teams/:teamId/members",
-    ],
-  },
-  {
-    id: "supervision.read",
-    says: "Read supervised-access grants, pending approvals and notices due.",
-    reachesContent: false,
-    requires: [],
-    routes: ["GET /api/approvals", "GET /api/notifications", "GET /api/supervised"],
-  },
-  {
-    id: "hold.read",
-    says: "Read the legal holds in force.",
-    reachesContent: false,
-    requires: [],
-    routes: ["GET /api/holds"],
-  },
-  {
-    id: "export.read",
-    says: "Read e-discovery exports **and the exported message bytes inside them**. This reaches content that "
-      + "somebody else assembled, so it is not part of reading mail.",
-    reachesContent: true,
-    requires: ["ediscovery.export"],
-    routes: ["GET /api/exports", "GET /api/exports/:exportId/objects/:objectId"],
+    routes: ["GET /api/notifications"],
   },
   {
     id: "health.read",
-    says: "Read this Node's own condition: the doctor's findings, transport, breakers and pauses. The "
-      + "operational log is withheld from machines — it carries error detail and request ids from across the "
-      + "organization.",
+    says: "Read this Node's own condition: the doctor's findings, the send breakers and any domain pauses. "
+      + "The doctor's organization-wide half is an administrator's and is not included.",
     reachesContent: false,
-    requires: [],
-    routes: [
-      "GET /api/breakers",
-      "GET /api/doctor",
-      "GET /api/domain-pauses",
-      "GET /api/transport",
-      "GET /health",
-    ],
+    routes: ["GET /api/breakers", "GET /api/doctor", "GET /api/domain-pauses", "GET /health"],
   },
   {
     id: "identity.read",
-    says: "Read who this credential is acting as, and the signing keys a client needs to check a session.",
+    says: "Read who this credential is acting as and whose authority it borrows, and the signing keys a "
+      + "client needs to check a session.",
     reachesContent: false,
-    requires: [],
     routes: ["GET /.well-known/jwks.json", "GET /api/auth/passkeys", "GET /api/me"],
   },
 ];
+
+/*
+ * ## Nine capabilities were removed, and the removal is the finding
+ *
+ * `matter.open`, `butler.read`, `butler.author`, `policy.author`, `directory.read`, `hold.read`,
+ * `export.read`, `supervision.read` and the transport half of `health.read` all named routes that check
+ * `org.admin`. `AGENT_GRANTABLE_RELATIONS` excludes that relation deliberately — an agent holding
+ * organization administration is a machine administering the organization it acts inside, while the
+ * delegation model's whole claim is that it acts *within* one person's authority.
+ *
+ * So they offered authority the product **cannot provision**. An administrator could select `butler.read`,
+ * mint the agent, and hand over a credential refused on every route it named. None of it was visible from the
+ * vocabulary, because the vocabulary described requirements by hand and those nine declared none.
+ *
+ * They are not withheld by a list here. They are gone because `agentGrantableActions()` now intersects the
+ * exposure tier with `machineProvisionable`, so their routes left the machine-grantable set and
+ * `capability-world` no longer requires a home for them. Deleting the entries was the consequence rather than
+ * the mechanism, which is what stops them coming back.
+ *
+ * Building any of them properly means deciding that agents may hold organization-scoped authority — recursive
+ * intersection through the sponsor, a depth bound, root attribution, and organization grants selectable in the
+ * mint surface. That is a design, not a list entry.
+ */
+
+
+/**
+ * The mailbox relations a capability's routes actually require, derived from their declared authority.
+ *
+ * ## Why this is computed and was written by hand
+ *
+ * Authorization is enforced per **route**; the vocabulary described it per **capability**. Sixteen hand-written
+ * summaries of facts that live in handlers, and they drifted in three directions at once — `mail.read`
+ * promising the original `.eml` on content read alone, `send.observe` omitting `message.export`, and seven
+ * capabilities declaring no relation while their routes require `org.admin`.
+ *
+ * A summary of a set of checks goes stale. The checks do not.
+ *
+ * `anyOf` contributes nothing, and `allOf` contributes everything. A route satisfied by *either* of two
+ * relations cannot say which an administrator should grant, so demanding one would refuse a legitimate
+ * ceiling; a route needing *both* must say so, or the mint hands over a credential that fails on its own
+ * promise.
+ */
+export function requiresOf(capability: Capability): readonly AgentGrantableRelation[] {
+  const all: readonly RouteSpec[] = ROUTES;
+  const byRoute = new Map(all.map((spec) => [`${spec.method} ${spec.path}`, spec.authority]));
+  const needed = new Set<AgentGrantableRelation>();
+  for (const route of capability.routes) {
+    for (const relation of requiredRelations(byRoute.get(route))) needed.add(relation);
+  }
+  return [...needed].sort();
+}
+
+/**
+ * Can an agent be provisioned to use every route in this capability?
+ *
+ * `organization` scope answers no, and that is the product decision the audit asked for: an agent holding
+ * `org.admin` is a machine administering the organization it acts inside, while the delegation model's whole
+ * claim is that it acts *within* one person's authority. Nested administration is a design somebody should
+ * make deliberately — recursive intersection, a depth bound, root attribution — not one that arrives because
+ * a capability listed a route.
+ *
+ * The alternative was to keep offering them. That is the state this replaces: an administrator could select
+ * `butler.read`, mint the agent, and hand over a credential refused on every route it names.
+ */
+export function machineUsable(capability: Capability): boolean {
+  const all: readonly RouteSpec[] = ROUTES;
+  const byRoute = new Map(all.map((spec) => [`${spec.method} ${spec.path}`, spec.authority]));
+  return capability.routes.every((route) => machineProvisionable(byRoute.get(route)));
+}
 
 /** Every capability id, sorted. */
 export function capabilityIds(): readonly string[] {
@@ -290,10 +266,16 @@ export function heldCapabilities(
  */
 export function offerableCapabilities(): readonly Capability[] {
   /*
-   * **Every** route, not some. A capability keeps its name when one route is reclassified as governed, so
-   * `some` would go on offering it while `mintAgent` refuses the complete expansion — an offer that mints
+   * **Every** route, on both counts. A capability keeps its name when one route is reclassified as governed,
+   * so `some` would go on offering it while `mintAgent` refuses the complete expansion — an offer that mints
    * nothing, which `docs/machine-surfaces.md` argues is worse than no offer at all.
+   *
+   * `machineUsable` is the second count and the one that removed seven capabilities: a route needing
+   * `org.admin` cannot be provisioned for an agent at all, so offering the capability was offering a
+   * credential refused on every route it named.
    */
   const grantable = new Set(agentGrantableActions());
-  return CAPABILITIES.filter((one) => one.routes.every((route) => grantable.has(route)));
+  return CAPABILITIES
+    .filter((one) => one.routes.every((route) => grantable.has(route)))
+    .filter(machineUsable);
 }

@@ -80,6 +80,8 @@ const UNDRIVEN: readonly string[] = [
   // Need a message whose body index has failed, which `test/message-search.test.ts` constructs.
   "GET /api/search/failed",
   "POST /api/search/repair",
+  // Needs a seeded person and mailboxes; `test/agents.test.ts` covers the shape it returns.
+  "GET /api/people/:userId/mailboxes",
   // Authentication paths with their own suites and their own cookie assertions.
   "POST /api/auth/login",
   "POST /api/auth/logout-everywhere",

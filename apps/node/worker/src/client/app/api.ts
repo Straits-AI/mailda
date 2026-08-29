@@ -1465,3 +1465,31 @@ export async function revokeAgent(agentId: string): Promise<{ ok: boolean; messa
     message: String(parsed?.message ?? parsed?.error ?? (response.ok ? "Revoked." : `Answered ${response.status}.`)),
   };
 }
+
+/** One mailbox on the mint surface, with what the named sponsor holds on it. */
+export interface SponsorMailbox {
+  mailboxId: string;
+  mailboxName: string;
+  /** Empty when the sponsor holds nothing here — the mailbox is still listed, and is not selectable. */
+  relations: string[];
+}
+
+/**
+ * Every mailbox, with what one person holds on each.
+ *
+ * The mint form's catalogue. It used `useMailboxes()`, which is the **work queue** — mailboxes the *caller*
+ * sends from — so a read-only sponsor's mailboxes were unselectable and an administrator could not provision
+ * an agent for a mailbox they administer without working in.
+ */
+export function useSponsorMailboxes(userId: string | null): UseQueryResult<
+  { mailboxes: SponsorMailbox[] }, Error
+> {
+  return useQuery({
+    queryKey: ["sponsor-mailboxes", userId],
+    enabled: userId !== null,
+    queryFn: () => read<{ mailboxes: SponsorMailbox[] }>(
+      GET("/api/people/:userId/mailboxes", { userId: userId! }),
+    ),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}

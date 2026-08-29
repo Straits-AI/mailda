@@ -3,7 +3,8 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMailboxes, useMe,
+  AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMe, usePeople,
+  useSponsorMailboxes,
   type AgentRelation, type AgentRow, type CapabilityRow,
 } from "../api.ts";
 
@@ -50,34 +51,69 @@ function standing(agent: AgentRow, now: number): { label: string; state: string 
 }
 
 /**
- * Which chosen capabilities do not have the relations they need, and what is missing.
+ * Which chosen capabilities cannot be satisfied by the relations selected, and what is missing.
  *
- * Derived from each capability's own `requires`, which the Node publishes. The first version carried a
- * hand-written `NEEDS_A_MAILBOX` set here — a second correspondence table, free to drift from the vocabulary,
- * which is the exact shape the capability layer was introduced to remove one level up.
+ * ## Per mailbox, which the first version was not
  *
- * **Per capability, not "any relation at all".** The old warning fired only when *zero* relations were
- * chosen, so `mail.read` paired with `send.propose` reviewed as fine and produced an agent that cannot read
- * anything. A requirement is satisfied when the relation is granted on **some** mailbox: which mailbox is the
- * administrator's business, and demanding it on every one would refuse the ordinary case of an agent that
- * reads one mailbox and drafts in another.
+ * It collapsed every selected relation into one set, so `content.read` on Mailbox A plus `message.export` on
+ * Mailbox B read as satisfying `mail.read` — and no mailbox had the two relations that route needs together.
+ * The condition is
+ *
+ * ```
+ *   ∃m: content.read(m) ∧ message.export(m)
+ * ```
+ *
+ * and what was tested was
+ *
+ * ```
+ *   (∃m₁: content.read(m₁)) ∧ (∃m₂: message.export(m₂))
+ * ```
+ *
+ * Those are not the same, and the difference is a positive-looking review over a credential that does not
+ * work. A capability is satisfied when **some one mailbox** carries all of its relations; which mailbox is
+ * the administrator's business, and demanding every mailbox would refuse the ordinary case of an agent that
+ * reads one and drafts in another.
  */
 function unmet(
   capabilities: CapabilityRow[],
   chosen: Set<string>,
   reach: Set<string>,
 ): { id: string; missing: string[] }[] {
-  const granted = new Set([...reach].map((key) => key.split("::")[1]!));
+  const byMailbox = new Map<string, Set<string>>();
+  for (const key of reach) {
+    const [mailboxId, relation] = key.split("::");
+    const held = byMailbox.get(mailboxId!) ?? new Set<string>();
+    held.add(relation!);
+    byMailbox.set(mailboxId!, held);
+  }
+
   return capabilities
-    .filter((one) => chosen.has(one.id))
-    .map((one) => ({ id: one.id, missing: one.requires.filter((r) => !granted.has(r)) }))
+    .filter((one) => chosen.has(one.id) && one.requires.length > 0)
+    .map((one) => {
+      // The mailbox that comes closest, so the message names what is missing *there* rather than in the
+      // abstract — "add message.export on Support" is an instruction; "add message.export" is a puzzle.
+      const shortfalls = [...byMailbox.values()]
+        .map((held) => one.requires.filter((relation) => !held.has(relation)));
+      const best = shortfalls.length === 0
+        ? [...one.requires]
+        : shortfalls.reduce((a, b) => (b.length < a.length ? b : a));
+      return { id: one.id, missing: best };
+    })
     .filter((one) => one.missing.length > 0);
 }
 
 function Minting({ onMinted }: { onMinted: () => void }) {
   const capabilities = useAgentCapabilities();
-  const mailboxes = useMailboxes();
   const me = useMe();
+  const people = usePeople();
+  /*
+   * The **sponsor's** catalogue, not the caller's queue. This was `useMailboxes()` — the work-queue rail,
+   * which lists mailboxes the *caller* sends from — so an administrator could only pick mailboxes they
+   * personally work in, and a read-only or export-only sponsor's were unselectable.
+   */
+  const [sponsor, setSponsor] = useState<string | null>(null);
+  const chosenSponsor = sponsor ?? me.data?.userId ?? null;
+  const mailboxes = useSponsorMailboxes(chosenSponsor);
   const [name, setName] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [days, setDays] = useState("30");
@@ -95,7 +131,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       name,
       // The caller, which is the common case: an administrator setting up their own automation. Naming
       // somebody else is a deliberate act and belongs on a route rather than defaulted to in a form.
-      sponsorUserId: me.data?.userId ?? "",
+      sponsorUserId: chosenSponsor ?? "",
       capabilities: [...chosen],
       grants: [...reach].map((key) => {
         const [mailboxId, relation] = key.split("::");
@@ -122,6 +158,28 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         void mint();
       }}
     >
+      {/*
+        * The sponsor is chosen, not assumed. The Node has supported naming somebody else since the layer
+        * shipped — an administrator setting up automation for a colleague is the ordinary case — and the form
+        * always sent the signed-in user, so the wider half of the route was unreachable from the product.
+        */}
+      <label>
+        <span>Acting for</span>
+        <select
+          value={chosenSponsor ?? ""}
+          onChange={(event) => setSponsor(event.target.value)}
+        >
+          {people.isSuccess
+            ? people.data.people.map((person) => (
+              <option key={person.id} value={person.id}>{person.email}</option>
+            ))
+            : <option value={chosenSponsor ?? ""}>{me.data?.userId ?? "…"}</option>}
+        </select>
+        <span className="dim">
+          The agent can never exceed this person, and stops when their access does.
+        </span>
+      </label>
+
       <label>
         <span>Name</span>
         <input
@@ -183,14 +241,24 @@ function Minting({ onMinted }: { onMinted: () => void }) {
           ? <p className="dim">No mailbox on this Node yet.</p>
           : null}
         {mailboxes.isSuccess ? mailboxes.data.mailboxes.map((box) => (
-          <div key={box.id} className="stack">
-            <strong>{box.name}</strong>
+          <div key={box.mailboxId} className="stack">
+            <strong>{box.mailboxName}</strong>
+            {box.relations.length === 0
+              ? <span className="dim">this person holds nothing here</span>
+              : null}
             {AGENT_RELATIONS.map((one) => {
-              const key = `${box.id}::${one.relation}`;
+              const key = `${box.mailboxId}::${one.relation}`;
+              /*
+               * Only what the sponsor holds is selectable. The backend refuses the rest — a grant the sponsor
+               * does not hold is written and never matches — so offering it would be an offer that fails at
+               * mint, which `docs/machine-surfaces.md` argues is worse than no offer.
+               */
+              const available = box.relations.includes(one.relation);
               return (
-                <label key={key} className="check">
+                <label key={key} className={available ? "check" : "check dim"}>
                   <input
                     type="checkbox"
+                    disabled={!available}
                     checked={reach.has(key)}
                     onChange={(event) => {
                       const next = new Set(reach);
@@ -239,8 +307,8 @@ function Minting({ onMinted }: { onMinted: () => void }) {
           {unmet(capabilities.data.capabilities, chosen, reach).map((one) => (
             <p key={one.id}>
               <span className="mono">{one.id}</span>
-              {` needs ${one.missing.join(" and ")}, which is not granted on any mailbox here — the agent `}
-              {"will authenticate and be refused."}
+              {` needs ${one.missing.join(" and ")} on the same mailbox as its other relations — no mailbox `}
+              {"here carries all of them, so the agent will authenticate and be refused."}
             </p>
           ))}
         </div>

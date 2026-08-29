@@ -42,12 +42,27 @@
 
 import type { ZodType } from "zod";
 
+import type { Authority } from "./authority.ts";
 import * as S from "./schemas.ts";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface RouteSpec {
   readonly method: HttpMethod;
+  /**
+   * What this route requires of the caller — see `authority.ts`.
+   *
+   * Declared beside the route because that is where the check is. The agent capability vocabulary used to
+   * describe the same fact per *capability*, as a hand-written summary of a set of routes, and every summary
+   * was a second copy that drifted: `mail.read` promising the original `.eml` on content read alone,
+   * `send.observe` omitting `message.export`, and seven capabilities declaring no relation at all while their
+   * routes require `org.admin` — authority no mint can confer.
+   *
+   * Optional on the type and **required in practice** for anything a machine may hold:
+   * `test/node/capability-world.test.ts` fails on a grantable route with no `authority`, and
+   * `machineProvisionable` answers `false` for an undeclared one, which is the fail-closed direction.
+   */
+  readonly authority?: Authority;
   /**
    * The path, with `:name` for a segment the Worker captures.
    *
@@ -122,16 +137,18 @@ export const METHOD_UNCHECKED: readonly string[] = [
 export const ROUTES = [
   // ---- the surface an unauthenticated caller reaches (ADR 30) ----------------------------------------
   {
+    authority: { scope: "none" },
     method: "GET", path: "/health",
     summary: "Whether this Node is up, and what is missing if it is not",
     response: S.healthResponse,
   },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
-  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", response: S.jwksResponse },
+  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "none" }, response: S.jwksResponse },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
   { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
   { method: "POST", path: "/api/agents", summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
   { method: "GET", path: "/api/agents", summary: "Every agent in this organization", response: S.agentListResponse },
+  { method: "GET", path: "/api/people/:userId/mailboxes", summary: "Every mailbox, with what this person holds on each — the mint surface's resource catalogue", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.sponsorMailboxListResponse },
   { method: "GET", path: "/api/agent-capabilities", summary: "What an agent may be granted, in this Node's own vocabulary", response: S.agentCapabilityListResponse },
   { method: "DELETE", path: "/api/agents/:agentId", summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
   { method: "GET", path: "/api/search/failed", summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
@@ -145,6 +162,7 @@ export const ROUTES = [
     response: S.prepareResponse,
   },
   {
+    authority: { scope: "none" },
     method: "GET", path: "/api/doctor",
     summary: "What this Node can and cannot do, with the evidence",
     response: S.doctorResponse,
@@ -160,7 +178,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
-  { method: "GET", path: "/api/me", summary: "Who this session is", response: S.meResponse },
+  { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "none" }, response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
   {
@@ -179,6 +197,7 @@ export const ROUTES = [
     response: S.signedInResponse,
   },
   {
+    authority: { scope: "none" },
     method: "GET", path: "/api/auth/passkeys",
     summary: "The passkeys this account holds. Never returns a public key",
     response: S.passkeyListResponse,
@@ -190,33 +209,35 @@ export const ROUTES = [
   },
 
   // ---- membership (#83) ------------------------------------------------------------------------------
-  { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", response: S.invitationListResponse },
+  { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.invitationListResponse },
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
   { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
-  { method: "GET", path: "/api/people", summary: "Everybody in this organization", response: S.peopleListResponse },
-  { method: "GET", path: "/api/teams", summary: "Every team", response: S.teamListResponse },
+  { method: "GET", path: "/api/people", summary: "Everybody in this organization", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.peopleListResponse },
+  { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamListResponse },
   { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },
-  { method: "GET", path: "/api/teams/:teamId", summary: "One team", response: S.teamDetailResponse },
+  { method: "GET", path: "/api/teams/:teamId", summary: "One team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamDetailResponse },
   { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team", response: S.teamCreatedResponse },
-  { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team", response: S.teamMembersResponse },
+  { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamMembersResponse },
   { method: "POST", path: "/api/teams/:teamId/members", summary: "Put somebody in a team, conferring every relation it holds", response: S.teamMembershipResponse },
   { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
-  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", response: S.accessResponse },
+  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.accessResponse },
   { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
   { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
-  { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", response: S.supervisedListResponse },
+  { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.supervisedListResponse },
   { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires", response: S.supervisedRequestedResponse },
 
   // ---- mail: reading -------------------------------------------------------------------------------
   {
+    authority: { scope: "mailbox", allOf: ["send.propose"] },
     method: "GET", path: "/api/mailboxes",
     summary: "The mailboxes this person may act in",
     response: S.mailboxListResponse,
   },
   { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {
+    authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] },
     method: "GET", path: "/api/messages",
     summary: "Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to "
       + "continue; null means nothing older is visible",
@@ -245,6 +266,7 @@ export const ROUTES = [
     response: S.messageListResponse,
   },
   {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
     method: "GET", path: "/api/messages/:receiptId/body",
     /*
      * **`:receiptId`, not `:messageId`, and the rename is a finding rather than a tidy-up.**
@@ -257,8 +279,9 @@ export const ROUTES = [
     summary: "One message's rendered body. Takes the receipt id that GET /api/messages returns as `id`",
     response: S.messageBodyResponse,
   },
-  { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" },
+  { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
     method: "GET", path: "/api/notifications",
     summary: "What has changed since the last poll",
     response: S.notificationListResponse,
@@ -273,7 +296,8 @@ export const ROUTES = [
    * Line 66 of this file already said so: *"a parameter the route cannot answer without is a path segment
    * wearing a disguise"*. A queue belongs to one mailbox, so this one could never answer without it.
    */
-  { method: "GET", path: "/api/mailboxes/:mailboxId/cases", summary: "The case queue in one mailbox", response: S.caseListResponse },
+  { method: "GET", path: "/api/mailboxes/readable", summary: "Mailboxes this caller may read, which is not the work-queue list", authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] }, response: S.readableMailboxListResponse },
+  { method: "GET", path: "/api/mailboxes/:mailboxId/cases", summary: "The case queue in one mailbox", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.caseListResponse },
   {
     method: "POST",
     path: "/api/cases/:caseId/:action",
@@ -288,18 +312,19 @@ export const ROUTES = [
   { method: "POST", path: "/api/conversations/merge", summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
-  { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", response: S.draftListResponse },
-  { method: "PUT", path: "/api/drafts", summary: "Save a draft", response: S.draftSavedResponse },
-  { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", response: S.draftDetailResponse },
+  { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
+  { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftSavedResponse },
+  { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
   { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
-  { method: "GET", path: "/api/sends", summary: "The outbox", response: S.sendListResponse },
+  { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", response: S.sendSealedResponse },
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
-  { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", response: S.sendCancelledResponse },
+  { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendCancelledResponse },
   { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed", response: S.sendRetriedResponse },
   { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
   { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
   {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] },
     method: "GET", path: "/api/sends/:sendId/submitted",
     /*
      * **Not JSON**, and it took driving it to find that out: it answers the submitted message itself, as
@@ -311,8 +336,9 @@ export const ROUTES = [
   },
 
   // ---- governance: policy, approvals, holds, breakers (#60, #61, #63, #75) --------------------------
-  { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", response: S.policyListResponse },
+  { method: "GET", path: "/api/policies", summary: "Every policy, with the version that is live", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.policyListResponse },
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/policies",
     summary: "Create a policy",
     // Strict, and #93's `createPolicyRequest` argues why this route is not one of the ones that tolerate
@@ -320,6 +346,7 @@ export const ROUTES = [
     request: S.createPolicyRequest, response: S.policyDraftResponse,
   },
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "PUT",
     path: "/api/policies/:policyId/draft",
     /*
@@ -330,32 +357,35 @@ export const ROUTES = [
     request: S.editPolicyDraftRequest, response: S.policyDraftResponse,
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
-  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", response: S.approvalListResponse },
+  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.approvalListResponse },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
-  { method: "GET", path: "/api/holds", summary: "Legal holds in force", response: S.holdListResponse },
+  { method: "GET", path: "/api/holds", summary: "Legal holds in force", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
-  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", response: S.matterListResponse },
-  { method: "POST", path: "/api/matters", summary: "Open a matter", response: S.matterResponse },
+  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterListResponse },
+  { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterResponse },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
   {
+    authority: { scope: "none" },
     method: "GET", path: "/api/breakers",
     summary: "The rate breakers, with the readings behind them",
     response: S.breakerListResponse,
   },
-  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", response: S.domainPauseListResponse },
+  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "none" }, response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
-  { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", response: S.butlerListResponse },
+  { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerListResponse },
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/butlers", summary: "Create a Butler and its first draft",
     request: S.createButlerRequest, response: S.butlerDraftResponse,
   },
-  { method: "GET", path: "/api/butlers/:butlerId", summary: "One Butler and its version history", response: S.butlerDetailResponse },
+  { method: "GET", path: "/api/butlers/:butlerId", summary: "One Butler and its version history", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerDetailResponse },
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "PUT", path: "/api/butlers/:butlerId/draft", summary: "Replace a Butler's draft",
     request: S.editButlerDraftRequest, response: S.butlerDraftResponse,
   },
@@ -365,15 +395,16 @@ export const ROUTES = [
     response: S.butlerPublishedResponse,
   },
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/butlers/:butlerId/simulate",
     summary: "Dry-run a Butler: walk it, cause nothing, report what a live run would do",
     request: S.simulateRequest, response: S.simulationResponse,
   },
-  { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", response: S.butlerRunListResponse },
-  { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", response: S.butlerRunDetailResponse },
-  { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", response: S.butlerRunInspectionResponse },
+  { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunListResponse },
+  { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunDetailResponse },
+  { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunInspectionResponse },
   { method: "POST", path: "/api/butler-runs/:runId/replay", summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
-  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", response: S.butlerPauseListResponse },
+  { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerPauseListResponse },
   { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason", response: S.butlerPauseResumedResponse },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
@@ -386,13 +417,14 @@ export const ROUTES = [
     method: "GET", path: "/api/logs", summary: "The operational log",
     response: S.logListResponse,
   },
-  { method: "GET", path: "/api/exports", summary: "Export jobs", response: S.exportListResponse },
+  { method: "GET", path: "/api/exports", summary: "Export jobs", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.exportListResponse },
   { method: "POST", path: "/api/exports", summary: "Start an e-discovery export", response: S.exportRequestedResponse },
   { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export", response: S.exportRunResponse },
-  { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" },
+  { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" , authority: { scope: "export", allOf: ["ediscovery.export"], owner: "requester" } },
 
   // ---- the sending transport's credentials (#86, ADR 33) ------------------------------------------
   {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/transport",
     summary: "Which adapter carries this Node's mail, and what both can say about themselves",
     response: S.transportResponse,

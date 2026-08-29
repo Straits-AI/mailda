@@ -1,4 +1,5 @@
 import { ROUTES, type RouteSpec } from "./routes.ts";
+import { machineProvisionable } from "./authority.ts";
 
 /**
  * Which of this Node's routes a machine may be offered, and which it may not (#88, #89, ADR 12).
@@ -298,6 +299,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/agents",
     "GET /api/agents",
     "GET /api/agent-capabilities",
+    // The mint surface's resource catalogue: every mailbox with what a named person holds on it, which is
+    // the same map of how to escalate that listing agents is.
+    "GET /api/people/:userId/mailboxes",
     "DELETE /api/agents/:agentId",
     /*
      * The audit trail and the operational log, withheld for the same reason and found the same way.
@@ -393,6 +397,21 @@ export function agentGrantableActions(): readonly string[] {
   return all
     .map((spec) => ({ spec, classification: exposureOf(spec) }))
     .filter(({ classification }) => classification.tier === "read" || classification.tier === "act")
+    /*
+     * **And provisionable.** The tier says what kind of act a route is; `authority` says whether a machine can
+     * ever be given what it requires. Both are true and they answer different questions, which is why this is
+     * an intersection rather than a widened tier.
+     *
+     * Twenty-five routes are `read` or `act` and check `org.admin` — the whole of Butler and policy authoring,
+     * the directory, holds, matters, exports, supervision, transport. `AGENT_GRANTABLE_RELATIONS` excludes
+     * `org.admin` deliberately, so an agent needs itself *and* its sponsor to be administrators, which no mint
+     * can confer. They were offered anyway: an administrator could select `butler.read`, mint the agent, and
+     * hand over a credential refused on every route it names.
+     *
+     * Deriving it here rather than adding a sixth tier keeps the tier table answering the question it was
+     * built for. A route is still an ordinary read; it is simply not one a machine can be provisioned for.
+     */
+    .filter(({ spec }) => machineProvisionable(spec.authority))
     .map(({ spec }) => `${spec.method} ${spec.path}`)
     .sort();
 }

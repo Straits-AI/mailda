@@ -373,6 +373,19 @@ describe("the ledgers answer what the contract says they do", () => {
     expect(confirmed.confirmed).toBeGreaterThan(0);
   });
 
+  it("GET /api/mailboxes/readable, which is not the work-queue list", async () => {
+    /*
+     * The catalogue `mail.read` needs. `GET /api/mailboxes` is the queue rail — mailboxes the caller holds
+     * `send.propose` on — and it sat inside the reading capability, so a read-only agent could open messages
+     * and received an empty list with no way to discover the ids it was allowed to read.
+     */
+    const held = await cookie();
+    const read = await answers("GET", "/api/mailboxes/readable", { cookie: held }) as {
+      mailboxes: { id: string; name: string }[];
+    };
+    expect(Array.isArray(read.mailboxes)).toBe(true);
+  });
+
   it("GET /api/agent-capabilities, which the mint surface is chosen from", async () => {
     /*
      * Live, not only schema-covered. The vocabulary is published so the interface does not restate it, and a
@@ -1583,8 +1596,16 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The 99th is `GET /api/agent-capabilities`: the vocabulary an agent's ceiling is chosen from, published
      * so the interface offering it does not carry a second copy. `operator`, like the three above it — a
      * machine reading the list of what machines may be granted is reading a map of how to escalate.
+     *
+     * The 100th is `GET /api/mailboxes/readable`: the catalogue `mail.read` needs, added because
+     * `GET /api/mailboxes` is the work-queue rail — `mailboxQueues` lists mailboxes the caller holds
+     * `send.propose` on — so a read-only agent could open messages and received an empty list.
+     *
+     * The 101st is `GET /api/people/:userId/mailboxes`, the mint surface's resource catalogue: every mailbox
+     * with what a **named sponsor** holds on it. The form used the queue rail for that too, so an
+     * administrator could only provision mailboxes they personally send from.
      */
-    expect(coverage.total).toBe(99);
+    expect(coverage.total).toBe(101);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

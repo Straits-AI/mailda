@@ -78,6 +78,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Every mailbox, with what this person holds on each — the mint surface's resource catalogue
+   *
+   * `GET /api/people/:userId/mailboxes`
+   */
+  async getPeopleByUserIdMailboxes(params: { userId: string }): Promise<z.infer<typeof S.sponsorMailboxListResponse>> {
+    return await this.json("GET", "/api/people/:userId/mailboxes", params, undefined) as z.infer<typeof S.sponsorMailboxListResponse>;
+  }
+
+  /**
    * What an agent may be granted, in this Node's own vocabulary
    *
    * `GET /api/agent-capabilities`
@@ -450,6 +459,15 @@ export class GeneratedClient extends Transport {
    */
   async getNotifications(): Promise<z.infer<typeof S.notificationListResponse>> {
     return await this.json("GET", "/api/notifications", {}, undefined) as z.infer<typeof S.notificationListResponse>;
+  }
+
+  /**
+   * Mailboxes this caller may read, which is not the work-queue list
+   *
+   * `GET /api/mailboxes/readable`
+   */
+  async getMailboxesReadable(): Promise<z.infer<typeof S.readableMailboxListResponse>> {
+    return await this.json("GET", "/api/mailboxes/readable", {}, undefined) as z.infer<typeof S.readableMailboxListResponse>;
   }
 
   /**

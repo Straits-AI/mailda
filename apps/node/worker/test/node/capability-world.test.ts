@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { agentGrantableActions } from "@mailda/contract/agent";
 import {
-  CAPABILITIES, capabilityIds, heldCapabilities, offerableCapabilities, routesFor,
+  CAPABILITIES, capabilityIds, heldCapabilities, machineUsable, offerableCapabilities, requiresOf, routesFor,
 } from "@mailda/contract/capability";
+import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
 import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 
 /**
@@ -82,7 +83,12 @@ describe("every grantable route has exactly one capability", () => {
 
   it("finds a real vocabulary, so a broken import cannot pass by comparing nothing", () => {
     // The control. Two empty sets satisfy all three assertions above.
-    expect(GRANTABLE.size, "no grantable routes — has exposureOf changed shape?").toBeGreaterThan(20);
+    /*
+     * The floor was 20 when the grantable set was 48. It is 20 now: `agentGrantableActions()` intersects the
+     * exposure tier with `machineProvisionable`, and twenty-eight routes check `org.admin` or requester
+     * ownership — authority no mint can confer. They were being offered.
+     */
+    expect(GRANTABLE.size, "no grantable routes — has exposureOf changed shape?").toBeGreaterThan(10);
     expect(CAPABILITIES.length, "no capabilities").toBeGreaterThan(5);
     expect(CAPABILITIES.every((one) => one.routes.length > 0)).toBe(true);
   });
@@ -164,8 +170,8 @@ describe("expanding and reading back a ceiling", () => {
   });
 
   it("omits capabilities the agent holds nothing of", () => {
-    const held = heldCapabilities(routesFor(["hold.read"]).routes).held;
-    expect(held.map((one) => one.id)).toEqual(["hold.read"]);
+    const held = heldCapabilities(routesFor(["identity.read"]).routes).held;
+    expect(held.map((one) => one.id)).toEqual(["identity.read"]);
   });
 
   it("reports a route that belongs to no capability rather than dropping it", () => {
@@ -186,60 +192,130 @@ describe("expanding and reading back a ceiling", () => {
   });
 });
 
-describe("a capability declares the mailbox relations its routes actually check", () => {
+describe("a capability's requirements come from its routes, not from a summary of them", () => {
   /*
-   * Without this the mint screen carried a hand-written `NEEDS_A_MAILBOX` set — a second correspondence table,
-   * free to drift from the vocabulary, which is the exact shape the capability layer was introduced to remove
-   * one level up. And its warning fired only when **zero** relations were chosen, so `mail.read` paired with
-   * `send.propose` reviewed as fine and produced an agent that cannot read anything.
+   * `requires` was a hand-written field: sixteen summaries of facts that live in handlers. They drifted in
+   * three directions at once — `mail.read` promising the original `.eml` on content read alone,
+   * `send.observe` omitting `message.export`, and **nine** capabilities declaring no relation while their
+   * routes check `org.admin`, which no mint can confer.
+   *
+   * It is derived now. These assertions are about the derivation, and the execution suite in
+   * `test/agent-capabilities.test.ts` is what proves the derivation is the truth.
    */
-  it("names a relation for every capability that reaches a mailbox, and none for the ones that do not", () => {
-    const reaching = CAPABILITIES.filter((one) => one.requires.length > 0).map((one) => one.id).sort();
-    const free = CAPABILITIES.filter((one) => one.requires.length === 0).map((one) => one.id).sort();
-
+  it("names both relations where a route checks both", () => {
     /*
-     * Both lists asserted exactly. A capability quietly gaining or losing a requirement changes what the mint
-     * screen warns about and what an administrator has to grant, and neither direction should be possible
-     * without somebody saying so here.
-     */
-    expect(reaching, "the set of capabilities needing a mailbox has changed")
-      .toEqual(["export.read", "mail.draft", "mail.read", "queue.read", "send.cancel", "send.observe"]);
-    expect(free.length, "no capability reaches nothing mailbox-shaped, which cannot be right")
-      .toBeGreaterThan(5);
-  });
-
-  it("requires message.export where the route checks it, not only content read", () => {
-    /*
-     * The contradiction this replaced. `mail.read` promised the original `.eml` on content read alone, and
-     * `GET /api/messages/:receiptId/raw` checks `message.export` **as well** — `hasAnyRelation` for the export
-     * and `mayRead` for the content. An agent granted the capability and content read got a 404 on the one
-     * route the description singled out.
+     * The contradiction this replaced. `GET /api/messages/:receiptId/raw` checks `message.export` through
+     * `hasAnyRelation` **and** content read through `mayRead`; the capability promised the bytes on content
+     * read alone, so an agent granted exactly what it asked for got a 404 on the one route the description
+     * singled out.
      */
     const read = CAPABILITIES.find((one) => one.id === "mail.read")!;
-    expect(read.routes, "the raw route left mail.read, so this assertion is about nothing")
-      .toContain("GET /api/messages/:receiptId/raw");
-    expect(read.requires, "the capability promises original bytes on content read alone").toContain(
-      "message.export",
-    );
-    expect(read.says, "the description still promises the bytes without saying what they cost")
-      .toContain("message.export");
+    expect(read.routes).toContain("GET /api/messages/:receiptId/raw");
+    expect(requiresOf(read)).toEqual(["mailbox.content.read", "message.export"]);
+
+    // And the same route's authority is where that comes from, rather than a second list agreeing with it.
+    const spec = (ROUTES as readonly RouteSpec[])
+      .find((one) => one.method === "GET" && one.path === "/api/messages/:receiptId/raw")!;
+    expect(spec.authority).toEqual({
+      scope: "mailbox", allOf: ["mailbox.content.read", "message.export"],
+    });
   });
 
-  it("names only relations an administrator can actually grant an agent", () => {
+  it("names message.export for the submitted bytes too", () => {
+    // `send.observe` declared `mailbox.content.read` while `/submitted` shares the inbound raw path's
+    // decision — `authorizeSendExport`, which is content read *and* export.
+    expect(requiresOf(CAPABILITIES.find((one) => one.id === "send.observe")!))
+      .toEqual(["mailbox.content.read", "message.export"]);
+  });
+
+  it("requires nothing where the routes are unscoped", () => {
+    // The control. A derivation that returned everything for everybody would satisfy the two above.
+    expect(requiresOf(CAPABILITIES.find((one) => one.id === "identity.read")!)).toEqual([]);
+    expect(requiresOf(CAPABILITIES.find((one) => one.id === "health.read")!)).toEqual([]);
+  });
+
+  it("does not turn an anyOf into a requirement", () => {
     /*
-     * The mint request's enum is the door. A capability requiring something outside it would produce a
-     * warning naming a relation nobody can select — an instruction that cannot be followed, which is worse
-     * than none.
+     * `GET /api/messages` is satisfied by metadata read *or* content read. A route satisfied by either cannot
+     * say which an administrator should grant, so demanding one would refuse a legitimate ceiling — a
+     * metadata-only agent is a real and useful thing.
      */
+    const spec = (ROUTES as readonly RouteSpec[])
+      .find((one) => one.method === "GET" && one.path === "/api/messages")!;
+    expect(spec.authority).toMatchObject({ scope: "mailbox" });
+    expect(requiresOf(CAPABILITIES.find((one) => one.id === "mail.read")!))
+      .not.toContain("mailbox.metadata.read");
+  });
+
+  it("offers only capabilities a machine can actually be provisioned for", () => {
     /*
-     * Derived from the mint request's own enum, not restated. The first version of this assertion hand-copied
-     * the list and quietly included `ediscovery.export` — which `export.read` needs and the enum did **not**
-     * offer, so the test passed while the requirement was unsatisfiable through the only door that grants it.
-     * A hand-copied expectation is the correspondence problem this whole layer exists to remove.
+     * Nine capabilities named routes checking `org.admin`, which `AGENT_GRANTABLE_RELATIONS` excludes
+     * deliberately. So they offered authority the product cannot provision: select `butler.read`, mint, and
+     * hand over a credential refused on every route it names.
+     *
+     * Asserted as an equality between two derived sets rather than against a list, so neither a new
+     * capability nor a reclassified route can drift past it.
+     */
+    expect(offerableCapabilities().map((one) => one.id).sort())
+      .toEqual(CAPABILITIES.map((one) => one.id).sort());
+    for (const capability of CAPABILITIES) {
+      expect(machineUsable(capability), `${capability.id} names a route no machine can be provisioned for`)
+        .toBe(true);
+    }
+  });
+
+  it("keeps the work queue out of the reading capability", () => {
+    /*
+     * `GET /api/mailboxes` is the queue rail — `mailboxQueues` lists mailboxes the caller holds
+     * `send.propose` on. It sat inside `mail.read`, so a read-only agent could open messages and received an
+     * **empty catalogue**, with no product-level way to discover the ids it was allowed to read. Two
+     * questions, two routes.
+     */
+    const read = CAPABILITIES.find((one) => one.id === "mail.read")!;
+    expect(read.routes, "the work-queue list is back inside the reading capability")
+      .not.toContain("GET /api/mailboxes");
+    expect(read.routes).toContain("GET /api/mailboxes/readable");
+    expect(requiresOf(read), "reading mail requires the authority to send from it")
+      .not.toContain("send.propose");
+    expect(CAPABILITIES.find((one) => one.id === "queue.read")!.routes).toContain("GET /api/mailboxes");
+  });
+});
+
+describe("every declared authority names relations this Node can actually confer", () => {
+  it("uses only relations the mint offers, or a scope that says it cannot be provisioned", () => {
+    /*
+     * The check that found `ediscovery.export` missing from the mint enum while `export.read` required it: a
+     * requirement naming a relation nobody can select is an instruction that cannot be followed, which is
+     * worse than none.
+     *
+     * Derived from the mint request's own enum rather than restated — the first version of this hand-copied
+     * the list and quietly included the value that was missing, so it passed while the requirement was
+     * unsatisfiable.
+     *
+     * `organization` and `export` are allowed to name things outside that enum, because they say in their own
+     * shape that no mint can satisfy them. `machineProvisionable` is what turns that into a refusal.
      */
     const grantable = new Set<string>(AGENT_GRANTABLE_RELATIONS);
-    const strays = CAPABILITIES.flatMap((one) => one.requires.map((r) => `${one.id}:${r}`))
-      .filter((entry) => !grantable.has(entry.split(":").slice(1).join(":")));
-    expect(strays, "these requirements name relations the mint surface cannot confer").toEqual([]);
+    const strays: string[] = [];
+    for (const spec of ROUTES as readonly RouteSpec[]) {
+      const authority = spec.authority;
+      if (authority === undefined || authority.scope !== "mailbox") continue;
+      for (const relation of [...(authority.allOf ?? []), ...(authority.anyOf ?? [])]) {
+        if (!grantable.has(relation)) strays.push(`${spec.method} ${spec.path} → ${relation}`);
+      }
+    }
+    expect(strays, "these mailbox authorities name relations the mint surface cannot confer").toEqual([]);
+  });
+
+  it("declares an authority for every route a machine may be granted", () => {
+    /*
+     * `machineProvisionable(undefined)` is `false`, so an unclassified route leaves the grantable set rather
+     * than entering it — the fail-closed direction. This asserts the consequence directly, because "it fails
+     * closed" is a sentence and a missing declaration is a route somebody forgot to think about.
+     */
+    const undeclared = (ROUTES as readonly RouteSpec[])
+      .filter((spec) => GRANTABLE.has(`${spec.method} ${spec.path}`) && spec.authority === undefined)
+      .map((spec) => `${spec.method} ${spec.path}`);
+    expect(undeclared, "these routes are grantable to a machine and declare no authority").toEqual([]);
   });
 });

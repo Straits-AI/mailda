@@ -375,8 +375,13 @@ describe("the pinned ceiling cannot name a capability machines are withheld", ()
     const grantable = new Set(agentGrantableActions());
     const overreach = minted.agent.actions.filter((action) => !grantable.has(action));
     expect(overreach, "the vocabulary conferred authority no machine may hold").toEqual([]);
+    /*
+     * The widest ceiling is twenty routes now, not forty-eight: `agentGrantableActions()` intersects the
+     * exposure tier with `machineProvisionable`, and twenty-eight routes check `org.admin` or requester
+     * ownership. They were being conferred.
+     */
     expect(minted.agent.actions.length, "the widest ceiling is empty, so nothing is being checked")
-      .toBeGreaterThan(20);
+      .toBeGreaterThan(10);
   });
 
   it("refuses a capability name it does not have", async () => {
@@ -1058,7 +1063,7 @@ describe("a pinned ceiling narrows when the classification does", () => {
      * reach for is re-minting, which will not help and cannot be made to.
      */
     const narrow = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "narrow", sponsorUserId: SPONSOR, capabilities: ["hold.read"],
+      name: "narrow", sponsorUserId: SPONSOR, capabilities: ["identity.read"],
     });
     await expect(
       principalFor(testEnv, createSystemCtx(), asAgent(narrow.token, "/api/messages")),
