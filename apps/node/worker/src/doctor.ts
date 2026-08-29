@@ -298,6 +298,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),
     ...(await checkAgentCeilings(env, ctx, claim?.org_id ?? null)),
     ...(await checkRecoveryRestores(env, ctx, claim?.org_id ?? null)),
+    ...(await checkRecoveryConflicts(env, claim?.org_id ?? null)),
   );
 
 
@@ -2230,6 +2231,111 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
  * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
  */
 /**
+ * A persisted restore's detail, read defensively enough to survive a row this version did not write.
+ *
+ * The first version caught invalid JSON and then trusted the shape — so a row carrying `"content": 7` reached
+ * `.map()` and took the whole diagnostic down with it. `doctor` is what somebody opens when things have
+ * already gone wrong, and a disaster report that 500s on a malformed historical record is one that fails at
+ * exactly the moment it is needed.
+ *
+ * Unreadable is a value, not an exception: the caller reports the record rather than the numbers.
+ */
+function restoreDetail(raw: string | null): {
+  restored: number; conflicted: string[]; error?: string; readable: boolean;
+} {
+  if (raw === null) return { restored: 0, conflicted: [], readable: true };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { restored: 0, conflicted: [], readable: false };
+  }
+  if (typeof parsed !== "object" || parsed === null) return { restored: 0, conflicted: [], readable: false };
+
+  const numbers = (part: unknown): number[] | null =>
+    part === undefined ? []
+      : Array.isArray(part) && part.every((n) => typeof n === "number") ? part
+      : null;
+  const side = (part: unknown): { content: number[]; credential: number[] } | null => {
+    if (part === undefined) return { content: [], credential: [] };
+    if (typeof part !== "object" || part === null) return null;
+    const content = numbers((part as { content?: unknown }).content);
+    const credential = numbers((part as { credential?: unknown }).credential);
+    return content === null || credential === null ? null : { content, credential };
+  };
+
+  const restored = side((parsed as { restored?: unknown }).restored);
+  const conflicted = side((parsed as { conflicted?: unknown }).conflicted);
+  const error = (parsed as { error?: unknown }).error;
+  if (restored === null || conflicted === null) return { restored: 0, conflicted: [], readable: false };
+  return {
+    restored: restored.content.length + restored.credential.length,
+    conflicted: [
+      ...conflicted.content.map((n) => `content ${n}`),
+      ...conflicted.credential.map((n) => `credential ${n}`),
+    ],
+    ...(typeof error === "string" ? { error } : {}),
+    readable: true,
+  };
+}
+
+/**
+ * Key collisions that were never resolved, across **every** restore rather than the latest one.
+ *
+ * ## Why the latest row cannot answer this
+ *
+ * `recovery_restore_state` reports the most recent operation, which is right for *"is a restore stuck"* and
+ * wrong for *"is any mail permanently unreadable"*. A conflict means the vault already held a different key
+ * under a generation the escrow also carried, so the escrowed one was not installed and mail sealed under it
+ * stays unreadable — permanently, because two secrets cannot share one generation number.
+ *
+ * A later clean restore then becomes the newest row and the earlier conflict disappears from the verdict
+ * without anything having repaired it. Nothing repaired it; nothing can.
+ *
+ * So this scans the whole table. It stays degraded until somebody says otherwise, which is deliberate: the
+ * remedy is an assessment of what was lost, not a command, and a finding that clears itself when the next
+ * operation succeeds is one that will clear itself exactly when an operator stops looking.
+ *
+ * ## What acknowledgement would look like, and why it is not built
+ *
+ * The audit asked for an acknowledgement record — who assessed it, when, against which incident. That is the
+ * right shape and it is a table, a route and a screen; what exists here is the detection. Stated rather than
+ * implied, so nobody reads a permanent `degraded` as a bug in the check.
+ */
+async function checkRecoveryConflicts(env: Env, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+
+  const rows = await env.CATALOG.prepare(
+    `SELECT id, started_at, detail FROM recovery_restores
+      WHERE org_id = ? AND state = 'completed' ORDER BY started_at`,
+  ).bind(orgId).all<{ id: string; started_at: string; detail: string | null }>().catch(() => null);
+  if (rows === null) return [];
+
+  const unresolved = rows.results
+    .map((row) => ({ row, carried: restoreDetail(row.detail) }))
+    .filter((one) => one.carried.readable && one.carried.conflicted.length > 0)
+    .map((one) => `${one.row.id} (${one.row.started_at}): ${one.carried.conflicted.join(", ")}`);
+
+  return [{
+    check: "recovery_key_conflicts",
+    severity: unresolved.length > 0 ? "degraded" : "report",
+    discloses: "infrastructure",
+    ok: unresolved.length === 0,
+    detail: unresolved.length === 0
+      ? "No vault restore on this Node has collided with a live key."
+      : `${unresolved.length} restore(s) collided with a live key, and each collision is permanent — two `
+        + "different secrets cannot share one generation number, so mail sealed under the escrowed key of "
+        + `that generation stays unreadable: ${unresolved.join("; ")}. A later clean restore does not repair `
+        + "this and must not appear to: `recovery_restore_state` above reports the newest operation only.",
+    ...(unresolved.length === 0 ? {} : {
+      fix: "assess what was sealed under those generations — `evidence_lifecycle` describes the window — and "
+        + "record the outcome as an incident. This finding does not clear on its own, because nothing "
+        + "repairs a collision",
+    }),
+  }];
+}
+
+/**
  * What the last vault restore did, and whether one is stuck.
  *
  * ## Why the escrow check cannot answer this
@@ -2292,19 +2398,21 @@ async function checkRecoveryRestores(env: Env, ctx: Ctx, orgId: string | null): 
    * a truncated write, must not turn the whole report into a 500 — `doctor` is what somebody reads when
    * things are already wrong.
    */
-  const carried = ((): { restored?: Record<string, number[]>; conflicted?: Record<string, number[]>;
-    error?: string } => {
-    try {
-      return latest.detail === null ? {} : JSON.parse(latest.detail);
-    } catch {
-      return {};
-    }
-  })();
-  const conflicted = [
-    ...(carried.conflicted?.content ?? []).map((n) => `content ${n}`),
-    ...(carried.conflicted?.credential ?? []).map((n) => `credential ${n}`),
-  ];
-  const installed = (carried.restored?.content ?? []).length + (carried.restored?.credential ?? []).length;
+  const carried = restoreDetail(latest.detail);
+  const conflicted = carried.conflicted;
+  const installed = carried.restored;
+  if (!carried.readable) {
+    return [{
+      check: "recovery_restore_state",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: `The last vault restore (${latest.id}) recorded a result this version cannot read. Its state is `
+        + `\`${latest.state}\`; what it installed and what collided are not legible from the row.`,
+      fix: "read the `recovery.vault_restored` entry for this attempt in the audit trail — the entry carries "
+        + "the same outcome and the chain proves it was not edited",
+    }];
+  }
   const lapsed = latest.state === "started"
     && Date.parse(latest.started_at) <= ctx.now() - RESTORE_LEASE_MS;
 

@@ -412,6 +412,29 @@ Three details:
   throw a bare `TypeError` out of the audit detail's `.map` — a 500 with no what, why or fix, on the path
   where an operator is deciding whether to spend one of nine remaining codes.
 
+### Doctor answers less, to fewer people, after less work
+
+Two things were true of `/api/doctor` and neither was intended. It ran the **entire diagnostic** to decide
+whether an anonymous caller got a 401 — an organization-wide sweep of D1, R2 and the vault, performed for a
+request that received nothing. And any signed-in colleague got the full report, which names holds, matters,
+mailboxes, send manifests, agent names, Butler triggers and domain pauses. The `discloses: "data"`
+classification that marks those findings existed already and decided only what a *locked-out* operator saw.
+
+Now: a two-check probe answers the 401 question, and the reduced report is the default with the full one
+reserved for `org.admin`. That also makes the locked-out case coherent rather than an exception — the
+anonymous reduced report and an ordinary member's are the same report, for the same reason.
+
+Two more findings joined it, both about what the latest row cannot say:
+
+- **`recovery_key_conflicts`** scans every completed restore, not the newest. A collision is permanent — two
+  secrets cannot share one generation number — so mail sealed under the escrowed key of that generation stays
+  unreadable, and a later clean restore was becoming the newest row and taking the conflict out of the verdict
+  without anything having repaired it. It stays degraded; there is no acknowledgement record yet, which is
+  stated rather than implied.
+- The restore detail is **parsed through a schema**. Catching invalid JSON and then trusting the shape meant a
+  row carrying `"conflicted": 7` reached `.map()` and took the diagnostic down — a disaster report that fails
+  on a malformed historical record fails at the one moment it is needed.
+
 **Signing in with a recovery code is deliberately not built.** ADR 29 gives the codes two jobs and this is
 the second. The first needs step-up, rate limiting and an audited session-issuance path, and shipping the
 vault half first closes ADR 28's gate without waiting on any of it. Redemption issues no session and grants

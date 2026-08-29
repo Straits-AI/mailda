@@ -1780,3 +1780,72 @@ describe("retirement is fenced inside the transaction, not before it", () => {
     expect(await heldSets(), "each rotation left another sealed copy of the vault behind").toBe(2);
   });
 });
+
+describe("a later clean restore does not hide an earlier permanent conflict", () => {
+  /*
+   * `recovery_restore_state` reports the **latest** operation, which is right for "is a restore stuck" and
+   * wrong for "is any mail permanently unreadable". A conflict means the vault already held a different key
+   * under a generation the escrow also carried, so the escrowed one was never installed and mail sealed under
+   * it stays unreadable — permanently, because two secrets cannot share one generation number.
+   *
+   * A later clean restore then becomes the newest row and the conflict leaves the verdict without anything
+   * having repaired it. Nothing repaired it; nothing can.
+   */
+  it("keeps reporting a collision after a clean restore has happened since", async () => {
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    // R1: the vault regenerates its own generation 1, so the escrow's collides and is not installed.
+    await loseTheVault();
+    await vault(testEnv).sealingKey("content");
+    const collided = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(collided.conflicted.content, "the fixture did not produce a collision").toContain(1);
+
+    // R2: a later restore that installs cleanly and becomes the newest row.
+    await loseTheVault();
+    const clean = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[1]!);
+    expect(clean.conflicted.content, "the second restore collided too, so it is not the clean one").toEqual([]);
+
+    const report = await runDoctor(testEnv, createSystemCtx());
+    expect(
+      find(report.findings, "recovery_restore_state").ok,
+      "the latest-operation finding should be clean — that is the whole premise of this test",
+    ).toBe(true);
+    const conflicts = find(report.findings, "recovery_key_conflicts");
+    expect(
+      conflicts.ok,
+      "a permanent collision left the verdict because a later operation succeeded",
+    ).toBe(false);
+    expect(conflicts.detail).toContain("permanent");
+    expect(report.verdict).not.toBe("ok");
+  });
+
+  it("reports nothing when no restore has ever collided", async () => {
+    // The control. A finding that is always degraded is one nobody can act on.
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    const conflicts = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts");
+    expect(conflicts.ok, `a clean history reported a collision: ${conflicts.detail}`).toBe(true);
+  });
+
+  it("survives a restore record this version cannot read", async () => {
+    /*
+     * The parser caught invalid JSON and then trusted the shape, so a row carrying `"conflicted": 7` reached
+     * `.map()` and took the diagnostic down. `doctor` is what somebody opens when things have already gone
+     * wrong — a disaster report that 500s on a malformed historical row fails at exactly the moment it is
+     * needed.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    await testEnv.CATALOG.prepare("UPDATE recovery_restores SET detail = ? WHERE org_id = ?")
+      .bind('{"restored":7,"conflicted":"nonsense"}', ORG).run();
+
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const state = find(report.findings, "recovery_restore_state");
+    expect(state.ok, "an unreadable record reported healthy").toBe(false);
+    expect(state.detail).toContain("cannot read");
+    // And the conflict scan skips it rather than throwing: an illegible row is not evidence of a collision.
+    expect(find(report.findings, "recovery_key_conflicts").ok).toBe(true);
+  });
+});

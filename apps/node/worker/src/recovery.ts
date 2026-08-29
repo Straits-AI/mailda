@@ -263,10 +263,19 @@ async function readVault(env: Env): Promise<EscrowedVault> {
 /**
  * Mints ten codes and escrows the vault under each.
  *
- * Called at claim, and callable again to re-escrow after a rotation — which **invalidates the previous set**,
- * because ten codes that open a vault two generations behind are ten codes that restore a Node unable to
- * read its recent mail. A silent stale escrow is the failure this whole file exists to prevent, so replacing
- * the set is the honest behaviour and the old rows are deleted rather than left to be chosen from.
+ * Called at claim, and callable again to re-escrow after a rotation. Ten codes that open a vault two
+ * generations behind are ten codes that restore a Node unable to read its recent mail, and a silent stale
+ * escrow is the failure this whole file exists to prevent — so a fresh set is the honest response to a
+ * rotation.
+ *
+ * **It does not invalidate the previous set, and this paragraph used to say it did.** A *confirmed* sheet
+ * survives until its replacement is confirmed in turn (audit P1-2): a rotation whose response is lost would
+ * otherwise leave the operator holding an old sheet that no longer works and a new one they never saw. What
+ * this deletes is an **unconfirmed** sheet — nobody proved they hold it — and not one whose code a restore is
+ * running against right now, which would take the escrow that attempt needs to resume with.
+ *
+ * The stale sentence outlived the behaviour by two rounds, in the file whose subject is what an operator does
+ * when everything else has gone wrong.
  *
  * The plaintext codes are returned **once**. Nothing stores them, so nothing can reproduce them: the same
  * sentence `claim-secret` already prints, and the reason a lost set is re-minted rather than recovered.
@@ -447,10 +456,18 @@ export async function redeemForVault(
   if (row.redeemed_at !== null) {
     throw unprocessable("E_RECOVERY_CODE_SPENT", {
       what: `that recovery code was already used, on ${row.redeemed_at}`,
-      why: "ADR 29's codes are single-use, so that one is spent whether or not the restore it was used for "
-        + "succeeded",
-      fix: "use one of the other codes from the set printed at claim, then mint a fresh set — a set with "
-        + "codes missing is a set nobody knows the size of",
+      /*
+       * This said the code was spent "whether or not the restore it was used for succeeded", which stopped
+       * being true when the saga landed: `redeemed_at` is written only by a settlement that **completed**, and
+       * a failed attempt deliberately costs nothing. The old sentence sent an operator to their next code
+       * when retrying the same one is the designed remedy — which is the wrong direction to be wrong in, with
+       * nine left and an incident running.
+       */
+      why: "ADR 29's codes are single-use, and this one was spent by a restore that ran to the end — a "
+        + "failed attempt does not spend a code, so this is a record of a completed recovery rather than of "
+        + "an attempt",
+      fix: "check `doctor`'s `recovery_restore_state` for what that restore installed. If you need to run "
+        + "another, use a different code from the same sheet",
     });
   }
 
