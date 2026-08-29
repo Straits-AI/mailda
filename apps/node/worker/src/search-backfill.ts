@@ -123,9 +123,16 @@ const BODY_BACKFILL_LIMIT = 25;
  * budget on the same failures forever. §24's guarantee is about not losing mail, and nothing is lost — the
  * message stays listed, readable and searchable by subject, and is simply not searchable by its contents.
  *
- * A read that fails for a *transient* reason is settled too, which is the cost of that choice and is stated
- * rather than hidden: such a message stays unsearchable by body until something re-indexes it, and nothing
- * does yet. Recorded in `docs/receipts/message-search-cost.md` under what is not built.
+ * **The two failure classes are told apart**, and this paragraph used to say they were not. Reaching the
+ * evidence is R2 and the vault: recoverable, so it becomes `retryable`, backs off from one minute to sixteen,
+ * and is abandoned after six attempts with the reason kept. Parsing what came back is deterministic: the same
+ * bytes fail the same way next minute, so retrying spends the pass on a message that cannot succeed while the
+ * mail behind it waits.
+ *
+ * That distinction and `mailda search repair` arrived with #107's state machine, and this comment went on
+ * describing the absence they filled — sitting directly above the code that fills it, which is the shape of
+ * drift this repository keeps meeting: a comment that reads as a statement of what the system cannot do,
+ * three lines above the thing doing it.
  */
 export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
   const at = new Date(ctx.now()).toISOString();

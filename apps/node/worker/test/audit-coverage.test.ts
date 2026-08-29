@@ -37,8 +37,17 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * from a trail that carries nothing able to open the escrow.
    */
   recovery_codes: {
-    actions: ["recovery.codes_minted", "recovery.codes_confirmed", "recovery.vault_restored"],
+    actions: [
+      "recovery.codes_minted", "recovery.codes_confirmed", "recovery.restore_started",
+      "recovery.vault_restored",
+    ],
   },
+  /*
+   * One attempt at restoring the vault. Audited by the pair above it — `restore_started` before the Durable
+   * Object calls and `vault_restored` after — because D1 and the vault share no transaction, so the row is
+   * how an interrupted attempt stays legible rather than looking like one that never began.
+   */
+  recovery_restores: { actions: ["recovery.restore_started", "recovery.vault_restored"] },
   send_manifests: {
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",

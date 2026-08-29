@@ -380,6 +380,38 @@ no session — which had stopped being true, since `claim.ts` issues one on the 
 `POST /api/recovery-codes/rotate` at all. Rotating the one artifact that can decrypt an organization's mail was
 the least attributable act in the product and the least attributed.
 
+### Restoring the vault is a saga, because it cannot be a transaction
+
+`redeemForVault` wrote `recovery.vault_restored / ok`, marked the code spent, and **then** made the Durable
+Object calls that put the keys back. D1 and Durable Object storage share no transaction, so a Worker dying in
+between left three things true at once: the code gone, the trail claiming success, and the keys still absent.
+Ten codes bound the damage and do not make the record honest — and this is the disaster-recovery path, whose
+record is read during the incident it exists for.
+
+The attempt is now recorded before the vault calls and settled after:
+
+- `recovery.restore_started` claims only that an attempt began, with which code, and what the escrow carried.
+  It cannot say what was installed, because nothing has been yet.
+- `recovery.vault_restored` is written **knowing** — `ok` when it ran to the end, `failed` when the vault
+  refused part way — and names the generations put back and the ones that collided with a live key.
+
+A `started` with no settling entry beside it is an interrupted restore. That state existed before and was
+indistinguishable from a completed one.
+
+Three details:
+
+- **The row is the reservation.** A code with a live `started` row is in flight, which stops two concurrent
+  redemptions doing the work twice; `started_at` is the lease, so a dead attempt frees the code after five
+  minutes rather than parking it for ever. A reservation nothing can release is a deadlock wearing a safety
+  argument, which is the same reasoning the body-index lease carries.
+- **A failed attempt does not spend the code.** The operator has few and needs them under exactly the
+  conditions that cause failures. Resuming is safe rather than merely allowed, because every step is
+  idempotent: `vault.restore` reports `identical` for a generation already present and `conflict` for one that
+  disagrees.
+- **A corrupt escrow is refused with a reason.** One that decrypts and no longer describes a vault used to
+  throw a bare `TypeError` out of the audit detail's `.map` — a 500 with no what, why or fix, on the path
+  where an operator is deciding whether to spend one of nine remaining codes.
+
 **Signing in with a recovery code is deliberately not built.** ADR 29 gives the codes two jobs and this is
 the second. The first needs step-up, rate limiting and an audited session-issuance path, and shipping the
 vault half first closes ADR 28's gate without waiting on any of it. Redemption issues no session and grants

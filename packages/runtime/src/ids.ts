@@ -22,7 +22,7 @@ import { ULID_ALPHABET, ULID_BODY_CHARS } from "./ctx.ts";
  * the failure it exists to prevent
  *
  * `ctx.id()` is called with **52** distinct string literals elsewhere in this repository, and this registry
- * names ten. That is deliberate, not a backlog. A prefix spelled in exactly one place cannot diverge from
+ * names eleven. That is deliberate, not a backlog. A prefix spelled in exactly one place cannot diverge from
  * anything — there is no second spelling to disagree with. The divergence class only exists when a prefix is
  * *checked* somewhere: a contract schema, an AST, a route parameter, an actor-kind derivation. The rule that keeps the set complete is enforced rather than remembered:
  * `test/node/id-prefix-world.test.ts` fails on any hand-written prefixed-ULID pattern anywhere under
@@ -34,7 +34,7 @@ import { ULID_ALPHABET, ULID_BODY_CHARS } from "./ctx.ts";
  * completeness.
  *
  * `ctx.id(prefix: string)` stays open on purpose. Narrowing it to this union would reject the other
- * forty-two and force every one of them into a registry that buys them nothing.
+ * forty-one and force every one of them into a registry that buys them nothing.
  *
  * ## A second divergence, found by the check rather than by reading
  *
@@ -111,6 +111,18 @@ export const ID_PREFIXES = {
    * carries meaning rather than being chosen for distance alone.
    */
   recoveryPad: "pad",
+  /**
+   * One attempt at restoring the key vault from a recovery code (audit finding 8).
+   *
+   * Registered because the attempt is a **resumable operation with a stable identity**, and an operation whose
+   * id nothing validates is one that cannot be resumed: the row is the reservation on the code, and both the
+   * `started` and the settling audit entries name it so an interrupted restore can be found by the id it was
+   * given rather than reconstructed from timestamps.
+   *
+   * `rst`, and it shares no two letters with `rcv` above it or with `rcpt` — the neighbours this registry's
+   * `case_`/`cas_` lesson is about.
+   */
+  recoveryRestore: "rst",
 } as const;
 
 /**

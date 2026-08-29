@@ -102,6 +102,15 @@ interface EscrowedVault {
 export const CODE_CHARACTERS = 26;
 
 /**
+ * How long one restore attempt reserves its code.
+ *
+ * Five minutes, against an operation that takes seconds. As with the body-index lease, the number is not a
+ * guess about duration — it is how long a **dead** attempt holds a code before anybody may try again, and a
+ * reservation nothing can release is a deadlock wearing a safety argument.
+ */
+export const RESTORE_LEASE_MS = 5 * 60_000;
+
+/**
  * A code, formatted so a person can write it on paper and type it back.
  *
  * Grouped in fours with hyphens. The hyphens are cosmetic and stripped before hashing, so a code typed
@@ -170,11 +179,20 @@ export async function codeHash(code: string): Promise<string> {
  * into `code_hash` is not the input to this. Without the separation, `sha256(code)` would be both the stored
  * verifier and the key material, and the table would carry the means to open its own contents.
  */
-async function codeKey(code: string): Promise<CryptoKey> {
+/*
+ * Exported for one test, and the test could not be written without it.
+ *
+ * The failure branch — the vault refusing part way, so the code must **not** be spent — needs an escrow that
+ * opens and then makes `restore` reject. Every escrow this Node writes is well-formed, so producing that state
+ * means sealing one deliberately, which needs the key the code derives. Reaching into the crypto to build a
+ * broken input is the only way to prove the branch that decides whether an operator loses one of ten codes to
+ * a crash.
+ */
+export async function codeKey(code: string): Promise<CryptoKey> {
   return await aesKeyFrom(`mailda/vault-escrow/v1/${normaliseCode(code)}`);
 }
 
-async function seal(key: CryptoKey, plaintext: string): Promise<string> {
+export async function seal(key: CryptoKey, plaintext: string): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const sealed = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv }, key, new TextEncoder().encode(plaintext),
@@ -423,15 +441,63 @@ export async function redeemForVault(
    * restored would be the false-success claim this file's own tests exist to catch.
    */
   const escrowed = JSON.parse(plain) as EscrowedVault;
-  const { results } = await auditedBatch(
+  /*
+   * The decrypted escrow is **checked before it is used**, and a corrupt one is a real state: a blob that
+   * still decrypts and no longer describes a vault. Without this the first thing to touch it was
+   * `escrowed.content.map(…)` building the audit detail, which threw a bare `TypeError` — a 500 with no
+   * `what`, `why` or `fix` on the disaster-recovery path, where the operator has nine codes left and no idea
+   * whether to spend one.
+   */
+  const shaped = (part: unknown): boolean =>
+    Array.isArray(part) && part.every((key) =>
+      typeof key === "object" && key !== null
+      && typeof (key as { generation?: unknown }).generation === "number"
+      && typeof (key as { secret?: unknown }).secret === "string");
+  if (!shaped(escrowed?.content) || !shaped(escrowed?.credential)) {
+    throw unprocessable("E_RECOVERY_ESCROW_CORRUPT", {
+      what: "that code opened its escrow and the escrow does not describe a key vault",
+      why: "the blob decrypted, so the code is right — what it carried is damaged. Nothing was installed and "
+        + "the code has not been spent",
+      fix: "try another code from the same sheet. If they all answer this, the escrow was written by a "
+        + "version of this Node that wrote a different shape, and `doctor` will say what the vault now holds",
+    });
+  }
+
+  /*
+   * ## A saga, because it cannot be a transaction
+   *
+   * This wrote `recovery.vault_restored / ok`, marked the code spent, and *then* made the Durable Object calls
+   * that put the keys back. D1 and Durable Object storage share no transaction, so a Worker dying in between
+   * left the code gone, the trail claiming success, and the keys still absent — on the disaster-recovery path,
+   * whose record is read during the incident it exists for.
+   *
+   * So the attempt is recorded **first** and settled after. The `started` entry is honest about what it
+   * claims: an attempt began with this code. The outcome entry carries what was actually installed, and it is
+   * written knowing.
+   */
+  const restoreId = ctx.id(ID_PREFIXES.recoveryRestore);
+  const at = new Date(ctx.now()).toISOString();
+  const stale = new Date(ctx.now() - RESTORE_LEASE_MS).toISOString();
+
+  /*
+   * The reservation, as a conditional insert: this attempt begins only if no live one already holds the code.
+   * `changes` is the compare-and-swap — two concurrent redemptions of one code cannot both proceed, and the
+   * loser is told rather than left to do the work twice.
+   *
+   * `started_at > ?` bounds it. A Worker that dies never settles its row, and a reservation nothing can
+   * release is a deadlock wearing a safety argument — so a dead attempt frees the code after the lease and
+   * the retry resumes it. Resuming is safe because `vault.restore` is idempotent: a generation already
+   * present comes back `identical`, and one that disagrees comes back `conflict`.
+   */
+  const { results: opened } = await auditedBatch(
     env, ctx, orgId,
     {
-      action: "recovery.vault_restored",
+      action: "recovery.restore_started",
       outcome: "ok",
       actorKind: "node",
-      // The row id, never the code and never its hash — enough to answer "which of the ten, and when".
       subject: row.id,
       detail: {
+        restore: restoreId,
         escrowedContent: escrowed.content.map((key) => key.generation),
         escrowedCredential: escrowed.credential.map((key) => key.generation),
       },
@@ -439,39 +505,109 @@ export async function redeemForVault(
     (entry) => [
       entry,
       env.CATALOG.prepare(
-        "UPDATE recovery_codes SET redeemed_at = ? WHERE id = ? AND redeemed_at IS NULL",
-      ).bind(new Date(ctx.now()).toISOString(), row.id),
+        `INSERT INTO recovery_restores (id, org_id, code_id, state, started_at)
+         SELECT ?,?,?,'started',?
+          WHERE NOT EXISTS (SELECT 1 FROM recovery_restores
+                             WHERE org_id = ? AND code_id = ? AND state = 'started' AND started_at > ?)`,
+      ).bind(restoreId, orgId, row.id, at, orgId, row.id, stale),
     ],
   );
-  const spent = results[1]!;
-  if ((spent.meta.changes ?? 0) === 0) {
-    // Lost the race against a concurrent redemption of the same code. The other one restored the vault.
-    throw unprocessable("E_RECOVERY_CODE_SPENT", {
-      what: "that recovery code was used by another request while this one was running",
-      why: "codes are single-use and the spend is a compare-and-swap, so exactly one of two concurrent "
-        + "redemptions wins",
-      fix: "the vault was restored by the request that won — check `doctor` before using a second code",
+  if ((opened[1]?.meta.changes ?? 0) === 0) {
+    throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
+      what: "that code is already being redeemed by another request",
+      why: "a restore installs keys through the vault, which cannot join this database's transaction — so it "
+        + "is reserved while it runs rather than attempted twice",
+      fix: `wait for the attempt in flight to finish and check \`doctor\`. If it never finishes, the `
+        + `reservation lapses after ${Math.round(RESTORE_LEASE_MS / 60_000)} minutes and the code can be `
+        + "used again",
     });
   }
 
   const restored = { content: [] as number[], credential: [] as number[] };
   const conflicted = { content: [] as number[], credential: [] as number[] };
-  for (const purpose of ["content", "credential"] as const) {
-    for (const key of escrowed[purpose]) {
-      /*
-       * The outcome is **read**, and the first version threw it away — it pushed every generation into
-       * `restored` whatever happened, so a redemption that installed nothing reported the full list as
-       * restored. Found by probing the wipe-then-regenerate case rather than by reading: the report said
-       * generation 1 was restored while the vault kept a different key of the same number.
-       *
-       * `identical` is not reported as restored either. A generation the vault already had, byte for byte,
-       * was not put back by this redemption, and counting it would inflate what a code achieved.
-       */
-      const outcome = await vault(env).restore(purpose, key.generation, key.secret);
-      if (outcome === "restored") restored[purpose].push(key.generation);
-      else if (outcome === "conflict") conflicted[purpose].push(key.generation);
+  /*
+   * `failure` records a vault refusal part way through, and the branch it feeds — settle as `failed`, do not
+   * spend the code — has **no data-driven trigger under miniflare**, which is said here rather than implied.
+   * `vault.restore` returns one of three outcomes for every well-formed input and the escrow's shape is
+   * checked above, so reaching it needs the Durable Object itself to fail. What *is* tested is the property
+   * the branch exists for: `test/recovery-escrow.test.ts` proves a redemption that does not complete costs no
+   * code, through the corrupt-escrow path that refuses before any of this.
+   */
+  let failure: string | null = null;
+  try {
+    for (const purpose of ["content", "credential"] as const) {
+      for (const key of escrowed[purpose]) {
+        /*
+         * The outcome is **read**, and the first version threw it away — it pushed every generation into
+         * `restored` whatever happened, so a redemption that installed nothing reported the full list as
+         * restored. Found by probing the wipe-then-regenerate case rather than by reading: the report said
+         * generation 1 was restored while the vault kept a different key of the same number.
+         *
+         * `identical` is not reported as restored either. A generation the vault already had, byte for byte,
+         * was not put back by this redemption, and counting it would inflate what a code achieved.
+         */
+        const outcome = await vault(env).restore(purpose, key.generation, key.secret);
+        if (outcome === "restored") restored[purpose].push(key.generation);
+        else if (outcome === "conflict") conflicted[purpose].push(key.generation);
+      }
     }
+  } catch (error) {
+    // Recorded rather than thrown past the settlement. An attempt that stopped half way is exactly the state
+    // this whole shape exists to make legible, and losing it to an exception would be the old behaviour with
+    // extra steps.
+    failure = (error as Error).message.split("\n")[0] ?? "the vault refused a generation";
   }
+
+  const installed = restored.content.length + restored.credential.length;
+  const settledAt = new Date(ctx.now()).toISOString();
+  const detail = {
+    restore: restoreId,
+    restored: { content: restored.content, credential: restored.credential },
+    conflicted: { content: conflicted.content, credential: conflicted.credential },
+    ...(failure === null ? {} : { error: failure }),
+  };
+
+  /*
+   * The outcome, written **knowing**. `failed` when the vault refused part way, and the code is *not* spent —
+   * a crash or a refusal must not cost one of ten, and re-running is safe because every step is idempotent.
+   *
+   * A restore that installed nothing because every generation collided is `ok`, not `failed`: the vault
+   * already holds keys of those numbers, nothing was lost, and `conflicted` says so. Calling that a failure
+   * would send an operator looking for a broken thing during an incident.
+   */
+  await auditedBatch(
+    env, ctx, orgId,
+    {
+      action: "recovery.vault_restored",
+      outcome: failure === null ? "ok" : "failed",
+      actorKind: "node",
+      // The row id, never the code and never its hash — enough to answer "which of the ten, and when".
+      subject: row.id,
+      detail,
+    },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare(
+        "UPDATE recovery_restores SET state = ?, settled_at = ?, detail = ? WHERE id = ?",
+      ).bind(failure === null ? "completed" : "failed", settledAt, JSON.stringify(detail), restoreId),
+      ...(failure === null
+        ? [env.CATALOG.prepare(
+            "UPDATE recovery_codes SET redeemed_at = ? WHERE id = ? AND redeemed_at IS NULL",
+          ).bind(settledAt, row.id)]
+        : []),
+    ],
+  );
+
+  if (failure !== null) {
+    throw unprocessable("E_RECOVERY_RESTORE_INCOMPLETE", {
+      what: `the vault refused part way through: ${failure}`,
+      why: `${installed} generation(s) were installed before it stopped. The code has **not** been spent, `
+        + "because a failed attempt must not cost one of ten — and every step is idempotent, so running it "
+        + "again resumes rather than repeats",
+      fix: "check `doctor`'s `recovery_escrow` finding, then redeem the same code again",
+    });
+  }
+
   return { restored, conflicted };
 }
 

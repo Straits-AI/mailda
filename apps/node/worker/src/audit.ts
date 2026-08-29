@@ -96,9 +96,18 @@ export const AUDIT_ACTIONS = {
     says: "Somebody proved they hold a set of recovery codes, without spending one — and every other set was "
       + "retired, which deletes the copies of the key vault sealed under those codes. Names both sets.",
   },
+  "recovery.restore_started": {
+    says: "A recovery code was accepted and the key vault restore began. Names the attempt and the "
+      + "generations the escrow carried. An entry with no settling `recovery.vault_restored` beside it is an "
+      + "attempt that was interrupted — which is the state this pair exists to make legible, since the vault "
+      + "cannot join the database's transaction.",
+  },
   "recovery.vault_restored": {
-    says: "A recovery code was spent to restore key material into the vault. Names the generations put back "
-      + "and the ones that collided with a live key and were not.",
+    says: "A key vault restore settled. Names the generations put back and the ones that collided with a "
+      + "live key and were not. `ok` means it ran to the end; `failed` means the vault refused part way, in "
+      + "which case the code was **not** spent and the attempt can be run again. Written after the restore, "
+      + "never before — it used to be written first, so a Worker dying in between left the trail claiming a "
+      + "success that had not happened.",
   },
 
   /*

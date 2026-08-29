@@ -233,6 +233,7 @@ const EXPECTED_TABLES = [
   // Node "does not ship without" — three refusals in this file and in `keyvault.ts` named it as the remedy
   // before anything created it.
   "recovery_codes",
+  "recovery_restores",
   // #109 L2: the agent identity and its pinned action ceiling.
   "agents",
   "agent_actions",

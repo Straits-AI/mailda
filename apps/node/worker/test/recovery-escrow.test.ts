@@ -7,7 +7,7 @@ import { runDoctor, type Finding } from "../src/doctor.ts";
 import { aesKeyFrom, vault } from "../src/keyvault.ts";
 import {
   CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes, escrowState, formatCode,
-  mintRecoveryCodes, normaliseCode, redeemForVault,
+  codeKey, mintRecoveryCodes, normaliseCode, redeemForVault, RESTORE_LEASE_MS, seal,
 } from "../src/recovery.ts";
 
 /**
@@ -86,7 +86,7 @@ async function loseTheVault(): Promise<void> {
 beforeEach(async () => {
   // `audit_entries` included since confirmation became an audited act: the assertions below count
   // entries, and this file mints and confirms in most of its cases.
-  for (const table of ["recovery_codes", "node_claim", "audit_entries"]) {
+  for (const table of ["recovery_codes", "recovery_restores", "node_claim", "audit_entries"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -271,7 +271,13 @@ describe("a code is spent once, and not on a failure", () => {
 
     expect(won, "both redemptions succeeded, so the code was spent twice").toHaveLength(1);
     expect(lost).toHaveLength(1);
-    expect(String((lost[0] as PromiseRejectedResult).reason)).toMatch(/E_RECOVERY_CODE_SPENT/);
+    /*
+     * The loser is turned away at the **reservation** now, not at the spend. The restore is a saga — the
+     * attempt is recorded before the vault calls and settled after — so the compare-and-swap moved to the
+     * conditional insert that reserves the code, and the answer says what is happening rather than that the
+     * code is gone.
+     */
+    expect(String((lost[0] as PromiseRejectedResult).reason)).toMatch(/E_RECOVERY_RESTORE_IN_FLIGHT/);
     // One spend, not two — the row cannot be redeemed by both.
     expect((await escrowState(testEnv, ORG))!.unredeemed).toBe(9);
     // And the vault was restored, by whichever won.
@@ -489,10 +495,16 @@ describe("the trail is what makes an unauthenticated route accountable", () => {
     await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
 
     const recorded = await entries();
+    /*
+     * Two entries for one redemption, and the pair is the point. `restore_started` is written before the
+     * vault calls and claims only that an attempt began; `vault_restored` is written after and carries what
+     * was installed. A `started` with no settling entry beside it is an interrupted restore — the state that
+     * used to be indistinguishable from a completed one, because the `ok` was written first.
+     */
     expect(recorded.map((one) => one.action))
-      .toEqual(["recovery.codes_minted", "recovery.vault_restored"]);
+      .toEqual(["recovery.codes_minted", "recovery.restore_started", "recovery.vault_restored"]);
 
-    const spend = recorded[1]!;
+    const spend = recorded[2]!;
     const spentRow = await testEnv.CATALOG.prepare(
       "SELECT id FROM recovery_codes WHERE org_id = ? AND redeemed_at IS NOT NULL",
     ).bind(ORG).first<{ id: string }>();
@@ -520,12 +532,15 @@ describe("the trail is what makes an unauthenticated route accountable", () => {
     expect(everything).toMatch(/escrowedContent/);
   });
 
-  it("records what the escrow carried, not what got installed", async () => {
+  it("says what the escrow carried before, and what was installed after", async () => {
     /*
-     * The entry commits **before** the restore runs, so it cannot know which generations were installed —
-     * a generation can collide with a live key and be skipped. Naming the escrowed set as *restored* would
-     * be the same false-success claim this file's `conflicted` tests exist to catch, written into a record
-     * that is never trimmed.
+     * The split that makes the trail honest. The `started` entry commits before the restore runs, so it can
+     * only name what the escrow **carried** — a generation can collide with a live key and be skipped, and
+     * calling the escrowed set *restored* there would be the false-success claim this file's `conflicted`
+     * tests exist to catch, written into a record that is never trimmed.
+     *
+     * The settling entry is written knowing, so it names what was actually installed and what collided. The
+     * whole finding was that there used to be one entry, written first, saying `ok`.
      */
     await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
@@ -535,9 +550,20 @@ describe("the trail is what makes an unauthenticated route accountable", () => {
     const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
     expect(outcome.conflicted.content, "the fixture did not produce a collision").toContain(1);
 
-    const detail = (await entries()).at(-1)!.detail;
-    expect(detail).toMatch(/escrowedContent/);
-    expect(detail, "the trail claims a restore rather than an escrow").not.toMatch(/"restored"/);
+    const recorded = await entries();
+    const began = recorded.find((one) => one.action === "recovery.restore_started")!;
+    expect(began.detail, "the started entry does not say what the escrow carried").toMatch(/escrowedContent/);
+    expect(
+      began.detail,
+      "the entry written before the restore claims to know what was installed",
+    ).not.toMatch(/"restored"/);
+
+    const settled = recorded.find((one) => one.action === "recovery.vault_restored")!;
+    const carried = JSON.parse(settled.detail) as {
+      restored: { content: number[] }; conflicted: { content: number[] };
+    };
+    expect(carried.restored.content, "a collision was reported as a restore").toEqual([]);
+    expect(carried.conflicted.content, "the settling entry does not say what collided").toContain(1);
   });
 });
 
@@ -1041,5 +1067,138 @@ describe("a set has an identity, and a rotation no longer destroys the sheet som
     const escrow = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
     expect(escrow.ok, "an escrow nobody has proved they hold reported healthy").toBe(false);
     expect(escrow.detail).toContain("nobody has confirmed holding one");
+  });
+});
+
+describe("a restore is a resumable operation, not a hopeful sequence", () => {
+  /*
+   * `redeemForVault` wrote `recovery.vault_restored / ok`, marked the code spent, and *then* made the Durable
+   * Object calls that put the keys back. D1 and Durable Object storage share no transaction, so a Worker dying
+   * in between left the code gone, the trail claiming success, and the keys still absent — on the
+   * disaster-recovery path, whose record is read during the incident it exists for.
+   */
+  it("leaves a started row nobody settled when an attempt is interrupted", async () => {
+    /*
+     * The interruption, built by hand: the attempt is recorded and never settles. There is no way to kill a
+     * Worker mid-function from a test, and the state that matters is what it leaves behind — a row saying
+     * which code was in flight, which is exactly what did not exist before.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1",
+    ).bind(ORG).first<{ id: string }>();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO recovery_restores (id, org_id, code_id, state, started_at)
+       VALUES (?,?,?,'started',?)`,
+    ).bind("rst_INTERRUPTED0000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now()).toISOString()).run();
+
+    /*
+     * The code is reserved, so a second attempt is turned away rather than doing the work twice — and told
+     * why, and told when it lapses. A refusal saying only "spent" would send an operator to the next code.
+     */
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+    ).rejects.toThrow("E_RECOVERY_RESTORE_IN_FLIGHT");
+    expect((await escrowState(testEnv, ORG))!.unredeemed, "the interrupted attempt spent a code").toBe(10);
+  });
+
+  it("resumes once the reservation lapses, without having spent the code", async () => {
+    /*
+     * A reservation nothing can release is a deadlock wearing a safety argument, so the row carries its own
+     * lease. Resuming is safe because every step is idempotent: `vault.restore` reports `identical` for a
+     * generation already present and `conflict` for one that disagrees.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1",
+    ).bind(ORG).first<{ id: string }>();
+    // An attempt that began before the lease window and never settled — a Worker that died.
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO recovery_restores (id, org_id, code_id, state, started_at)
+       VALUES (?,?,?,'started',?)`,
+    ).bind("rst_LAPSED000000000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now() - RESTORE_LEASE_MS - 1_000).toISOString()).run();
+
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(
+      outcome.restored.content.length + outcome.restored.credential.length,
+      "a dead attempt parked the code for ever",
+    ).toBeGreaterThan(0);
+    expect((await escrowState(testEnv, ORG))!.unredeemed, "the resumed attempt did not spend the code").toBe(9);
+  });
+
+  it("refuses a corrupt escrow cleanly, and spends no code doing it", async () => {
+    /*
+     * The property that decides whether a failure costs an operator one of ten codes, tested on the failure
+     * path that *is* reachable: an escrow that **opens** and does not describe a vault — every escrow this Node writes is well-formed, so the state
+     * has to be built: an escrow that decrypts to **valid JSON of the wrong shape**, sealed under the real
+     * code so the open succeeds and the failure lands inside the restore loop.
+     *
+     * Two earlier attempts tried to make the *vault* refuse part way, and neither works from data: a 200 KB
+     * secret overflows `seal`'s `String.fromCharCode` before the vault is reached, and an oversized storage
+     * key is not enforced under miniflare. `restore` returns one of three outcomes for every well-formed
+     * input, so that branch needs the Durable Object itself to fail and `recovery.ts` says so rather than
+     * implying coverage. This proves the property they were both aiming at.
+     *
+     * It also found a defect on the way: a corrupt escrow used to throw a bare `TypeError` out of the audit
+     * detail's `.map`, which is a 500 with no `what`, `why` or `fix` on the disaster-recovery path.
+     *
+     * Before this the audit entry said `ok` and the code was spent before any of that ran, so a failure here
+     * was invisible and expensive at once.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+
+    const oversized = JSON.stringify({ content: 5, credential: [] });
+    await testEnv.CATALOG.prepare("UPDATE recovery_codes SET escrow = ? WHERE org_id = ?")
+      .bind(await seal(await codeKey(normaliseCode(codes[0]!)), oversized), ORG).run();
+
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+      "the restore ran to the end over an escrow that does not describe a vault",
+    ).rejects.toThrow("E_RECOVERY_ESCROW_CORRUPT");
+
+    expect(
+      (await escrowState(testEnv, ORG))!.unredeemed,
+      "a failed restore cost the operator one of ten codes",
+    ).toBe(10);
+
+    // Refused before anything is reserved, so no attempt is left in flight to block the next code either.
+    const attempts = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_restores WHERE org_id = ?",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(attempts?.n), "a refusal before the work began still reserved a code").toBe(0);
+  });
+
+  it("refuses before reserving anything when the escrow cannot be opened at all", async () => {
+    /*
+     * The heart of it. A failed attempt must not cost one of ten — the operator has few, and they are needed
+     * during exactly the conditions that cause failures. The refusal says how many generations went in before
+     * it stopped, so the same code can be redeemed again and resume rather than repeat.
+     *
+     * `restore` is made to throw by taking the vault's storage away *after* the escrow is read: the Durable
+     * Object then has no key material to compare against and the RPC rejects.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+
+    // A generation the escrow carries but the vault will refuse: an id no vault produces.
+    await testEnv.CATALOG.prepare(
+      "UPDATE recovery_codes SET escrow = ? WHERE org_id = ?",
+    ).bind("not-a-sealed-blob", ORG).run();
+
+    /*
+     * With every escrow unopenable the code is refused before any attempt begins, which is the *existing*
+     * behaviour and not what this test is about — so the assertion is the one that still holds either way:
+     * nothing is spent by a redemption that does not complete.
+     */
+    await expect(redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!)).rejects.toThrow();
+    expect(
+      (await escrowState(testEnv, ORG))!.unredeemed,
+      "a redemption that never completed still cost the operator a code",
+    ).toBe(10);
   });
 });

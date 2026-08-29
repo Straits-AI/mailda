@@ -122,8 +122,8 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 | | |
 |---|---|
 | **Recovery is half built** | The key vault is escrowed under ADR 29's recovery codes (#92), so losing Durable Object storage is survivable. Exporting D1, R2 and the manifests and restoring them into a **clean** Cloudflare account is not, and no drill has measured an RPO or RTO. |
-| **Deployment is unproven** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). Nobody has run it against a second Cloudflare account, so the assumption the whole rollback rests on — that `versions upload` shifts no traffic — is documented and unverified. |
-| **Two Nodes in one account is unmeasured** | The Workflow binding is a fixed account-level name (#99). Production and staging in one account is a normal configuration and this has never been tried. |
+| **Deployment promotes by hand on a Free account** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). It has now been run against a live account ([receipt](./docs/receipts/deploy-drill-live-account.md)) — and `versions upload --preview-alias` returned **no reachable preview URL**, so the gate cannot probe the canary and degrades to a safe manual promotion. The cause is not established, which is why that receipt records it without a number. |
+| **Two Nodes in one account collide on the Workflow, and the deploy refuses** | Measured rather than suspected ([receipt](./docs/receipts/deploy-drill-live-account.md)): every other resource derives its name from the Worker's, the Workflow does not, and deploying a second Node **succeeded with exit 0 and silently took ownership** — leaving the first Node's `BUTLER_RUNS` binding pointing at a Workflow now running the second Node's code against the second Node's bindings. `mailda deploy` now refuses when the Workflow belongs to another Worker and names the fix. The config still ships a fixed name, so the refusal is the guard rather than the naming. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
 | **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; search over subjects, senders and message bodies in #107. The rest has not. |
 | **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
@@ -1339,8 +1339,12 @@ the engine does not refuse it either: it runs until the platform's CPU limit kil
 name is account-scoped and **cannot be omitted**, so #72's fix for the queue is unavailable here; what is
 enforced instead is that the name derives from the Worker's own, which makes a rename one edit. The residual
 is named: Workers Builds overrides the Worker's name, so a second install into one account gets a different
-Worker and the same workflow name, and what happens then is unmeasured. The queue case collided silently;
-this one is not known to.
+Worker and the same workflow name. **That has now been measured, and it is the worse of the two
+possibilities** ([receipt](./docs/receipts/deploy-drill-live-account.md)): deploying the second Node exits 0
+with no warning and the Workflow's ownership moves, so the first Node keeps a binding into code and bindings
+that are no longer its own. The queue case collided silently; so does this one. `mailda deploy` refuses when
+the Workflow already belongs to another Worker, which is a guard at the one moment the collision can be
+created rather than a naming rule the config enforces.
 
 **Mail older than the newest fifty could not be reached, and the fix is a cursor that carries no authority.**
 `listMessages` ordered by arrival and took fifty, with no cursor, no offset and no mailbox filter — so the
