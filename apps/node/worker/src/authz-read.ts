@@ -1,4 +1,5 @@
 import { BUDGETS } from "@mailda/budgets";
+import { agentGrantableActions } from "@mailda/contract/agent";
 import { MESSAGE_PAGE_PARAMS, specFor } from "@mailda/contract/routes";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
@@ -185,9 +186,43 @@ export async function principalFor(env: Env, ctx: Ctx, request: Request): Promis
    *
    * A route the contract does not describe is refused too. `specFor` returning null means an undeclared
    * path, and an agent whose ceiling names routes cannot hold one that has no name.
+   *
+   * ## Intersected with what a machine may hold **today**, not only with what it held at mint
+   *
+   * The pinned set is checked against `agentGrantableActions()` on every request, and that is not redundant
+   * with the check `mintAgent` makes. Minting filters what goes *in*; this filters what comes *out*, and the
+   * two answer different questions because the tier table moves and a stored ceiling does not:
+   *
+   * - **An agent minted before the capability layer** holds whatever route strings the old API accepted —
+   *   `POST /api/sends/seal`, `POST /api/agents` — because `agent_actions.action` is plain `TEXT` and no
+   *   migration rewrote it. On an upgraded Node those rows were still executable.
+   * - **A route reclassified as unsafe.** If something currently `act` is found to be irreversible and moved
+   *   to `governed`, new agents stop receiving it and every existing agent keeps executing it. A curation
+   *   that only runs at mint is a decision about the future with no effect on the present.
+   *
+   * The two monotonicities people actually want both survive, because the terms are intersected rather than
+   * one replacing the other:
+   *
+   * - Adding a route to a capability does **not** widen an existing agent — the route is absent from its
+   *   pinned set, which is §16's rule and the reason capabilities are expanded at mint.
+   * - Reclassifying a route as withheld **does** narrow every existing agent, immediately, because it leaves
+   *   the grantable set.
+   *
+   * The refusal says which term failed. "Your ceiling never had this" and "no machine may have this any more"
+   * are different facts, and an operator reading the second one needs to know the ceiling is not the problem.
    */
   const spec = specFor(request.method, new URL(request.url).pathname);
   const wanted = spec === null ? null : `${spec.method} ${spec.path}`;
+  if (wanted !== null && agent.actions.includes(wanted) && !agentGrantableActions().includes(wanted)) {
+    throw new CallerError("E_AGENT_ACTION_WITHDRAWN", 403, {
+      what: `${wanted} is no longer an act any machine may perform on this Node`,
+      why: "this agent's ceiling was pinned when it was minted and still names that route, but the route has "
+        + "since been reclassified as one no machine may hold — either because it needs more than one person "
+        + "or because it cannot be undone. A pinned ceiling narrows when the classification does; it never "
+        + "widens",
+      fix: "this act needs a person. `doctor` lists every agent still holding a withdrawn capability",
+    });
+  }
   if (wanted === null || !agent.actions.includes(wanted)) {
     throw new CallerError("E_AGENT_ACTION_NOT_PERMITTED", 403, {
       what: `this agent's ceiling does not include ${wanted ?? `${request.method} on an undeclared route`}`,

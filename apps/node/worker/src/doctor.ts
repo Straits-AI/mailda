@@ -1,5 +1,6 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
+import { agentGrantableActions } from "@mailda/contract/agent";
 
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
@@ -294,6 +295,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),
+    ...(await checkAgentCeilings(env, ctx, claim?.org_id ?? null)),
   );
 
 
@@ -2201,6 +2203,82 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
  *
  * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
  */
+/**
+ * Agents still holding a capability no machine may have any more.
+ *
+ * ## What this counts, and why it is not zero by construction
+ *
+ * `principalFor` intersects a pinned ceiling with `agentGrantableActions()` on every request, so a withdrawn
+ * capability is already **unreachable**. This finding is not about reachability — it is about the operator not
+ * knowing. Two ways the state arises:
+ *
+ * - An agent minted before the capability layer, holding route strings the old API accepted. The column is
+ *   plain `TEXT` and no migration rewrote it, deliberately: rewriting somebody's stored ceiling so a report
+ *   looks clean is the opposite of keeping a record of what they were granted.
+ * - A route reclassified as `governed` or `operator` after a review decided it was irreversible. Every agent
+ *   holding it narrows on the deploy that reclassifies it, which is correct — and an automation that quietly
+ *   stops doing part of its job is exactly the thing somebody needs told about.
+ *
+ * `report` rather than `degraded`. Nothing is broken and nothing is exposed: the refusal is in force. What is
+ * true is that a credential is narrower than whoever minted it believes.
+ */
+async function checkAgentCeilings(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+
+  /*
+   * Live agents only. A revoked or expired one reaches nothing regardless, so listing it would be a finding
+   * nobody can act on or clear — and a report that accumulates unclearable entries is one people stop reading.
+   */
+  const rows = await env.CATALOG.prepare(
+    `SELECT a.id, a.name, x.action
+       FROM agents a JOIN agent_actions x ON x.agent_id = a.id
+      WHERE a.org_id = ? AND a.revoked_at IS NULL AND a.expires_at > ?
+      ORDER BY a.name, x.action`,
+  ).bind(orgId, new Date(ctx.now()).toISOString())
+    .all<{ id: string; name: string; action: string }>()
+    .catch(() => null);
+
+  if (rows === null) {
+    return [{
+      check: "agent_withdrawn_capabilities",
+      severity: "degraded",
+      discloses: "data",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say what the agents on this Node hold.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+
+  const grantable = new Set(agentGrantableActions());
+  const stale = new Map<string, { name: string; actions: string[] }>();
+  for (const row of rows.results) {
+    if (grantable.has(row.action)) continue;
+    const held = stale.get(row.id) ?? { name: row.name, actions: [] };
+    held.actions.push(row.action);
+    stale.set(row.id, held);
+  }
+
+  const affected = [...stale.values()];
+  return [{
+    check: "agent_withdrawn_capabilities",
+    severity: "report",
+    discloses: "data",
+    ok: affected.length === 0,
+    detail: affected.length === 0
+      ? "Every live agent's pinned ceiling is within what a machine may hold today."
+      : `${affected.length} live agent(s) hold capabilities no machine may have any more, and those acts are `
+        + `refused: ${affected.map((one) => `${one.name} (${one.actions.join(", ")})`).join("; ")}. A ceiling `
+        + "is pinned at mint and the classification is not, so a route reclassified as needing a person "
+        + "narrows every agent already holding it. Nothing is exposed — the refusal is in force — but an "
+        + "automation that has quietly stopped doing part of its job is worth knowing about.",
+    ...(affected.length === 0 ? {} : {
+      fix: "re-mint each agent with the capabilities it still needs, and give the withheld act to a person. "
+        + "The stored rows are left alone on purpose: rewriting a ceiling so this report looks clean would "
+        + "destroy the record of what was granted",
+    }),
+  }];
+}
+
 /**
  * How much mail is not searchable yet (#107).
  *

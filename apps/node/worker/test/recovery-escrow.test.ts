@@ -6,8 +6,8 @@ import { createSystemCtx } from "@mailda/runtime";
 import { runDoctor, type Finding } from "../src/doctor.ts";
 import { aesKeyFrom, vault } from "../src/keyvault.ts";
 import {
-  CODE_CHARACTERS, codeHash, confirmRecoveryCodes, escrowState, formatCode, mintRecoveryCodes,
-  normaliseCode, redeemForVault,
+  CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes, escrowState, formatCode,
+  mintRecoveryCodes, normaliseCode, redeemForVault,
 } from "../src/recovery.ts";
 
 /**
@@ -812,6 +812,87 @@ describe("a set has an identity, and a rotation no longer destroys the sheet som
       marked.results.map((row) => row.set_id),
       "a sheet was marked as held on the strength of a code from a different sheet",
     ).toEqual([second.setId]);
+  });
+
+  it("destroys nothing when the set it read a code from has already been replaced", async () => {
+    /*
+     * The interleaving the last round stopped one step short of, and it was catastrophic.
+     *
+     * `auditedBatch`'s gate wraps the **audit entry's insert** and nothing else, so the `UPDATE` and the
+     * `DELETE` beside it ran unconditionally. Atomicity did not help, because all three statements *succeed*:
+     * a zero-row `INSERT … SELECT` and a zero-row `UPDATE` are not failures. The sequence:
+     *
+     * ```
+     *   before        X active, A pending
+     *   confirm       reads a code from A
+     *   rotation      deletes pending A, inserts pending B, keeps X
+     *   confirm       audit gated off, UPDATE A → 0 rows,
+     *                 DELETE everything that is not A → deletes B *and* X
+     *   after         no recovery codes at all
+     * ```
+     *
+     * An organization's entire escrow, gone, from a confirmation that reported no error. The previous test
+     * built two coexisting sets and confirmed a code from one that *still existed* — which proves set-scoped
+     * confirmation and cannot reach this.
+     *
+     * Run through the exported statements, because the vanished-set state cannot be produced by calling the
+     * public function in sequence: the vanishing has to happen between its read and its write.
+     */
+    const active = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, active.codes[0]!);
+    const pending = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(await heldSets()).toBe(2);
+
+    // The rotation that lands mid-confirmation: the pending sheet is replaced, the active one is kept.
+    const replacement = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(replacement.setId).not.toBe(pending.setId);
+
+    // The stale confirmation's own statements, still naming the set that has gone.
+    const at = new Date(createSystemCtx().now()).toISOString();
+    const outcomes = await testEnv.CATALOG.batch(confirmationStatements(testEnv, ORG, pending.setId, at));
+
+    /*
+     * The confirming update changes **nothing**, which is the condition `confirmRecoveryCodes` turns into
+     * `E_RECOVERY_SET_REPLACED`. Asserted here rather than there because the throw is reachable only under
+     * the interleaving this test builds by hand: called in sequence, the update always finds the rows its own
+     * select just matched. So the branch's *condition* is proved and the branch is a mapping from it.
+     */
+    expect(
+      outcomes[outcomes.length - 1]!.meta.changes ?? 0,
+      "the update reported rows changed for a set that no longer exists",
+    ).toBe(0);
+
+    expect(
+      await heldSets(),
+      "a confirmation whose set had been replaced deleted every other set — the whole escrow",
+    ).toBe(2);
+
+    // And the sheet the operator actually holds still opens the vault, which is the thing that was lost.
+    await loseTheVault();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, active.codes[1]!);
+    expect(outcome.restored.content.length + outcome.restored.credential.length).toBeGreaterThan(0);
+  });
+
+  it("tells the operator their sheet was replaced rather than reporting nothing happened", async () => {
+    /*
+     * The other half. Before, a confirmation whose set had vanished returned `confirmed: 0` with
+     * `alreadyConfirmed: false` — a success shape carrying a zero, for a request that did nothing to an escrow
+     * it may have just destroyed. The operator typed a real code and is owed the reason.
+     */
+    const active = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, active.codes[0]!);
+    const pending = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    // The pending sheet's rows are taken away, exactly as a rotation would.
+    await testEnv.CATALOG.prepare("DELETE FROM recovery_codes WHERE org_id = ? AND set_id IS ?")
+      .bind(ORG, pending.setId).run();
+
+    await expect(
+      confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, pending.codes[0]!),
+      "a code from a vanished set answered as though it were unknown, or as though it had worked",
+    ).rejects.toThrow(/E_RECOVERY_CODE_UNKNOWN|E_RECOVERY_SET_REPLACED/);
+
+    expect(await heldSets(), "the active sheet was destroyed on the way").toBe(1);
   });
 
   it("retires a legacy sheet, whose set_id is NULL", async () => {

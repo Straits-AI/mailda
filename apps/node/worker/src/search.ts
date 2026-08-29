@@ -138,12 +138,36 @@ export function indexMessage(env: Env, messageId: string): D1PreparedStatement {
  * and two rows for one rowid is not a state FTS5 should be asked to hold. Replacing is idempotent and makes
  * "index this message" mean the same thing whoever calls it.
  */
-export function indexBody(env: Env, messageId: string, body: string): D1PreparedStatement {
+export function indexBody(
+  env: Env,
+  messageId: string,
+  body: string,
+  /**
+   * The claim version this write belongs to — the same one the settlement carries.
+   *
+   * **Required, for the reason the settlement's version is required.** The lease and the compare-and-swap
+   * protected `messages.body_index_state` and left this statement unconditional, so a stale worker could not
+   * record its *answer* and could still write its *tokens*:
+   *
+   * ```
+   *   worker A   claims version 1, becomes slow, lease lapses
+   *   worker B   claims version 2, parses, settles `empty`
+   *   worker A   returns: INSERT OR REPLACE lands, version-1 state update changes nothing
+   *   result     state says `empty`, and body search still matches A's text
+   * ```
+   *
+   * The reverse is the same shape: an older parse overwriting a newer one's tokens. Either way the index and
+   * the state column disagree, which is precisely the disagreement `repairBodyIndex` was changed to prevent
+   * from the other direction.
+   */
+  version: number,
+): D1PreparedStatement {
   return env.CATALOG.prepare(
     `INSERT OR REPLACE INTO message_body_search (rowid, body)
-     SELECT rowid, ? FROM messages WHERE id = ?`,
-  ).bind(body, messageId);
+     SELECT rowid, ? FROM messages WHERE id = ? AND body_index_attempt_version = ?`,
+  ).bind(body, messageId, version);
 }
+
 
 /**
  * Where a message stands with the body index (`migrations/0044_body_index_state.sql`).
@@ -330,6 +354,12 @@ export function afterFailedAttempt(
  * again rather than be abandoned immediately. Clearing the lease matters for the same reason: a message
  * repaired while a pass held a claim on it would otherwise wait out that claim before anybody retried.
  *
+ * **The claim version is bumped**, which is what makes the repair stick. Clearing the lease frees the message
+ * for a new pass and does nothing about the pass already running: a worker holding the old version could land
+ * afterwards, write its tokens and settle its state, undoing the requeue with an answer computed before the
+ * operator asked for it. Incrementing invalidates every in-flight claim, so a repair means "nothing already
+ * running may speak for this message" rather than only "somebody else may try".
+ *
  * Returns statements for the caller to combine, rather than executing them here. This file is on the doctor
  * path, and `test/node/doctor-meter-honesty.test.ts` forbids the batching call in any file that is — the rule
  * is lexical on the file rather than an argument about reachability, which is also why this paragraph does not
@@ -352,7 +382,8 @@ export function repairBodyIndex(
       `UPDATE messages
           SET body_index_state = 'pending', body_index_attempts = 0, body_index_error = NULL,
               body_index_next_attempt_at = NULL, body_indexed_at = NULL,
-              body_index_lease_until = NULL
+              body_index_lease_until = NULL,
+              body_index_attempt_version = body_index_attempt_version + 1
         WHERE org_id = ? AND id IN (${placeholders})`,
     ).bind(orgId, ...messageIds),
   ];

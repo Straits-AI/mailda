@@ -544,6 +544,57 @@ export async function escrowState(env: Env, orgId: string): Promise<{
 }
 
 /**
+ * The two statements that make one sheet the active one: retire every other set, then confirm this one.
+ *
+ * ## Why both are conditional, and why the order is the way round it is
+ *
+ * The first version gated only the **audit entry** — `auditedBatch`'s gate wraps the entry's `INSERT`, and
+ * nothing else. The `UPDATE` and the `DELETE` ran unconditionally, and that made the batch's atomicity beside
+ * the point: all three statements *succeed*, because a zero-row `INSERT … SELECT` and a zero-row `UPDATE` are
+ * not failures. So this interleaving destroyed an organization's entire escrow:
+ *
+ * ```
+ *   before        X active, A pending
+ *   confirm       reads a code from A
+ *   rotation      deletes pending A, inserts pending B, keeps X
+ *   confirm       audit insert gated off, UPDATE A → 0 rows,
+ *                 DELETE everything that is not A → deletes B *and* X
+ *   after         no recovery codes at all
+ * ```
+ *
+ * The `EXISTS` puts the same predicate on the destructive statement that the gate puts on the entry, so a
+ * confirmation whose set has vanished deletes nothing.
+ *
+ * **The delete runs first**, which is not a stylistic choice. Confirming the selected set first would make its
+ * rows non-`NULL`, the `EXISTS` false, and the retirement a no-op — leaving both sheets live and the vault
+ * openable by the sheet the operator was just told was retired. The two statements are in one transaction, so
+ * "first" here means textual order within the batch, which is the order D1 applies them.
+ *
+ * Exported so `test/recovery-escrow.test.ts` can run them against a hand-built vanished-set state. That
+ * interleaving cannot be produced by calling the public function in sequence, and the previous round of this
+ * defect survived precisely because the test constructed a state one step short of it.
+ */
+export function confirmationStatements(
+  env: Env,
+  orgId: string,
+  setId: string | null,
+  at: string,
+): D1PreparedStatement[] {
+  return [
+    env.CATALOG.prepare(
+      `DELETE FROM recovery_codes
+        WHERE org_id = ? AND set_id IS NOT ?
+          AND EXISTS (SELECT 1 FROM recovery_codes
+                       WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL)`,
+    ).bind(orgId, setId, orgId, setId),
+    env.CATALOG.prepare(
+      `UPDATE recovery_codes SET confirmed_at = ?
+        WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL`,
+    ).bind(at, orgId, setId),
+  ];
+}
+
+/**
  * Proves an operator holds one of the codes just minted, without spending it.
  *
  * ## Why confirmation is a separate act from minting
@@ -610,46 +661,21 @@ export async function confirmRecoveryCodes(
   /*
    * One batch: the set is confirmed and every other set is retired together, or neither happens.
    *
-   * **`set_id IS ?` and `IS NOT ?`, not `=` and `<>`.** SQLite's `IS` is the null-safe comparison, and
-   * `set_id` is nullable because migration 0047 leaves pre-migration rows as the legacy set. `= NULL` is
-   * `NULL`, which is not true, so an `=` here would confirm nothing for a legacy set and — far worse — the
-   * `<>` form would retire nothing, leaving both sheets live and the vault openable by a sheet the operator
-   * has just replaced.
+   * `set_id IS ?` and `IS NOT ?`, not `=` and `<>`. SQLite's `IS` is the null-safe comparison and `set_id` is
+   * nullable, because migration 0047 leaves pre-migration rows as the legacy set. `= NULL` is `NULL`, which is
+   * not true, so the `=` forms would confirm nothing for a legacy set and — far worse — retire nothing,
+   * leaving both sheets live and the vault openable by one the operator has just replaced.
    *
-   * **Retirement is a delete rather than a state**, and that is the point of it. Each row carries the vault
-   * *sealed under its own code*, so a retired row left in the table is the vault still openable by the old
-   * sheet — exactly what somebody rotating their codes is trying to stop being true. A `retired_at` column
-   * would have recorded the intent and kept the capability.
-   *
-   * The UPDATE is conditional on `confirmed_at IS NULL`, which is this repository's compare-and-swap: two
-   * operators confirming the same sheet at once cannot both retire the other set, because the second one's
-   * update changes nothing and the count says so.
+   * Retirement is a **delete** rather than a state. Each row carries the vault sealed under its own code, so a
+   * retired row left in the table is the vault still openable by the old sheet — exactly what somebody
+   * rotating their codes is trying to stop being true. A `retired_at` column would have recorded the intent
+   * and kept the capability.
    */
   const retiring = await env.CATALOG.prepare(
-    "SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes WHERE org_id = ? AND set_id IS NOT ?",
+    `SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes
+      WHERE org_id = ? AND set_id IS NOT ?`,
   ).bind(orgId, row.set_id).first<{ sets: number }>();
 
-  /*
-   * Through `auditedBatch`, and the trail is the reason rather than the batch.
-   *
-   * Confirming used to write nothing. It changes whether this Node is recoverable, and — since retirement is
-   * a delete — it **destroys copies of the key vault**, one per code on the retired sheet. An act that
-   * removes the ability to decrypt an organization's mail leaving no entry is what §7 forbids, and it went
-   * unnoticed because the act reads like a checkbox.
-   *
-   * The gate makes the entry conditional on the set still being pending, so a confirmation that loses a race
-   * to another one records nothing rather than claiming a retirement it did not perform. The entry precedes
-   * the statements that change the predicate, which `AuditGate` requires.
-   *
-   * **No test in this repository reaches that gate, and this says so rather than implying otherwise.** The
-   * early return above means a sequential caller whose set is already confirmed never gets here, and the
-   * `UPDATE`'s predicate is the same one the `SELECT` just satisfied — so in a single-threaded world the
-   * update always changes rows and the gate always fires. It exists for the interleaving: pending at read
-   * time, confirmed or retired by write time. What *is* tested is the mechanism —
-   * `test/audit.test.ts` asserts the chain stays contiguous when a gated entry does not fire — and the
-   * predicate is the same one the `UPDATE` carries three lines below, so the two cannot disagree about what
-   * "still pending" means.
-   */
   const { results } = await auditedBatch<unknown>(
     env, ctx, orgId,
     {
@@ -660,21 +686,34 @@ export async function confirmRecoveryCodes(
       subject: row.id,
       detail: { set: row.set_id, retired: Number(retiring?.sets ?? 0) },
     },
-    (entry) => [
-      entry,
-      env.CATALOG.prepare(
-        `UPDATE recovery_codes SET confirmed_at = ?
-          WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL`,
-      ).bind(at, orgId, row.set_id),
-      env.CATALOG.prepare(
-        "DELETE FROM recovery_codes WHERE org_id = ? AND set_id IS NOT ?",
-      ).bind(orgId, row.set_id),
-    ],
+    (entry) => [entry, ...confirmationStatements(env, orgId, row.set_id, at)],
     {
       sql: "SELECT 1 FROM recovery_codes WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL",
       params: [orgId, row.set_id],
     },
   );
 
-  return { confirmed: results[1]?.meta.changes ?? 0, alreadyConfirmed: false };
+  /*
+   * The confirming `UPDATE` is the last statement, and a zero-row result means the set this request read a
+   * code from is **gone** — retired by a rotation that landed between the read and the write. Reported as a
+   * conflict rather than as `confirmed: 0`, because the operator typed a real code and needs to know that
+   * nothing happened and why.
+   *
+   * **Reachable only under that interleaving, and this says so rather than implying coverage.** Called in
+   * sequence the update always finds the rows the select above just matched, so no test enters this branch.
+   * What is tested is the condition: `test/recovery-escrow.test.ts` runs `confirmationStatements` against a
+   * hand-built vanished-set state and asserts the update changes zero rows. The branch is the mapping from
+   * that fact to an answer.
+   */
+  const confirmed = results[results.length - 1]?.meta.changes ?? 0;
+  if (confirmed === 0) {
+    throw unprocessable("E_RECOVERY_SET_REPLACED", {
+      what: "the set that code belongs to was replaced while this confirmation was in flight",
+      why: "a rotation landed between reading your code and recording it, so the sheet you typed from is no "
+        + "longer this Node's. Nothing was confirmed and nothing was retired",
+      fix: "type a code from the sheet the rotation printed. If you do not have it, mint a fresh set",
+    });
+  }
+
+  return { confirmed, alreadyConfirmed: false };
 }

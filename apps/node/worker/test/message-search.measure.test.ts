@@ -158,7 +158,7 @@ beforeAll(async () => {
      */
     statements.push(indexBody(testEnv, messageId, n % RARE_EVERY === 0
       ? `demurrage was claimed on booking ${n} and the container held`
-      : `container ${n} cleared and the shipment was released on time`));
+      : `container ${n} cleared and the shipment was released on time`, 0));
   }
   // Batched in chunks: one 3,600-statement batch exceeds what D1 will accept in a single call.
   for (let at2 = 0; at2 < statements.length; at2 += 300) {

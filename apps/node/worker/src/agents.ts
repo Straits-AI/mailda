@@ -1,6 +1,6 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
 import { capabilityIds, routesFor } from "@mailda/contract/capability";
-import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
 import { auditedBatch } from "./audit.ts";
@@ -227,6 +227,51 @@ export async function mintAgent(
    * to want and shortening it silently is the documented behaviour; asking for a life of `NaN` is not
    * anything.
    */
+  /*
+   * The sponsor must be a **person in this organization**, checked rather than trusted.
+   *
+   * The field took any non-empty string, and the consequences were not cosmetic:
+   *
+   * - **Nested delegation by accident.** Naming another agent as sponsor made the intersection in
+   *   `delegation.ts` check *that agent's* tuples, with no recursion to the human at the root and no regard
+   *   for whether its credential had expired or been revoked. An agent could outlive the person the whole
+   *   chain hangs from. Deliberate nested delegation is a design — recursive intersection, cycle detection, a
+   *   depth bound, root attribution — and it must not arrive by accepting a string.
+   * - **A trail that names a machine where it promises a person.** `delegator_user_id`'s contract says it
+   *   names the human accountable, and an `agt_` there makes that sentence false in the one record whose
+   *   value is that it is not.
+   * - **Cross-organization sponsorship.** The sponsor's tuples are read with this Node's `org_id`, so a
+   *   sponsor from another organization holds nothing here — the agent would simply never work, which is a
+   *   confusing way to find out you typed the wrong id.
+   *
+   * `usr_` is checked through `idPattern`, not by hand: `test/node/id-prefix-world.test.ts` requires it and
+   * has caught the hand-written alphabet three times.
+   */
+  if (!idPattern(ID_PREFIXES.user).test(input.sponsorUserId)) {
+    throw unprocessable("E_AGENT_SPONSOR_NOT_A_PERSON", {
+      what: `${input.sponsorUserId} is not a person's identifier`,
+      why: "an agent borrows a named human's authority, and the audit trail records that human as the one "
+        + "accountable. A Butler or another agent as sponsor would mean an agent outliving the person the "
+        + "delegation hangs from, with nothing checking the root",
+      fix: "name a person in this organization as the sponsor",
+    });
+  }
+  const sponsor = await env.CATALOG.prepare(
+    "SELECT 1 FROM users WHERE id = ? AND org_id = ? LIMIT 1",
+  ).bind(input.sponsorUserId, orgId).first();
+  if (sponsor === null) {
+    /*
+     * One refusal for "no such person" and "somebody else's organization". §5C: an administrator of this
+     * organization has no business learning which identifiers exist in another, and the remedy is the same.
+     */
+    throw unprocessable("E_AGENT_SPONSOR_UNKNOWN", {
+      what: "that sponsor is not a person in this organization",
+      why: "an agent's authority is bounded by its sponsor's, which is read against this organization — a "
+        + "sponsor from anywhere else holds nothing here, so the credential would be minted and never work",
+      fix: "name somebody from GET /api/people",
+    });
+  }
+
   const lifetime = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
   if (!Number.isFinite(lifetime) || lifetime <= 0) {
     throw unprocessable("E_AGENT_LIFETIME_INVALID", {

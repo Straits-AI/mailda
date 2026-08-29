@@ -166,7 +166,7 @@ export async function backfillBodyIndex(env: Env, ctx: Ctx): Promise<number> {
 
     const body = await indexableText(raw);
     if (body.kind === "text") {
-      statements.push(indexBody(env, message.id, body.text));
+      statements.push(indexBody(env, message.id, body.text, message.version));
       statements.push(settleBodyIndex(env, message.id, { state: "indexed" }, at, message.version));
     } else if (body.kind === "empty") {
       statements.push(settleBodyIndex(env, message.id, { state: "empty" }, at, message.version));

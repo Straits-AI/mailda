@@ -172,7 +172,7 @@ export async function materialiseReceipt(
      * entirely when there is nothing to index — an empty index row can never match, and it would still be
      * counted as indexed, which would make the backfill's remaining-work figure a lie.
      */
-    ...(bodyWords.kind === "text" ? [indexBody(env, messageId, bodyWords.text)] : []),
+    ...(bodyWords.kind === "text" ? [indexBody(env, messageId, bodyWords.text, 0)] : []),
     /*
      * Settled either way, in the same batch, and settled to the state that is **true** rather than to one
      * "finished" value. A headers-only message is `empty`; one whose body the parser could not read is

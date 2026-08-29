@@ -144,6 +144,7 @@ beforeAll(async () => {
         receiptId === DEMURRAGE
           ? "cabotage rules disputed, and the demurrage position restated"
           : `cabotage rules disputed for ${receiptId}`,
+        0,
       ));
     }
     return out;
@@ -884,6 +885,134 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
     expect(after?.s).toBe("indexed");
   });
 
+  it("refuses a stale worker's tokens, not only its state", async () => {
+    /*
+     * The lease and the compare-and-swap protected `messages.body_index_state` and left the FTS write
+     * unconditional, so a stale worker could not record its **answer** and could still write its **tokens**:
+     *
+     * ```
+     *   worker A   claims version 1, becomes slow, lease lapses
+     *   worker B   claims version 2, parses, settles `empty`
+     *   worker A   returns: INSERT OR REPLACE lands, version-1 state update changes nothing
+     *   result     state says `empty`, and body search still matches A's text
+     * ```
+     *
+     * The index and the state column then disagree — the exact disagreement `repairBodyIndex` was changed to
+     * prevent from the operator's end, arriving here without anybody asking.
+     */
+    const messageId = "msg_stalewriter000000000001";
+    await seedRepairable(messageId, null);
+
+    const first = await claimBodyIndexBatch(testEnv, AT, 50).all<{ id: string; version: number }>();
+    const mine = first.results.find((row) => row.id === messageId);
+    expect(mine, "the claim returned nothing, so there is no stale version to hold").toBeDefined();
+
+    // A later pass takes it over and settles it as having no text to index.
+    const afterLapse = new Date(Date.parse(AT) + BODY_INDEX_LEASE_MS + 1_000).toISOString();
+    const second = await claimBodyIndexBatch(testEnv, afterLapse, 50).all<{ id: string; version: number }>();
+    const theirs = second.results.find((row) => row.id === messageId)!;
+    await settleBodyIndex(testEnv, messageId, { state: "empty" }, afterLapse, theirs.version).run();
+
+    // The slow worker returns, holding the version it claimed.
+    await testEnv.CATALOG.batch([
+      indexBody(testEnv, messageId, "cabotage", mine!.version),
+      settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine!.version),
+    ]);
+
+    const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
+      .bind(messageId).first<{ s: string }>();
+    expect(state?.s, "the stale worker overwrote the newer answer").toBe("empty");
+    expect(
+      await bodySearchFinds("cabotage"),
+      "the state column says this message has no body text and the index answers for it anyway",
+    ).not.toContain(messageId);
+  });
+
+  it("leaves the index row and the state column agreeing on everything it settles", async () => {
+    /*
+     * The invariant, asserted as a property of the **pass** rather than as a function guarding it.
+     *
+     * The audit that prompted this asked for a version-gated delete on the `empty` and `unindexable` paths, on
+     * the reasoning that a stale worker's tokens could outlive a newer settlement. With the FTS write inside
+     * the same batch as the state update and both carrying the claim version, that cannot happen — the two
+     * land together or neither does. A delete there would be code implying a lifecycle this product does not
+     * have, which is the argument `search-backfill.ts` already makes for not writing `unindexMessage`.
+     *
+     * So the obligation is enforced by an assertion that **fails the day a path breaks it**. Scoped to what
+     * one pass settled rather than to the whole table, because several cases in this file construct states the
+     * product cannot reach — a message driven straight from `indexed` to `retryable`, a settlement written
+     * with no tokens to prove a compare-and-swap — and a table-wide claim would be measuring those.
+     */
+    const readable = "msg_agree_ok00000000000001";
+    const unreadable = "msg_agree_gone0000000000001";
+    await seedRepairable(readable, null);
+    await seedRepairable(unreadable, null);
+    // One message whose evidence is really there, so the pass has a success to settle as well as a failure.
+    // The other's `blob_key` points at nothing, which is the ordinary unreadable case.
+    const raw = utf8([
+      "From: alice@agree.example",
+      "To: in@search.example",
+      "Subject: agreement",
+      "Message-ID: <agree-1@agree.example>",
+      "Date: Mon, 3 Aug 2026 12:00:00 +0000",
+      "",
+      "cabotage schedules attached",
+    ].join("\r\n"));
+    await putEvidence(testEnv, `${ORG}/raw/rcpt_${readable.slice(4, 27)}`, raw);
+
+    await backfillBodyIndex(testEnv, createSystemCtx());
+
+    const rows = await testEnv.CATALOG.prepare(
+      `SELECT m.id, m.body_index_state AS state,
+              EXISTS (SELECT 1 FROM message_body_search b WHERE b.rowid = m.rowid) AS indexed
+         FROM messages m WHERE m.id IN (?, ?)`,
+    ).bind(readable, unreadable).all<{ id: string; state: string; indexed: number }>();
+
+    expect(rows.results.length, "the pass reached neither message").toBe(2);
+    expect(
+      rows.results.every((row) => row.state === "pending"),
+      "neither message was settled, so agreement is trivial",
+    ).toBe(false);
+
+    const disagreeing = rows.results
+      .filter((row) => (row.state === "indexed") !== (Number(row.indexed) === 1))
+      .map((row) => `${row.id}: state=${row.state} indexed=${Number(row.indexed) === 1}`);
+    expect(
+      disagreeing,
+      "the pass left the body index and the state column disagreeing. Body search answers for a message whose "
+      + "state says it holds no text, or the reverse:\n  " + disagreeing.join("\n  "),
+    ).toEqual([]);
+  });
+
+  it("invalidates an in-flight claim on repair, so an old worker cannot undo the requeue", async () => {
+    /*
+     * Clearing the lease frees the message for a **new** pass and does nothing about the pass already
+     * running. A worker holding the pre-repair version could land afterwards, write its tokens and settle its
+     * state, undoing the requeue with an answer computed before the operator asked for it — which is the one
+     * thing a repair has to mean.
+     */
+    const messageId = "msg_repairstale00000000002";
+    await seedRepairable(messageId, null);
+    const claimed = await claimBodyIndexBatch(testEnv, AT, 50).all<{ id: string; version: number }>();
+    const mine = claimed.results.find((row) => row.id === messageId)!;
+
+    await testEnv.CATALOG.batch(repairBodyIndex(testEnv, ORG, [messageId]));
+
+    // The worker that was already running returns.
+    await testEnv.CATALOG.batch([
+      indexBody(testEnv, messageId, "cabotage", mine.version),
+      settleBodyIndex(testEnv, messageId, { state: "indexed" }, AT, mine.version),
+    ]);
+
+    const state = await testEnv.CATALOG.prepare("SELECT body_index_state AS s FROM messages WHERE id = ?")
+      .bind(messageId).first<{ s: string }>();
+    expect(state?.s, "a worker running before the repair settled the message afterwards").toBe("pending");
+    expect(
+      await bodySearchFinds("cabotage"),
+      "a repaired message was re-indexed by the pass that was already failing it",
+    ).not.toContain(messageId);
+  });
+
   it("does not hand the same message to two overlapping passes", async () => {
     /*
      * The pass runs from cron every minute and costs, per message, an R2 read plus a vault unwrap plus a MIME
@@ -936,7 +1065,7 @@ async function seedRepairable(messageId: string, indexedText: string | null): Pr
       `${receiptId}@example.net`, ctx.id("thr"), "Repairable", "x@y.example", AT, AT, receiptId, AT,
       `${receiptId}@example.net`, ctx.id("cnv"), indexedText === null ? "pending" : "indexed"),
   ]);
-  if (indexedText !== null) await indexBody(testEnv, messageId, indexedText).run();
+  if (indexedText !== null) await indexBody(testEnv, messageId, indexedText, 0).run();
 }
 
 /** Which messages the body index answers for a term — the index alone, not the authorized listing. */

@@ -38,9 +38,14 @@ import { liveGrantsBySubject, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA } from "..
 
 const testEnv = env as unknown as Env;
 const ORG = "org_agents";
-const ADMIN = "usr_agents_admin";
-const SPONSOR = "usr_agents_sponsor";
-const OUTSIDER = "usr_agents_outsider";
+/*
+ * Real 26-character identifiers, and real rows in `users`, since `mintAgent` now checks that a sponsor is a
+ * person in this organization. The previous placeholders were neither — which is the check earning itself
+ * before it shipped: every fixture in this file was naming a sponsor who did not exist.
+ */
+const ADMIN = "usr_AGENTSADMN0000000000000000";
+const SPONSOR = "usr_AGENTSSPNSR000000000000000";
+const OUTSIDER = "usr_AGENTSTHERS000000000000000";
 
 const AGENT_READS = "mail.read";
 const AGENT_CANNOT = "POST /api/sends/seal";
@@ -68,6 +73,16 @@ beforeEach(async () => {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table} WHERE 1=1`).run();
   }
   await tuple(ADMIN, "org.admin", "organization", ORG);
+  const at = new Date(createSystemCtx().now()).toISOString();
+  await testEnv.CATALOG.batch([
+    testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(ADMIN, ORG, "admin@agents.example", at),
+    testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(SPONSOR, ORG, "sponsor@agents.example", at),
+    // A person in a different organization, for the cross-organization refusal.
+    testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(OUTSIDER, "org_elsewhere", "outsider@elsewhere.example", at),
+  ]);
 });
 
 describe("minting is an administrator's act, and the sponsor is named rather than assumed", () => {
@@ -209,7 +224,7 @@ describe("the pinned ceiling binds on every surface, not only on tools", () => {
       name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await expect(
-      principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/sends/seal", "POST")),
+      principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/sends", "POST")),
     ).rejects.toThrow(/E_AGENT_ACTION_NOT_PERMITTED/);
   });
 
@@ -437,7 +452,7 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
     await testEnv.CATALOG.prepare("DELETE FROM message_search WHERE message_id = ?").bind(messageId).run();
     await indexMessage(testEnv, messageId).run();
     // `cabotage` is in no subject, so a match on it can only have come through the body arm.
-    await indexBody(testEnv, messageId, "cabotage schedules attached").run();
+    await indexBody(testEnv, messageId, "cabotage schedules attached", 0).run();
   }
 
   async function pageFor(who: { orgId: string; userId: string; delegatorUserId?: string | null }, q: string | null = null) {
@@ -962,5 +977,143 @@ describe("an agent's act names its sponsor without the call site remembering to 
     }, (entry) => [entry]);
     const outcome = await verifyChain(testEnv, ORG);
     expect(outcome.intact, `chain broken: ${JSON.stringify(outcome)}`).toBe(true);
+  });
+});
+
+describe("a pinned ceiling narrows when the classification does", () => {
+  /*
+   * The upgrade-safety hole. `agent_actions.action` is plain `TEXT`, the old mint API accepted arbitrary route
+   * strings, and no migration rewrote the rows — so on a Node that minted agents before the capability layer,
+   * a credential holding `POST /api/sends/seal` went on sealing sends. The capability vocabulary filters what
+   * goes *in*; nothing filtered what came *out*.
+   *
+   * The same hole swallows any future reclassification: a route found to be irreversible and moved to
+   * `governed` stops reaching new agents and keeps reaching every existing one. Curation that runs only at
+   * mint is a decision about the future with no effect on the present.
+   */
+  async function withStoredActions(name: string, actions: string[]) {
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name, sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+    });
+    /*
+     * Written straight into `agent_actions`, which is how a legacy row got there: the column takes any text
+     * and the mint that wrote it no longer exists. Going through `mintAgent` could not produce this state,
+     * which is exactly why the state survived.
+     */
+    await testEnv.CATALOG.prepare("DELETE FROM agent_actions WHERE agent_id = ?").bind(minted.agent.id).run();
+    for (const action of actions) {
+      await testEnv.CATALOG.prepare("INSERT INTO agent_actions (agent_id, action) VALUES (?,?)")
+        .bind(minted.agent.id, action).run();
+    }
+    return minted;
+  }
+
+  it("refuses a route no machine may hold, even when the ceiling names it", async () => {
+    const minted = await withStoredActions("legacy", ["POST /api/sends", "GET /api/messages"]);
+    await expect(
+      principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/sends", "POST")),
+      "an agent minted before the capability layer went on sealing sends",
+    ).rejects.toThrow("E_AGENT_ACTION_WITHDRAWN");
+  });
+
+  it("refuses the route that lets an agent escape its own ceiling", async () => {
+    // The sharpest instance: an agent that can mint agents writes itself a wider one in a single call.
+    const minted = await withStoredActions("escaper", ["POST /api/agents"]);
+    await expect(
+      principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/agents", "POST")),
+    ).rejects.toThrow("E_AGENT_ACTION_WITHDRAWN");
+  });
+
+  it("still admits the routes that are grantable today", async () => {
+    /*
+     * The control, and it carries the property the intersection must not break: an agent keeps everything in
+     * its pinned set that is still grantable. A fix that refused a legacy agent outright would pass the two
+     * assertions above and break every working agent on an upgraded Node.
+     */
+    const minted = await withStoredActions("mixed", ["POST /api/sends", "GET /api/messages"]);
+    const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token, "/api/messages"));
+    expect(who?.userId, "a live capability was withdrawn along with the stale one").toBe(minted.agent.id);
+  });
+
+  it("says which term refused, because they are different facts", async () => {
+    /*
+     * "Your ceiling never had this" and "no machine may have this any more" need different answers. An
+     * operator reading the second one has to know the ceiling is not the problem — otherwise the remedy they
+     * reach for is re-minting, which will not help and cannot be made to.
+     */
+    const narrow = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "narrow", sponsorUserId: SPONSOR, capabilities: ["hold.read"],
+    });
+    await expect(
+      principalFor(testEnv, createSystemCtx(), asAgent(narrow.token, "/api/messages")),
+      "a route simply not in the ceiling was reported as withdrawn from all machines",
+    ).rejects.toThrow("E_AGENT_ACTION_NOT_PERMITTED");
+  });
+});
+
+describe("a sponsor is a person in this organization, checked rather than trusted", () => {
+  /*
+   * `sponsorUserId` took any non-empty string. The consequence was not a typo problem:
+   *
+   * - Naming **another agent** as sponsor made `delegation.ts` intersect against *that agent's* tuples, with
+   *   no recursion to the human at the root and no regard for whether its credential had expired or been
+   *   revoked. An agent could go on working after the person the whole chain hangs from lost access.
+   * - It put an `agt_` into `delegator_user_id`, whose contract says it names the human accountable — making
+   *   that sentence false in the one record whose value is that it is not.
+   *
+   * Nested delegation is a design, not an accident: it needs recursive intersection, cycle detection, a depth
+   * bound and root attribution. None of that should arrive by accepting a string.
+   */
+  it("refuses another agent as sponsor", async () => {
+    const first = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "root", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+    });
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "nested", sponsorUserId: first.agent.id, capabilities: [AGENT_READS],
+      }),
+      "an agent was made to hang off another agent, with nothing checking the human at the root",
+    ).rejects.toThrow("E_AGENT_SPONSOR_NOT_A_PERSON");
+  });
+
+  it("refuses a Butler as sponsor", async () => {
+    // The neighbouring machine principal, and the same argument: a Butler is not a person to be accountable.
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "butlered", sponsorUserId: "btl_AGENTSBTER0000000000000000", capabilities: [AGENT_READS],
+      }),
+    ).rejects.toThrow("E_AGENT_SPONSOR_NOT_A_PERSON");
+  });
+
+  it("refuses a person who does not exist", async () => {
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "ghost", sponsorUserId: "usr_AGENTSGHST0000000000000000", capabilities: [AGENT_READS],
+      }),
+    ).rejects.toThrow("E_AGENT_SPONSOR_UNKNOWN");
+  });
+
+  it("refuses a person from another organization, with the same answer", async () => {
+    /*
+     * §5C: one refusal for "no such person" and "somebody else's organization". An administrator here has no
+     * business learning which identifiers exist elsewhere, and the remedy is the same either way.
+     *
+     * It is also not merely a privacy point. The sponsor's tuples are read against *this* organization, so a
+     * sponsor from another one holds nothing here — the credential would mint and never work, which is a
+     * confusing way to discover a typo.
+     */
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "foreign", sponsorUserId: OUTSIDER, capabilities: [AGENT_READS],
+      }),
+    ).rejects.toThrow("E_AGENT_SPONSOR_UNKNOWN");
+  });
+
+  it("still mints for a real person in this organization", async () => {
+    // The control. Without it, refusing every sponsor would satisfy all four assertions above.
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "ordinary", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+    });
+    expect(minted.agent.sponsorUserId).toBe(SPONSOR);
   });
 });
