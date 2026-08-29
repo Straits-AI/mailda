@@ -341,9 +341,18 @@ export async function mintRecoveryCodes(
     },
     (entry) => [
       entry,
+      /*
+       * The same in-transaction guard the confirmation carries, and rotation had **none at all**.
+       *
+       * `redeemForVault` does not require `confirmed_at IS NOT NULL`, so a pending sheet's code is real
+       * recovery material and can legitimately be mid-restore when the next rotation deletes it — taking the
+       * escrow that attempt needs to resume with. The delete is skipped in that case and the mint proceeds:
+       * two pending sheets for a few minutes is untidy, and destroying a live recovery is not.
+       */
       env.CATALOG.prepare(
-        "DELETE FROM recovery_codes WHERE org_id = ? AND confirmed_at IS NULL",
-      ).bind(orgId),
+        `DELETE FROM recovery_codes
+          WHERE org_id = ? AND confirmed_at IS NULL AND ${NO_LIVE_RESTORE_PENDING}`,
+      ).bind(orgId, orgId, new Date(ctx.now() - RESTORE_LEASE_MS).toISOString()),
       ...rows.map((row) => env.CATALOG.prepare(
         `INSERT INTO recovery_codes
            (id, org_id, code_hash, escrow, content_generation, credential_generation, created_at,
@@ -873,23 +882,47 @@ export async function setHasLiveRestore(
   return row !== null;
 }
 
+/**
+ * No code in a set this statement would delete is being restored from.
+ *
+ * `SQL` rather than a function, because it has to sit **inside the transaction** with the delete it guards. A
+ * preflight read cannot enforce this: a restore acquired between the check and the batch is one whose escrow
+ * the batch then deletes, leaving an operation that can neither settle nor resume. That is the state the whole
+ * saga exists to make impossible, arrived at from the outside.
+ *
+ * Takes `orgId`, the set being kept, and the lease cutoff — in that order, appended after the caller's own
+ * parameters.
+ */
+const NO_LIVE_RESTORE_ELSEWHERE = `NOT EXISTS (
+    SELECT 1 FROM recovery_restores r JOIN recovery_codes c ON c.id = r.code_id
+     WHERE r.org_id = ? AND c.set_id IS NOT ? AND r.state = 'started' AND r.started_at > ?)`;
+
+/** The same question for the sets a **rotation** removes: every unconfirmed one. */
+const NO_LIVE_RESTORE_PENDING = `NOT EXISTS (
+    SELECT 1 FROM recovery_restores r JOIN recovery_codes c ON c.id = r.code_id
+     WHERE r.org_id = ? AND c.confirmed_at IS NULL AND r.state = 'started' AND r.started_at > ?)`;
+
 export function confirmationStatements(
   env: Env,
   orgId: string,
   setId: string | null,
   at: string,
+  /** The instant a reservation older than this has lapsed. Bound into the guard below. */
+  staleBefore: string,
 ): D1PreparedStatement[] {
   return [
     env.CATALOG.prepare(
       `DELETE FROM recovery_codes
         WHERE org_id = ? AND set_id IS NOT ?
           AND EXISTS (SELECT 1 FROM recovery_codes
-                       WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL)`,
-    ).bind(orgId, setId, orgId, setId),
+                       WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL)
+          AND ${NO_LIVE_RESTORE_ELSEWHERE}`,
+    ).bind(orgId, setId, orgId, setId, orgId, setId, staleBefore),
     env.CATALOG.prepare(
       `UPDATE recovery_codes SET confirmed_at = ?
-        WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL`,
-    ).bind(at, orgId, setId),
+        WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL
+          AND ${NO_LIVE_RESTORE_ELSEWHERE}`,
+    ).bind(at, orgId, setId, orgId, setId, staleBefore),
   ];
 }
 
@@ -1028,6 +1061,11 @@ export async function confirmRecoveryCodes(
    * whole point of the saga is that an interrupted restore is resumable. A lease lasts five minutes; a
    * recovery that cannot be finished lasts as long as the mail does.
    */
+  /*
+   * A **preflight for the message**, not the enforcement. The guard that matters is inside the transaction
+   * below; this exists so an operator gets a sentence naming the wait rather than a silent no-op, and the two
+   * cannot disagree because the statements refuse whatever this misses.
+   */
   if (await setHasLiveRestore(env, orgId, row.set_id, ctx.now())) {
     throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
       what: "a code from the sheet this would retire is being redeemed right now",
@@ -1037,6 +1075,14 @@ export async function confirmRecoveryCodes(
         + `${Math.round(RESTORE_LEASE_MS / 60_000)} minutes`,
     });
   }
+
+  /*
+   * The lease cutoff, computed once and bound into both the gate and the statements — so the entry, the
+   * delete and the confirmation all decide "is a restore live" against the same instant. Three reads of the
+   * clock would be three slightly different questions, which is the shape of race this whole function keeps
+   * meeting.
+   */
+  const staleBefore = new Date(ctx.now() - RESTORE_LEASE_MS).toISOString();
 
   const retiring = await env.CATALOG.prepare(
     `SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes
@@ -1053,10 +1099,16 @@ export async function confirmRecoveryCodes(
       subject: row.id,
       detail: { set: row.set_id, retired: Number(retiring?.sets ?? 0) },
     },
-    (entry) => [entry, ...confirmationStatements(env, orgId, row.set_id, at)],
+    (entry) => [entry, ...confirmationStatements(env, orgId, row.set_id, at, staleBefore)],
     {
-      sql: "SELECT 1 FROM recovery_codes WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL",
-      params: [orgId, row.set_id],
+      /*
+       * The gate carries the live-restore term as well, so an entry cannot be written for a retirement the
+       * statements beside it refuse. Same predicate, same instant, three uses — the lesson the reservation
+       * predicate above already records.
+       */
+      sql: `SELECT 1 FROM recovery_codes WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL
+              AND ${NO_LIVE_RESTORE_ELSEWHERE}`,
+      params: [orgId, row.set_id, orgId, row.set_id, staleBefore],
     },
   );
 

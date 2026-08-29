@@ -876,7 +876,7 @@ describe("a set has an identity, and a rotation no longer destroys the sheet som
 
     // The stale confirmation's own statements, still naming the set that has gone.
     const at = new Date(createSystemCtx().now()).toISOString();
-    const outcomes = await testEnv.CATALOG.batch(confirmationStatements(testEnv, ORG, pending.setId, at));
+    const outcomes = await testEnv.CATALOG.batch(confirmationStatements(testEnv, ORG, pending.setId, at, new Date(createSystemCtx().now() - RESTORE_LEASE_MS).toISOString()));
 
     /*
      * The confirming update changes **nothing**, which is the condition `confirmRecoveryCodes` turns into
@@ -1683,4 +1683,100 @@ describe("retirement waits for a restore, and a replaced sheet says so", () => {
     expect(await heldSets()).toBe(1);
   });
 
+});
+
+describe("retirement is fenced inside the transaction, not before it", () => {
+  /*
+   * The guard was a preflight read and the destructive statements carried nothing. So a restore acquired
+   * **between** the check and the batch was one whose escrow the batch then deleted, leaving an operation that
+   * could neither settle nor resume — the state the whole saga exists to make impossible, arrived at from the
+   * outside. Failing closed at settlement stops the attempt lying about success; it does not undo the
+   * destruction of the material it needed.
+   */
+  async function liveRestoreOn(setId: string | null, id: string) {
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? AND set_id IS ? LIMIT 1",
+    ).bind(ORG, setId).first<{ id: string }>();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+      ).bind(id, ORG, code!.id, new Date(createSystemCtx().now()).toISOString()),
+      testEnv.CATALOG.prepare("UPDATE recovery_codes SET active_restore_id = ? WHERE id = ?")
+        .bind(id, code!.id),
+    ]);
+    return code!.id;
+  }
+
+  it("deletes nothing when a restore is acquired after the preflight", async () => {
+    /*
+     * The interleaving, built by running the confirmation's **own statements** against a state where a
+     * restore arrived after the preflight would have passed. That is precisely what a preflight cannot see,
+     * and it cannot be produced by calling `confirmRecoveryCodes` in sequence — the preflight would refuse
+     * first, which is the better error and not the enforcement.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await liveRestoreOn(first.setId, "rst_AFTERPREFLIGHT0000000000");
+
+    const staleBefore = new Date(createSystemCtx().now() - RESTORE_LEASE_MS).toISOString();
+    const outcomes = await testEnv.CATALOG.batch(confirmationStatements(
+      testEnv, ORG, second.setId, new Date(createSystemCtx().now()).toISOString(), staleBefore,
+    ));
+
+    expect(
+      outcomes[0]!.meta.changes ?? 0,
+      "the retirement deleted the code an in-flight restore needs to resume with",
+    ).toBe(0);
+    expect(
+      outcomes[1]!.meta.changes ?? 0,
+      "the sheet was confirmed while its retirement was refused, so the two disagree",
+    ).toBe(0);
+    expect(await heldSets(), "a sheet was retired around a live restore").toBe(2);
+  });
+
+  it("lets the retirement through once nothing is in flight", async () => {
+    // The control. A guard that never releases is a Node whose codes can never be rotated again.
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const staleBefore = new Date(createSystemCtx().now() - RESTORE_LEASE_MS).toISOString();
+    const outcomes = await testEnv.CATALOG.batch(confirmationStatements(
+      testEnv, ORG, second.setId, new Date(createSystemCtx().now()).toISOString(), staleBefore,
+    ));
+    expect(outcomes[0]!.meta.changes ?? 0).toBe(10);
+    expect(outcomes[1]!.meta.changes ?? 0).toBe(10);
+  });
+
+  it("does not let a rotation delete a pending sheet somebody is restoring from", async () => {
+    /*
+     * Rotation had **no** guard at all. `redeemForVault` does not require `confirmed_at IS NOT NULL`, so a
+     * pending sheet's code is real recovery material and can legitimately be mid-restore when the next
+     * rotation deletes it.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const pending = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await liveRestoreOn(pending.setId, "rst_PENDINGRESTORE0000000000");
+
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    const survived = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_codes WHERE org_id = ? AND set_id IS ?",
+    ).bind(ORG, pending.setId).first<{ n: number }>();
+    expect(
+      Number(survived?.n),
+      "a rotation deleted the pending sheet an in-flight restore was using",
+    ).toBe(10);
+  });
+
+  it("still replaces an unconfirmed sheet nobody is restoring from", async () => {
+    // The control for rotation: the ordinary case must still collapse to one pending sheet.
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    expect(await heldSets(), "each rotation left another sealed copy of the vault behind").toBe(2);
+  });
 });

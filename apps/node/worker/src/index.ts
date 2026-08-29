@@ -65,7 +65,9 @@ import {
   type IssuedSession,
 } from "./auth/session.ts";
 import { sponsorTerm } from "./delegation.ts";
-import { authenticationIsImpossible, formatReport, runDoctor, withoutDataFindings } from "./doctor.ts";
+import {
+  authenticationIsImpossible, authenticationProbe, formatReport, runDoctor, withoutDataFindings,
+} from "./doctor.ts";
 import { releaseButlerSend } from "./butler/release.ts";
 import { pausesInForce as butlerPausesInForce } from "./butler/pause.ts";
 import { resumeButlerPause } from "./butler/pause-acts.ts";
@@ -525,17 +527,45 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      */
     if (url.pathname === "/api/doctor") {
       const orgId = await organizationId(env);
-      const signedIn = (await principalFor(env, clock, request)) !== null;
-      const full = await runDoctor(env, clock);
+      const who = await principalFor(env, clock, request);
 
-      // A claimed Node normally requires authentication here. The exception is the case that made
-      // this endpoint useless when it mattered: if the Node cannot authenticate *anyone*, the gate
-      // is not one a caller can satisfy, so the reduced report is served instead of a 401.
-      let report = full;
-      if (orgId !== null && !signedIn) {
-        if (!authenticationIsImpossible(full)) return unauthenticated();
-        report = withoutDataFindings(full);
+      /*
+       * ## The decision is made before the diagnostic runs
+       *
+       * This ran `runDoctor` first and used the result to decide whether to answer 401 — so every anonymous
+       * request to a healthy claimed Node paid for a full organization-wide sweep of D1, R2 and the vault and
+       * received nothing for it. CI proves that sweep is bounded; bounded is not free, and it is not
+       * authorized. An expensive diagnostic anybody can trigger without a credential is an availability and
+       * billing surface whatever its ceiling.
+       *
+       * `authenticationProbe` asks the one question the 401 turns on — can this Node authenticate anybody —
+       * with the two checks that answer it.
+       *
+       * **The ordering is not observable from outside**, and that is said here rather than left for somebody
+       * to assume a test covers: `runDoctor` catches per check, so a handler that swept first and refused
+       * afterwards answers 401 as well. What `test/operator-routes.test.ts` can assert is that the probe is
+       * two findings against the diagnostic's dozens — the substance of the cost, if not the ordering.
+       */
+      if (orgId !== null && who === null) {
+        const probe = await authenticationProbe(env, clock);
+        if (!authenticationIsImpossible({ findings: probe })) return unauthenticated();
       }
+
+      /*
+       * ## And who sees what, which was "anybody signed in"
+       *
+       * `discloses: "data"` marks the findings that name holds, matters, mailboxes, send manifests, agent
+       * names, Butler triggers and domain pauses — the shape of the organization's work. That classification
+       * decided what a locked-out operator saw and nothing else, so an ordinary member reading `doctor` got
+       * the whole organization's condition, and `health.read` handed an agent the same.
+       *
+       * The reduced report is the default now and the full one is an administrator's. Which is also what
+       * makes the locked-out case coherent rather than an exception: the anonymous reduced report and the
+       * ordinary member's are the same report, for the same reason.
+       */
+      const full = await runDoctor(env, clock);
+      const wholeOrganization = who !== null && await isAdmin(env, who.orgId, who.userId);
+      const report = wholeOrganization ? full : withoutDataFindings(full);
       // A refusing verdict is a 503: the Node is telling a load balancer and a human the same
       // thing, rather than answering 200 with bad news in the body.
       const status = report.verdict === "refuse" ? 503 : 200;

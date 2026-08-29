@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
+import { authenticationProbe, runDoctor } from "../src/doctor.ts";
 
 /**
  * Five organization-wide routes that asked for a session and needed an administrator.
@@ -211,5 +212,71 @@ describe("administrator means one thing, whichever module asks", () => {
      */
     await tuple(AGENT, "org.admin", "organization", ORG);
     expect(await isAdmin(testEnv, ORG, AGENT)).toBe(true);
+  });
+});
+
+describe("doctor decides before it works, and shows an ordinary member less", () => {
+  /*
+   * Two properties, and the same root: `discloses: "data"` classified every finding that names holds, matters,
+   * mailboxes, send manifests, agent names, Butler triggers and domain pauses — and that classification only
+   * ever decided what a **locked-out** operator saw. Anybody signed in got the whole organization's
+   * condition, and `health.read` handed an agent the same.
+   */
+  it("refuses an anonymous caller on a claimed Node", async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/doctor`);
+    expect(response.status).toBe(401);
+  });
+
+  it("has an authentication probe far narrower than the diagnostic", async () => {
+    /*
+     * The 401 above used to be decided by running the **entire** diagnostic and discarding it, so every
+     * anonymous request to a healthy Node paid for an organization-wide sweep of D1, R2 and the vault. CI
+     * proves that sweep is bounded; bounded is not free and is not authorized.
+     *
+     * **The ordering is not observable from the response**, and this says so rather than implying a test
+     * holds it: `runDoctor` catches per check, so a handler that swept first and refused afterwards answers
+     * 401 too. Four candidate discriminators were tried and none distinguished the two — dropping
+     * `mailboxes`, `legal_holds`, `matters`, `send_manifests`. What *is* checkable is the substance: the
+     * probe asks the two questions the 401 turns on and nothing else, so using it cannot cost what the sweep
+     * costs.
+     */
+    const probe = await authenticationProbe(testEnv, createSystemCtx());
+    const full = await runDoctor(testEnv, createSystemCtx());
+    expect(probe.map((one) => one.check).sort(), "the probe asks something other than the two key checks")
+      .toEqual(["credential_key", "signing_key"]);
+    expect(
+      full.findings.length,
+      "the full diagnostic is no larger than the probe, so there was nothing to avoid",
+    ).toBeGreaterThan(probe.length * 4);
+  });
+
+  it("gives an ordinary member the reduced report", async () => {
+    const response = await SELF.fetch(`${ORIGIN}/api/doctor`, {
+      headers: { cookie: await cookieFor(MEMBER) },
+    });
+    expect(response.status).toBe(200);
+    const report = await response.json<{ findings: { check: string; discloses: string }[] }>();
+    expect(
+      report.findings.every((one) => one.discloses === "infrastructure"),
+      "a colleague was shown findings that name this organization's holds, matters and mailboxes",
+    ).toBe(true);
+    expect(report.findings.map((one) => one.check)).toContain("report_reduced");
+  });
+
+  it("gives an administrator the whole thing", async () => {
+    /*
+     * The control, and it is what stops the fix above being "show nobody anything". An operator needs the
+     * organization-wide view — it is the screen they open when something has gone wrong.
+     */
+    const response = await SELF.fetch(`${ORIGIN}/api/doctor`, {
+      headers: { cookie: await cookieFor(ADMIN) },
+    });
+    expect(response.status).toBe(200);
+    const report = await response.json<{ findings: { check: string; discloses: string }[] }>();
+    expect(
+      report.findings.some((one) => one.discloses === "data"),
+      "an administrator was shown the reduced report",
+    ).toBe(true);
+    expect(report.findings.map((one) => one.check)).not.toContain("report_reduced");
   });
 });

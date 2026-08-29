@@ -2645,6 +2645,28 @@ export function formatReport(report: DoctorReport): string {
 }
 
 /**
+ * Can this Node authenticate anybody at all?
+ *
+ * ## Why this exists rather than reading the full report
+ *
+ * `/api/doctor` answered a 401 to an anonymous caller by running the **entire diagnostic** and then throwing
+ * the result away — because the one question it needed was *"is authentication impossible"*, and the only way
+ * to ask it was `authenticationIsImpossible(full)`. So every anonymous request to a healthy Node paid for a
+ * full organization-wide sweep of D1, R2 and the vault, and received nothing.
+ *
+ * CI proves that sweep is bounded. Bounded is not the same as free, and it is not the same as authorized: an
+ * expensive diagnostic anybody can trigger without a credential is an availability and billing surface,
+ * whatever its ceiling.
+ *
+ * The question turns on exactly two findings — `credential_key` and `signing_key` — so this runs those two.
+ * `authenticationIsImpossible` reads the same shape either way, which is what stops the cheap answer and the
+ * full one disagreeing.
+ */
+export async function authenticationProbe(env: Env, ctx: Ctx): Promise<Finding[]> {
+  return [...(await checkCredentialKek(env)), ...(await checkSigningKeys(env, ctx))];
+}
+
+/**
  * Can this Node authenticate anyone at all?
  *
  * Found by measurement, not by reasoning: removing the `CREDENTIAL_KEK` binding made every signing
@@ -2667,7 +2689,10 @@ export function formatReport(report: DoctorReport): string {
  * any name referenced here — in this predicate or in a `fix:` that points at "the X finding" — that no
  * check emits, and `test/doctor.test.ts` covers the KEK-alone lockout end to end.
  */
-export function authenticationIsImpossible(report: DoctorReport): boolean {
+/**
+ * Reads a report *or* a bare finding list, so the cheap probe and the full sweep cannot answer differently.
+ */
+export function authenticationIsImpossible(report: DoctorReport | { findings: Finding[] }): boolean {
   return report.findings.some(
     (f) => !f.ok && f.severity === "refuse" && (f.check === "credential_key" || f.check === "signing_key"),
   );
