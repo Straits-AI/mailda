@@ -1,6 +1,7 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
 import type { MailboxRelation } from "./access.ts";
 import { capabilityIds, routesFor } from "@mailda/contract/capability";
+import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
@@ -170,6 +171,51 @@ export async function mintAgent(
   },
 ): Promise<MintedAgent> {
   await assertAdmin(env, orgId, createdBy);
+
+  /*
+   * The value **shapes**, checked before anything reads them.
+   *
+   * `refuseUnknownFields` guards the request boundary against keys nobody declared and deliberately does not
+   * validate types — so the handler cast decoded JSON into this interface and passed it here, where
+   * `input.name.trim()` on a number and `input.capabilities.length` on `1` become ordinary `TypeError`s and
+   * generic 500s. A caller who sent the wrong shape is owed the same four-part answer as one who sent an
+   * unknown key.
+   *
+   * Checked here rather than in the route, because this function is also called from tests and future
+   * callers, and a guard that lives at one door is a guard the second door does not have.
+   */
+  if (typeof input.name !== "string") {
+    throw unprocessable("E_AGENT_FIELD_SHAPE", {
+      what: "`name` must be a string",
+      why: "the name is what a refusal and an audit entry say instead of an identifier, so it has to be text",
+      fix: "send a name describing what this agent is for",
+    });
+  }
+  if (!Array.isArray(input.capabilities) || input.capabilities.some((one) => typeof one !== "string")) {
+    throw unprocessable("E_AGENT_FIELD_SHAPE", {
+      what: "`capabilities` must be an array of capability names",
+      why: "the ceiling is chosen from a fixed vocabulary, so anything that is not a list of names cannot be "
+        + "expanded into one",
+      fix: "send an array of names from GET /api/agent-capabilities",
+    });
+  }
+  if (input.grants !== undefined && (!Array.isArray(input.grants) || input.grants.some((one) =>
+    typeof one !== "object" || one === null
+    || typeof (one as { mailboxId?: unknown }).mailboxId !== "string"
+    || !(AGENT_GRANTABLE_RELATIONS as readonly string[])
+      .includes((one as { relation?: unknown }).relation as string)))) {
+    /*
+     * The relation enum is enforced **at runtime**, not only in the contract. The handler casts a decoded
+     * string to `MailboxRelation`, so the declared four values were a compile-time comfort over a value that
+     * arrives from the network — and an unknown relation would be written as a tuple that matches nothing.
+     */
+    throw unprocessable("E_AGENT_FIELD_SHAPE", {
+      what: "each grant must name a mailbox and one of: " + AGENT_GRANTABLE_RELATIONS.join(", "),
+      why: "a grant is written as a relationship tuple, and a relation outside that set would be stored and "
+        + "match nothing — the agent would authenticate and be refused with no explanation",
+      fix: "send `grants` as an array of { mailboxId, relation }",
+    });
+  }
 
   const name = input.name.trim();
   if (name === "") {

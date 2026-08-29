@@ -1,4 +1,5 @@
 import { agentGrantableActions } from "./agent.ts";
+import type { AgentGrantableRelation } from "./relations.ts";
 
 /**
  * What an agent may be granted, said in the product's own words rather than in HTTP.
@@ -63,14 +64,33 @@ export interface Capability {
    * would let "read mail" and "read about mail" look alike at the moment somebody is choosing between them.
    */
   readonly reachesContent: boolean;
+  /**
+   * The mailbox relations this capability's routes actually check, so nothing has to guess.
+   *
+   * Two things went wrong without it. The mint screen warned only when **zero** relations were chosen, so
+   * `mail.read` with `send.propose` reviewed as fine and produced an agent that cannot read anything. And a
+   * hand-written `NEEDS_A_MAILBOX` list in the client was a second correspondence table free to drift from
+   * this one — the exact shape the capability vocabulary was introduced to remove one level up.
+   *
+   * Empty means the capability reaches nothing mailbox-shaped: `health.read` and `identity.read` are real and
+   * common, and requiring a grant for them would make the ordinary diagnostic agent impossible to create.
+   *
+   * **Every relation listed is needed**, not any one of them. `mail.read` names `mailbox.content.read` *and*
+   * `message.export` because `GET /api/messages/:receiptId/raw` checks both — `hasAnyRelation` for the export
+   * and `mayRead` for the content — and the description used to promise the original bytes on content read
+   * alone.
+   */
+  readonly requires: readonly AgentGrantableRelation[];
   readonly routes: readonly string[];
 }
 
 export const CAPABILITIES: readonly Capability[] = [
   {
     id: "mail.read",
-    says: "Read mail: list it, open a message, and fetch the original bytes.",
+    says: "Read mail: list it, open a message, and fetch the original bytes. The original `.eml` needs "
+      + "`message.export` as well as content read — the route checks both.",
     reachesContent: true,
+    requires: ["mailbox.content.read", "message.export"],
     routes: [
       "GET /api/mailboxes",
       "GET /api/messages",
@@ -83,12 +103,14 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Write and revise drafts. Sending is not included and cannot be — sealing a send is withheld from "
       + "every machine.",
     reachesContent: true,
+    requires: ["send.propose"],
     routes: ["GET /api/drafts", "GET /api/drafts/:draftId", "PUT /api/drafts"],
   },
   {
     id: "send.observe",
     says: "See what has been sent and how each delivery went.",
     reachesContent: true,
+    requires: ["mailbox.content.read"],
     routes: ["GET /api/sends", "GET /api/sends/:sendId/submitted"],
   },
   {
@@ -96,12 +118,14 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Cancel a send that has not gone out yet. Its own capability rather than part of observing, because "
       + "it stops somebody else's message leaving.",
     reachesContent: false,
+    requires: ["send.propose"],
     routes: ["POST /api/sends/:sendId/cancel"],
   },
   {
     id: "queue.read",
     says: "See the case queues: what is unclaimed, what is claimed, and what is assigned to whom.",
     reachesContent: false,
+    requires: ["send.propose"],
     routes: ["GET /api/mailboxes/:mailboxId/cases"],
   },
   {
@@ -109,12 +133,14 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "List matters and open new ones. Closing one is withheld — it settles what an investigation may "
       + "still reach.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /api/matters", "POST /api/matters"],
   },
   {
     id: "butler.read",
     says: "Read Butlers, their versions and every run they have made, including a run's full trace.",
     reachesContent: true,
+    requires: [],
     routes: [
       "GET /api/butler-pauses",
       "GET /api/butler-runs",
@@ -129,24 +155,28 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Draft and simulate Butlers. **Publishing is withheld** — a published Butler acts on its own, so "
       + "putting one into force needs a person.",
     reachesContent: false,
+    requires: [],
     routes: ["POST /api/butlers", "POST /api/butlers/:butlerId/simulate", "PUT /api/butlers/:butlerId/draft"],
   },
   {
     id: "policy.author",
     says: "Read policies and draft changes to them. Putting a policy into force is withheld.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /api/policies", "POST /api/policies", "PUT /api/policies/:policyId/draft"],
   },
   {
     id: "audit.read",
     says: "Read the audit trail and verify its hash chain.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /api/audit", "POST /api/audit/verify"],
   },
   {
     id: "directory.read",
     says: "Read who is in this organization, which teams they are in, and what each of them may reach.",
     reachesContent: false,
+    requires: [],
     routes: [
       "GET /api/access",
       "GET /api/invitations",
@@ -160,12 +190,14 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "supervision.read",
     says: "Read supervised-access grants, pending approvals and notices due.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /api/approvals", "GET /api/notifications", "GET /api/supervised"],
   },
   {
     id: "hold.read",
     says: "Read the legal holds in force.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /api/holds"],
   },
   {
@@ -173,12 +205,14 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Read e-discovery exports **and the exported message bytes inside them**. This reaches content that "
       + "somebody else assembled, so it is not part of reading mail.",
     reachesContent: true,
+    requires: ["ediscovery.export"],
     routes: ["GET /api/exports", "GET /api/exports/:exportId/objects/:objectId"],
   },
   {
     id: "health.read",
     says: "Read this Node's own condition: the doctor's findings, logs, transport, breakers and pauses.",
     reachesContent: false,
+    requires: [],
     routes: [
       "GET /api/breakers",
       "GET /api/doctor",
@@ -192,6 +226,7 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "identity.read",
     says: "Read who this credential is acting as, and the signing keys a client needs to check a session.",
     reachesContent: false,
+    requires: [],
     routes: ["GET /.well-known/jwks.json", "GET /api/auth/passkeys", "GET /api/me"],
   },
 ];

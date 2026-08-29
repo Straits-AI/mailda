@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Nothing } from "../chrome.tsx";
 import {
   AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMailboxes, useMe,
-  type AgentRelation, type AgentRow,
+  type AgentRelation, type AgentRow, type CapabilityRow,
 } from "../api.ts";
 
 /**
@@ -50,14 +50,29 @@ function standing(agent: AgentRow, now: number): { label: string; state: string 
 }
 
 /**
- * Capabilities that do nothing without a mailbox relation.
+ * Which chosen capabilities do not have the relations they need, and what is missing.
  *
- * Named rather than derived, because the derivation is not available here: a capability is a set of routes and
- * whether a route needs a mailbox relation is a fact about its handler. Getting this list wrong costs a
- * warning that does not appear, not a credential that is wrong — so a short honest list beats a clever guess.
+ * Derived from each capability's own `requires`, which the Node publishes. The first version carried a
+ * hand-written `NEEDS_A_MAILBOX` set here — a second correspondence table, free to drift from the vocabulary,
+ * which is the exact shape the capability layer was introduced to remove one level up.
+ *
+ * **Per capability, not "any relation at all".** The old warning fired only when *zero* relations were
+ * chosen, so `mail.read` paired with `send.propose` reviewed as fine and produced an agent that cannot read
+ * anything. A requirement is satisfied when the relation is granted on **some** mailbox: which mailbox is the
+ * administrator's business, and demanding it on every one would refuse the ordinary case of an agent that
+ * reads one mailbox and drafts in another.
  */
-const NEEDS_A_MAILBOX = new Set(["mail.read", "mail.draft", "send.observe", "send.cancel", "queue.read",
-  "export.read"]);
+function unmet(
+  capabilities: CapabilityRow[],
+  chosen: Set<string>,
+  reach: Set<string>,
+): { id: string; missing: string[] }[] {
+  const granted = new Set([...reach].map((key) => key.split("::")[1]!));
+  return capabilities
+    .filter((one) => chosen.has(one.id))
+    .map((one) => ({ id: one.id, missing: one.requires.filter((r) => !granted.has(r)) }))
+    .filter((one) => one.missing.length > 0);
+}
 
 function Minting({ onMinted }: { onMinted: () => void }) {
   const capabilities = useAgentCapabilities();
@@ -221,12 +236,13 @@ function Minting({ onMinted }: { onMinted: () => void }) {
             Every one of them also stops the moment the sponsor loses that access — an agent is bounded by the
             person it acts for, checked on each request rather than at this moment.
           </p>
-          {reach.size === 0 && [...chosen].some((id) => NEEDS_A_MAILBOX.has(id)) ? (
-            <p>
-              Some of these capabilities read mail, and no mailbox is chosen — the agent will authenticate and
-              find nothing it may read.
+          {unmet(capabilities.data.capabilities, chosen, reach).map((one) => (
+            <p key={one.id}>
+              <span className="mono">{one.id}</span>
+              {` needs ${one.missing.join(" and ")}, which is not granted on any mailbox here — the agent `}
+              {"will authenticate and be refused."}
             </p>
-          ) : null}
+          ))}
         </div>
       )}
       <p className="dim">

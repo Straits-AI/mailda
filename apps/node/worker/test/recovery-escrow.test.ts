@@ -1382,3 +1382,111 @@ describe("doctor reports what the restore actually did", () => {
     expect(finding.detail).toContain("No vault restore has been attempted");
   });
 });
+
+describe("a decrypted escrow is validated before it becomes a vault", () => {
+  /*
+   * The parse was unguarded and the shape check accepted any number as a generation. The second matters more
+   * than it looks: `KeyVault.restore` builds a storage key from the generation **and advances the current
+   * pointer** when it is larger, so a damaged escrow could leave this Node sealing under a fractional or
+   * enormous generation for ever — a vault nothing else will ever produce a key for.
+   */
+  async function withEscrow(payload: string, codes: readonly string[]) {
+    await testEnv.CATALOG.prepare("UPDATE recovery_codes SET escrow = ? WHERE org_id = ?")
+      .bind(await seal(await codeKey(normaliseCode(codes[0]!)), payload), ORG).run();
+  }
+
+  const REAL_SECRET = "A".repeat(43) + "=";
+
+  const damaged = [
+    { what: "invalid JSON", payload: "{not json" },
+    { what: "a fractional generation", payload: JSON.stringify({
+      content: [{ generation: 1.5, secret: REAL_SECRET }], credential: [],
+    }) },
+    { what: "generation zero, which this Node never escrows", payload: JSON.stringify({
+      content: [{ generation: 0, secret: REAL_SECRET }], credential: [],
+    }) },
+    { what: "a negative generation", payload: JSON.stringify({
+      content: [{ generation: -3, secret: REAL_SECRET }], credential: [],
+    }) },
+    { what: "an absurd generation", payload: JSON.stringify({
+      content: [{ generation: 999_999_999, secret: REAL_SECRET }], credential: [],
+    }) },
+    { what: "the same generation twice", payload: JSON.stringify({
+      content: [
+        { generation: 1, secret: REAL_SECRET },
+        { generation: 1, secret: REAL_SECRET },
+      ],
+      credential: [],
+    }) },
+    { what: "a secret that is not 32 base64 bytes", payload: JSON.stringify({
+      content: [{ generation: 1, secret: "too-short" }], credential: [],
+    }) },
+    { what: "more generations than any vault has", payload: JSON.stringify({
+      content: Array.from({ length: 200 }, (_, n) => ({ generation: n + 1, secret: REAL_SECRET })),
+      credential: [],
+    }) },
+  ];
+
+  for (const one of damaged) {
+    it(`refuses ${one.what}, and spends nothing`, async () => {
+      const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+      await loseTheVault();
+      await withEscrow(one.payload, codes);
+
+      await expect(
+        redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+        `${one.what} reached the vault`,
+      ).rejects.toThrow("E_RECOVERY_ESCROW_CORRUPT");
+      expect(
+        (await escrowState(testEnv, ORG))!.unredeemed,
+        "a refusal before any work began still cost a code",
+      ).toBe(10);
+    });
+  }
+
+  it("still restores from an escrow this Node actually wrote", async () => {
+    /*
+     * The control, and it has to be a real escrow rather than a hand-built one: a validator strict enough to
+     * refuse everything would satisfy all eight assertions above, and the thing being protected is the
+     * ordinary path through them.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(
+      outcome.restored.content.length + outcome.restored.credential.length,
+      "the validator refuses escrows this Node writes itself",
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe("two confirmations of one sheet do not tell the loser it was replaced", () => {
+  it("answers alreadyConfirmed when the sheet is here and somebody else confirmed it", async () => {
+    /*
+     * Zero rows changed has two causes and they are not the same answer: the sheet may be **gone**, replaced
+     * by a rotation between the read and the write, or it may still be here and simply confirmed already by a
+     * request that won the same race. Reporting both as replaced tells an operator their sheet is dead when
+     * it is the active one — and the remedy that follows from that sentence is to mint again, which retires
+     * the sheet they are holding.
+     *
+     * **This input reaches that answer through the early return**, not through the race branch: the set is
+     * already confirmed when the code is read, so the function returns before the batch. That is the same
+     * answer by a shorter path, and it is what the sequential case gets. The branch after a zero-row update
+     * covers the interleaving — confirmed *between* the read and the write — which no sequential test can
+     * produce, and `recovery.ts` says so rather than implying otherwise.
+     *
+     * What this pins is the answer itself: a sheet that is present and held is never reported as replaced,
+     * because the remedy that follows from "replaced" is to mint again, which retires the sheet the operator
+     * is holding.
+     */
+    const minted = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await testEnv.CATALOG.prepare(
+      "UPDATE recovery_codes SET confirmed_at = ? WHERE org_id = ? AND set_id IS ?",
+    ).bind(new Date(createSystemCtx().now()).toISOString(), ORG, minted.setId).run();
+
+    const outcome = await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, minted.codes[1]!);
+    expect(outcome.alreadyConfirmed, "a sheet that is present and held was reported as replaced").toBe(true);
+    expect(outcome.confirmed).toBe(0);
+    expect(await heldSets(), "the sheet was retired by a confirmation that changed nothing").toBe(1);
+  });
+});

@@ -1396,3 +1396,63 @@ describe("an agent's reach is recorded and readable, not only written", () => {
     ).rejects.toThrow("E_AGENT_GRANTS_UNBOUNDED");
   });
 });
+
+describe("the mint refuses a malformed request instead of throwing a TypeError", () => {
+  /*
+   * `refuseUnknownFields` guards the boundary against keys nobody declared and deliberately does not validate
+   * types, so the handler cast decoded JSON into an interface and passed it on. `input.name.trim()` on a
+   * number and `input.capabilities.length` on `1` then become ordinary `TypeError`s and generic 500s — a
+   * caller who sent the wrong shape got nothing to act on, where one who sent an unknown key got four parts.
+   */
+  const badly = [
+    { what: "a name that is not a string", body: { name: 7, capabilities: ["health.read"] } },
+    { what: "capabilities that are not an array", body: { name: "x", capabilities: 1 } },
+    { what: "a capability that is not a string", body: { name: "x", capabilities: [1] } },
+    { what: "grants that are not an array", body: { name: "x", capabilities: ["health.read"], grants: 1 } },
+    {
+      what: "a grant that is not an object",
+      body: { name: "x", capabilities: ["health.read"], grants: ["mbx"] },
+    },
+    {
+      what: "a relation outside the enum",
+      body: {
+        name: "x", capabilities: ["health.read"],
+        grants: [{ mailboxId: "mbx_x", relation: "org.admin" }],
+      },
+    },
+  ];
+
+  for (const one of badly) {
+    it(`refuses ${one.what}`, async () => {
+      await expect(
+        mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+          sponsorUserId: SPONSOR,
+          ...one.body,
+        } as never),
+        `${one.what} reached the domain and threw something generic`,
+      ).rejects.toThrow("E_AGENT_FIELD_SHAPE");
+    });
+  }
+
+  it("still mints a well-formed request", async () => {
+    // The control. Refusing everything satisfies all six assertions above.
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "well-formed", sponsorUserId: SPONSOR, capabilities: ["health.read"],
+    });
+    expect(minted.agent.name).toBe("well-formed");
+  });
+
+  it("enforces the relation enum at runtime, not only in the contract", async () => {
+    /*
+     * The handler casts a decoded string to `MailboxRelation`, so the four declared values were a
+     * compile-time comfort over a value that arrives from the network. An unknown relation would be written
+     * as a tuple that matches nothing: the agent authenticates and is refused, with no explanation anywhere.
+     */
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "invented-relation", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: [{ mailboxId: "mbx_x", relation: "mailbox.everything" }],
+      } as never),
+    ).rejects.toThrow("E_AGENT_FIELD_SHAPE");
+  });
+});

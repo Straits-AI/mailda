@@ -2,6 +2,8 @@ import * as z from "zod";
 
 import { ID_PREFIXES, idPattern } from "@mailda/runtime";
 
+import { AGENT_GRANTABLE_RELATIONS } from "./relations.ts";
+
 /**
  * What each route accepts and answers (#85 step 2, ADR 12).
  *
@@ -1476,6 +1478,12 @@ export const agentCapabilityListResponse = z.object({
     id: z.string().min(1),
     says: z.string().min(1),
     reachesContent: z.boolean(),
+    /**
+     * The mailbox relations this capability's routes check. Published so the mint form does not carry its own
+     * copy — a hand-written "which capabilities need a mailbox" list is a second correspondence table, and it
+     * drifted from the vocabulary the moment it existed.
+     */
+    requires: z.array(z.enum(AGENT_GRANTABLE_RELATIONS)),
     routes: z.array(z.string().min(1)).min(1),
   }).strict()),
 }).strict();
@@ -1506,9 +1514,13 @@ export const agentMintRequest = z.object({
    */
   grants: z.array(z.object({
     mailboxId: z.string().min(1),
-    relation: z.enum([
-      "mailbox.metadata.read", "mailbox.content.read", "send.propose", "message.export",
-    ]),
+    /*
+     * Read from `capability.ts` rather than restated. A capability's `requires` names relations from this same
+     * set, and the two disagreeing means a warning that tells an administrator to grant something the form
+     * cannot offer — which is how `export.read` came to need `ediscovery.export` against an enum that omitted
+     * it.
+     */
+    relation: z.enum(AGENT_GRANTABLE_RELATIONS),
     // The refusal code is on the nested object too, so an unknown key inside a grant answers with this
     // route's own code rather than the generic one. `test/request-shape.test.ts` probes every position,
     // including nested ones, which is how the omission was found.

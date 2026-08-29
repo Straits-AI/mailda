@@ -1339,6 +1339,13 @@ export interface CapabilityRow {
   says: string;
   /** Whether exercising it reaches the **content** of mail rather than only its metadata. */
   reachesContent: boolean;
+  /**
+   * The mailbox relations this capability's routes check.
+   *
+   * Published so the mint form does not carry its own copy: a hand-written list of "which capabilities need a
+   * mailbox" is a second correspondence table, and it drifted from the vocabulary the moment it existed.
+   */
+  requires: string[];
   routes: string[];
 }
 

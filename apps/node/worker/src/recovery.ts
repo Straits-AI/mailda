@@ -111,6 +111,17 @@ export const CODE_CHARACTERS = 26;
 export const RESTORE_LEASE_MS = 5 * 60_000;
 
 /**
+ * Bounds on what a decrypted escrow may claim, so a damaged one cannot become a damaged vault.
+ *
+ * A generation is an integer the vault uses as part of a storage key **and** as a pointer it advances when the
+ * value is larger. So a fractional or enormous one is not merely odd input: it leaves this Node sealing under
+ * a generation nothing else will ever produce. The count is bounded for the ordinary reason — the loop makes
+ * one Durable Object call per entry.
+ */
+const MAX_ESCROWED_GENERATIONS = 100;
+const MAX_GENERATION = 10_000;
+
+/**
  * A code, formatted so a person can write it on paper and type it back.
  *
  * Grouped in fours with hyphens. The hyphens are cosmetic and stripped before hashing, so a code typed
@@ -412,10 +423,14 @@ export async function redeemForVault(
   }
   /*
    * **This check is the message, not the guarantee**, and `scripts/mutants.mjs` is what established that:
-   * removing it entirely leaves every test passing, because the compare-and-swap below refuses the same code
-   * for the same reason. What is lost without it is the *date* — "already used, on 2026-08-26" instead of
-   * "used by another request while this one was running", which is a worse sentence for somebody holding a
-   * list of ten codes and trying to work out which they have spent.
+   * removing it entirely leaves every test passing, because the reservation below refuses the same code for
+   * the same reason. What is lost without it is the *date* — "already used, on 2026-08-26" instead of "used
+   * by another request while this one was running", which is a worse sentence for somebody holding a list of
+   * ten codes and trying to work out which they have spent.
+   *
+   * `redeemed_at` is set only by a restore that **completed**, since the saga deliberately does not spend a
+   * failed attempt — so this refusal means the vault was put back, not merely that somebody tried. That
+   * distinction is why the sentence says "used" rather than "spent".
    *
    * Kept deliberately, and labelled, because a surviving mutant here is a reader's question and this is the
    * answer: the guard is redundant on purpose, and the redundancy buys a better refusal.
@@ -440,20 +455,45 @@ export async function redeemForVault(
    * this commits, and a generation can collide with a live key and be skipped. Recording the escrowed set as
    * restored would be the false-success claim this file's own tests exist to catch.
    */
-  const escrowed = JSON.parse(plain) as EscrowedVault;
   /*
-   * The decrypted escrow is **checked before it is used**, and a corrupt one is a real state: a blob that
-   * still decrypts and no longer describes a vault. Without this the first thing to touch it was
-   * `escrowed.content.map(…)` building the audit detail, which threw a bare `TypeError` — a 500 with no
-   * `what`, `why` or `fix` on the disaster-recovery path, where the operator has nine codes left and no idea
-   * whether to spend one.
+   * The decrypted escrow is **parsed and checked before it is used**, and a corrupt one is a real state: a
+   * blob that still decrypts and no longer describes a vault.
+   *
+   * The parse was unguarded, so invalid JSON threw a bare `SyntaxError` — a 500 with no `what`, `why` or
+   * `fix`, on the disaster-recovery path, where the operator has nine codes left and no idea whether to spend
+   * one. The shape check that followed accepted any number as a generation, which matters more than it
+   * looks: `KeyVault.restore` builds a storage key from it and **advances the current-generation pointer**
+   * when it is larger, so `1.5` would leave the vault sealing under a fractional generation for ever.
+   *
+   * Generation zero is refused too. It is the published legacy constant, `readVault` never escrows it, and
+   * `restore` answers `identical` without writing — so its presence means the blob did not come from here.
    */
-  const shaped = (part: unknown): boolean =>
-    Array.isArray(part) && part.every((key) =>
-      typeof key === "object" && key !== null
-      && typeof (key as { generation?: unknown }).generation === "number"
-      && typeof (key as { secret?: unknown }).secret === "string");
-  if (!shaped(escrowed?.content) || !shaped(escrowed?.credential)) {
+  const escrowed = ((): EscrowedVault | null => {
+    try {
+      return JSON.parse(plain) as EscrowedVault;
+    } catch {
+      return null;
+    }
+  })();
+
+  const shaped = (part: unknown): boolean => {
+    if (!Array.isArray(part) || part.length > MAX_ESCROWED_GENERATIONS) return false;
+    const seen = new Set<number>();
+    for (const key of part) {
+      if (typeof key !== "object" || key === null) return false;
+      const { generation, secret } = key as { generation?: unknown; secret?: unknown };
+      if (typeof generation !== "number" || !Number.isInteger(generation)) return false;
+      if (generation <= 0 || generation > MAX_GENERATION) return false;
+      if (seen.has(generation)) return false;
+      seen.add(generation);
+      // 32 bytes, base64. The vault stores what it is given, so a secret of the wrong length is a key that
+      // decrypts nothing — installed, counted as restored, and useless.
+      if (typeof secret !== "string" || !/^[A-Za-z0-9+/]{43}=$/.test(secret)) return false;
+    }
+    return true;
+  };
+
+  if (escrowed === null || !shaped(escrowed.content) || !shaped(escrowed.credential)) {
     throw unprocessable("E_RECOVERY_ESCROW_CORRUPT", {
       what: "that code opened its escrow and the escrow does not describe a key vault",
       why: "the blob decrypted, so the code is right — what it carried is damaged. Nothing was installed and "
@@ -463,18 +503,6 @@ export async function redeemForVault(
     });
   }
 
-  /*
-   * ## A saga, because it cannot be a transaction
-   *
-   * This wrote `recovery.vault_restored / ok`, marked the code spent, and *then* made the Durable Object calls
-   * that put the keys back. D1 and Durable Object storage share no transaction, so a Worker dying in between
-   * left the code gone, the trail claiming success, and the keys still absent — on the disaster-recovery path,
-   * whose record is read during the incident it exists for.
-   *
-   * So the attempt is recorded **first** and settled after. The `started` entry is honest about what it
-   * claims: an attempt began with this code. The outcome entry carries what was actually installed, and it is
-   * written knowing.
-   */
   const restoreId = ctx.id(ID_PREFIXES.recoveryRestore);
   const at = new Date(ctx.now()).toISOString();
   const stale = new Date(ctx.now() - RESTORE_LEASE_MS).toISOString();
@@ -893,6 +921,29 @@ export async function confirmRecoveryCodes(
    */
   const confirmed = results[results.length - 1]?.meta.changes ?? 0;
   if (confirmed === 0) {
+    /*
+     * Zero rows has **two** causes and they are not the same answer. The sheet may be gone — replaced by a
+     * rotation between the read and the write — or it may still be here and simply confirmed already, by
+     * another request that won the same race. The first version reported both as replaced, which tells an
+     * operator their sheet is dead when it is the active one.
+     *
+     * Re-read to tell them apart. Somebody confirming a sheet that somebody else just confirmed has done no
+     * harm and needs no error: it is the `alreadyConfirmed` answer, which is exactly what the sequential
+     * version of that case gets from the early return far above.
+     *
+     * **Reachable only under that interleaving**, said plainly rather than implied — confirmed between this
+     * function's read and this batch. Sequentially the read sees the confirmation and returns before getting
+     * here. `test/recovery-escrow.test.ts` pins the answer through the early path; this is the same answer
+     * for the race.
+     */
+    const still = await env.CATALOG.prepare(
+      `SELECT COUNT(*) AS present,
+              SUM(CASE WHEN confirmed_at IS NOT NULL THEN 1 ELSE 0 END) AS held
+         FROM recovery_codes WHERE org_id = ? AND set_id IS ?`,
+    ).bind(orgId, row.set_id).first<{ present: number; held: number }>();
+    if (still !== null && Number(still.present) > 0 && Number(still.held) > 0) {
+      return { confirmed: 0, alreadyConfirmed: true };
+    }
     throw unprocessable("E_RECOVERY_SET_REPLACED", {
       what: "the set that code belongs to was replaced while this confirmation was in flight",
       why: "a rotation landed between reading your code and recording it, so the sheet you typed from is no "

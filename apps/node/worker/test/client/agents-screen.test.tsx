@@ -37,12 +37,14 @@ const CAPABILITIES = [
     id: "mail.read",
     says: "Read mail: list it, open a message, and fetch the original bytes.",
     reachesContent: true,
+    requires: ["mailbox.content.read", "message.export"],
     routes: ["a", "b", "c", "d"],
   },
   {
     id: "hold.read",
     says: "Read the legal holds in force.",
     reachesContent: false,
+    requires: [],
     routes: ["e"],
   },
 ];
@@ -285,20 +287,51 @@ describe("the mint form completes the authority, not only the credential", () =>
     ).toBeTruthy();
   });
 
-  it("warns when a mail-reading capability is chosen with no mailbox", async () => {
+  it("names the relation a chosen capability is missing", async () => {
     /*
-     * The exact state the form used to produce by construction: capabilities that read mail, no relation, and
+     * The exact state the form used to produce by construction: a capability that reads mail, no relation, and
      * a credential that finds nothing. Said before minting rather than discovered afterwards through an
-     * automation that quietly does nothing.
+     * automation that quietly does nothing — and it names *which* relation, because "choose a mailbox" is not
+     * an instruction somebody can act on when four relations are on offer.
      */
     mount([]);
     const { fireEvent } = await import("@testing-library/react");
     // Awaited: the capability list arrives from the Node, so the checkboxes do not exist on the first render.
     await screen.findByText("mail.read");
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(await screen.findByText(/needs mailbox\.content\.read and message\.export/)).toBeTruthy();
+  });
+
+  it("still warns when a relation is chosen but not the one the capability needs", async () => {
+    /*
+     * The defect the per-capability form replaces. The old warning fired only when **zero** relations were
+     * chosen, so `mail.read` paired with `send.propose` reviewed as fine and minted an agent that cannot read
+     * anything — a positive-looking review over a credential that does not work.
+     */
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    const wrong = (await screen.findByText("send.propose")).closest("label")!.querySelector("input")!;
+    fireEvent.click(wrong);
+
     expect(
-      await screen.findByText(/the agent will authenticate and find nothing it may read/),
+      await screen.findByText(/needs mailbox\.content\.read and message\.export/),
+      "a relation that satisfies nothing silenced the warning",
     ).toBeTruthy();
+  });
+
+  it("stops warning once the required relations are granted", async () => {
+    // The control. A warning that never clears is one people mint through without reading.
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    for (const relation of ["mailbox.content.read", "message.export"]) {
+      const input = (await screen.findByText(relation)).closest("label")!.querySelector("input")!;
+      fireEvent.click(input);
+    }
+    expect(screen.queryByText(/needs mailbox\.content\.read/)).toBeNull();
   });
 
   it("says the reach stops when the sponsor's access does", async () => {

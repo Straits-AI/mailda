@@ -94,7 +94,10 @@ export const AUDIT_ACTIONS = {
   },
   "recovery.codes_confirmed": {
     says: "Somebody proved they hold a set of recovery codes, without spending one — and every other set was "
-      + "retired, which deletes the copies of the key vault sealed under those codes. Names both sets.",
+      + "retired, which deletes the copies of the key vault sealed under those codes. Names the set that was "
+      + "confirmed and **how many** were retired. It used to say it named both, which it never did: the "
+      + "retired sets are gone by the time the entry commits, so their identifiers exist only in whichever "
+      + "`recovery.codes_minted` entry created them.",
   },
   "recovery.restore_started": {
     says: "A recovery code was accepted and the key vault restore began. Names the attempt and the "

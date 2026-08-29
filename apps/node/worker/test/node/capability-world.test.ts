@@ -4,6 +4,7 @@ import { agentGrantableActions } from "@mailda/contract/agent";
 import {
   CAPABILITIES, capabilityIds, heldCapabilities, offerableCapabilities, routesFor,
 } from "@mailda/contract/capability";
+import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 
 /**
  * The capability vocabulary covers every grantable route, exactly once.
@@ -182,5 +183,63 @@ describe("expanding and reading back a ceiling", () => {
     // Everything is offerable today, which is what the closed world above guarantees. The assertion is that
     // the filter is derived from the tiers at all, so a reclassification takes effect on the same commit.
     expect(offerableCapabilities().length).toBe(CAPABILITIES.length);
+  });
+});
+
+describe("a capability declares the mailbox relations its routes actually check", () => {
+  /*
+   * Without this the mint screen carried a hand-written `NEEDS_A_MAILBOX` set — a second correspondence table,
+   * free to drift from the vocabulary, which is the exact shape the capability layer was introduced to remove
+   * one level up. And its warning fired only when **zero** relations were chosen, so `mail.read` paired with
+   * `send.propose` reviewed as fine and produced an agent that cannot read anything.
+   */
+  it("names a relation for every capability that reaches a mailbox, and none for the ones that do not", () => {
+    const reaching = CAPABILITIES.filter((one) => one.requires.length > 0).map((one) => one.id).sort();
+    const free = CAPABILITIES.filter((one) => one.requires.length === 0).map((one) => one.id).sort();
+
+    /*
+     * Both lists asserted exactly. A capability quietly gaining or losing a requirement changes what the mint
+     * screen warns about and what an administrator has to grant, and neither direction should be possible
+     * without somebody saying so here.
+     */
+    expect(reaching, "the set of capabilities needing a mailbox has changed")
+      .toEqual(["export.read", "mail.draft", "mail.read", "queue.read", "send.cancel", "send.observe"]);
+    expect(free.length, "no capability reaches nothing mailbox-shaped, which cannot be right")
+      .toBeGreaterThan(5);
+  });
+
+  it("requires message.export where the route checks it, not only content read", () => {
+    /*
+     * The contradiction this replaced. `mail.read` promised the original `.eml` on content read alone, and
+     * `GET /api/messages/:receiptId/raw` checks `message.export` **as well** — `hasAnyRelation` for the export
+     * and `mayRead` for the content. An agent granted the capability and content read got a 404 on the one
+     * route the description singled out.
+     */
+    const read = CAPABILITIES.find((one) => one.id === "mail.read")!;
+    expect(read.routes, "the raw route left mail.read, so this assertion is about nothing")
+      .toContain("GET /api/messages/:receiptId/raw");
+    expect(read.requires, "the capability promises original bytes on content read alone").toContain(
+      "message.export",
+    );
+    expect(read.says, "the description still promises the bytes without saying what they cost")
+      .toContain("message.export");
+  });
+
+  it("names only relations an administrator can actually grant an agent", () => {
+    /*
+     * The mint request's enum is the door. A capability requiring something outside it would produce a
+     * warning naming a relation nobody can select — an instruction that cannot be followed, which is worse
+     * than none.
+     */
+    /*
+     * Derived from the mint request's own enum, not restated. The first version of this assertion hand-copied
+     * the list and quietly included `ediscovery.export` — which `export.read` needs and the enum did **not**
+     * offer, so the test passed while the requirement was unsatisfiable through the only door that grants it.
+     * A hand-copied expectation is the correspondence problem this whole layer exists to remove.
+     */
+    const grantable = new Set<string>(AGENT_GRANTABLE_RELATIONS);
+    const strays = CAPABILITIES.flatMap((one) => one.requires.map((r) => `${one.id}:${r}`))
+      .filter((entry) => !grantable.has(entry.split(":").slice(1).join(":")));
+    expect(strays, "these requirements name relations the mint surface cannot confer").toEqual([]);
   });
 });

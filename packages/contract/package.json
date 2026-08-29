@@ -28,6 +28,7 @@
     "./schemas": "./src/schemas.ts",
     "./agent": "./src/agent.ts",
     "./capability": "./src/capability.ts",
+    "./relations": "./src/relations.ts",
     "./naming": "./src/naming.ts"
   }
 }
