@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { assertAdmin, isAdmin } from "../src/access.ts";
+import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { auditedBatch, verifyChain } from "../src/audit.ts";
 import { mailboxQueues } from "../src/cases.ts";
 import { notificationsFor } from "../src/notifications.ts";
@@ -940,20 +941,22 @@ describe("an agent's act names its sponsor without the call site remembering to 
      * construction cannot notice a route that never sends the field — so the assertion has to be made here as
      * well, against the real Worker.
      *
-     * Through `SELF.fetch` with the agent's own bearer token: `GET /api/audit` is inside the machine ceiling,
-     * so an agent reading the trail and finding its own sponsor named is the real path rather than a
-     * contrivance.
+     * Through `SELF.fetch` with an **administrator's session**, not an agent token. `GET /api/audit` is now
+     * `org.admin` and withheld from every machine: reading the whole organization's trail is the same map of
+     * how to escalate that `GET /api/agents` is. The agent is still what the entry is *about* — the point is
+     * that somebody can read the delegator back, not that the agent can read it about itself.
      */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "routed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS, "audit.read"],
+      name: "routed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
     });
     await auditedBatch(testEnv, createSystemCtx(), ORG, {
       action: "supervised.opened", outcome: "ok", actorUserId: minted.agent.id,
       subject: "rcpt_p1five00000000000000001",
     }, (entry) => [entry]);
 
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: ADMIN });
     const response = await SELF.fetch("https://node.example/api/audit?action=supervised.opened", {
-      headers: { authorization: `Bearer ${minted.token}` },
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}` },
     });
     expect(response.status, await response.clone().text()).toBe(200);
     const body = await response.json<{ entries: { subject: string; delegator_user_id: string | null }[] }>();
@@ -1454,5 +1457,72 @@ describe("the mint refuses a malformed request instead of throwing a TypeError",
         grants: [{ mailboxId: "mbx_x", relation: "mailbox.everything" }],
       } as never),
     ).rejects.toThrow("E_AGENT_FIELD_SHAPE");
+  });
+});
+
+describe("a mint whose record would be truncated is refused, not recorded partially", () => {
+  /*
+   * `boundedDetail` replaces an oversized audit detail with a truncation envelope carrying a prefix — right
+   * for a log line, wrong for the only immutable record of what authority was conferred. And it was reachable
+   * at the documented limits rather than theoretical: fifty grants of typed mailbox identifiers plus the
+   * expanded route list measures about 4,600 bytes against a 2,048-byte cap.
+   *
+   * So a request accepted as valid produced a partial record and said nothing, while the comment beside
+   * `MAX_GRANTS` claimed the entry was bounded. It bounded the grants. Nothing bounded the entry.
+   */
+  it("refuses a ceiling it could not write down exactly", async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const many = Array.from({ length: 40 }, (_, n) => `mbx_truncation${String(n).padStart(12, "0")}`);
+    await testEnv.CATALOG.batch(many.flatMap((mailboxId) => [
+      testEnv.CATALOG.prepare("INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(mailboxId, ORG, `Box ${mailboxId}`, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'mailbox.content.read','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, SPONSOR, mailboxId, at),
+    ]));
+
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "unrecordable", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
+        grants: many.map((mailboxId) => ({ mailboxId, relation: "mailbox.content.read" as const })),
+      }),
+      "a ceiling too large to record exactly was minted anyway, with a prefix for a record",
+    ).rejects.toThrow("E_AGENT_MINT_UNRECORDABLE");
+
+    const created = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM agents WHERE org_id = ? AND name = 'unrecordable'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(created?.n), "the agent exists for a mint that was refused").toBe(0);
+  });
+
+  it("records an ordinary ceiling whole", async () => {
+    /*
+     * The control, and it carries the shape of the failure: the assertion is on the **stored** detail rather
+     * than on the mint succeeding, because a truncated entry succeeds too. What is checked is that the exact
+     * pairs came back out.
+     */
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind("mbx_ordinary", ORG, "Enquiries", at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'mailbox.content.read','mailbox','mbx_ordinary',?)`,
+      ).bind(ctx.id("rt"), ORG, SPONSOR, at),
+    ]);
+
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "ordinary-ceiling", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: "mbx_ordinary", relation: "mailbox.content.read" }],
+    });
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE org_id = ? AND subject = ? AND action = 'agent.minted'",
+    ).bind(ORG, minted.agent.id).first<{ detail: string }>();
+    const carried = JSON.parse(entry!.detail) as { grants?: string[]; truncated?: unknown };
+    expect(carried.truncated, "an ordinary mint was stored as a truncation envelope").toBeUndefined();
+    expect(carried.grants).toEqual(["mbx_ordinary::mailbox.content.read"]);
   });
 });

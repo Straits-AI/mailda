@@ -558,6 +558,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/maintenance/reseal" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      /*
+       * `org.admin`, and it was **signed in** — which is not the same thing and was never meant to be. This
+       * re-wraps every credential in the organization under a fresh key: organization-wide cryptographic
+       * maintenance, startable by anybody with a session.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
       const outcome = await resealBatch(env, clock, who.orgId);
       // 200 even with failures: the batch itself succeeded, and each failure is a named receipt the
       // caller has to act on rather than a request to retry.
@@ -567,6 +573,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/maintenance/reconcile" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      /*
+       * The sharpest of the five. With `collect=1` this is the **only call in the product that destroys
+       * content bytes** — `content-deletion-world.test.ts` says so on the `EVIDENCE.delete` it guards — and it
+       * asked for nothing but a session. Every safeguard around that delete was doing its work behind a door
+       * any member of the organization could open.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
       const collect = url.searchParams.get("collect") === "1";
       const report = await reconcileEvidence(env, clock, who.orgId, { collect });
       return url.searchParams.get("format") === "text"
@@ -2958,6 +2971,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/auth/rotate-signing-key" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      /*
+       * The comment here called this owner-authenticated and the code enforced *signed in*. Repeated rotation
+       * walks the verification window forward until sessions signed by retired keys stop verifying, which is
+       * a sign-out for the organization performed by one member.
+       *
+       * **Step-up is not built** and this does not pretend otherwise: ADR 29's re-authentication ceremony
+       * would be the right second factor for an act of this weight, and `org.admin` is what exists today.
+       * Said here rather than left as a gap somebody assumes is covered.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
       const rotated = await rotateSigningKey(env, clock);
       return Response.json({
         rotated: true,
@@ -2981,6 +3004,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/audit" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      /*
+       * `org.admin`. The trail is **wider than any mailbox grant** — actors and subjects across the whole
+       * organization, access-grant history, agent sponsorship, matter and supervised-access events — and this
+       * file already said so while checking only for a session. A statement in a comment is not a check.
+       *
+       * A dedicated `audit.read` relation would be the better long-run answer, so somebody can read the trail
+       * without administering the organization. It does not exist, and `org.admin` is the narrower of the two
+       * options that do.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
       const action = url.searchParams.get("action");
       const rows = await env.CATALOG.prepare(
         /*
@@ -3004,6 +3037,9 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/audit/verify" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      // The same visibility as reading it: verification reports where a chain broke, which is a fact about
+      // the trail somebody who may not read the trail has no business learning.
+      await assertAdmin(env, who.orgId, who.userId);
       const from = Number(url.searchParams.get("from") ?? "1");
       return Response.json(await verifyChain(env, who.orgId, Number.isFinite(from) ? from : 1));
     }
@@ -3011,6 +3047,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/logs" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
+      /*
+       * `org.admin`. Operational logs carry error detail and request ids from across the organization — the
+       * shape of what other people are doing, which is not a mailbox grant and was not gated as anything.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
       const level = url.searchParams.get("level");
       const rows = await env.CATALOG.prepare(
         `SELECT id, at, level, event, message, detail, request_id FROM log_entries

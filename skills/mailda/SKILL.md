@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 48 capabilities
+## What you can do — 45 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -36,7 +36,6 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getWellKnownJwksJson` | The public keys that verify this Node's tokens |
 | `getAccess` | Who holds what on which mailbox |
 | `getApprovals` | Approvals waiting on somebody |
-| `getAudit` | The audit trail |
 | `getAuthPasskeys` | The passkeys this account holds. Never returns a public key |
 | `getBreakers` | The rate breakers, with the readings behind them |
 | `getButlerPauses` | Butlers a machine has stopped |
@@ -53,7 +52,6 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getExportsByExportIdObjectsByObjectId` | One object from a completed export |
 | `getHolds` | Legal holds in force |
 | `getInvitations` | Invitations still outstanding |
-| `getLogs` | The operational log |
 | `getMailboxes` | The mailboxes this person may act in |
 | `getMailboxesByMailboxIdCases` | The case queue in one mailbox |
 | `getMatters` | Matters a hold or an export can be scoped to |
@@ -77,7 +75,6 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 
 | method | what it does |
 |:--|:--|
-| `postAuditVerify` | Verify the audit chain |
 | `postButlers` | Create a Butler and its first draft |
 | `putButlersByButlerIdDraft` | Replace a Butler's draft |
 | `postButlersByButlerIdSimulate` | Dry-run a Butler: walk it, cause nothing, report what a live run would do |
@@ -87,7 +84,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `putPoliciesByPolicyIdDraft` | Replace a policy's draft |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 56 withheld
+## What you cannot do, and why — 59 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -146,9 +143,9 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (26)
+### Operator — running the Node rather than using it (29)
 
-- **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getSearchFailed`, `postAgents`, `postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryCodesConfirm`, `postRecoveryCodesRotate`, `postRecoveryRedeem`, `postSearchRepair`**
+- **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getAudit`, `getLogs`, `getSearchFailed`, `postAgents`, `postAuditVerify`, `postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryCodesConfirm`, `postRecoveryCodesRotate`, `postRecoveryRedeem`, `postSearchRepair`**
 
   Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
 

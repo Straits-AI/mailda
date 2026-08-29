@@ -166,13 +166,6 @@ export const CAPABILITIES: readonly Capability[] = [
     routes: ["GET /api/policies", "POST /api/policies", "PUT /api/policies/:policyId/draft"],
   },
   {
-    id: "audit.read",
-    says: "Read the audit trail and verify its hash chain.",
-    reachesContent: false,
-    requires: [],
-    routes: ["GET /api/audit", "POST /api/audit/verify"],
-  },
-  {
     id: "directory.read",
     says: "Read who is in this organization, which teams they are in, and what each of them may reach.",
     reachesContent: false,
@@ -210,14 +203,15 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     id: "health.read",
-    says: "Read this Node's own condition: the doctor's findings, logs, transport, breakers and pauses.",
+    says: "Read this Node's own condition: the doctor's findings, transport, breakers and pauses. The "
+      + "operational log is withheld from machines — it carries error detail and request ids from across the "
+      + "organization.",
     reachesContent: false,
     requires: [],
     routes: [
       "GET /api/breakers",
       "GET /api/doctor",
       "GET /api/domain-pauses",
-      "GET /api/logs",
       "GET /api/transport",
       "GET /health",
     ],
@@ -295,6 +289,11 @@ export function heldCapabilities(
  * reclassification takes effect on the same commit rather than leaving an offer nobody can complete.
  */
 export function offerableCapabilities(): readonly Capability[] {
+  /*
+   * **Every** route, not some. A capability keeps its name when one route is reclassified as governed, so
+   * `some` would go on offering it while `mintAgent` refuses the complete expansion — an offer that mints
+   * nothing, which `docs/machine-surfaces.md` argues is worse than no offer at all.
+   */
   const grantable = new Set(agentGrantableActions());
-  return CAPABILITIES.filter((one) => one.routes.some((route) => grantable.has(route)));
+  return CAPABILITIES.filter((one) => one.routes.every((route) => grantable.has(route)));
 }

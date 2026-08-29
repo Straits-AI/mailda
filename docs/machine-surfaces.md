@@ -16,10 +16,10 @@ would come to disagree about which acts are safe, which is the worst thing they 
 
 | tier | offered | what it is | count |
 |:--|:--|:--|--:|
-| `read` | yes | answers a question, changes nothing | 39 |
-| `act` | yes | changes something, and a person can undo it | 9 |
+| `read` | yes | answers a question, changes nothing | 37 |
+| `act` | yes | changes something, and a person can undo it | 8 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 29 |
-| `operator` | **no** | installation, credentials, maintenance | 26 |
+| `operator` | **no** | installation, credentials, maintenance | 29 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 

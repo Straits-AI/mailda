@@ -5,7 +5,7 @@ import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
 import { assertAdmin } from "./access.ts";
-import { auditedBatch } from "./audit.ts";
+import { auditedBatch, detailFits } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
 
 /**
@@ -453,6 +453,37 @@ export async function mintAgent(
    * no audit entry is a machine principal nobody authorised as far as the trail is concerned, which is the
    * state this whole layer exists to make unreachable.
    */
+  /*
+   * The snapshot is built **before** the batch and refused if it would not survive whole.
+   *
+   * `boundedDetail` replaces an oversized detail with a truncation envelope carrying a prefix — which is the
+   * right behaviour for a log line and the wrong one for the only immutable record of what authority was
+   * conferred. At the documented limits this was reachable rather than theoretical: fifty grants of typed
+   * mailbox identifiers plus the expanded route list measures about 4,600 bytes against a 2,048-byte cap, so
+   * a request accepted as valid produced a partial record and said nothing. The comment beside `MAX_GRANTS`
+   * claimed it kept the entry bounded. It bounded the grants; nothing bounded the entry.
+   *
+   * Refused rather than split into continuation entries. Splitting is what `audit.ts` does for a page of
+   * results and it is the more elaborate answer; this is a **ceiling somebody chose**, and one that cannot be
+   * written down exactly is one nobody should be handed. Two narrower agents is a better product than one
+   * whose record is a prefix.
+   */
+  const detail = {
+    name, sponsorUserId: input.sponsorUserId, actions, expiresAt,
+    grants: grants.map((one) => `${one.mailboxId}::${one.relation}`),
+  };
+  if (!detailFits(detail)) {
+    throw unprocessable("E_AGENT_MINT_UNRECORDABLE", {
+      what: "this ceiling is too large to record exactly in the audit trail",
+      why: "an audit entry's detail is capped, and an oversized one is stored as a truncated prefix. The "
+        + "grants and the action ceiling are the only immutable record of what was conferred — live "
+        + "relationship tuples can be revoked, so they are not a snapshot anybody can reconstruct this from "
+        + "later. A ceiling that cannot be written down exactly is one nobody should be handed",
+      fix: "mint two narrower agents, each with the capabilities and mailboxes one job needs. That is also "
+        + "the ceiling somebody reviewing this will be able to read",
+    });
+  }
+
   await auditedBatch(env, ctx, orgId, {
     action: "agent.minted",
     outcome: "ok",
@@ -462,18 +493,11 @@ export async function mintAgent(
     // and how far it reaches — everything except the secret.
     /*
      * The **grants** are in the detail, not only the actions. A route names what verbs an agent may attempt;
-     * a grant names which mailboxes it may reach, and the second is the question an access review asks. The
-     * comment here used to claim the trail records how far the agent reaches while recording only the first
-     * half of that.
+     * a grant names which mailboxes it may reach, and the second is the question an access review asks.
      *
-     * The exact pairs rather than a count or a digest: live `relationship_tuples` can be revoked, so they are
-     * not a snapshot this can be reconstructed from later. The audit chain is the only immutable copy of what
-     * was conferred, and `MAX_GRANTS` is what keeps the entry bounded.
+     * Built above rather than here, so it can be measured against the cap before anything commits.
      */
-    detail: {
-      name, sponsorUserId: input.sponsorUserId, actions, expiresAt,
-      grants: grants.map((one) => `${one.mailboxId}::${one.relation}`),
-    },
+    detail,
   }, (entry) => [
     entry,
     env.CATALOG.prepare(

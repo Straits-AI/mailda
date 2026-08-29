@@ -299,6 +299,23 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "GET /api/agents",
     "GET /api/agent-capabilities",
     "DELETE /api/agents/:agentId",
+    /*
+     * The audit trail and the operational log, withheld for the same reason and found the same way.
+     *
+     * Both were `read` by the GET-derivation rule and both were gated on nothing but a session — so an
+     * ordinary member could read every actor and subject in the organization, the access-grant history, agent
+     * sponsorship, matter and supervised-access events, and the error detail and request ids of everybody
+     * else's work. Adding `org.admin` to the routes fixed the human hole and exposed the machine one: an
+     * agent holding `audit.read` would then need itself *and* its sponsor to be administrators, which the
+     * mint surface cannot confer — a capability offering authority the product cannot provision.
+     *
+     * So it is withheld rather than made unprovisionable. Reading the whole organization's trail is the same
+     * map of how to escalate that `GET /api/agents` is, arrived at from the other side, and an agent that can
+     * read every act taken on a Node can find the one act nobody watched.
+     */
+    "GET /api/audit",
+    "POST /api/audit/verify",
+    "GET /api/logs",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

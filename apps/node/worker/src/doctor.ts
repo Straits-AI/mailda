@@ -2131,11 +2131,22 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
    */
   const unconfirmed = state.confirmed === 0 && state.unredeemed > 0;
 
+  /*
+   * **Every code spent**, which reported `ok: false` at severity `report` — and the overall verdict only
+   * escalates on a failing `degraded` or `refuse`. So a Node with no remaining way to recover its vault
+   * answered `ok` overall, with the honest fix printed underneath where nothing was reading it.
+   *
+   * `unredeemed > 0` guarded the other three conditions rather than being one, which is how it hid: each of
+   * them is about the codes that remain, and the state where none remain has no code to be stale or weak or
+   * unconfirmed. It is the worst of the four and it fell through the gap between them.
+   */
+  const exhausted = state.unredeemed === 0;
+
   return [{
     check: "recovery_escrow",
-    severity: stale || weak || unconfirmed ? "degraded" : "report",
+    severity: stale || weak || unconfirmed || exhausted ? "degraded" : "report",
     discloses: "data",
-    ok: !stale && !weak && !unconfirmed && state.unredeemed > 0,
+    ok: !stale && !weak && !unconfirmed && !exhausted,
     detail: unconfirmed && !weak && !stale
       ? `${state.unredeemed} recovery codes exist and **nobody has confirmed holding one**. The codes are `
         + "returned once by the mint and cannot be produced again, so a response that was lost or a terminal "

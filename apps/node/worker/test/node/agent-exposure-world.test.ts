@@ -39,7 +39,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are four", () => {
+  it("derives read for every GET but the named exceptions, and there are six", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -56,6 +56,12 @@ describe("every route is classified, and a new one cannot default", () => {
      * its sponsor and its reach — which is a map of how to escalate, and exactly what an agent looking for a
      * wider ceiling would read first.
      *
+     * `GET /api/audit` and `GET /api/logs` arrived together, and by the same route: both were `read` by
+     * derivation and gated on nothing but a session, so an ordinary member could read every actor and subject
+     * in the organization and everybody else's error detail. Adding `org.admin` to the handlers fixed the
+     * human hole and exposed the machine one — an agent holding them would need itself *and* its sponsor to
+     * be administrators, which the mint surface cannot confer. Withheld rather than made unprovisionable.
+     *
      * `GET /api/agent-capabilities` is the same reasoning about the other half. It publishes the vocabulary a
      * ceiling is chosen from — every name, and the routes behind each one — so a machine reading it is reading
      * the list of what machines may be granted. That is the map from the other direction, and it is withheld
@@ -63,7 +69,8 @@ describe("every route is classified, and a new one cannot default", () => {
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
-      "GET /api/agent-capabilities", "GET /api/agents", "GET /api/search/failed", "GET /index.html",
+      "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit", "GET /api/logs",
+      "GET /api/search/failed", "GET /index.html",
     ]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {

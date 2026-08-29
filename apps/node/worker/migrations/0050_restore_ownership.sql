@@ -1,0 +1,33 @@
+-- A restore attempt has to prove it still **owns** the code when it settles, not only that it acquired it.
+--
+-- The saga fenced acquisition correctly: one predicate decided that the code existed, was unspent and had no
+-- live reservation, and it gated both the `recovery.restore_started` entry and the reservation row. Settlement
+-- was fenced by nothing. It updated `recovery_restores` by id alone and appended its audit entry
+-- unconditionally, so a worker that lost its lease could still come back and settle:
+--
+--   A reserves code C as restore R1 and runs long enough that its lease lapses.
+--   B reserves the same code as R2, restores the vault, marks C redeemed.
+--   A returns: writes a second `recovery.vault_restored / ok`, marks R1 completed, and its conditional
+--   `UPDATE recovery_codes … redeemed_at IS NULL` changes nothing — a zero nobody read.
+--
+-- `KeyVault.restore` is idempotent, so the keys survive that. The record does not: two completed restores for
+-- one single-use code, two entries claiming a successful settlement, and a stale attempt's outcome detail
+-- superseding the newer one in every report that reads the latest row.
+--
+-- `active_restore_id` is the compare-and-swap token. Acquisition assigns it; settlement is conditional on
+-- still holding it. A worker whose claim was taken over changes nothing and is told so, rather than writing a
+-- second history of the same code.
+--
+-- Nullable, because a code that has never been the subject of a restore has no owner — and NULL is also what a
+-- settled attempt leaves behind, so the column answers "is somebody restoring from this right now" without a
+-- second state to keep in step.
+ALTER TABLE recovery_codes ADD COLUMN active_restore_id TEXT;
+
+-- `superseded`, alongside started/completed/failed: an attempt whose lease lapsed and whose code was taken by
+-- somebody else. Distinct from `failed` on purpose — failed means the vault refused and the operator should
+-- run it again, superseded means another attempt already did and running it again would be a third history.
+--
+-- No migration of existing rows: every `started` row on an upgraded Node either settles normally or lapses,
+-- and lapsing is what the acquisition path now marks. Rewriting history here to make a new column look tidy is
+-- the opposite of what this table is for.
+CREATE INDEX IF NOT EXISTS recovery_codes_by_restore ON recovery_codes (org_id, active_restore_id);

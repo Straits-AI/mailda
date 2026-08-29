@@ -558,6 +558,33 @@ export async function redeemForVault(
                              WHERE r.org_id = c.org_id AND r.code_id = c.id
                                AND r.state = 'started' AND r.started_at > ?)`,
       ).bind(restoreId, at, ...reservableParams),
+      /*
+       * The attempt this one displaced, marked **superseded** rather than left as a `started` row that never
+       * settles.
+       *
+       * Both of these statements carry `EXISTS (… w.id = restoreId …)`, which is *this attempt's own row* —
+       * so they run only when the insert above won. Without it a request that lost the reservation still
+       * superseded the winner and stamped its own ownership, and both callers then failed to settle. That was
+       * this change's own first draft: a compare-and-swap whose consequences were not swapped with it. Distinct from `failed` on purpose: failed means the vault refused and the operator should run
+       * it again; superseded means somebody else already did, and running it again would be a third history of
+       * one code. `doctor` reads the latest row, so a lapsed attempt left `started` for ever would go on
+       * reporting an interrupted restore that has since completed.
+       */
+      env.CATALOG.prepare(
+        `UPDATE recovery_restores SET state = 'superseded', settled_at = ?
+          WHERE org_id = ? AND code_id = ? AND state = 'started' AND id <> ?
+            AND EXISTS (SELECT 1 FROM recovery_restores w WHERE w.id = ? AND w.state = 'started')`,
+      ).bind(at, orgId, row.id, restoreId, restoreId),
+      /*
+       * Ownership. Settlement is conditional on still holding this, so a worker whose lease lapsed and whose
+       * code was re-claimed writes nothing — the compare-and-swap the previous version had at acquisition and
+       * not at the end.
+       */
+      env.CATALOG.prepare(
+        `UPDATE recovery_codes SET active_restore_id = ?
+          WHERE org_id = ? AND id = ? AND redeemed_at IS NULL
+            AND EXISTS (SELECT 1 FROM recovery_restores w WHERE w.id = ? AND w.state = 'started')`,
+      ).bind(restoreId, orgId, row.id, restoreId),
     ],
     { sql: reservable, params: reservableParams },
   );
@@ -653,7 +680,7 @@ export async function redeemForVault(
    * already holds keys of those numbers, nothing was lost, and `conflicted` says so. Calling that a failure
    * would send an operator looking for a broken thing during an incident.
    */
-  await auditedBatch(
+  const { results: settled } = await auditedBatch(
     env, ctx, orgId,
     {
       action: "recovery.vault_restored",
@@ -663,18 +690,35 @@ export async function redeemForVault(
       subject: row.id,
       detail,
     },
-    (entry) => [
-      entry,
-      env.CATALOG.prepare(
-        "UPDATE recovery_restores SET state = ?, settled_at = ?, detail = ? WHERE id = ?",
-      ).bind(failure === null ? "completed" : "failed", settledAt, JSON.stringify(detail), restoreId),
-      ...(failure === null
-        ? [env.CATALOG.prepare(
-            "UPDATE recovery_codes SET redeemed_at = ? WHERE id = ? AND redeemed_at IS NULL",
-          ).bind(settledAt, row.id)]
-        : []),
-    ],
+    (entry) => [entry, ...settlementStatements(env, orgId, row.id, restoreId, {
+      state: failure === null ? "completed" : "failed",
+      settledAt,
+      detail: JSON.stringify(detail),
+      spend: failure === null,
+    })],
+    { sql: OWNS_RESTORE, params: [orgId, row.id, restoreId] },
   );
+
+  /*
+   * The settlement's own statement changed nothing, which means this attempt no longer owns the code — its
+   * lease lapsed, somebody else re-claimed it and finished. Refused rather than reported as a success, and
+   * **nothing was written**: the entry is gated on the same predicate, so the trail does not gain a second
+   * history of one code.
+   *
+   * **Reachable only under that interleaving**, said rather than implied: the takeover has to land while this
+   * function is between its acquisition and its settlement, and the call that would cause it is the one that
+   * takes the claim away. What is tested is the predicate — `test/recovery-escrow.test.ts` runs
+   * `settlementStatements` against a hand-built takeover and asserts it changes nothing and writes no entry.
+   */
+  if ((settled[1]?.meta.changes ?? 0) === 0) {
+    throw unprocessable("E_RECOVERY_RESTORE_SUPERSEDED", {
+      what: "this restore lost its claim on the code while it was running",
+      why: `the reservation lapses after ${Math.round(RESTORE_LEASE_MS / 60_000)} minutes, and another `
+        + "request took the code and finished. Its result stands; nothing here was recorded, because two "
+        + "settlements for one single-use code would be two histories of the same act",
+      fix: "check `doctor`'s `recovery_restore_state` finding for what the attempt that won installed",
+    });
+  }
 
   if (failure !== null) {
     throw unprocessable("E_RECOVERY_RESTORE_INCOMPLETE", {
@@ -805,6 +849,58 @@ export function confirmationStatements(
       `UPDATE recovery_codes SET confirmed_at = ?
         WHERE org_id = ? AND set_id IS ? AND confirmed_at IS NULL`,
     ).bind(at, orgId, setId),
+  ];
+}
+
+/**
+ * Does this restore still own the code it claimed?
+ *
+ * The predicate is written once and used three times — as the settlement's `AuditGate`, and on both statements
+ * that settle — for the reason the acquisition predicate is: three copies of one question is three chances for
+ * them to answer differently, and the one that matters here decides whether a stale worker gets to write a
+ * second history of a single-use code.
+ */
+const OWNS_RESTORE =
+  `SELECT 1 FROM recovery_codes c JOIN recovery_restores r ON r.id = c.active_restore_id
+    WHERE c.org_id = ? AND c.id = ? AND c.active_restore_id = ? AND r.state = 'started'`;
+
+/**
+ * Settling one restore, conditional on it still owning the code.
+ *
+ * Exported so a takeover can be built by hand. The state it guards against — lease lapsed, code re-claimed and
+ * finished by somebody else, original worker returning — cannot be produced by calling `redeemForVault` in
+ * sequence, because the second call is what takes the claim away. This is the same reason
+ * `confirmationStatements` is exported, and the previous round's defect survived precisely because the test
+ * stopped one step short of building the interleaving.
+ */
+export function settlementStatements(
+  env: Env,
+  orgId: string,
+  codeId: string,
+  restoreId: string,
+  outcome: { state: "completed" | "failed"; settledAt: string; detail: string; spend: boolean },
+): D1PreparedStatement[] {
+  return [
+    env.CATALOG.prepare(
+      `UPDATE recovery_restores SET state = ?, settled_at = ?, detail = ?
+        WHERE id = ? AND state = 'started'
+          AND EXISTS (SELECT 1 FROM recovery_codes c
+                       WHERE c.org_id = ? AND c.id = ? AND c.active_restore_id = ?)`,
+    ).bind(outcome.state, outcome.settledAt, outcome.detail, restoreId, orgId, codeId, restoreId),
+    /*
+     * The code is spent and its ownership released together. Releasing matters: a completed restore that left
+     * `active_restore_id` set would keep answering "somebody is restoring from this" for ever, and the column
+     * is what `doctor` and the next acquisition read.
+     */
+    ...(outcome.spend
+      ? [env.CATALOG.prepare(
+          `UPDATE recovery_codes SET redeemed_at = ?, active_restore_id = NULL
+            WHERE org_id = ? AND id = ? AND redeemed_at IS NULL AND active_restore_id = ?`,
+        ).bind(outcome.settledAt, orgId, codeId, restoreId)]
+      : [env.CATALOG.prepare(
+          `UPDATE recovery_codes SET active_restore_id = NULL
+            WHERE org_id = ? AND id = ? AND active_restore_id = ?`,
+        ).bind(orgId, codeId, restoreId)]),
   ];
 }
 

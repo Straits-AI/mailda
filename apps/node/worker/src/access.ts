@@ -1,4 +1,4 @@
-import type { Ctx } from "@mailda/runtime";
+import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { sponsorOf } from "./delegation.ts";
@@ -281,12 +281,37 @@ export function conferredBySupervision(relation: string): Relation | null {
  * administrator pays a regular-expression test and nothing else.
  */
 export async function isAdmin(env: Env, orgId: string, userId: string): Promise<boolean> {
+  /*
+   * Direct **or through a team**, which is the rule every other relation in this Node follows and the one
+   * `org.admin` did not.
+   *
+   * `adminsOf` in `deciders.ts` has always expanded a team-held `org.admin` to that team's members, because
+   * approval eligibility asks "who are the administrators" and a grant to a team obviously meant its members.
+   * This function asked only for a direct tuple. So the same person was an administrator for dual-control
+   * eligibility and not one for any administrator route — "administrator" meaning two different things
+   * depending on which module asked, with `grant()` happily conferring the relation on a team either way.
+   *
+   * Aligned on the wider reading rather than the narrower, because that is the reading `grant()` already
+   * permits and `adminsOf` already acts on: an administrator who granted `org.admin` to a team meant those
+   * people to be administrators, and the surprise was that half the product disagreed.
+   *
+   * The team arm is **only consulted for a person**, and the first draft of this said it did not need to be:
+   * `team_members.user_id` holds users, so an `agt_` matches nothing there "by construction". That is a
+   * convention, not a constraint — nothing in the schema stops a row being written with a machine's
+   * identifier, and the test that asserts it proved the claim false the moment it existed. A delegated
+   * principal reaching `org.admin` through a team row would step straight around the sponsor bound.
+   *
+   * So the prefix decides, the way it decides everywhere else in this delegation layer.
+   */
   const holds = async (subjectId: string) => await env.CATALOG.prepare(
     `SELECT 1 FROM relationship_tuples
-      WHERE org_id = ? AND subject_id = ? AND object_type = 'organization'
-        AND relation = 'org.admin' AND object_id = ? LIMIT 1`,
+      WHERE org_id = ? AND object_type = 'organization' AND relation = 'org.admin' AND object_id = ?
+        AND (subject_id = ?
+             OR (? = 1 AND subject_id IN (SELECT team_id FROM team_members
+                                           WHERE org_id = ? AND user_id = ?)))
+      LIMIT 1`,
   )
-    .bind(orgId, subjectId, orgId)
+    .bind(orgId, orgId, subjectId, idPattern(ID_PREFIXES.user).test(subjectId) ? 1 : 0, orgId, subjectId)
     .first() !== null;
 
   if (!(await holds(userId))) return false;

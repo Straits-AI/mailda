@@ -8,6 +8,7 @@ import { aesKeyFrom, vault } from "../src/keyvault.ts";
 import {
   CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes, escrowState, formatCode,
   codeKey, mintRecoveryCodes, normaliseCode, redeemForVault, RESTORE_LEASE_MS, seal,
+  settlementStatements,
 } from "../src/recovery.ts";
 
 /**
@@ -1488,5 +1489,149 @@ describe("two confirmations of one sheet do not tell the loser it was replaced",
     expect(outcome.alreadyConfirmed, "a sheet that is present and held was reported as replaced").toBe(true);
     expect(outcome.confirmed).toBe(0);
     expect(await heldSets(), "the sheet was retired by a confirmation that changed nothing").toBe(1);
+  });
+});
+
+describe("a Node with no recovery codes left is not healthy", () => {
+  it("degrades the whole verdict once every code has been spent", async () => {
+    /*
+     * `unredeemed > 0` was a **guard on** the other three conditions rather than one of them — and each of
+     * those is about the codes that remain, so the state where none remain has no code to be stale or weak or
+     * unconfirmed. It fell through the gap: `ok: false` at severity `report`, and the overall verdict only
+     * escalates on a failing `degraded`. A Node holding mail with no way to recover its vault answered `ok`,
+     * with the correct remedy printed underneath where nothing was reading it.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, codes[0]!);
+    for (const code of codes) {
+      await loseTheVault();
+      await redeemForVault(testEnv, createSystemCtx(), ORG, code).catch(() => undefined);
+    }
+    expect((await escrowState(testEnv, ORG))!.unredeemed, "the fixture did not spend every code").toBe(0);
+
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const escrow = find(report.findings, "recovery_escrow");
+    expect(escrow.ok, "a Node with no recovery codes reported healthy").toBe(false);
+    expect(escrow.severity, "the finding cannot reach the verdict at `report`").toBe("degraded");
+    expect(report.verdict, `the headline verdict is still ${report.verdict}`).not.toBe("ok");
+  });
+
+  it("stays report-level while codes remain", async () => {
+    // The control. A finding that degrades whenever it is looked at is one people stop reading — and this is
+    // the ordinary state of every working Node.
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, codes[0]!);
+    const escrow = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_escrow");
+    expect(escrow.ok, `a healthy escrow reported a problem: ${escrow.detail}`).toBe(true);
+    expect(escrow.severity).toBe("report");
+  });
+});
+
+describe("a restore that lost its claim cannot settle", () => {
+  /*
+   * Acquisition was fenced and settlement was not. The settlement batch updated `recovery_restores` by id
+   * alone and appended its entry unconditionally, so a worker whose lease lapsed could come back and finish:
+   *
+   * ```
+   *   A reserves code C as R1, runs past its five-minute lease
+   *   B reserves C as R2, restores, marks C redeemed
+   *   A returns: second `recovery.vault_restored / ok`, R1 marked completed,
+   *              its conditional code-spend changes nothing and nobody reads the zero
+   * ```
+   *
+   * `KeyVault.restore` is idempotent so the keys survive. The record does not: two completed restores for one
+   * single-use code, two entries claiming a successful settlement, and the stale attempt's detail becoming the
+   * newest row every report reads.
+   */
+  it("supersedes a lapsed attempt when the code is re-claimed", async () => {
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const code = await testEnv.CATALOG.prepare("SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1")
+      .bind(ORG).first<{ id: string }>();
+
+    // A, still running, its lease long gone.
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+      ).bind("rst_SLOW00000000000000000000", ORG, code!.id,
+        new Date(createSystemCtx().now() - RESTORE_LEASE_MS - 1_000).toISOString()),
+      testEnv.CATALOG.prepare("UPDATE recovery_codes SET active_restore_id = ? WHERE id = ?")
+        .bind("rst_SLOW00000000000000000000", code!.id),
+    ]);
+
+    // B takes the code over and finishes.
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    const stale = await testEnv.CATALOG.prepare("SELECT state FROM recovery_restores WHERE id = ?")
+      .bind("rst_SLOW00000000000000000000").first<{ state: string }>();
+    expect(
+      stale?.state,
+      "the displaced attempt is still `started`, so doctor goes on reporting an interrupted restore",
+    ).toBe("superseded");
+  });
+
+  it("writes nothing when the stale worker returns", async () => {
+    /*
+     * A's settlement, run through the exported statements. The state cannot be produced by calling
+     * `redeemForVault` twice, because the second call is what takes the claim away — so the interleaving is
+     * built and A's own statements are executed against it.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const code = await testEnv.CATALOG.prepare("SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1")
+      .bind(ORG).first<{ id: string }>();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+      ).bind("rst_SLOW00000000000000000000", ORG, code!.id,
+        new Date(createSystemCtx().now() - RESTORE_LEASE_MS - 1_000).toISOString()),
+      testEnv.CATALOG.prepare("UPDATE recovery_codes SET active_restore_id = ? WHERE id = ?")
+        .bind("rst_SLOW00000000000000000000", code!.id),
+    ]);
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    const before = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'recovery.vault_restored'",
+    ).bind(ORG).first<{ n: number }>();
+
+    const outcomes = await testEnv.CATALOG.batch(settlementStatements(
+      testEnv, ORG, code!.id, "rst_SLOW00000000000000000000",
+      { state: "completed", settledAt: "2099-01-01T00:00:00.000Z", detail: "{}", spend: true },
+    ));
+    expect(
+      outcomes[0]!.meta.changes ?? 0,
+      "the stale attempt settled itself after losing the code",
+    ).toBe(0);
+
+    const after = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'recovery.vault_restored'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(after?.n), "a second settlement entry for one code").toBe(Number(before?.n));
+
+    // And exactly one completed restore, one redemption, for one single-use code.
+    const completed = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_restores WHERE org_id = ? AND state = 'completed'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(completed?.n), "two completed restores for one code").toBe(1);
+    expect((await escrowState(testEnv, ORG))!.unredeemed).toBe(9);
+  });
+
+  it("lets the owner settle, so the refusal above is the fence and not a broken statement", async () => {
+    // The control, and it is the ordinary path: one acquisition, one settlement, one spend.
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(outcome.restored.content.length + outcome.restored.credential.length).toBeGreaterThan(0);
+
+    const settled = await testEnv.CATALOG.prepare(
+      "SELECT state, COUNT(*) AS n FROM recovery_restores WHERE org_id = ? GROUP BY state",
+    ).bind(ORG).all<{ state: string; n: number }>();
+    expect(settled.results).toEqual([{ state: "completed", n: 1 }]);
+
+    // Ownership released, or the code would answer "somebody is restoring from this" for ever.
+    const held = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_codes WHERE org_id = ? AND active_restore_id IS NOT NULL",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(held?.n), "a settled restore kept its claim on the code").toBe(0);
   });
 });
