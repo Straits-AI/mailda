@@ -335,6 +335,44 @@ describe("the ledgers answer what the contract says they do", () => {
     expect(read.entries.length).toBeGreaterThan(0);
   });
 
+  it("POST /api/agents, whose success shape was wrong and unexercised", async () => {
+    /*
+     * This route answered with the bare agent while its strict schema embeds `agentSummary`, which carries
+     * `held` and `unnamed`. A deterministic contract violation on a success path, with CI green — because
+     * nothing drove it. `schemaCoverage()` proves a route *has* a schema and never that a test executes one,
+     * and the difference is the whole of that finding.
+     */
+    const held = await cookie();
+    const person = await testEnv.CATALOG.prepare("SELECT id FROM users WHERE org_id = ? LIMIT 1")
+      .bind(ORG).first<{ id: string }>();
+    const minted = await answers("POST", "/api/agents", {
+      cookie: held,
+      body: { name: "contract", sponsorUserId: person!.id, capabilities: ["health.read"] },
+    }) as { agent: { held: unknown[]; unnamed: unknown[] }; token: string };
+
+    expect(Array.isArray(minted.agent.held), "the summary's capability view is missing").toBe(true);
+    expect(Array.isArray(minted.agent.unnamed)).toBe(true);
+  });
+
+  it("POST /api/recovery-codes/rotate and confirm, whose extra fields were undeclared", async () => {
+    /*
+     * Both handlers send a field their strict schema did not declare — `set` on the rotation and
+     * `alreadyConfirmed` on the confirmation. Undeclared *and* unexercised, which is the pairing that let
+     * three of these ship at once.
+     */
+    const held = await cookie();
+    const minted = await answers("POST", "/api/recovery-codes/rotate", { cookie: held }) as {
+      codes: string[]; set: string;
+    };
+    expect(minted.set, "the rotation does not say which sheet it printed").toBeTruthy();
+
+    const confirmed = await answers("POST", "/api/recovery-codes/confirm", {
+      cookie: held, body: { code: minted.codes[0] },
+    }) as { confirmed: number; alreadyConfirmed: boolean };
+    expect(confirmed.alreadyConfirmed).toBe(false);
+    expect(confirmed.confirmed).toBeGreaterThan(0);
+  });
+
   it("GET /api/agent-capabilities, which the mint surface is chosen from", async () => {
     /*
      * Live, not only schema-covered. The vocabulary is published so the interface does not restate it, and a

@@ -2488,7 +2488,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         ...(body.lifetimeDays === undefined ? {} : { lifetimeDays: body.lifetimeDays }),
       });
       return Response.json({
-        agent: minted.agent,
+        /*
+         * The **summary** shape, not the bare agent. `agentSummary` carries `held` and `unnamed` — the
+         * ceiling read back in capability terms — and returning the narrower object made this success path
+         * violate its own strict schema. It went unnoticed because nothing drove it: `schemaCoverage()` proves
+         * a route *has* a schema, never that a test executes it.
+         */
+        agent: { ...minted.agent, ...heldCapabilities(minted.agent.actions) },
         token: minted.token,
         notice: "This token is shown once and cannot be shown again. It expires on "
           + `${minted.agent.expiresAt} and there is no refresh — re-mint to renew.`,

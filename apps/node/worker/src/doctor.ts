@@ -5,7 +5,7 @@ import { agentGrantableActions } from "@mailda/contract/agent";
 import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
-import { escrowState } from "./recovery.ts";
+import { escrowState, RESTORE_LEASE_MS } from "./recovery.ts";
 import { bodyIndexState, unindexedMessages } from "./search.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
@@ -297,6 +297,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),
     ...(await checkAgentCeilings(env, ctx, claim?.org_id ?? null)),
+    ...(await checkRecoveryRestores(env, ctx, claim?.org_id ?? null)),
   );
 
 
@@ -2204,6 +2205,141 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
  *
  * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
  */
+/**
+ * What the last vault restore did, and whether one is stuck.
+ *
+ * ## Why the escrow check cannot answer this
+ *
+ * `recovery_escrow` compares **generation numbers**, and the failure that matters most is invisible to a
+ * number: lose the vault, let the Node keep working, and `sealingKey` mints a fresh generation 1 with a
+ * different secret. The escrow also carries a generation 1. `vault.restore` keeps the live key and reports a
+ * conflict — correctly, because the alternative trades newer mail for older — and the inventory still says
+ * generation 1. Both sides agree on the number and disagree on the key, so mail sealed before the loss stays
+ * unreadable and every count in that finding looks healthy.
+ *
+ * The evidence is in `recovery_restores.detail.conflicted` and nothing read it. The redemption's *response*
+ * carries the conflict, and a lost response is the exact failure the saga was built for — so the durable copy
+ * has to be reported, or persisting it bought nothing.
+ *
+ * ## It stays in the reduced report
+ *
+ * `runDoctor` answers unauthenticated in a narrowed form, and this belongs in it: the moment an operator most
+ * needs to know whether the restore finished is the moment the credential vault is being restored, when
+ * signing in is exactly what does not work.
+ */
+async function checkRecoveryRestores(env: Env, ctx: Ctx, orgId: string | null): Promise<Finding[]> {
+  if (orgId === null) return [];
+
+  const latest = await env.CATALOG.prepare(
+    `SELECT id, code_id, state, started_at, settled_at, detail FROM recovery_restores
+      WHERE org_id = ? ORDER BY started_at DESC LIMIT 1`,
+  ).bind(orgId)
+    .first<{
+      id: string; code_id: string; state: string; started_at: string; settled_at: string | null;
+      detail: string | null;
+    }>()
+    .catch(() => undefined);
+
+  if (latest === undefined) {
+    return [{
+      check: "recovery_restore_state",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: "The catalog could not be read, so this report cannot say whether a vault restore is in "
+        + "progress or was interrupted.",
+      fix: "check the `catalog_reachable` finding in this same report first — this one is downstream of it",
+    }];
+  }
+
+  if (latest === null) {
+    // Never attempted, which is the ordinary state and not a finding to act on.
+    return [{
+      check: "recovery_restore_state",
+      severity: "report",
+      discloses: "infrastructure",
+      ok: true,
+      detail: "No vault restore has been attempted on this Node.",
+    }];
+  }
+
+  /*
+   * The detail is this Node's own JSON and is still parsed defensively: a row written by an older version, or
+   * a truncated write, must not turn the whole report into a 500 — `doctor` is what somebody reads when
+   * things are already wrong.
+   */
+  const carried = ((): { restored?: Record<string, number[]>; conflicted?: Record<string, number[]>;
+    error?: string } => {
+    try {
+      return latest.detail === null ? {} : JSON.parse(latest.detail);
+    } catch {
+      return {};
+    }
+  })();
+  const conflicted = [
+    ...(carried.conflicted?.content ?? []).map((n) => `content ${n}`),
+    ...(carried.conflicted?.credential ?? []).map((n) => `credential ${n}`),
+  ];
+  const installed = (carried.restored?.content ?? []).length + (carried.restored?.credential ?? []).length;
+  const lapsed = latest.state === "started"
+    && Date.parse(latest.started_at) <= ctx.now() - RESTORE_LEASE_MS;
+
+  if (latest.state === "started") {
+    return [{
+      check: "recovery_restore_state",
+      severity: lapsed ? "degraded" : "report",
+      discloses: "infrastructure",
+      ok: !lapsed,
+      detail: lapsed
+        ? `A vault restore (${latest.id}) began at ${latest.started_at} and never settled. Its reservation `
+          + "has lapsed, so the code it used can be redeemed again — the restore is resumable and every step "
+          + "of it is idempotent, so running it again resumes rather than repeats."
+        : `A vault restore (${latest.id}) is in progress, started at ${latest.started_at}.`,
+      ...(lapsed
+        ? { fix: "redeem the same recovery code again. It was not spent, because an attempt that does not "
+            + "finish must not cost one of ten" }
+        : {}),
+    }];
+  }
+
+  if (latest.state === "failed") {
+    return [{
+      check: "recovery_restore_state",
+      severity: "degraded",
+      discloses: "infrastructure",
+      ok: false,
+      detail: `The last vault restore (${latest.id}) failed after installing ${installed} generation(s)`
+        + `${carried.error === undefined ? "" : `: ${carried.error.slice(0, 200)}`}. The code was not spent.`,
+      fix: "redeem the same recovery code again — every step is idempotent, so it resumes",
+    }];
+  }
+
+  /*
+   * Completed **with conflicts** is the case this finding exists for, and it is the one that looks healthy
+   * everywhere else. A conflict means the vault kept a live key under a generation the escrow also carried
+   * with a different secret, so mail sealed under the escrowed one stays unreadable — and the generation
+   * numbers, which is all `recovery_escrow` compares, agree.
+   */
+  return [{
+    check: "recovery_restore_state",
+    severity: conflicted.length > 0 ? "degraded" : "report",
+    discloses: "infrastructure",
+    ok: conflicted.length === 0,
+    detail: conflicted.length === 0
+      ? `The last vault restore (${latest.id}) completed at ${latest.settled_at}, installing ${installed} `
+        + "generation(s) with no collisions."
+      : `The last vault restore (${latest.id}) completed and **${conflicted.length} generation(s) collided `
+        + `with a live key and were not installed**: ${conflicted.join(", ")}. The vault kept the live key, `
+        + "which preserves mail sealed since the loss — and mail sealed under the escrowed key of the same "
+        + "generation number stays unreadable. Generation counts agree, so the `recovery_escrow` finding "
+        + "above cannot see this.",
+    ...(conflicted.length === 0 ? {} : {
+      fix: "there is no repair for a collision: two different keys cannot share one generation number. Treat "
+        + "mail from before the loss as unreadable, and check `evidence_lifecycle` for what that covers",
+    }),
+  }];
+}
+
 /**
  * Agents still holding a capability no machine may have any more.
  *

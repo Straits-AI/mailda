@@ -480,15 +480,32 @@ export async function redeemForVault(
   const stale = new Date(ctx.now() - RESTORE_LEASE_MS).toISOString();
 
   /*
-   * The reservation, as a conditional insert: this attempt begins only if no live one already holds the code.
-   * `changes` is the compare-and-swap — two concurrent redemptions of one code cannot both proceed, and the
-   * loser is told rather than left to do the work twice.
+   * ## One predicate, used three times
    *
-   * `started_at > ?` bounds it. A Worker that dies never settles its row, and a reservation nothing can
-   * release is a deadlock wearing a safety argument — so a dead attempt frees the code after the lease and
-   * the retry resumes it. Resuming is safe because `vault.restore` is idempotent: a generation already
-   * present comes back `identical`, and one that disagrees comes back `conflict`.
+   * The reservation, the audit gate and the refusal all have to be asking the same question, and the first
+   * version had them asking three. It gated nothing on the entry, tested only for a live `started` row on the
+   * insert, and answered with a single code — which left two defects:
+   *
+   * - **A request turned away still recorded that a restore began.** The entry's insert was unconditional, so
+   *   a caller who lost the reservation wrote `recovery.restore_started` and then threw. The catalogue defines
+   *   that action as *a code was accepted and restoration began*, and neither had happened.
+   * - **A code spent between the read and the batch was restored again.** The `NOT EXISTS` looked for a live
+   *   attempt; a winner that had already *finished* leaves none, so a second request sailed through and
+   *   restored from a code the database says is spent. Not an escalation — the escrow's contents are the same
+   *   either way — but it breaks single use and makes the trail claim something the row does not.
+   *
+   * So the predicate is written once and bound twice: as the `AuditGate`, so no entry exists for an attempt
+   * that never began, and as the `INSERT … SELECT`'s own source, so the row and the entry cannot disagree.
+   * The gate must precede the statement that changes it, which `auditedBatch` requires and the ordering here
+   * satisfies.
    */
+  const reservable = `SELECT 1 FROM recovery_codes c
+     WHERE c.org_id = ? AND c.id = ? AND c.redeemed_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM recovery_restores r
+                        WHERE r.org_id = c.org_id AND r.code_id = c.id
+                          AND r.state = 'started' AND r.started_at > ?)`;
+  const reservableParams = [orgId, row.id, stale];
+
   const { results: opened } = await auditedBatch(
     env, ctx, orgId,
     {
@@ -506,20 +523,53 @@ export async function redeemForVault(
       entry,
       env.CATALOG.prepare(
         `INSERT INTO recovery_restores (id, org_id, code_id, state, started_at)
-         SELECT ?,?,?,'started',?
-          WHERE NOT EXISTS (SELECT 1 FROM recovery_restores
-                             WHERE org_id = ? AND code_id = ? AND state = 'started' AND started_at > ?)`,
-      ).bind(restoreId, orgId, row.id, at, orgId, row.id, stale),
+         SELECT ?, c.org_id, c.id, 'started', ?
+           FROM recovery_codes c
+          WHERE c.org_id = ? AND c.id = ? AND c.redeemed_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM recovery_restores r
+                             WHERE r.org_id = c.org_id AND r.code_id = c.id
+                               AND r.state = 'started' AND r.started_at > ?)`,
+      ).bind(restoreId, at, ...reservableParams),
     ],
+    { sql: reservable, params: reservableParams },
   );
+
   if ((opened[1]?.meta.changes ?? 0) === 0) {
-    throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
-      what: "that code is already being redeemed by another request",
-      why: "a restore installs keys through the vault, which cannot join this database's transaction — so it "
-        + "is reserved while it runs rather than attempted twice",
-      fix: `wait for the attempt in flight to finish and check \`doctor\`. If it never finishes, the `
-        + `reservation lapses after ${Math.round(RESTORE_LEASE_MS / 60_000)} minutes and the code can be `
-        + "used again",
+    /*
+     * Re-read to say **which** term refused. One code for both states sends an operator to the wrong remedy:
+     * "already being redeemed" tells them to wait, "already spent" tells them to use another, and those are
+     * not interchangeable when there are nine left and an incident running.
+     *
+     * The spent branch here is the **interleaved** case only — a code spent between this function's first
+     * read and this batch. The ordinary one is refused far above, at that read, and has been since before the
+     * saga existed. So no sequential test enters this branch, which is said rather than implied; what the
+     * tests do assert is the predicate it reports on, since the reservation's `redeemed_at IS NULL` is what
+     * the old `NOT EXISTS`-only condition was missing.
+     */
+    const state = await env.CATALOG.prepare(
+      `SELECT c.redeemed_at,
+              (SELECT COUNT(*) FROM recovery_restores r
+                WHERE r.org_id = c.org_id AND r.code_id = c.id
+                  AND r.state = 'started' AND r.started_at > ?) AS live
+         FROM recovery_codes c WHERE c.org_id = ? AND c.id = ?`,
+    ).bind(stale, orgId, row.id).first<{ redeemed_at: string | null; live: number }>();
+
+    if (state !== null && Number(state.live) > 0) {
+      throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
+        what: "that code is already being redeemed by another request",
+        why: "a restore installs keys through the vault, which cannot join this database's transaction — so "
+          + "it is reserved while it runs rather than attempted twice",
+        fix: `wait for the attempt in flight to finish and check \`doctor\`. If it never finishes, the `
+          + `reservation lapses after ${Math.round(RESTORE_LEASE_MS / 60_000)} minutes and the code can be `
+          + "used again",
+      });
+    }
+    throw unprocessable("E_RECOVERY_CODE_SPENT", {
+      what: "that recovery code has already been used",
+      why: "codes are single-use, and one was spent by a request that finished between this one reading it "
+        + "and reserving it. The vault was restored by that request",
+      fix: "check `doctor` before spending another — the restore that won may have installed everything this "
+        + "one would have",
     });
   }
 

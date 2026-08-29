@@ -97,6 +97,11 @@ export const signedInResponse = z.object({
  * trail.
  */
 export const meResponse = z.object({
+  /**
+   * Always true here — the route answers 401 otherwise. Declared because the handler sends it and the client
+   * reads it, and a field that exists in both and in no schema is one nothing can check.
+   */
+  signedIn: z.literal(true),
   /** The principal itself: `usr_` for a person, `agt_` for an agent. */
   principalId: z.string().min(1),
   principalKind: z.enum(["user", "agent"]),
@@ -105,7 +110,14 @@ export const meResponse = z.object({
   /** The human accountable for a machine's acts. Null when the principal is that human. */
   delegatorUserId: userId.nullable(),
   organizationId: z.string().min(1),
-}).loose();
+  /** The person's address. Null for a machine, which has none, and for a person with none recorded. */
+  email: z.string().nullable(),
+  /*
+   * `.strict()`, and the change is the point. This was `.loose()` with two of the fields it actually sends
+   * undeclared — so the contract described less than the route answered and nothing could tell. A loose schema
+   * on a route this small is not tolerance, it is a place for fields to accumulate unchecked.
+   */
+}).strict();
 
 /* ------------------------------------------------------------------ passkeys (#84) ------------------ */
 
@@ -1358,12 +1370,20 @@ export const recoveryCodesMintedResponse = z.object({
     content: z.number().int().nonnegative(),
     credential: z.number().int().nonnegative(),
   }).strict(),
+  /** Which sheet these are, so a caller confirms *this* one rather than "whatever is current". */
+  set: z.string().min(1),
   notice: z.string().min(1),
 }).strict();
 
 /** Proof that an operator holds one of the codes. Compared, never spent. */
 export const recoveryCodesConfirmedResponse = z.object({
   confirmed: z.number().int().nonnegative(),
+  /**
+   * True when the code came from the sheet that was **already** active: nothing was marked and, the
+   * load-bearing half, nothing was retired. A count of zero cannot carry that — it is also what a
+   * confirmation that changed nothing looks like.
+   */
+  alreadyConfirmed: z.boolean(),
   message: z.string().min(1),
 }).strict();
 

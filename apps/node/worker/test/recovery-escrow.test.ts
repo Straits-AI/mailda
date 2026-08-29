@@ -1202,3 +1202,183 @@ describe("a restore is a resumable operation, not a hopeful sequence", () => {
     ).toBe(10);
   });
 });
+
+describe("the reservation is one predicate, not three questions", () => {
+  /*
+   * The saga's start had the reservation, the audit gate and the refusal asking different things. Two defects
+   * came out of that, and neither is visible from any single statement.
+   */
+  it("writes no started entry for a request that never began", async () => {
+    /*
+     * The entry's insert was unconditional while the reservation's was not, so a caller who lost the race
+     * recorded `recovery.restore_started` — which the catalogue defines as *a code was accepted and
+     * restoration began* — and then threw. An audit trail that records attempts that did not happen is worse
+     * than one that records none: it is the artefact somebody counts during an incident.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1",
+    ).bind(ORG).first<{ id: string }>();
+    // Somebody else holds the reservation.
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+    ).bind("rst_HELD00000000000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now()).toISOString()).run();
+
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
+    await expect(redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!))
+      .rejects.toThrow("E_RECOVERY_RESTORE_IN_FLIGHT");
+
+    const began = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM audit_entries WHERE org_id = ? AND action = 'recovery.restore_started'",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(began?.n), "the trail records a restore that never started").toBe(0);
+  });
+
+  it("refuses a spent code with no attempt in flight, which the old NOT EXISTS let through", async () => {
+    /*
+     * The `NOT EXISTS` looked for a **live** attempt, and a winner that has already *finished* leaves none —
+     * so the reservation's only condition was satisfied and a second request restored from a code the
+     * database says is spent. Not an escalation, since the escrow holds the same keys either way, but it
+     * breaks single use and makes the trail claim something the row does not.
+     *
+     * **This test reaches the refusal through the earlier read**, which has caught the ordinary spent case
+     * since before the saga existed. The reservation's own `redeemed_at IS NULL` term covers the interleaving
+     * — spent between that read and the batch — which no sequential test can produce, and `recovery.ts` says
+     * so rather than implying otherwise. What is asserted here is the state the old predicate accepted: a
+     * spent code with nothing in flight reserves nothing.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await testEnv.CATALOG.prepare(
+      "UPDATE recovery_codes SET redeemed_at = ? WHERE org_id = ?",
+    ).bind(new Date(createSystemCtx().now()).toISOString(), ORG).run();
+
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!),
+      "a spent code was restored again because no attempt was in flight",
+    ).rejects.toThrow("E_RECOVERY_CODE_SPENT");
+
+    const reserved = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_restores WHERE org_id = ?",
+    ).bind(ORG).first<{ n: number }>();
+    expect(Number(reserved?.n), "a spent code was reserved anyway").toBe(0);
+  });
+
+  it("tells the two refusals apart, because their remedies differ", async () => {
+    /*
+     * "Already being redeemed" means wait; "already spent" means use another. One code for both sends an
+     * operator to the wrong remedy when there are nine left and an incident running.
+     *
+     * The in-flight case is covered above; this is the control that the two do not collapse into one answer.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(outcome.restored.content.length).toBeGreaterThan(0);
+
+    // The same code again: spent, with nothing in flight.
+    await expect(redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!))
+      .rejects.toThrow("E_RECOVERY_CODE_SPENT");
+  });
+
+  it("records exactly one start and one settlement for one successful restore", async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    const counted = await testEnv.CATALOG.prepare(
+      `SELECT action, COUNT(*) AS n FROM audit_entries
+        WHERE org_id = ? AND action LIKE 'recovery.%' GROUP BY action ORDER BY action`,
+    ).bind(ORG).all<{ action: string; n: number }>();
+    const byAction = Object.fromEntries(counted.results.map((one) => [one.action, Number(one.n)]));
+    expect(byAction["recovery.restore_started"]).toBe(1);
+    expect(byAction["recovery.vault_restored"]).toBe(1);
+  });
+});
+
+describe("doctor reports what the restore actually did", () => {
+  /*
+   * The refusal for an in-flight restore tells an operator to check `doctor`, and `doctor` did not look at
+   * `recovery_restores` at all. Worse than a missing status line: the **collision** case looks healthy
+   * everywhere else, because `recovery_escrow` compares generation *numbers* and a collision is two different
+   * keys wearing the same number.
+   */
+  it("says a completed restore is clean when nothing collided", async () => {
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_restore_state");
+    expect(finding.ok, `reported a problem on a clean restore: ${finding.detail}`).toBe(true);
+    expect(finding.detail).toContain("no collisions");
+  });
+
+  it("goes degraded on a collision the escrow check cannot see", async () => {
+    /*
+     * The whole reason this finding exists. Lose the vault, let the Node mint a fresh generation 1 with a
+     * different secret, then redeem: the escrow's generation 1 collides, the live key is kept, and the
+     * inventory still reads 1. Both sides agree on the number and disagree on the key, so mail sealed before
+     * the loss is unreadable and every count in `recovery_escrow` looks fine.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    await vault(testEnv).sealingKey("content");
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(outcome.conflicted.content, "the fixture did not produce a collision").toContain(1);
+
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const finding = find(report.findings, "recovery_restore_state");
+    expect(finding.ok, "a collision reported as healthy").toBe(false);
+    expect(finding.detail).toContain("collided");
+
+    // The control, and the point: the older check still says nothing is wrong.
+    const escrow = find(report.findings, "recovery_escrow");
+    expect(
+      escrow.detail,
+      "the escrow check noticed after all, which would make this finding redundant rather than necessary",
+    ).not.toContain("collided");
+  });
+
+  it("says an interrupted restore is resumable once its reservation has lapsed", async () => {
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1",
+    ).bind(ORG).first<{ id: string }>();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+    ).bind("rst_STUCK0000000000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now() - RESTORE_LEASE_MS - 1_000).toISOString()).run();
+
+    const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_restore_state");
+    expect(finding.ok, "an abandoned restore reported healthy").toBe(false);
+    expect(finding.detail).toContain("never settled");
+    expect(finding.fix, "an operator is not told the code is still theirs to use").toContain("not spent");
+    expect(codes.length).toBe(10);
+  });
+
+  it("does not fire while a restore is legitimately in progress", async () => {
+    // The control. A finding that goes degraded the moment work begins is one people learn to ignore.
+    const code = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? LIMIT 1",
+    ).bind(ORG).first<{ id: string }>();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+    ).bind("rst_RUNNING00000000000000000", ORG, row!.id,
+      new Date(createSystemCtx().now()).toISOString()).run();
+
+    const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_restore_state");
+    expect(finding.ok, "a restore that started a moment ago reported as broken").toBe(true);
+    expect(code.codes.length).toBe(10);
+  });
+
+  it("says nothing has been attempted when nothing has", async () => {
+    await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const finding = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_restore_state");
+    expect(finding.ok).toBe(true);
+    expect(finding.detail).toContain("No vault restore has been attempted");
+  });
+});
