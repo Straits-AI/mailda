@@ -609,7 +609,27 @@ export async function redeemForVault(
          FROM recovery_codes c WHERE c.org_id = ? AND c.id = ?`,
     ).bind(stale, orgId, row.id).first<{ redeemed_at: string | null; live: number }>();
 
-    if (state !== null && Number(state.live) > 0) {
+    if (state === null) {
+      /*
+       * The row is **gone**, not spent. A concurrent rotation or confirmation can retire a set between this
+       * function's read and its reservation, and answering "already used" sends an operator to their next
+       * code when the sheet itself has been replaced — the wrong remedy during the incident this path exists
+       * for.
+       *
+       * **Interleaving-only**, and said rather than implied: the row has to vanish between this function's
+       * first read and its reservation, and the retirement that would do it is now refused while a restore is
+       * live. So this is the residue — a rotation landing in the same instant — and no sequential test reaches
+       * it. What is tested is the refusal that prevents the ordinary version:
+       * `test/recovery-escrow.test.ts` proves a confirmation will not retire a sheet being restored from.
+       */
+      throw unprocessable("E_RECOVERY_CODE_UNKNOWN", {
+        what: "that code's sheet was replaced while this request was running",
+        why: "a rotation or a confirmation retired the set it belongs to, which deletes its rows. The code "
+          + "was real and is no longer this Node's",
+        fix: "use a code from the sheet this Node last printed. If you do not have it, mint a fresh set",
+      });
+    }
+    if (Number(state.live) > 0) {
       throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
         what: "that code is already being redeemed by another request",
         why: "a restore installs keys through the vault, which cannot join this database's transaction — so "
@@ -832,6 +852,27 @@ export async function escrowState(env: Env, orgId: string): Promise<{
  * interleaving cannot be produced by calling the public function in sequence, and the previous round of this
  * defect survived precisely because the test constructed a state one step short of it.
  */
+/**
+ * Is any code in a set being restored from right now?
+ *
+ * Retirement deletes a set's rows, and a row deleted mid-restore takes the escrow the attempt needs to resume
+ * with it — the attempt cannot settle and cannot be run again, which is the one state a resumable operation
+ * must not be able to reach. Refusing for the few minutes a lease lasts is the cheaper failure.
+ */
+export async function setHasLiveRestore(
+  env: Env,
+  orgId: string,
+  keepSetId: string | null,
+  now: number,
+): Promise<boolean> {
+  const row = await env.CATALOG.prepare(
+    `SELECT 1 FROM recovery_restores r JOIN recovery_codes c ON c.id = r.code_id
+      WHERE r.org_id = ? AND r.state = 'started' AND r.started_at > ?
+        AND c.set_id IS NOT ? LIMIT 1`,
+  ).bind(orgId, new Date(now - RESTORE_LEASE_MS).toISOString(), keepSetId).first();
+  return row !== null;
+}
+
 export function confirmationStatements(
   env: Env,
   orgId: string,
@@ -981,6 +1022,22 @@ export async function confirmRecoveryCodes(
    * rotating their codes is trying to stop being true. A `retired_at` column would have recorded the intent
    * and kept the capability.
    */
+  /*
+   * Refused while a code in a retiring set is being restored from. The delete would take the escrow that
+   * attempt needs to resume with, leaving an operation that can neither settle nor be run again — and the
+   * whole point of the saga is that an interrupted restore is resumable. A lease lasts five minutes; a
+   * recovery that cannot be finished lasts as long as the mail does.
+   */
+  if (await setHasLiveRestore(env, orgId, row.set_id, ctx.now())) {
+    throw unprocessable("E_RECOVERY_RESTORE_IN_FLIGHT", {
+      what: "a code from the sheet this would retire is being redeemed right now",
+      why: "confirming retires every other sheet, and deleting a code mid-restore takes the escrow that "
+        + "attempt needs to resume with — it could then neither finish nor be run again",
+      fix: `wait for the restore to finish and confirm again. A reservation lapses after `
+        + `${Math.round(RESTORE_LEASE_MS / 60_000)} minutes`,
+    });
+  }
+
   const retiring = await env.CATALOG.prepare(
     `SELECT COUNT(DISTINCT IFNULL(set_id, '')) AS sets FROM recovery_codes
       WHERE org_id = ? AND set_id IS NOT ?`,

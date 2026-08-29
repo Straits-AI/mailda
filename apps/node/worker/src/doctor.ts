@@ -2097,10 +2097,16 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
       detail: "No key escrow. This Node's content and credential keys exist **only** in its Durable Object "
         + "storage, so losing that storage makes every message permanently unreadable — which is the "
         + "condition ADR 28 says it does not ship without covering.",
-      fix: "a Node claimed before #92 has no codes and there is no route that mints a set for one — the "
-        + "escrow is written at claim, because a Node that has accepted a single message without one already "
-        + "holds content it cannot recover. Re-claiming is not possible either. Treat this Node as "
-        + "unrecoverable and plan a migration to a freshly claimed one",
+      /*
+       * This said there was no route that mints a set for such a Node and recommended migrating to a freshly
+       * claimed one. `POST /api/recovery-codes/rotate` exists now, so the remedy was telling an operator to
+       * abandon a Node they could have recovered — the most expensive kind of stale sentence, in the finding
+       * that fires when everything else has already gone wrong.
+       */
+      fix: "an administrator can mint a set now: `mailda recovery-codes rotate`, then store the sheet and "
+        + "`mailda recovery-codes confirm` one of the codes. Mail already sealed on this Node is covered "
+        + "from that moment; nothing recovers content whose keys are lost before the escrow exists, which is "
+        + "why the escrow is normally written at claim",
     }];
   }
 
@@ -2177,8 +2183,15 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
           + "weak code is still better than no code — but it is the weaker of the two states and this "
           + "finding stays degraded until it is replaced" }
       : stale
-      ? { fix: "mint a fresh set of codes, which re-escrows every generation the vault now holds and "
-          + "invalidates the old set. The previously printed codes stop working, which is the point" }
+      /*
+       * The old wording said minting invalidates the previous set immediately. It has not since the sheets
+       * gained identities: a **confirmed** sheet survives a rotation until the replacement is confirmed, and
+       * an operator following the old sentence would destroy the still-working printout before the new one
+       * was proven held — which is the exact loss that change was made to prevent.
+       */
+      ? { fix: "mint a fresh set, which re-escrows every generation the vault now holds. Store the new sheet, "
+          + "confirm one of its codes, and only then destroy the previous one: the old sheet keeps working "
+          + "until the new one is confirmed, deliberately" }
       : state.unredeemed === 0
         ? { fix: "every code has been spent, so nothing can restore this vault. Mint a fresh set" }
         : {}),

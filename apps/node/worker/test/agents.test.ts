@@ -826,6 +826,19 @@ describe("the mint and revoke routes validate what they are handed", () => {
     expect(all.agent.actions.length).toBe(agentGrantableActions().length);
   });
 
+  it("refuses a fractional lifetime, which the contract calls an integer", async () => {
+    /*
+     * `agentMintRequest` says `lifetimeDays` is an integer and the domain checked only finite-and-positive, so
+     * a direct caller could mint for `0.5` days: a credential nobody asked for, expiring at a time nobody
+     * chose, against a field whose name says whole days.
+     */
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "half-day", sponsorUserId: SPONSOR, capabilities: [AGENT_READS], lifetimeDays: 0.5,
+      }),
+    ).rejects.toThrow("E_AGENT_LIFETIME_INVALID");
+  });
+
   it("refuses a lifetime that is not a positive number of days", async () => {
     /*
      * `Math.min(input.lifetimeDays ?? DEFAULT, MAX)` accepts anything. `NaN` propagates through `Math.min`,

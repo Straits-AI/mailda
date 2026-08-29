@@ -347,10 +347,12 @@ export async function mintAgent(
   }
 
   const lifetime = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
-  if (!Number.isFinite(lifetime) || lifetime <= 0) {
+  if (!Number.isInteger(lifetime) || lifetime <= 0) {
     throw unprocessable("E_AGENT_LIFETIME_INVALID", {
-      what: `a lifetime of ${String(input.lifetimeDays)} days is not a length of time`,
-      why: "an agent's expiry is the thing that makes the credential temporary, so it has to be a positive "
+      what: `a lifetime of ${String(input.lifetimeDays)} days is not a whole number of days`,
+      why: "an agent's expiry is the thing that makes the credential temporary, so it has to be a whole "
+        + "positive number of days — the contract says integer and the domain accepted `0.5`, which is a "
+        + "credential nobody asked for expiring at a time nobody chose. A positive "
         + `number of days. Longer than ${MAX_LIFETIME_DAYS} is shortened to it rather than refused, because `
         + "asking for more is a reasonable thing to want",
       fix: `pass a positive number of days, up to ${MAX_LIFETIME_DAYS}`,
@@ -381,14 +383,13 @@ export async function mintAgent(
    * unbounded and this is a limit on one request's shape. Fifty pairs is more mailboxes than any agent has a
    * use for and small enough that the refused case costs nothing.
    */
-  const seen = new Set<string>();
-  const grants = (input.grants ?? []).filter((one) => {
-    const key = `${one.mailboxId}::${one.relation}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
   if ((input.grants ?? []).length > MAX_GRANTS) {
+    /*
+     * Checked **before** the deduplication below, not after. The first version filtered the whole raw array
+     * to build the `seen` set and then measured its length — so a large authenticated request paid for the
+     * iteration and the allocation before being told it was too long, which is the cost the bound exists to
+     * refuse.
+     */
     throw unprocessable("E_AGENT_GRANTS_UNBOUNDED", {
       what: `${(input.grants ?? []).length} mailbox grants were requested and the limit is ${MAX_GRANTS}`,
       why: "each grant is checked against the sponsor and written as its own tuple, so a long list is work "
@@ -396,6 +397,13 @@ export async function mintAgent(
       fix: `send each mailbox and relation once, up to ${MAX_GRANTS} pairs`,
     });
   }
+  const seen = new Set<string>();
+  const grants = (input.grants ?? []).filter((one) => {
+    const key = `${one.mailboxId}::${one.relation}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   for (const wantedGrant of grants) {
     const held = await env.CATALOG.prepare(

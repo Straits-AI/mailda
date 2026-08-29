@@ -1635,3 +1635,52 @@ describe("a restore that lost its claim cannot settle", () => {
     expect(Number(held?.n), "a settled restore kept its claim on the code").toBe(0);
   });
 });
+
+describe("retirement waits for a restore, and a replaced sheet says so", () => {
+  it("refuses to confirm while a code in a retiring sheet is being restored from", async () => {
+    /*
+     * Retirement deletes a set's rows, and a row deleted mid-restore takes the escrow that attempt needs to
+     * resume with — leaving an operation that can neither settle nor be run again. That is the one state a
+     * resumable operation must not be able to reach, and the whole saga exists to make an interrupted restore
+     * resumable.
+     *
+     * Refusing for the few minutes a lease lasts is the cheaper failure.
+     */
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    // Somebody is restoring from the sheet the confirmation below would retire.
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? AND set_id IS ? LIMIT 1",
+    ).bind(ORG, first.setId).first<{ id: string }>();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+    ).bind("rst_MIDFLIGHT00000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now()).toISOString()).run();
+
+    await expect(
+      confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!),
+      "a confirmation deleted the code an in-flight restore needs to resume with",
+    ).rejects.toThrow("E_RECOVERY_RESTORE_IN_FLIGHT");
+    expect(await heldSets(), "the sheet was retired anyway").toBe(2);
+  });
+
+  it("confirms normally once the restore has lapsed", async () => {
+    // The control. A guard that never releases is a Node that can never rotate its codes again.
+    const first = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, first.codes[0]!);
+    const second = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const code = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_codes WHERE org_id = ? AND set_id IS ? LIMIT 1",
+    ).bind(ORG, first.setId).first<{ id: string }>();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO recovery_restores (id, org_id, code_id, state, started_at) VALUES (?,?,?,'started',?)",
+    ).bind("rst_LAPSEDMID0000000000000", ORG, code!.id,
+      new Date(createSystemCtx().now() - RESTORE_LEASE_MS - 1_000).toISOString()).run();
+
+    expect((await confirmRecoveryCodes(testEnv, createSystemCtx(), ORG, second.codes[0]!)).confirmed).toBe(10);
+    expect(await heldSets()).toBe(1);
+  });
+
+});
