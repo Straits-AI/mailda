@@ -69,6 +69,12 @@ const EXEMPT: Record<string, string> = {
     + "kind, worked out first and reached by a different route (`DISTINCT subject_id`).",
   effectiveOnMailbox: "the Butler's own intersection, as `effectiveOn`",
   metered: "`doctor` counting rows in a table by name. No predicate.",
+  agentReach: "reports what each agent was granted and whether the sponsor still holds it — so it **computes** "
+    + "the intersection rather than being bounded by one. It is the administrator's view of somebody else's "
+    + "authority, not a principal reading their own: an agent asking this question would be asking about "
+    + "agents, which is `GET /api/agents` and withheld from every machine. Applying the term here would hide "
+    + "exactly the rows the finding exists to show, since a grant the sponsor has lost is the one an operator "
+    + "needs to see.",
   mintAgent: "two sites, and neither evaluates a principal's own authority. One **is** the sponsor term, "
     + "asked up front: it reads the sponsor's tuples to refuse a grant the sponsor does not hold, so an "
     + "administrator finds out at mint rather than through an automation that quietly does nothing. "

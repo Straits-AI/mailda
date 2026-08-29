@@ -1452,6 +1452,20 @@ export const agentSummary = z.object({
    * `agent_actions` and still checked, so hiding it is the one thing this must not do.
    */
   unnamed: z.array(z.string().min(1)),
+  /**
+   * Which mailboxes this agent may reach, and whether each relation is **live right now**.
+   *
+   * Two facts rather than one, because `effective(agent)` intersects the agent's tuples with its sponsor's: a
+   * sponsor who loses a relation silently narrows every agent that borrowed it. An access review reading only
+   * what was granted gets an answer that was true on the day of the mint.
+   */
+  grants: z.array(z.object({
+    mailboxId: z.string().min(1),
+    /** Null when the mailbox has been deleted out from under the tuple. Shown, never dropped. */
+    mailboxName: z.string().nullable(),
+    relation: z.string().min(1),
+    effective: z.boolean(),
+  }).strict()),
 }).strict();
 
 export const agentListResponse = z.object({ agents: z.array(agentSummary) }).strict();

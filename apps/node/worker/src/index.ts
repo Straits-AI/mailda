@@ -13,7 +13,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 import { claimNode } from "./claim.ts";
 import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
-import { listAgents, mintAgent, revokeAgent } from "./agents.ts";
+import { agentReach, listAgents, mintAgent, revokeAgent } from "./agents.ts";
 import { migrate } from "./migrate.ts";
 import { refuseCrossSite } from "./csrf.ts";
 import { refuseUnknownFields } from "./request-shape.ts";
@@ -2494,7 +2494,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
          * violate its own strict schema. It went unnoticed because nothing drove it: `schemaCoverage()` proves
          * a route *has* a schema, never that a test executes it.
          */
-        agent: { ...minted.agent, ...heldCapabilities(minted.agent.actions) },
+        /*
+         * Reach included, from the same query the list uses rather than from the request body. A mint that
+         * echoed back what was asked for would report `effective: true` on every relation by construction —
+         * and the sponsor check above means it *is* true at this instant, which makes the echo look right and
+         * be a different fact.
+         */
+        agent: {
+          ...minted.agent,
+          ...heldCapabilities(minted.agent.actions),
+          grants: (await agentReach(env, who.orgId)).get(minted.agent.id) ?? [],
+        },
         token: minted.token,
         notice: "This token is shown once and cannot be shown again. It expires on "
           + `${minted.agent.expiresAt} and there is no refresh — re-mint to renew.`,
@@ -2538,8 +2548,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
        * ceiling does not carry and never will.
        */
       const agents = await listAgents(env, who.orgId);
+      /*
+       * Reach is joined in, with `effective` per relation. The list used to answer capabilities and standing
+       * and say nothing about **which mailboxes** — so an access review could not ask the question it exists
+       * to ask, and could not see that a sponsor losing access had quietly narrowed an agent.
+       */
+      const reach = await agentReach(env, who.orgId);
       return Response.json({
-        agents: agents.map((agent) => ({ ...agent, ...heldCapabilities(agent.actions) })),
+        agents: agents.map((agent) => ({
+          ...agent,
+          ...heldCapabilities(agent.actions),
+          grants: reach.get(agent.id) ?? [],
+        })),
       });
     }
 

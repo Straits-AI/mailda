@@ -10,7 +10,7 @@ import { notificationsFor } from "../src/notifications.ts";
 import { agentGrantableActions } from "@mailda/contract/agent";
 import { capabilityIds, routesFor } from "@mailda/contract/capability";
 
-import { agentFor, listAgents, mintAgent, revokeAgent } from "../src/agents.ts";
+import { agentFor, agentReach, listAgents, mintAgent, revokeAgent } from "../src/agents.ts";
 import {
   listMessages, mailboxesWithRelation, mayRead, maySend, messagePageQuery, principalFor,
   readableSubjects,
@@ -1260,5 +1260,139 @@ describe("minting completes the authority, not only the credential", () => {
       name: "diagnostic", sponsorUserId: SPONSOR, capabilities: ["health.read"],
     });
     expect(minted.agent.actions.length).toBeGreaterThan(0);
+  });
+});
+
+describe("an agent's reach is recorded and readable, not only written", () => {
+  /*
+   * Minting writes the tuples, and both the trail and the agent surface said nothing about them. The audit
+   * detail carried actions — *what verbs it may attempt* — while the comment beside it claimed the trail
+   * records how far the agent reaches. Which mailboxes it may reach is the question an access review asks,
+   * and neither the entry nor `GET /api/agents` could answer it.
+   */
+  const MAILBOX = "mbx_agents_reach";
+
+  async function seed() {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+    ).bind(MAILBOX, ORG, "Enquiries", new Date(ctx.now()).toISOString()).run();
+    await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
+  }
+
+  it("records the exact grants in the mint entry", async () => {
+    /*
+     * The pairs themselves, not a count or a digest. Live `relationship_tuples` can be revoked, so they are
+     * not a snapshot this can be reconstructed from later — the audit chain is the only immutable copy of
+     * what was conferred, which is why `MAX_GRANTS` bounds the entry rather than a summary replacing it.
+     */
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "recorded", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'agent.minted' AND subject = ?`,
+    ).bind(ORG, minted.agent.id).first<{ detail: string }>();
+    expect(
+      JSON.parse(entry!.detail).grants,
+      "the trail records what verbs the agent may attempt and not which mailboxes it may reach",
+    ).toEqual([`${MAILBOX}::mailbox.content.read`]);
+  });
+
+  it("reports each grant as granted and as effective now", async () => {
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "readable", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+
+    const reach = (await agentReach(testEnv, ORG)).get(minted.agent.id);
+    expect(reach).toEqual([{
+      mailboxId: MAILBOX, mailboxName: "Enquiries", relation: "mailbox.content.read", effective: true,
+    }]);
+  });
+
+  it("shows a grant the sponsor has since lost as granted and not effective", async () => {
+    /*
+     * The reason there are two columns. A sponsor losing a relation narrows every agent that borrowed it —
+     * correctly, on the next request, and silently. An access review reading only what was granted gets an
+     * answer that was true on the day of the mint; one reading only what is effective cannot tell a narrowed
+     * agent from one that was never granted anything.
+     */
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "narrowed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?",
+    ).bind(ORG, SPONSOR).run();
+
+    const reach = (await agentReach(testEnv, ORG)).get(minted.agent.id);
+    expect(reach?.[0]?.effective, "a grant the sponsor no longer holds still reads as live").toBe(false);
+    expect(reach?.[0]?.mailboxId, "the grant vanished rather than being shown as ineffective").toBe(MAILBOX);
+  });
+
+  it("counts a sponsor's team relation as effective", async () => {
+    // A relation held through a team is held, which is the rule everywhere else. Checking the sponsor's own
+    // tuples alone would report most people's agents as ineffective.
+    await seed();
+    const team = "tm_agentsreach0000000000001";
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "teamed-reach", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+    await testEnv.CATALOG.prepare(
+      "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?",
+    ).bind(ORG, SPONSOR).run();
+    await testEnv.CATALOG.prepare(
+      "INSERT OR IGNORE INTO team_members (id, org_id, team_id, user_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind("tmm_agentsreach000000000001", ORG, team, SPONSOR,
+      new Date(createSystemCtx().now()).toISOString()).run();
+    await tuple(team, "mailbox.content.read", "mailbox", MAILBOX);
+
+    const reach = (await agentReach(testEnv, ORG)).get(minted.agent.id);
+    expect(reach?.[0]?.effective, "a sponsor's team relation was not counted").toBe(true);
+  });
+
+  it("deduplicates repeated pairs and refuses a list nobody could mean", async () => {
+    /*
+     * Each grant costs a sponsor query and a batch statement, so the work was the caller's array length
+     * rather than the ceiling's — `INSERT OR IGNORE` collapsed duplicates at the very end, which is the
+     * wrong end.
+     */
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "repetitive", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: Array.from({ length: 20 }, () => ({
+        mailboxId: MAILBOX, relation: "mailbox.content.read" as const,
+      })),
+    });
+    expect((await agentReach(testEnv, ORG)).get(minted.agent.id)?.length).toBe(1);
+    /*
+     * The **entry**, not only the tuples. `INSERT OR IGNORE` collapses duplicates in the database whether or
+     * not anything deduplicated first, so the tuple count proves nothing about the work — twenty repetitions
+     * still cost twenty sponsor queries and twenty batch statements, and left a record listing one pair
+     * twenty times. The audit detail is where the difference shows.
+     */
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'agent.minted' AND subject = ?",
+    ).bind(ORG, minted.agent.id).first<{ detail: string }>();
+    expect(
+      JSON.parse(entry!.detail).grants,
+      "the entry records the same pair repeatedly, so the request was not normalised before the work",
+    ).toEqual([`${MAILBOX}::mailbox.content.read`]);
+
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "greedy-grants", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: Array.from({ length: 200 }, () => ({
+          mailboxId: MAILBOX, relation: "mailbox.content.read" as const,
+        })),
+      }),
+    ).rejects.toThrow("E_AGENT_GRANTS_UNBOUNDED");
   });
 });

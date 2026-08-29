@@ -1363,6 +1363,13 @@ export interface AgentRow {
   held: { id: string; says: string; reachesContent: boolean; held: number; total: number }[];
   /** Pinned routes belonging to no current capability — a rename, normally empty. Shown, never dropped. */
   unnamed: string[];
+  /**
+   * Which mailboxes this agent may reach, and whether each relation is live **right now**.
+   *
+   * Two facts rather than one: a sponsor who loses a relation silently narrows every agent that borrowed it,
+   * so a review reading only what was granted gets an answer that was true on the day of the mint.
+   */
+  grants: { mailboxId: string; mailboxName: string | null; relation: string; effective: boolean }[];
 }
 
 export function useAgentCapabilities(): UseQueryResult<{ capabilities: CapabilityRow[] }, Error> {

@@ -58,6 +58,15 @@ const TOKEN_BYTES = 32;
 const DEFAULT_LIFETIME_DAYS = 90;
 
 /** The longest life this Node will mint. */
+/**
+ * How many mailbox relations one mint may confer.
+ *
+ * Stated rather than derived — there is nothing to derive it from, since a Node's mailbox count is unbounded
+ * and this bounds one request's shape. Fifty pairs is more than any agent has a use for and small enough that
+ * refusing costs nothing.
+ */
+const MAX_GRANTS = 50;
+
 const MAX_LIFETIME_DAYS = 365;
 
 export interface Agent {
@@ -315,7 +324,33 @@ export async function mintAgent(
    * The intersection at request time is what keeps it true afterwards, which is the whole point of that term
    * — a sponsor losing access still narrows the agent on the next request, without anything re-running here.
    */
-  const grants = input.grants ?? [];
+  /*
+   * Normalised **before** anything is done per entry: deduplicated by `mailboxId::relation`, and bounded.
+   *
+   * Each grant costs a sponsor-authority query and a batch statement, so the work was the caller's array
+   * length rather than the ceiling's — a thousand repetitions of one pair does a thousand queries to arrive at
+   * one tuple. `INSERT OR IGNORE` collapsed the duplicates at the very end, which is the wrong end.
+   *
+   * The bound is stated rather than derived, because there is nothing to derive it from: a mailbox count is
+   * unbounded and this is a limit on one request's shape. Fifty pairs is more mailboxes than any agent has a
+   * use for and small enough that the refused case costs nothing.
+   */
+  const seen = new Set<string>();
+  const grants = (input.grants ?? []).filter((one) => {
+    const key = `${one.mailboxId}::${one.relation}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if ((input.grants ?? []).length > MAX_GRANTS) {
+    throw unprocessable("E_AGENT_GRANTS_UNBOUNDED", {
+      what: `${(input.grants ?? []).length} mailbox grants were requested and the limit is ${MAX_GRANTS}`,
+      why: "each grant is checked against the sponsor and written as its own tuple, so a long list is work "
+        + "done before anything is refused. A list this long is repetition or a mistake",
+      fix: `send each mailbox and relation once, up to ${MAX_GRANTS} pairs`,
+    });
+  }
+
   for (const wantedGrant of grants) {
     const held = await env.CATALOG.prepare(
       `SELECT 1 FROM relationship_tuples
@@ -379,7 +414,20 @@ export async function mintAgent(
     subject: id,
     // The token is not here and must never be. The trail records that an agent was made, by whom, for whom,
     // and how far it reaches — everything except the secret.
-    detail: { name, sponsorUserId: input.sponsorUserId, actions, expiresAt },
+    /*
+     * The **grants** are in the detail, not only the actions. A route names what verbs an agent may attempt;
+     * a grant names which mailboxes it may reach, and the second is the question an access review asks. The
+     * comment here used to claim the trail records how far the agent reaches while recording only the first
+     * half of that.
+     *
+     * The exact pairs rather than a count or a digest: live `relationship_tuples` can be revoked, so they are
+     * not a snapshot this can be reconstructed from later. The audit chain is the only immutable copy of what
+     * was conferred, and `MAX_GRANTS` is what keeps the entry bounded.
+     */
+    detail: {
+      name, sponsorUserId: input.sponsorUserId, actions, expiresAt,
+      grants: grants.map((one) => `${one.mailboxId}::${one.relation}`),
+    },
   }, (entry) => [
     entry,
     env.CATALOG.prepare(
@@ -482,6 +530,63 @@ Promise<void> {
     sql: "SELECT 1 FROM agents WHERE org_id = ? AND id = ? AND revoked_at IS NULL",
     params: [orgId, agentId],
   });
+}
+
+/**
+ * The mailboxes each agent may reach, and whether that reach is **live right now**.
+ *
+ * ## Why granted and effective are two columns
+ *
+ * `effective(agent) = ceiling ∩ agent's tuples ∩ sponsor's tuples`, and only the middle term is what minting
+ * wrote. A sponsor who loses a relation silently narrows every agent that borrowed it — which is the point of
+ * sponsoring and also the thing nobody can see. An access review asking *"what can this agent reach"* off the
+ * granted list alone gets an answer that was true on the day it was minted.
+ *
+ * So both are reported. `granted` is what the agent holds; `effective` is what survives the intersection at
+ * this moment. A row where they disagree is an automation that has quietly stopped doing part of its job, and
+ * an operator finding that out from the agent screen rather than from a support ticket is the whole reason
+ * this query exists.
+ *
+ * One statement for every agent in the organization rather than one per agent: the screen lists them together,
+ * and a query per row is how a list of twenty becomes twenty round trips.
+ */
+export async function agentReach(env: Env, orgId: string): Promise<Map<string, {
+  mailboxId: string; mailboxName: string | null; relation: string; effective: boolean;
+}[]>> {
+  const rows = await env.CATALOG.prepare(
+    `SELECT a.id AS agent_id, t.object_id AS mailbox_id, m.name AS mailbox_name, t.relation,
+            EXISTS (
+              SELECT 1 FROM relationship_tuples s
+               WHERE s.org_id = t.org_id AND s.object_type = 'mailbox'
+                 AND s.relation = t.relation AND s.object_id = t.object_id
+                 AND s.subject_id IN (SELECT a.sponsor_user_id
+                                       UNION SELECT team_id FROM team_members
+                                              WHERE org_id = t.org_id AND user_id = a.sponsor_user_id)
+            ) AS effective
+       FROM agents a
+       JOIN relationship_tuples t ON t.org_id = a.org_id AND t.subject_id = a.id
+                                 AND t.object_type = 'mailbox'
+       LEFT JOIN mailboxes m ON m.org_id = t.org_id AND m.id = t.object_id
+      WHERE a.org_id = ?
+      ORDER BY m.name, t.relation`,
+  ).bind(orgId).all<{
+    agent_id: string; mailbox_id: string; mailbox_name: string | null; relation: string; effective: number;
+  }>();
+
+  const byAgent = new Map<string, {
+    mailboxId: string; mailboxName: string | null; relation: string; effective: boolean;
+  }[]>();
+  for (const row of rows.results) {
+    const held = byAgent.get(row.agent_id) ?? [];
+    held.push({
+      mailboxId: row.mailbox_id,
+      mailboxName: row.mailbox_name,
+      relation: row.relation,
+      effective: Number(row.effective) === 1,
+    });
+    byAgent.set(row.agent_id, held);
+  }
+  return byAgent;
 }
 
 /** Every agent in this organization, newest first. Never the token, and never its hash. */

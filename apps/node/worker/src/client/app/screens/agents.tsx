@@ -298,6 +298,7 @@ export function Agents() {
               <th scope="col">Name</th>
               <th scope="col">Sponsor</th>
               <th scope="col">May do</th>
+              <th scope="col">Where</th>
               <th scope="col">Standing</th>
               <th scope="col" className="num">Expires</th>
               <th scope="col"><span className="sr-only">Withdraw</span></th>
@@ -334,6 +335,34 @@ export function Agents() {
                         </li>
                       )}
                     </ul>
+                  </td>
+                  <td>
+                    {/*
+                      * Granted **and** effective, because they are different facts. A sponsor losing a
+                      * relation narrows every agent that borrowed it, correctly and silently — so a row
+                      * showing only what was granted is an answer that was true on the day of the mint, and
+                      * one showing only what is effective cannot tell a narrowed agent from an unprovisioned
+                      * one.
+                      */}
+                    {agent.grants.length === 0
+                      ? <span className="dim">no mailbox</span>
+                      : (
+                        <ul className="bare">
+                          {agent.grants.map((grant) => (
+                            <li key={`${grant.mailboxId}:${grant.relation}`}>
+                              <span>{grant.mailboxName ?? grant.mailboxId}</span>
+                              <span className="mono dim">{` ${grant.relation}`}</span>
+                              {grant.effective
+                                ? null
+                                : (
+                                  <span className="state state-audit-warn">
+                                    not effective — the sponsor no longer holds this
+                                  </span>
+                                )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                   </td>
                   <td><span className={`state state-audit-${where.state}`}>{where.label}</span></td>
                   <td className="num mono dim">{agent.expiresAt}</td>

@@ -59,6 +59,9 @@ function agent(overrides: Record<string, unknown> = {}) {
     actions: ["a", "b", "c", "d"],
     held: [{ id: "mail.read", says: "Read mail.", reachesContent: true, held: 4, total: 4 }],
     unnamed: [],
+    grants: [{
+      mailboxId: "mbx_support", mailboxName: "Support", relation: "mailbox.content.read", effective: true,
+    }],
     ...overrides,
   };
 }
@@ -321,5 +324,43 @@ describe("the mint form completes the authority, not only the credential", () =>
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
     await waitFor(() => expect(posted.length).toBe(1));
     expect(posted[0]).toMatchObject({ grants: [] });
+  });
+});
+
+describe("the list says where an agent reaches, and whether it still does", () => {
+  it("names the mailbox and relation", async () => {
+    // The list answered capabilities and standing and said nothing about which mailboxes — so an access
+    // review could not ask the question it exists to ask.
+    mount([agent()]);
+    expect(await screen.findByText("Support")).toBeTruthy();
+    expect(screen.getByText(/mailbox\.content\.read/)).toBeTruthy();
+  });
+
+  it("marks a grant the sponsor has since lost", async () => {
+    /*
+     * The whole reason there are two facts. A sponsor losing a relation narrows every agent that borrowed it,
+     * correctly and silently — and an operator who cannot see that is left with an automation that has
+     * quietly stopped doing part of its job.
+     */
+    mount([agent({
+      grants: [{
+        mailboxId: "mbx_support", mailboxName: "Support", relation: "mailbox.content.read", effective: false,
+      }],
+    })]);
+    expect(await screen.findByText(/the sponsor no longer holds this/)).toBeTruthy();
+  });
+
+  it("does not mark a grant that is still effective", async () => {
+    // The control: a warning on every row is a warning nobody reads.
+    mount([agent()]);
+    await screen.findByText("Support");
+    expect(screen.queryByText(/the sponsor no longer holds this/)).toBeNull();
+  });
+
+  it("says so plainly when an agent reaches no mailbox at all", async () => {
+    // A diagnostic agent is a real shape — `health.read` needs nothing. An empty cell would read as a
+    // rendering failure rather than as a fact.
+    mount([agent({ grants: [] })]);
+    expect(await screen.findByText("no mailbox")).toBeTruthy();
   });
 });
