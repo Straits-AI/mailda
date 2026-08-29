@@ -29,6 +29,7 @@ import { isAppRoute } from "./app-routes.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "./cases.ts";
 import {
   assertAdmin, conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke,
+  type MailboxRelation,
 } from "./access.ts";
 import { closeMatter, listMatters, openMatter } from "./matters.ts";
 import { grantsForReport, requestSupervisedRead } from "./supervised.ts";
@@ -671,19 +672,24 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       );
     }
 
-    if (url.pathname === "/api/cases" && request.method === "GET") {
+    /*
+     * The mailbox is a **path segment**. It was `?mailbox=`, and the route registry never declared it — so the
+     * generated client and the MCP tool had no way to send it and always met the refusal below, which is now
+     * unreachable and gone. `queue.read` was a capability an agent could be granted and could not use.
+     *
+     * `routes.ts` already carried the rule: *"a parameter the route cannot answer without is a path segment
+     * wearing a disguise"*. A queue belongs to one mailbox, so this route could never answer without it.
+     */
+    const queuePattern = idPattern(ID_PREFIXES.mailbox).source.slice(1, -1);
+    // One line, because `test/node/route-registry.test.ts` reads this idiom per line: a constructor split
+    // across lines is a served route the scanner cannot see, and the failure it reports is the opposite one.
+    const mailboxQueue = new RegExp(`^/api/mailboxes/(${queuePattern})/cases$`).exec(url.pathname);
+    if (mailboxQueue !== null && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
-      const mailboxId = url.searchParams.get("mailbox");
-      if (mailboxId === null) {
-        return Response.json(
-          { error: "mailbox_required", message: "A queue belongs to one mailbox; name it with ?mailbox=." },
-          { status: 400 },
-        );
-      }
       // Empty rather than forbidden for a mailbox this caller cannot see: §5C keeps an absent thing and an
       // invisible one alike, and a queue is a list, which Blueprint:358 gates before returning counts.
-      return Response.json({ cases: await queueFor(env, clock, who.orgId, who.userId, mailboxId) });
+      return Response.json({ cases: await queueFor(env, clock, who.orgId, who.userId, mailboxQueue[1]!) });
     }
 
     const caseAction = /^\/api\/cases\/([^/]+)\/(claim|steal|release|close)$/.exec(url.pathname);
@@ -2472,11 +2478,13 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const body = (await request.json().catch(() => ({}))) as {
         name?: string; sponsorUserId?: string; capabilities?: string[]; lifetimeDays?: number;
+        grants?: { mailboxId: string; relation: MailboxRelation }[];
       };
       const minted = await mintAgent(env, clock, who.orgId, who.userId, {
         name: body.name ?? "",
         sponsorUserId: body.sponsorUserId ?? who.userId,
         capabilities: body.capabilities ?? [],
+        grants: body.grants ?? [],
         ...(body.lifetimeDays === undefined ? {} : { lifetimeDays: body.lifetimeDays }),
       });
       return Response.json({
@@ -2994,12 +3002,26 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (url.pathname === "/api/me") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
-      const user = await env.CATALOG.prepare("SELECT email FROM users WHERE id = ? LIMIT 1")
-        .bind(who.userId)
-        .first<{ email: string }>();
+      /*
+       * A **principal**, not a user. An agent holding `identity.read` reaches this route, and answering with
+       * `userId: "agt_…"` violated the route's own contract in the one place a caller asks who it is.
+       *
+       * The kind is derived from the identifier's typed prefix, the way `kindOfActor` derives an actor's —
+       * so a new principal kind is a branch here rather than a field every caller has to start sending.
+       */
+      const person = who.delegatorUserId ?? (idPattern(ID_PREFIXES.user).test(who.userId) ? who.userId : null);
+      const machine = !idPattern(ID_PREFIXES.user).test(who.userId);
+      // The email belongs to the person, not to the credential: an agent has none, and its sponsor's is the
+      // sponsor's to disclose elsewhere.
+      const user = machine ? null : await env.CATALOG.prepare(
+        "SELECT email FROM users WHERE id = ? LIMIT 1",
+      ).bind(who.userId).first<{ email: string }>();
       return Response.json({
         signedIn: true,
-        userId: who.userId,
+        principalId: who.userId,
+        principalKind: machine ? "agent" : "user",
+        userId: machine ? null : who.userId,
+        delegatorUserId: machine ? person : null,
         organizationId: who.orgId,
         email: user?.email ?? null,
       });

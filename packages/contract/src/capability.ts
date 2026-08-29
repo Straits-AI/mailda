@@ -102,7 +102,7 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "queue.read",
     says: "See the case queues: what is unclaimed, what is claimed, and what is assigned to whom.",
     reachesContent: false,
-    routes: ["GET /api/cases"],
+    routes: ["GET /api/mailboxes/:mailboxId/cases"],
   },
   {
     id: "matter.open",

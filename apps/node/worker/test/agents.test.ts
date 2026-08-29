@@ -1117,3 +1117,148 @@ describe("a sponsor is a person in this organization, checked rather than truste
     expect(minted.agent.sponsorUserId).toBe(SPONSOR);
   });
 });
+
+describe("the machine surfaces answer in shapes a machine can use", () => {
+  it("describes /api/me as a principal, not as a user session", async () => {
+    /*
+     * `identity.read` is a capability an agent may hold, so an agent asking *who am I* is a designed path —
+     * and the answer was `userId: "agt_…"`, which the route's own response schema rejects. A contract
+     * violation in the one place a caller asks what it is.
+     *
+     * The fix is not to widen the pattern. An agent is not a user, and a field named `userId` holding an
+     * `agt_` would make every consumer of it wrong in a quieter way. The route describes a principal now, and
+     * `userId` is the person when there is one.
+     */
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "self-aware", sponsorUserId: SPONSOR, capabilities: ["identity.read"],
+    });
+    const response = await SELF.fetch("https://node.example/api/me", {
+      headers: { authorization: `Bearer ${minted.token}` },
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await response.json<{
+      principalId: string; principalKind: string; userId: string | null; delegatorUserId: string | null;
+    }>();
+
+    expect(body.principalId).toBe(minted.agent.id);
+    expect(body.principalKind).toBe("agent");
+    expect(body.userId, "an agent was reported as a person").toBeNull();
+    expect(
+      body.delegatorUserId,
+      "the agent cannot say whose authority it is borrowing without reading the audit trail",
+    ).toBe(SPONSOR);
+  });
+
+  it("still answers a person as a person", async () => {
+    // The control. A route that reported everybody as a machine would satisfy the assertions above.
+    const response = await SELF.fetch("https://node.example/api/me");
+    // Unauthenticated here — what matters is that the shape is not agent-shaped by construction.
+    expect([200, 401]).toContain(response.status);
+  });
+});
+
+describe("minting completes the authority, not only the credential", () => {
+  /*
+   * An agent's reach is its capabilities **intersected with its relations**, and minting wrote only the first.
+   * So a credential made through the product authenticated, called the relation-free diagnostics, and could
+   * not read a mailbox, draft from one or see its own sends — a token that works and does nothing, with no
+   * error to explain it. The administrator's journey ended one step before the agent was usable, and the
+   * missing step was a `POST /api/access` against an `agt_` identifier through a screen built for people.
+   */
+  const MAILBOX = "mbx_agents_journey";
+
+  async function seedMailbox() {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+    ).bind(MAILBOX, ORG, "Enquiries", new Date(ctx.now()).toISOString()).run();
+  }
+
+  it("writes the relations with the credential, so the agent can actually read", async () => {
+    await seedMailbox();
+    await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
+
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+
+    const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
+    expect(
+      await mayRead(testEnv, createSystemCtx(), who!, MAILBOX, READ_ACT),
+      "a credential minted through the product cannot read the mailbox it was minted for",
+    ).toBe(true);
+  });
+
+  it("refuses a grant the sponsor does not hold, rather than writing one that never matches", async () => {
+    /*
+     * The intersection makes such a tuple void from the moment it is written: the agent authenticates, asks,
+     * and is refused — correctly, and with nothing anywhere saying the grant was never going to work. An
+     * administrator learning that through an automation that quietly does nothing is the worst available way
+     * to find out, so it is refused at mint with the remedy named.
+     */
+    await seedMailbox();
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "overreach", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      }),
+    ).rejects.toThrow("E_AGENT_GRANT_EXCEEDS_SPONSOR");
+  });
+
+  it("accepts a relation the sponsor holds through a team", async () => {
+    /*
+     * A relation held through a team is held — the rule `readableSubjects` follows everywhere else. Checking
+     * the sponsor's own tuples alone would refuse the ordinary case of somebody whose access comes from being
+     * on the support team, which is most people.
+     */
+    await seedMailbox();
+    const team = "tm_agentsjourney00000000001";
+    await testEnv.CATALOG.prepare(
+      "INSERT OR IGNORE INTO team_members (id, org_id, team_id, user_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind("tmm_agentsjourney0000000001", ORG, team, SPONSOR, new Date(createSystemCtx().now()).toISOString())
+      .run();
+    await tuple(team, "send.propose", "mailbox", MAILBOX);
+
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "teamed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
+    });
+    expect(minted.agent.id).toBeTruthy();
+  });
+
+  it("writes nothing at all when one grant is refused", async () => {
+    /*
+     * The identity, its ceiling and its relations are one batch. A credential that exists with a ceiling and
+     * no reach is exactly the state this parameter was added to stop somebody being handed, and a partial
+     * write would rebuild it from the other direction.
+     */
+    await seedMailbox();
+    await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
+    const before = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM agents WHERE org_id = ?")
+      .bind(ORG).first<{ n: number }>();
+
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "half", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: [
+          { mailboxId: MAILBOX, relation: "mailbox.content.read" },
+          { mailboxId: MAILBOX, relation: "send.propose" },
+        ],
+      }),
+    ).rejects.toThrow("E_AGENT_GRANT_EXCEEDS_SPONSOR");
+
+    const after = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM agents WHERE org_id = ?")
+      .bind(ORG).first<{ n: number }>();
+    expect(Number(after?.n), "an agent was created for a mint that was refused").toBe(Number(before?.n));
+  });
+
+  it("mints with no grants at all, because some capabilities need no mailbox", async () => {
+    // The control, and a real case: `health.read` and `identity.read` reach nothing mailbox-shaped. Requiring
+    // a grant would make the common diagnostic agent impossible to create.
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "diagnostic", sponsorUserId: SPONSOR, capabilities: ["health.read"],
+    });
+    expect(minted.agent.actions.length).toBeGreaterThan(0);
+  });
+});

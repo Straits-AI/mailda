@@ -1004,13 +1004,16 @@ describe("the routes that only exist once mail has landed", () => {
   it("GET /api/cases, with a case in it", async () => {
     await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
     /*
-     * `?mailbox=` is required, and the refusal says why in one line: *"a queue belongs to one mailbox"*. The
-     * query string rides on the path here because `path()` builds the path and a caller appends the query —
-     * the same shape `useCases` uses in the client.
+     * The mailbox is a **path segment** now. It was `?mailbox=` and the registry never declared it, so `path()`
+     * could not build a usable URL and the caller had to append the query by hand — which the SDK and the MCP
+     * tool cannot do, and is why `queue.read` was a capability an agent could hold and could not use.
+     *
+     * That is the difference this test now demonstrates rather than works around: `path()` alone produces a
+     * URL that answers.
      */
     const held = await cookie();
-    const spec = route("GET", "/api/cases");
-    const response = await SELF.fetch(`${ORIGIN}${path(spec)}?mailbox=${mailboxId}`, {
+    const spec = route("GET", "/api/mailboxes/:mailboxId/cases");
+    const response = await SELF.fetch(`${ORIGIN}${path(spec, { mailboxId })}`, {
       headers: { cookie: held },
     });
     expect(response.status).toBe(200);

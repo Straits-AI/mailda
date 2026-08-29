@@ -77,8 +77,33 @@ export const signedInResponse = z.object({
   credentialId: z.string().min(1).optional(),
 }).strict();
 
+/**
+ * Who this credential is acting as.
+ *
+ * ## It describes a **principal**, not a user session
+ *
+ * `userId` was required and `usr_`-patterned, which was true while the only caller was a person. An agent
+ * token reaching this route got `userId: "agt_…"` back — a response the route's own contract rejects, in the
+ * one place a caller asks *who am I*. `identity.read` is a capability an agent may hold, so this was reachable
+ * by design rather than by accident.
+ *
+ * So the principal's identifier and kind are their own fields, and `userId` stays as the **person**: present
+ * for somebody signed in, null for a machine. Nullable rather than absent, because a field that disappears
+ * cannot be told apart by a client from a Node too old to send it — the same argument `next_cursor` makes
+ * above.
+ *
+ * `delegatorUserId` is the human accountable when the principal is a machine, which is the same fact
+ * `audit_entries` records and the reason a caller can ask *whose authority am I borrowing* without reading the
+ * trail.
+ */
 export const meResponse = z.object({
-  userId,
+  /** The principal itself: `usr_` for a person, `agt_` for an agent. */
+  principalId: z.string().min(1),
+  principalKind: z.enum(["user", "agent"]),
+  /** The person, when the principal is one. Null for a machine. */
+  userId: userId.nullable(),
+  /** The human accountable for a machine's acts. Null when the principal is that human. */
+  delegatorUserId: userId.nullable(),
   organizationId: z.string().min(1),
 }).loose();
 
@@ -1438,6 +1463,22 @@ export const agentMintRequest = z.object({
   name: z.string().min(1),
   sponsorUserId: z.string().min(1).optional(),
   capabilities: z.array(z.string().min(1)).min(1),
+  /**
+   * The mailboxes this agent may act in, and how.
+   *
+   * Optional and allowed to be empty, because `health.read` and `identity.read` need no mailbox — but an agent
+   * granted `mail.read` and no relation is a credential that authenticates and reads nothing, which is the
+   * state the mint surface used to hand over by construction.
+   */
+  grants: z.array(z.object({
+    mailboxId: z.string().min(1),
+    relation: z.enum([
+      "mailbox.metadata.read", "mailbox.content.read", "send.propose", "message.export",
+    ]),
+    // The refusal code is on the nested object too, so an unknown key inside a grant answers with this
+    // route's own code rather than the generic one. `test/request-shape.test.ts` probes every position,
+    // including nested ones, which is how the omission was found.
+  }).strict().meta({ refusal: "E_AGENT_FIELD_UNKNOWN" })).optional(),
   lifetimeDays: z.number().int().positive().optional(),
 }).strict().meta({ refusal: "E_AGENT_FIELD_UNKNOWN" });
 

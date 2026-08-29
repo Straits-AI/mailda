@@ -88,6 +88,9 @@ function mount(agents: unknown[], minted?: unknown) {
       return Response.json({ revoked: true, message: "Revoked." });
     }
     if (call.path.startsWith("/api/agents")) return Response.json({ agents });
+    if (call.path.startsWith("/api/mailboxes")) {
+      return Response.json({ mailboxes: [{ id: "mbx_support", name: "Support", addresses: null }] });
+    }
     return undefined;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -122,7 +125,17 @@ describe("the ceiling is chosen and shown as capabilities", () => {
      */
     mount([]);
     await screen.findByText("mail.read");
-    expect(screen.getAllByText("reaches message content").length).toBe(1);
+    /*
+     * Scoped to the capability list. The mailbox relations carry the same marker for the same reason, and
+     * counting every one on the page would make this assertion about the fixture's size rather than about the
+     * capability being marked.
+     */
+    const marked = (await screen.findByText("mail.read")).closest("label")!;
+    expect(marked.textContent, "the capability that reaches content is not marked as doing so")
+      .toContain("reaches message content");
+    const unmarked = screen.getByText("hold.read").closest("label")!;
+    expect(unmarked.textContent, "a capability that reaches no content is marked as if it did")
+      .not.toContain("reaches message content");
   });
 
   it("sends capability names, never the routes behind them", async () => {
@@ -229,5 +242,84 @@ describe("reading a pinned ceiling back", () => {
     fireEvent.click(screen.getByRole("button", { name: "withdraw" }));
     await waitFor(() =>
       expect(seen("/api/agents/agt_one000000000000000000001").length).toBeGreaterThan(0));
+  });
+});
+
+describe("the mint form completes the authority, not only the credential", () => {
+  /*
+   * An agent's reach is its capabilities **intersected with its relations**, and this form wrote only the
+   * first — so a credential minted here authenticated, called the relation-free diagnostics, and could not
+   * read a mailbox. A token that works and does nothing, with no error to explain it, because the journey
+   * ended one step before the agent was usable.
+   */
+  it("sends the chosen mailbox relations with the mint", async () => {
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
+      target: { value: "triage" },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    // The relation's own checkbox, reached through its label rather than by index — the capability
+    // checkboxes come first and their count is not this test's business.
+    const relation = (await screen.findByText("mailbox.content.read")).closest("label")!
+      .querySelector("input")!;
+    fireEvent.click(relation);
+    fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
+
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(
+      posted[0],
+      "the form minted a credential with no reach, which authenticates and reads nothing",
+    ).toMatchObject({ grants: [{ mailboxId: "mbx_support", relation: "mailbox.content.read" }] });
+  });
+
+  it("offers each relation with what it lets the agent do", async () => {
+    // `mailbox.metadata.read` is exact and says nothing about the consequence. The distinction between it and
+    // `mailbox.content.read` is the one somebody granting access is most likely to get wrong.
+    mount([]);
+    expect(
+      await screen.findByText("See that mail exists — senders, subjects, when. Not the message itself."),
+    ).toBeTruthy();
+  });
+
+  it("warns when a mail-reading capability is chosen with no mailbox", async () => {
+    /*
+     * The exact state the form used to produce by construction: capabilities that read mail, no relation, and
+     * a credential that finds nothing. Said before minting rather than discovered afterwards through an
+     * automation that quietly does nothing.
+     */
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    // Awaited: the capability list arrives from the Node, so the checkboxes do not exist on the first render.
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(
+      await screen.findByText(/the agent will authenticate and find nothing it may read/),
+    ).toBeTruthy();
+  });
+
+  it("says the reach stops when the sponsor's access does", async () => {
+    // The whole argument for sponsoring, and it is invisible in a list of checkboxes.
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    await screen.findByText("mail.read");
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(await screen.findByText(/stops the moment the sponsor loses that access/)).toBeTruthy();
+  });
+
+  it("grants nothing by default", async () => {
+    /*
+     * Least privilege has to be what takes no effort. Copying the sponsor's relations in would be the widest
+     * possible ceiling arrived at by doing nothing, which is the opposite of the model.
+     */
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
+      target: { value: "diagnostic" },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0]).toMatchObject({ grants: [] });
   });
 });

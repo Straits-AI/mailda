@@ -45,7 +45,6 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getButlerRunsByRunIdInspect` | One run's input, program and effects, with the replay modes it offers |
 | `getButlers` | Every Butler, with the version that is live |
 | `getButlersByButlerId` | One Butler and its version history |
-| `getCases` | Cases in the mailboxes this person may act in |
 | `getDoctor` | What this Node can and cannot do, with the evidence |
 | `getDomainPauses` | Domains this Node has stopped sending to |
 | `getDrafts` | Drafts this person is writing |
@@ -56,6 +55,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getInvitations` | Invitations still outstanding |
 | `getLogs` | The operational log |
 | `getMailboxes` | The mailboxes this person may act in |
+| `getMailboxesByMailboxIdCases` | The case queue in one mailbox |
 | `getMatters` | Matters a hold or an export can be scoped to |
 | `getMe` | Who this session is |
 | `getMessages` | Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible |

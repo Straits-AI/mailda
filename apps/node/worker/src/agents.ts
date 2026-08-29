@@ -1,4 +1,5 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
+import type { MailboxRelation } from "./access.ts";
 import { capabilityIds, routesFor } from "@mailda/contract/capability";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
@@ -138,6 +139,24 @@ export async function mintAgent(
      * later would silently widen every existing agent the day somebody added a route to that capability.
      */
     capabilities: readonly string[];
+    /**
+     * The mailboxes this agent may act in, and how — written as `relationship_tuples` in the mint batch.
+     *
+     * ## Why minting grants them rather than leaving it to a second act
+     *
+     * An agent's authority is its **capabilities intersected with its relations**, and minting used to write
+     * only the first. So a credential made through the product authenticated, called the relation-free
+     * diagnostics, and could not read a mailbox, draft from one or see its own sends — a token that works and
+     * does nothing, with no error to explain it. The administrator's journey ended one step before the agent
+     * was usable, and the missing step was a `POST /api/access` against an `agt_` identifier through a screen
+     * built for people.
+     *
+     * Granted here so the credential is never handed over without the authority it was meant to have, and so
+     * the sponsor check below happens **at mint** rather than as a silent nothing on the first request.
+     *
+     * Empty is allowed and is not a mistake: `health.read` and `identity.read` need no mailbox at all.
+     */
+    grants?: readonly { mailboxId: string; relation: MailboxRelation }[];
     lifetimeDays?: number;
   },
 ): Promise<MintedAgent> {
@@ -282,6 +301,40 @@ export async function mintAgent(
       fix: `pass a positive number of days, up to ${MAX_LIFETIME_DAYS}`,
     });
   }
+  /*
+   * Every requested relation is checked against the **sponsor**, now, rather than discovered as a silent
+   * refusal later.
+   *
+   * `effective(agent) = ceiling ∩ agent's tuples ∩ sponsor's tuples`, so granting an agent
+   * `mailbox.content.read` on a mailbox its sponsor cannot read produces a tuple that never matches. The
+   * agent authenticates, asks, and is refused — correctly, and with nothing anywhere saying the grant was
+   * void from the moment it was written. An administrator finding that out through an automation that quietly
+   * does nothing is the worst available way to learn it.
+   *
+   * The check is a **snapshot**, and that is stated rather than implied: it says the sponsor holds this now.
+   * The intersection at request time is what keeps it true afterwards, which is the whole point of that term
+   * — a sponsor losing access still narrows the agent on the next request, without anything re-running here.
+   */
+  const grants = input.grants ?? [];
+  for (const wantedGrant of grants) {
+    const held = await env.CATALOG.prepare(
+      `SELECT 1 FROM relationship_tuples
+        WHERE org_id = ? AND subject_id IN (SELECT ? UNION SELECT team_id FROM team_members
+                                             WHERE org_id = ? AND user_id = ?)
+          AND object_type = 'mailbox' AND relation = ? AND object_id = ? LIMIT 1`,
+    ).bind(orgId, input.sponsorUserId, orgId, input.sponsorUserId, wantedGrant.relation, wantedGrant.mailboxId)
+      .first();
+    if (held === null) {
+      throw unprocessable("E_AGENT_GRANT_EXCEEDS_SPONSOR", {
+        what: `the sponsor does not hold ${wantedGrant.relation} on ${wantedGrant.mailboxId}`,
+        why: "an agent's reach is its own relations intersected with its sponsor's, so this grant would be "
+          + "written and never match. The agent would authenticate, ask, and be refused, with nothing saying "
+          + "the grant was void from the moment it was made",
+        fix: "grant the sponsor that relation first, or name a sponsor who already holds it",
+      });
+    }
+  }
+
   const days = Math.min(lifetime, MAX_LIFETIME_DAYS);
   const at = new Date(ctx.now()).toISOString();
   const expiresAt = new Date(ctx.now() + days * 86_400_000).toISOString();
@@ -336,6 +389,16 @@ export async function mintAgent(
     ...actions.map((action) => env.CATALOG.prepare(
       "INSERT INTO agent_actions (agent_id, action) VALUES (?,?)",
     ).bind(id, action)),
+    /*
+     * The relations, in the same batch as the identity and its ceiling. All three or none: a credential that
+     * exists with a ceiling and no reach is the state this whole parameter was added to stop somebody being
+     * handed, and a partial write would recreate it from the other direction.
+     */
+    ...grants.map((one) => env.CATALOG.prepare(
+      `INSERT OR IGNORE INTO relationship_tuples
+         (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,'mailbox',?,?)`,
+    ).bind(ctx.id("rt"), orgId, id, one.relation, one.mailboxId, at)),
   ]);
 
   return {

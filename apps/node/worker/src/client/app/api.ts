@@ -79,7 +79,21 @@ async function read<T>(path: string): Promise<T> {
 /** Short, because a revocation must not be hidden by a cache. See the header. */
 const AUTHORIZATION_SENSITIVE = { staleTime: 5_000, refetchOnWindowFocus: true } as const;
 
-export interface Me { signedIn: boolean; userId: string; organizationId: string; email: string | null }
+/**
+ * Who this credential is acting as.
+ *
+ * `userId` is **nullable** now: the route describes a principal, and an agent holding `identity.read` is not a
+ * person. `principalId` is always there; `userId` is the person when there is one.
+ */
+export interface Me {
+  signedIn: boolean;
+  principalId: string;
+  principalKind: "user" | "agent";
+  userId: string | null;
+  delegatorUserId: string | null;
+  organizationId: string;
+  email: string | null;
+}
 
 export interface MessageRow {
   id: string;
@@ -399,7 +413,7 @@ export function useMailboxes(): UseQueryResult<{ mailboxes: MailboxQueue[] }, Er
 export function useCases(mailboxId: string | null): UseQueryResult<{ cases: CaseRow[] }, Error> {
   return useQuery({
     queryKey: ["cases", mailboxId],
-    queryFn: () => read<{ cases: CaseRow[] }>(`${GET("/api/cases")}?mailbox=${encodeURIComponent(mailboxId!)}`),
+    queryFn: () => read<{ cases: CaseRow[] }>(GET("/api/mailboxes/:mailboxId/cases", { mailboxId: mailboxId! })),
     enabled: mailboxId !== null,
     ...AUTHORIZATION_SENSITIVE,
   });
@@ -1374,10 +1388,39 @@ export function useAgents(): UseQueryResult<{ agents: AgentRow[] }, Error> {
  * screen therefore shows it immediately with the sentence that it will not be shown again — the same shape as
  * `invite`, and for the same reason.
  */
+/** A mailbox relation an agent may be granted at mint. Matches the contract's enum. */
+export type AgentRelation =
+  "mailbox.metadata.read" | "mailbox.content.read" | "send.propose" | "message.export";
+
+/** What each relation lets an agent do, in the words somebody choosing needs rather than the tuple's name. */
+export const AGENT_RELATIONS: { relation: AgentRelation; says: string; reachesContent: boolean }[] = [
+  {
+    relation: "mailbox.metadata.read",
+    says: "See that mail exists — senders, subjects, when. Not the message itself.",
+    reachesContent: false,
+  },
+  {
+    relation: "mailbox.content.read",
+    says: "Read the messages themselves, including the original bytes.",
+    reachesContent: true,
+  },
+  {
+    relation: "send.propose",
+    says: "Draft and propose mail from this mailbox. Sealing a send is withheld from every machine.",
+    reachesContent: false,
+  },
+  {
+    relation: "message.export",
+    says: "Take copies of individual messages out of this mailbox.",
+    reachesContent: true,
+  },
+];
+
 export async function mintAgent(input: {
   name: string;
   sponsorUserId: string;
   capabilities: string[];
+  grants: { mailboxId: string; relation: AgentRelation }[];
   lifetimeDays?: number;
 }): Promise<{ ok: true; token: string; agent: AgentRow; notice: string } | { ok: false; message: string }> {
   const response = await apiFetch(at("POST", "/api/agents"), {

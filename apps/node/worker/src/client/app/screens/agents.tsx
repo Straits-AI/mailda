@@ -3,8 +3,8 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMe,
-  type AgentRow,
+  AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMailboxes, useMe,
+  type AgentRelation, type AgentRow,
 } from "../api.ts";
 
 /**
@@ -49,12 +49,25 @@ function standing(agent: AgentRow, now: number): { label: string; state: string 
   return { label: "live", state: "live" };
 }
 
+/**
+ * Capabilities that do nothing without a mailbox relation.
+ *
+ * Named rather than derived, because the derivation is not available here: a capability is a set of routes and
+ * whether a route needs a mailbox relation is a fact about its handler. Getting this list wrong costs a
+ * warning that does not appear, not a credential that is wrong — so a short honest list beats a clever guess.
+ */
+const NEEDS_A_MAILBOX = new Set(["mail.read", "mail.draft", "send.observe", "send.cancel", "queue.read",
+  "export.read"]);
+
 function Minting({ onMinted }: { onMinted: () => void }) {
   const capabilities = useAgentCapabilities();
+  const mailboxes = useMailboxes();
   const me = useMe();
   const [name, setName] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [days, setDays] = useState("30");
+  /** Chosen resource authority, keyed `mailboxId::relation` so a set is the whole state. */
+  const [reach, setReach] = useState<Set<string>>(new Set());
   const [token, setToken] = useState<{ value: string; notice: string } | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
 
@@ -69,12 +82,17 @@ function Minting({ onMinted }: { onMinted: () => void }) {
       // somebody else is a deliberate act and belongs on a route rather than defaulted to in a form.
       sponsorUserId: me.data?.userId ?? "",
       capabilities: [...chosen],
+      grants: [...reach].map((key) => {
+        const [mailboxId, relation] = key.split("::");
+        return { mailboxId: mailboxId!, relation: relation as AgentRelation };
+      }),
       lifetimeDays: Number(days),
     });
     if (outcome.ok) {
       setToken({ value: outcome.token, notice: outcome.notice });
       setName("");
       setChosen(new Set());
+      setReach(new Set());
       onMinted();
     } else {
       setRefusal(outcome.message);
@@ -130,6 +148,54 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         ))}
       </fieldset>
 
+      {/*
+        * **Which mailboxes, and how.** Minting used to write only the ceiling, so a credential made here
+        * authenticated and could not read anything — the journey ended one step before the agent was usable.
+        *
+        * Nothing is copied from the sponsor automatically. An agent inheriting everything its sponsor holds
+        * is the widest possible ceiling arrived at by default, and least privilege has to be the thing that
+        * takes no effort to get wrong, not the thing that takes effort to get right.
+        */}
+      <fieldset>
+        <legend>Which mailboxes, and how</legend>
+        <p className="dim">
+          Nothing is granted by default, and an agent can never exceed its sponsor: a relation the sponsor
+          does not hold is refused when you mint, rather than written and silently never matching.
+        </p>
+        {mailboxes.isPending ? <Nothing kind="loading" /> : null}
+        {mailboxes.isError ? <Nothing kind="failed" detail={mailboxes.error.message} /> : null}
+        {mailboxes.isSuccess && mailboxes.data.mailboxes.length === 0
+          ? <p className="dim">No mailbox on this Node yet.</p>
+          : null}
+        {mailboxes.isSuccess ? mailboxes.data.mailboxes.map((box) => (
+          <div key={box.id} className="stack">
+            <strong>{box.name}</strong>
+            {AGENT_RELATIONS.map((one) => {
+              const key = `${box.id}::${one.relation}`;
+              return (
+                <label key={key} className="check">
+                  <input
+                    type="checkbox"
+                    checked={reach.has(key)}
+                    onChange={(event) => {
+                      const next = new Set(reach);
+                      if (event.target.checked) next.add(key);
+                      else next.delete(key);
+                      setReach(next);
+                    }}
+                  />
+                  <span className="mono">{one.relation}</span>
+                  {one.reachesContent
+                    ? <span className="state state-audit-warn">reaches message content</span>
+                    : null}
+                  <span className="dim">{one.says}</span>
+                </label>
+              );
+            })}
+          </div>
+        )) : null}
+      </fieldset>
+
       <label>
         <span>Expires after (days)</span>
         <input
@@ -140,6 +206,29 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         />
       </label>
 
+      {/*
+        * The review, before anything is minted. Two facts an administrator cannot otherwise see together: what
+        * this agent will be able to do, and that every part of it stops when the sponsor's own access does.
+        * The second is the whole argument for sponsoring, and it is invisible in a list of checkboxes.
+        */}
+      {chosen.size === 0 && reach.size === 0 ? null : (
+        <div className="notice">
+          <p>
+            {`This agent will hold ${chosen.size} capability(s) across ${reach.size} mailbox relation(s), `}
+            {"until it expires or is withdrawn."}
+          </p>
+          <p className="dim">
+            Every one of them also stops the moment the sponsor loses that access — an agent is bounded by the
+            person it acts for, checked on each request rather than at this moment.
+          </p>
+          {reach.size === 0 && [...chosen].some((id) => NEEDS_A_MAILBOX.has(id)) ? (
+            <p>
+              Some of these capabilities read mail, and no mailbox is chosen — the agent will authenticate and
+              find nothing it may read.
+            </p>
+          ) : null}
+        </div>
+      )}
       <p className="dim">
         There is no refresh and no way to widen a ceiling later — re-minting is the renewal, and it issues a
         new token.

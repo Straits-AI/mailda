@@ -453,12 +453,12 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Cases in the mailboxes this person may act in
+   * The case queue in one mailbox
    *
-   * `GET /api/cases`
+   * `GET /api/mailboxes/:mailboxId/cases`
    */
-  async getCases(): Promise<z.infer<typeof S.caseListResponse>> {
-    return await this.json("GET", "/api/cases", {}, undefined) as z.infer<typeof S.caseListResponse>;
+  async getMailboxesByMailboxIdCases(params: { mailboxId: string }): Promise<z.infer<typeof S.caseListResponse>> {
+    return await this.json("GET", "/api/mailboxes/:mailboxId/cases", params, undefined) as z.infer<typeof S.caseListResponse>;
   }
 
   /**

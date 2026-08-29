@@ -265,7 +265,15 @@ export const ROUTES = [
   },
 
   // ---- cases and conversations (#42) -----------------------------------------------------------------
-  { method: "GET", path: "/api/cases", summary: "Cases in the mailboxes this person may act in", response: S.caseListResponse },
+  /*
+   * The mailbox is a **path segment**, and it was a query parameter this registry never declared — so the
+   * generated client and the MCP tool had no way to supply it and always met the route's "name a mailbox"
+   * refusal. `queue.read` was a capability an agent could hold and could not use.
+   *
+   * Line 66 of this file already said so: *"a parameter the route cannot answer without is a path segment
+   * wearing a disguise"*. A queue belongs to one mailbox, so this one could never answer without it.
+   */
+  { method: "GET", path: "/api/mailboxes/:mailboxId/cases", summary: "The case queue in one mailbox", response: S.caseListResponse },
   {
     method: "POST",
     path: "/api/cases/:caseId/:action",

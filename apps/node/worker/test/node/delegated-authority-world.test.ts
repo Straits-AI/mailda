@@ -69,6 +69,11 @@ const EXEMPT: Record<string, string> = {
     + "kind, worked out first and reached by a different route (`DISTINCT subject_id`).",
   effectiveOnMailbox: "the Butler's own intersection, as `effectiveOn`",
   metered: "`doctor` counting rows in a table by name. No predicate.",
+  mintAgent: "two sites, and neither evaluates a principal's own authority. One **is** the sponsor term, "
+    + "asked up front: it reads the sponsor's tuples to refuse a grant the sponsor does not hold, so an "
+    + "administrator finds out at mint rather than through an automation that quietly does nothing. "
+    + "Intersecting it with itself is not a thing. The other writes the agent's tuples, and a write has no "
+    + "reader to bound — what bounds it is the check beside it and the intersection on every later request.",
 };
 
 /**
