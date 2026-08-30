@@ -339,9 +339,9 @@ export const ROUTES = [
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
   { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, request: S.saveDraftRequest, response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
-  { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
+  { method: "DELETE", path: "/api/drafts/:draftId", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
-  { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", response: S.sendSealedResponse },
+  { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendSealedResponse },
   /*
    * Declared although it is `governed` and reaches no machine, because the declaration is what the parity
    * suite drives — and an undeclared route is one nothing compares to its handler.
@@ -353,9 +353,9 @@ export const ROUTES = [
    */
   { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendCancelledResponse },
-  { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed", response: S.sendRetriedResponse },
-  { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
-  { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
+  { method: "POST", path: "/api/sends/:sendId/retry", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Retry a send that failed", response: S.sendRetriedResponse },
+  { method: "POST", path: "/api/sends/:sendId/release", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
+  { method: "POST", path: "/api/sends/:sendId/release-hold", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
   {
     authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] },
     method: "GET", path: "/api/sends/:sendId/submitted",

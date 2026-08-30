@@ -682,14 +682,21 @@ describe("a mailbox route requires the relation it declares, not merely some rel
   /**
    * Every mailbox relation this Node can grant, **derived** from `access.ts` rather than listed.
    *
-   * It was a hand-written four, described in exactly these words, and there are six: `approval.decide` and
-   * `ediscovery.export` were missing. The second is not decorative — a mutation letting `ediscovery.export`
+   * It was a hand-written four, described in exactly these words, and the filter yields **seven**:
+   * `approval.decide`, `ediscovery.export` and `supervised.read` were all missing. The second is not decorative — a mutation letting `ediscovery.export`
    * satisfy the single-message `.eml` gate survived all 1,529 tests, and that is the relation #65 added so
    * that taking a copy off the Node is granted and audited separately from reading it. Two similarly-named
    * export relations is precisely the confusion a list of four could not see.
    *
-   * Derived, so a seventh cannot be silently uncovered. The same landmine as the hand-copied id lists this
+   * Derived, so an eighth cannot be silently uncovered. The same landmine as the hand-copied id lists this
    * suite keeps finding, one table to the left.
+   *
+   * The filter is `object === "mailbox"` and not also `conferredBy === "admin_grant"`, so `supervised.read`
+   * comes with it — a relation this Node never writes as a tuple and `POST /api/access` refuses. Harmless and
+   * deliberate: an extra impostor makes a stronger test and no declaration names it. What the derivation
+   * genuinely cannot reach is authority conferred by something that is **not** a tuple — a supervised grant
+   * lives in `supervised_grants`, so `onlyRelations` cannot simulate one. That path is held by
+   * `supervised-read.test.ts`, and this file does not claim it.
    */
   const MAILBOX_RELATIONS = Object.entries(GRANTABLE)
     .filter(([, meta]) => (meta as { object: string }).object === "mailbox")
@@ -887,6 +894,17 @@ const UNDISCLOSING: readonly string[] = [
   // Needs submitted bytes in R2 beside the manifest.
   "GET /api/sends/:sendId/submitted",
   /*
+   * Acts whose answers name nothing, so no detector can see them. The two release routes and `PUT /api/drafts`
+   * are asserted by **effect** in the block below; the two here are covered elsewhere by name:
+   * `POST /api/sends` by `outbound.test.ts > reading a mailbox does not confer sending as it`, which is the
+   * necessary-half assertion written by hand, and `retry` needs a failed send that `outbound.test.ts` builds.
+   */
+  "POST /api/sends",
+  "POST /api/sends/:sendId/retry",
+  "POST /api/sends/:sendId/release",
+  "POST /api/sends/:sendId/release-hold",
+  "DELETE /api/drafts/:draftId",
+  /*
    * `dispatchResponse` is `{dispatched: […]}` and carries no manifest id, so the body cannot show whether the
    * sweep touched this mailbox. Its observable is the **effect**, asserted directly in the block below.
    */
@@ -1044,5 +1062,128 @@ describe("cancelling somebody else's send needs the relation that authors one", 
     await relate("send.propose");
     expect(await cancel(), "send.propose could not cancel either, so this route cancels nothing").toBe(200);
     expect(await stateOf(), "the send was not actually cancelled").not.toBe("held");
+  });
+});
+
+describe("acts on a send need send.propose, and their answers name nothing", () => {
+  /*
+   * Three `send.propose` gates lived one call deeper than `index.ts`, so none of them was declared and the
+   * necessary-half loop never saw them. Each left the whole suite green when widened to accept
+   * `mailbox.content.read`:
+   *
+   * - `releaseButlerSend` — #50's gate, which exists precisely because *no person had seen the send*, cleared
+   *   by somebody who may only read the mailbox.
+   * - `releasePolicyHold` — releasing past #61, which its own docstring calls *"a governance bypass with a
+   *   benign-looking name"*.
+   * - `saveDraft` — composing a draft **as** a mailbox the author may not send from (ADR 36).
+   *
+   * `test/node/mailbox-gate-world.test.ts` now fails the build for an undeclared mailbox-gated route, so the
+   * class cannot recur. These are the assertions the declaration then needs, and they are written against the
+   * **effect** rather than the body for the reason `cancel` and `dispatch` are: both release routes answer
+   * `{released}` with `200` or `409` and name no mailbox, so no disclosure detector can ever see them.
+   */
+  const HELD = "snd_PARTYACTS00000000000000000";
+
+  async function heldSend(state: string, reason: string | null) {
+    const at = "2020-01-01T00:00:00.000Z";
+    await testEnv.CATALOG.prepare("DELETE FROM send_manifests WHERE id = ?").bind(HELD).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests
+         (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
+          fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+          sealed_at, release_at, state, state_at, state_reason)
+       VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,?,?,?)`,
+    ).bind(HELD, ORG, MAILBOX, ADMIN, "enquiries@parity.example",
+      JSON.stringify(["out@example.test"]), "act on me", `<${HELD}@parity.example>`,
+      `${ORG}/typed/${HELD}`, "0".repeat(64), `${ORG}/norm/${HELD}`, "0".repeat(64),
+      at, "2999-01-01T00:00:00.000Z", state, at, reason).run();
+  }
+
+  async function relate(relation: string) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?")
+      .bind(ORG, MEMBER).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,'mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, MEMBER, relation, MAILBOX, new Date(ctx.now()).toISOString()).run();
+  }
+
+  async function act(path: string): Promise<boolean> {
+    const response = await SELF.fetch(`https://node/api/sends/${HELD}/${path}`, {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}` },
+    });
+    // `{released}` with 200 or 409 — the status *is* the effect, and it is all these routes disclose.
+    return response.status === 200 && ((await response.json()) as { released?: boolean }).released === true;
+  }
+
+  /*
+   * `awaiting` + the exact `state_reason` the release is conditional on — `releasePolicyHold` updates
+   * `WHERE state = 'awaiting' AND state_reason = 'policy_hold'`, so a `held` fixture releases for nobody and
+   * both refusals below would have passed against a route doing nothing. The control caught precisely that.
+   */
+  for (const [path, state, reason] of [
+    ["release", "awaiting", "butler_release_required"],
+    ["release-hold", "awaiting", "policy_hold"],
+  ] as const) {
+    it(`refuses ${path} to a holder of mailbox.content.read`, async () => {
+      await heldSend(state, reason);
+      await relate("mailbox.content.read");
+      expect(
+        await act(path),
+        `somebody who may only read this mailbox cleared its ${reason} gate — the gate exists because a `
+        + "person had not decided yet, and a reader is not that person",
+      ).toBe(false);
+    });
+  }
+
+  /*
+   * **A control per route, not one covering both.**
+   *
+   * The first version had only `release-hold`, and the `release` refusal beside it was passing against a
+   * fixture that released for nobody: widening `releaseButlerSend` to accept `mailbox.content.read` survived.
+   * That is the exact vacuity a control exists to catch, sitting in the same block as a control.
+   *
+   * The cause is that each conditional `UPDATE` names its own `state_reason` — `policy_hold` for the policy
+   * gate, `butler_release_required` for #50's — and a fixture carrying the wrong one is indistinguishable
+   * from a working gate. One control cannot speak for two predicates.
+   */
+  for (const [path, reason] of [
+    ["release", "butler_release_required"],
+    ["release-hold", "policy_hold"],
+  ] as const) {
+    it(`permits ${path} to a holder of send.propose, so its refusal is not a broken route`, async () => {
+      await heldSend("awaiting", reason);
+      await relate("send.propose");
+      expect(
+        await act(path),
+        `send.propose could not ${path} either, so that route releases nothing for anybody and the refusal `
+        + "above proves nothing",
+      ).toBe(true);
+    });
+  }
+
+  it("refuses saving a draft as a mailbox the author may not send from", async () => {
+    /*
+     * ADR 36: a draft is addressed **from** a mailbox, so holding one requires `send.propose` on it —
+     * `assertMaySend`'s own words. Widening that to `mailbox.content.read` passed 1,531 tests.
+     */
+    await relate("mailbox.content.read");
+    const response = await SELF.fetch("https://node/api/drafts", {
+      method: "PUT",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ mailboxId: MAILBOX, to: ["out@example.test"], subject: "x", body: "y" }),
+    });
+    expect(response.status, "a reader composed a draft as a mailbox they cannot send from").not.toBe(200);
+
+    // The control: the relation the route declares does save one.
+    await relate("send.propose");
+    const allowed = await SELF.fetch("https://node/api/drafts", {
+      method: "PUT",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ mailboxId: MAILBOX, to: ["out@example.test"], subject: "x", body: "y" }),
+    });
+    expect(allowed.status, "send.propose could not save a draft either").toBe(200);
   });
 });
