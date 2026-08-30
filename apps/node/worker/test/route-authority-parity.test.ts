@@ -1187,3 +1187,75 @@ describe("acts on a send need send.propose, and their answers name nothing", () 
     expect(allowed.status, "send.propose could not save a draft either").toBe(200);
   });
 });
+
+describe("closing a matter is the opener's or an administrator's, and nobody else's", () => {
+  /*
+   * The gate outside every loop, and the class the `mailbox` work does not reach: an **ownership-or-admin**
+   * gate inside a domain function, on an undeclared route.
+   *
+   * `if (false && matter.openedBy !== actorUserId && !(await isAdmin(…)))` — so any authenticated member
+   * closes anybody's matter — left all 1,541 tests green.
+   *
+   * It matters more than most refusals because closing is one-way (`matters.ts` has `openMatter` and
+   * `closeMatter` and no reopen — *"a resumed investigation needs a new matter"*) and because §7 hangs the
+   * employee-notification obligation on the close. Closing somebody's investigation early tells the person
+   * under investigation before the investigator intended, and nothing can put it back.
+   *
+   * **Deliberately not declared in the registry.** The gate is "the opener, or an administrator", and no
+   * current scope says that: `filtered/ownership` describes a *result* being narrowed with no refusal to
+   * test, and `self-or-admin` sits in the mirror check that requires an ordinary member to be answered —
+   * which this route correctly refuses with a §5C 404. Forcing either would make a declaration that reads
+   * true and asserts something false, which is the defect this whole branch is about. The pair below holds
+   * the gate directly instead, and `mailbox-gate-world.test.ts` does not claim to cover this class.
+   */
+  const MATTER = "mat_PARTYMATTER000000000000000";
+
+  async function matterOpenedBy(userId: string) {
+    const at = new Date(createSystemCtx().now()).toISOString();
+    await testEnv.CATALOG.prepare("DELETE FROM matters WHERE id = ?").bind(MATTER).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO matters (id, org_id, type, description, opened_by, opened_at)
+       VALUES (?,?,'security_incident','parity fixture',?,?)`,
+    ).bind(MATTER, ORG, userId, at).run();
+  }
+
+  async function closedAt(): Promise<string | null> {
+    const row = await testEnv.CATALOG.prepare("SELECT closed_at FROM matters WHERE id = ?")
+      .bind(MATTER).first<{ closed_at: string | null }>();
+    return row?.closed_at ?? null;
+  }
+
+  async function close(cookie: string): Promise<number> {
+    const response = await SELF.fetch(`https://node/api/matters/${MATTER}/close`, {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${cookie}` },
+    });
+    return response.status;
+  }
+
+  it("refuses a member who neither opened it nor administers the organization", async () => {
+    await matterOpenedBy(ADMIN);
+    await close(memberCookie);
+    expect(
+      await closedAt(),
+      "somebody who did not open this matter closed it — one-way, and §7's notice to the person under "
+      + "investigation becomes due on the close",
+    ).toBeNull();
+  });
+
+  it("permits the person who opened it", async () => {
+    // The control, and it must be the *opener* rather than the administrator: an admin-only control would
+    // pass against a gate that had collapsed to `isAdmin`, which is half of what this refusal protects.
+    await matterOpenedBy(MEMBER);
+    expect(await close(memberCookie), "the opener could not close their own matter").toBe(200);
+    expect(await closedAt(), "the close did not happen").not.toBeNull();
+  });
+
+  it("permits an administrator who did not open it", async () => {
+    // The other half of the disjunction. Without it the refusal above is satisfied by a gate that had
+    // collapsed to `openedBy` alone, which would strand every matter whose opener has left.
+    await matterOpenedBy(MEMBER);
+    expect(await close(adminCookie), "an administrator could not close somebody else's matter").toBe(200);
+    expect(await closedAt()).not.toBeNull();
+  });
+});
