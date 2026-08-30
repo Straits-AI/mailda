@@ -50,14 +50,19 @@ import { hashPassword } from "../src/auth/password.ts";
  * Driven here: `organization` both ways, `member` both ways, `public` anonymously, the restrictive half of
  * `self-or-admin`, and every scoped route against a caller presenting nothing.
  *
- * **Not** driven here: `mailbox`, which `test/agent-capabilities.test.ts` exercises with exactly the relations
- * each route declares — and that proves those relations *sufficient*, never *necessary*, so a `mailbox` route
- * naming a relation no mint confers would be silently withheld with nothing able to see it. Nor the open case
- * of `recovery`, which `test/operator-routes.test.ts` drives on a Node that cannot authenticate anybody.
+ * `mailbox` routes are driven here too, but **only anonymously**. Their relation half belongs to
+ * `test/agent-capabilities.test.ts`, which exercises each with exactly the relations it declares — and that
+ * proves those relations *sufficient*, never *necessary*, so a `mailbox` route naming a relation no mint
+ * confers would be silently withheld with nothing able to see it.
  *
- * This paragraph is written out because the previous one was stale in the file whose whole subject is stale
- * claims: it described a scope called `none` that no longer exists and said the file covered two scopes when
- * it covered five.
+ * Not driven here: the **open** case of `recovery`, where `GET /api/doctor` serves a stranger because this
+ * Node cannot authenticate anybody. `test/doctor.test.ts` owns that one; the closed case — 401 on a healthy
+ * Node — is in the anonymous loop below.
+ *
+ * This paragraph keeps being wrong, which is worth admitting in the file whose subject is stale claims. It
+ * described a scope called `none` after this work deleted it; then said `mailbox` was not driven here after
+ * the anonymous loop began driving all twelve; then pointed at `operator-routes.test.ts` for an open
+ * `recovery` case that file does not contain.
  */
 
 const testEnv = env as unknown as {
@@ -446,9 +451,28 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       // rather than public — and `test/operator-routes.test.ts` drives the open case.
     );
 
-    const admitted: string[] = [];
+    /*
+     * **Real ids, and `401` exactly.** The first version substituted `${name}-does-not-exist` and accepted any
+     * non-2xx, and both halves were wrong in the same direction.
+     *
+     * `GET /api/mailboxes/:mailboxId/cases` and `GET /api/people/:userId/mailboxes` are matched by regexes
+     * built from `idPattern`, so a placeholder never matches, the router 404s before the handler is entered,
+     * and the assertion could not fail whatever the handler did with the principal. A verified mutation —
+     * dropping the `principalFor` refusal from the case queue, so a stranger reads any mailbox's queue —
+     * passed all 1,510 tests.
+     *
+     * This file warns about exactly that hazard two hundred lines above, where the administrator loop
+     * harvests real ids for the same reason. Walking into it here is why the rule is now `401` and anything
+     * else is reported by name: a 404 that means "no such route" and a 404 that means "you may not" are
+     * indistinguishable from outside, so only the status that unambiguously means *authenticate* counts.
+     */
+    const anonymousIds: Record<string, string> = { mailboxId: MAILBOX, userId: MEMBER };
+    const wrong: string[] = [];
     for (const spec of scoped) {
-      const path = spec.path.replace(/:(\w+)/g, (_, name: string) => `${name}-does-not-exist`);
+      const path = spec.path.replace(
+        /:(\w+)/g,
+        (_, name: string) => anonymousIds[name] ?? `${name}-does-not-exist`,
+      );
       const body = BODIES[`${spec.method} ${spec.path}`];
       const response = await SELF.fetch(`https://node${path}`, {
         method: spec.method,
@@ -457,15 +481,14 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
           body: JSON.stringify(body),
         }),
       });
-      if (response.status >= 200 && response.status < 300) {
-        admitted.push(`${spec.method} ${spec.path} → ${response.status}`);
-      }
+      if (response.status !== 401) wrong.push(`${spec.method} ${spec.path} → ${response.status}`);
     }
 
     expect(
-      admitted,
-      "these routes declare an authority scope and answered a caller who presented nothing. A scoped route "
-      + "requires a principal — that is the sentence authority.ts rests its one-field design on:",
+      wrong,
+      "these routes declare an authority scope and did not answer 401 to a caller who presented nothing. A "
+      + "scoped route requires a principal — that is the sentence authority.ts rests its one-field design on "
+      + "— and anything other than 401 means the request did not reach the check:",
     ).toEqual([]);
 
     // The control: every scope in the union must be represented, or this passes over the one that is wrong.

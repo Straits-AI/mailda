@@ -79,8 +79,26 @@ const MUST_SUCCEED = new Set([
   "GET /api/breakers",
   "GET /api/domain-pauses",
   "GET /.well-known/jwks.json",
-  "GET /api/auth/passkeys",
 ]);
+
+describe("the must-succeed set names routes this suite actually drives", () => {
+  it("has no entry for a route no offered capability contains", () => {
+    /*
+     * `MUST_SUCCEED` is hand-written and nothing guarded it, so `GET /api/auth/passkeys` sat here after it
+     * left `identity.read` — a "this must answer 200" claim about a route this suite no longer drives at all.
+     * A dead entry in a set whose purpose is to make the suite decisive is the quietest way to make it
+     * suggestive again.
+     */
+    const reachable = new Set(offerableCapabilities().flatMap((one) => one.routes));
+    const stale = [...MUST_SUCCEED].filter((route) => !reachable.has(route));
+    expect(
+      stale,
+      "these routes are held to a success and no offered capability names them, so nothing drives them:",
+    ).toEqual([]);
+    // The control: an empty vocabulary would make every entry stale rather than none.
+    expect(reachable.size).toBeGreaterThan(10);
+  });
+});
 
 async function tuple(subjectId: string, relation: string, objectId: string) {
   const ctx = createSystemCtx();

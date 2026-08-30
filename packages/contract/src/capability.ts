@@ -195,12 +195,19 @@ export const CAPABILITIES: readonly Capability[] = [
  *
  * **`matter.open` and `directory.read` are back**, defined above, and that is the same mechanism running the
  * other way rather than a reversal. Driving every organization-declared route against a real member showed
- * that `GET /api/teams` and both `/api/matters` routes never checked `org.admin` at all — the declarations
- * were wrong, not the routes. Correcting them put the routes back in the grantable set, and
+ * that `GET /api/teams` and both `/api/matters` routes were never *gated* on `org.admin` — the declarations
+ * were wrong, not the routes. `GET /api/matters` does read it, to widen an administrator's list to every
+ * matter rather than to refuse anybody, which is a different thing from a gate and worth the extra clause. Correcting them put the routes back in the grantable set, and
  * `capability-world` then required a home for them again.
  *
- * That is the property worth having: nothing here is a list somebody maintains. A capability exists exactly
- * while its routes are provisionable, and both directions are consequences.
+ * The property worth having, stated at its real strength: `CAPABILITIES` **is** a hand-written array, and both
+ * entries were typed in by a person. What is automatic is that `capability-world` goes red until somebody
+ * does — a newly grantable route has no home and fails until it is given one. The reverse is weaker still: a
+ * route leaving the grantable set leaves its entry sitting here, and `offerableCapabilities()` simply stops
+ * offering it.
+ *
+ * So this is a maintained list with a test that will not let it drift, which is a smaller claim than "both
+ * directions are consequences" and the one that is true.
  *
  * Building any of them properly means deciding that agents may hold organization-scoped authority — recursive
  * intersection through the sponsor, a depth bound, root attribution, and organization grants selectable in the
