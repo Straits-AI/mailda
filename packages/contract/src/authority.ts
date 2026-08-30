@@ -41,6 +41,55 @@ export type Authority =
   | { readonly scope: "none" }
   | { readonly scope: "organization"; readonly allOf: readonly ["org.admin"] }
   /**
+   * Authenticated, and nothing further. Every member of the organization sees the same thing.
+   *
+   * Distinct from `none`, which is *unauthenticated-reachable* — `GET /health` answers a stranger. A `member`
+   * route answers anybody signed in and nobody else, which is a different fact about a different boundary.
+   *
+   * `GET /api/teams` is the example and its handler argues the case: a team is a name and a headcount, which
+   * is the organizational chart rather than the access map. Who is *in* it and what it *holds* are separate
+   * routes and both are `organization`.
+   */
+  | { readonly scope: "member" }
+  /**
+   * Authenticated, and then the **result** is narrowed by what the caller holds. There is no refusal to test.
+   *
+   * This is the shape that was missing, and its absence is why five routes were declared `organization` while
+   * their handlers required no administrator at all. Each returns a filtered list to an ordinary member —
+   * `GET /api/approvals` the mailboxes they may decide for, `GET /api/matters` the matters they opened — and
+   * an empty list is not a refusal. Declaring them `org.admin` was the only way the old algebra could say
+   * "not everybody sees everything", and it said something false.
+   *
+   * **What** narrows it is part of the declaration, because for a machine that is the difference between a
+   * capability and an empty promise:
+   *
+   * - `relation` — you see the mailboxes you hold one of these on. An agent cannot hold `approval.decide`
+   *   (it is not in `AGENT_GRANTABLE_RELATIONS`), so an agent calling `GET /api/approvals` gets 200 and an
+   *   empty list, for ever.
+   * - `ownership` — you see what you opened. `GET /api/matters` gives an administrator every matter and
+   *   everybody else their own, and returns an empty list rather than a 403 *because the shape is already a
+   *   filtered list, so it discloses no more than "you opened none"*.
+   * - `addressee` — you see what was addressed to you, or to a mailbox you may read. `GET /api/notifications`
+   *   is both, which is why declaring it `mailbox.content.read` was an understatement rather than a lie.
+   *
+   * Reachable is not the same as useful, and `machineUseful` below is what tells them apart.
+   */
+  | {
+    readonly scope: "filtered";
+    readonly by: "relation" | "ownership" | "addressee";
+    /** The relations that widen the result. Only meaningful when `by` is `relation`. */
+    readonly relations?: readonly string[];
+  }
+  /**
+   * Your own by default; somebody else's needs `org.admin`.
+   *
+   * `GET /api/access` is the one, and its handler puts it plainly: *"knowing what you hold is not
+   * privileged"*. It defaults the subject to the caller and demands administration only when the subject is
+   * somebody else — which it refuses with a §5C 404 rather than a 403, so the two are not even the same
+   * shape of no.
+   */
+  | { readonly scope: "self-or-admin" }
+  /**
    * Held by the **requester** of an artefact somebody else created, not by whoever is calling.
    *
    * `GET /api/exports/:exportId/objects/:objectId` re-asks on every object whether the *requester* still holds
@@ -79,6 +128,13 @@ export function machineProvisionable(authority: Authority | undefined): boolean 
   if (authority.scope === "none") return true;
   if (authority.scope === "organization") return false;
   /*
+   * An agent authenticates, so all three of these are reachable. `filtered` is reachable and may still be
+   * useless — see `machineUseful`, which is the question this one is not asking.
+   */
+  if (authority.scope === "member") return true;
+  if (authority.scope === "filtered") return true;
+  if (authority.scope === "self-or-admin") return true;
+  /*
    * Requester-owned artefacts are out of reach whatever relation an agent holds: it cannot be the requester,
    * because the route that creates one is withheld from machines. A capability naming this would offer a
    * download nobody could perform.
@@ -86,4 +142,62 @@ export function machineProvisionable(authority: Authority | undefined): boolean 
   if (authority.scope === "export") return false;
   const named = [...(authority.allOf ?? []), ...(authority.anyOf ?? [])];
   return named.every((one) => (AGENT_GRANTABLE_RELATIONS as readonly string[]).includes(one));
+}
+
+/**
+ * Can a machine get a **non-empty** answer, as opposed to merely a successful one?
+ *
+ * `machineProvisionable` asks whether the door opens. This asks whether there is anything behind it. They
+ * came apart the moment `filtered` existed: `GET /api/approvals` answers any authenticated caller with 200,
+ * and narrows the list to mailboxes where the caller holds `approval.decide` — a relation no mint can confer.
+ * So an agent gets `{approvals: []}` for ever, and a capability built on it would be the same empty promise
+ * that cost nine capabilities their place in the vocabulary.
+ *
+ * Every other scope answers alike, because for them reachable and useful are the same question.
+ */
+/**
+ * Why no machine can be provisioned to use this, in a sentence, or `null` when one can.
+ *
+ * Exists so that `withheldCapabilities` can explain a route it withholds for a reason that is **not** its
+ * exposure tier. Those two reasons look identical in a list and are not the same fact: a `governed` route is
+ * one a machine may not do, and an `org.admin` route is one a machine could be trusted with and cannot be
+ * given. An agent author reading "withheld" without the distinction will keep asking for the second kind.
+ */
+export function whyMachinesCannotUse(authority: Authority | undefined): string | null {
+  if (authority === undefined) {
+    return "this route has not been classified, and an unclassified route is withheld until somebody decides "
+      + "it — the fail-closed direction";
+  }
+  if (authority.scope === "organization") {
+    return "it requires org.admin, which is deliberately not an agent-grantable relation: an agent holding it "
+      + "would administer the organization it acts inside, and nested administration is a design somebody "
+      + "should make on purpose";
+  }
+  if (authority.scope === "export") {
+    return "it belongs to the requester of an export, and creating one is withheld from every machine — so an "
+      + "agent cannot be the requester of anything this would answer for";
+  }
+  if (authority.scope === "mailbox") {
+    const named = [...(authority.allOf ?? []), ...(authority.anyOf ?? [])];
+    const ungrantable = named.filter((one) => !(AGENT_GRANTABLE_RELATIONS as readonly string[]).includes(one));
+    return ungrantable.length === 0 ? null : `it requires ${ungrantable.join(" and ")}, which no mint confers`;
+  }
+  if (authority.scope === "filtered" && !machineUseful(authority)) {
+    return `it answers any authenticated caller and narrows the result to what ${
+      (authority.relations ?? []).join(" or ")
+    } reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever`;
+  }
+  return null;
+}
+
+export function machineUseful(authority: Authority | undefined): boolean {
+  if (!machineProvisionable(authority)) return false;
+  if (authority?.scope !== "filtered") return true;
+  /*
+   * Ownership and addressee narrow by things an agent can acquire: it can open a matter and it can be sent a
+   * notice. A relation it can never hold is the only one that empties the answer permanently.
+   */
+  if (authority.by !== "relation") return true;
+  return (authority.relations ?? [])
+    .some((one) => (AGENT_GRANTABLE_RELATIONS as readonly string[]).includes(one));
 }

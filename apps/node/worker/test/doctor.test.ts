@@ -261,7 +261,7 @@ describe("doctor", () => {
     // Infrastructure, so it survives into the report a locked-out operator sees unauthenticated: the queue's
     // name is derived from this Worker's name and its binding, and neither is organization content.
     expect(finding.discloses).toBe("infrastructure");
-    expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("sending_events_consumer");
+    expect(withoutDataFindings(report, "locked_out").findings.map((f) => f.check)).toContain("sending_events_consumer");
   });
 
   it("says Butlers run here, on whose authority, and what is still not built (#50)", async () => {
@@ -299,7 +299,7 @@ describe("doctor", () => {
     // Infrastructure: the shape of the bundle and the name of a ticket, both public. So it survives into
     // the report a locked-out operator sees unauthenticated.
     expect(finding.discloses).toBe("infrastructure");
-    expect(withoutDataFindings(report).findings.map((f) => f.check)).toContain("butler_execution");
+    expect(withoutDataFindings(report, "locked_out").findings.map((f) => f.check)).toContain("butler_execution");
   });
 
   it("gives every failure a fix — a refusal without a remedy is a dead end", async () => {
@@ -381,7 +381,7 @@ describe("doctor", () => {
     const report = await runDoctor(testEnv, ctx);
     expect(authenticationIsImpossible(report)).toBe(true);
 
-    const reduced = withoutDataFindings(report);
+    const reduced = withoutDataFindings(report, "locked_out");
     // Infrastructure findings survive: their contents are all published in this repository already.
     expect(reduced.findings.some((f) => f.check === "signing_key" && !f.ok)).toBe(true);
     // Anything derived from the organisation's mail does not.
@@ -425,7 +425,7 @@ describe("doctor", () => {
       "a Node that cannot round-trip a credential cannot mint a usable signing key, so nobody can sign in",
     ).toBe(true);
 
-    const reduced = withoutDataFindings(report);
+    const reduced = withoutDataFindings(report, "locked_out");
     expect(reduced.findings.some((f) => f.check === "credential_key" && !f.ok)).toBe(true);
     expect(reduced.findings.every((f) => f.discloses === "infrastructure")).toBe(true);
     expect(reduced.findings.some((f) => f.check === "evidence_present")).toBe(false);

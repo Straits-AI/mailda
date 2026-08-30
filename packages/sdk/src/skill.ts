@@ -25,6 +25,16 @@ export function emitSkill(): string {
   const offered = agentCapabilities(methodNameFor);
   const withheld = withheldCapabilities(methodNameFor);
   const byTier = (tier: string) => withheld.filter((entry) => entry.tier === tier);
+  /*
+   * The fourth group, and it had no section until it had members.
+   *
+   * `withheldCapabilities` used to mean "wrong exposure tier" and the document's three headings covered it
+   * exactly. Once the offered list began filtering on whether a machine can be *provisioned* for a route,
+   * twenty-two ordinary reads and acts joined the withheld total and were rendered by none of the three —
+   * counted in the header and absent from the body, which is the shape of gap this Skill exists to close.
+   */
+  const unprovisionable = withheld
+    .filter((entry) => entry.tier === "read" || entry.tier === "act");
 
   const reasons = new Map<string, string[]>();
   for (const entry of withheld) {
@@ -94,6 +104,22 @@ ${[...reasons.entries()]
 
 ${[...reasons.entries()]
     .filter(([, names]) => names.some((name) => byTier("operator").some((entry) => entry.name === name)))
+    .map(([why, names]) => `- **${names.map((name) => `\`${name}\``).join(", ")}**\n\n  ${why.replace(/\n\n/g, "\n\n  ")}`)
+    .join("\n\n")}
+
+### Out of reach — an ordinary act, and no credential can be provisioned for it (${unprovisionable.length})
+
+These are not governed and not operator acts. They are reads and reversible writes a machine could perfectly
+well be trusted with, and there is **no credential that satisfies them**: they require \`org.admin\`, or they
+belong to whoever requested an export, or they narrow their answer by a relation no mint confers — so a token
+holding them would be admitted and shown nothing, for ever.
+
+They are listed because the alternative is worse. Until now they were counted as withheld and printed
+nowhere, which reads as an omission somebody will try to work around. Asking an administrator to grant one of
+these does not help; the answer is a person doing it, or a change to what Mailda is willing to delegate.
+
+${[...reasons.entries()]
+    .filter(([, names]) => names.some((name) => unprovisionable.some((entry) => entry.name === name)))
     .map(([why, names]) => `- **${names.map((name) => `\`${name}\``).join(", ")}**\n\n  ${why.replace(/\n\n/g, "\n\n  ")}`)
     .join("\n\n")}
 

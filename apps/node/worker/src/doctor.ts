@@ -6,6 +6,7 @@ import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { escrowState, RESTORE_LEASE_MS } from "./recovery.ts";
+import { conflictKey, restoreDetail } from "./restore-detail.ts";
 import { bodyIndexState, unindexedMessages } from "./search.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "./breakers.ts";
 import { deliveryActivity, isPauseReason, publishedButlerState } from "./butler/pause.ts";
@@ -234,6 +235,7 @@ const EXPECTED_TABLES = [
   // before anything created it.
   "recovery_codes",
   "recovery_restores",
+  "recovery_key_conflict_acknowledgements",
   // #109 L2: the agent identity and its pinned action ceiling.
   "agents",
   "agent_actions",
@@ -2230,54 +2232,6 @@ async function checkRecoveryEscrow(env: Env, orgId: string | null): Promise<Find
  *
  * `discloses: "data"` because the counts are derived from an organization's mail (§5C).
  */
-/**
- * A persisted restore's detail, read defensively enough to survive a row this version did not write.
- *
- * The first version caught invalid JSON and then trusted the shape — so a row carrying `"content": 7` reached
- * `.map()` and took the whole diagnostic down with it. `doctor` is what somebody opens when things have
- * already gone wrong, and a disaster report that 500s on a malformed historical record is one that fails at
- * exactly the moment it is needed.
- *
- * Unreadable is a value, not an exception: the caller reports the record rather than the numbers.
- */
-function restoreDetail(raw: string | null): {
-  restored: number; conflicted: string[]; error?: string; readable: boolean;
-} {
-  if (raw === null) return { restored: 0, conflicted: [], readable: true };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { restored: 0, conflicted: [], readable: false };
-  }
-  if (typeof parsed !== "object" || parsed === null) return { restored: 0, conflicted: [], readable: false };
-
-  const numbers = (part: unknown): number[] | null =>
-    part === undefined ? []
-      : Array.isArray(part) && part.every((n) => typeof n === "number") ? part
-      : null;
-  const side = (part: unknown): { content: number[]; credential: number[] } | null => {
-    if (part === undefined) return { content: [], credential: [] };
-    if (typeof part !== "object" || part === null) return null;
-    const content = numbers((part as { content?: unknown }).content);
-    const credential = numbers((part as { credential?: unknown }).credential);
-    return content === null || credential === null ? null : { content, credential };
-  };
-
-  const restored = side((parsed as { restored?: unknown }).restored);
-  const conflicted = side((parsed as { conflicted?: unknown }).conflicted);
-  const error = (parsed as { error?: unknown }).error;
-  if (restored === null || conflicted === null) return { restored: 0, conflicted: [], readable: false };
-  return {
-    restored: restored.content.length + restored.credential.length,
-    conflicted: [
-      ...conflicted.content.map((n) => `content ${n}`),
-      ...conflicted.credential.map((n) => `credential ${n}`),
-    ],
-    ...(typeof error === "string" ? { error } : {}),
-    readable: true,
-  };
-}
 
 /**
  * Key collisions that were never resolved, across **every** restore rather than the latest one.
@@ -2296,11 +2250,20 @@ function restoreDetail(raw: string | null): {
  * remedy is an assessment of what was lost, not a command, and a finding that clears itself when the next
  * operation succeeds is one that will clear itself exactly when an operator stops looking.
  *
- * ## What acknowledgement would look like, and why it is not built
+ * ## Acknowledgement, which is now built
  *
- * The audit asked for an acknowledgement record — who assessed it, when, against which incident. That is the
- * right shape and it is a table, a route and a screen; what exists here is the detection. Stated rather than
- * implied, so nobody reads a permanent `degraded` as a bug in the check.
+ * "Stays degraded until somebody says otherwise" was true and there was no way to say otherwise, so it stayed
+ * degraded full stop. That is the failure mode of every permanent alarm: an operator who has assessed the loss
+ * still sees it every morning, `degraded` stops carrying information, and the next real one is read as the
+ * same old noise.
+ *
+ * `POST /api/recovery/conflicts/:restoreId/acknowledge` records the assessment — who, when, what was examined,
+ * what was concluded — and this check reads it. The severity drops to `report`; **`ok` stays false**, because
+ * nothing repaired anything and the report must go on saying so. Acknowledged is not healthy.
+ *
+ * Keyed to the restore *and* the conflicted generations, so acknowledging one collision is not acknowledging
+ * whatever that restore is later found to have collided with. A set that has changed since it was assessed
+ * reads as unassessed again.
  */
 async function checkRecoveryConflicts(env: Env, orgId: string | null): Promise<Finding[]> {
   if (orgId === null) return [];
@@ -2311,29 +2274,76 @@ async function checkRecoveryConflicts(env: Env, orgId: string | null): Promise<F
   ).bind(orgId).all<{ id: string; started_at: string; detail: string | null }>().catch(() => null);
   if (rows === null) return [];
 
-  const unresolved = rows.results
+  const acknowledged = await env.CATALOG.prepare(
+    `SELECT restore_id, generations, assessed_by, assessed_at
+       FROM recovery_key_conflict_acknowledgements WHERE org_id = ?`,
+  ).bind(orgId).all<{ restore_id: string; generations: string; assessed_by: string; assessed_at: string }>()
+    .catch(() => null);
+  const assessed = new Map(
+    (acknowledged?.results ?? []).map((row) => [`${row.restore_id}::${row.generations}`, row]),
+  );
+
+  const conflicted = rows.results
     .map((row) => ({ row, carried: restoreDetail(row.detail) }))
     .filter((one) => one.carried.readable && one.carried.conflicted.length > 0)
-    .map((one) => `${one.row.id} (${one.row.started_at}): ${one.carried.conflicted.join(", ")}`);
+    /*
+     * Keyed on the **generations**, not the restore. Acknowledging one collision is not acknowledging whatever
+     * that restore might later be found to have collided with, so a set that has changed since it was assessed
+     * reads as unacknowledged again — the fail-closed direction, and the only one that keeps the record
+     * meaning what it says.
+     */
+    .map((one) => ({
+      ...one,
+      key: `${one.row.id}::${conflictKey(one.carried.conflicted)}`,
+    }))
+    .map((one) => ({ ...one, ack: assessed.get(one.key) }));
 
+  const unresolved = conflicted.filter((one) => one.ack === undefined);
+  const settled = conflicted.filter((one) => one.ack !== undefined);
+
+  const describe = (one: typeof conflicted[number]) =>
+    `${one.row.id} (${one.row.started_at}): ${one.carried.conflicted.join(", ")}`;
+
+  /*
+   * ## Acknowledged is not healthy, and `ok` stays false to say so
+   *
+   * The severity drops to `report` — so an assessed collision no longer decides the verdict — and `ok` remains
+   * `false`, because nothing repaired anything. Two different secrets still cannot share one generation
+   * number, and the mail sealed under that generation is still unreadable.
+   *
+   * That split is the whole design. A permanent `degraded` nobody can discharge is a warning an operator
+   * learns to scroll past, and then the next real one is read as the same old noise; a finding that
+   * disappeared on acknowledgement would be a record of a loss that the record no longer mentions. This
+   * reports the loss for ever and stops it drowning everything else.
+   */
   return [{
     check: "recovery_key_conflicts",
     severity: unresolved.length > 0 ? "degraded" : "report",
     discloses: "infrastructure",
-    ok: unresolved.length === 0,
-    detail: unresolved.length === 0
+    ok: conflicted.length === 0,
+    detail: conflicted.length === 0
       ? "No vault restore on this Node has collided with a live key."
-      : `${unresolved.length} restore(s) collided with a live key, and each collision is permanent — two `
-        + "different secrets cannot share one generation number, so mail sealed under the escrowed key of "
-        + `that generation stays unreadable: ${unresolved.join("; ")}. A later clean restore does not repair `
-        + "this and must not appear to: `recovery_restore_state` above reports the newest operation only.",
+      : [
+        unresolved.length === 0
+          ? `${settled.length} restore(s) collided with a live key. Every one has been assessed, and every `
+            + "collision is still permanent: the loss does not clear, only the alarm does."
+          : `${unresolved.length} restore(s) collided with a live key and have not been assessed, and each `
+            + "collision is permanent — two different secrets cannot share one generation number, so mail "
+            + "sealed under the escrowed key of that generation stays unreadable: "
+            + `${unresolved.map(describe).join("; ")}. A later clean restore does not repair this and must `
+            + "not appear to: `recovery_restore_state` above reports the newest operation only.",
+        ...settled.map((one) =>
+          `Assessed: ${describe(one)} — by ${one.ack!.assessed_by} on ${one.ack!.assessed_at}.`
+        ),
+      ].join(" "),
     ...(unresolved.length === 0 ? {} : {
       fix: "assess what was sealed under those generations — `evidence_lifecycle` describes the window — and "
-        + "record the outcome as an incident. This finding does not clear on its own, because nothing "
-        + "repairs a collision",
+        + "record the outcome with POST /api/recovery/conflicts/:restoreId/acknowledge. That does not repair "
+        + "the collision, which nothing can; it records that somebody has established what was lost",
     }),
   }];
 }
+
 
 /**
  * What the last vault restore did, and whether one is stuck.
@@ -2806,8 +2816,48 @@ export function authenticationIsImpossible(report: DoctorReport | { findings: Fi
   );
 }
 
-/** The reduced form. Infrastructure findings only, and it says that it is reduced. */
-export function withoutDataFindings(report: DoctorReport): DoctorReport {
+/**
+ * Why a report was reduced. Three distinct situations that used to share one sentence.
+ *
+ * - `locked_out` — nobody can sign in, because a key this Node needs is gone. The original case, and the one
+ *   the wording was written for.
+ * - `unclaimed` — no organization exists here yet, so there is nobody to be.
+ * - `not_an_administrator` — signed in, and the organization's condition is an administrator's to read.
+ *
+ * There is deliberately no *"you are not signed in"*: on a claimed Node the route answers an anonymous caller
+ * `401` unless authentication is impossible, so that case never reaches this function. Writing a fourth
+ * reason for it would be adding wording for a state the router cannot produce — which is how the one wrong
+ * sentence got here in the first place.
+ */
+export type ReductionReason = "locked_out" | "unclaimed" | "not_an_administrator";
+
+const REDUCTION_WORDING: Record<ReductionReason, string> = {
+  locked_out: "Served without authentication because this Node cannot currently authenticate anyone.",
+  unclaimed: "Served without authentication because this Node has not been claimed yet, so it has no "
+    + "organization to describe.",
+  not_an_administrator:
+    "You are signed in. The withheld findings describe the whole organization's mail, which is an "
+    + "administrator's to read.",
+};
+
+/**
+ * The reduced form. Infrastructure findings only, and it says that it is reduced **and why**.
+ *
+ * ## The sentence that was wrong for most of its readers
+ *
+ * This took no reason and always said *"Served without authentication because this Node cannot currently
+ * authenticate anyone."* That is true in exactly one case — the locked-out Node it was written for. The
+ * router calls this for **every** non-administrator, so the ordinary signed-in member, on a perfectly healthy
+ * Node, was told that authentication was impossible.
+ *
+ * It matters more than a wording slip because of when it is read. `doctor` is what an operator opens during
+ * an incident, and a diagnostic that contradicts the thing the reader just did — signing in — costs them the
+ * first minutes of the incident wondering whether the sessions are broken too.
+ *
+ * The test that covered this asserted the report *was* reduced and never read the explanation, so the false
+ * sentence was inside the one assertion nobody made.
+ */
+export function withoutDataFindings(report: DoctorReport, reason: ReductionReason): DoctorReport {
   const findings = report.findings.filter((f) => f.discloses === "infrastructure");
   return {
     ...report,
@@ -2818,10 +2868,9 @@ export function withoutDataFindings(report: DoctorReport): DoctorReport {
         severity: "report",
         ok: true,
         discloses: "infrastructure",
-        detail:
-          `Served without authentication because this Node cannot currently authenticate anyone. ` +
-          `${report.findings.length - findings.length} finding(s) that would describe this ` +
-          `organization's mail are withheld. Sign in once the failure above is fixed to see them.`,
+        detail: `${REDUCTION_WORDING[reason]} `
+          + `${report.findings.length - findings.length} finding(s) that would describe this `
+          + `organization's mail are withheld.`,
       },
     ],
   };

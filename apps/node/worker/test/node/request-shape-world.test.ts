@@ -313,9 +313,28 @@ describe("strictness is decided per route, not turned on globally", () => {
        * unconstrained anything. It is listed separately rather than derived from the shared schema, because
        * two routes sharing a shape today is not an argument that they always will.
        */
+      /*
+       * Opening a matter, and saving a draft. Both acquired a request schema when the machine surface was
+       * corrected — a route with no declared request publishes an MCP tool that takes **no body**, so the one
+       * writing act an agent is offered could not say what the draft said.
+       *
+       * Tolerant rather than strict, and the distinction is #93's own: the policy and Butler bodies are strict
+       * because every field decides which sends a rule catches, so a misspelling silently empties a closed
+       * set. A draft is text a person reads before anything leaves, and a matter is a folder with a type the
+       * domain refuses by name (`E_MATTER_TYPE_UNKNOWN`, which lists the four). Nothing here can be silently
+       * emptied, and strictness would refuse a client that sent a field a newer Node had added.
+       */
+      "POST /api/matters",
       "POST /api/recovery-codes/confirm",
+      /*
+       * Acknowledging a key collision. Tolerant, for the reason the routes around it are: the two fields are
+       * free text a person wrote, both are refused when blank by the domain, and there is no closed set a
+       * misspelling could silently empty.
+       */
+      "POST /api/recovery/conflicts/:restoreId/acknowledge",
       "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
+      "PUT /api/drafts",
       "PUT /api/transport",
     ]);
   });

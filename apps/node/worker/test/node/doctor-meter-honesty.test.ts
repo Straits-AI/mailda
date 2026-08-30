@@ -69,6 +69,13 @@ const DOCTOR_PATH = [
    */
   "recovery.ts",
   /*
+   * Added when `restoreDetail` moved out of `doctor.ts`. It performs **no I/O at all** — it parses a string
+   * that a query has already returned — so it adds nothing to the meter's figure. It is on the list because
+   * the derivation above reads `doctor.ts`'s imports and would otherwise report it as uncovered, and because
+   * a pure parser is exactly the kind of file somebody later adds a lookup to.
+   */
+  "restore-detail.ts",
+  /*
    * Added with #107's `search_index_backlog` and `body_index_backlog` checks: `unindexedMessages` and
    * `unindexedBodies` are one aggregate query each on the doctor path, so each is one prepare that must be one
    * execution.

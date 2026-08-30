@@ -824,11 +824,19 @@ describe("the mint and revoke routes validate what they are handed", () => {
       }),
     ).rejects.toThrow("E_AGENT_ACTIONS_UNBOUNDED");
 
-    // The control: the whole curated list is a legitimate ceiling and must still mint.
+    /*
+     * The control: the whole curated list is a legitimate ceiling and must still mint.
+     *
+     * Compared against what those capabilities **expand to**, not against `agentGrantableActions()`. Those two
+     * were equal once and it was a coincidence rather than an invariant: grantable is every route a machine
+     * *could* be provisioned for, and the vocabulary is the narrower set somebody decided to offer. Correcting
+     * five over-declared routes made a machine able to reach `GET /api/teams` and `GET /api/matters`, which no
+     * capability names and none should — opening a legal matter is not a thing to hand a machine by default.
+     */
     const all = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
       name: "everything", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
     });
-    expect(all.agent.actions.length).toBe(agentGrantableActions().length);
+    expect(all.agent.actions.length).toBe(routesFor(capabilityIds()).routes.length);
   });
 
   it("refuses a fractional lifetime, which the contract calls an integer", async () => {
@@ -1178,6 +1186,114 @@ describe("the machine surfaces answer in shapes a machine can use", () => {
   });
 });
 
+describe("a capability no granted mailbox can satisfy is refused at mint", () => {
+  /*
+   * Both halves of an agent's authority were validated and their product was not: grants against the sponsor,
+   * capabilities against the vocabulary, and `capabilities: ["mail.read"], grants: []` satisfied both. The
+   * credential authenticated and reached nothing, and the administrator found out days later through a 403
+   * that looks like a defect in this Node rather than like the mint-time misconfiguration it is.
+   */
+  const MAILBOX = "mbx_agents_satisfiable";
+  const OTHER = "mbx_agents_satisfiable_two";
+
+  /** A signed-in administrator, issued directly — this file has no password fixture and needs none. */
+  async function adminCookie(): Promise<string> {
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: ADMIN });
+    return `${ACCESS_COOKIE}=${session.accessToken}`;
+  }
+
+  async function seed() {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    for (const id of [MAILBOX, OTHER]) {
+      await testEnv.CATALOG.prepare(
+        "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+      ).bind(id, ORG, id, at).run();
+    }
+    for (const relation of ["mailbox.content.read", "message.export"]) {
+      await tuple(SPONSOR, relation, "mailbox", MAILBOX);
+      await tuple(SPONSOR, relation, "mailbox", OTHER);
+    }
+  }
+
+  it("refuses a capability selected with no mailbox, through the route an administrator uses", async () => {
+    /*
+     * Driven through `POST /api/agents` rather than `mintAgent`, because that is where the rule belongs and
+     * the two layers differ on purpose. The domain function allows no grants — it is also the building block
+     * for giving an agent a relation its sponsor lacks, which `grants` cannot express — and the route does
+     * not, because through the product minting is one step and there is no later grant to wait for.
+     */
+    await seed();
+    const response = await SELF.fetch("https://node.example/api/agents", {
+      method: "POST",
+      headers: { cookie: await adminCookie(), "content-type": "application/json" },
+      body: JSON.stringify({ name: "inert", sponsorUserId: SPONSOR, capabilities: [AGENT_READS], grants: [] }),
+    });
+    expect(response.status).toBe(422);
+    expect((await response.json() as { error: string }).error).toBe("E_AGENT_CAPABILITY_UNSATISFIABLE");
+  });
+
+  it("still mints through that route when the mailbox carries every relation", async () => {
+    // The control on the route check: without it, a route that refused every mint would pass the test above.
+    await seed();
+    const response = await SELF.fetch("https://node.example/api/agents", {
+      method: "POST",
+      headers: { cookie: await adminCookie(), "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "provisioned", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: [
+          { mailboxId: MAILBOX, relation: "mailbox.content.read" },
+          { mailboxId: MAILBOX, relation: "message.export" },
+        ],
+      }),
+    });
+    expect(response.status, await response.text()).toBe(200);
+  });
+
+  it("refuses a capability whose relations are split across two mailboxes", async () => {
+    /*
+     * The case a set-union check would pass. `mail.read` needs `mailbox.content.read` **and**
+     * `message.export`, and holding one on Support and the other on Billing satisfies it on neither — reach is
+     * decided per mailbox. This is the same defect the agent screen had and fixed; the domain had it too.
+     */
+    await seed();
+    await expect(
+      mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+        name: "split", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        grants: [
+          { mailboxId: MAILBOX, relation: "mailbox.content.read" },
+          { mailboxId: OTHER, relation: "message.export" },
+        ],
+      }),
+    ).rejects.toThrow("E_AGENT_CAPABILITY_UNSATISFIABLE");
+  });
+
+  it("mints when one mailbox carries every relation the capability needs", async () => {
+    // The control. Without it the two refusals above are satisfied by a mint that refuses everything.
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "satisfied", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      grants: [
+        { mailboxId: MAILBOX, relation: "mailbox.content.read" },
+        { mailboxId: MAILBOX, relation: "message.export" },
+      ],
+    });
+    expect(minted.agent.id).toMatch(/^agt_/);
+  });
+
+  it("still mints a capability that needs no mailbox, with no grants", async () => {
+    /*
+     * The other control, and the one that stops this check being written as "grants must not be empty".
+     * `health.read` and `identity.read` require no relation at all, and a credential for them legitimately has
+     * no mailbox. Refusing those would break the diagnostics agent this product ships with.
+     */
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "diagnostics", sponsorUserId: SPONSOR, capabilities: ["health.read"], grants: [],
+    });
+    expect(minted.agent.id).toMatch(/^agt_/);
+  });
+});
+
 describe("minting completes the authority, not only the credential", () => {
   /*
    * An agent's reach is its capabilities **intersected with its relations**, and minting wrote only the first.
@@ -1197,11 +1313,18 @@ describe("minting completes the authority, not only the credential", () => {
 
   it("writes the relations with the credential, so the agent can actually read", async () => {
     await seedMailbox();
+    // Both relations `mail.read` requires, on the one mailbox. The fixture granted only `content.read` until
+    // the mint learned to check the intersection, which made this credential unable to fetch the original
+    // `.eml` its own capability promises — the under-provisioning the check now refuses.
     await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
+    await tuple(SPONSOR, "message.export", "mailbox", MAILBOX);
 
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
       name: "reader", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      grants: [
+        { mailboxId: MAILBOX, relation: "mailbox.content.read" },
+        { mailboxId: MAILBOX, relation: "message.export" },
+      ],
     });
 
     const who = await principalFor(testEnv, createSystemCtx(), asAgent(minted.token));
@@ -1241,8 +1364,14 @@ describe("minting completes the authority, not only the credential", () => {
       .run();
     await tuple(team, "send.propose", "mailbox", MAILBOX);
 
+    /*
+     * `mail.draft` rather than `mail.read`, because the grant under test is `send.propose` and that is exactly
+     * what `mail.draft` requires. The pairing was previously `mail.read` with a `send.propose` grant — a
+     * capability and a relation with nothing to do with each other, which minted only because nothing compared
+     * them. The subject here is the team-held relation, and it is unchanged.
+     */
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "teamed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      name: "teamed", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
       grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
     });
     expect(minted.agent.id).toBeTruthy();
@@ -1298,7 +1427,7 @@ describe("an agent's reach is recorded and readable, not only written", () => {
     await testEnv.CATALOG.prepare(
       "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
     ).bind(MAILBOX, ORG, "Enquiries", new Date(ctx.now()).toISOString()).run();
-    await tuple(SPONSOR, "mailbox.content.read", "mailbox", MAILBOX);
+    await tuple(SPONSOR, "send.propose", "mailbox", MAILBOX);
   }
 
   it("records the exact grants in the mint entry", async () => {
@@ -1309,8 +1438,8 @@ describe("an agent's reach is recorded and readable, not only written", () => {
      */
     await seed();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "recorded", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      name: "recorded", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
+      grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
     });
 
     const entry = await testEnv.CATALOG.prepare(
@@ -1319,19 +1448,19 @@ describe("an agent's reach is recorded and readable, not only written", () => {
     expect(
       JSON.parse(entry!.detail).grants,
       "the trail records what verbs the agent may attempt and not which mailboxes it may reach",
-    ).toEqual([`${MAILBOX}::mailbox.content.read`]);
+    ).toEqual([`${MAILBOX}::send.propose`]);
   });
 
   it("reports each grant as granted and as effective now", async () => {
     await seed();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "readable", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      name: "readable", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
+      grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
     });
 
     const reach = (await agentReach(testEnv, ORG)).get(minted.agent.id);
     expect(reach).toEqual([{
-      mailboxId: MAILBOX, mailboxName: "Enquiries", relation: "mailbox.content.read", effective: true,
+      mailboxId: MAILBOX, mailboxName: "Enquiries", relation: "send.propose", effective: true,
     }]);
   });
 
@@ -1344,8 +1473,8 @@ describe("an agent's reach is recorded and readable, not only written", () => {
      */
     await seed();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "narrowed", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      name: "narrowed", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
+      grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
     });
 
     await testEnv.CATALOG.prepare(
@@ -1363,8 +1492,8 @@ describe("an agent's reach is recorded and readable, not only written", () => {
     await seed();
     const team = "tm_agentsreach0000000000001";
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "teamed-reach", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+      name: "teamed-reach", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
+      grants: [{ mailboxId: MAILBOX, relation: "send.propose" }],
     });
     await testEnv.CATALOG.prepare(
       "DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?",
@@ -1373,7 +1502,7 @@ describe("an agent's reach is recorded and readable, not only written", () => {
       "INSERT OR IGNORE INTO team_members (id, org_id, team_id, user_id, created_at) VALUES (?,?,?,?,?)",
     ).bind("tmm_agentsreach000000000001", ORG, team, SPONSOR,
       new Date(createSystemCtx().now()).toISOString()).run();
-    await tuple(team, "mailbox.content.read", "mailbox", MAILBOX);
+    await tuple(team, "send.propose", "mailbox", MAILBOX);
 
     const reach = (await agentReach(testEnv, ORG)).get(minted.agent.id);
     expect(reach?.[0]?.effective, "a sponsor's team relation was not counted").toBe(true);
@@ -1387,9 +1516,9 @@ describe("an agent's reach is recorded and readable, not only written", () => {
      */
     await seed();
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "repetitive", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+      name: "repetitive", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
       grants: Array.from({ length: 20 }, () => ({
-        mailboxId: MAILBOX, relation: "mailbox.content.read" as const,
+        mailboxId: MAILBOX, relation: "send.propose" as const,
       })),
     });
     expect((await agentReach(testEnv, ORG)).get(minted.agent.id)?.length).toBe(1);
@@ -1405,13 +1534,13 @@ describe("an agent's reach is recorded and readable, not only written", () => {
     expect(
       JSON.parse(entry!.detail).grants,
       "the entry records the same pair repeatedly, so the request was not normalised before the work",
-    ).toEqual([`${MAILBOX}::mailbox.content.read`]);
+    ).toEqual([`${MAILBOX}::send.propose`]);
 
     await expect(
       mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-        name: "greedy-grants", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+        name: "greedy-grants", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
         grants: Array.from({ length: 200 }, () => ({
-          mailboxId: MAILBOX, relation: "mailbox.content.read" as const,
+          mailboxId: MAILBOX, relation: "send.propose" as const,
         })),
       }),
     ).rejects.toThrow("E_AGENT_GRANTS_UNBOUNDED");
@@ -1491,20 +1620,33 @@ describe("a mint whose record would be truncated is refused, not recorded partia
   it("refuses a ceiling it could not write down exactly", async () => {
     const ctx = createSystemCtx();
     const at = new Date(ctx.now()).toISOString();
-    const many = Array.from({ length: 40 }, (_, n) => `mbx_truncation${String(n).padStart(12, "0")}`);
+    /*
+     * Sixteen mailboxes carrying all three relations rather than forty carrying one. The whole vocabulary is
+     * selected, so every mailbox must satisfy every capability it is offered for — `mail.read` needs
+     * `message.export` beside `mailbox.content.read`, and `mail.draft` needs `send.propose`. Forty grants of a
+     * single relation was a ceiling no mailbox could satisfy, which the mint now refuses first, for a
+     * different reason than the one under test.
+     *
+     * 48 pairs against `MAX_GRANTS` of 50, and a larger detail than the 4,600 bytes originally measured — so
+     * the truncation this exists to catch is still comfortably triggered.
+     */
+    const relations = ["mailbox.content.read", "message.export", "send.propose"] as const;
+    const many = Array.from({ length: 16 }, (_, n) => `mbx_truncation${String(n).padStart(12, "0")}`);
     await testEnv.CATALOG.batch(many.flatMap((mailboxId) => [
       testEnv.CATALOG.prepare("INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
         .bind(mailboxId, ORG, `Box ${mailboxId}`, at),
-      testEnv.CATALOG.prepare(
-        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
-         VALUES (?,?,?,'mailbox.content.read','mailbox',?,?)`,
-      ).bind(ctx.id("rt"), ORG, SPONSOR, mailboxId, at),
+      ...relations.map((relation) =>
+        testEnv.CATALOG.prepare(
+          `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+           VALUES (?,?,?,?,'mailbox',?,?)`,
+        ).bind(ctx.id("rt"), ORG, SPONSOR, relation, mailboxId, at)
+      ),
     ]));
 
     await expect(
       mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
         name: "unrecordable", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
-        grants: many.map((mailboxId) => ({ mailboxId, relation: "mailbox.content.read" as const })),
+        grants: many.flatMap((mailboxId) => relations.map((relation) => ({ mailboxId, relation }))),
       }),
       "a ceiling too large to record exactly was minted anyway, with a prefix for a record",
     ).rejects.toThrow("E_AGENT_MINT_UNRECORDABLE");
@@ -1528,19 +1670,21 @@ describe("a mint whose record would be truncated is refused, not recorded partia
         .bind("mbx_ordinary", ORG, "Enquiries", at),
       testEnv.CATALOG.prepare(
         `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
-         VALUES (?,?,?,'mailbox.content.read','mailbox','mbx_ordinary',?)`,
+         VALUES (?,?,?,'send.propose','mailbox','mbx_ordinary',?)`,
       ).bind(ctx.id("rt"), ORG, SPONSOR, at),
     ]);
 
+    // `mail.draft` and its one relation, so the stored pair list stays a single entry — this test is about
+    // the detail being recorded whole, and a two-relation capability would only make the fixture longer.
     const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
-      name: "ordinary-ceiling", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
-      grants: [{ mailboxId: "mbx_ordinary", relation: "mailbox.content.read" }],
+      name: "ordinary-ceiling", sponsorUserId: SPONSOR, capabilities: ["mail.draft"],
+      grants: [{ mailboxId: "mbx_ordinary", relation: "send.propose" }],
     });
     const entry = await testEnv.CATALOG.prepare(
       "SELECT detail FROM audit_entries WHERE org_id = ? AND subject = ? AND action = 'agent.minted'",
     ).bind(ORG, minted.agent.id).first<{ detail: string }>();
     const carried = JSON.parse(entry!.detail) as { grants?: string[]; truncated?: unknown };
     expect(carried.truncated, "an ordinary mint was stored as a truncation envelope").toBeUndefined();
-    expect(carried.grants).toEqual(["mbx_ordinary::mailbox.content.read"]);
+    expect(carried.grants).toEqual(["mbx_ordinary::send.propose"]);
   });
 });

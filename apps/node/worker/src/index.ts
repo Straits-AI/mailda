@@ -1,6 +1,12 @@
 import { createSystemCtx, ID_PREFIXES, idPattern } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
-import { heldCapabilities, offerableCapabilities, requiresOf } from "@mailda/contract/capability";
+import {
+  CAPABILITIES,
+  heldCapabilities,
+  offerableCapabilities,
+  requiresOf,
+  unsatisfiedCapabilities,
+} from "@mailda/contract/capability";
 
 import { log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
@@ -11,7 +17,7 @@ import {
 import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/passkey-verify.ts";
 
 import { claimNode } from "./claim.ts";
-import { confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
+import { acknowledgeKeyConflict, confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
 import { agentReach, listAgents, mintAgent, revokeAgent, sponsorReach } from "./agents.ts";
 import { migrate } from "./migrate.ts";
@@ -566,7 +572,15 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
        */
       const full = await runDoctor(env, clock);
       const wholeOrganization = who !== null && await isAdmin(env, who.orgId, who.userId);
-      const report = wholeOrganization ? full : withoutDataFindings(full);
+      /*
+       * Why it was reduced, not only that it was. One sentence covered all three situations and was true of
+       * one: a signed-in ordinary member was told this Node cannot authenticate anyone, which is the least
+       * useful thing to read during the incident they opened `doctor` to understand.
+       */
+      const report = wholeOrganization ? full : withoutDataFindings(
+        full,
+        who !== null ? "not_an_administrator" : orgId === null ? "unclaimed" : "locked_out",
+      );
       // A refusing verdict is a 503: the Node is telling a load balancer and a human the same
       // thing, rather than answering 200 with bad news in the body.
       const status = report.verdict === "refuse" ? 503 : 200;
@@ -2536,6 +2550,32 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         name?: string; sponsorUserId?: string; capabilities?: string[]; lifetimeDays?: number;
         grants?: { mailboxId: string; relation: MailboxRelation }[];
       };
+      /*
+       * Through the product, minting is **one** step, so an empty mailbox list is a mistake rather than a plan.
+       *
+       * `mintAgent` deliberately allows no grants at all — it is also the building block for the two-step case
+       * where an agent is given a relation its sponsor does not hold, which `grants` cannot express. Nothing
+       * reaches this route that way: an administrator selecting `mail.read` and no mailbox gets a credential
+       * that authenticates and is refused on every route the capability names, and finds out days later
+       * through a 403 that reads like a defect in this Node.
+       *
+       * Same function as the domain check, with `grantsAreComplete` — so the rule has one definition and the
+       * two callers differ only in what they know.
+       */
+      const unmet = unsatisfiedCapabilities(
+        CAPABILITIES.filter((one) => (body.capabilities ?? []).includes(one.id)),
+        body.grants ?? [],
+        { grantsAreComplete: true },
+      );
+      if (unmet.length > 0) {
+        throw unprocessable("E_AGENT_CAPABILITY_UNSATISFIABLE", {
+          what: unmet.map((one) => `${one.id} needs ${one.requires.join(" and ")} on one mailbox`).join("; "),
+          why: "an agent's authority is its capabilities intersected with its relations, so a capability whose "
+            + "relations no single granted mailbox carries is authority it can never exercise",
+          fix: "grant every relation the capability needs on at least one mailbox — all of them on the same "
+            + "mailbox, because reach is decided per mailbox — or do not select the capability",
+        });
+      }
       const minted = await mintAgent(env, clock, who.orgId, who.userId, {
         name: body.name ?? "",
         sponsorUserId: body.sponsorUserId ?? who.userId,
@@ -2783,6 +2823,44 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         notice: "These ten codes are shown once and cannot be shown again. Store them, then confirm one so "
           + "this Node knows you have them. Until you do, `doctor` reports the set unconfirmed and the "
           + "previous sheet keeps working — confirming this one retires it.",
+      });
+    }
+
+    /**
+     * Recording that a permanent key collision has been assessed (P2-2).
+     *
+     * `doctor` scans every completed restore and stays `degraded` while any of them collided with a live key,
+     * for a good reason: nothing repairs a collision, so nothing should clear the finding. But nothing could
+     * discharge it either, and a permanent alarm is one an operator learns to scroll past — after which the
+     * next real `degraded` reads as the same old noise.
+     *
+     * This changes what the finding *decides*, never what it says. The loss stays in the report, `ok` stays
+     * false, and the severity drops to `report` once somebody has established what was lost.
+     */
+    const acknowledgeConflict = /^\/api\/recovery\/conflicts\/([^/]+)\/acknowledge$/.exec(url.pathname);
+    if (acknowledgeConflict && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) {
+        return Response.json(
+          { error: "unauthenticated", message: "Sign in to acknowledge a key collision.", refreshable: true },
+          { status: 401 },
+        );
+      }
+      await assertAdmin(env, who.orgId, who.userId);
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const recorded = await acknowledgeKeyConflict(env, clock, who.orgId, who.userId, {
+        restoreId: acknowledgeConflict[1]!,
+        // Refused in the domain when blank rather than defaulted here: an acknowledgement this Node filled in
+        // on somebody's behalf would be a conclusion nobody reached.
+        scope: String(body.scope ?? ""),
+        conclusion: String(body.conclusion ?? ""),
+      });
+      return Response.json({
+        acknowledged: {
+          restoreId: acknowledgeConflict[1]!,
+          generations: recorded.generations,
+          acknowledgedAt: recorded.acknowledgedAt,
+        },
       });
     }
 

@@ -86,6 +86,13 @@ const UNDRIVEN: readonly string[] = [
   "POST /api/auth/login",
   "POST /api/auth/logout-everywhere",
   "DELETE /api/auth/passkeys",
+  /*
+   * Needs a completed restore that really collided with a live key — a conflict cannot be inserted as a row
+   * and mean anything, because the check reads the detail the restore itself wrote. Built and **driven** in
+   * `test/recovery-escrow.test.ts`, which parses the answer against `conflictAcknowledgedResponse`; this list
+   * is about drivers in `contract-responses.test.ts`, which is why it is named here rather than absent.
+   */
+  "POST /api/recovery/conflicts/:restoreId/acknowledge",
   // Need a delivered notice and a sealed export respectively; both are ordinary fixtures and neither is hard.
   // These two are the honest backlog rather than a case for an exemption.
   "GET /api/notifications",

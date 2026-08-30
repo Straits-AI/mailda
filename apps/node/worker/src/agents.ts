@@ -1,6 +1,12 @@
 import { agentGrantableActions } from "@mailda/contract/agent";
 import type { MailboxRelation } from "./access.ts";
-import { capabilityIds, offerableCapabilities, routesFor } from "@mailda/contract/capability";
+import {
+  CAPABILITIES,
+  capabilityIds,
+  offerableCapabilities,
+  routesFor,
+  unsatisfiedCapabilities,
+} from "@mailda/contract/capability";
 import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
 import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 
@@ -469,6 +475,46 @@ export async function mintAgent(
         + "authority and the vocabulary has drifted from them",
       fix: "report this: a capability in packages/contract/src/capability.ts names a withheld route, which "
         + "test/node/capability-world.test.ts exists to catch",
+    });
+  }
+
+  /*
+   * **The intersection, which nothing checked.** Both halves of an agent's authority were validated and their
+   * product was not: every grant against the sponsor, every capability against the vocabulary, and
+   * `capabilities: ["mail.read"], grants: []` satisfied both. The result authenticates and reaches nothing —
+   * `mail.read` requires `mailbox.content.read` and `message.export`, so every route it names answers 403.
+   *
+   * ## Why this layer stops short of refusing an empty grant list
+   *
+   * Because minting and granting are genuinely separable here, and one legitimate case needs them separate:
+   * an agent may be given a relation its **sponsor does not hold**, to prove the intersection refuses the read
+   * at request time. `grants` cannot express that — every entry is checked against the sponsor above — so that
+   * scenario must mint with none and write the tuple afterwards. Refusing it here would make a real property
+   * untestable and a real two-step flow impossible.
+   *
+   * So this layer refuses what it can see to be wrong: grants that were supplied and do not satisfy the
+   * capabilities selected — a partial set, or relations split across two mailboxes when reach is decided per
+   * mailbox. `POST /api/agents` applies the same function with `grantsAreComplete`, because through the
+   * product minting is **one** step and there is no later grant to wait for; an administrator who selects
+   * `mail.read` and no mailbox has made a mistake, not a plan.
+   */
+  const unsatisfied = unsatisfiedCapabilities(
+    CAPABILITIES.filter((one) => input.capabilities.includes(one.id)),
+    input.grants ?? [],
+    // Grants supplied here are checked; **no grants at all** is deferral rather than error, and only at this
+    // layer. See the note above and `POST /api/agents`, which withholds that allowance from the product.
+    { grantsAreComplete: (input.grants ?? []).length > 0 },
+  );
+  if (unsatisfied.length > 0) {
+    throw unprocessable("E_AGENT_CAPABILITY_UNSATISFIABLE", {
+      what: unsatisfied
+        .map((one) => `${one.id} needs ${one.requires.join(" and ")} on one mailbox`)
+        .join("; "),
+      why: "an agent's authority is its capabilities intersected with its relations, so a capability whose "
+        + "relations no single granted mailbox carries is authority it can never exercise. The credential "
+        + "would authenticate and then be refused on every route the capability names",
+      fix: "grant every relation the capability needs on at least one mailbox — all of them on the same "
+        + "mailbox, because reach is decided per mailbox — or do not select the capability",
     });
   }
 

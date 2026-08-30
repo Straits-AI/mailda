@@ -11,6 +11,12 @@
  * — is a real one.
  */
 export * from "./agent.ts";
+/*
+ * The authority algebra, exported because it is what the machine surfaces are derived from: `mcp.ts` builds
+ * its catalogue from routes a machine can be provisioned for, and a test that checks the catalogue has to be
+ * able to ask the same question rather than restate it.
+ */
+export * from "./authority.ts";
 export * from "./naming.ts";
 export * from "./routes.ts";
 export * from "./send-mail.ts";

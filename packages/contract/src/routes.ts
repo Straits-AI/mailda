@@ -153,6 +153,12 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/agents/:agentId", summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
   { method: "GET", path: "/api/search/failed", summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
   { method: "POST", path: "/api/search/repair", summary: "Put named messages back in the body index's queue", request: S.searchRepairRequest, response: S.searchRepairedResponse },
+  /*
+   * Acknowledging a permanent key collision (P2-2). `organization`, because it is a statement about the whole
+   * Node's evidence made on the organization's behalf — and `governed` in the exposure tiers, because it is a
+   * conclusion a person reaches and not an act a machine should be able to file.
+   */
+  { method: "POST", path: "/api/recovery/conflicts/:restoreId/acknowledge", summary: "Record that a permanent key collision has been assessed", authority: { scope: "organization", allOf: ["org.admin"] }, request: S.acknowledgeConflictRequest, response: S.conflictAcknowledgedResponse },
   { method: "POST", path: "/api/recovery-codes/rotate", summary: "Mint a replacement set of ten recovery codes, shown once", response: S.recoveryCodesMintedResponse },
   { method: "POST", path: "/api/recovery-codes/confirm", summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
   {
@@ -213,7 +219,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
   { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.peopleListResponse },
-  { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamListResponse },
+  { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "member" }, response: S.teamListResponse },
   { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },
   { method: "GET", path: "/api/teams/:teamId", summary: "One team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamDetailResponse },
   { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team", response: S.teamCreatedResponse },
@@ -222,7 +228,7 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
-  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.accessResponse },
+  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "self-or-admin" }, response: S.accessResponse },
   { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
   { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.supervisedListResponse },
@@ -281,7 +287,7 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
-    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    authority: { scope: "filtered", by: "addressee" },
     method: "GET", path: "/api/notifications",
     summary: "What has changed since the last poll",
     response: S.notificationListResponse,
@@ -313,7 +319,7 @@ export const ROUTES = [
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
-  { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftSavedResponse },
+  { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, request: S.saveDraftRequest, response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
   { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
@@ -357,14 +363,14 @@ export const ROUTES = [
     request: S.editPolicyDraftRequest, response: S.policyDraftResponse,
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
-  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.approvalListResponse },
+  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, response: S.approvalListResponse },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
-  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterListResponse },
-  { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterResponse },
+  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "filtered", by: "ownership" }, response: S.matterListResponse },
+  { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "member" }, request: S.openMatterRequest, response: S.matterResponse },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
   {
     authority: { scope: "none" },

@@ -3,6 +3,7 @@ import { ID_PREFIXES, ULID_ALPHABET, type Ctx } from "@mailda/runtime";
 import { auditedBatch } from "./audit.ts";
 import { unprocessable } from "./errors.ts";
 import { aesKeyFrom, vault, type KeyPurpose } from "./keyvault.ts";
+import { conflictKey, restoreDetail } from "./restore-detail.ts";
 
 /**
  * ADR 29's recovery codes, carrying ADR 28's key escrow (#92).
@@ -394,6 +395,33 @@ export async function mintRecoveryCodes(
  */
 export async function redeemForVault(
   env: Env, ctx: Ctx, orgId: string, code: string,
+  /**
+   * How a generation is put back — the real vault by default.
+   *
+   * ## Why this parameter exists, and why it is the smallest one that works
+   *
+   * The failure branch below settles as `failed` and **does not spend the code**, which is the difference
+   * between an operator losing one of ten to a crash and being able to run it again. It had no test, and its
+   * own comment said so: `vault.restore` answers one of three outcomes for every well-formed input, the
+   * escrow's shape is checked before the loop, and two attempts to force a refusal from data both failed —
+   * `seal()` overflows on a payload large enough to matter, and miniflare does not enforce the storage-key
+   * limit that would have rejected one. So the only remaining trigger is the Durable Object itself failing,
+   * which nothing reachable from a test can arrange.
+   *
+   * A seam is therefore the honest way to reach it, and this is the narrowest available: one function, the
+   * same signature the vault's own `restore` has, defaulted to it. It cannot change behaviour when nobody
+   * passes it, and it is not configuration — there is no environment variable, no flag, and nothing the
+   * deployed Node reads. `codeKey` and `seal` are exported a few lines above for the same reason and with the
+   * same argument.
+   *
+   * What it buys is the whole branch, end to end: some generations installed, the failure detail persisted,
+   * the attempt `failed`, ownership released, `redeemed_at` untouched, and a re-run that succeeds — none of
+   * which was held by anything but reasoning.
+   */
+  restoreKey: (
+    purpose: KeyPurpose, generation: number, secret: string,
+  ) => Promise<"restored" | "conflict" | "identical"> = (purpose, generation, secret) =>
+    vault(env).restore(purpose, generation, secret),
 ): Promise<{
   restored: { content: number[]; credential: number[] };
   /**
@@ -677,12 +705,16 @@ export async function redeemForVault(
   const restored = { content: [] as number[], credential: [] as number[] };
   const conflicted = { content: [] as number[], credential: [] as number[] };
   /*
-   * `failure` records a vault refusal part way through, and the branch it feeds — settle as `failed`, do not
-   * spend the code — has **no data-driven trigger under miniflare**, which is said here rather than implied.
-   * `vault.restore` returns one of three outcomes for every well-formed input and the escrow's shape is
-   * checked above, so reaching it needs the Durable Object itself to fail. What *is* tested is the property
-   * the branch exists for: `test/recovery-escrow.test.ts` proves a redemption that does not complete costs no
-   * code, through the corrupt-escrow path that refuses before any of this.
+   * `failure` records a vault refusal part way through, and the branch it feeds settles as `failed` and does
+   * **not** spend the code — the difference between an operator losing one of ten to a crash and being able
+   * to run it again.
+   *
+   * It has no data-driven trigger: `vault.restore` answers one of three outcomes for every well-formed input,
+   * the escrow's shape is checked above, and two attempts to force a refusal from data both failed. It is
+   * driven end to end through the `restoreKey` seam instead — see its own note — and
+   * `test/recovery-escrow.test.ts` now asserts every consequence: what was installed before the refusal, the
+   * detail persisted, the attempt `failed`, the ownership released, `redeemed_at` untouched, and a re-run
+   * that completes.
    */
   let failure: string | null = null;
   try {
@@ -697,7 +729,7 @@ export async function redeemForVault(
          * `identical` is not reported as restored either. A generation the vault already had, byte for byte,
          * was not put back by this redemption, and counting it would inflate what a code achieved.
          */
-        const outcome = await vault(env).restore(purpose, key.generation, key.secret);
+        const outcome = await restoreKey(purpose, key.generation, key.secret);
         if (outcome === "restored") restored[purpose].push(key.generation);
         else if (outcome === "conflict") conflicted[purpose].push(key.generation);
       }
@@ -1175,4 +1207,113 @@ export async function confirmRecoveryCodes(
   }
 
   return { confirmed, alreadyConfirmed: false };
+}
+
+/**
+ * Record that somebody has assessed a permanent key collision.
+ *
+ * ## What this is not
+ *
+ * It is **not** a repair, and the wording throughout says so. Two different secrets cannot share one
+ * generation number; mail sealed under the escrowed key of that generation is unreadable and stays that way.
+ * Nothing here changes a byte of evidence.
+ *
+ * What it changes is whether `doctor`'s verdict is decided by a fact nobody can act on any further. A
+ * permanent `degraded` that no act discharges is a warning an operator learns to scroll past — and then the
+ * next real one is read as the same old noise. The finding remains, `ok` stays `false`, and the severity drops
+ * to `report`.
+ *
+ * ## Why the generations are part of the identity
+ *
+ * The acknowledgement names the exact conflicted set it was made about. If that restore is later found to
+ * have collided with a generation nobody assessed, the key no longer matches and the finding returns to
+ * `degraded` — which is the fail-closed direction, and the only one under which the record means what it
+ * says. Acknowledging a restore once and for all would be acknowledging future discoveries in advance.
+ *
+ * Immutable and unique: a second acknowledgement of the same set is refused rather than layered, so the trail
+ * cannot hold two conclusions about one incident with nothing saying which stands.
+ */
+export async function acknowledgeKeyConflict(
+  env: Env,
+  ctx: Ctx,
+  orgId: string,
+  actorUserId: string,
+  input: { restoreId: string; scope: string; conclusion: string },
+): Promise<{ acknowledgedAt: string; generations: string }> {
+  const restore = await env.CATALOG.prepare(
+    "SELECT id, state, detail FROM recovery_restores WHERE org_id = ? AND id = ?",
+  ).bind(orgId, input.restoreId).first<{ id: string; state: string; detail: string | null }>();
+
+  if (restore === null || restore.state !== "completed") {
+    throw unprocessable("E_RESTORE_NOT_ACKNOWLEDGEABLE", {
+      what: restore === null
+        ? `no completed restore ${input.restoreId}`
+        : `restore ${input.restoreId} is ${restore.state}`,
+      why: "an acknowledgement is a statement about a collision that has happened, and only a completed "
+        + "restore has reported one. Acknowledging an attempt still in flight would record a conclusion "
+        + "about an outcome nobody has seen",
+      fix: "name a completed restore — `GET /api/doctor` lists the ones that collided",
+    });
+  }
+
+  const { conflicted } = restoreDetail(restore.detail);
+  if (conflicted.length === 0) {
+    throw unprocessable("E_RESTORE_HAD_NO_CONFLICT", {
+      what: `restore ${input.restoreId} reported no key collision`,
+      why: "acknowledging a collision that did not happen would put a permanent incident record against a "
+        + "restore that went cleanly, and a later reader has no way to tell that apart from one that did",
+      fix: "check the restore id — `recovery_key_conflicts` in the doctor report names the ones that collided",
+    });
+  }
+
+  /*
+   * Both refused rather than defaulted. A blank conclusion is a dismissal, and this table exists to be
+   * distinguishable from one; a blank scope makes the record unreadable to whoever finds it in a year, which
+   * is the only reader it has.
+   */
+  for (const [field, value] of [["scope", input.scope], ["conclusion", input.conclusion]] as const) {
+    if (value.trim() === "") {
+      throw unprocessable("E_ACKNOWLEDGEMENT_INCOMPLETE", {
+        what: `${field} was empty`,
+        why: "an acknowledgement with no " + field + " is a dismissal wearing the shape of an assessment, and "
+          + "the only reader of this record is somebody who arrives long after everybody involved has gone",
+        fix: `send a ${field} describing what was examined and what was concluded`,
+      });
+    }
+  }
+
+  const generations = conflictKey(conflicted);
+  const at = new Date(ctx.now()).toISOString();
+
+  const existing = await env.CATALOG.prepare(
+    `SELECT assessed_by, assessed_at FROM recovery_key_conflict_acknowledgements
+      WHERE org_id = ? AND restore_id = ? AND generations = ?`,
+  ).bind(orgId, input.restoreId, generations).first<{ assessed_by: string; assessed_at: string }>();
+  if (existing !== null) {
+    throw unprocessable("E_ALREADY_ACKNOWLEDGED", {
+      what: `${input.restoreId} generations ${generations} were assessed by ${existing.assessed_by} `
+        + `on ${existing.assessed_at}`,
+      why: "an acknowledgement is immutable, so a second one would leave two conclusions about one incident "
+        + "with nothing saying which stands",
+      fix: "read the existing assessment. If the conclusion has changed, that is a new incident and belongs "
+        + "in the audit trail as its own entry rather than as a replacement for this one",
+    });
+  }
+
+  await auditedBatch(env, ctx, orgId, {
+    action: "recovery.conflict_acknowledged",
+    outcome: "ok",
+    actorUserId,
+    subject: input.restoreId,
+    detail: { generations, scope: input.scope, conclusion: input.conclusion },
+  }, (entry) => [
+    entry,
+    env.CATALOG.prepare(
+      `INSERT INTO recovery_key_conflict_acknowledgements
+         (id, org_id, restore_id, generations, assessed_by, assessed_at, scope, conclusion)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rka"), orgId, input.restoreId, generations, actorUserId, at, input.scope, input.conclusion),
+  ]);
+
+  return { acknowledgedAt: at, generations };
 }

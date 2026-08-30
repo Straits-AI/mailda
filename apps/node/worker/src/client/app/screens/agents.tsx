@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { shortfall } from "@mailda/contract/capability";
+
 import { Nothing } from "../chrome.tsx";
 import {
   AGENT_RELATIONS, mintAgent, revokeAgent, useAgentCapabilities, useAgents, useMe, usePeople,
@@ -73,32 +75,28 @@ function standing(agent: AgentRow, now: number): { label: string; state: string 
  * work. A capability is satisfied when **some one mailbox** carries all of its relations; which mailbox is
  * the administrator's business, and demanding every mailbox would refuse the ordinary case of an agent that
  * reads one and drafts in another.
+ *
+ * ## One rule, in `@mailda/contract`
+ *
+ * The arithmetic above used to live here and **again** in `mintAgent`, which is two chances to make the same
+ * mistake and no way to notice one of them had. `shortfall` is the single definition now; this function only
+ * translates the screen's shapes into it. What the interface refuses to submit and what the Node refuses to
+ * mint are therefore the same question, answered by the same code.
  */
 function unmet(
   capabilities: CapabilityRow[],
   chosen: Set<string>,
   reach: Set<string>,
 ): { id: string; missing: string[] }[] {
-  const byMailbox = new Map<string, Set<string>>();
-  for (const key of reach) {
+  // `reach` is a set of `mailboxId::relation` keys, which is the grant list in the shape this screen holds it.
+  const grants = [...reach].map((key) => {
     const [mailboxId, relation] = key.split("::");
-    const held = byMailbox.get(mailboxId!) ?? new Set<string>();
-    held.add(relation!);
-    byMailbox.set(mailboxId!, held);
-  }
+    return { mailboxId: mailboxId!, relation: relation! };
+  });
 
   return capabilities
     .filter((one) => chosen.has(one.id) && one.requires.length > 0)
-    .map((one) => {
-      // The mailbox that comes closest, so the message names what is missing *there* rather than in the
-      // abstract — "add message.export on Support" is an instruction; "add message.export" is a puzzle.
-      const shortfalls = [...byMailbox.values()]
-        .map((held) => one.requires.filter((relation) => !held.has(relation)));
-      const best = shortfalls.length === 0
-        ? [...one.requires]
-        : shortfalls.reduce((a, b) => (b.length < a.length ? b : a));
-      return { id: one.id, missing: best };
-    })
+    .map((one) => ({ id: one.id, missing: [...shortfall(one.requires, grants)] }))
     .filter((one) => one.missing.length > 0);
 }
 
@@ -318,7 +316,22 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         new token.
       </p>
 
-      <button type="submit" disabled={name.trim() === "" || chosen.size === 0}>Mint agent</button>
+      {/*
+        * Disabled on the shortfall too, not only on the empty name.
+        *
+        * The screen has computed and displayed `unmet` all along — "no mailbox here carries all of them, so
+        * the agent will authenticate and be refused" — and then let the administrator press the button
+        * anyway. A warning beside an enabled control reads as advice about a choice, and this is not one:
+        * `POST /api/agents` refuses the same combination. Being stopped here, next to the mailbox list that
+        * fixes it, is the difference between a correction and a rejection.
+        */}
+      <button
+        type="submit"
+        disabled={name.trim() === "" || chosen.size === 0
+          || unmet(capabilities.data?.capabilities ?? [], chosen, reach).length > 0}
+      >
+        Mint agent
+      </button>
 
       {refusal === null ? null : <p className="notice">{refusal}</p>}
       {token === null ? null : (

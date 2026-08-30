@@ -398,6 +398,20 @@ The attempt is now recorded before the vault calls and settled after:
 A `started` with no settling entry beside it is an interrupted restore. That state existed before and was
 indistinguishable from a completed one.
 
+**The refusal path is driven end to end**, which it was not. A vault that fails part way settles `failed`,
+leaves `redeemed_at` null and releases the code — the difference between an operator losing one of ten to a
+crash and being able to run it again — and none of that was held by a test. It could not be: `vault.restore`
+answers one of three outcomes for every well-formed input, the escrow's shape is checked before the loop, and
+two attempts to force a refusal from data both failed, so the only remaining trigger was the Durable Object
+itself failing.
+
+`redeemForVault` therefore takes the restore function it calls, defaulted to the real vault. Not
+configuration — no flag, no environment variable, nothing the deployed Node reads — and the same argument the
+neighbouring `codeKey` and `seal` exports already make. What it buys is every consequence of one refusal:
+what was installed before it, the detail persisted, the attempt `failed`, the ownership released, the code
+unspent, and a re-run that completes. The claim *"re-running is safe because every step is idempotent"* was a
+sentence in a comment until something executed it.
+
 Three details:
 
 - **The row is the reservation.** A code with a live `started` row is in flight, which stops two concurrent
@@ -429,8 +443,19 @@ Two more findings joined it, both about what the latest row cannot say:
 - **`recovery_key_conflicts`** scans every completed restore, not the newest. A collision is permanent — two
   secrets cannot share one generation number — so mail sealed under the escrowed key of that generation stays
   unreadable, and a later clean restore was becoming the newest row and taking the conflict out of the verdict
-  without anything having repaired it. It stays degraded; there is no acknowledgement record yet, which is
-  stated rather than implied.
+  without anything having repaired it.
+
+  It therefore stayed `degraded` for ever, and that was the second problem. A permanent alarm nobody can
+  discharge is one an operator learns to scroll past, after which the next real `degraded` reads as the same
+  old noise. `POST /api/recovery/conflicts/:restoreId/acknowledge` records that somebody established what was
+  lost — assessor, time, what was examined, what was concluded — and the finding's severity drops to `report`
+  while `ok` **stays false**: the loss is still in the report, because nothing repaired it.
+
+  The acknowledgement is keyed to the restore **and the exact conflicted generations**, and is immutable.
+  Acknowledging a restore outright would be acknowledging future discoveries in advance, so a conflicted set
+  that no longer matches what was assessed returns to `degraded` — the fail-closed direction, and the only one
+  under which the record means what it says. A second acknowledgement of the same set is refused rather than
+  layered: a changed conclusion is a new incident, not a replacement.
 - The restore detail is **parsed through a schema**. Catching invalid JSON and then trusting the shape meant a
   row carrying `"conflicted": 7` reached `.map()` and took the diagnostic down — a disaster report that fails
   on a malformed historical record fails at the one moment it is needed.

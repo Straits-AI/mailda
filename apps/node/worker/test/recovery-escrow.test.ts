@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
+import { conflictAcknowledgedResponse } from "@mailda/contract/schemas";
+
+import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { runDoctor, type Finding } from "../src/doctor.ts";
 import { aesKeyFrom, vault } from "../src/keyvault.ts";
 import {
-  CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes, escrowState, formatCode,
-  codeKey, mintRecoveryCodes, normaliseCode, redeemForVault, RESTORE_LEASE_MS, seal,
+  acknowledgeKeyConflict, CODE_CHARACTERS, codeHash, confirmationStatements, confirmRecoveryCodes,
+  escrowState, formatCode, codeKey, mintRecoveryCodes, normaliseCode, redeemForVault, RESTORE_LEASE_MS, seal,
   settlementStatements,
 } from "../src/recovery.ts";
 
@@ -1847,5 +1850,314 @@ describe("a later clean restore does not hide an earlier permanent conflict", ()
     expect(state.detail).toContain("cannot read");
     // And the conflict scan skips it rather than throwing: an illegible row is not evidence of a collision.
     expect(find(report.findings, "recovery_key_conflicts").ok).toBe(true);
+  });
+});
+
+describe("a permanent key collision can be acknowledged, which is not the same as repaired", () => {
+  /*
+   * `recovery_key_conflicts` scans every completed restore and holds the Node `degraded` while any of them
+   * collided with a live key. Both halves of that are right: nothing repairs a collision, so nothing should
+   * clear the finding.
+   *
+   * And it had no end. An operator who had read the finding, worked out what was sealed in that window and
+   * established the loss was bounded still saw `degraded` every morning afterwards — so `degraded` stopped
+   * carrying information, and the next real one would be read as the same old noise. That is how a permanent
+   * alarm becomes worse than no alarm.
+   *
+   * What acknowledgement changes is what the finding **decides**, never what it says.
+   */
+
+  /** A completed restore that really collided, built the way the trail's own tests build one. */
+  async function collide(): Promise<string> {
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    // A fresh generation 1 with a different secret, so the escrowed generation 1 cannot be installed.
+    await vault(testEnv).sealingKey("content");
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(outcome.conflicted.content, "the fixture did not produce a collision").toContain(1);
+
+    const restore = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_restores WHERE org_id = ? AND state = 'completed' ORDER BY started_at DESC",
+    ).bind(ORG).first<{ id: string }>();
+    return restore!.id;
+  }
+
+  it("holds the Node degraded until somebody assesses it", async () => {
+    /*
+     * The control on everything below. If the collision did not degrade the Node in the first place, the
+     * acknowledgement would be clearing a finding that was never raised.
+     */
+    await collide();
+    const before = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts");
+    expect(before.severity, "a live key collision did not degrade the Node").toBe("degraded");
+    expect(before.ok).toBe(false);
+  });
+
+  it("stops deciding the verdict once assessed, and still reports the loss", async () => {
+    const restoreId = await collide();
+    await acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, {
+      restoreId,
+      scope: "content generation 1, mail sealed between 09:00 and 11:20 on 30 August",
+      conclusion: "four messages unreadable, all reproducible from the sender's own archive",
+    });
+
+    const after = find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts");
+    expect(after.severity, "an assessed collision still decides the verdict").toBe("report");
+    /*
+     * **`ok` stays false**, and that is the whole distinction. Nothing was repaired: two different secrets
+     * still cannot share one generation number. A finding that flipped to `ok` would be a record of a loss
+     * that no longer mentions the loss.
+     */
+    expect(after.ok, "acknowledgement was treated as a repair").toBe(false);
+    expect(after.detail, "the assessed collision vanished from the report").toContain(restoreId);
+    expect(after.detail).toMatch(/still permanent|Assessed/);
+  });
+
+  it("returns to degraded if the restore is later found to have collided with more", async () => {
+    /*
+     * The reason the generations are part of the key. An acknowledgement is a statement about a specific set,
+     * and acknowledging a restore outright would be acknowledging future discoveries in advance — so a
+     * conflicted set that no longer matches what was assessed reads as unassessed, which is the fail-closed
+     * direction.
+     */
+    const restoreId = await collide();
+    await acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, {
+      restoreId, scope: "content generation 1", conclusion: "bounded",
+    });
+    expect(
+      find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts").severity,
+    ).toBe("report");
+
+    // The restore is re-read and found to have collided with a credential generation nobody assessed.
+    const row = await testEnv.CATALOG.prepare("SELECT detail FROM recovery_restores WHERE id = ?")
+      .bind(restoreId).first<{ detail: string }>();
+    const detail = JSON.parse(row!.detail) as { conflicted: { content: number[]; credential: number[] } };
+    detail.conflicted.credential = [2];
+    await testEnv.CATALOG.prepare("UPDATE recovery_restores SET detail = ? WHERE id = ?")
+      .bind(JSON.stringify(detail), restoreId).run();
+
+    expect(
+      find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts").severity,
+      "an acknowledgement of one generation silently covered a collision nobody assessed",
+    ).toBe("degraded");
+  });
+
+  it("refuses a second acknowledgement of the same set", async () => {
+    // Immutable: two conclusions about one incident, with nothing saying which stands, is worse than one.
+    const restoreId = await collide();
+    const input = { restoreId, scope: "content generation 1", conclusion: "bounded" };
+    await acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, input);
+    await expect(acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, input))
+      .rejects.toThrow("E_ALREADY_ACKNOWLEDGED");
+  });
+
+  it("refuses an acknowledgement with nothing in it", async () => {
+    // A blank conclusion is a dismissal wearing the shape of an assessment, and this table exists to be
+    // distinguishable from one.
+    const restoreId = await collide();
+    await expect(
+      acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, {
+        restoreId, scope: "content generation 1", conclusion: "   ",
+      }),
+    ).rejects.toThrow("E_ACKNOWLEDGEMENT_INCOMPLETE");
+  });
+
+  it("refuses to acknowledge a restore that went cleanly", async () => {
+    /*
+     * A permanent incident record filed against a restore that collided with nothing is unreadable to
+     * whoever finds it later — they cannot tell it apart from one that did.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+    expect(outcome.conflicted.content, "the fixture collided after all").toEqual([]);
+
+    const restore = await testEnv.CATALOG.prepare(
+      "SELECT id FROM recovery_restores WHERE org_id = ? AND state = 'completed' ORDER BY started_at DESC",
+    ).bind(ORG).first<{ id: string }>();
+    await expect(
+      acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, {
+        restoreId: restore!.id, scope: "x", conclusion: "y",
+      }),
+    ).rejects.toThrow("E_RESTORE_HAD_NO_CONFLICT");
+  });
+
+  it("is reachable over the route, and answers the shape the contract declares", async () => {
+    /*
+     * Driven over HTTP rather than through the domain function, because a route with no driver is exactly the
+     * gap this repository has already paid for: three routes shipped success shapes that disagreed with their
+     * own schemas while a suite claiming to check every schema-bearing route never sent them a request.
+     *
+     * The first version of this work put the route on `response-drivers-world`'s undriven list, which would
+     * have repeated that.
+     */
+    // Session first: `collide()` regenerates the credential key, and one sealed under the old key cannot be
+    // opened afterwards.
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(USER, ORG, "operator@recovery.example", at).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'org.admin','organization',?,?)`,
+    ).bind(ctx.id("rt"), ORG, USER, ORG, at).run();
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: USER });
+    const restoreId = await collide();
+
+    const response = await SELF.fetch(`${ORIGIN}/api/recovery/conflicts/${restoreId}/acknowledge`, {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ scope: "content generation 1", conclusion: "four messages, all recoverable" }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await response.json();
+    conflictAcknowledgedResponse.parse(body);
+    expect(body).toMatchObject({ acknowledged: { restoreId, generations: "content 1" } });
+
+    // And the finding it exists to change actually changed.
+    expect(
+      find((await runDoctor(testEnv, createSystemCtx())).findings, "recovery_key_conflicts").severity,
+    ).toBe("report");
+  });
+
+  it("records who assessed it, in a trail entry that cannot be separated from the row", async () => {
+    const restoreId = await collide();
+    await acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, {
+      restoreId, scope: "content generation 1", conclusion: "four messages, all recoverable elsewhere",
+    });
+
+    const entry = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, detail FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.conflict_acknowledged'`,
+    ).bind(ORG).first<{ actor_user_id: string; detail: string }>();
+    expect(entry, "the assessment left no audit entry").not.toBeNull();
+    expect(entry!.actor_user_id).toBe(USER);
+    expect(JSON.parse(entry!.detail).conclusion).toContain("recoverable elsewhere");
+  });
+});
+
+describe("a vault that refuses part way costs no code, and the attempt says what it managed", () => {
+  /*
+   * The branch that decides whether a crash costs an operator one of ten codes, and it was held by reasoning.
+   *
+   * Its own comment said why: `vault.restore` answers one of three outcomes for every well-formed input, the
+   * escrow's shape is checked before the loop, and two attempts to force a refusal from data both failed —
+   * `seal()` overflows on a payload large enough to matter, and miniflare does not enforce the storage-key
+   * limit that would have rejected one. So the only remaining trigger is the Durable Object failing, and
+   * `redeemForVault` now takes the restore function it calls, defaulted to the real vault.
+   *
+   * Everything below is a consequence of that one refusal, and none of it was checked before.
+   */
+  async function escrowOfTwo(): Promise<string> {
+    // Two content generations, so a seam that fails on the second has a first to have succeeded on.
+    await vault(testEnv).sealingKey("content");
+    await vault(testEnv).rotate("content");
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    await loseTheVault();
+    return codes[0]!;
+  }
+
+  /** Refuses after `after` successful installs, and reports how many it was asked for. */
+  function failingAfter(after: number) {
+    const asked: number[] = [];
+    return {
+      asked,
+      restore: async (_purpose: "content" | "credential", generation: number, _secret: string) => {
+        asked.push(generation);
+        if (asked.length > after) throw new Error("the vault refused: storage unavailable");
+        return "restored" as const;
+      },
+    };
+  }
+
+  it("settles as failed, leaves the code unspent, and says what it installed first", async () => {
+    const code = await escrowOfTwo();
+    const seam = failingAfter(1);
+
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, code, seam.restore),
+    ).rejects.toThrow();
+
+    expect(seam.asked.length, "the seam was never reached, so this proves nothing").toBeGreaterThan(1);
+
+    const restore = await testEnv.CATALOG.prepare(
+      "SELECT state, detail FROM recovery_restores WHERE org_id = ? ORDER BY started_at DESC",
+    ).bind(ORG).first<{ state: string; detail: string | null }>();
+    expect(restore!.state, "a refused restore did not settle as failed").toBe("failed");
+
+    const detail = JSON.parse(restore!.detail!) as {
+      restored: { content: number[] }; error?: string;
+    };
+    expect(detail.error, "the failure detail was not persisted").toMatch(/refused/);
+    expect(
+      detail.restored.content,
+      "the generations installed before the refusal were lost from the record",
+    ).toEqual([seam.asked[0]]);
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT redeemed_at, active_restore_id FROM recovery_codes WHERE org_id = ? AND code_hash = ?",
+    ).bind(ORG, await codeHash(code)).first<{ redeemed_at: string | null; active_restore_id: string | null }>();
+    /*
+     * The two that matter most. A refusal that spent the code would cost one of ten for a crash nobody caused,
+     * and one that held the claim would leave the code unusable by the retry it is telling the operator to
+     * make — the lease would have to lapse first, which is the state this fencing exists to avoid.
+     */
+    expect(row!.redeemed_at, "a refused restore spent the code").toBeNull();
+    expect(row!.active_restore_id, "a settled attempt still owns the code").toBeNull();
+  });
+
+  it("succeeds on a re-run, because every step is idempotent", async () => {
+    /*
+     * The claim the failure branch rests on: *"re-running is safe because every step is idempotent"*. It was
+     * a sentence in a comment, and this is the first thing to execute it.
+     */
+    const code = await escrowOfTwo();
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, code, failingAfter(1).restore),
+    ).rejects.toThrow();
+
+    // Same code, real vault, no seam.
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, code);
+    expect(
+      outcome.restored.content.length + outcome.conflicted.content.length,
+      "the retry installed nothing, so the escrow did not survive the first attempt",
+    ).toBe(2);
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT redeemed_at FROM recovery_codes WHERE org_id = ? AND code_hash = ?",
+    ).bind(ORG, await codeHash(code)).first<{ redeemed_at: string | null }>();
+    expect(row!.redeemed_at, "the successful retry did not spend the code").not.toBeNull();
+  });
+
+  it("writes a failed settlement entry rather than a silent one", async () => {
+    // The trail is the only permanent record. An attempt that stopped half way with nothing in the audit
+    // chain is exactly the state the started/settled pair exists to make legible.
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
+    const code = await escrowOfTwo();
+    await expect(
+      redeemForVault(testEnv, createSystemCtx(), ORG, code, failingAfter(1).restore),
+    ).rejects.toThrow();
+
+    const settled = await testEnv.CATALOG.prepare(
+      `SELECT outcome, detail FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.vault_restored' ORDER BY seq DESC`,
+    ).bind(ORG).first<{ outcome: string; detail: string }>();
+    expect(settled, "a refused restore left no settling entry").not.toBeNull();
+    expect(settled!.outcome, "a refused restore was recorded as a success").toBe("failed");
+    expect(JSON.parse(settled!.detail).error).toMatch(/refused/);
+  });
+
+  it("completes normally when the seam is not passed, so the default is the real vault", async () => {
+    /*
+     * The control on the seam itself. Every assertion above depends on `restoreKey` defaulting to
+     * `vault(env).restore` when nobody supplies one — if the default were broken, the tests would still pass
+     * and the production path would be dead.
+     */
+    const code = await escrowOfTwo();
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, code);
+    expect(
+      outcome.restored.content.length + outcome.conflicted.content.length,
+      "the default restore path installed nothing",
+    ).toBe(2);
   });
 });

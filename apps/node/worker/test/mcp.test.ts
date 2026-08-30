@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
+import { ROUTES, machineUseful, methodNameFor, type RouteSpec } from "@mailda/contract";
+
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 
 /**
@@ -85,11 +87,15 @@ describe("the tool list is the curated one, and nothing else", () => {
     };
     const names = answer.result.tools.map((tool) => tool.name);
 
-    expect(names.length).toBeGreaterThan(40);
+    /*
+     * 24 today, down from 46. The catalogue used to be filtered by exposure tier alone, so it offered every
+     * organization-scoped read as a tool an agent token could never satisfy. The floor is well below the
+     * count and well above zero, which is what a floor is for.
+     */
+    expect(names.length).toBeGreaterThan(15);
     // The reads and the reversible acts.
     expect(names).toContain("getMessages");
     expect(names).toContain("putDrafts");
-    expect(names).toContain("postButlersByButlerIdSimulate");
 
     /*
      * And none of the acts that need a person — or two. This is the property the whole curation exists for:
@@ -105,6 +111,43 @@ describe("the tool list is the curated one, and nothing else", () => {
 
     // And not itself: a surface is not a capability on itself.
     expect(names).not.toContain("postMcp");
+  });
+
+  it("lists no tool that no agent credential could ever satisfy", async () => {
+    /*
+     * The property the catalogue is *for*, asserted against the registry rather than against a handful of
+     * names I happened to think of.
+     *
+     * `tools()` was built from the exposure tier alone while `agentGrantableActions()` — the set a mint may
+     * actually confer — also asked whether a machine can be provisioned for the route. Two filters, one
+     * question, different answers: twenty-two organization-scoped routes were published as tools that every
+     * agent token is refused on. Not a bypass, since the route still says no; a broken contract, and worse
+     * than a missing tool, because the tool list is what teaches an agent what to attempt. It retries against
+     * a door that cannot open and the operator sees a broken agent rather than a catalogue that lied.
+     *
+     * Written as a set intersection so that the *next* unreachable route fails this too, rather than only the
+     * ones already known.
+     */
+    const answer = await rpc("tools/list") as { result: { tools: Array<{ name: string }> } };
+    const listed = new Set(answer.result.tools.map((tool) => tool.name));
+
+    const unreachable = (ROUTES as readonly RouteSpec[])
+      .filter((spec) => !machineUseful(spec.authority))
+      .map((spec) => methodNameFor(spec).replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, ""));
+
+    expect(
+      unreachable.filter((name) => listed.has(name)),
+      "these tools are published to agents and no mint can confer what their routes require, so every call "
+      + "is refused — the catalogue is teaching an agent to retry against a door that cannot open:",
+    ).toEqual([]);
+
+    /*
+     * The control, in both directions. An empty `unreachable` would satisfy the assertion above without
+     * proving anything, and an empty `listed` would mean the surface had been filtered away entirely.
+     */
+    expect(unreachable.length, "no unreachable routes exist — has machineUseful stopped discriminating?")
+      .toBeGreaterThan(20);
+    expect(listed.size, "no tools are listed at all").toBeGreaterThan(15);
   });
 
   it("publishes no internal metadata in a tool's input schema", async () => {
@@ -126,18 +169,31 @@ describe("the tool list is the curated one, and nothing else", () => {
     expect(leaking).toEqual([]);
     // Non-vacuity: the tool that carries the metadata is on the list, so an empty result above is the
     // stripping working rather than the schema being absent.
-    const policies = answer.result.tools.find((tool) => tool.name === "postPolicies");
-    expect(policies, "postPolicies is not offered, so this proves nothing").toBeDefined();
-    expect(JSON.stringify(policies!.inputSchema)).toMatch(/mailboxId/);
+    const drafts = answer.result.tools.find((tool) => tool.name === "putDrafts");
+    expect(drafts, "putDrafts is not offered, so this proves nothing").toBeDefined();
+    expect(JSON.stringify(drafts!.inputSchema)).toMatch(/mailboxId/);
   });
 
   it("gives each tool a JSON Schema with its path parameters required", async () => {
     const answer = await rpc("tools/list") as {
       result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown>; required: string[] } }> };
     };
-    const simulate = answer.result.tools.find((tool) => tool.name === "postButlersByButlerIdSimulate")!;
-    expect(Object.keys(simulate.inputSchema.properties)).toEqual(["butlerId", "body"]);
-    expect(simulate.inputSchema.required).toEqual(["butlerId", "body"]);
+    /*
+     * A path parameter and a body, on two tools rather than one.
+     *
+     * `postButlersByButlerIdSimulate` carried both and is no longer offered — it needs `org.admin`, which no
+     * mint confers, so publishing it taught an agent to attempt a call that could only be refused. Nothing in
+     * the offered set has both today, which is worth knowing rather than working around: the parameterised
+     * tools are reads, and the one writing tool takes a body and no segment.
+     */
+    const one = answer.result.tools.find((tool) => tool.name === "getMessagesByReceiptIdBody")!;
+    expect(one.inputSchema.required, "a path parameter is not required").toEqual(["receiptId"]);
+
+    const drafts = answer.result.tools.find((tool) => tool.name === "putDrafts")!;
+    expect(
+      drafts.inputSchema.required,
+      "the one act an agent is offered publishes no body, so it cannot say what the draft says",
+    ).toEqual(["body"]);
 
     // A parameterless read takes nothing, rather than an empty object it has to be told to omit.
     const messages = answer.result.tools.find((tool) => tool.name === "getMessages")!;
@@ -148,30 +204,28 @@ describe("the tool list is the curated one, and nothing else", () => {
 describe("a tool call goes through this Node's own routes", () => {
   it("carries the caller's session, so the act is theirs", async () => {
     /*
-     * The audit trail is the assertion. `postButlers` writes a `butler.drafted` entry naming an actor, and
+     * The audit trail is the assertion. `postMatters` writes a `matter.opened` entry naming an actor, and
      * that actor is the **person** whose cookie the MCP request carried — not a machine identity. An
      * MCP-specific credential would have put a machine there, and every act an agent performed would have
      * been unattributable to whoever set it going.
+     *
+     * `postButlers` until the catalogue was corrected — it needs `org.admin`, so it was a tool no agent
+     * credential could ever have completed, and this test proved attribution through a door that was shut.
      */
     const held = await cookie();
-    const source = JSON.stringify({
-      apiVersion: "mailda/v1", kind: "Butler", metadata: { name: "via mcp", owner: "team:support" },
-      capabilities: [], trigger: { event: "mail.received", mailbox: "support@example.com" },
-      entry: "halt", nodes: [{ id: "halt", type: "stop", reason: "nothing yet" }],
-    });
 
     const answer = await rpc("tools/call", {
-      name: "postButlers",
-      arguments: { body: { name: "via mcp", source, sourceFormat: "json" } },
+      name: "postMatters",
+      arguments: { body: { type: "security_incident", description: "opened via mcp" } },
     }, held) as { result: { isError: boolean; content: Array<{ text: string }> } };
 
-    expect(answer.result.isError).toBe(false);
-    expect(answer.result.content[0]!.text).toContain("butlerId");
+    expect(answer.result.isError, answer.result.content[0]?.text).toBe(false);
+    expect(answer.result.content[0]!.text).toContain("security_incident");
 
     const audited = await testEnv.CATALOG.prepare(
       "SELECT actor_user_id, action FROM audit_entries WHERE org_id = ? ORDER BY seq DESC LIMIT 1",
     ).bind(ORG).first<{ actor_user_id: string; action: string }>();
-    expect(audited).toMatchObject({ actor_user_id: USER, action: "butler.drafted" });
+    expect(audited).toMatchObject({ actor_user_id: USER, action: "matter.opened" });
   });
 
   it("is refused when the caller has no session, by the route rather than by this layer", async () => {
@@ -195,13 +249,13 @@ describe("a tool call goes through this Node's own routes", () => {
      */
     const held = await cookie();
     const answer = await rpc("tools/call", {
-      name: "postButlers",
-      arguments: { body: { name: "broken", source: "{not json", sourceFormat: "json" } },
+      name: "postMatters",
+      arguments: { body: { type: "not-a-matter-type", description: "broken" } },
     }, held) as { result: { isError: boolean; content: Array<{ text: string }> } };
 
     expect(answer.result.isError).toBe(true);
     const text = answer.result.content[0]!.text;
-    expect(text).toContain("E_BUTLER_SOURCE_NOT_JSON");
+    expect(text).toContain("E_MATTER_TYPE_UNKNOWN");
     expect(text).toContain("why");
     expect(text).toContain("fix");
   });
@@ -222,11 +276,12 @@ describe("a tool call goes through this Node's own routes", () => {
   });
 
   it("refuses a call missing a path parameter, before making a request", async () => {
+    // `getButlersByButlerId` until the catalogue was corrected — it needs `org.admin` and is no longer a tool.
     const answer = await rpc("tools/call", {
-      name: "getButlersByButlerId", arguments: {},
+      name: "getDraftsByDraftId", arguments: {},
     }, await cookie()) as { error: { code: number; message: string } };
     expect(answer.error.code).toBe(-32602);
-    expect(answer.error.message).toContain("butlerId");
+    expect(answer.error.message).toContain("draftId");
   });
 });
 

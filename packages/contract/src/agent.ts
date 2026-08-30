@@ -1,5 +1,5 @@
 import { ROUTES, type RouteSpec } from "./routes.ts";
-import { machineProvisionable } from "./authority.ts";
+import { machineUseful, whyMachinesCannotUse } from "./authority.ts";
 
 /**
  * Which of this Node's routes a machine may be offered, and which it may not (#88, #89, ADR 12).
@@ -153,6 +153,14 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "collected from R2 by the reconciler afterwards — there is nothing to restore from. An agent tidying "
     + "drafts is an agent deleting a person's unfinished work.",
     "DELETE /api/drafts/:draftId",
+  ),
+  ...changing("governed",
+    "Acknowledging a permanent key collision is a conclusion a person reached about what was lost, and it is "
+    + "immutable — there is no second acknowledgement and no edit, so a machine filing one wrong has taken "
+    + "the record away from whoever should have written it. It is also the act that stops `doctor` deciding "
+    + "its verdict on that collision, which is precisely the kind of alarm-silencing that should cost a "
+    + "person's attention.",
+    "POST /api/recovery/conflicts/:restoreId/acknowledge",
   ),
   ...changing("governed",
     "Closing a matter is one-way. `matters.ts` has openMatter and closeMatter and no reopen, and the closure "
@@ -398,9 +406,15 @@ export function agentGrantableActions(): readonly string[] {
     .map((spec) => ({ spec, classification: exposureOf(spec) }))
     .filter(({ classification }) => classification.tier === "read" || classification.tier === "act")
     /*
-     * **And provisionable.** The tier says what kind of act a route is; `authority` says whether a machine can
-     * ever be given what it requires. Both are true and they answer different questions, which is why this is
-     * an intersection rather than a widened tier.
+     * **And useful to a machine.** The tier says what kind of act a route is; `authority` says whether a
+     * machine can ever be given what it requires. Both are true and they answer different questions, which is
+     * why this is an intersection rather than a widened tier.
+     *
+     * `machineUseful` rather than `machineProvisionable`, because a third answer exists between them.
+     * `GET /api/approvals` admits any authenticated caller and narrows the list to mailboxes where they hold
+     * `approval.decide` — a relation no mint confers. An agent is let in and shown an empty queue, for ever.
+     * Conferring that is conferring nothing, and it is worse than an `org.admin` route because nothing
+     * refuses: the agent retries, the operator reads 200s, and the credential looks like it works.
      *
      * Twenty-five routes are `read` or `act` and check `org.admin` — the whole of Butler and policy authoring,
      * the directory, holds, matters, exports, supervision, transport. `AGENT_GRANTABLE_RELATIONS` excludes
@@ -411,16 +425,31 @@ export function agentGrantableActions(): readonly string[] {
      * Deriving it here rather than adding a sixth tier keeps the tier table answering the question it was
      * built for. A route is still an ordinary read; it is simply not one a machine can be provisioned for.
      */
-    .filter(({ spec }) => machineProvisionable(spec.authority))
+    .filter(({ spec }) => machineUseful(spec.authority))
     .map(({ spec }) => `${spec.method} ${spec.path}`)
     .sort();
 }
 
+/**
+ * What a machine surface may offer.
+ *
+ * **Derived from `agentGrantableActions()`**, which is the fix rather than an implementation detail. This
+ * filtered on the exposure tier alone while `agentGrantableActions` filtered on the tier *and* whether a
+ * machine could be provisioned for the route — two functions, adjacent in this file, disagreeing about the
+ * same question. `tools()` in `src/mcp.ts` and the SDK Skill both build from this one, so an agent token was
+ * offered twenty-five organization-scoped tools it could never satisfy.
+ *
+ * That is not an authorization bypass — the route still refuses — it is a broken contract, which is worse in
+ * one specific way: the tool list is what teaches an agent what to attempt, so the failure is a retry loop
+ * against a door that will never open, and the operator sees an agent that looks broken rather than a
+ * catalogue that lied.
+ */
 export function agentCapabilities(nameFor: (spec: RouteSpec) => string): AgentCapability[] {
   const all: readonly RouteSpec[] = ROUTES;
+  const grantable = new Set(agentGrantableActions());
   return all
     .map((spec) => ({ spec, classification: exposureOf(spec) }))
-    .filter(({ classification }) => classification.tier === "read" || classification.tier === "act")
+    .filter(({ spec }) => grantable.has(`${spec.method} ${spec.path}`))
     .map(({ spec, classification }) => ({
       name: nameFor(spec),
       summary: spec.summary,
@@ -439,19 +468,42 @@ export function agentCapabilities(nameFor: (spec: RouteSpec) => string): AgentCa
  * Takes the same `nameFor` the offered list does, so both halves of the document speak one vocabulary. The
  * first draft named the offered capabilities by SDK method and the withheld ones by route path, which would
  * have had an agent reading two spellings of the same thing and inferring they were different surfaces.
+ *
+ * ## Two reasons to withhold, and the second one used to be invisible
+ *
+ * This filtered on the exposure tier, so it answered *"a machine may not do this"* and nothing else. Once
+ * `agentCapabilities` began filtering on provisionability as well, a third category appeared: routes that are
+ * ordinary reads a machine could be trusted with, and that no mint can confer — `org.admin`, requester-owned
+ * exports, and the filtered lists that would answer an agent with an empty result for ever.
+ *
+ * Those were in **neither** list. Offered explained what an agent may do, withheld explained what it may not,
+ * and twenty-six routes were simply absent from both — which is the shape of gap this repository treats as a
+ * defect rather than as tidiness. `whyMachinesCannotUse` supplies the sentence, so the two lists are now
+ * complementary and exhaustive, and `test/node/agent-exposure-world.test.ts` holds them to it.
  */
 export function withheldCapabilities(
   nameFor: (spec: RouteSpec) => string = (spec) => `${spec.method} ${spec.path}`,
 ): Array<{ name: string; route: string; tier: Exposure; why: string }> {
   const all: readonly RouteSpec[] = ROUTES;
+  const grantable = new Set(agentGrantableActions());
   return all
+    .filter((spec) => !grantable.has(`${spec.method} ${spec.path}`))
     .map((spec) => ({ spec, classification: exposureOf(spec) }))
-    .filter(({ classification }) => classification.tier !== "read" && classification.tier !== "act")
-    .map(({ spec, classification }) => ({
-      name: nameFor(spec),
-      route: `${spec.method} ${spec.path}`,
-      tier: classification.tier,
-      why: classification.why,
-    }))
+    .map(({ spec, classification }) => {
+      /*
+       * The tier's own reason when the tier is why, and the authority's when it is not. A `governed` route
+       * withheld with "an agent cannot be provisioned for this" would be true and would answer the wrong
+       * question — it is withheld because a machine may not do it, whatever any mint could confer.
+       */
+      const unusable = classification.tier === "read" || classification.tier === "act"
+        ? whyMachinesCannotUse(spec.authority)
+        : null;
+      return {
+        name: nameFor(spec),
+        route: `${spec.method} ${spec.path}`,
+        tier: classification.tier,
+        why: unusable ?? classification.why,
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name));
 }

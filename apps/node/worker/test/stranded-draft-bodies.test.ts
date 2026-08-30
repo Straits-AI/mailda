@@ -286,7 +286,7 @@ describe("doctor counts draft bodies whose drafts row is gone", () => {
       // The branch under test really was reached, rather than the assertion passing by absence.
       expect(find(report.findings, "draft_bodies_stranded").ok, label).toBe(false);
 
-      const reduced = withoutDataFindings(report);
+      const reduced = withoutDataFindings(report, "locked_out");
       expect(JSON.stringify(reduced), label).not.toContain(ORG);
       expect(reduced.findings.some((f) => f.check === "draft_bodies_stranded"), label).toBe(false);
     }

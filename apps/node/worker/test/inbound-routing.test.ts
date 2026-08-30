@@ -149,7 +149,7 @@ describe("the counts are data, so a locked-out reader does not get them", () => 
     const finding = await routing();
     expect(finding.discloses).toBe("data");
 
-    const reduced = withoutDataFindings(await runDoctor(testEnv, createSystemCtx()));
+    const reduced = withoutDataFindings(await runDoctor(testEnv, createSystemCtx()), "locked_out");
     expect(reduced.findings.find((one) => one.check === "inbound_routing")).toBeUndefined();
     // Non-vacuity: the reduction keeps *something*, so the assertion above is about this finding rather
     // than about an empty list.

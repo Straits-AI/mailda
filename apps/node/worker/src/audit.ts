@@ -105,6 +105,14 @@ export const AUDIT_ACTIONS = {
       + "attempt that was interrupted — which is the state this pair exists to make legible, since the vault "
       + "cannot join the database's transaction.",
   },
+  "recovery.conflict_acknowledged": {
+    says: "Somebody assessed a permanent key collision and recorded what was lost. Names the restore, the "
+      + "generations assessed, what was examined and what was concluded. **It repairs nothing** — two "
+      + "different secrets cannot share one generation number, and mail sealed under the escrowed key of that "
+      + "generation stays unreadable — it records that a person established the extent of the loss, which is "
+      + "what lets `doctor` stop deciding its verdict on a fact nobody can act on any further. Immutable and "
+      + "one per restore-and-generation-set: a changed conclusion is a new incident, not a replacement.",
+  },
   "recovery.vault_restored": {
     says: "A key vault restore settled. Names the generations put back and the ones that collided with a "
       + "live key and were not. `ok` means it ran to the end; `failed` means the vault refused part way, in "

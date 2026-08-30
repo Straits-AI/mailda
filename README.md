@@ -1412,8 +1412,32 @@ Three things bound what one can reach, and two of them already existed:
 
 The middle term is ordinary relationship tuples, so an agent's resource ceiling *is* its tuples — conferred by
 an administrator through the same door as every other relation. The action ceiling is pinned at mint, derived
-from the route registry's `read` and `act` tiers rather than restated, so a route reclassified as `governed`
-leaves every agent's reachable set on the same commit. There is deliberately no route that widens one.
+from the route registry rather than restated, so a route reclassified as `governed` leaves every agent's
+reachable set on the same commit. There is deliberately no route that widens one.
+
+### What a route requires is declared beside the route
+
+The tier answers *may a machine do this*. It does not answer *can a machine be given what this needs*, and
+treating one question as both was worth 22 tools an agent token could never satisfy. So each route declares
+its authority — `none`, `member`, `organization`, `mailbox` with the relations, `filtered` with what narrows
+the result, `self-or-admin`, or `export` — and everything downstream is derived from that one declaration: the
+capability vocabulary, what the mint refuses, the MCP catalogue, the Skill's withheld list.
+
+A declaration is hand-written, so it is checked against the handler rather than trusted.
+`test/route-authority-parity.test.ts` drives every organization-declared route as an administrator and as an
+ordinary member, and only `admin succeeds, member does not` confirms one. It found five routes claiming to
+need `org.admin` whose handlers require nothing of the sort — `GET /api/teams` says so in its own comment —
+and each was withholding machine authority the Node would actually have allowed.
+
+The distinction that took a second function is **reachable** versus **useful**. `GET /api/approvals` admits
+any authenticated caller and narrows its list to mailboxes where the caller holds `approval.decide`, which no
+mint confers. An agent is let in and shown an empty queue, for ever — worse than a refusal, because nothing
+says no and the operator sees an agent that looks broken rather than a catalogue that lied.
+
+Minting checks the **intersection**, which nothing did: both halves of an agent's authority were validated and
+their product was not, so `capabilities: ["mail.read"], grants: []` produced a credential that authenticates
+and reaches nothing. A capability is satisfied when one mailbox carries *all* of its relations — summing them
+across mailboxes satisfies neither — and the same predicate disables the button and refuses the route.
 
 Minting is administrator-only and the sponsor is named rather than assumed, so the person who authorises a
 machine identity need not be the person whose authority it borrows. All three agent routes are withheld from
