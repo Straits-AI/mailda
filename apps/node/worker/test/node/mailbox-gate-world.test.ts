@@ -14,8 +14,8 @@ import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
  * proper subset of an `allOf`, and each subset crossed with an impostor. Eight authorization mutations die on
  * it that previously passed the whole suite.
  *
- * And it looks only at routes that **declare** `scope: "mailbox"`. Fifty-three routes declare no authority at
- * all, and roughly ten of those are gated by a mailbox relation, so they sit outside the loop entirely. Three
+ * And it looks only at routes that **declare** `scope: "mailbox"`. When this file was written, ten
+ * undeclared routes were gated by a mailbox relation and therefore outside that loop entirely; three
  * mutations proved it, each green across 1,531 tests:
  *
  * | route | what a `mailbox.content.read` holder could do |
@@ -27,6 +27,11 @@ import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
  * `POST /api/sends/dispatch` was in exactly this position two commits ago and was fixed by declaring it —
  * which fixed one route and left its neighbours. That is the shape this file replaces: *somebody remembered
  * to declare it* becomes *an undeclared mailbox-gated route fails the build*.
+ *
+ * All ten are declared now. What remains undeclared and mailbox-gated is three routes whose gate is one call
+ * deep — `POST /api/cases/:caseId/:action`, `POST /api/exports`, `POST /api/exports/:exportId/run` — each
+ * held by a named test elsewhere (`layer3-queue`, `ediscovery-export`) and each absent from
+ * `GATED_INDIRECTLY`, which is the hand-written half this file cannot check.
  *
  * It is the same fail-closed move the parity suite's own anonymous loop needed when a placeholder id let the
  * router 404 before the handler ran. Applied one level up: rather than trusting that the input set is
