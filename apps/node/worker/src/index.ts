@@ -2551,6 +2551,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         grants?: { mailboxId: string; relation: MailboxRelation }[];
       };
       /*
+       * **Administration first.** `mintAgent` opens with `assertAdmin` and says why — minting confers a
+       * machine identity that acts on mail — and putting a validation refusal in front of it made an ordinary
+       * member's request answer `422 E_AGENT_CAPABILITY_UNSATISFIABLE` instead of the administrator refusal.
+       * That tells somebody who may not mint at all how to write a request that would, and it contradicts a
+       * rule stated in the file this route calls into. Asserted here rather than left to the call below,
+       * because the check underneath it has to run before the mint.
+       */
+      await assertAdmin(env, who.orgId, who.userId);
+
+      /*
        * Through the product, minting is **one** step, so an empty mailbox list is a mistake rather than a plan.
        *
        * `mintAgent` deliberately allows no grants at all — it is also the building block for the two-step case

@@ -1833,9 +1833,14 @@ export const sponsorMailboxListResponse = z.object({
 /**
  * Acknowledging a permanent key collision.
  *
- * Both fields are required and both are refused when blank. An acknowledgement with no scope is unreadable to
- * the only reader it has — somebody arriving long after everybody involved has gone — and one with no
- * conclusion is a dismissal wearing the shape of an assessment.
+ * Both fields are required here, and **blankness is refused in `recovery.ts`, not by this schema.** Zod would
+ * express it with `.min(1)` and deliberately does not: the refusal names which field was empty and why it
+ * matters, which a schema error cannot. Said precisely because the first version of this note claimed the
+ * schema did both, and a comment describing a check that lives elsewhere is how somebody later removes the
+ * one that is real.
+ *
+ * An acknowledgement with no scope is unreadable to the only reader it has — somebody arriving long after
+ * everybody involved has gone — and one with no conclusion is a dismissal wearing the shape of an assessment.
  */
 export const acknowledgeConflictRequest = z.object({
   scope: z.string(),

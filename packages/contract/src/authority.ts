@@ -61,7 +61,10 @@ export type Authority =
    * not cross here: every scoped route requires a principal, and every unauthenticated route is unscoped, so a
    * second axis would add a field to 106 routes with nothing to discriminate. `public` and `member` are the
    * two halves the old name conflated, and `test/route-authority-parity.test.ts` now drives both — a `public`
-   * route must answer with no cookie, and a `member` route must refuse without one and answer with one.
+   * route must not answer `401` with no cookie, and a `member` route must not succeed without one. Stated at
+   * that strength rather than as "must answer", because that is what the assertion checks: a public route
+   * returning `500` would pass it, and claiming otherwise would be the same overstatement this scope was
+   * split to fix.
    */
   | { readonly scope: "public" }
   /**
@@ -107,14 +110,16 @@ export type Authority =
    * - `ownership` — you see what you opened. `GET /api/matters` gives an administrator every matter and
    *   everybody else their own, and returns an empty list rather than a 403 *because the shape is already a
    *   filtered list, so it discloses no more than "you opened none"*.
-   * - `addressee` — you see what was addressed to you, or to a mailbox you may read. `GET /api/notifications`
-   *   is both, which is why declaring it `mailbox.content.read` was an understatement rather than a lie.
+   * - `self` — you see **your own** records, and a machine can never have any. `GET /api/auth/passkeys` lists
+   *   the caller's passkeys; registering one is `POST /api/auth/passkeys`, which is withheld from every
+   *   machine, so an agent holding this reads an empty list for ever. Reachable and useless, exactly as
+   *   `GET /api/approvals` is — and it sat inside the offered `identity.read` until this was named.
    *
    * Reachable is not the same as useful, and `machineUseful` below is what tells them apart.
    */
   | {
     readonly scope: "filtered";
-    readonly by: "relation" | "ownership" | "addressee";
+    readonly by: "relation" | "ownership" | "self";
     /** The relations that widen the result. Only meaningful when `by` is `relation`. */
     readonly relations?: readonly string[];
   }
@@ -246,9 +251,12 @@ export function whyMachinesCannotUse(authority: Authority | undefined): string |
     return ungrantable.length === 0 ? null : `it requires ${ungrantable.join(" and ")}, which no mint confers`;
   }
   if (authority.scope === "filtered" && !machineUseful(authority)) {
-    return `it answers any authenticated caller and narrows the result to what ${
-      (authority.relations ?? []).join(" or ")
-    } reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever`;
+    return authority.by === "self"
+      ? "it answers any authenticated caller with that caller's own records, and the acts that create them "
+        + "are withheld from machines — so an agent would be admitted and shown an empty result for ever"
+      : `it answers any authenticated caller and narrows the result to what ${
+        (authority.relations ?? []).join(" or ")
+      } reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever`;
   }
   return null;
 }
@@ -257,9 +265,11 @@ export function machineUseful(authority: Authority | undefined): boolean {
   if (!machineProvisionable(authority)) return false;
   if (authority?.scope !== "filtered") return true;
   /*
-   * Ownership and addressee narrow by things an agent can acquire: it can open a matter and it can be sent a
-   * notice. A relation it can never hold is the only one that empties the answer permanently.
+   * `ownership` narrows by something an agent can acquire — it can open a matter, and then read it. `self`
+   * does not: the records behind it are accumulated by acts withheld from machines, so the answer is empty
+   * for ever. A relation no mint confers empties it the same way.
    */
+  if (authority.by === "self") return false;
   if (authority.by !== "relation") return true;
   return (authority.relations ?? [])
     .some((one) => (AGENT_GRANTABLE_RELATIONS as readonly string[]).includes(one));

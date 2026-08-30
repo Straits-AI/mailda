@@ -95,17 +95,29 @@ const NO_CONFIG: readonly string[] = [
 
 describe("the measured timeout reaches every suite", () => {
   it("names every package that runs vitest without a config, so none is silently at the default", () => {
+    /*
+     * `packages/` **and** `apps/`. The first version scanned only packages, which is this file's own argument
+     * — *"a list of three cannot notice one"* — applied to configs and not to the tree they live in. An app
+     * added with a test script and no config would have been invisible to the check written to find exactly
+     * that.
+     */
     const running: string[] = [];
-    for (const entry of readdirSync(join(REPO, "packages"))) {
-      const dir = join(REPO, "packages", entry);
-      if (!statSync(dir).isDirectory()) continue;
-      const manifest = join(dir, "package.json");
-      if (!existsSync(manifest)) continue;
-      const scripts = (JSON.parse(readFileSync(manifest, "utf8")) as {
-        scripts?: Record<string, string>;
-      }).scripts ?? {};
-      if (!(scripts["test"] ?? "").includes("vitest")) continue;
-      if (configs(dir).length === 0) running.push(`packages/${entry}`);
+    for (const group of ["packages", "apps"]) {
+      for (const entry of readdirSync(join(REPO, group))) {
+        const dir = join(REPO, group, entry);
+        if (!statSync(dir).isDirectory()) continue;
+        for (const [where, at] of [[`${group}/${entry}`, dir], ...readdirSync(dir)
+          .filter((child) => statSync(join(dir, child)).isDirectory())
+          .map((child) => [`${group}/${entry}/${child}`, join(dir, child)] as const)]) {
+          const manifest = join(at, "package.json");
+          if (!existsSync(manifest)) continue;
+          const scripts = (JSON.parse(readFileSync(manifest, "utf8")) as {
+            scripts?: Record<string, string>;
+          }).scripts ?? {};
+          if (!(scripts["test"] ?? "").includes("vitest")) continue;
+          if (configs(at).length === 0) running.push(where);
+        }
+      }
     }
 
     expect(

@@ -829,9 +829,15 @@ describe("the mint and revoke routes validate what they are handed", () => {
      *
      * Compared against what those capabilities **expand to**, not against `agentGrantableActions()`. Those two
      * were equal once and it was a coincidence rather than an invariant: grantable is every route a machine
-     * *could* be provisioned for, and the vocabulary is the narrower set somebody decided to offer. Correcting
-     * five over-declared routes made a machine able to reach `GET /api/teams` and `GET /api/matters`, which no
-     * capability names and none should — opening a legal matter is not a thing to hand a machine by default.
+     * *could* be provisioned for, and the vocabulary is the set that has a capability naming it.
+     *
+     * The first version of this comment said `GET /api/teams` and `GET /api/matters` were reachable and named
+     * by no capability, and argued they should stay that way. Both halves are false: `capability-world`
+     * requires every grantable route to have exactly one home, so `directory.read` and `matter.open` were
+     * added in the same change. The reasoning it offered — that opening a matter is not a thing to hand a
+     * machine — is a real question, and the place to settle it is the exposure tier, which already classifies
+     * `POST /api/matters` as `act` on the grounds that a matter is a folder rather than an act on anybody's
+     * mail.
      */
     const all = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
       name: "everything", sponsorUserId: SPONSOR, capabilities: capabilityIds(),
@@ -1215,6 +1221,30 @@ describe("a capability no granted mailbox can satisfy is refused at mint", () =>
       await tuple(SPONSOR, relation, "mailbox", OTHER);
     }
   }
+
+  it("refuses an ordinary member before telling them how to write a valid mint", async () => {
+    /*
+     * Authorization before validation. The capability check ran in front of `mintAgent`, and `mintAgent` is
+     * where `assertAdmin` lives — so a member who may not mint at all received
+     * `422 E_AGENT_CAPABILITY_UNSATISFIABLE`, which is a refusal that teaches them how to write a request
+     * that would work. `agents.ts` states the ordering rule the route was bypassing.
+     */
+    await seed();
+    const ctx = createSystemCtx();
+    const member = "usr_AGENTSNTADMN00000000000000";
+    await testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(member, ORG, "member@agents.example", new Date(ctx.now()).toISOString()).run();
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: member });
+
+    const response = await SELF.fetch("https://node.example/api/agents", {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}`, "content-type": "application/json" },
+      // Deliberately unsatisfiable, so the validation refusal would fire if it ran first.
+      body: JSON.stringify({ name: "sneaky", sponsorUserId: SPONSOR, capabilities: [AGENT_READS], grants: [] }),
+    });
+    expect(response.status).toBe(403);
+    expect((await response.json() as { error: string }).error).toBe("E_NOT_AN_ADMINISTRATOR");
+  });
 
   it("refuses a capability selected with no mailbox, through the route an administrator uses", async () => {
     /*

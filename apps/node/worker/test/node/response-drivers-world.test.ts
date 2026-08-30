@@ -176,11 +176,19 @@ describe("the response suite's reach is stated rather than assumed", () => {
     for (const [route, file] of Object.entries(DRIVEN_ELSEWHERE)) {
       const [method, path] = route.split(" ") as [string, string];
       const source = readFileSync(new URL(file, import.meta.url).pathname, "utf8");
-      const concrete = new RegExp(
-        path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:\w+/g, "[^\"`'/]+"),
+      /*
+       * The path and the method **in the same call**, not two greps over the file.
+       *
+       * The first version required the path pattern to appear somewhere and `method: "POST"` to appear
+       * somewhere; `recovery-escrow.test.ts` has three unrelated `method: "POST"` lines, so changing the
+       * driver's verb — a realistic regression if the route's method changed — would have passed. The
+       * docstring said it "requires a request to the route", and it required two strings to co-occur.
+       */
+      const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:\w+/g, "[^\"`'/]+");
+      const inOneCall = new RegExp(
+        `${escaped}[^]{0,400}?method:\\s*"${method}"|method:\\s*"${method}"[^]{0,400}?${escaped}`,
       );
-      const drives = concrete.test(source)
-        && new RegExp(`method:\\s*"${method}"`).test(source);
+      const drives = inOneCall.test(source);
       if (!drives) missing.push(`${route} — ${file} does not send it`);
     }
     expect(

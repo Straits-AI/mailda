@@ -27,14 +27,14 @@ after every row of this table was found to be wrong at once — 41/12/25/17 agai
 of counts in a document about completeness reads as evidence of completeness, and nothing was watching it.
 
 **The tier is necessary and not sufficient**, and that column used to say "offered" flat. 46 routes are `read`
-or `act`; **24** are offered. The difference is the second question — can a machine ever be *provisioned* for
+or `act`; **23** are offered. The difference is the second question — can a machine ever be *provisioned* for
 this route — and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |
 |:--|--:|:--|
 | the tier | 61 | `POST /api/sends` — sealing a send is the one act nobody can undo |
 | `org.admin`, which no mint confers | 20 | `GET /api/people`, `POST /api/butlers` |
-| a filter no machine can satisfy | 1 | `GET /api/approvals` — 200, and an empty list, for ever |
+| a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys` — 200, and an empty list, for ever |
 | requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |
 
 The middle two are the ones worth understanding, because nothing refuses: the route answers, and the answer is

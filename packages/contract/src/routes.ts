@@ -203,7 +203,12 @@ export const ROUTES = [
     response: S.signedInResponse,
   },
   {
-    authority: { scope: "member" },
+    /*
+     * The caller's **own** passkeys, and registering one is withheld from machines — so an agent holding this
+     * reads an empty list for ever. It was `member` and inside the offered `identity.read`, which made it the
+     * same empty promise `GET /api/approvals` is withheld for, one capability to the left.
+     */
+    authority: { scope: "filtered", by: "self" },
     method: "GET", path: "/api/auth/passkeys",
     summary: "The passkeys this account holds. Never returns a public key",
     response: S.passkeyListResponse,

@@ -134,6 +134,12 @@ export const CAPABILITIES: readonly Capability[] = [
     id: "identity.read",
     says: "Read who this credential is acting as and whose authority it borrows, the relations it actually "
       + "holds, and the signing keys a client needs to check a session.",
+    /*
+     * `GET /api/auth/passkeys` was here and is not offered any more. It lists the caller's own passkeys, and
+     * registering one is withheld from every machine — so an agent holding this capability read an empty list
+     * for ever, which is the promise `GET /api/approvals` is withheld for. The capability's own `says` never
+     * mentioned passkeys either, so the route was inside the offer and outside its description.
+     */
     reachesContent: false,
     /*
      * `GET /api/access` joined when its declaration was corrected. It reads the caller's *own* relations by
@@ -141,7 +147,7 @@ export const CAPABILITIES: readonly Capability[] = [
      * else, which no agent has. It belongs here for the reason the rest of this capability does: an agent that
      * cannot enumerate its own authority has to discover it by being refused.
      */
-    routes: ["GET /.well-known/jwks.json", "GET /api/access", "GET /api/auth/passkeys", "GET /api/me"],
+    routes: ["GET /.well-known/jwks.json", "GET /api/access", "GET /api/me"],
   },
   /*
    * The two capabilities below exist because correcting five over-declared routes made them reachable by a
@@ -170,11 +176,11 @@ export const CAPABILITIES: readonly Capability[] = [
 ];
 
 /*
- * ## Nine capabilities were removed, and the removal is the finding
+ * ## Nine capabilities were removed, and two of them came back
  *
  * `matter.open`, `butler.read`, `butler.author`, `policy.author`, `directory.read`, `hold.read`,
- * `export.read`, `supervision.read` and the transport half of `health.read` all named routes that check
- * `org.admin`. `AGENT_GRANTABLE_RELATIONS` excludes that relation deliberately — an agent holding
+ * `export.read`, `supervision.read` and the transport half of `health.read` all named routes **declared** as
+ * checking `org.admin`. `AGENT_GRANTABLE_RELATIONS` excludes that relation deliberately — an agent holding
  * organization administration is a machine administering the organization it acts inside, while the
  * delegation model's whole claim is that it acts *within* one person's authority.
  *
@@ -182,10 +188,19 @@ export const CAPABILITIES: readonly Capability[] = [
  * mint the agent, and hand over a credential refused on every route it named. None of it was visible from the
  * vocabulary, because the vocabulary described requirements by hand and those nine declared none.
  *
- * They are not withheld by a list here. They are gone because `agentGrantableActions()` now intersects the
- * exposure tier with `machineProvisionable`, so their routes left the machine-grantable set and
- * `capability-world` no longer requires a home for them. Deleting the entries was the consequence rather than
- * the mechanism, which is what stops them coming back.
+ * They are not withheld by a list here. They went because `agentGrantableActions()` intersects the exposure
+ * tier with what a machine can be provisioned for, so their routes left the machine-grantable set and
+ * `capability-world` stopped requiring a home for them. Deleting the entries was the consequence rather than
+ * the mechanism.
+ *
+ * **`matter.open` and `directory.read` are back**, defined above, and that is the same mechanism running the
+ * other way rather than a reversal. Driving every organization-declared route against a real member showed
+ * that `GET /api/teams` and both `/api/matters` routes never checked `org.admin` at all — the declarations
+ * were wrong, not the routes. Correcting them put the routes back in the grantable set, and
+ * `capability-world` then required a home for them again.
+ *
+ * That is the property worth having: nothing here is a list somebody maintains. A capability exists exactly
+ * while its routes are provisionable, and both directions are consequences.
  *
  * Building any of them properly means deciding that agents may hold organization-scoped authority — recursive
  * intersection through the sponsor, a depth bound, root attribution, and organization grants selectable in the

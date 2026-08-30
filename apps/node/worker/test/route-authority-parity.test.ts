@@ -45,11 +45,19 @@ import { hashPassword } from "../src/auth/password.ts";
  * this Node's admin gate answer `404` exactly as an absent thing does — the first version accepted "not 403"
  * and a mutation declaring the admin-only `GET /api/people` as `member` sailed through it.
  *
- * ## What this file does not cover
+ * ## What this file covers, and what it does not
  *
- * `mailbox`-scoped routes, which `test/agent-capabilities.test.ts` drives with exactly the relations they
- * declare, and `none`, which `test/contract-responses.test.ts` reaches unauthenticated. Stated rather than
- * left as an absence: this file is about the two scopes whose declarations nothing else compares to a handler.
+ * Driven here: `organization` both ways, `member` both ways, `public` anonymously, the restrictive half of
+ * `self-or-admin`, and every scoped route against a caller presenting nothing.
+ *
+ * **Not** driven here: `mailbox`, which `test/agent-capabilities.test.ts` exercises with exactly the relations
+ * each route declares — and that proves those relations *sufficient*, never *necessary*, so a `mailbox` route
+ * naming a relation no mint confers would be silently withheld with nothing able to see it. Nor the open case
+ * of `recovery`, which `test/operator-routes.test.ts` drives on a Node that cannot authenticate anybody.
+ *
+ * This paragraph is written out because the previous one was stale in the file whose whole subject is stale
+ * claims: it described a scope called `none` that no longer exists and said the file covered two scopes when
+ * it covered five.
  */
 
 const testEnv = env as unknown as {
@@ -416,6 +424,80 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       .toBeGreaterThan(1);
     expect(all.filter((one) => one.authority?.scope === "member").length, "no member routes declared")
       .toBeGreaterThan(3);
+  });
+
+  it("refuses a stranger on every scoped route, whatever the scope", async () => {
+    /*
+     * The direction that was missing, and it was missing for four scopes at once.
+     *
+     * The suite drove `member` anonymously and stopped there, so `filtered`, `self-or-admin`, `recovery` and
+     * `export` had no anonymous driver at all. A verified mutation: making `GET /api/approvals` fall back to a
+     * synthetic principal when `principalFor` returns null — a stranger reading the approval queue — passed
+     * all 1,507 tests.
+     *
+     * `authority.ts` asserts as fact that *"every scoped route requires a principal, and every unauthenticated
+     * route is unscoped"*. That sentence is the justification for keeping authentication and authority in one
+     * field, and this is what makes it an assertion rather than a claim.
+     */
+    const scoped = (ROUTES as readonly RouteSpec[]).filter((spec) =>
+      spec.authority !== undefined && spec.authority.scope !== "public"
+      // `recovery` is deliberately reachable by a stranger when this Node cannot authenticate anybody. On the
+      // healthy Node these fixtures build it must refuse like the rest, which is what makes it conditional
+      // rather than public — and `test/operator-routes.test.ts` drives the open case.
+    );
+
+    const admitted: string[] = [];
+    for (const spec of scoped) {
+      const path = spec.path.replace(/:(\w+)/g, (_, name: string) => `${name}-does-not-exist`);
+      const body = BODIES[`${spec.method} ${spec.path}`];
+      const response = await SELF.fetch(`https://node${path}`, {
+        method: spec.method,
+        ...(body === undefined ? {} : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      });
+      if (response.status >= 200 && response.status < 300) {
+        admitted.push(`${spec.method} ${spec.path} → ${response.status}`);
+      }
+    }
+
+    expect(
+      admitted,
+      "these routes declare an authority scope and answered a caller who presented nothing. A scoped route "
+      + "requires a principal — that is the sentence authority.ts rests its one-field design on:",
+    ).toEqual([]);
+
+    // The control: every scope in the union must be represented, or this passes over the one that is wrong.
+    expect(new Set(scoped.map((spec) => spec.authority!.scope)).size, "not every scope was driven")
+      .toBeGreaterThanOrEqual(5);
+  });
+
+  it("refuses a member somebody else's access map, which is the restrictive half of self-or-admin", async () => {
+    /*
+     * The half no test drove, and the reason this suite had to grow.
+     *
+     * `GET /api/access` was `organization` before this work and covered by the administrator loop above. It is
+     * `self-or-admin` now — correct, because its handler says *"knowing what you hold is not privileged"* —
+     * and moving it out of that loop left only the permissive branch exercised. A verified mutation:
+     * `if (false && subjectId !== who.userId && !(await isAdmin(…)))`, which lets any signed-in member read
+     * anybody's relation set, **passed all 1,507 tests**.
+     *
+     * That is the organization access map, and §5C's own example of what a listing must not hand out. It is
+     * also inside `identity.read`, which is offered to machines — so the bypass reached agents too.
+     */
+    const own = await drive(
+      { method: "GET", path: "/api/access", summary: "" } as RouteSpec, memberCookie, {},
+    );
+    expect(own.status, "a member could not read their own relations, which needs no administrator").toBe(200);
+
+    const somebodyElse = await SELF.fetch(`https://node/api/access?subject=${ADMIN}`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}` },
+    });
+    expect(
+      somebodyElse.status,
+      "an ordinary member read somebody else's relation set — the organization access map",
+    ).toBe(404);
   });
 
   it("declares enough organization routes for the check above to have a subject", async () => {

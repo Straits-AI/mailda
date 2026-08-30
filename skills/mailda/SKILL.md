@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 24 capabilities
+## What you can do — 23 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -35,7 +35,6 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 |:--|:--|
 | `getWellKnownJwksJson` | The public keys that verify this Node's tokens |
 | `getAccess` | Who holds what on which mailbox |
-| `getAuthPasskeys` | The passkeys this account holds. Never returns a public key |
 | `getBreakers` | The rate breakers, with the readings behind them |
 | `getDoctor` | What this Node can and cannot do, with the evidence |
 | `getDomainPauses` | Domains this Node has stopped sending to |
@@ -63,7 +62,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 83 withheld
+## What you cannot do, and why — 84 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -144,7 +143,7 @@ so you are that one person and can never be the second. These are not permission
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
 
-### Out of reach — an ordinary act, and no credential can be provisioned for it (22)
+### Out of reach — an ordinary act, and no credential can be provisioned for it (23)
 
 These are not governed and not operator acts. They are reads and reversible writes a machine could perfectly
 well be trusted with, and there is **no credential that satisfies them**: they require `org.admin`, or they
@@ -158,6 +157,10 @@ these does not help; the answer is a person doing it, or a change to what Mailda
 - **`getApprovals`**
 
   it answers any authenticated caller and narrows the result to what approval.decide reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever
+
+- **`getAuthPasskeys`**
+
+  it answers any authenticated caller with that caller's own records, and the acts that create them are withheld from machines — so an agent would be admitted and shown an empty result for ever
 
 - **`getButlerPauses`, `getButlerRuns`, `getButlerRunsByRunId`, `getButlerRunsByRunIdInspect`, `getButlers`, `getButlersByButlerId`, `getExports`, `getHolds`, `getInvitations`, `getPeople`, `getPolicies`, `getSupervised`, `getTeamsByTeamId`, `getTeamsByTeamIdMembers`, `getTransport`, `postButlers`, `postButlersByButlerIdSimulate`, `postPolicies`, `putButlersByButlerIdDraft`, `putPoliciesByPolicyIdDraft`**
 

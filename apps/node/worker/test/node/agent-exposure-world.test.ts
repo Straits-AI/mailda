@@ -277,6 +277,7 @@ describe("the tier table in docs/machine-surfaces.md counts what exposureOf coun
      * category silently.
      */
     const reasons = { tier: 0, admin: 0, filtered: 0, requester: 0 };
+    const unclassified: string[] = [];
     for (const spec of ALL) {
       const eligible = ["read", "act"].includes(exposureOf(spec).tier);
       if (!eligible) {
@@ -287,7 +288,15 @@ describe("the tier table in docs/machine-surfaces.md counts what exposureOf coun
       if (why === null) continue;
       if (why.includes("org.admin")) reasons.admin += 1;
       else if (why.includes("requester")) reasons.requester += 1;
-      else reasons.filtered += 1;
+      else if (why.includes("not been classified")) {
+        /*
+         * An unclassified route. Zero exist today, and the previous version swept this into the `filtered`
+         * bucket — where the documented row reads "a filter no machine can satisfy", which would have
+         * described it wrongly and been fixed by editing the document to match. Failed by name instead, so
+         * the answer is to classify the route.
+         */
+        unclassified.push(`${spec.method} ${spec.path}`);
+      } else reasons.filtered += 1;
     }
 
     const documentedReasons: number[] = [];
@@ -296,6 +305,11 @@ describe("the tier table in docs/machine-surfaces.md counts what exposureOf coun
         .exec(line.trim());
       if (match !== null) documentedReasons.push(Number(match[1]));
     }
+    expect(
+      unclassified,
+      "these read/act routes have no `authority` at all, so they are withheld by the fail-closed default "
+      + "rather than by a decision. Classify them in packages/contract/src/routes.ts:",
+    ).toEqual([]);
     expect(documentedReasons, "the withheld-reason table is gone or has changed shape").toHaveLength(4);
     expect(
       documentedReasons,
