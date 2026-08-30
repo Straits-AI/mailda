@@ -1,3 +1,4 @@
+import { utf8 } from "@mailda/evidence";
 import { SELF, env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -7,6 +8,7 @@ import { notificationListResponse } from "@mailda/contract/schemas";
 
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import { hashPassword } from "../src/auth/password.ts";
+import { putEvidence } from "../src/evidence-store.ts";
 
 /**
  * What a route **declares** it requires, driven against a principal who does not have it.
@@ -550,10 +552,13 @@ describe("a mailbox-wide notice reaches the relation it names, and no other", ()
    * grantless `notice.read` on its strength.
    *
    * Nothing compared that declaration to the handler. Dropping `AND t.relation = 'mailbox.content.read'` from
-   * `notificationsFor` — so any tuple on a mailbox sees its notices — left **1,511 tests green**. Every
-   * existing caller of that function passes `subjects: [MEMBER]` and exercises the directly-addressed branch;
-   * the relation branch had no test that lacked the relation, and the route is on the undriven-response list
-   * as well.
+   * `notificationsFor` — so any tuple on a mailbox sees its notices — left **1,511 tests green**.
+   *
+   * The reason, stated correctly: `agents.test.ts` does drive the relation branch, through the sponsor term,
+   * and it **grants the relation**. Nothing anywhere drove a caller holding a *lesser* one. An earlier draft
+   * of this paragraph said every existing caller exercised the directly-addressed branch, which is checkable
+   * in one grep and wrong — a false coverage claim, in a docstring about coverage, in the file whose subject
+   * is stale coverage claims.
    *
    * What leaks is what the query's own comment names four lines above the gate: *"an agent reading these
    * unintersected would learn which mailboxes have matters open and what is due on them — the shape of the
@@ -618,5 +623,277 @@ describe("a mailbox-wide notice reaches the relation it names, and no other", ()
       await noticeIds(),
       "a metadata-only holder read a mailbox-wide notice, which names the mailbox and its matter",
     ).not.toContain(noticeId);
+  });
+});
+
+describe("a mailbox route requires the relation it declares, not merely some relation", () => {
+  /*
+   * The **necessary** half of the `mailbox` scope, which nothing had.
+   *
+   * `test/agent-capabilities.test.ts` grants each capability exactly the relations it declares and proves them
+   * *sufficient*. That cannot see a handler whose relation term is wrong, because a caller holding the
+   * declared relations passes either way. And every negative test on these paths grants the caller **nothing**
+   * — "shows a member with no relation on the mailbox nothing at all" — which passes with the relation term
+   * deleted, since a caller with no tuples fails `subject_id IN (…)` regardless.
+   *
+   * Four gates were live holes under that shape, each leaving 1,513 tests green when its relation term was
+   * removed:
+   *
+   * | gate | what a lesser relation opened |
+   * |:--|:--|
+   * | `cases.ts` `mailboxQueues` | `GET /api/mailboxes` — the mailbox, its addresses, its queue counts |
+   * | `authz-read.ts` `readableMailboxes` | `GET /api/mailboxes/readable` listing what it may not read |
+   * | `index.ts` outbox query | `GET /api/sends` — subjects, recipients, the receiving server's words |
+   * | `authz-read.ts` `mailboxesWithRelation` | answered any relation for any relation asked |
+   *
+   * The outbox one is the sharpest: the comment above that query names incident #45 — *"any authenticated
+   * member received every send from every mailbox — subjects, recipients, and the receiving server's own
+   * words about a customer's address"* — and the relation term that fixed it had no test.
+   *
+   * So this drives the class rather than those four. For every `mailbox`-scoped route it grants a relation
+   * that does **not** satisfy the declaration and asserts nothing about the mailbox comes back, then grants
+   * the declared relations and asserts it does. Both halves, because a route that discloses to nobody would
+   * satisfy the first on its own.
+   */
+  const RECEIPT = "rcpt_PARTYRCPT00000000000000000";
+  const SEND = "snd_PARTYSEND00000000000000000";
+  /*
+   * A second manifest, `held` with its window already closed, so `POST /api/sends/dispatch` has something to
+   * release and names it in the answer. Without it that route disclosed nothing to *anybody* and its refusal
+   * was vacuous — which the check below reports rather than passes, and which is how the `send.propose` bound
+   * on the sweep went untested while a mutation making it answer any relation left 1,525 tests green.
+   */
+  const HELD = "snd_PARTYHELD00000000000000000";
+  const ADDRESS = "enquiries@parity.example";
+
+  /** Every id that only somebody entitled to this mailbox should ever see in a response. */
+  const SECRETS = [MAILBOX, RECEIPT, SEND, HELD, ADDRESS];
+
+  async function seedMailboxContents() {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const raw = utf8([
+      "From: someone@parity.example",
+      `To: ${ADDRESS}`,
+      "Subject: parity fixture",
+      "Message-ID: <parity-1@parity.example>",
+      "Date: Mon, 3 Aug 2026 12:00:00 +0000",
+      "",
+      "body text",
+    ].join("\r\n"));
+    await putEvidence(testEnv as never, `${ORG}/raw/${RECEIPT}`, raw);
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare(
+        "INSERT OR IGNORE INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("addr"), ORG, ADDRESS, MAILBOX, at),
+      testEnv.CATALOG.prepare(
+        `INSERT OR IGNORE INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+           raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(RECEIPT, ORG, `evt_${RECEIPT}`, "someone@parity.example", ADDRESS, raw.byteLength,
+        `${ORG}/raw/${RECEIPT}`, "0".repeat(64), at),
+      testEnv.CATALOG.prepare(
+        `INSERT OR IGNORE INTO send_manifests
+           (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
+            fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+            sealed_at, release_at, state, state_at)
+         VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'sent',?)`,
+      ).bind(SEND, ORG, MAILBOX, MEMBER, ADDRESS, JSON.stringify(["out@example.test"]), "parity out",
+        `<${SEND}@parity.example>`, `${ORG}/typed/${SEND}`, "0".repeat(64), `${ORG}/norm/${SEND}`,
+        "0".repeat(64), at, at, at),
+      testEnv.CATALOG.prepare(
+        `INSERT OR IGNORE INTO send_manifests
+           (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
+            fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+            sealed_at, release_at, state, state_at)
+         VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'held',?)`,
+      ).bind(HELD, ORG, MAILBOX, MEMBER, ADDRESS, JSON.stringify(["held@example.test"]), "parity held",
+        `<${HELD}@parity.example>`, `${ORG}/typed/${HELD}`, "0".repeat(64), `${ORG}/norm/${HELD}`,
+        "0".repeat(64), "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z"),
+    ]);
+  }
+
+  async function onlyRelations(relations: readonly string[]) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?")
+      .bind(ORG, MEMBER).run();
+    for (const relation of relations) {
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, MEMBER, relation, MAILBOX, new Date(ctx.now()).toISOString()).run();
+    }
+  }
+
+  /** Whether a response actually handed over something about this mailbox. */
+  async function discloses(spec: RouteSpec): Promise<boolean> {
+    const path = spec.path
+      .replace(":mailboxId", MAILBOX).replace(":receiptId", RECEIPT).replace(":sendId", SEND)
+      .replace(":draftId", "dft_PARTYDRAFT0000000000000000");
+    const body = BODIES[`${spec.method} ${spec.path}`];
+    const response = await SELF.fetch(`https://node${path}`, {
+      method: spec.method,
+      headers: {
+        cookie: `${ACCESS_COOKIE}=${memberCookie}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (response.status < 200 || response.status >= 300) return false;
+    const text = await response.text();
+    return SECRETS.some((secret) => text.includes(secret));
+  }
+
+  /** The declared relations a caller must hold, and one this Node grants that does not satisfy them. */
+  function pair(spec: RouteSpec): { enough: string[]; lesser: string } | null {
+    const authority = spec.authority as { allOf?: string[]; anyOf?: string[] };
+    const enough = authority.allOf?.length ? authority.allOf : authority.anyOf?.slice(0, 1) ?? [];
+    if (enough.length === 0) return null;
+    const satisfying = new Set([...(authority.allOf ?? []), ...(authority.anyOf ?? [])]);
+    const lesser = ["send.propose", "mailbox.metadata.read", "mailbox.content.read", "message.export"]
+      .find((one) => !satisfying.has(one));
+    return lesser === undefined ? null : { enough, lesser };
+  }
+
+  const mailboxRoutes = (ROUTES as readonly RouteSpec[]).filter((spec) => spec.authority?.scope === "mailbox");
+
+  for (const spec of mailboxRoutes) {
+    const key = `${spec.method} ${spec.path}`;
+    const chosen = pair(spec);
+    if (chosen === null) continue;
+
+    it(`withholds ${key} from a holder of ${chosen.lesser}`, async () => {
+      await seedMailboxContents();
+
+      // The control first: the declared relations really do reach this mailbox's data through this route.
+      // Without it, the refusal below is satisfied by a route that discloses to nobody.
+      await onlyRelations(chosen.enough);
+      const withEnough = await discloses(spec);
+
+      await onlyRelations([chosen.lesser]);
+      const withLesser = await discloses(spec);
+
+      expect(
+        withLesser,
+        `${key} declares ${chosen.enough.join(" and ")} and handed this mailbox's data to a holder of `
+        + `${chosen.lesser}. A caller with *no* relation is refused by the subject test alone, so only a `
+        + "lesser relation can show the relation term is doing anything",
+      ).toBe(false);
+
+      // Reported rather than asserted: a route the fixtures cannot drive to a disclosure proves nothing
+      // above, and saying so is better than a green test that checked an absence against an absence.
+      if (!withEnough) {
+        expect(
+          UNDISCLOSING,
+          `${key} disclosed nothing even to a holder of ${chosen.enough.join(" and ")}, so the refusal above `
+          + "is vacuous. Build the fixture it needs, or name it here:",
+        ).toContain(key);
+      }
+    });
+  }
+});
+
+/**
+ * Mailbox routes whose fixtures do not reach a disclosure, so their refusal above proves nothing yet.
+ *
+ * Named rather than silently passing, and the list can only shrink: it is the same shape `NOT_EXERCISED`
+ * uses, and it exists because an absence checked against an absence is exactly how the four gates above
+ * stayed untested through five rounds of review.
+ */
+const UNDISCLOSING: readonly string[] = [
+  // Needs a saved draft, which `test/composer.test.ts` builds through the save path rather than by row.
+  "GET /api/drafts",
+  "PUT /api/drafts",
+  "GET /api/drafts/:draftId",
+  // Needs a case row on the mailbox; `test/queue-disclosure.test.ts` owns that fixture.
+  "GET /api/mailboxes/:mailboxId/cases",
+  // Cancelling needs a send that has not left; this one is already sealed and sent.
+  "POST /api/sends/:sendId/cancel",
+  /*
+   * `dispatchResponse` is `{dispatched: […]}` and carries no manifest id, so the body cannot show whether the
+   * sweep touched this mailbox. Its observable is the **effect**, and the test below asserts that directly:
+   * a lesser-relation caller must not move a held send out of `held`.
+   */
+  "POST /api/sends/dispatch",
+  // Needs submitted bytes in R2 beside the manifest.
+  "GET /api/sends/:sendId/submitted",
+  // The body and raw routes need the message to be readable through `authorize`, which the seeded receipt
+  // reaches only with content.read — covered by `test/agent-capabilities.test.ts` for the sufficient half.
+  "GET /api/messages/:receiptId/body",
+  "GET /api/messages/:receiptId/raw",
+];
+
+describe("forcing the dispatch sweep reaches only mailboxes the caller may send from", () => {
+  /*
+   * `mailboxesWithRelation(who, "send.propose")` bounds this route, and the comment beside the call records
+   * why: forcing the sweep releases held sends, *"so forcing the sweep ended other people's chance to stop
+   * their own mail"*. Mutating that function to `AND (t.relation = ? OR 1)` — it answers any relation for any
+   * relation asked — left **1,525 tests green**.
+   *
+   * The generic pair a few blocks up cannot cover it: `dispatchResponse` is `{dispatched: […]}` and names no
+   * manifest, so there is nothing in the body to recognise. The observable is the effect on the manifest, so
+   * that is what this asserts.
+   */
+  const HELD = "snd_PARTYSWEEP0000000000000000";
+
+  async function heldSend() {
+    const at = "2020-01-01T00:00:00.000Z";
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO send_manifests
+         (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
+          fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+          sealed_at, release_at, state, state_at)
+       VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'held',?)`,
+    ).bind(HELD, ORG, MAILBOX, MEMBER, "enquiries@parity.example", JSON.stringify(["out@example.test"]),
+      "swept", `<${HELD}@parity.example>`, `${ORG}/typed/${HELD}`, "0".repeat(64), `${ORG}/norm/${HELD}`,
+      "0".repeat(64), at, at, at).run();
+  }
+
+  async function stateOfHeld(): Promise<string> {
+    const row = await testEnv.CATALOG.prepare("SELECT state FROM send_manifests WHERE id = ?")
+      .bind(HELD).first<{ state: string }>();
+    return row?.state ?? "gone";
+  }
+
+  async function relate(relation: string) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?")
+      .bind(ORG, MEMBER).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,'mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, MEMBER, relation, MAILBOX, new Date(ctx.now()).toISOString()).run();
+  }
+
+  async function sweep(): Promise<number> {
+    const response = await SELF.fetch("https://node/api/sends/dispatch", {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}` },
+    });
+    return response.status;
+  }
+
+  it("leaves a held send alone for a caller holding only a lesser relation", async () => {
+    await heldSend();
+    await relate("mailbox.content.read");
+    await sweep();
+    expect(
+      await stateOfHeld(),
+      "a caller who may read the mailbox but not send from it forced somebody else's held mail out of hold",
+    ).toBe("held");
+  });
+
+  it("reaches it for a holder of send.propose, so the refusal above is not a broken route", async () => {
+    /*
+     * The control, and the half that makes the assertion above mean something. Without it, a dispatch that
+     * released nothing for anybody — a transport misconfiguration, a query that matches no row — would
+     * satisfy the refusal perfectly.
+     */
+    await heldSend();
+    await relate("send.propose");
+    await sweep();
+    expect(
+      await stateOfHeld(),
+      "send.propose did not reach the sweep either, so this route releases nothing for anybody",
+    ).not.toBe("held");
   });
 });

@@ -342,7 +342,16 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", response: S.sendSealedResponse },
-  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
+  /*
+   * Declared although it is `governed` and reaches no machine, because the declaration is what the parity
+   * suite drives — and an undeclared route is one nothing compares to its handler.
+   *
+   * `mailboxesWithRelation(who, "send.propose")` bounds the sweep to mailboxes this caller may act in, which
+   * is the fix for the incident recorded beside the call: forcing the sweep released other people's held
+   * sends and ended their chance to cancel. Mutating that function to answer any relation for any relation
+   * asked left 1,525 tests green, because nothing drove this route with a lesser relation.
+   */
+  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendCancelledResponse },
   { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed", response: S.sendRetriedResponse },
   { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
