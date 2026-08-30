@@ -10,8 +10,13 @@ import { cpus } from "node:os";
  * timeout on its own — because a suite creeping toward its ceiling reads as flakiness only after it
  * starts failing, and by then somebody has usually reached for `retry`.
  *
- * Reads the report the test run already produced (`vitest.config.ts` adds a json reporter when CI is
- * set) rather than running the suite again for a number the first run knows.
+ * Reads the reports the test run already produced (each config adds a json reporter when CI is set)
+ * rather than running the suite again for a number the first run knows.
+ *
+ * **All three suites**, which took a flake to notice. This read only the workerd report, so the ceiling
+ * designed to catch a test creeping toward the timeout could not see `test/node/` or `test/client/` at
+ * all — and `test/node/attach-queue-consumer.test.ts` is the file that went on to breach 5,000 ms under
+ * load. It was invisible twice over: its config had no measured timeout, and this check never read it.
  *
  * It gates as well as reports, because a printed warning nobody fails on is the muted check AGENTS.md
  * warns about. The threshold comes from measurement rather than taste: the first CI run put the slowest
@@ -21,7 +26,16 @@ import { cpus } from "node:os";
  * noisy-neighbour variance cannot reach it and tight enough to catch a test that has genuinely grown.
  */
 
-const REPORT = "apps/node/worker/.vitest-report.json";
+/**
+ * One report per config, because one config is one `testTimeout` and each has its own way to be slow.
+ * Named individually rather than globbed: a config that stops emitting its report should show up as a
+ * suite this check can no longer see, and a glob would simply find one fewer file and say nothing.
+ */
+const REPORTS = [
+  { suite: "workerd", path: "apps/node/worker/.vitest-report.json" },
+  { suite: "node", path: "apps/node/worker/.vitest-report-node.json" },
+  { suite: "client", path: "apps/node/worker/.vitest-report-client.json" },
+];
 
 /**
  * Both numbers come from the generated budgets, so neither can drift from the receipt that measured it
@@ -43,15 +57,42 @@ function emit(markdown) {
   }
 }
 
-if (!existsSync(REPORT)) {
-  // A failed suite may not have written one. Silence here is honest; the test step already failed.
-  emit(`No test report at \`${REPORT}\` — the suite did not finish.`);
+const present = REPORTS.filter((r) => existsSync(r.path));
+const missing = REPORTS.filter((r) => !existsSync(r.path));
+
+/**
+ * Whether the Test step itself succeeded, passed in by the workflow.
+ *
+ * A missing report means one of two very different things. If the suite crashed, vitest never got to write
+ * one and silence here is honest — the run has already failed for a better reason. If the suite **passed**
+ * and a report is still missing, a suite has stopped reporting, and this gate has quietly stopped covering
+ * it: exactly how `test/node/` sat outside the ceiling for three weeks.
+ *
+ * Absent when run by hand, which is treated as "do not gate" so the script stays usable locally.
+ */
+const TESTS_PASSED = process.env.TEST_STEP_OUTCOME === "success";
+
+if (present.length === 0) {
+  emit(`No test reports found — the suite did not finish.`);
+  if (TESTS_PASSED) {
+    emit("> **The tests passed and produced no report at all.** Every suite has stopped reporting, so this "
+      + "gate is measuring nothing. Check the `reporters` block in each vitest config.");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
-const report = JSON.parse(readFileSync(REPORT, "utf8"));
-const tests = report.testResults
-  .flatMap((file) => file.assertionResults.map((a) => ({ name: a.fullName, ms: a.duration ?? 0 })))
+/*
+ * Which suites are absent is stated rather than left to a smaller number. This step runs under
+ * `if: always()`, so a crashed suite legitimately writes nothing and gating on that would fail every run
+ * that already failed for a better reason. But a report quietly disappearing is how the coverage this
+ * commit just added would be lost, and an unmentioned absence is indistinguishable from a fast suite.
+ */
+const tests = present
+  .flatMap(({ suite, path }) =>
+    JSON.parse(readFileSync(path, "utf8")).testResults
+      .flatMap((file) => file.assertionResults.map((a) => ({ suite, name: a.fullName, ms: a.duration ?? 0 })))
+  )
   .sort((a, b) => b.ms - a.ms);
 
 const timeout = budget("test.timeout_ms");
@@ -59,7 +100,7 @@ const worst = tests[0]?.ms ?? 0;
 
 const rows = tests
   .slice(0, 8)
-  .map((t) => `| ${t.ms} | ${((t.ms / timeout) * 100).toFixed(1)}% | ${t.name.slice(0, 90)} |`);
+  .map((t) => `| ${t.ms} | ${((t.ms / timeout) * 100).toFixed(1)}% | ${t.suite} | ${t.name.slice(0, 90)} |`);
 
 /**
  * The share of the timeout a single test may take before this fails.
@@ -74,13 +115,17 @@ emit(
   [
     "### Test headroom on this hardware",
     "",
-    `Cores: **${cpus().length}** · timeout: **${timeout}ms** · tests: **${tests.length}**`,
+    `Cores: **${cpus().length}** · timeout: **${timeout}ms** · tests: **${tests.length}** · ` +
+      `suites read: **${present.map((r) => r.suite).join(", ")}**`,
     "",
+    ...(missing.length === 0
+      ? []
+      : [`> No report from: **${missing.map((r) => r.suite).join(", ")}** — those suites are unmeasured here.`, ""]),
     `Slowest test used **${worst}ms**, which is **${((worst / timeout) * 100).toFixed(1)}%** of the timeout ` +
       `(**${(timeout / Math.max(worst, 1)).toFixed(1)}x** headroom).`,
     "",
-    "| ms | % of timeout | test |",
-    "|---:|---:|:---|",
+    "| ms | % of timeout | suite | test |",
+    "|---:|---:|:---|:---|",
     ...rows,
     "",
     `Fails above **${CEILING * 100}%** of the timeout. See ` +
@@ -88,12 +133,26 @@ emit(
   ].join("\n"),
 );
 
+/*
+ * A suite that stopped reporting is a suite that left this gate, and reporting it without failing is the
+ * muted check AGENTS.md describes — the same argument the ceiling below already makes about printing a number
+ * nobody fails on. Only gated when the tests passed, because a crashed suite legitimately writes nothing.
+ */
+if (TESTS_PASSED && missing.length > 0) {
+  emit(
+    `\n> **${missing.map((r) => r.suite).join(", ")} produced no report while the tests passed.** That suite is `
+    + "no longer covered by the headroom ceiling, so a test in it can grow until it times out with nothing "
+    + "saying so. Restore its json reporter, or remove it from REPORTS deliberately.",
+  );
+  process.exitCode = 1;
+}
+
 if (worst > timeout * CEILING) {
   const slowest = tests[0];
   emit(
     [
       "",
-      `> **Over the headroom ceiling.** \`${slowest.name}\` took ${slowest.ms}ms, past ` +
+      `> **Over the headroom ceiling.** \`${slowest.name}\` (${slowest.suite}) took ${slowest.ms}ms, past ` +
         `${CEILING * 100}% of the ${timeout}ms timeout.`,
       ">",
       "> The fix is usually *not* to raise the timeout. A test this close to it will start timing out " +

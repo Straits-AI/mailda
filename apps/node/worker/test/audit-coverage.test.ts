@@ -48,6 +48,12 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * how an interrupted attempt stays legible rather than looking like one that never began.
    */
   recovery_restores: { actions: ["recovery.restore_started", "recovery.vault_restored"] },
+  /*
+   * The acknowledgement of a permanent key collision. One action, and the row is immutable — there is no
+   * update and no delete, so the entry and the record are written in one batch and neither can outlive the
+   * other.
+   */
+  recovery_key_conflict_acknowledgements: { actions: ["recovery.conflict_acknowledged"] },
   send_manifests: {
     actions: [
       "send.sealed", "send.cancelled", "send.held", "send.throttled", "send.refused",

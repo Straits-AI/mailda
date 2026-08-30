@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
-import { authenticationProbe, runDoctor } from "../src/doctor.ts";
+import { authenticationProbe, runDoctor, withoutDataFindings } from "../src/doctor.ts";
 
 /**
  * Five organization-wide routes that asked for a session and needed an administrator.
@@ -93,6 +93,11 @@ const OPERATOR_ROUTES = [
   { method: "GET", path: "/api/audit", why: "every actor, subject, grant and matter in the organization" },
   { method: "POST", path: "/api/audit/verify", why: "where the chain broke, about a trail they may not read" },
   { method: "GET", path: "/api/logs", why: "error detail and request ids from everybody else's work" },
+  {
+    method: "POST",
+    path: "/api/recovery/conflicts/rst_nothing/acknowledge",
+    why: "silence a permanent key-loss alarm, which is the one signal saying mail is unreadable for ever",
+  },
 ] as const;
 
 describe("organization-wide routes need an administrator, not a session", () => {
@@ -261,6 +266,44 @@ describe("doctor decides before it works, and shows an ordinary member less", ()
       "a colleague was shown findings that name this organization's holds, matters and mailboxes",
     ).toBe(true);
     expect(report.findings.map((one) => one.check)).toContain("report_reduced");
+  });
+
+  it("tells a signed-in member the truth about why they are seeing less", async () => {
+    /*
+     * The assertion nobody made. The test above checks the report **is** reduced and never reads the sentence
+     * explaining it — and that sentence said *"Served without authentication because this Node cannot
+     * currently authenticate anyone"* to every ordinary member, on a Node authenticating them perfectly well
+     * at that moment.
+     *
+     * `doctor` is what somebody opens during an incident. A diagnostic that contradicts the thing the reader
+     * just did costs them the first minutes of it wondering whether sessions are broken too.
+     */
+    const response = await SELF.fetch(`${ORIGIN}/api/doctor`, {
+      headers: { cookie: await cookieFor(MEMBER) },
+    });
+    const report = await response.json<{ findings: { check: string; detail: string }[] }>();
+    const reduced = report.findings.find((one) => one.check === "report_reduced")!;
+
+    expect(
+      reduced.detail,
+      "a signed-in member is told this Node cannot authenticate anyone",
+    ).not.toMatch(/cannot currently authenticate anyone/);
+    expect(reduced.detail, "the reason given is not that they are signed in").toMatch(/You are signed in/);
+  });
+
+  it("keeps the locked-out wording for the case it was written for", async () => {
+    /*
+     * The control on the one above: if the wording were simply swapped rather than chosen per case, this
+     * would fail.
+     *
+     * An anonymous caller reaches a report at all only when this Node **cannot authenticate anyone** — the
+     * route answers `401` otherwise, which is what the test at the top of this block asserts. So the original
+     * sentence is exactly right here and exactly wrong for the signed-in member, which is the whole finding.
+     */
+    const report = withoutDataFindings(await runDoctor(testEnv, createSystemCtx()), "locked_out");
+    const reduced = report.findings.find((one) => one.check === "report_reduced")!;
+    expect(reduced.detail).toMatch(/cannot currently authenticate anyone/);
+    expect(reduced.detail, "the locked-out report claims the reader is signed in").not.toMatch(/You are signed in/);
   });
 
   it("gives an administrator the whole thing", async () => {

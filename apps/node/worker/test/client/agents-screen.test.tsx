@@ -191,14 +191,16 @@ describe("the ceiling is chosen and shown as capabilities", () => {
     fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
       target: { value: "triage" },
     });
-    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    // `hold.read` rather than `mail.read`: this is about the request carrying names, and `mail.read` needs
+    // two relations on one mailbox, which the button now requires before it will submit at all.
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     await waitFor(() => expect(posted.length).toBe(1));
     expect(
       posted[0],
       "the screen expanded capabilities into routes itself, which puts the expansion in two places",
-    ).toMatchObject({ capabilities: ["mail.read"] });
+    ).toMatchObject({ capabilities: ["hold.read"] });
     expect(JSON.stringify(posted[0]), "a route string reached the request body").not.toContain("/api/");
   });
 
@@ -214,7 +216,8 @@ describe("the ceiling is chosen and shown as capabilities", () => {
     fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
       target: { value: "triage" },
     });
-    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    // The relation-free capability, so this test is about the token and not about provisioning.
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     expect(await screen.findByText("tok_shown_once")).toBeTruthy();
@@ -234,8 +237,65 @@ describe("the ceiling is chosen and shown as capabilities", () => {
     });
     expect(screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled")).toBe(true);
 
-    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
     expect(screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("refuses to mint a capability no chosen mailbox can satisfy", async () => {
+    /*
+     * The screen computed this and displayed it and then let the button be pressed anyway — "no mailbox here
+     * carries all of them, so the agent will authenticate and be refused", beside an enabled control. A
+     * warning next to a live button reads as advice about a choice, and this is not one: `POST /api/agents`
+     * refuses the same combination, so pressing it only moves the refusal somewhere less useful.
+     */
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
+      target: { value: "triage" },
+    });
+
+    // `mail.read`, which needs `mailbox.content.read` and `message.export` on one mailbox, and no mailbox.
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(
+      screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled"),
+      "a capability with no mailbox at all could still be minted",
+    ).toBe(true);
+
+    // Half of what it needs is still not enough, and this is the case a set-union check would have allowed.
+    await pick("mailbox.content.read", "Support");
+    expect(
+      screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled"),
+      "a half-satisfied capability could still be minted",
+    ).toBe(true);
+
+    // The control: completing it on the same mailbox enables the button, so the assertions above are not
+    // passing because the button is disabled for some unrelated reason.
+    await pick("message.export", "Support");
+    expect(
+      screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled"),
+      "a fully satisfied capability could not be minted",
+    ).toBe(false);
+  });
+
+  it("refuses when the two relations are on different mailboxes", async () => {
+    /*
+     * The case the arithmetic exists for. `content.read` on Support and `message.export` on Billing satisfies
+     * `mail.read` on neither, because reach is decided per mailbox — and a check that unioned the selected
+     * relations would call this provisioned and be wrong.
+     */
+    mount([]);
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
+      target: { value: "split" },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    await pick("mailbox.content.read", "Support");
+    await pick("message.export", "Billing");
+
+    expect(
+      screen.getByRole("button", { name: "Mint agent" }).hasAttribute("disabled"),
+      "relations split across two mailboxes were counted as satisfying one capability",
+    ).toBe(true);
   });
 });
 
@@ -301,14 +361,23 @@ describe("the mint form completes the authority, not only the credential", () =>
       target: { value: "triage" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    // Both relations `mail.read` needs, on the one mailbox. Picking only `content.read` left the capability
+    // unsatisfied, which the form now refuses to submit — the credential it would have minted could not have
+    // fetched the original bytes its own capability promises.
     await pick("mailbox.content.read", "Support");
+    await pick("message.export", "Support");
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     await waitFor(() => expect(posted.length).toBe(1));
     expect(
       posted[0],
       "the form minted a credential with no reach, which authenticates and reads nothing",
-    ).toMatchObject({ grants: [{ mailboxId: "mbx_support", relation: "mailbox.content.read" }] });
+    ).toMatchObject({
+      grants: [
+        { mailboxId: "mbx_support", relation: "mailbox.content.read" },
+        { mailboxId: "mbx_support", relation: "message.export" },
+      ],
+    });
   });
 
   it("offers each relation with what it lets the agent do", async () => {
@@ -384,7 +453,16 @@ describe("the mint form completes the authority, not only the credential", () =>
     fireEvent.change(await screen.findByPlaceholderText("what this agent is for"), {
       target: { value: "diagnostic" },
     });
-    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    /*
+     * `hold.read`, which needs no mailbox — and that is the whole remaining shape of this claim.
+     *
+     * This test used to select `mail.read` and assert it minted with `grants: []`, which made it evidence for
+     * the defect rather than against it: the credential it described authenticates and is refused on every
+     * route the capability names. Least privilege is still the subject, and it is still true — nothing is
+     * pre-selected — but "nothing granted" is only a legitimate *mint* for a capability that needs nothing.
+     * The mailbox-requiring case is covered by the two refusals above.
+     */
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
     await waitFor(() => expect(posted.length).toBe(1));
     expect(posted[0]).toMatchObject({ grants: [] });
@@ -517,7 +595,8 @@ describe("the mint form asks about the sponsor, not about the caller", () => {
     fireEvent.change(chooser, { target: { value: "usr_ben000000000000000001" } });
 
     fireEvent.change(screen.getByPlaceholderText("what this agent is for"), { target: { value: "for ben" } });
-    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    // Relation-free, so the assertion below is about the sponsor and not about provisioning.
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
     fireEvent.click(screen.getByRole("button", { name: "Mint agent" }));
 
     await waitFor(() => expect(posted.length).toBe(1));

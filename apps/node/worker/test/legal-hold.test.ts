@@ -890,7 +890,7 @@ describe("doctor reports what is held, and whether anybody could lift it", () =>
 
   it("keeps every mailbox id out of the reduced report, which now carries no hold finding at all", async () => {
     await placeHold(testEnv, atTime(AUGUST_10), ORG, ADMIN, { mailboxId: HELD_MAILBOX });
-    const reduced = withoutDataFindings(await runDoctor(testEnv, atTime(AUGUST_10)));
+    const reduced = withoutDataFindings(await runDoctor(testEnv, atTime(AUGUST_10)), "locked_out");
 
     // Every hold finding discloses `data` now that the one `infrastructure` one is gone, so an
     // unauthenticated reader learns nothing about holds — including whether any exist, which is the property

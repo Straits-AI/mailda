@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 46 capabilities
+## What you can do — 23 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -35,23 +35,11 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 |:--|:--|
 | `getWellKnownJwksJson` | The public keys that verify this Node's tokens |
 | `getAccess` | Who holds what on which mailbox |
-| `getApprovals` | Approvals waiting on somebody |
-| `getAuthPasskeys` | The passkeys this account holds. Never returns a public key |
 | `getBreakers` | The rate breakers, with the readings behind them |
-| `getButlerPauses` | Butlers a machine has stopped |
-| `getButlerRuns` | What the Butlers have done |
-| `getButlerRunsByRunId` | One run |
-| `getButlerRunsByRunIdInspect` | One run's input, program and effects, with the replay modes it offers |
-| `getButlers` | Every Butler, with the version that is live |
-| `getButlersByButlerId` | One Butler and its version history |
 | `getDoctor` | What this Node can and cannot do, with the evidence |
 | `getDomainPauses` | Domains this Node has stopped sending to |
 | `getDrafts` | Drafts this person is writing |
 | `getDraftsByDraftId` | One draft |
-| `getExports` | Export jobs |
-| `getExportsByExportIdObjectsByObjectId` | One object from a completed export |
-| `getHolds` | Legal holds in force |
-| `getInvitations` | Invitations still outstanding |
 | `getMailboxes` | The mailboxes this person may act in |
 | `getMailboxesByMailboxIdCases` | The case queue in one mailbox |
 | `getMailboxesReadable` | Mailboxes this caller may read, which is not the work-queue list |
@@ -61,37 +49,26 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getMessagesByReceiptIdBody` | One message's rendered body. Takes the receipt id that GET /api/messages returns as `id` |
 | `getMessagesByReceiptIdRaw` | One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does |
 | `getNotifications` | What has changed since the last poll |
-| `getPeople` | Everybody in this organization |
-| `getPolicies` | Every policy, with the version that is live |
 | `getSends` | The outbox |
 | `getSendsBySendIdSubmitted` | The exact bytes handed to the transport, as the message itself |
-| `getSupervised` | Live supervised-access grants (§7) |
 | `getTeams` | Every team |
-| `getTeamsByTeamId` | One team |
-| `getTeamsByTeamIdMembers` | Who is in a team |
-| `getTransport` | Which adapter carries this Node's mail, and what both can say about themselves |
 | `getHealth` | Whether this Node is up, and what is missing if it is not |
 
 ### Acting — changes something a person can undo
 
 | method | what it does |
 |:--|:--|
-| `postButlers` | Create a Butler and its first draft |
-| `putButlersByButlerIdDraft` | Replace a Butler's draft |
-| `postButlersByButlerIdSimulate` | Dry-run a Butler: walk it, cause nothing, report what a live run would do |
 | `putDrafts` | Save a draft |
 | `postMatters` | Open a matter |
-| `postPolicies` | Create a policy |
-| `putPoliciesByPolicyIdDraft` | Replace a policy's draft |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 60 withheld
+## What you cannot do, and why — 84 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
 them independently of this document.
 
-### Governed — needs more than one person, or cannot be undone (29)
+### Governed — needs more than one person, or cannot be undone (30)
 
 You are acting inside one person's session. Mailda counts **distinct people**, not credentials or requests,
 so you are that one person and can never be the second. These are not permissions you might be granted.
@@ -134,6 +111,10 @@ so you are that one person and can never be the second. These are not permission
 
   Closing a matter is one-way. `matters.ts` has openMatter and closeMatter and no reopen, and the closure stamps the time from which employee-notification obligations become due (§7). A resumed investigation needs a new matter, so this is a governance event rather than filing.
 
+- **`postRecoveryConflictsByRestoreIdAcknowledge`**
+
+  Acknowledging a permanent key collision is a conclusion a person reached about what was lost, and it is immutable — there is no second acknowledgement and no edit, so a machine filing one wrong has taken the record away from whoever should have written it. It is also the act that stops `doctor` deciding its verdict on that collision, which is precisely the kind of alarm-silencing that should cost a person's attention.
+
 - **`postSends`, `postSendsBySendIdRetry`**
 
   Mail leaving is the one act in this product nobody can undo. Sealing commits a message to policy and the dispatcher takes it from there; a cancellation is a race, not a reversal.
@@ -161,6 +142,33 @@ so you are that one person and can never be the second. These are not permission
 - **`patchMailboxesByMailboxId`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
+
+### Out of reach — an ordinary act, and no credential can be provisioned for it (23)
+
+These are not governed and not operator acts. They are reads and reversible writes a machine could perfectly
+well be trusted with, and there is **no credential that satisfies them**: they require `org.admin`, or they
+belong to whoever requested an export, or they narrow their answer by a relation no mint confers — so a token
+holding them would be admitted and shown nothing, for ever.
+
+They are listed because the alternative is worse. Until now they were counted as withheld and printed
+nowhere, which reads as an omission somebody will try to work around. Asking an administrator to grant one of
+these does not help; the answer is a person doing it, or a change to what Mailda is willing to delegate.
+
+- **`getApprovals`**
+
+  it answers any authenticated caller and narrows the result to what approval.decide reaches — a relation no mint confers, so an agent would be admitted and shown an empty result for ever
+
+- **`getAuthPasskeys`**
+
+  it answers any authenticated caller with that caller's own records, and the acts that create them are withheld from machines — so an agent would be admitted and shown an empty result for ever
+
+- **`getButlerPauses`, `getButlerRuns`, `getButlerRunsByRunId`, `getButlerRunsByRunIdInspect`, `getButlers`, `getButlersByButlerId`, `getExports`, `getHolds`, `getInvitations`, `getPeople`, `getPolicies`, `getSupervised`, `getTeamsByTeamId`, `getTeamsByTeamIdMembers`, `getTransport`, `postButlers`, `postButlersByButlerIdSimulate`, `postPolicies`, `putButlersByButlerIdDraft`, `putPoliciesByPolicyIdDraft`**
+
+  it requires org.admin, which is deliberately not an agent-grantable relation: an agent holding it would administer the organization it acts inside, and nested administration is a design somebody should make on purpose
+
+- **`getExportsByExportIdObjectsByObjectId`**
+
+  it belongs to the requester of an export, and creating one is withheld from every machine — so an agent cannot be the requester of anything this would answer for
 
 ## Three things worth knowing before you act
 

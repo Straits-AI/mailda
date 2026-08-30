@@ -14,18 +14,33 @@ would come to disagree about which acts are safe, which is the worst thing they 
 
 ## The rule
 
-| tier | offered | what it is | count |
+| tier | may be offered | what it is | count |
 |:--|:--|:--|--:|
 | `read` | yes | answers a question, changes nothing | 38 |
 | `act` | yes | changes something, and a person can undo it | 8 |
-| `governed` | **no** | needs more than one person, or cannot be undone | 29 |
+| `governed` | **no** | needs more than one person, or cannot be undone | 30 |
 | `operator` | **no** | installation, credentials, maintenance | 30 |
 | `surface` | **no** | the machine surface itself | 1 |
-
 
 These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
 after every row of this table was found to be wrong at once — 41/12/25/17 against an actual 39/9/29/25. A table
 of counts in a document about completeness reads as evidence of completeness, and nothing was watching it.
+
+**The tier is necessary and not sufficient**, and that column used to say "offered" flat. 46 routes are `read`
+or `act`; **23** are offered. The difference is the second question — can a machine ever be *provisioned* for
+this route — and it is asked in `authority.ts` rather than here:
+
+| withheld by | how many | example |
+|:--|--:|:--|
+| the tier | 61 | `POST /api/sends` — sealing a send is the one act nobody can undo |
+| `org.admin`, which no mint confers | 20 | `GET /api/people`, `POST /api/butlers` |
+| a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys` — 200, and an empty list, for ever |
+| requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |
+
+The middle two are the ones worth understanding, because nothing refuses: the route answers, and the answer is
+empty or the credential is rejected on a door it was told it could open. They were offered as tools for as
+long as the catalogue was filtered by tier alone, and `test/mcp.test.ts` now asserts the intersection is empty
+against the registry rather than against a list of names.
 
 **Reads are derived, with one named exception.** Every `GET` is `read` by construction, because writing
 ninety judgements where one rule suffices is how a registry acquires an entry that disagrees with its own
@@ -51,10 +66,17 @@ ask for anything else, so an agent looking for last month's invoice thread had o
 there was more. It now reports a `next_cursor` and takes one, and the parameter's **description carries into
 the tool schema** — because a paging control an agent cannot see the meaning of is a control it will not use.
 
-An argument that is absent, empty or not a string is **omitted** rather than refused. Omitting is what the
-route already means by absent — the newest page, every mailbox — so the honest failure for a wrong value is the
-route's own refusal, which names the shape and the way back. A guard here would be a second, differently
-worded opinion about a value the route already validates.
+An argument that is **absent or null** is omitted; everything else is forwarded, coerced with `String()`.
+Omitting an absent one is what the route already means by absent — the newest page, every mailbox — and
+forwarding the rest is the same principle from the other side: an empty `?q=` or a number where a cursor
+belongs is a *wrong value*, and the honest failure for a wrong value is the route's own refusal, which names
+the shape and the way back. A guard here would be a second, differently worded opinion about a value the route
+already validates.
+
+> This paragraph said "absent, empty or not a string is omitted", which described a version of `mcp.ts` that
+> is not the one running: `if (value !== undefined && value !== null) search.set(name, String(value))`. An
+> agent author reading the old sentence would have expected `?q=` to be dropped and seen it forwarded, which is
+> the specific way stale documentation costs more than none.
 
 ## `governed` is not about permission
 
@@ -308,7 +330,8 @@ The last row is the one that mattered. Nine capabilities offered authority the p
 an administrator could select `butler.read`, mint the agent, and hand over a credential refused on every route
 it named.
 
-Each route now declares an `authority` — `none`, `organization`, `mailbox` with `allOf`/`anyOf`, or `export`
+Each route now declares an `authority` — `public`, `member`, `recovery`, `organization`, `filtered`,
+`self-or-admin`, `mailbox` with `allOf`/`anyOf`, or `export`
 with requester ownership — and the capability's requirements, the mint's validation, the interface's warnings
 and the tests are all read from it. `anyOf` contributes nothing to a requirement and `allOf` contributes all of
 it: a route satisfied by *either* of two relations cannot say which to grant, while one needing *both* must, or

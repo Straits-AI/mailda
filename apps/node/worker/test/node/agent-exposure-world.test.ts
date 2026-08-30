@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  DECLARED_ROUTES, ROUTES, agentCapabilities, exposureOf, withheldCapabilities, type RouteSpec,
+  DECLARED_ROUTES, ROUTES, agentCapabilities, exposureOf, whyMachinesCannotUse, withheldCapabilities,
+  type RouteSpec,
 } from "@mailda/contract";
 
 /**
@@ -142,17 +143,45 @@ describe("nothing that needs two people is offered to something that can only be
     expect(offered.has("POST /api/sends/:sendId/release-hold")).toBe(false);
   });
 
-  it("offers the dry run, because that is what it was built for", () => {
+  it("cannot offer the dry run, because its handler requires an administrator", () => {
     /*
-     * The positive case, and it is not filler: #87 built a simulation that causes nothing and cannot write,
-     * and *"what would this Butler do"* is exactly the question a machine should be able to ask before a
-     * person publishes one. A curation rule that withheld it would be timid rather than careful.
+     * **This test used to assert the opposite, and the intent behind it has not been abandoned — it was never
+     * true.**
+     *
+     * #87 built a simulation that causes nothing and cannot write, and the curation says plainly that
+     * *"offering this to an agent is the point of having built it"*. The exposure tier says `act`. And the
+     * handler's first move, before it reads a single field, is `isAdmin(…)` — so every agent credential that
+     * was ever offered `postButlersByButlerIdSimulate` would have been refused by it. The same is true of
+     * `POST /api/butlers`, whose draft is written by `createButlerDraft` and gated inside it.
+     *
+     * The catalogue was filtered by tier alone, so the offer stood for as long as nobody compared the two
+     * halves. What changed is not the decision; it is that the decision is now checked against the code, and
+     * the code has always disagreed.
+     *
+     * Recorded as an assertion rather than deleted, because the gap is worth someone's attention: if the dry
+     * run *should* reach a machine — and the argument for it is good — the fix is in the handler's
+     * authorization, not in this list. Making that a decision somebody takes on purpose is the whole point of
+     * the two halves having to agree.
      */
     const offered = new Set(agentCapabilities((spec) => `${spec.method} ${spec.path}`).map((one) => one.name));
-    expect(offered.has("POST /api/butlers/:butlerId/simulate")).toBe(true);
-    expect(offered.has("POST /api/butlers")).toBe(true);
-    // …and not publishing it, which is the line #49's draft-then-publish lifecycle already draws.
+    expect(
+      offered.has("POST /api/butlers/:butlerId/simulate"),
+      "the dry run is offered again — did its handler stop requiring org.admin, or did the filter regress?",
+    ).toBe(false);
+    expect(offered.has("POST /api/butlers")).toBe(false);
+    // …and not publishing it either, which is the line #49's draft-then-publish lifecycle already draws.
     expect(offered.has("POST /api/butlers/:butlerId/publish")).toBe(false);
+  });
+
+  it("still offers something, so the filter has not simply emptied the catalogue", () => {
+    /*
+     * The control this needs now that the assertions above are all negative. A `machineUseful` that returned
+     * `false` for everything would satisfy every one of them, and the surface would be gone.
+     */
+    const offered = agentCapabilities((spec) => `${spec.method} ${spec.path}`).map((one) => one.name);
+    expect(offered.length, "the machine catalogue is empty").toBeGreaterThan(15);
+    expect(offered, "reading mail is not offered").toContain("GET /api/messages");
+    expect(offered, "writing a draft is not offered").toContain("PUT /api/drafts");
   });
 
   it("accounts for every route exactly once, offered or withheld", () => {
@@ -215,5 +244,76 @@ describe("the tier table in docs/machine-surfaces.md counts what exposureOf coun
       documented(),
       "docs/machine-surfaces.md states tier counts that no longer match the route registry",
     ).toEqual(actual);
+  });
+
+  it("agrees about how many of those routes are actually offered", () => {
+    /*
+     * The tier table was right and the sentence above it was wrong, which is the more interesting failure.
+     * That column read "offered" flat, and the tier stopped being sufficient the moment the catalogue also
+     * asked whether a machine can be *provisioned* for a route: 46 routes are `read` or `act`, and 24 are
+     * offered.
+     *
+     * So the two numbers in the prose are parsed and checked too. A document that counts the tiers correctly
+     * and then says all of them are offered is more misleading than one that counts nothing — it is precise
+     * about the wrong quantity.
+     */
+    const eligible = ALL.filter((spec) => ["read", "act"].includes(exposureOf(spec).tier)).length;
+    const offered = agentCapabilities((spec) => `${spec.method} ${spec.path}`).length;
+
+    const claim = /(\d+) routes are `read`\s*\nor `act`; \*\*(\d+)\*\* are offered/.exec(doc)
+      ?? /(\d+) routes are `read` or `act`; \*\*(\d+)\*\* are offered/.exec(doc);
+    expect(claim, "the sentence stating how many routes are offered is gone — has the document been rewritten?")
+      .not.toBeNull();
+    expect(
+      { eligible: Number(claim![1]), offered: Number(claim![2]) },
+      "docs/machine-surfaces.md states an offered count that no longer matches the catalogue",
+    ).toEqual({ eligible, offered });
+  });
+
+  it("agrees about why each withheld route is withheld", () => {
+    /*
+     * The second table, which explains the gap between 46 and 24. Counted from `whyMachinesCannotUse` rather
+     * than from a list, so a route that becomes unreachable for a new reason fails this rather than joining a
+     * category silently.
+     */
+    const reasons = { tier: 0, admin: 0, filtered: 0, requester: 0 };
+    const unclassified: string[] = [];
+    for (const spec of ALL) {
+      const eligible = ["read", "act"].includes(exposureOf(spec).tier);
+      if (!eligible) {
+        reasons.tier += 1;
+        continue;
+      }
+      const why = whyMachinesCannotUse(spec.authority);
+      if (why === null) continue;
+      if (why.includes("org.admin")) reasons.admin += 1;
+      else if (why.includes("requester")) reasons.requester += 1;
+      else if (why.includes("not been classified")) {
+        /*
+         * An unclassified route. Zero exist today, and the previous version swept this into the `filtered`
+         * bucket — where the documented row reads "a filter no machine can satisfy", which would have
+         * described it wrongly and been fixed by editing the document to match. Failed by name instead, so
+         * the answer is to classify the route.
+         */
+        unclassified.push(`${spec.method} ${spec.path}`);
+      } else reasons.filtered += 1;
+    }
+
+    const documentedReasons: number[] = [];
+    for (const line of doc.split("\n")) {
+      const match = /^\|\s*(?:the tier|`org\.admin`[^|]*|a filter[^|]*|requester-owned)\s*\|\s*(\d+)\s*\|/
+        .exec(line.trim());
+      if (match !== null) documentedReasons.push(Number(match[1]));
+    }
+    expect(
+      unclassified,
+      "these read/act routes have no `authority` at all, so they are withheld by the fail-closed default "
+      + "rather than by a decision. Classify them in packages/contract/src/routes.ts:",
+    ).toEqual([]);
+    expect(documentedReasons, "the withheld-reason table is gone or has changed shape").toHaveLength(4);
+    expect(
+      documentedReasons,
+      "docs/machine-surfaces.md explains the withheld routes with counts the registry does not produce",
+    ).toEqual([reasons.tier, reasons.admin, reasons.filtered, reasons.requester]);
   });
 });

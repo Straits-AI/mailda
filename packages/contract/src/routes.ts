@@ -137,13 +137,13 @@ export const METHOD_UNCHECKED: readonly string[] = [
 export const ROUTES = [
   // ---- the surface an unauthenticated caller reaches (ADR 30) ----------------------------------------
   {
-    authority: { scope: "none" },
+    authority: { scope: "public" },
     method: "GET", path: "/health",
     summary: "Whether this Node is up, and what is missing if it is not",
     response: S.healthResponse,
   },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
-  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "none" }, response: S.jwksResponse },
+  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "public" }, response: S.jwksResponse },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
   { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
   { method: "POST", path: "/api/agents", summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
@@ -153,6 +153,12 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/agents/:agentId", summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
   { method: "GET", path: "/api/search/failed", summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
   { method: "POST", path: "/api/search/repair", summary: "Put named messages back in the body index's queue", request: S.searchRepairRequest, response: S.searchRepairedResponse },
+  /*
+   * Acknowledging a permanent key collision (P2-2). `organization`, because it is a statement about the whole
+   * Node's evidence made on the organization's behalf — and `governed` in the exposure tiers, because it is a
+   * conclusion a person reaches and not an act a machine should be able to file.
+   */
+  { method: "POST", path: "/api/recovery/conflicts/:restoreId/acknowledge", summary: "Record that a permanent key collision has been assessed", authority: { scope: "organization", allOf: ["org.admin"] }, request: S.acknowledgeConflictRequest, response: S.conflictAcknowledgedResponse },
   { method: "POST", path: "/api/recovery-codes/rotate", summary: "Mint a replacement set of ten recovery codes, shown once", response: S.recoveryCodesMintedResponse },
   { method: "POST", path: "/api/recovery-codes/confirm", summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
   {
@@ -162,7 +168,7 @@ export const ROUTES = [
     response: S.prepareResponse,
   },
   {
-    authority: { scope: "none" },
+    authority: { scope: "recovery" },
     method: "GET", path: "/api/doctor",
     summary: "What this Node can and cannot do, with the evidence",
     response: S.doctorResponse,
@@ -178,7 +184,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
-  { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "none" }, response: S.meResponse },
+  { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "member" }, response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
   {
@@ -197,7 +203,12 @@ export const ROUTES = [
     response: S.signedInResponse,
   },
   {
-    authority: { scope: "none" },
+    /*
+     * The caller's **own** passkeys, and registering one is withheld from machines — so an agent holding this
+     * reads an empty list for ever. It was `member` and inside the offered `identity.read`, which made it the
+     * same empty promise `GET /api/approvals` is withheld for, one capability to the left.
+     */
+    authority: { scope: "filtered", by: "self" },
     method: "GET", path: "/api/auth/passkeys",
     summary: "The passkeys this account holds. Never returns a public key",
     response: S.passkeyListResponse,
@@ -213,7 +224,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
   { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.peopleListResponse },
-  { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamListResponse },
+  { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "member" }, response: S.teamListResponse },
   { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },
   { method: "GET", path: "/api/teams/:teamId", summary: "One team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamDetailResponse },
   { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team", response: S.teamCreatedResponse },
@@ -222,7 +233,7 @@ export const ROUTES = [
   { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
-  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.accessResponse },
+  { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "self-or-admin" }, response: S.accessResponse },
   { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
   { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.supervisedListResponse },
@@ -281,7 +292,20 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
-    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    /*
+     * Two ways to be a recipient, and **a machine can only reach one of them**.
+     *
+     * `notificationsFor` returns a notice whose `user_id` is the caller, or a mailbox-wide notice on a mailbox
+     * where the caller holds `mailbox.content.read` — intersected with the sponsor for an agent. Declared
+     * `addressee` at first, which was true of the route and useless to a mint: `filtered` contributes no
+     * required relation, so `notice.read` minted with no grants at all and returned an empty list for ever.
+     *
+     * Nothing addresses a notice to an `agt_` principal. Approval notices name the people eligible to decide
+     * and supervised-read notices are mailbox-wide, so the direct branch is a human's. The relation branch is
+     * what a machine can be provisioned for, and naming it is what makes the capability a promise rather than
+     * an offer that answers 200 with nothing in it.
+     */
+    authority: { scope: "filtered", by: "relation", relations: ["mailbox.content.read"] },
     method: "GET", path: "/api/notifications",
     summary: "What has changed since the last poll",
     response: S.notificationListResponse,
@@ -313,16 +337,25 @@ export const ROUTES = [
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
-  { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftSavedResponse },
+  { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, request: S.saveDraftRequest, response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
-  { method: "DELETE", path: "/api/drafts/:draftId", summary: "Discard a draft", response: S.draftDeletedResponse },
+  { method: "DELETE", path: "/api/drafts/:draftId", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Discard a draft", response: S.draftDeletedResponse },
   { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
-  { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", response: S.sendSealedResponse },
-  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", response: S.dispatchResponse },
+  { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendSealedResponse },
+  /*
+   * Declared although it is `governed` and reaches no machine, because the declaration is what the parity
+   * suite drives — and an undeclared route is one nothing compares to its handler.
+   *
+   * `mailboxesWithRelation(who, "send.propose")` bounds the sweep to mailboxes this caller may act in, which
+   * is the fix for the incident recorded beside the call: forcing the sweep released other people's held
+   * sends and ended their chance to cancel. Mutating that function to answer any relation for any relation
+   * asked left 1,525 tests green, because nothing drove this route with a lesser relation.
+   */
+  { method: "POST", path: "/api/sends/dispatch", summary: "Hand every due send to the transport now", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.dispatchResponse },
   { method: "POST", path: "/api/sends/:sendId/cancel", summary: "Cancel a send that has not left", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendCancelledResponse },
-  { method: "POST", path: "/api/sends/:sendId/retry", summary: "Retry a send that failed", response: S.sendRetriedResponse },
-  { method: "POST", path: "/api/sends/:sendId/release", summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
-  { method: "POST", path: "/api/sends/:sendId/release-hold", summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
+  { method: "POST", path: "/api/sends/:sendId/retry", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Retry a send that failed", response: S.sendRetriedResponse },
+  { method: "POST", path: "/api/sends/:sendId/release", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Release a send parked on a Butler's gate", response: S.sendReleasedResponse },
+  { method: "POST", path: "/api/sends/:sendId/release-hold", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Release a send a policy put on hold", response: S.sendHoldReleasedResponse },
   {
     authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] },
     method: "GET", path: "/api/sends/:sendId/submitted",
@@ -357,22 +390,22 @@ export const ROUTES = [
     request: S.editPolicyDraftRequest, response: S.policyDraftResponse,
   },
   { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
-  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.approvalListResponse },
+  { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, response: S.approvalListResponse },
   { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
   { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.holdListResponse },
   { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
   { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
-  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterListResponse },
-  { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.matterResponse },
+  { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "filtered", by: "ownership" }, response: S.matterListResponse },
+  { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "member" }, request: S.openMatterRequest, response: S.matterResponse },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
   {
-    authority: { scope: "none" },
+    authority: { scope: "member" },
     method: "GET", path: "/api/breakers",
     summary: "The rate breakers, with the readings behind them",
     response: S.breakerListResponse,
   },
-  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "none" }, response: S.domainPauseListResponse },
+  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "member" }, response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 

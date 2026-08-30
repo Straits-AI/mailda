@@ -123,6 +123,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Record that a permanent key collision has been assessed
+   *
+   * `POST /api/recovery/conflicts/:restoreId/acknowledge`
+   */
+  async postRecoveryConflictsByRestoreIdAcknowledge(params: { restoreId: string }, body: z.infer<typeof S.acknowledgeConflictRequest>): Promise<z.infer<typeof S.conflictAcknowledgedResponse>> {
+    return await this.json("POST", "/api/recovery/conflicts/:restoreId/acknowledge", params, body) as z.infer<typeof S.conflictAcknowledgedResponse>;
+  }
+
+  /**
    * Mint a replacement set of ten recovery codes, shown once
    *
    * `POST /api/recovery-codes/rotate`
@@ -511,7 +520,7 @@ export class GeneratedClient extends Transport {
    *
    * `PUT /api/drafts`
    */
-  async putDrafts(body?: unknown): Promise<z.infer<typeof S.draftSavedResponse>> {
+  async putDrafts(body: z.infer<typeof S.saveDraftRequest>): Promise<z.infer<typeof S.draftSavedResponse>> {
     return await this.json("PUT", "/api/drafts", {}, body) as z.infer<typeof S.draftSavedResponse>;
   }
 
@@ -709,7 +718,7 @@ export class GeneratedClient extends Transport {
    *
    * `POST /api/matters`
    */
-  async postMatters(body?: unknown): Promise<z.infer<typeof S.matterResponse>> {
+  async postMatters(body: z.infer<typeof S.openMatterRequest>): Promise<z.infer<typeof S.matterResponse>> {
     return await this.json("POST", "/api/matters", {}, body) as z.infer<typeof S.matterResponse>;
   }
 

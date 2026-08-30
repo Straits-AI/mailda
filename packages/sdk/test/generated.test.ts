@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { NOT_JSON, ROUTES, type RouteSpec } from "@mailda/contract/routes";
 
-import { exposureOf } from "@mailda/contract/agent";
+import { agentCapabilities } from "@mailda/contract/agent";
 
 import { emit, methodNameFor } from "../src/generate.ts";
 import { emitSkill } from "../src/skill.ts";
@@ -23,9 +23,6 @@ import { ContractViolation, MaildaError } from "../src/transport.ts";
 
 const ALL: readonly RouteSpec[] = ROUTES;
 const GENERATED = join(import.meta.dirname, "../src/generated.ts");
-
-/** The tiers the Skill lists as withheld rather than offered. */
-const WITHHELD_TIERS = new Set(["governed", "operator", "surface"]);
 
 describe("the committed client is what the generator produces", () => {
   it("is byte for byte what the generator emits", () => {
@@ -205,8 +202,16 @@ describe("the committed Skill is what the generator produces", () => {
      * already covers this — but it fails with a diff, and a diff of a 300-line document does not say *"the
      * headline number is wrong"*. This one names it.
      */
+    /*
+     * Counted from `agentCapabilities`, not re-derived from the exposure tier.
+     *
+     * This used to filter on the tier itself, which was a **second implementation of the offered rule** — and
+     * when the real one started also asking whether a machine can be provisioned for a route, this one went on
+     * reporting the old answer. A test that restates the rule it is checking cannot notice the rule changing;
+     * it can only notice the output changing, which is the opposite of what it was written for.
+     */
     const text = emitSkill();
-    const offered = ALL.filter((spec) => !WITHHELD_TIERS.has(exposureOf(spec).tier)).length;
+    const offered = agentCapabilities((spec) => `${spec.method} ${spec.path}`).length;
     const withheld = ALL.length - offered;
     expect(text, `the offered count is not ${offered}`).toContain(`${offered} capabilities`);
     expect(text, `the withheld count is not ${withheld}`).toContain(`${withheld} withheld`);

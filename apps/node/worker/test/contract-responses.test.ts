@@ -1604,8 +1604,14 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The 101st is `GET /api/people/:userId/mailboxes`, the mint surface's resource catalogue: every mailbox
      * with what a **named sponsor** holds on it. The form used the queue rail for that too, so an
      * administrator could only provision mailboxes they personally send from.
+     *
+     * The 102nd is `POST /api/recovery/conflicts/:restoreId/acknowledge`. `doctor` stayed `degraded` for ever
+     * once a vault restore had collided with a live key — correctly, since nothing repairs a collision, and
+     * uselessly, since a permanent alarm is one an operator learns to scroll past. This records that somebody
+     * established what was lost; the finding stays and its severity drops, which is the difference between
+     * acknowledged and healthy.
      */
-    expect(coverage.total).toBe(101);
+    expect(coverage.total).toBe(102);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

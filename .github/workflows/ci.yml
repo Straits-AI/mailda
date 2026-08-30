@@ -81,6 +81,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
+        id: tests
         run: pnpm test
 
       # Proves the Worker still bundles and that its bindings resolve against wrangler.jsonc. Catches
@@ -101,6 +102,11 @@ jobs:
       # adds a json reporter when CI is set.
       - name: Test headroom on this hardware
         if: always()
+        # The Test step's outcome, so a missing report can be told apart from a crashed suite. A suite that
+        # stops emitting one silently leaves this gate — which is how test/node/ sat outside it for three
+        # weeks — and that is a failure when the tests themselves passed.
+        env:
+          TEST_STEP_OUTCOME: ${{ steps.tests.outcome }}
         run: node .github/scripts/test-headroom.mjs
 
       # Fails when a previous push to main lost its verdict.

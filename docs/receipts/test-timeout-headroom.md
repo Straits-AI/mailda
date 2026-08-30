@@ -5,7 +5,8 @@ measured_on: 2026-08-05
 stale_when: >
   the PBKDF2 round count changes (see password-hash-cost), a new test exceeds the recorded
   slowest-under-load figure, the number of packages running under `turbo test` changes
-  materially, or the suite moves to CI hardware with a different core count
+  materially, the suite moves to CI hardware with a different core count, a new vitest config
+  is added, or a suite's report stops being read by .github/scripts/test-headroom.mjs
 values:
   test.timeout_ms: 30000
   test.hook_timeout_ms: 30000
@@ -162,6 +163,55 @@ Two things about the bound, both of which are the reason this is written down ra
 The lesson for the next one: **`retry` would have hidden this**, exactly as this receipt already says it
 would have hidden the timeout. A wall-clock constant in a test is a budget with no receipt, and the ones that
 are not called `timeout` are the ones that survive review.
+
+## The same bug again, in the two configs written after this receipt
+
+Three weeks after the fix above, `test/node/attach-queue-consumer.test.ts` started failing under
+`turbo test` and passing in isolation. The measured breach:
+
+| | Slowest case in that file |
+|:--|---:|
+| idle | **364 ms** |
+| beside a full concurrent workerd suite | 384 ms |
+| under `turbo test`, on the failing run | **5,481 ms** |
+
+The middle row is why this took a measurement rather than an inference. The obvious story — the file
+spawns four Node processes per case, so it is slow under load — predicts steady inflation, and running
+it alongside the entire workerd suite moved it 5%. It is not steadily slow. It is occasionally stalled,
+for multiples of its own runtime, and the same run took `test/node/delegated-authority-world.test.ts`
+down with it.
+
+5,481 ms is **below** the 5,790 ms already recorded above. Nothing had got slower and no number here
+needed re-measuring. The budget simply was not applied: `vitest.node.config.ts` and
+`vitest.client.config.ts` were both created after this receipt, and **neither set `testTimeout`**, so
+both ran at the 5,000 ms default this receipt exists to reject.
+
+The detail worth keeping is how they explain themselves. Each header says it is a separate file rather
+than a `projects` block *because `vitest.config.ts` is the one carrying the measured timeouts* — a
+sentence naming the exact thing it drops, in the file dropping it. A comment describing an invariant
+reads as evidence the invariant holds, which is the trap this repository keeps walking into.
+
+### Two holes, and the second one is why it stayed hidden
+
+The timeout was missing, and **the ceiling could not see the suite either.**
+`.github/scripts/test-headroom.mjs` read one report, `.vitest-report.json`, which only
+`vitest.config.ts` emits. The check whose entire purpose is catching a test creeping toward the timeout
+— the thing that would have flagged this file long before it failed — was not looking at `test/node/`
+or `test/client/` at all.
+
+So both were fixed, because either alone leaves the other:
+
+- All three configs now take `testTimeout`/`hookTimeout` from these budgets.
+- All three emit a json report on CI, and `test-headroom.mjs` reads all three, labels each test with its
+  suite, and names any suite whose report is absent instead of quietly measuring fewer.
+- `apps/node/worker/test/node/vitest-timeout-world.test.ts` **resolves every `vitest*.config.ts` in the
+  repository** and asserts the value vitest would actually use, so a fourth config cannot repeat this.
+
+That test is resolved rather than grepped, and its limits were measured rather than claimed: deleting
+the line fails it, setting it to a literal `5000` fails it, and feeding `testTimeout` the *hook* budget
+key **survives** — `test.timeout_ms` and `test.hook_timeout_ms` are both 30,000, and no check can
+separate two keys holding one number. The gate was verified in the other direction too, by forging a
+21,000 ms entry into the node report and confirming a non-zero exit naming the test and its suite.
 
 ## Re-measuring
 

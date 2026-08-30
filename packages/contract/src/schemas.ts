@@ -909,6 +909,44 @@ export const policyStage = z.union([
  * what the rule catches, so there is no field here this Node can ignore harmlessly, which is exactly the
  * test the loose default is meant to pass and cannot.
  */
+/**
+ * Saving a draft — the one **writing** act a machine is offered, and it had no request schema at all.
+ *
+ * The consequence was invisible until the organization-scoped routes stopped being offered to machines: the
+ * MCP tool builder adds a `body` property only when a route declares a `request`, so `putDrafts` was
+ * published as a tool taking **no arguments**. An agent holding `mail.draft` could call it and had no way to
+ * say what the draft said. Every tool that did carry a body was an `org.admin` route the catalogue should
+ * never have offered, so the surface looked complete while the one act agents exist to perform did not work.
+ *
+ * Not `.strict()`, unlike the policy and Butler bodies. Those refuse an unknown field because every field
+ * changes which sends a rule catches; a draft is text a person will read before anything leaves, and the
+ * handler already ignores what it does not know. A strict schema here would refuse a client that sent a field
+ * a newer Node added, which is the rolling-upgrade case rather than a safety one.
+ */
+export const saveDraftRequest = z.object({
+  id: z.string().nullish(),
+  mailboxId: z.string(),
+  inReplyToMessageId: z.string().nullish(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()).optional(),
+  bcc: z.array(z.string()).optional(),
+  subject: z.string(),
+  body: z.string(),
+});
+
+/**
+ * Opening a matter, for the same reason `saveDraftRequest` exists: it became a machine-reachable act when its
+ * authority declaration was corrected, and a tool with no declared body is a tool that cannot be called.
+ *
+ * `type` is a string here and an enum in `src/matters.ts`. Deliberate: the refusal names the four it accepts,
+ * and a caller who sends a fifth gets `E_MATTER_TYPE_UNKNOWN` with the list — which is more use than a schema
+ * error, and keeps the vocabulary in the domain that owns it rather than copied into the wire contract.
+ */
+export const openMatterRequest = z.object({
+  type: z.string(),
+  description: z.string(),
+});
+
 export const createPolicyRequest = z.object({
   name: z.string(),
   outcome: z.string(),
@@ -1790,4 +1828,30 @@ export const sponsorMailboxListResponse = z.object({
     mailboxName: z.string().min(1),
     relations: z.array(z.string().min(1)),
   }).strict()),
+}).strict();
+
+/**
+ * Acknowledging a permanent key collision.
+ *
+ * Both fields are required here, and **blankness is refused in `recovery.ts`, not by this schema.** Zod would
+ * express it with `.min(1)` and deliberately does not: the refusal names which field was empty and why it
+ * matters, which a schema error cannot. Said precisely because the first version of this note claimed the
+ * schema did both, and a comment describing a check that lives elsewhere is how somebody later removes the
+ * one that is real.
+ *
+ * An acknowledgement with no scope is unreadable to the only reader it has — somebody arriving long after
+ * everybody involved has gone — and one with no conclusion is a dismissal wearing the shape of an assessment.
+ */
+export const acknowledgeConflictRequest = z.object({
+  scope: z.string(),
+  conclusion: z.string(),
+});
+
+/** What the Node recorded, read back so the caller can see the generations it was filed against. */
+export const conflictAcknowledgedResponse = z.object({
+  acknowledged: z.object({
+    restoreId: z.string(),
+    generations: z.string(),
+    acknowledgedAt: z.string(),
+  }),
 }).strict();
