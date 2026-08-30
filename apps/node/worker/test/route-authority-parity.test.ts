@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
+import { notificationListResponse } from "@mailda/contract/schemas";
 
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
 import { hashPassword } from "../src/auth/password.ts";
@@ -437,8 +438,12 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
      *
      * The suite drove `member` anonymously and stopped there, so `filtered`, `self-or-admin`, `recovery` and
      * `export` had no anonymous driver at all. A verified mutation: making `GET /api/approvals` fall back to a
-     * synthetic principal when `principalFor` returns null — a stranger reading the approval queue — passed
-     * all 1,507 tests.
+     * synthetic principal when `principalFor` returns null, so a stranger reads the approval queue.
+     *
+     * The receipt is the **corrected** run. The first version of that mutation named an identifier that is out
+     * of scope at that point, so it threw and answered `500` — it survived as a crash rather than as a bypass,
+     * and quoting it here would be a measurement that never established the property it was cited for. The
+     * version that really answers `200` fails this test.
      *
      * `authority.ts` asserts as fact that *"every scoped route requires a principal, and every unauthenticated
      * route is unscoped"*. That sentence is the justification for keeping authentication and authority in one
@@ -448,7 +453,11 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       spec.authority !== undefined && spec.authority.scope !== "public"
       // `recovery` is deliberately reachable by a stranger when this Node cannot authenticate anybody. On the
       // healthy Node these fixtures build it must refuse like the rest, which is what makes it conditional
-      // rather than public — and `test/operator-routes.test.ts` drives the open case.
+      // rather than public. `test/doctor.test.ts` drives the open case; `test/operator-routes.test.ts` drives
+      // the closed one, which is the 401 this loop asserts.
+      //
+      // The header forty lines up carried this same wrong pointer, was corrected, and this copy was not — in
+      // the same commit, in the file whose subject is stale claims. Both files were read before this edit.
     );
 
     /*
@@ -530,5 +539,84 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       .filter((spec) => spec.authority?.scope === "organization");
     expect(declared.length, "no organization-declared routes found — has the scope been renamed?")
       .toBeGreaterThan(15);
+  });
+});
+
+describe("a mailbox-wide notice reaches the relation it names, and no other", () => {
+  /*
+   * `GET /api/notifications` is the third route this work re-declared, and the one whose declaration carries
+   * the most weight: `{scope:"filtered", by:"relation", relations:["mailbox.content.read"]}` is the **entire**
+   * basis of `notice.read`'s mint requirement, because `requiredRelations` reads it and `mintAgent` refuses a
+   * grantless `notice.read` on its strength.
+   *
+   * Nothing compared that declaration to the handler. Dropping `AND t.relation = 'mailbox.content.read'` from
+   * `notificationsFor` — so any tuple on a mailbox sees its notices — left **1,511 tests green**. Every
+   * existing caller of that function passes `subjects: [MEMBER]` and exercises the directly-addressed branch;
+   * the relation branch had no test that lacked the relation, and the route is on the undriven-response list
+   * as well.
+   *
+   * What leaks is what the query's own comment names four lines above the gate: *"an agent reading these
+   * unintersected would learn which mailboxes have matters open and what is due on them — the shape of the
+   * work, without the mail."* A `mailbox.metadata.read` holder is exactly who §7's split exists to keep away
+   * from that.
+   *
+   * So the pair below is sufficient **and** necessary, which is the shape `agent-capabilities.test.ts` cannot
+   * supply on its own: it grants each capability its declared relations and proves them enough, never that a
+   * lesser relation is not.
+   */
+  async function seedNotice(): Promise<string> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const noticeId = ctx.id("ntf");
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO notifications (id, org_id, kind, subject_id, user_id, mailbox_id, created_at, delivered_at)
+       VALUES (?,?,?,?,NULL,?,?,?)`,
+    ).bind(noticeId, ORG, "supervised_read", MAILBOX, MAILBOX, at, at).run();
+    return noticeId;
+  }
+
+  async function relate(relation: string) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,'mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, MEMBER, relation, MAILBOX, new Date(ctx.now()).toISOString()).run();
+  }
+
+  async function noticeIds(): Promise<string[]> {
+    // `method` spelled out although GET is the default: `response-drivers-world` matches a driver by finding
+    // the path and the method in one call, and an implicit GET has no method for it to find.
+    const response = await SELF.fetch("https://node/api/notifications", {
+      method: "GET",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}` },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // Parsed against the contract, so this doubles as the HTTP driver the response world was missing.
+    notificationListResponse.parse(body);
+    return (body as { notifications: { id: string }[] }).notifications.map((one) => one.id);
+  }
+
+  it("reaches a holder of the relation the route declares", async () => {
+    const noticeId = await seedNotice();
+    await relate("mailbox.content.read");
+    expect(
+      await noticeIds(),
+      "the relation the declaration names does not actually reach the notice",
+    ).toContain(noticeId);
+  });
+
+  it("does not reach a holder of a lesser relation on the same mailbox", async () => {
+    /*
+     * The necessary half. `mailbox.metadata.read` is a real relation on the same mailbox — so this is not
+     * "somebody with nothing sees nothing", which any broken query satisfies. It is the specific relation the
+     * §7 split exists to keep away from what a supervised-read notice discloses.
+     */
+    const noticeId = await seedNotice();
+    await relate("mailbox.metadata.read");
+    expect(
+      await noticeIds(),
+      "a metadata-only holder read a mailbox-wide notice, which names the mailbox and its matter",
+    ).not.toContain(noticeId);
   });
 });

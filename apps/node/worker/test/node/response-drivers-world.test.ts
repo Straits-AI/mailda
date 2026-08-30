@@ -83,6 +83,11 @@ function driven(): Set<string> {
  *
  * Each entry names the file, and the test below reads that file and requires a request to the route in it. So
  * removing the driver fails here, and moving it fails here until the entry moves with it.
+ *
+ * The match wants the path and an explicit `method:` **in one call**, so a driver that relies on GET being
+ * fetch's default is reported as missing. That is the safe direction — it fails loudly and is fixed by
+ * spelling the method out — but it is a property of the check rather than of the driver, and worth knowing
+ * before somebody reads a failure here as a deleted test.
  */
 const DRIVEN_ELSEWHERE: Readonly<Record<string, string>> = {
   /*
@@ -91,6 +96,12 @@ const DRIVEN_ELSEWHERE: Readonly<Record<string, string>> = {
    * real Worker and parsed through `conflictAcknowledgedResponse`.
    */
   "POST /api/recovery/conflicts/:restoreId/acknowledge": "../recovery-escrow.test.ts",
+  /*
+   * Needs a delivered mailbox-wide notice. Driven there over HTTP and parsed against
+   * `notificationListResponse`, once as a holder of the relation the route declares and once as a holder
+   * of a lesser one — the necessary half, which is what dropping the relation gate slipped past.
+   */
+  "GET /api/notifications": "../route-authority-parity.test.ts",
 };
 
 const UNDRIVEN: readonly string[] = [
@@ -110,9 +121,7 @@ const UNDRIVEN: readonly string[] = [
   "POST /api/auth/login",
   "POST /api/auth/logout-everywhere",
   "DELETE /api/auth/passkeys",
-  // Need a delivered notice and a sealed export respectively; both are ordinary fixtures and neither is hard.
-  // These two are the honest backlog rather than a case for an exemption.
-  "GET /api/notifications",
+  // Needs a sealed export: an ordinary fixture, and the honest backlog rather than a case for an exemption.
   "GET /api/exports",
 ];
 
