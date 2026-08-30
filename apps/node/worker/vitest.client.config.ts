@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
+import { BUDGETS } from "@mailda/budgets";
+
 /**
  * The interface, rendered.
  *
@@ -15,8 +17,11 @@ import { defineConfig } from "vitest/config";
  * coincidence to note in passing; it is the reason this file is here.
  *
  * A third config rather than a `projects` block, for exactly the reason `vitest.node.config.ts` gives for
- * being the second: `vitest.config.ts` carries the measured timeouts and the Cloudflare pool, and
- * restructuring it to host a DOM environment would put a stable suite at risk for no gain.
+ * being the second: `vitest.config.ts` carries the Cloudflare pool, and restructuring it to host a DOM
+ * environment would put a stable suite at risk for no gain.
+ *
+ * Both files used to say "the measured timeouts and the Cloudflare pool", and both then omitted the
+ * timeouts — the sentence naming the dropped thing, in the file dropping it. See the note beside them.
  *
  * ## What belongs here, and what does not
  *
@@ -67,5 +72,22 @@ export default defineConfig({
     // which is the exact class of bug this suite exists to catch, arriving as a flake instead.
     globals: true,
     setupFiles: ["test/client/setup.ts"],
+
+    // The measured budget, for the reason `vitest.node.config.ts` records at length: this config gives the
+    // same explanation for being separate — that `vitest.config.ts` is the one carrying the measured
+    // timeouts — and then did not carry them either. Both were fixed together, and
+    // `test/node/vitest-timeout-world.test.ts` holds every config to it now.
+    //
+    // No breach has been observed here yet: this suite mounts components and its slowest case is far under
+    // the limit. It is set because 5,000 ms is an inherited default rather than a measured one, and waiting
+    // for a flake to prove that a third time is not a plan.
+    testTimeout: BUDGETS["test.timeout_ms"],
+    hookTimeout: BUDGETS["test.hook_timeout_ms"],
+
+    // So the headroom ceiling can see this suite too — it read only the workerd report until now. See the
+    // note on the same line in `vitest.node.config.ts`.
+    reporters: process.env.CI === undefined
+      ? ["default"]
+      : ["default", ["json", { outputFile: "./.vitest-report-client.json" }]],
   },
 });

@@ -762,9 +762,18 @@ quoted display name (#100), an empty inbox asserting routing is live (#101). The
 most of the bugs. The 1,135 tests had nothing to say about any of them.
 
 So there is a third config, `vitest.client.config.ts`, on the precedent `vitest.node.config.ts` set: a
-separate file rather than a `projects` block, because `vitest.config.ts` carries the measured timeouts and
-the Cloudflare pool and restructuring it to host a DOM would risk a stable suite for no gain. It runs
-`test/client/**/*.test.tsx` under `happy-dom`, and `pnpm test` runs all three.
+separate file rather than a `projects` block, because `vitest.config.ts` carries the Cloudflare pool and
+restructuring it to host a DOM would risk a stable suite for no gain. It runs `test/client/**/*.test.tsx`
+under `happy-dom`, and `pnpm test` runs all three.
+
+That sentence used to read "carries the measured timeouts and the Cloudflare pool", and it was the tell.
+Both later configs gave that as their reason for being separate and **neither then set a timeout**, so both
+ran at vitest's 5,000 ms default — which
+[test-timeout-headroom](./receipts/test-timeout-headroom.md) exists to reject. It surfaced as a flake three
+weeks later, when a `test/node/` case with a 364 ms idle cost was measured at 5,481 ms under `turbo test`.
+All three configs now take the budget, all three emit a report the CI headroom ceiling reads, and
+`test/node/vitest-timeout-world.test.ts` resolves every config in the repository to hold them to it. The
+pool is a real reason for separate files; the timeouts never were, because a budget is one import.
 
 Two rules about what goes in it, because the wrong answer to either makes it worse than nothing:
 
