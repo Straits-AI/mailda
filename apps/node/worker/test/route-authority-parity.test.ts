@@ -7,6 +7,7 @@ import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
 import { notificationListResponse } from "@mailda/contract/schemas";
 
 import { ACCESS_COOKIE, login } from "../src/auth/session.ts";
+import { GRANTABLE } from "../src/access.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { putEvidence } from "../src/evidence-store.ts";
 
@@ -636,8 +637,8 @@ describe("a mailbox route requires the relation it declares, not merely some rel
    * — "shows a member with no relation on the mailbox nothing at all" — which passes with the relation term
    * deleted, since a caller with no tuples fails `subject_id IN (…)` regardless.
    *
-   * Six gates were live holes under that shape, each leaving the whole suite green when its relation term was
-   * removed or widened:
+   * Five gates were live holes under that shape — six mutations across them, since `readableMailboxes`
+   * accounts for two — each leaving the whole suite green when its relation term was removed or widened:
    *
    * | gate | what it opened |
    * |:--|:--|
@@ -678,13 +679,21 @@ describe("a mailbox route requires the relation it declares, not merely some rel
   /** Everything only somebody entitled to this mailbox should ever see come back. */
   const SECRETS = [MAILBOX, RECEIPT, SEND, ADDRESS, SUBJECT_MARKER, BODY_MARKER];
 
-  /** Every mailbox relation this Node can grant, which is the set a lesser one is drawn from. */
-  const MAILBOX_RELATIONS = [
-    "mailbox.metadata.read",
-    "mailbox.content.read",
-    "send.propose",
-    "message.export",
-  ] as const;
+  /**
+   * Every mailbox relation this Node can grant, **derived** from `access.ts` rather than listed.
+   *
+   * It was a hand-written four, described in exactly these words, and there are six: `approval.decide` and
+   * `ediscovery.export` were missing. The second is not decorative — a mutation letting `ediscovery.export`
+   * satisfy the single-message `.eml` gate survived all 1,529 tests, and that is the relation #65 added so
+   * that taking a copy off the Node is granted and audited separately from reading it. Two similarly-named
+   * export relations is precisely the confusion a list of four could not see.
+   *
+   * Derived, so a seventh cannot be silently uncovered. The same landmine as the hand-copied id lists this
+   * suite keeps finding, one table to the left.
+   */
+  const MAILBOX_RELATIONS = Object.entries(GRANTABLE)
+    .filter(([, meta]) => (meta as { object: string }).object === "mailbox")
+    .map(([relation]) => relation);
 
   async function seedMailboxContents() {
     const ctx = createSystemCtx();
@@ -765,12 +774,24 @@ describe("a mailbox route requires the relation it declares, not merely some rel
     const satisfying = new Set([...allOf, ...anyOf]);
 
     const enough = allOf.length > 0 ? [allOf] : anyOf.map((one) => [one]);
-    const lesser: string[][] = MAILBOX_RELATIONS
-      .filter((one) => !satisfying.has(one))
-      .map((one) => [one]);
-    // A proper subset of an `allOf` is a lesser holding too: it is the caller who has some of what the route
-    // needs, which is the realistic near-miss rather than an unrelated relation.
-    if (allOf.length > 1) for (const drop of allOf) lesser.push(allOf.filter((one) => one !== drop));
+    const outside = MAILBOX_RELATIONS.filter((one) => !satisfying.has(one));
+    const lesser: string[][] = outside.map((one) => [one]);
+
+    /*
+     * A proper subset of an `allOf` is a lesser holding, **and so is that subset plus something else** — which
+     * is the shape the interesting mistake takes. A handler that accepts a similarly-named relation in place
+     * of the one it declares is satisfied by a caller holding "all but one of the declared, plus the
+     * impostor": `[mailbox.content.read, ediscovery.export]` against a route needing
+     * `[mailbox.content.read, message.export]`. Neither a single outside relation nor a bare subset grants
+     * that combination, so a mutation swapping the two export relations survived both.
+     */
+    if (allOf.length > 1) {
+      for (const drop of allOf) {
+        const subset = allOf.filter((one) => one !== drop);
+        lesser.push(subset);
+        for (const impostor of outside) lesser.push([...subset, impostor]);
+      }
+    }
     return { enough, lesser };
   }
 
@@ -857,7 +878,11 @@ const UNDISCLOSING: readonly string[] = [
   "GET /api/drafts/:draftId",
   // Needs a case row on the mailbox; `test/queue-disclosure.test.ts` owns that fixture.
   "GET /api/mailboxes/:mailboxId/cases",
-  // Cancelling needs a send that has not left; the seeded manifest is already sealed and sent.
+  /*
+   * `sendCancelledResponse` is `{cancelled: true}` and strict, so it names nothing a detector could recognise
+   * — no fixture can make this route register a disclosure. Its observable is the **effect**, asserted in its
+   * own block below, which is the same treatment `POST /api/sends/dispatch` gets and for the same reason.
+   */
   "POST /api/sends/:sendId/cancel",
   // Needs submitted bytes in R2 beside the manifest.
   "GET /api/sends/:sendId/submitted",
@@ -941,5 +966,83 @@ describe("forcing the dispatch sweep reaches only mailboxes the caller may send 
       await stateOfHeld(),
       "send.propose did not reach the sweep either, so this route releases nothing for anybody",
     ).not.toBe("held");
+  });
+});
+
+describe("cancelling somebody else's send needs the relation that authors one", () => {
+  /*
+   * `POST /api/sends/:sendId/cancel` is gated by `maySend` — `send.propose` on the mailbox — and its answer is
+   * `{cancelled: true}`. `sendCancelledResponse` is `z.object({cancelled: z.literal(true)}).strict()`, so it
+   * names nothing: no mailbox, no manifest, no subject. The disclosure detector a few blocks up greps the
+   * response for the mailbox's ids and markers, and **no fixture can ever make that route register one**.
+   *
+   * So it sat permanently in `UNDISCLOSING`, and a mutation letting a `mailbox.content.read` holder cancel
+   * anybody's send passed all 1,529 tests. Markers fix reads; an act needs its **effect** asserted, which is
+   * what `POST /api/sends/dispatch` already does two blocks down.
+   *
+   * The handler's own comment beside the gate is worth reading here: *"Today the two relations are granted
+   * together at claim, so this choice is unobservable; it becomes observable the moment Layer 3 grants them
+   * apart."* Layer 3 is built.
+   */
+  const SENDABLE = "snd_PARTYCANCEL000000000000000";
+
+  async function heldSend() {
+    const at = "2020-01-01T00:00:00.000Z";
+    await testEnv.CATALOG.prepare("DELETE FROM send_manifests WHERE id = ?").bind(SENDABLE).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests
+         (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
+          fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
+          sealed_at, release_at, state, state_at)
+       VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'held',?)`,
+    ).bind(SENDABLE, ORG, MAILBOX, ADMIN, "enquiries@parity.example",
+      JSON.stringify(["out@example.test"]), "cancel me", `<${SENDABLE}@parity.example>`,
+      `${ORG}/typed/${SENDABLE}`, "0".repeat(64), `${ORG}/norm/${SENDABLE}`, "0".repeat(64),
+      at, "2999-01-01T00:00:00.000Z", at).run();
+  }
+
+  async function stateOf(): Promise<string> {
+    const row = await testEnv.CATALOG.prepare("SELECT state FROM send_manifests WHERE id = ?")
+      .bind(SENDABLE).first<{ state: string }>();
+    return row?.state ?? "gone";
+  }
+
+  async function relate(relation: string) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ? AND subject_id = ?")
+      .bind(ORG, MEMBER).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,'mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, MEMBER, relation, MAILBOX, new Date(ctx.now()).toISOString()).run();
+  }
+
+  async function cancel(): Promise<number> {
+    const response = await SELF.fetch(`https://node/api/sends/${SENDABLE}/cancel`, {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}` },
+    });
+    return response.status;
+  }
+
+  it("refuses a holder of mailbox.content.read, who may read the outbox and not write to it", async () => {
+    await heldSend();
+    await relate("mailbox.content.read");
+    await cancel();
+    expect(
+      await stateOf(),
+      "somebody who may only read this mailbox stopped another person's mail from going",
+    ).toBe("held");
+  });
+
+  it("permits a holder of send.propose, so the refusal above is not a broken route", async () => {
+    /*
+     * The control, and the half that matters: without it a cancel that failed for everybody — a wrong id, a
+     * state the route will not act on — would satisfy the refusal perfectly.
+     */
+    await heldSend();
+    await relate("send.propose");
+    expect(await cancel(), "send.propose could not cancel either, so this route cancels nothing").toBe(200);
+    expect(await stateOf(), "the send was not actually cancelled").not.toBe("held");
   });
 });

@@ -76,7 +76,16 @@ type ConferredBy = "admin_grant" | "supervised_grant";
  * `Record<string, …>` annotation would have made every helper below accept any string it was handed, and the
  * failure mode is a typo that grants nothing and reports success.
  */
-const GRANTABLE = {
+/*
+ * Exported so tests can derive the mailbox relation set rather than restate it.
+ *
+ * `test/route-authority-parity.test.ts` tries every relation a route does **not** declare and asserts it is
+ * refused. It held a hand-written list of four, described as "every mailbox relation this Node can grant",
+ * and there are six — `approval.decide` and `ediscovery.export` were missing, and the second is why a
+ * mutation letting `ediscovery.export` satisfy the single-message `.eml` gate survived the whole suite. A
+ * hard-coded copy of this table is the same landmine the id lists in that suite keep finding.
+ */
+export const GRANTABLE = {
   // Subject lines and sender addresses. Weaker than content.read on purpose: somebody triaging or working a
   // queue needs to know what arrived and from whom, which is not the same as reading it.
   "mailbox.metadata.read": { object: "mailbox", conferredBy: "admin_grant" },
