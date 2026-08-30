@@ -60,9 +60,25 @@ function emit(markdown) {
 const present = REPORTS.filter((r) => existsSync(r.path));
 const missing = REPORTS.filter((r) => !existsSync(r.path));
 
+/**
+ * Whether the Test step itself succeeded, passed in by the workflow.
+ *
+ * A missing report means one of two very different things. If the suite crashed, vitest never got to write
+ * one and silence here is honest — the run has already failed for a better reason. If the suite **passed**
+ * and a report is still missing, a suite has stopped reporting, and this gate has quietly stopped covering
+ * it: exactly how `test/node/` sat outside the ceiling for three weeks.
+ *
+ * Absent when run by hand, which is treated as "do not gate" so the script stays usable locally.
+ */
+const TESTS_PASSED = process.env.TEST_STEP_OUTCOME === "success";
+
 if (present.length === 0) {
-  // A failed suite may not have written any. Silence here is honest; the test step already failed.
   emit(`No test reports found — the suite did not finish.`);
+  if (TESTS_PASSED) {
+    emit("> **The tests passed and produced no report at all.** Every suite has stopped reporting, so this "
+      + "gate is measuring nothing. Check the `reporters` block in each vitest config.");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -116,6 +132,20 @@ emit(
       "`docs/receipts/test-timeout-headroom.md` for where that threshold comes from.",
   ].join("\n"),
 );
+
+/*
+ * A suite that stopped reporting is a suite that left this gate, and reporting it without failing is the
+ * muted check AGENTS.md describes — the same argument the ceiling below already makes about printing a number
+ * nobody fails on. Only gated when the tests passed, because a crashed suite legitimately writes nothing.
+ */
+if (TESTS_PASSED && missing.length > 0) {
+  emit(
+    `\n> **${missing.map((r) => r.suite).join(", ")} produced no report while the tests passed.** That suite is `
+    + "no longer covered by the headroom ceiling, so a test in it can grow until it times out with nothing "
+    + "saying so. Restore its json reporter, or remove it from REPORTS deliberately.",
+  );
+  process.exitCode = 1;
+}
 
 if (worst > timeout * CEILING) {
   const slowest = tests[0];

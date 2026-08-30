@@ -1281,6 +1281,38 @@ describe("a capability no granted mailbox can satisfy is refused at mint", () =>
     expect(minted.agent.id).toMatch(/^agt_/);
   });
 
+  it("refuses notice.read with no mailbox, because its answer would be empty for ever", async () => {
+    /*
+     * The capability that was mintable and useless. `GET /api/notifications` returns notices addressed to the
+     * caller *or* mailbox-wide notices on a mailbox the caller can read — and nothing addresses a notice to a
+     * machine, so the relation branch is the only one an agent reaches. Its authority said `filtered`, which
+     * contributed no required relation, so this minted and then answered `200 {notifications: []}` for ever.
+     *
+     * An execution test cannot catch that: an empty list is a successful response. Only the requirement can.
+     */
+    await seed();
+    const response = await SELF.fetch("https://node.example/api/agents", {
+      method: "POST",
+      headers: { cookie: await adminCookie(), "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "empty-notices", sponsorUserId: SPONSOR, capabilities: ["notice.read"], grants: [],
+      }),
+    });
+    expect(response.status).toBe(422);
+    expect((await response.json() as { error: string }).error).toBe("E_AGENT_CAPABILITY_UNSATISFIABLE");
+  });
+
+  it("mints notice.read when a mailbox it can read is granted", async () => {
+    // The control: the capability is not simply unsatisfiable now, it is satisfiable by the one grant that
+    // makes its answer non-empty.
+    await seed();
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "notices", sponsorUserId: SPONSOR, capabilities: ["notice.read"],
+      grants: [{ mailboxId: MAILBOX, relation: "mailbox.content.read" }],
+    });
+    expect(minted.agent.id).toMatch(/^agt_/);
+  });
+
   it("still mints a capability that needs no mailbox, with no grants", async () => {
     /*
      * The other control, and the one that stops this check being written as "grants must not be empty".

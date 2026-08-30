@@ -137,13 +137,13 @@ export const METHOD_UNCHECKED: readonly string[] = [
 export const ROUTES = [
   // ---- the surface an unauthenticated caller reaches (ADR 30) ----------------------------------------
   {
-    authority: { scope: "none" },
+    authority: { scope: "public" },
     method: "GET", path: "/health",
     summary: "Whether this Node is up, and what is missing if it is not",
     response: S.healthResponse,
   },
   { method: "GET", path: "/index.html", summary: "The interface shell" },
-  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "none" }, response: S.jwksResponse },
+  { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "public" }, response: S.jwksResponse },
   { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
   { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
   { method: "POST", path: "/api/agents", summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
@@ -168,7 +168,7 @@ export const ROUTES = [
     response: S.prepareResponse,
   },
   {
-    authority: { scope: "none" },
+    authority: { scope: "recovery" },
     method: "GET", path: "/api/doctor",
     summary: "What this Node can and cannot do, with the evidence",
     response: S.doctorResponse,
@@ -184,7 +184,7 @@ export const ROUTES = [
   { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
   { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
-  { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "none" }, response: S.meResponse },
+  { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "member" }, response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
   {
@@ -203,7 +203,7 @@ export const ROUTES = [
     response: S.signedInResponse,
   },
   {
-    authority: { scope: "none" },
+    authority: { scope: "member" },
     method: "GET", path: "/api/auth/passkeys",
     summary: "The passkeys this account holds. Never returns a public key",
     response: S.passkeyListResponse,
@@ -287,7 +287,20 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
-    authority: { scope: "filtered", by: "addressee" },
+    /*
+     * Two ways to be a recipient, and **a machine can only reach one of them**.
+     *
+     * `notificationsFor` returns a notice whose `user_id` is the caller, or a mailbox-wide notice on a mailbox
+     * where the caller holds `mailbox.content.read` — intersected with the sponsor for an agent. Declared
+     * `addressee` at first, which was true of the route and useless to a mint: `filtered` contributes no
+     * required relation, so `notice.read` minted with no grants at all and returned an empty list for ever.
+     *
+     * Nothing addresses a notice to an `agt_` principal. Approval notices name the people eligible to decide
+     * and supervised-read notices are mailbox-wide, so the direct branch is a human's. The relation branch is
+     * what a machine can be provisioned for, and naming it is what makes the capability a promise rather than
+     * an offer that answers 200 with nothing in it.
+     */
+    authority: { scope: "filtered", by: "relation", relations: ["mailbox.content.read"] },
     method: "GET", path: "/api/notifications",
     summary: "What has changed since the last poll",
     response: S.notificationListResponse,
@@ -373,12 +386,12 @@ export const ROUTES = [
   { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "member" }, request: S.openMatterRequest, response: S.matterResponse },
   { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
   {
-    authority: { scope: "none" },
+    authority: { scope: "member" },
     method: "GET", path: "/api/breakers",
     summary: "The rate breakers, with the readings behind them",
     response: S.breakerListResponse,
   },
-  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "none" }, response: S.domainPauseListResponse },
+  { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "member" }, response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 

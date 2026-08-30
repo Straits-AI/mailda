@@ -129,7 +129,17 @@ async function sessionFor(userId: string): Promise<string> {
   return outcome.session.accessToken;
 }
 
-async function drive(spec: RouteSpec, cookie: string, ids: Record<string, string>): Promise<number> {
+/**
+ * The status **and the refusal code**, because "not a success" is not proof of an authorization check.
+ *
+ * A route can refuse for reasons that have nothing to do with who is asking — a fixture it cannot find, a
+ * body it will not accept, a conflict with something another principal just did. Counting any non-2xx as a
+ * confirmed gate credits the declaration for a refusal it did not cause, which is the same class of error as
+ * a test that passes because it asserts nothing.
+ */
+async function drive(
+  spec: RouteSpec, cookie: string, ids: Record<string, string>,
+): Promise<{ status: number; error: string }> {
   const path = spec.path.replace(/:(\w+)/g, (_, name: string) => ids[name] ?? `${name}-does-not-exist`);
   const body = BODIES[`${spec.method} ${spec.path}`];
   const response = await SELF.fetch(`https://node${path}`, {
@@ -140,7 +150,14 @@ async function drive(spec: RouteSpec, cookie: string, ids: Record<string, string
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  return response.status;
+  const text = await response.text();
+  let error = "";
+  try {
+    error = (JSON.parse(text) as { error?: string }).error ?? "";
+  } catch {
+    // A non-JSON body is not a refusal shape, so there is no code to read. The status still speaks.
+  }
+  return { status: response.status, error };
 }
 
 /** The minimum body each writing route needs to get past its own shape validation and reach its authority check. */
@@ -223,32 +240,62 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
     const falselyDeclared: string[] = [];
     const unexercised: string[] = [];
     let confirmed = 0;
+    /*
+     * ## The member goes first, and the refusal has to be an authorization refusal
+     *
+     * Two corrections, both about counting a refusal that authority did not cause.
+     *
+     * **Order.** The administrator used to be driven first, and several of these routes *write* — a matter
+     * opened, a policy drafted. The member then met a world the administrator had just changed and could be
+     * refused `409` for a conflict, `422` for a second act that is invalid, or `404` for a fixture the first
+     * call transformed. Every one of those was counted as a confirmed gate. Driving the member against the
+     * state the administrator has not touched yet removes the whole class.
+     *
+     * Said plainly, because it would be easy to imply otherwise: **no test fails if this order is reverted.**
+     * Every organization-declared route today gates before it writes, so the hazard is latent rather than
+     * live, and a mutation swapping the two lines survives. It is a guard against the next mutating route,
+     * not a fix for a current failure. The *shape* rule below is the half that is mutation-proven.
+     *
+     * **Shape.** "Not a success" is not proof either. Only two answers demonstrate an authorization check:
+     * `403` naming `E_NOT_AN_ADMINISTRATOR`, and the §5C `404` that makes an unauthorised read answer exactly
+     * as an absent thing does — which several handlers use deliberately and state in their own comments.
+     * Anything else means the route stopped short for a reason of its own, and it is reported as unexercised
+     * rather than credited.
+     */
     for (const spec of declared) {
       const key = `${spec.method} ${spec.path}`;
-      const asAdmin = await drive(spec, adminCookie, ids);
       const asMember = await drive(spec, memberCookie, ids);
+      const asAdmin = await drive(spec, adminCookie, ids);
 
-      if (asAdmin >= 200 && asAdmin < 300) {
-        // The pair that decides it. The administrator reached the handler, so the member's answer is about
-        // authority rather than about a fixture.
-        if (asMember >= 200 && asMember < 300) {
-          falselyDeclared.push(`${key} — declares org.admin, but an ordinary member got ${asMember}`);
+      /*
+       * `403 E_NOT_AN_ADMINISTRATOR` is unambiguous. The §5C `404` is the dominant idiom here — eighteen
+       * handlers refuse a non-administrator by answering exactly as an absent thing does, and most of them
+       * run `isAdmin` *before* any lookup, so the 404 really is the gate.
+       *
+       * A response cannot show that ordering, though. If the administrator gets the same `404`, both
+       * principals were stopped by the same absence and the member's answer proves nothing — so it only
+       * counts when the administrator's answer differs. That keeps the rule grounded in what was observed
+       * rather than in what reading the handler told me.
+       */
+      const refusedForAuthority = (asMember.status === 403 && asMember.error === "E_NOT_AN_ADMINISTRATOR")
+        || (asMember.status === 404 && asMember.error === "not_found"
+          && !(asAdmin.status === 404 && asAdmin.error === "not_found"));
+
+      if (asMember.status >= 200 && asMember.status < 300) {
+        if (asAdmin.status >= 200 && asAdmin.status < 300) {
+          falselyDeclared.push(`${key} — declares org.admin, but an ordinary member got ${asMember.status}`);
         } else {
-          confirmed += 1;
+          // The member succeeded where the administrator did not, which is not a story about authority at
+          // all — it is a fixture the administrator's own earlier calls disturbed.
+          unexercised.push(`${key} — member got ${asMember.status}, admin got ${asAdmin.status}`);
         }
-      } else if (asMember === 403 || (asMember === 404 && asAdmin !== 404)) {
+      } else if (refusedForAuthority) {
         confirmed += 1;
       } else {
-        /*
-         * The administrator did not succeed. The member may still have been demonstrably refused: 403 is the
-         * plain no, and **404 is also one** — §5C makes a read somebody may not do answer exactly as an absent
-         * thing does, which `POST /api/butlers/:butlerId/simulate` states in its own comment. A 404 only
-         * counts when the administrator got something else, or the two are agreeing that nothing is there.
-         *
-         * Anything else means both principals were stopped by the same missing fixture, and this route was
-         * not tested at all.
-         */
-        unexercised.push(`${key} — admin got ${asAdmin}, member got ${asMember}`);
+        unexercised.push(
+          `${key} — member got ${asMember.status} ${asMember.error || "(no code)"}, which is not an `
+          + "authorization refusal",
+        );
       }
     }
 
@@ -299,7 +346,7 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
 
     const refused: string[] = [];
     for (const spec of reachable) {
-      const status = await drive(spec, memberCookie, { userId: MEMBER, mailboxId: MAILBOX });
+      const { status } = await drive(spec, memberCookie, { userId: MEMBER, mailboxId: MAILBOX });
       /*
        * The member must actually be **answered**, not merely spared a 403.
        *
@@ -319,6 +366,55 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
     ).toEqual([]);
 
     expect(reachable.length, "no member-reachable routes declared — has a scope been renamed?")
+      .toBeGreaterThan(3);
+  });
+
+  it("answers a stranger on every public route, and refuses one everywhere else", async () => {
+    /*
+     * The scope that was wrong, and it was wrong *because* nothing drove it.
+     *
+     * `none` meant "reaches nothing scoped" and was applied both to `GET /health`, which answers a stranger,
+     * and to `GET /api/me`, whose handler calls `principalFor` and answers 401 without one. Five routes were
+     * declared that way while requiring a principal. The handler stayed stricter than the declaration, so
+     * nothing leaked — and the registry still said something false, which is the whole subject of this file.
+     *
+     * It survived because the suite drove `organization`, `member`, `filtered` and `self-or-admin`. A scope
+     * with no driver is a claim nobody checks, which is the same lesson `response-drivers-world` records
+     * about schemas.
+     */
+    const all = ROUTES as readonly RouteSpec[];
+    const anonymous = async (spec: RouteSpec) => {
+      const path = spec.path.replace(/:(\w+)/g, (_, name: string) => `${name}-does-not-exist`);
+      return (await SELF.fetch(`https://node${path}`, { method: spec.method })).status;
+    };
+
+    const refusedPublic: string[] = [];
+    for (const spec of all.filter((one) => one.authority?.scope === "public")) {
+      const status = await anonymous(spec);
+      if (status === 401) refusedPublic.push(`${spec.method} ${spec.path} → 401`);
+    }
+    expect(
+      refusedPublic,
+      "these routes declare they need no sign-in and the Node refused an anonymous caller:",
+    ).toEqual([]);
+
+    const admittedUnauthenticated: string[] = [];
+    for (const spec of all.filter((one) => one.authority?.scope === "member")) {
+      const status = await anonymous(spec);
+      // 401 is the answer. Anything else that is not a success means the route stopped short for its own
+      // reasons — a missing fixture — which does not disprove the declaration.
+      if (status >= 200 && status < 300) admittedUnauthenticated.push(`${spec.method} ${spec.path} → ${status}`);
+    }
+    expect(
+      admittedUnauthenticated,
+      "these routes declare that a signed-in member reaches them, and the Node answered a stranger. Either "
+      + "the handler is missing its principal check, or the route is public and should say so:",
+    ).toEqual([]);
+
+    // Both controls, so neither list is empty for want of a subject.
+    expect(all.filter((one) => one.authority?.scope === "public").length, "no public routes declared")
+      .toBeGreaterThan(1);
+    expect(all.filter((one) => one.authority?.scope === "member").length, "no member routes declared")
       .toBeGreaterThan(3);
   });
 

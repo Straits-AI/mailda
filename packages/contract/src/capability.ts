@@ -112,7 +112,14 @@ export const CAPABILITIES: readonly Capability[] = [
   },
   {
     id: "notice.read",
-    says: "Read the notices due on mailboxes you can read — what is waiting, and on which mailbox.",
+    /*
+     * **Mailbox-wide notices**, and the wording is the fix rather than decoration. The route also serves
+     * notices addressed to a named person, and nothing addresses one to a machine — so a capability that said
+     * "your notices" described something an agent can never receive. What it can receive is what is due on the
+     * mailboxes it may read, which is now both what this says and what its declared authority requires.
+     */
+    says: "Read the notices due on the mailboxes this credential can read — what is waiting, and on which "
+      + "mailbox. Not notices addressed to a person: those reach the person they name.",
     reachesContent: false,
     routes: ["GET /api/notifications"],
   },

@@ -330,7 +330,8 @@ The last row is the one that mattered. Nine capabilities offered authority the p
 an administrator could select `butler.read`, mint the agent, and hand over a credential refused on every route
 it named.
 
-Each route now declares an `authority` — `none`, `organization`, `mailbox` with `allOf`/`anyOf`, or `export`
+Each route now declares an `authority` — `public`, `member`, `recovery`, `organization`, `filtered`,
+`self-or-admin`, `mailbox` with `allOf`/`anyOf`, or `export`
 with requester ownership — and the capability's requirements, the mint's validation, the interface's warnings
 and the tests are all read from it. `anyOf` contributes nothing to a requirement and `allOf` contributes all of
 it: a route satisfied by *either* of two relations cannot say which to grant, while one needing *both* must, or

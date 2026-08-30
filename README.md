@@ -1419,9 +1419,15 @@ reachable set on the same commit. There is deliberately no route that widens one
 
 The tier answers *may a machine do this*. It does not answer *can a machine be given what this needs*, and
 treating one question as both was worth 22 tools an agent token could never satisfy. So each route declares
-its authority — `none`, `member`, `organization`, `mailbox` with the relations, `filtered` with what narrows
-the result, `self-or-admin`, or `export` — and everything downstream is derived from that one declaration: the
-capability vocabulary, what the mint refuses, the MCP catalogue, the Skill's withheld list.
+its authority — `public`, `member`, `recovery`, `organization`, `mailbox` with the relations, `filtered` with
+what narrows the result, `self-or-admin`, or `export` — and everything downstream is derived from that one
+declaration: the capability vocabulary, what the mint refuses, the MCP catalogue, the Skill's withheld list.
+
+`public` and `member` were one value called `none`, documented as "reaches nothing scoped" and applied both to
+`GET /health`, which answers a stranger, and to `GET /api/me`, which answers `401` without a principal. Five
+routes were declared that way while requiring a session. Nothing leaked — the handler stayed stricter than the
+declaration — and it was still a registry saying something false, in the one scope the parity suite did not
+drive. A scope with no driver is a claim nobody checks.
 
 A declaration is hand-written, so it is checked against the handler rather than trusted.
 `test/route-authority-parity.test.ts` drives every organization-declared route as an administrator and as an

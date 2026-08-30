@@ -25,7 +25,11 @@ import { AGENT_GRANTABLE_RELATIONS, type AgentGrantableRelation } from "./relati
  *
  * ## What the shapes mean
  *
- * - `none` — reaches nothing scoped. `GET /health`, `GET /api/me`.
+ * - `public` — reachable **without signing in**. `GET /health`, `GET /.well-known/jwks.json`, and nothing
+ *   else: two routes, both of which answer a stranger on purpose.
+ * - `recovery` — open to a stranger *only when this Node cannot authenticate anybody*. `GET /api/doctor` is
+ *   the one, and the conditionality is the point: it refuses an anonymous caller on a healthy Node and opens
+ *   when the failure being diagnosed is the sign-in path itself.
  * - `organization` — needs `org.admin`. **Not machine-provisionable**: an agent would need itself *and* its
  *   sponsor to be administrators, and `AGENT_GRANTABLE_RELATIONS` deliberately excludes `org.admin`.
  * - `mailbox` — needs relations on the mailbox being reached. `allOf` is every one of them; `anyOf` is any
@@ -38,13 +42,47 @@ import { AGENT_GRANTABLE_RELATIONS, type AgentGrantableRelation } from "./relati
  * credential that fails on its own promise.
  */
 export type Authority =
-  | { readonly scope: "none" }
+  /**
+   * Reachable without signing in.
+   *
+   * ## This used to be called `none`, and it meant two incompatible things
+   *
+   * `none` was documented as *"reaches nothing scoped"* and applied both to `GET /health`, which answers a
+   * stranger, and to `GET /api/me`, whose handler calls `principalFor` and answers `401` without one. Five
+   * routes were declared that way while requiring a principal — `/api/me`, `/api/auth/passkeys`,
+   * `/api/breakers`, `/api/domain-pauses` and `/api/doctor`.
+   *
+   * Not a leak: the handler stayed stricter than the declaration, which is the safe direction. It was still
+   * the exact defect this whole file exists to close — a registry saying something the handler does not — and
+   * it survived the parity suite because that suite drove `organization`, `member`, `filtered` and
+   * `self-or-admin`, and never drove this one. The scope nobody tested was the scope that was wrong.
+   *
+   * Authentication and resource authority are separate questions. They are kept in one field because they do
+   * not cross here: every scoped route requires a principal, and every unauthenticated route is unscoped, so a
+   * second axis would add a field to 106 routes with nothing to discriminate. `public` and `member` are the
+   * two halves the old name conflated, and `test/route-authority-parity.test.ts` now drives both — a `public`
+   * route must answer with no cookie, and a `member` route must refuse without one and answer with one.
+   */
+  | { readonly scope: "public" }
+  /**
+   * Open to a stranger **only when this Node cannot authenticate anybody**.
+   *
+   * `GET /api/doctor` alone. On a healthy claimed Node it answers `401` to an anonymous caller; when the
+   * credential or signing key is gone it serves the reduced report, because the thing an operator needs to
+   * read at that moment is the diagnosis of why they cannot sign in.
+   *
+   * Its own scope rather than `public` or `member`, because it is neither and calling it either would be the
+   * `none` mistake again in a smaller font. A machine can hold it — the reduced report discloses only
+   * infrastructure — so it is provisionable.
+   */
+  | { readonly scope: "recovery" }
   | { readonly scope: "organization"; readonly allOf: readonly ["org.admin"] }
   /**
    * Authenticated, and nothing further. Every member of the organization sees the same thing.
    *
-   * Distinct from `none`, which is *unauthenticated-reachable* — `GET /health` answers a stranger. A `member`
-   * route answers anybody signed in and nobody else, which is a different fact about a different boundary.
+   * Distinct from `public`, which is *unauthenticated-reachable* — `GET /health` answers a stranger. A
+   * `member` route answers anybody signed in and nobody else, which is a different fact about a different
+   * boundary, and the two shared one name until it was driven.
    *
    * `GET /api/teams` is the example and its handler argues the case: a team is a name and a headcount, which
    * is the organizational chart rather than the access map. Who is *in* it and what it *holds* are separate
@@ -109,7 +147,29 @@ export type Authority =
 
 /** The relations a caller must hold on one mailbox to satisfy this route. `anyOf` is not one of them. */
 export function requiredRelations(authority: Authority | undefined): readonly AgentGrantableRelation[] {
-  return authority !== undefined && authority.scope === "mailbox" ? authority.allOf ?? [] : [];
+  if (authority === undefined) return [];
+  if (authority.scope === "mailbox") return authority.allOf ?? [];
+  /*
+   * **A filtered route requires what narrows it**, when a mint can confer it.
+   *
+   * This returned nothing for `filtered`, on the reasoning that such a route refuses nobody — which is true
+   * and answers the wrong question. `notice.read` expands to `GET /api/notifications`, whose mailbox-wide
+   * branch is gated on `mailbox.content.read`; without it the credential authenticated, called the route
+   * successfully, and read an empty list for ever. The capability was mintable and empty, which is the same
+   * defect as an unsatisfiable one wearing a 200.
+   *
+   * Ungrantable narrowers are excluded rather than demanded: `GET /api/approvals` narrows by
+   * `approval.decide`, and requiring it would make a capability nobody could satisfy. `machineUseful` already
+   * withholds that route from machines entirely, so the two answers agree — one keeps the route out of the
+   * vocabulary, this one makes what is *in* it provisionable.
+   */
+  if (authority.scope === "filtered" && authority.by === "relation") {
+    return (authority.relations ?? [])
+      .filter((one): one is AgentGrantableRelation =>
+        (AGENT_GRANTABLE_RELATIONS as readonly string[]).includes(one)
+      );
+  }
+  return [];
 }
 
 /**
@@ -125,7 +185,10 @@ export function requiredRelations(authority: Authority | undefined): readonly Ag
  */
 export function machineProvisionable(authority: Authority | undefined): boolean {
   if (authority === undefined) return false;
-  if (authority.scope === "none") return true;
+  // Public, recovery-conditional and member-reachable routes all admit a machine: an agent authenticates, and
+  // the two unauthenticated ones admit anybody at all.
+  if (authority.scope === "public") return true;
+  if (authority.scope === "recovery") return true;
   if (authority.scope === "organization") return false;
   /*
    * An agent authenticates, so all three of these are reachable. `filtered` is reachable and may still be

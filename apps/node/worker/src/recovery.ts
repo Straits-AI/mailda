@@ -1285,22 +1285,26 @@ export async function acknowledgeKeyConflict(
   const generations = conflictKey(conflicted);
   const at = new Date(ctx.now()).toISOString();
 
-  const existing = await env.CATALOG.prepare(
-    `SELECT assessed_by, assessed_at FROM recovery_key_conflict_acknowledgements
-      WHERE org_id = ? AND restore_id = ? AND generations = ?`,
-  ).bind(orgId, input.restoreId, generations).first<{ assessed_by: string; assessed_at: string }>();
-  if (existing !== null) {
-    throw unprocessable("E_ALREADY_ACKNOWLEDGED", {
-      what: `${input.restoreId} generations ${generations} were assessed by ${existing.assessed_by} `
-        + `on ${existing.assessed_at}`,
-      why: "an acknowledgement is immutable, so a second one would leave two conclusions about one incident "
-        + "with nothing saying which stands",
-      fix: "read the existing assessment. If the conclusion has changed, that is a new incident and belongs "
-        + "in the audit trail as its own entry rather than as a replacement for this one",
-    });
-  }
+  /*
+   * **A compare-and-swap, not a read followed by a write.**
+   *
+   * The first version read whether an acknowledgement existed and then inserted. Two concurrent assessments
+   * both pass that read, and the unique index catches the second — as a raw constraint violation, so the
+   * loser gets a generic database failure instead of `E_ALREADY_ACKNOWLEDGED` and the reason it was refused.
+   * The trail stayed correct, because the batch is atomic and rolls the audit entry back with it; the caller
+   * was told nothing useful, during an incident, which is when this route is used.
+   *
+   * `INSERT … SELECT … WHERE NOT EXISTS` decides in the same statement, and the audit entry is gated on the
+   * same predicate — so an acknowledgement that changes nothing writes no entry either, rather than leaving a
+   * record of an assessment that was not stored. The unique index stays as the backstop it should be, rather
+   * than as the mechanism.
+   */
+  const NOT_YET_ACKNOWLEDGED =
+    `SELECT 1 WHERE NOT EXISTS (
+       SELECT 1 FROM recovery_key_conflict_acknowledgements
+        WHERE org_id = ? AND restore_id = ? AND generations = ?)`;
 
-  await auditedBatch(env, ctx, orgId, {
+  const { results } = await auditedBatch(env, ctx, orgId, {
     action: "recovery.conflict_acknowledged",
     outcome: "ok",
     actorUserId,
@@ -1311,9 +1315,34 @@ export async function acknowledgeKeyConflict(
     env.CATALOG.prepare(
       `INSERT INTO recovery_key_conflict_acknowledgements
          (id, org_id, restore_id, generations, assessed_by, assessed_at, scope, conclusion)
-       VALUES (?,?,?,?,?,?,?,?)`,
-    ).bind(ctx.id("rka"), orgId, input.restoreId, generations, actorUserId, at, input.scope, input.conclusion),
-  ]);
+       SELECT ?,?,?,?,?,?,?,?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM recovery_key_conflict_acknowledgements
+           WHERE org_id = ? AND restore_id = ? AND generations = ?)`,
+    ).bind(
+      ctx.id("rka"), orgId, input.restoreId, generations, actorUserId, at, input.scope, input.conclusion,
+      orgId, input.restoreId, generations,
+    ),
+  ], { sql: NOT_YET_ACKNOWLEDGED, params: [orgId, input.restoreId, generations] });
+
+  if ((results[1]?.meta.changes ?? 0) === 0) {
+    /*
+     * Nothing was written — somebody else assessed this set. Read theirs to name them, which is the whole
+     * point of refusing: the caller needs to find the conclusion that stands, not merely be told no.
+     */
+    const existing = await env.CATALOG.prepare(
+      `SELECT assessed_by, assessed_at FROM recovery_key_conflict_acknowledgements
+        WHERE org_id = ? AND restore_id = ? AND generations = ?`,
+    ).bind(orgId, input.restoreId, generations).first<{ assessed_by: string; assessed_at: string }>();
+    throw unprocessable("E_ALREADY_ACKNOWLEDGED", {
+      what: `${input.restoreId} generations ${generations} were assessed by `
+        + `${existing?.assessed_by ?? "somebody else"} on ${existing?.assessed_at ?? "an earlier date"}`,
+      why: "an acknowledgement is immutable, so a second one would leave two conclusions about one incident "
+        + "with nothing saying which stands",
+      fix: "read the existing assessment. If the conclusion has changed, that is a new incident and belongs "
+        + "in the audit trail as its own entry rather than as a replacement for this one",
+    });
+  }
 
   return { acknowledgedAt: at, generations };
 }

@@ -70,7 +70,31 @@ function driven(): Set<string> {
  * Not a backlog to be tolerated — a list that can only shrink. Every entry is a route whose success shape is
  * currently unchecked, which is exactly the condition three of them shipped broken in.
  */
+/**
+ * Routes driven **outside** `contract-responses.test.ts`, with the file that drives them.
+ *
+ * ## Why this is a map and not a sentence
+ *
+ * The acknowledgement route was listed in `UNDRIVEN` with a comment saying another file drove it. That
+ * comment was true and unchecked: deleting the HTTP test from `recovery-escrow.test.ts` would have left this
+ * world green, because the exemption was prose. An exemption nothing verifies is the same shape as the schema
+ * coverage this file exists to distinguish from real drivers — precise about what it can see, silent about
+ * what it cannot.
+ *
+ * Each entry names the file, and the test below reads that file and requires a request to the route in it. So
+ * removing the driver fails here, and moving it fails here until the entry moves with it.
+ */
+const DRIVEN_ELSEWHERE: Readonly<Record<string, string>> = {
+  /*
+   * Needs a completed restore that really collided with a live key — a conflict cannot be inserted as a row
+   * and mean anything, because the check reads the detail the restore itself wrote. Driven there against a
+   * real Worker and parsed through `conflictAcknowledgedResponse`.
+   */
+  "POST /api/recovery/conflicts/:restoreId/acknowledge": "../recovery-escrow.test.ts",
+};
+
 const UNDRIVEN: readonly string[] = [
+  ...Object.keys(DRIVEN_ELSEWHERE),
   // Spends a real code and needs a wiped vault, which `test/recovery-escrow.test.ts` sets up properly; the
   // shape is parsed there against the same schema.
   "POST /api/recovery/redeem",
@@ -86,13 +110,6 @@ const UNDRIVEN: readonly string[] = [
   "POST /api/auth/login",
   "POST /api/auth/logout-everywhere",
   "DELETE /api/auth/passkeys",
-  /*
-   * Needs a completed restore that really collided with a live key — a conflict cannot be inserted as a row
-   * and mean anything, because the check reads the detail the restore itself wrote. Built and **driven** in
-   * `test/recovery-escrow.test.ts`, which parses the answer against `conflictAcknowledgedResponse`; this list
-   * is about drivers in `contract-responses.test.ts`, which is why it is named here rather than absent.
-   */
-  "POST /api/recovery/conflicts/:restoreId/acknowledge",
   // Need a delivered notice and a sealed export respectively; both are ordinary fixtures and neither is hard.
   // These two are the honest backlog rather than a case for an exemption.
   "GET /api/notifications",
@@ -145,6 +162,35 @@ describe("the response suite's reach is stated rather than assumed", () => {
       "these schema-bearing routes are never sent a request by test/contract-responses.test.ts, so their "
       + "success shapes are unchecked. Write a driver, or add the route here with the fixture it would need:",
     ).toEqual([...UNDRIVEN].sort());
+  });
+
+  it("proves every externally-driven route really is driven, in the file that claims it", () => {
+    /*
+     * The half the prose could not do. `DRIVEN_ELSEWHERE` earns each route its place in `UNDRIVEN`, so the
+     * claim has to be checked or the exemption is just a way of writing "ignore this".
+     *
+     * Matched on the concrete path a driver actually sends — `:restoreId` is filled in at the call site — so
+     * the pattern is the path with its parameters replaced by a wildcard.
+     */
+    const missing: string[] = [];
+    for (const [route, file] of Object.entries(DRIVEN_ELSEWHERE)) {
+      const [method, path] = route.split(" ") as [string, string];
+      const source = readFileSync(new URL(file, import.meta.url).pathname, "utf8");
+      const concrete = new RegExp(
+        path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:\w+/g, "[^\"`'/]+"),
+      );
+      const drives = concrete.test(source)
+        && new RegExp(`method:\\s*"${method}"`).test(source);
+      if (!drives) missing.push(`${route} — ${file} does not send it`);
+    }
+    expect(
+      missing,
+      "these routes are exempt from the driver requirement because another file drives them, and that file "
+      + "no longer does. Restore the driver, or move the entry to where the driver went:",
+    ).toEqual([]);
+
+    // The control: an empty map would satisfy the loop without checking anything.
+    expect(Object.keys(DRIVEN_ELSEWHERE).length).toBeGreaterThan(0);
   });
 
   it("has no driver for a route that does not exist", () => {

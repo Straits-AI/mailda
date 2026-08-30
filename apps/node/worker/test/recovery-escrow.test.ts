@@ -1951,6 +1951,39 @@ describe("a permanent key collision can be acknowledged, which is not the same a
       .rejects.toThrow("E_ALREADY_ACKNOWLEDGED");
   });
 
+  it("writes no second audit entry when the duplicate is refused", async () => {
+    /*
+     * The half a read-then-insert could not promise. Two concurrent assessments both pass a pre-read, and the
+     * unique index then catches the loser as a raw constraint violation — a generic database failure rather
+     * than `E_ALREADY_ACKNOWLEDGED`, during an incident, which is the only time this route is used.
+     *
+     * The insert is a compare-and-swap now and the audit entry is gated on the same predicate, so a refused
+     * acknowledgement leaves **nothing**: no row, and no entry claiming an assessment that was not stored.
+     * Asserting the entry count is what distinguishes that from an insert that merely failed quietly.
+     */
+    const restoreId = await collide();
+    const input = { restoreId, scope: "content generation 1", conclusion: "bounded" };
+    await acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, input);
+
+    const entries = async () => Number((await testEnv.CATALOG.prepare(
+      `SELECT COUNT(*) AS n FROM audit_entries
+        WHERE org_id = ? AND action = 'recovery.conflict_acknowledged' AND subject = ?`,
+    ).bind(ORG, restoreId).first<{ n: number }>())?.n ?? 0);
+    expect(await entries(), "the first acknowledgement left no entry").toBe(1);
+
+    await expect(acknowledgeKeyConflict(testEnv, createSystemCtx(), ORG, USER, input))
+      .rejects.toThrow("E_ALREADY_ACKNOWLEDGED");
+    expect(
+      await entries(),
+      "the refused duplicate still wrote an entry, so the trail claims two assessments and stored one",
+    ).toBe(1);
+
+    const rows = Number((await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM recovery_key_conflict_acknowledgements WHERE org_id = ? AND restore_id = ?",
+    ).bind(ORG, restoreId).first<{ n: number }>())?.n ?? 0);
+    expect(rows, "a second acknowledgement row was stored for one incident").toBe(1);
+  });
+
   it("refuses an acknowledgement with nothing in it", async () => {
     // A blank conclusion is a dismissal wearing the shape of an assessment, and this table exists to be
     // distinguishable from one.
