@@ -628,7 +628,7 @@ describe("a mailbox-wide notice reaches the relation it names, and no other", ()
 
 describe("a mailbox route requires the relation it declares, not merely some relation", () => {
   /*
-   * The **necessary** half of the `mailbox` scope, which nothing had.
+   * The **necessary** half of the `mailbox` scope, over the whole class rather than a sample of it.
    *
    * `test/agent-capabilities.test.ts` grants each capability exactly the relations it declares and proves them
    * *sufficient*. That cannot see a handler whose relation term is wrong, because a caller holding the
@@ -636,38 +636,55 @@ describe("a mailbox route requires the relation it declares, not merely some rel
    * — "shows a member with no relation on the mailbox nothing at all" — which passes with the relation term
    * deleted, since a caller with no tuples fails `subject_id IN (…)` regardless.
    *
-   * Four gates were live holes under that shape, each leaving 1,513 tests green when its relation term was
-   * removed:
+   * Six gates were live holes under that shape, each leaving the whole suite green when its relation term was
+   * removed or widened:
    *
-   * | gate | what a lesser relation opened |
+   * | gate | what it opened |
    * |:--|:--|
    * | `cases.ts` `mailboxQueues` | `GET /api/mailboxes` — the mailbox, its addresses, its queue counts |
-   * | `authz-read.ts` `readableMailboxes` | `GET /api/mailboxes/readable` listing what it may not read |
+   * | `authz-read.ts` `readableMailboxes` | listing mailboxes it may not read; and, the other way, emptying it |
    * | `index.ts` outbox query | `GET /api/sends` — subjects, recipients, the receiving server's words |
-   * | `authz-read.ts` `mailboxesWithRelation` | answered any relation for any relation asked |
+   * | `authz-read.ts` `mailboxesWithRelation` | any relation answered for any relation asked |
+   * | `authz-read.ts` `mayRead` | **a `mailbox.metadata.read` holder reading message bodies** |
    *
-   * The outbox one is the sharpest: the comment above that query names incident #45 — *"any authenticated
-   * member received every send from every mailbox — subjects, recipients, and the receiving server's own
-   * words about a customer's address"* — and the relation term that fixed it had no test.
+   * The last is the one this scope exists for: `access.ts` sells that relation as *"See that mail exists —
+   * senders, subjects, when. **Not the message itself.**"*
    *
-   * So this drives the class rather than those four. For every `mailbox`-scoped route it grants a relation
-   * that does **not** satisfy the declaration and asserts nothing about the mailbox comes back, then grants
-   * the declared relations and asserts it does. Both halves, because a route that discloses to nobody would
-   * satisfy the first on its own.
+   * ## Why the first version of this block missed two of them
+   *
+   * It was a sample. It tried **one** arbitrary lesser relation per route, so `GET /api/messages/:receiptId/raw`
+   * was only ever probed with `send.propose` and never with `mailbox.metadata.read`, its §7 sibling. It took
+   * `anyOf.slice(0, 1)`, so only the first alternative was ever proven sufficient — dropping
+   * `mailbox.content.read` from `readableMailboxes` survived, which would have emptied the catalogue every
+   * `mail.read` agent needs to discover mailbox ids. And its disclosure detector grepped for **ids**, so
+   * `GET /api/messages/:receiptId/body` — whose response carries no identifier at all — could never register a
+   * disclosure however it was gated.
+   *
+   * So: every grantable relation outside the declaration is tried, every `anyOf` alternative must be
+   * sufficient on its own, every proper subset of an `allOf` must be insufficient, and the fixture's subject
+   * and body carry markers the detector looks for alongside the ids.
    */
   const RECEIPT = "rcpt_PARTYRCPT00000000000000000";
   const SEND = "snd_PARTYSEND00000000000000000";
-  /*
-   * A second manifest, `held` with its window already closed, so `POST /api/sends/dispatch` has something to
-   * release and names it in the answer. Without it that route disclosed nothing to *anybody* and its refusal
-   * was vacuous — which the check below reports rather than passes, and which is how the `send.propose` bound
-   * on the sweep went untested while a mutation making it answer any relation left 1,525 tests green.
-   */
-  const HELD = "snd_PARTYHELD00000000000000000";
   const ADDRESS = "enquiries@parity.example";
+  /*
+   * Markers rather than ids, because the routes that carry the most are the ones that name nothing.
+   * `messageBodyResponse` is `{state, html, text, blockedRemote, truncated, problem}` — no identifier — so an
+   * id-only detector was structurally blind to the body route, which is gated by the one term that survived.
+   */
+  const SUBJECT_MARKER = "PARITYSUBJECTMARKER";
+  const BODY_MARKER = "PARITYBODYMARKER";
 
-  /** Every id that only somebody entitled to this mailbox should ever see in a response. */
-  const SECRETS = [MAILBOX, RECEIPT, SEND, HELD, ADDRESS];
+  /** Everything only somebody entitled to this mailbox should ever see come back. */
+  const SECRETS = [MAILBOX, RECEIPT, SEND, ADDRESS, SUBJECT_MARKER, BODY_MARKER];
+
+  /** Every mailbox relation this Node can grant, which is the set a lesser one is drawn from. */
+  const MAILBOX_RELATIONS = [
+    "mailbox.metadata.read",
+    "mailbox.content.read",
+    "send.propose",
+    "message.export",
+  ] as const;
 
   async function seedMailboxContents() {
     const ctx = createSystemCtx();
@@ -675,11 +692,11 @@ describe("a mailbox route requires the relation it declares, not merely some rel
     const raw = utf8([
       "From: someone@parity.example",
       `To: ${ADDRESS}`,
-      "Subject: parity fixture",
+      `Subject: ${SUBJECT_MARKER}`,
       "Message-ID: <parity-1@parity.example>",
       "Date: Mon, 3 Aug 2026 12:00:00 +0000",
       "",
-      "body text",
+      BODY_MARKER,
     ].join("\r\n"));
     await putEvidence(testEnv as never, `${ORG}/raw/${RECEIPT}`, raw);
     await testEnv.CATALOG.batch([
@@ -697,18 +714,9 @@ describe("a mailbox route requires the relation it declares, not merely some rel
             fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
             sealed_at, release_at, state, state_at)
          VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'sent',?)`,
-      ).bind(SEND, ORG, MAILBOX, MEMBER, ADDRESS, JSON.stringify(["out@example.test"]), "parity out",
+      ).bind(SEND, ORG, MAILBOX, MEMBER, ADDRESS, JSON.stringify(["out@example.test"]), SUBJECT_MARKER,
         `<${SEND}@parity.example>`, `${ORG}/typed/${SEND}`, "0".repeat(64), `${ORG}/norm/${SEND}`,
         "0".repeat(64), at, at, at),
-      testEnv.CATALOG.prepare(
-        `INSERT OR IGNORE INTO send_manifests
-           (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
-            fidelity, body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
-            sealed_at, release_at, state, state_at)
-         VALUES (?,?,?,?,?,?,?,?,'authored',?,?,?,?,?,?,'held',?)`,
-      ).bind(HELD, ORG, MAILBOX, MEMBER, ADDRESS, JSON.stringify(["held@example.test"]), "parity held",
-        `<${HELD}@parity.example>`, `${ORG}/typed/${HELD}`, "0".repeat(64), `${ORG}/norm/${HELD}`,
-        "0".repeat(64), "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z", "2020-01-01T00:00:00.000Z"),
     ]);
   }
 
@@ -743,83 +751,121 @@ describe("a mailbox route requires the relation it declares, not merely some rel
     return SECRETS.some((secret) => text.includes(secret));
   }
 
-  /** The declared relations a caller must hold, and one this Node grants that does not satisfy them. */
-  function pair(spec: RouteSpec): { enough: string[]; lesser: string } | null {
+  /**
+   * Every relation set that should be enough, and every one that should not.
+   *
+   * `allOf` is enough exactly as declared, and **each proper subset is not** — that is what makes
+   * `message.export` a requirement on `/raw` rather than decoration. `anyOf` means each alternative is enough
+   * **on its own**, which is the half `.slice(0, 1)` skipped and where a live hole was.
+   */
+  function sets(spec: RouteSpec): { enough: string[][]; lesser: string[][] } {
     const authority = spec.authority as { allOf?: string[]; anyOf?: string[] };
-    const enough = authority.allOf?.length ? authority.allOf : authority.anyOf?.slice(0, 1) ?? [];
-    if (enough.length === 0) return null;
-    const satisfying = new Set([...(authority.allOf ?? []), ...(authority.anyOf ?? [])]);
-    const lesser = ["send.propose", "mailbox.metadata.read", "mailbox.content.read", "message.export"]
-      .find((one) => !satisfying.has(one));
-    return lesser === undefined ? null : { enough, lesser };
+    const allOf = authority.allOf ?? [];
+    const anyOf = authority.anyOf ?? [];
+    const satisfying = new Set([...allOf, ...anyOf]);
+
+    const enough = allOf.length > 0 ? [allOf] : anyOf.map((one) => [one]);
+    const lesser: string[][] = MAILBOX_RELATIONS
+      .filter((one) => !satisfying.has(one))
+      .map((one) => [one]);
+    // A proper subset of an `allOf` is a lesser holding too: it is the caller who has some of what the route
+    // needs, which is the realistic near-miss rather than an unrelated relation.
+    if (allOf.length > 1) for (const drop of allOf) lesser.push(allOf.filter((one) => one !== drop));
+    return { enough, lesser };
   }
 
   const mailboxRoutes = (ROUTES as readonly RouteSpec[]).filter((spec) => spec.authority?.scope === "mailbox");
 
   for (const spec of mailboxRoutes) {
     const key = `${spec.method} ${spec.path}`;
-    const chosen = pair(spec);
-    if (chosen === null) continue;
+    const { enough, lesser } = sets(spec);
+    if (enough.length === 0 || lesser.length === 0) continue;
 
-    it(`withholds ${key} from a holder of ${chosen.lesser}`, async () => {
+    it(`withholds ${key} from every relation short of what it declares`, async () => {
       await seedMailboxContents();
 
-      // The control first: the declared relations really do reach this mailbox's data through this route.
-      // Without it, the refusal below is satisfied by a route that discloses to nobody.
-      await onlyRelations(chosen.enough);
-      const withEnough = await discloses(spec);
+      // The control first, and **every** sufficient set: an `anyOf` route must disclose under each
+      // alternative, or one of them is a promise the handler does not keep.
+      const disclosing: string[][] = [];
+      for (const set of enough) {
+        await onlyRelations(set);
+        if (await discloses(spec)) disclosing.push(set);
+      }
 
-      await onlyRelations([chosen.lesser]);
-      const withLesser = await discloses(spec);
+      for (const set of lesser) {
+        await onlyRelations(set);
+        expect(
+          await discloses(spec),
+          `${key} declares ${enough.map((one) => one.join("+")).join(" or ")} and handed this mailbox's data `
+          + `to a holder of ${set.join("+")}. A caller with *no* relation is refused by the subject test `
+          + "alone, so only a lesser relation can show the relation term is doing anything",
+        ).toBe(false);
+      }
 
-      expect(
-        withLesser,
-        `${key} declares ${chosen.enough.join(" and ")} and handed this mailbox's data to a holder of `
-        + `${chosen.lesser}. A caller with *no* relation is refused by the subject test alone, so only a `
-        + "lesser relation can show the relation term is doing anything",
-      ).toBe(false);
-
-      // Reported rather than asserted: a route the fixtures cannot drive to a disclosure proves nothing
-      // above, and saying so is better than a green test that checked an absence against an absence.
-      if (!withEnough) {
+      /*
+       * Reported rather than asserted. A route the fixtures cannot drive to a disclosure proves nothing above,
+       * and an absence checked against an absence is how six gates stayed untested. `UNDISCLOSING` is the
+       * named, shrinking list of those — and `has no stale entry` below stops it growing a dead one.
+       */
+      if (disclosing.length !== enough.length) {
         expect(
           UNDISCLOSING,
-          `${key} disclosed nothing even to a holder of ${chosen.enough.join(" and ")}, so the refusal above `
-          + "is vacuous. Build the fixture it needs, or name it here:",
+          `${key} disclosed nothing under ${
+            enough.filter((one) => !disclosing.includes(one)).map((set) => set.join("+")).join(" or ")
+          }, so the refusals above are vacuous. Build the fixture it needs, or name it here:`,
         ).toContain(key);
       }
     });
   }
+
+  it("has no stale entry, so the exemption list cannot outlive its reason", async () => {
+    /*
+     * The guard `MUST_SUCCEED` got one commit ago, and this list was written without it in the next — so
+     * `GET /api/messages/:receiptId/raw` sat here after its fixture began reaching a disclosure. The
+     * `toContain` above only runs when a route fails to disclose, so a dead entry is invisible from inside
+     * the loop. It needs its own assertion, in the other direction.
+     */
+    await seedMailboxContents();
+    const stale: string[] = [];
+    for (const spec of mailboxRoutes) {
+      const key = `${spec.method} ${spec.path}`;
+      if (!UNDISCLOSING.includes(key)) continue;
+      const { enough } = sets(spec);
+      for (const set of enough) {
+        await onlyRelations(set);
+        if (await discloses(spec)) stale.push(`${key} — discloses under ${set.join("+")}`);
+      }
+    }
+    expect(
+      stale,
+      "these routes are exempted from the disclosure control and their fixtures do reach one, so the "
+      + "exemption is hiding a check that would now work. Remove the entry:",
+    ).toEqual([]);
+  });
 });
 
 /**
- * Mailbox routes whose fixtures do not reach a disclosure, so their refusal above proves nothing yet.
+ * Mailbox routes whose fixtures do not reach a disclosure, so their refusals above prove nothing yet.
  *
- * Named rather than silently passing, and the list can only shrink: it is the same shape `NOT_EXERCISED`
- * uses, and it exists because an absence checked against an absence is exactly how the four gates above
- * stayed untested through five rounds of review.
+ * Named rather than silently passing, and it can only shrink in both directions now: a route that stops
+ * disclosing must be added, and one that starts must be removed, which `has no stale entry` enforces.
  */
 const UNDISCLOSING: readonly string[] = [
-  // Needs a saved draft, which `test/composer.test.ts` builds through the save path rather than by row.
+  // Need a saved draft. `test/drafts.test.ts` builds them through the save path rather than by row.
   "GET /api/drafts",
   "PUT /api/drafts",
   "GET /api/drafts/:draftId",
   // Needs a case row on the mailbox; `test/queue-disclosure.test.ts` owns that fixture.
   "GET /api/mailboxes/:mailboxId/cases",
-  // Cancelling needs a send that has not left; this one is already sealed and sent.
+  // Cancelling needs a send that has not left; the seeded manifest is already sealed and sent.
   "POST /api/sends/:sendId/cancel",
-  /*
-   * `dispatchResponse` is `{dispatched: […]}` and carries no manifest id, so the body cannot show whether the
-   * sweep touched this mailbox. Its observable is the **effect**, and the test below asserts that directly:
-   * a lesser-relation caller must not move a held send out of `held`.
-   */
-  "POST /api/sends/dispatch",
   // Needs submitted bytes in R2 beside the manifest.
   "GET /api/sends/:sendId/submitted",
-  // The body and raw routes need the message to be readable through `authorize`, which the seeded receipt
-  // reaches only with content.read — covered by `test/agent-capabilities.test.ts` for the sufficient half.
-  "GET /api/messages/:receiptId/body",
-  "GET /api/messages/:receiptId/raw",
+  /*
+   * `dispatchResponse` is `{dispatched: […]}` and carries no manifest id, so the body cannot show whether the
+   * sweep touched this mailbox. Its observable is the **effect**, asserted directly in the block below.
+   */
+  "POST /api/sends/dispatch",
 ];
 
 describe("forcing the dispatch sweep reaches only mailboxes the caller may send from", () => {
