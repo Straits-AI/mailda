@@ -178,6 +178,28 @@ reason to stop rather than to proceed. Re-run against the same account, the gate
 expansion is backward-compatible ahead of the code — and the promotion is an operator's decision rather than
 a drill's.
 
+**Completed on the operator's word.** `c7e7b917` promoted to 100%. The Node now reports its own version —
+so every future canary gate can run — `migrations_applied` reads *"All 52 expected tables present"*, and the
+`mailda-sending-events` consumer was already attached from an earlier deploy, so the step the gate interrupted
+had nothing left to do. One finding remains: `signing_key`, self-healing on the next sign-in.
+
+**What the gate can actually see, measured rather than assumed.** The canary check is unauthenticated, so it
+reads the reduced report. On this Node that is **9 findings of 21** — the other 12 describe the organization's
+mail and are withheld from an anonymous caller. The differential comparison therefore covers 9, and a
+regression confined to a data-disclosing finding would not block a promotion.
+
+Fixable and deliberately not fixed: sessions are signed by the Node's own key and that state is shared across
+versions, so signing in and then sending the cookie **with** the override header would reach the canary
+authenticated and compare all 21. That needs credentials in the deploy path, which is a decision about what
+`mailda deploy` may hold.
+
+**A finding-count change that looked alarming and was not.** The report went from 20 findings to 9 across the
+promotion, which looks like checks disappearing. It is the opposite: the old route reduced only
+`if (orgId !== null && !signedIn)`, so an **unclaimed** Node served its *full* report to anonymous callers.
+The current route reduces that case too. Nothing was removed — four checks were added since — and the
+tightening is an improvement. Worth recording because the first reading of a shrinking number is that coverage
+was lost.
+
 **One thing worth fixing separately:** `mailda deploy` takes its exit code from the closing `doctor` run, so a
 Node reporting `degraded` makes a **successful** deploy exit 1. In a pipeline that reads as a failed deploy.
 
