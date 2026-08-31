@@ -631,6 +631,12 @@ const FIGURES: Record<string, Classification> = {
     "validator.typical_command_us", "validator.worst_realistic_command_us", "validator.bundle_bytes",
   ),
 
+  // docs/receipts/evidence-integrity-cost.md
+  ...mailda(
+    "what it costs this Node to prove its own evidence still hashes to what ingress recorded",
+    "evidence.verify_batch", "evidence.verify_subrequests_per_receipt",
+  ),
+
   // docs/receipts/preview-urls-and-durable-objects.md
   ...bothPlans(
     "how Cloudflare routes a canary: no preview URL for a Worker with Durable Objects, at most two versions "

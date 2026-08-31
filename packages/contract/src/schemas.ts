@@ -837,6 +837,31 @@ export const auditVerifyResponse = z.object({
   resumeFrom: z.number().int().nullable(),
 }).strict();
 
+/**
+ * Whether the evidence still matches what this Node recorded (#92).
+ *
+ * The three fault kinds are separate values rather than a boolean, because an operator does something
+ * different with each: `missing` means the object is gone and its metadata is not, `unreadable` means the key
+ * generation it names cannot be produced — the ADR 28 loss the escrow exists for — and `altered` means the
+ * bytes changed after ingress, which cannot happen by accident.
+ */
+export const evidenceFault = z.object({
+  receiptId: z.string(),
+  blobKey: z.string(),
+  kind: z.enum(["missing", "unreadable", "altered"]),
+  detail: z.string(),
+}).strict();
+
+export const evidenceVerifyResponse = z.object({
+  checked: z.number().int().nonnegative(),
+  after: z.string().nullable(),
+  intact: z.boolean(),
+  /** Every fault in the batch. Evidence objects are independent, so stopping at the first would hide a count. */
+  faults: z.array(evidenceFault),
+  resumeAfter: z.string().nullable(),
+  bytesRead: z.number().int().nonnegative(),
+}).strict();
+
 /* ------------------------------------------------------------------ policy authoring (#60, #93) ---- */
 
 /**

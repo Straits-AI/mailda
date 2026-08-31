@@ -137,11 +137,6 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "route the first draft of this file forgot, and the throw named it before anything ran.",
     "POST /api/sends/:sendId/cancel",
   ),
-  ...changing("act",
-    "Verifying the audit chain reads the world and changes nothing a person would need to undo.",
-    "POST /api/audit/verify",
-  ),
-
   // ---- governed: more than one person, or nobody can undo it ---------------------------------------
   /*
    * Four routes moved here from `act` on 28 August 2026, after an audit read the tier's own rule back to it:
@@ -253,6 +248,14 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/claim",
     "POST /api/prepare",
     "POST /api/invitations/redeem",
+  ),
+  ...changing("operator",
+    "The last resort. A recovery code IS the credential — redeem is unauthenticated on purpose, because the "
+    + "state it exists for is one where session keys are unopenable — so an agent able to call these holds "
+    + "this Node's escrow. There are ten codes, single-use: an agent retrying a mistyped one burns the "
+    + "escrow it was trying to use, and rotate destroys the operator's paper set to return successors into a "
+    + "transcript. A second person cannot make any of it safe for a machine, which is why it is `operator` "
+    + "rather than `governed`.",
     /*
      * Spending an ADR 29 recovery code to restore the vault (#92). `operator` rather than `governed`, and
      * the distinction is the one this tier exists for: a second person cannot make this safe for a machine.
@@ -280,6 +283,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "POST /api/recovery-codes/rotate",
     "POST /api/recovery-codes/confirm",
+  ),
+  ...changing("operator",
+    "Maintenance of the body index rather than work on anybody's mail, and its listing names message ids "
+    + "across the whole organization. A machine could safely call it; the reason it is withheld is that "
+    + "deciding WHICH failures are worth retrying is the whole job, and some are deterministically "
+    + "unparseable — repairing those spends the backfill's budget on work that cannot succeed.",
     /*
      * Repairing the body index (0044). `operator` because it is maintenance of the Node rather than work on
      * anybody's mail: it re-queues indexing, changes nothing a reader can see, and its listing names message
@@ -292,6 +301,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      */
     "GET /api/search/failed",
     "POST /api/search/repair",
+  ),
+  ...changing("operator",
+    "Agent identities. An agent that could mint agents can escape its own ceiling: the pinned action list is "
+    + "the whole mechanism, and a machine creating a second machine with a wider one has stepped around it "
+    + "in one call. Listing is withheld with them because it enumerates every machine identity with its "
+    + "sponsor and reach, which is a map of how to escalate.",
     /*
      * Minting, listing and revoking agents (#109 L2). `operator`, and this is the one classification in this
      * file that would be dangerous to get wrong in the other direction.
@@ -311,6 +326,14 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     // the same map of how to escalate that listing agents is.
     "GET /api/people/:userId/mailboxes",
     "DELETE /api/agents/:agentId",
+  ),
+  ...changing("operator",
+    "The organization's own record. An agent that can read every act taken on a Node can find the one act "
+    + "nobody watched — the same map of how to escalate that listing agents is, arrived at from the other "
+    + "side. Verification belongs with reading rather than with the harmless reads, because it reports WHERE "
+    + "the chain broke, which is a fact about the trail somebody who may not read the trail has no business "
+    + "learning. Sweeping the evidence is here for the same reason and one more: it opens every object in "
+    + "its batch, so a machine could spend the Node's whole subrequest budget by asking a question.",
     /*
      * The audit trail and the operational log, withheld for the same reason and found the same way.
      *
@@ -328,6 +351,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "GET /api/audit",
     "POST /api/audit/verify",
     "GET /api/logs",
+    "POST /api/evidence/verify",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

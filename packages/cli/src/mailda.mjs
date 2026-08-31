@@ -779,6 +779,127 @@ async function search(argv) {
 
 /* ------------------------------------------------------------------ dispatch ----------------------- */
 
+/* ------------------------------------------------------------------ verify-evidence ---------------- */
+
+/**
+ * Sweeps every stored message against the hash taken when it arrived (#92).
+ *
+ * ## Why the CLI pages and the route does not
+ *
+ * The route is bounded at a measured batch (`evidence-integrity-cost.md`) because a whole-database sweep
+ * cannot fit in one invocation's subrequest budget — and a request that hit the cap partway would return a
+ * clean partial result, which is the failure this whole feature exists to prevent. So the route answers
+ * *"here is what I checked, resume after this"*, and the loop belongs to the caller.
+ *
+ * That makes this the only place a **complete** answer exists. A person calling the route once learns about
+ * two hundred messages and can easily believe they learned about all of them; this keeps going until the
+ * Node says there is no more, and prints the total it actually covered.
+ *
+ * ## What it prints when something is wrong
+ *
+ * Every fault, grouped by kind, with the receipt id — because the three kinds are different problems.
+ * `missing` means the evidence is gone and the metadata that says it existed is not. `unreadable` means the
+ * key generation the object names cannot be produced, which is the ADR 28 loss the escrow exists for.
+ * `altered` means the bytes changed after ingress, which cannot happen by accident.
+ *
+ * Exit 1 on any fault, so this can be a scheduled check rather than something somebody reads.
+ */
+async function verifyEvidence(argv) {
+  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
+  if (origin === "") {
+    fail("usage: mailda verify-evidence --url https://your-node.workers.dev\n"
+      + "  why      the check runs inside the Node: it needs the R2 bucket and the key vault, so a CLI\n"
+      + "           that answered locally would be guessing about both\n"
+      + "  fix      pass --url, or set MAILDA_URL");
+  }
+
+  const email = process.env.MAILDA_EMAIL;
+  const password = process.env.MAILDA_PASSWORD;
+  if (email === undefined || password === undefined) {
+    fail("set MAILDA_EMAIL and MAILDA_PASSWORD\n"
+      + "  why      the route is administrator-only: what it reports is how much of the whole\n"
+      + "           organization's evidence is intact, which is not a mailbox grant\n"
+      + "  fix      export them, then re-run");
+  }
+
+  const signIn = await fetch(`${origin}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+  if (!signIn.ok) fail(`sign-in failed (${signIn.status}) — this route needs an administrator`);
+  const token = (await signIn.json()).access_token;
+
+  process.stdout.write("\n== checking stored evidence against the hashes taken at ingress\n");
+
+  let after = null;
+  let checked = 0;
+  let bytes = 0;
+  let batches = 0;
+  const faults = [];
+
+  /*
+   * Bounded by the Node's own cursor rather than by a page limit here. The guard is `resumeAfter` going
+   * null, which the route returns only on a short page — so a sweep ends because the Node said it had
+   * nothing more, never because this loop decided it had seen enough.
+   */
+  for (;;) {
+    const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
+    const response = await fetch(`${origin}/api/evidence/verify${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: "{}",
+    }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      fail(`/api/evidence/verify refused (${response.status})\n  ${payload.what ?? payload.message ?? "no detail"}`
+        + `\n\n  covered ${checked} message(s) before this, so the sweep is incomplete rather than clean.`);
+    }
+
+    batches += 1;
+    checked += payload.checked ?? 0;
+    bytes += payload.bytesRead ?? 0;
+    faults.push(...(payload.faults ?? []));
+    process.stdout.write(`   batch ${batches}: ${payload.checked} checked, ${(payload.faults ?? []).length} fault(s)\n`);
+
+    if (payload.resumeAfter === null || payload.resumeAfter === undefined) break;
+    after = payload.resumeAfter;
+  }
+
+  const megabytes = (bytes / 1024 / 1024).toFixed(1);
+  if (faults.length === 0) {
+    process.stdout.write(
+      `\n   ${checked} message(s) checked in ${batches} batch(es), ${megabytes} MiB read. Every one opened and\n`
+      + "   hashed to what was recorded when it arrived.\n\n",
+    );
+    /*
+     * Said explicitly, because it is the limit of what was just established. A clean sweep is a statement
+     * about the objects D1 knows about; an R2 object with no receipt is invisible to it, and so is a message
+     * that never reached ingress.
+     */
+    process.stdout.write(
+      "   what this does not cover: an R2 object no receipt names, and anything that never reached ingress.\n\n",
+    );
+    return;
+  }
+
+  process.stdout.write(`\n   ${faults.length} fault(s) across ${checked} message(s) checked:\n\n`);
+  for (const kind of ["altered", "missing", "unreadable"]) {
+    const group = faults.filter((one) => one.kind === kind);
+    if (group.length === 0) continue;
+    process.stdout.write(`   ${kind} (${group.length})\n`);
+    for (const fault of group) process.stdout.write(`     ${fault.receiptId}  ${fault.detail}\n`);
+    process.stdout.write("\n");
+  }
+  process.stderr.write(
+    "  altered      the bytes changed after ingress. This does not happen by accident.\n"
+    + "  missing      the evidence is gone; the row saying it existed is not.\n"
+    + "  unreadable   the object names a key generation this vault cannot produce — the ADR 28 loss the\n"
+    + "               recovery codes exist for. `mailda doctor` reports whether the escrow is current.\n\n",
+  );
+  process.exit(1);
+}
+
 const USAGE = `mailda — operate a Mailda Node
 
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
@@ -789,6 +910,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda recovery-codes confirm      prove you hold one; compared, never spent
   mailda search list                 what the body index failed on, and why
   mailda search repair --id <id>     put a message back in the body index's queue
+  mailda verify-evidence --url <o>   open every stored message and check it against its ingress hash
 
 Two things this cannot verify, said here rather than discovered later:
 
@@ -807,6 +929,7 @@ switch (verb) {
   case "claim-secret": claimSecret(rest); break;
   case "set-password": setPassword(rest); break;
   case "recovery-codes": await recoveryCodes(rest); break;
+  case "verify-evidence": await verifyEvidence(rest); break;
   case "search": await search(rest); break;
   default:
     process.stdout.write(USAGE);

@@ -2274,6 +2274,67 @@ there. Green, against a workflow that attests every pull request. It reads one j
 pair"* — had kept exporting a function that no longer existed. Both hand-written declarations are now compared
 against their modules as sets, in both directions, in `test/node/declaration-drift.test.ts`.
 
+## Nothing checked that the evidence was still there (#92)
+
+`doctor` sends one HEAD at the R2 bucket. That answers *is R2 reachable*, and nothing at all about whether
+what is in it is what arrived. So the question a mail system exists to answer — *is the message still there,
+and is it the one we received* — had no mechanism behind it, and the first person to find out otherwise would
+have been somebody opening a message years later.
+
+#92 asks for a restore into a clean Cloudflare account, and says of the step that proves sampled messages
+decrypt and hash-verify: *"Step 5 is the one that makes the rest true. An export nobody has restored is a
+claim, and this ticket exists because of a claim."* That step needs a verifier. There wasn't one — for a
+backup **or** for the running Node.
+
+`POST /api/evidence/verify` opens each object in a bounded batch and compares the plaintext hash against
+`ingress_receipts.blob_sha256`, recorded at arrival. `mailda verify-evidence --url <origin>` pages until the
+Node says there is no more, and prints the total it actually covered — the route cannot sweep everything in
+one invocation, and a single call that looked complete is the failure this feature exists to prevent.
+
+**The recorded hash is of the plaintext, not the stored bytes**, and that decision — made at ingress, long
+before this — is what makes the check survive ADR 28's key rotation. `reseal.ts` rewrites every object under a
+new generation; a ciphertext hash would mark every message in the Node as altered after correct maintenance,
+and a verifier that fails after correct maintenance is one that gets switched off.
+
+Three faults, kept separate because an operator does something different with each: **missing** (the object is
+gone, the row saying it existed is not), **unreadable** (it names a key generation this vault cannot produce —
+the ADR 28 loss the recovery codes exist for), and **altered** (the bytes changed after ingress, which does not
+happen by accident).
+
+### Two of my own tests were theatre, and the mutations said so
+
+Both are the oracle defect this repository keeps finding: an assertion a broken implementation also satisfies.
+
+The missing-object test broke one object out of two and asserted one fault. A verifier that **stops at the
+first fault** satisfies that too — and `checked` came from the page size rather than the loop, so the count
+did not move either. Mutating the loop to `break` left it green. It takes two broken objects with an intact one
+between them to tell "found a fault" from "kept looking", and the fault kinds take different paths through the
+loop, so the altered test needed its own pair for the same reason — pairing only the missing one still left the
+altered branch's `break` surviving.
+
+Forcing `resumeAfter` to null also passed everything, because three seeded messages never fill a page of two
+hundred and a short page correctly ends a sweep. The branch deciding whether a sweep **continues** was
+untested. The batch bound is now a parameter defaulting to the receipt's value, so a test reaches that branch
+in three messages instead of two hundred; the route does not read it from the query string, so an operator
+cannot widen a batch past what was measured.
+
+### A duplicate classification, found by having to add one
+
+Adding the route meant classifying it in `packages/contract/src/agent.ts`, which is where
+`POST /api/audit/verify` turned out to be declared **twice** — as `act`, with a written justification, and
+again inside an `operator` block. Object spread means the later wins, so the `act` reasoning was dead code and
+the route was withheld carrying a `why` inherited from a block about *"installation and the account
+lifecycle"*. That string is what the Skill and the MCP server quote to explain the absence.
+
+Nothing could have noticed: `DECLARED_ROUTES` collapses the duplicate before any test reads it, the counts
+matched, and every withheld route had *a* reason. The oversized `operator` block is now split into five, each
+carrying the reason its inline comment already stated — the comments were right, they just weren't the
+operative value — and a test reads the source for a route declared more than once.
+
+**What a clean sweep does not establish**, printed by the command rather than left implied: an R2 object no
+receipt names, and anything that never reached ingress. And the clean-account restore drill is still ahead of
+this — it needs a second Cloudflare account, and the export it verifies is the next layer.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

@@ -5,6 +5,8 @@ import { path, route, schemaCoverage } from "@mailda/contract/routes";
 import { createSystemCtx } from "@mailda/runtime";
 
 import { log } from "../src/audit.ts";
+import { utf8 } from "@mailda/evidence";
+import { putEvidence } from "../src/evidence-store.ts";
 import { createButlerDraft } from "../src/butlers.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
@@ -667,6 +669,35 @@ describe("the acts answer what the contract says they do", () => {
     expect(verified.intact).toBe(true);
     // `null` means the whole chain was covered, which is a different claim from `intact` alone.
     expect(verified.resumeFrom).toBeNull();
+  });
+
+  it("verifying the evidence, over a receipt whose hash is the real one", async () => {
+    const held = await cookie();
+
+    /*
+     * Seeded with the hash `putEvidence` actually computed, not a placeholder. Several fixtures in this
+     * suite store `"0".repeat(64)` because nothing read the column — this route does, and a fixture with a
+     * fake hash would drive it to `intact: false` and check the wrong shape.
+     */
+    const receipt = createSystemCtx().id("rcpt");
+    const blobKey = `${ORG}/raw/${receipt}.eml`;
+    const raw = utf8("From: a@b.test\r\nSubject: evidence\r\n\r\nbody");
+    const stored = await putEvidence(env, blobKey, raw);
+    await env.CATALOG.prepare(
+      `INSERT OR IGNORE INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+         raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(receipt, ORG, `evt_${receipt}`, "a@b.test", "c@d.test", raw.byteLength, blobKey,
+      stored.plaintextSha256, new Date().toISOString()).run();
+
+    const verdict = await act("POST", "/api/evidence/verify", { body: {}, cookie: held }) as {
+      checked: number; intact: boolean; faults: unknown[]; resumeAfter: string | null;
+    };
+
+    // Non-vacuity: `intact: true` over nothing checks no shape and asserts nothing about the Node.
+    expect(verdict.checked).toBeGreaterThan(0);
+    expect(verdict.intact).toBe(true);
+    expect(verdict.faults).toEqual([]);
+    expect(verdict.resumeAfter).toBeNull();
   });
 
   it("signing out, which answers the same shape an expired session does", async () => {
@@ -1582,7 +1613,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     /*
-     * 98 of 103 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
+     * 99 of 104 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
      * specifies rather than this contract (`EXTERNALLY_SPECIFIED`). Both are excluded from the denominator,
      * because a target counting routes no schema can describe is one nobody aims at.
      *
@@ -1610,8 +1641,13 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * uselessly, since a permanent alarm is one an operator learns to scroll past. This records that somebody
      * established what was lost; the finding stays and its severity drops, which is the difference between
      * acknowledged and healthy.
+     *
+     * The 103rd is `POST /api/evidence/verify` (#92). `doctor` sends one HEAD at the bucket, which answers
+     * whether R2 is reachable and nothing about whether what is in it is what ingress recorded. This opens
+     * each object in a bounded batch and compares the plaintext hash — the step #92 calls the one that makes
+     * the rest of a restore true, and which applies to the live Node as much as to a restored copy.
      */
-    expect(coverage.total).toBe(102);
+    expect(coverage.total).toBe(103);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be
