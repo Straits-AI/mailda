@@ -32,5 +32,15 @@ export function servedVersionOf(report: unknown): string | null;
 /** The pending migrations that contract, read from this repository's own files. */
 export function contractingAmong(listOutput: string, migrationsDir: string): string[];
 
-/** Whether a canary's `doctor` verdict is good enough to move traffic to. Only `"ok"` is. */
-export function shouldPromote(verdict: string): boolean;
+/**
+ * Whether the canary is safe to promote, judged against what is already serving.
+ *
+ * Replaced `shouldPromote`, which compared the canary's verdict against `"ok"` — and so refused a canary
+ * whose only finding was one the incumbent already had. A canary answers whether the new code is *worse*.
+ */
+export function promotionVerdict(args: { canary: unknown; incumbent: unknown }): {
+  promote: boolean;
+  blocking: string[];
+  carried: string[];
+  why: string | null;
+};

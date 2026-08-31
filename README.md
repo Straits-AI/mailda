@@ -2398,6 +2398,50 @@ requiring preflight to precede the Workflow guard searched for `refuseIfWorkflow
 matched the function's **definition** two thousand characters earlier and failed against correct code. It
 matches the call site now.
 
+## The drill ran, the mechanism works, and the gate was wrong (#98)
+
+The fourth live deploy drill, and the first since the preview-URL cause was established and the canary gate
+rebuilt around a version override. Every step ran in order:
+
+```text
+preflight                    account resolved, wrangler 4.118.0 above the 4.97 floor
+workflow guard               mailda-butler-runs owned by mailda — ran, rather than being skipped
+migrations                   0045–0051 applied (all expansion)
+reading the serving version  d27a228d
+canary upload                c7e7b917
+canary at 0%                 SUCCESS: c7e7b917 at 0% and d27a228d at 100%
+override probe               answered version: c7e7b917  ← the identity gate passed
+```
+
+That last line is what three previous drills could not reach. The override **does** reach a 0% version on the
+production hostname, and the canary named itself — so the identity check, the thing standing between this gate
+and an assertion that cannot fail, works against a real account.
+
+**Then the gate refused, and the refusal was the defect.** The canary reported `degraded` with one finding,
+`signing_key` — *"generated on the next sign-in, so this self-heals"*. The incumbent reported `degraded` with
+**the same one finding**. A version neither better nor worse than the one already taking every request was
+withheld, and the operator was told to promote it by hand.
+
+An unclaimed Node is in that state by construction until somebody signs in. So *every* deploy to one would
+have gone that way — which is the weak "upload, check by hand, promote" path the earlier drills recorded,
+reached from a completely different direction. A gate that always has to be overridden has stopped being a
+gate.
+
+The comparison is differential now. **A canary answers whether the new code is worse**, and a finding the
+incumbent already has is information about the Node rather than about the new version — refusing on it
+withholds the fix as readily as the regression. Shared findings are reported as *carried*, never silently
+dropped. `refuse` still refuses whatever the incumbent says, because two broken versions is a reason to stop
+rather than to proceed. And an *improvement* promotes, which is the direction nobody thinks to test: a canary
+that fixes the incumbent's finding has fewer, and a comparison written backwards would block it.
+
+The mutation worth naming survived everything else: fetch the incumbent's report **with** the override header
+and both reports come from the canary, so nothing ever blocks — including a canary that broke the Node. The
+pure function cannot see it; it is handed two reports and has no way to know they came from one version. The
+property is countable instead: exactly one request in the CLI overrides a version, and it is the canary's.
+
+`shouldPromote` is gone rather than left as an export nothing calls, with the expensive lesson from its
+docstring folded into its replacement.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
