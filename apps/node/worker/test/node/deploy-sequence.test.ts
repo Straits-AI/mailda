@@ -25,8 +25,11 @@ const cli = readFileSync(cliPath, "utf8")
  * the top level, so importing it would *run* it — the same defect the SDK's generator had, where a top-level
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
-const { previewUrlFrom, shouldPromote, versionIdFrom } =
-  await import("../../../../../packages/cli/src/deploy-parse.mjs");
+const parsers = await import("../../../../../packages/cli/src/deploy-parse.mjs");
+const { activeVersionFrom, servedVersionOf, shouldPromote, versionIdFrom } = parsers;
+
+/** The module's real export names, for the declaration-drift check below. */
+const exported = Object.keys(parsers).filter((name) => name !== "default");
 
 /**
  * The order `mailda deploy` does things in, and the gate it cannot skip (#98).
@@ -68,7 +71,9 @@ const { previewUrlFrom, shouldPromote, versionIdFrom } =
 const STEPS = [
   "== checking which migrations are pending\\n",
   "== applying migrations\\n",
+  "== reading the version currently serving\\n",
   "== uploading a canary version",
+  "== placing the canary in the deployment at 0%\\n",
   "== asking the canary how it is",
   "== moving traffic to the checked version\\n",
   "== attaching the delivery-events consumer\\n",
@@ -120,7 +125,10 @@ describe("expand, canary, check, then shift", () => {
      * therefore the closing courtesy on a deploy that may not have worked, and the file said so in as many
      * words: *"A deploy that ran is not a Node that works."*
      *
-     * The canary check needs no `--url` — the URL comes from wrangler — so there is nothing to omit.
+     * This comment used to end *"the canary check needs no `--url` — the URL comes from wrangler"*, which was
+     * true of the preview-URL design and is not true now. There is no preview URL for a Worker with Durable
+     * Objects, so the gate reaches the canary on the Node's own hostname and an origin is **required**. The
+     * skip did not come back: a missing `--url` is a refusal before anything changes, asserted below.
      */
     expect(cli).not.toContain("skipping the health check");
   });
@@ -165,12 +173,128 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
     expect(shouldPromote("OK")).toBe(false);
   });
 
-  it("reads the canary's preview URL, and strips the punctuation prose puts after it", () => {
-    expect(previewUrlFrom("Preview URL: https://canary-mailda.example.workers.dev"))
-      .toBe("https://canary-mailda.example.workers.dev");
-    // A trailing full stop is the difference between a URL and a 404 nobody can explain.
-    expect(previewUrlFrom("available at https://canary-mailda.example.workers.dev."))
-      .toBe("https://canary-mailda.example.workers.dev");
-    expect(previewUrlFrom("no url here")).toBeNull();
+  it("reads the serving version as the last one with traffic, not the first named", () => {
+    /*
+     * `wrangler deployments list` prints oldest-first, and every block looks alike. Taking the first match
+     * would build the two-version deployment around a version that stopped serving days ago — and publish it,
+     * dropping the one that is actually live. This is the parser whose failure is *not* protected by "a bad
+     * check promotes nothing", because it runs before the check.
+     */
+    const listing = [
+      "Created:     2026-08-27T14:52:55.319Z",
+      "Version(s):  (100%) f20aa711-a056-4db5-b03d-2d51b1ee3e7c",
+      "Created:     2026-08-28T09:46:20.695Z",
+      "Version(s):  (100%) d27a228d-384b-45f4-b13c-fdf029ae23a5",
+    ].join("\n");
+    expect(activeVersionFrom(listing)).toBe("d27a228d-384b-45f4-b13c-fdf029ae23a5");
+
+    /*
+     * A split deployment, which is the state this command itself creates at 0%. The canary must not be read
+     * back as the incumbent — that would pair a version with itself and leave nothing serving the other half.
+     */
+    const split = [
+      "Version(s):  (0%) aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "             (100%) bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+    ].join("\n");
+    expect(activeVersionFrom(split)).toBe("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
+
+    expect(activeVersionFrom("no deployments here")).toBeNull();
+  });
+
+  it("treats a report that cannot name its version as unable to be checked", () => {
+    /*
+     * The gate that makes the override meaningful. Cloudflare routes by traffic percentage when a version
+     * override cannot be applied, so the reply may legitimately come from the incumbent with `verdict: "ok"`.
+     * A missing or malformed version is therefore a refusal, not a pass — otherwise the whole check is an
+     * assertion that cannot fail.
+     */
+    expect(servedVersionOf({ version: "d27a228d-384b-45f4-b13c-fdf029ae23a5" }))
+      .toBe("d27a228d-384b-45f4-b13c-fdf029ae23a5");
+    expect(servedVersionOf({ verdict: "ok" })).toBeNull();
+    expect(servedVersionOf({ version: null })).toBeNull();
+    expect(servedVersionOf({ version: "canary" })).toBeNull();
+    expect(servedVersionOf({ version: "d27a228d" })).toBeNull();
+    expect(servedVersionOf(undefined)).toBeNull();
+  });
+});
+
+describe("the hand-written declaration names exactly what the module exports", () => {
+  /*
+   * `deploy-parse.d.mts` exists because the CLI is plain JavaScript with no build step, and its own header
+   * says the drift it allows is *"bounded"* and that *"nothing checks the pair"*. It then drifted: this change
+   * replaced `previewUrlFrom` with two functions, and the declaration still exported the old name. `tsc`
+   * caught the two missing ones only because the test below imports them — a name left in the declaration
+   * after leaving the module is invisible to it, and would type-check every call to a function that is gone.
+   *
+   * The pair is a set comparison, so it costs nothing to check in both directions.
+   */
+  it("declares every export, and exports every declaration", () => {
+    const declaration = readFileSync(
+      join(import.meta.dirname, "../../../../../packages/cli/src/deploy-parse.d.mts"),
+      "utf8",
+    );
+    const declared = [...declaration.matchAll(/^export function (\w+)/gm)].map((one) => one[1]);
+    expect(declared.length, "no declarations found — has the file's shape changed?").toBeGreaterThan(3);
+    expect([...declared].sort()).toEqual([...exported].sort());
+  });
+});
+
+describe("the canary is reached without a preview URL, because it cannot have one", () => {
+  /*
+   * Cloudflare does not generate preview URLs for Workers that implement a Durable Object, and this one holds
+   * both root keys in `KeyVault` (ADR 28). Two rounds of the live deploy drill recorded the resulting 404 as
+   * "cause unestablished, possibly an account setting"; the account's own API said
+   * `{"enabled": true, "previews_enabled": true}` the whole time. Measured in
+   * `docs/receipts/preview-urls-and-durable-objects.md`.
+   *
+   * So this asserts the *absence* of the mechanism that cannot work, which is the kind of claim that rots
+   * silently — somebody reintroduces `--preview-alias`, the gate goes back to checking a 404, and the failure
+   * looks like a network problem.
+   */
+  it("does not gate on a preview URL or a preview alias", () => {
+    expect(cli).not.toContain("--preview-alias");
+    expect(cli).not.toContain("preview-alias");
+    expect(cli).not.toContain("canaryUrl");
+  });
+
+  it("puts the canary in the deployment before overriding to it", () => {
+    // An override is only applied to a version in the current deployment. Reversed, the header would be
+    // ignored and the check would silently interrogate the version already serving.
+    const place = cli.indexOf("== placing the canary in the deployment at 0%");
+    const override = cli.indexOf("Cloudflare-Workers-Version-Overrides");
+    expect(place).toBeGreaterThan(-1);
+    expect(override).toBeGreaterThan(-1);
+    expect(place).toBeLessThan(override);
+  });
+
+  it("requires the answering version to be the uploaded one, before it consults the verdict", () => {
+    /*
+     * Order matters and is the substance of the fix. `shouldPromote` on a report from the incumbent returns
+     * `true`, so identity has to be settled first — otherwise the sequence has a path where a healthy
+     * incumbent promotes an unexamined canary.
+     */
+    /*
+     * `shouldPromote(` rather than `shouldPromote(verdict)`, and that is the whole lesson of this assertion.
+     * Matching the exact spelling let a mutation pass: inserting
+     * `shouldPromote(report.verdict ?? "refuse")` **above** the identity check is a different string, so the
+     * later `shouldPromote(verdict)` was still found later and the test went green against a sequence that
+     * decides on the verdict first. Matching the call rather than one of its call sites is what makes the
+     * order a property. This is the third time a lexical assertion in this file has been defeated by a
+     * substring, and the reason the value-level tests above carry the real weight.
+     */
+    const identity = cli.indexOf("servedVersionOf(report)");
+    const verdict = cli.indexOf("shouldPromote(");
+    expect(identity, "the responder's identity is never checked").toBeGreaterThan(-1);
+    expect(verdict, "the promotion gate is never consulted").toBeGreaterThan(-1);
+    expect(identity).toBeLessThan(verdict);
+  });
+
+  it("refuses a deploy with no origin before it changes anything", () => {
+    // The gate needs the Node's hostname now. Refusing after a migration has been applied would leave the
+    // schema ahead of the code with no version checked — the exact window this ticket exists to close.
+    const refusal = cli.indexOf("this deploy needs the Node's URL");
+    const migrate = cli.indexOf("== applying migrations\\n");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(refusal).toBeLessThan(migrate);
   });
 });

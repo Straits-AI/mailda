@@ -58,6 +58,25 @@ const BINDING_TYPES = [
    * property, which is the rule the ADR states rather than a convention around it.
    */
   "SecretsStoreSecret",
+  /*
+   * The first member here that is **plain readable data**, so it needs the argument this list asks for rather
+   * than a place in it.
+   *
+   * `WorkerVersionMetadata` is `{ id, tag, timestamp }` describing the deployed version. Nothing in it is a
+   * credential, and nothing about it is per-install: Cloudflare populates it from the version being run, so
+   * it cannot carry an account id, a token or a customer's configuration — the two things ADR 22 and ADR 24
+   * respectively exist to keep off `env`.
+   *
+   * It is also **deliberately disclosed**. `/api/doctor` returns the id, because `mailda deploy` checks a
+   * canary through a version override and has to know which version answered
+   * (`docs/receipts/preview-urls-and-durable-objects.md`). Cloudflare's own guidance is the same: return the
+   * version id to clients "for faster and more transparent debugging". A value published on purpose is not a
+   * value whose serialization is a leak.
+   *
+   * The rule this does not weaken: a *credential* still has to be a `.get()` binding. This exception is
+   * narrow, and it is one type rather than a general tolerance for plain values.
+   */
+  "WorkerVersionMetadata",
 ] as const;
 
 /**

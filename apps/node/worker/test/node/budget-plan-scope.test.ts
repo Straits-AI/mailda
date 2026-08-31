@@ -631,6 +631,14 @@ const FIGURES: Record<string, Classification> = {
     "validator.typical_command_us", "validator.worst_realistic_command_us", "validator.bundle_bytes",
   ),
 
+  // docs/receipts/preview-urls-and-durable-objects.md
+  ...bothPlans(
+    "how Cloudflare routes a canary: no preview URL for a Worker with Durable Objects, at most two versions "
+    + "in one deployment, and 0% traffic to the one under test. None of it varies by plan — the Durable "
+    + "Object exclusion and the deployment arity are properties of the platform, not of the account",
+    "deploy.canary_preview_url_available", "deploy.canary_traffic_percent", "deploy.versions_per_deployment",
+  ),
+
   // docs/receipts/false-claim-detectability.md
   ...mailda(
     "how much prose this repository carries, and how much of it names something absent on purpose",

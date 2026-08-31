@@ -2181,6 +2181,56 @@ earlier, broader phrase list looked far more productive at 36 apparent orphans, 
 was flagging `unmeasured` — which in this repository is overwhelmingly a deliberate honest-limit statement,
 the receipt discipline working. It would have punished the practice it was meant to protect.
 
+## The canary's 404 was never a setting, and the gate had to change shape (#98)
+
+`mailda deploy` uploads a canary version and checks it before moving traffic. For three deploys the check
+could not run — the canary's hostname 404'd — and two rounds of the live drill recorded the cause as *"not
+established: could be an account-level preview setting, a per-Worker dashboard toggle, or something about a
+Worker whose first version predates the alias"*, each time noting that settling it needed the dashboard.
+
+It never needed the dashboard. One read of the account's API:
+
+```text
+GET /accounts/{account}/workers/scripts/mailda/subdomain
+  → {"enabled": true, "previews_enabled": true}
+```
+
+Preview URLs were already on, the alias was recorded on every version, and no hostname routed. The cause is a
+documented platform limitation: **Cloudflare does not generate preview URLs for Workers that implement a
+Durable Object.** Mailda has two, and cannot drop them — ADR 28 moved both root keys into `KeyVault` precisely
+so a managed secret store could not re-provision them. `preview_urls: true` was a declaration with no effect,
+standing exactly where a reader would look for the reason.
+
+The transferable part is not about preview URLs. **The suspected cause was checkable without the dashboard,
+and two drills did not check it** — the ticket asked a person to go look at a toggle that a `GET` could have
+read.
+
+So the gate changed shape. The canary is now placed in the current deployment at **0%** and reached through
+`Cloudflare-Workers-Version-Overrides` on the production hostname. That works with Durable Objects, and it
+brings one trap with it, which is the interesting half: Cloudflare does not error when an override cannot be
+applied — it routes by traffic percentage, to the version already serving. A gate asking *"is the Node
+healthy?"* would get `ok` from the **incumbent** and promote a canary nothing had examined.
+
+That is an assertion that cannot fail, so the gate is an *identity* check rather than a health check: the
+Worker gained a `version_metadata` binding, `/api/doctor` reports which version answered, and the deploy
+refuses unless that id is the one it uploaded. A report naming no version is a refusal too — a Node too old
+to carry the field is one this gate cannot check, and "cannot check" is not "passed".
+
+Building it turned up a fourth lexical assertion in this repository that proved nothing. The test requiring
+identity to be settled before the verdict matched `shouldPromote(verdict)` exactly, so a mutation inserting
+`shouldPromote(report.verdict ?? "refuse")` **above** the identity check passed — a different string, the
+original still found later, green against a sequence that decides on the verdict first. It matches the call
+now, not one of its call sites.
+
+The hand-written `deploy-parse.d.mts` also drifted while this landed: it kept exporting the preview-URL
+parser after the function was gone. Its own header had said the drift was *"bounded"* and that *"nothing
+checks the pair"*. Something does now — a set comparison in both directions, which is what that admission was
+always worth.
+
+Still not verified end to end: the sequence needs a deploy against a live Node, and the two drills that
+produced the measurement above are the reason it is written this way. Every refusal in it leaves the incumbent
+serving 100%.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

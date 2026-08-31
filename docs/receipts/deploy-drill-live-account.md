@@ -6,7 +6,8 @@ stale_when: >
   wrangler changes whether `versions upload` shifts traffic, whether it can create a Worker that does not
   exist, or whether auto-provisioned D1/R2 bindings are created before a deploy; Cloudflare makes Workflow
   bindings scriptable rather than account-level, or makes a second script claiming one an error; or the
-  default for `preview_urls` changes again
+  default for `preview_urls` changes again; or Cloudflare stops excluding Workers with Durable Objects from
+  preview URL generation, which would reopen the alias path this drill found closed
 values:
   deploy.versions_upload_shifts_traffic: 0
   deploy.versions_upload_creates_worker: 0
@@ -112,10 +113,29 @@ schema change ahead of it was additive so nothing was serving against a schema i
 sequence degrading to *"upload, check by hand, promote"* is now a measured property of this account rather
 than a prediction — weaker than designed, and not dangerous.
 
-**What is not established:** whether this is an account-level preview setting, a dashboard toggle this
-account has never had enabled, or something about a Worker whose first version predates the alias. Recorded
-as unknown rather than guessed at, because the next person to touch #98 needs to know the difference between
-"we measured this and it is broken" and "we measured this and do not know why".
+**Established on 31 August 2026, and it was none of the three things suspected.** The account's own API had
+the answer the whole time:
+
+```text
+GET /accounts/{account}/workers/scripts/mailda/subdomain
+  → {"enabled": true, "previews_enabled": true}
+```
+
+Preview URLs were already enabled, the alias was recorded on every version, and the version API carries no
+preview-URL field. The cause is a documented platform limitation — Cloudflare does not generate preview URLs
+for Workers that **implement a Durable Object** — and this Worker declares `KEY_VAULT` and `OUTBOX_SWEEPER`,
+because ADR 28 put both root keys in a Durable Object. No setting on this account could ever have produced
+the hostname, and the dashboard visit this section twice asked for would have shown the toggle already on.
+
+Two drills recorded "cause unestablished, needs the dashboard" when one read of the API and one line of the
+Limitations documentation settled it. The lesson worth keeping is not about preview URLs: **the suspected
+cause was checkable without the dashboard, and neither drill checked it.**
+
+The gate no longer uses a preview URL. `mailda deploy` places the canary in the deployment at 0% and reaches
+it through `Cloudflare-Workers-Version-Overrides` on the production hostname, requiring the report to name
+the uploaded version — measured and reasoned in
+[`preview-urls-and-durable-objects`](./preview-urls-and-durable-objects.md). The degraded
+"upload, check by hand, promote" path recorded above is therefore history, not current behaviour.
 
 ## An unexplained D1 API failure during migration, 28 August 2026
 

@@ -34,7 +34,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { contractingAmong, previewUrlFrom, shouldPromote, versionIdFrom } from "./deploy-parse.mjs";
+import {
+  activeVersionFrom, contractingAmong, servedVersionOf, shouldPromote, versionIdFrom,
+} from "./deploy-parse.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
@@ -149,20 +151,25 @@ async function doctor(argv) {
 }
 
 /**
- * The canary's verdict, without exiting the process.
+ * The canary's whole report, without exiting the process.
  *
  * `doctor` above ends in `process.exit`, which is right for a command somebody runs and wrong for a gate in
  * the middle of a sequence — exiting there would leave a canary uploaded, unpromoted and unexplained. This
- * asks the same route and returns the word, so the caller decides what a `degraded` means.
+ * asks the same route and hands the report back, so the caller decides what a `degraded` means.
+ *
+ * **The whole report rather than the verdict**, which used to be all this returned. The canary is now reached
+ * by overriding to it on the production hostname, and Cloudflare falls back to the traffic percentages when
+ * an override cannot be applied — so `verdict` alone cannot distinguish "the canary is healthy" from "the
+ * version already serving is healthy". The caller compares `version` against the id it uploaded.
  *
  * Deliberately **unauthenticated**. A canary has never been signed into and `MAILDA_EMAIL` would sign in to
  * the *live* Node, not this version — so the reduced report (`withoutDataFindings`) is what this reads, which
  * is the right amount: it carries every `infrastructure` finding, including the bindings and schema checks
  * that are what a fresh version can get wrong.
  */
-async function doctorVerdict(origin) {
+async function doctorReport(origin, extraHeaders = {}) {
   const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", ...extraHeaders },
   }).catch((error) => fail(`could not reach the canary at ${origin}: ${error.message}`));
   const text = await response.text();
   if (!response.ok && response.status !== 503) {
@@ -181,7 +188,7 @@ async function doctorVerdict(origin) {
   for (const finding of report.findings ?? []) {
     if (!finding.ok) process.stdout.write(`   ${finding.severity}  ${finding.check}  ${finding.detail}\n`);
   }
-  return report.verdict ?? "refuse";
+  return report;
 }
 
 /**
@@ -326,7 +333,31 @@ function refuseIfWorkflowBelongsElsewhere() {
  * run correctly during an incident.
  *
  * `doctor` against the canary is therefore not the closing courtesy it used to be. It is the gate that
- * decides whether traffic moves, which is why it can no longer be skipped by omitting `--url`.
+ * decides whether traffic moves, which is why it can no longer be skipped.
+ *
+ * ## How the canary is reached, after two drills spent looking in the wrong place
+ *
+ * It used to be checked at `canary-mailda.<subdomain>.workers.dev`, from `--preview-alias`. That hostname
+ * **404s and always will**, and two rounds of the live drill recorded the cause as "unestablished, possibly
+ * an account setting". It is not a setting. Measured against the account: the script's subdomain settings
+ * already read `{"enabled": true, "previews_enabled": true}`, the alias is recorded on every version, and no
+ * preview hostname routes at all. Cloudflare does not generate preview URLs for Workers that implement a
+ * **Durable Object**, and ADR 28 put both root keys in `KeyVault`. No configuration reaches that.
+ *
+ * So the canary is reached on the production hostname instead:
+ *
+ *   1. upload it — no traffic;
+ *   2. publish a deployment of `canary@0% + incumbent@100%`, because an override is only applied to a version
+ *      **in the current deployment**, and 0% means nothing reaches it but the override;
+ *   3. send `Cloudflare-Workers-Version-Overrides: mailda="<id>"` to `/api/doctor`;
+ *   4. **require the report to name that id.** This is the gate. Cloudflare routes by percentage when an
+ *      override cannot be applied — no error, no header — so a check that read only `verdict` would ask the
+ *      incumbent how it is, hear `ok`, and promote a canary nothing had examined. That is why the Worker has
+ *      a `version_metadata` binding at all.
+ *   5. promote to 100%.
+ *
+ * The 0% step is a real deployment, so `wrangler deployments list` gains an entry per deploy. That is the
+ * cost of the mechanism and it is visible rather than hidden.
  *
  * ## What the canary check does **not** cover, and it is not what you would guess
  *
@@ -355,6 +386,7 @@ function refuseIfWorkflowBelongsElsewhere() {
  */
 async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
+  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "") || null;
 
   /*
    * **Is there anything here yet?** Measured against a real account rather than assumed, and it changed this
@@ -379,12 +411,27 @@ async function deploy(argv) {
     if (run("node", ["scripts/attach-queue-consumer.mjs"]) !== 0) {
       fail("attaching the consumer failed. Delivery outcomes will be unobserved until it is.");
     }
-    const origin = flag(argv, "url") ?? process.env.MAILDA_URL ?? null;
     if (origin !== null) {
       process.stdout.write("\n== asking the Node how it is\n");
       await doctor(["--url", origin]);
     }
     return;
+  }
+
+  /*
+   * The gate needs the Node's own hostname, so a missing one is refused **here** — before a migration has
+   * been applied or a version uploaded. The canary used to be checked at a preview URL that wrangler
+   * printed, so no origin was needed; it is needed now because that URL does not exist for a Worker with
+   * Durable Objects, and the check reaches the canary through the production hostname instead.
+   */
+  if (origin === null) {
+    fail(
+      "this deploy needs the Node's URL, and nothing has been changed.\n\n"
+      + "  why      the canary is checked by overriding to it on the Node's own hostname. There is no\n"
+      + "           preview URL to check instead: Cloudflare does not generate one for a Worker that\n"
+      + "           implements a Durable Object, and this one holds its root keys in `KeyVault`.\n"
+      + "  fix      re-run with `--url https://<your-node>` or set MAILDA_URL.",
+    );
   }
 
   /*
@@ -413,18 +460,31 @@ async function deploy(argv) {
   }
 
   /*
-   * The canary. `--preview-alias` gives it a stable hostname to check, rather than a per-version URL that
-   * would have to be scraped out of wrangler's prose.
+   * Which version is serving now. Read **before** the upload, so the pair below is built from the version
+   * this command found live rather than from whatever the list says after it has changed.
    */
+  process.stdout.write("\n== reading the version currently serving\n");
+  const deployments = capture("npx", ["wrangler", "deployments", "list", ...ENV]);
+  if (deployments.status !== 0) fail(`could not list deployments (exit ${deployments.status}).`);
+  const serving = activeVersionFrom(deployments.text);
+  if (serving === null) {
+    fail(
+      "could not tell which version is currently serving.\n\n"
+      + "  why      the canary is checked by placing it alongside that version at 0% and overriding to it.\n"
+      + "           Without the incumbent's id this command cannot build that pair, and guessing would\n"
+      + "           publish a deployment that drops the version now serving.\n"
+      + "  fix      nothing has changed. Run `wrangler deployments list` and check the output.",
+    );
+  }
+
   process.stdout.write("\n== uploading a canary version (no traffic)\n");
   const uploaded = capture("npx", [
-    "wrangler", "versions", "upload", "--preview-alias", "canary", "--message", "mailda deploy", ...ENV,
+    "wrangler", "versions", "upload", "--message", "mailda deploy", ...ENV,
   ]);
   if (uploaded.status !== 0) {
     fail(`uploading the canary failed (exit ${uploaded.status}). No traffic moved.`);
   }
   const version = versionIdFrom(uploaded.text);
-  const canaryUrl = previewUrlFrom(uploaded.text);
   if (version === null) {
     fail(
       "could not find the new version's id in wrangler's output.\n\n"
@@ -435,20 +495,46 @@ async function deploy(argv) {
   }
 
   /*
-   * The gate. Against the **canary**, not the live Node: checking the version that is already serving would
-   * pass whatever the new one does, which is the shape of a check that reads as a check.
+   * Put the canary **in** the current deployment at 0%. A version override is only applied if the version is
+   * in the current deployment, so without this step the header below would be ignored and the check would
+   * silently interrogate the incumbent. 0% means no request reaches it except one carrying the override.
    */
-  if (canaryUrl === null) {
+  process.stdout.write("\n== placing the canary in the deployment at 0%\n");
+  if (run("npx", [
+    "wrangler", "versions", "deploy", `${version}@0`, `${serving}@100`, "--yes", ...ENV,
+  ]) !== 0) {
     fail(
-      "could not find the canary's preview URL in wrangler's output.\n\n"
-      + "  why      the canary cannot be checked without one, and promoting an unchecked version is the\n"
-      + "           thing this sequence exists to prevent.\n"
-      + `  fix      the canary is uploaded and serving no traffic. Check it by hand, then promote with\n`
+      "could not place the canary in the deployment.\n\n"
+      + `  why      the canary cannot be reached without being in it, and ${serving} is still at 100%.\n`
+      + "  fix      nothing was promoted. Re-run, or check `wrangler deployments list`.",
+    );
+  }
+
+  /*
+   * The gate. Against the **canary**, reached through a version override on the production hostname — a
+   * Worker with Durable Objects gets no preview URL, which two rounds of the deploy drill spent on an
+   * account setting that was already correct (`preview-urls-and-durable-objects.md`).
+   *
+   * The identity check is the gate, not the verdict. Cloudflare routes by percentage when an override cannot
+   * be applied, so a report that came from the incumbent would say `ok` and promote an unexamined canary.
+   */
+  process.stdout.write(`\n== asking the canary how it is (${origin}, version ${version})\n`);
+  const report = await doctorReport(origin, {
+    "Cloudflare-Workers-Version-Overrides": `mailda="${version}"`,
+  });
+  const answered = servedVersionOf(report);
+  if (answered !== version) {
+    fail(
+      `the override did not reach the canary: ${answered ?? "the report named no version"} answered.\n\n`
+      + "  why      Cloudflare routes a request by traffic percentage when a version override cannot be\n"
+      + `           applied, so this check just asked ${serving} how it is. Promoting on that answer would\n`
+      + "           move every request onto a version nothing examined.\n"
+      + "  fix      no traffic moved. If the Node predates the `version_metadata` binding it cannot report\n"
+      + "           its version and this gate cannot run — deploy once by hand to install it:\n"
       + `           \`wrangler versions deploy ${version}@100\`.`,
     );
   }
-  process.stdout.write(`\n== asking the canary how it is (${canaryUrl})\n`);
-  const verdict = await doctorVerdict(canaryUrl);
+  const verdict = report.verdict ?? "refuse";
   if (!shouldPromote(verdict)) {
     fail(
       `the canary reports \`${verdict}\`, so traffic was not moved.\n\n`
@@ -473,11 +559,14 @@ async function deploy(argv) {
     fail("attaching the consumer failed. The new version is live but delivery outcomes are unobserved.");
   }
 
-  const origin = flag(argv, "url") ?? process.env.MAILDA_URL ?? null;
-  if (origin !== null) {
-    process.stdout.write("\n== asking the live Node how it is\n");
-    await doctor(["--url", origin]);
-  }
+  /*
+   * Unconditional now, where it used to depend on `--url` being passed. The canary path refuses without an
+   * origin long before this line, so there is no branch left in which it could be absent — and this run is
+   * the one that covers what the canary could not: Durable Object code, which runs the promoted version only
+   * after traffic moves.
+   */
+  process.stdout.write("\n== asking the live Node how it is\n");
+  await doctor(["--url", origin]);
 }
 
 

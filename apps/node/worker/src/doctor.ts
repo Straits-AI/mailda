@@ -84,6 +84,19 @@ export interface DoctorReport {
   verdict: "ok" | "degraded" | "refuse";
   claimed: boolean;
   at: string;
+  /**
+   * Which version of this Worker answered (#98).
+   *
+   * The deploy gate checks a canary by sending `Cloudflare-Workers-Version-Overrides` to the production
+   * hostname, and Cloudflare routes the request by traffic percentage when the override cannot be applied —
+   * to the version already serving. A gate that read only `verdict` would therefore pass by asking the old
+   * version how it is, and promote a canary nothing had examined. This is the field that makes the gate able
+   * to fail: `mailda deploy` refuses unless the id here equals the id it uploaded.
+   *
+   * `null` when the binding is absent, which is every test that builds an env by hand. Null is not "fine":
+   * the CLI treats a missing version as a refusal for the same reason it treats a mismatched one that way.
+   */
+  version: string | null;
   findings: Finding[];
   /**
    * What this run cost. Reported rather than assumed, because the receipt for this file needs a
@@ -327,7 +340,15 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
       ? "degraded"
       : "ok";
 
-  return { verdict, claimed, at: new Date(ctx.now()).toISOString(), findings, cost };
+  /*
+   * Read defensively rather than as `rawEnv.CF_VERSION.id`. The binding is generated from `wrangler.jsonc`,
+   * so the type says it is always there — but a test that builds an env literal does not have it, and a
+   * `TypeError` here would turn a diagnostic into a 500 for the one caller whose job is to report trouble.
+   */
+  const metadata = (rawEnv as { CF_VERSION?: { id?: string } }).CF_VERSION;
+  const version = typeof metadata?.id === "string" ? metadata.id : null;
+
+  return { verdict, claimed, at: new Date(ctx.now()).toISOString(), version, findings, cost };
 }
 
 /** Migrations applied. Checked by looking for the tables, not by trusting a version row. */

@@ -29,15 +29,52 @@ export function versionIdFrom(text) {
 }
 
 /**
- * The canary's preview URL.
+ * The version currently serving, out of `wrangler deployments list`.
  *
- * The trailing punctuation strip is not cosmetic: wrangler prints the URL inside a sentence, and a full stop
- * carried into a `fetch` is a 404 that reads as a broken canary rather than as a parse bug.
+ * ## Why this replaced a preview-URL parser
+ *
+ * The gate used to check the canary at `canary-mailda.<subdomain>.workers.dev`, and that hostname **404s and
+ * always will**. Measured against the live account: the script's subdomain settings read
+ * `{"enabled": true, "previews_enabled": true}`, the alias is recorded on every version, and no preview
+ * hostname routes at all. The cause is a platform limitation — Cloudflare does not generate preview URLs for
+ * Workers that implement a Durable Object, and this one has `KEY_VAULT` and `OUTBOX_SWEEPER`. Two rounds of
+ * the deploy drill blamed an account setting, which is why the receipt records the API response rather than
+ * the conclusion.
+ *
+ * So the canary is checked on the **production** hostname through a version override, which needs the
+ * currently-serving version id to build a two-version deployment. Cloudflare serves at most two versions in
+ * one deployment, so this is the other half of that pair.
+ *
+ * `wrangler deployments list` prints deployments oldest-first, so the **last** percentage line is the active
+ * one. Taking the first would build a deployment around a version that stopped serving days ago and drop the
+ * one that is — which is why this reads the last match rather than the first.
  */
-export function previewUrlFrom(text) {
-  const match = /(https:\/\/canary-[^\s]+\.workers\.dev)/i.exec(text)
-    ?? /Version Preview URL:\s*(https:\/\/[^\s]+)/i.exec(text);
-  return match?.[1]?.replace(/[.,)]+$/, "") ?? null;
+export function activeVersionFrom(text) {
+  const all = [...text.matchAll(/\((\d{1,3})%\)\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi)];
+  const serving = all.filter((one) => Number(one[1]) > 0);
+  return serving.at(-1)?.[2] ?? null;
+}
+
+/**
+ * The version id a doctor report says answered, or `null` if it did not say.
+ *
+ * ## Why the gate cannot just read `verdict`
+ *
+ * The canary is reached by sending `Cloudflare-Workers-Version-Overrides` to the production hostname, and
+ * Cloudflare is explicit about what happens when the override cannot be applied: the request is *"routed
+ * according to the percentages set in the gradual deployment configuration"*. That is the version already
+ * serving. No error, no header, nothing to notice — the check would ask the **old** version how it is, get
+ * `ok`, and promote a canary nothing had examined.
+ *
+ * That is an assertion that cannot fail, so the identity of the responder is part of the gate. A report
+ * without a version is a refusal rather than a pass: a Node too old to carry the field is a Node this gate
+ * cannot check.
+ */
+export function servedVersionOf(report) {
+  const id = report?.version;
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : null;
 }
 
 /**
