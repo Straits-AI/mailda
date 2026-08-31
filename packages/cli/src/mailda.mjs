@@ -30,7 +30,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -42,6 +42,7 @@ import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
 } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
+import { backupIndex, checkBackup } from "./backup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
@@ -1208,6 +1209,216 @@ async function preflight(argv) {
   process.stdout.write("\n");
 }
 
+/* ------------------------------------------------------------------ backup ------------------------- */
+
+/**
+ * Takes a backup that can be restored into a **different** Cloudflare account (#92).
+ *
+ * ## Why the account matters
+ *
+ * Durable Object point-in-time recovery and D1 Time Travel both cover thirty days and both operate inside the
+ * account that failed. #92 puts it plainly: *"A backup that only restores into the account that failed is not
+ * a backup for a product whose selling point is that you own the account."* So this writes files an operator
+ * holds, not a snapshot Cloudflare holds.
+ *
+ * ## Three files, and what each is for
+ *
+ *   `catalog.sql`      `wrangler d1 export`. The thing you restore. It carries the composition manifests, the
+ *                      audit chain and the **wrapped vault escrow**, because all three are rows — which is why
+ *                      the escrow had to exist before this was worth writing, and why #92's layers came in
+ *                      that order.
+ *   `inventory.jsonl`  every R2 object with the hash its plaintext should have. The bucket itself is not
+ *                      copied here — a bucket-to-bucket copy is the operator's tool, and this is what makes
+ *                      the result checkable object by object afterwards.
+ *   `index.json`       what the other two should contain, with a SHA-256 of each, so `verify-backup` can tell
+ *                      a complete copy from a truncated one without a Node.
+ *
+ * ## What this deliberately does not do
+ *
+ * **Copy the evidence bytes.** Streaming a mailbox's worth of R2 through a laptop is not a backup strategy,
+ * and pretending otherwise would produce a command that works on a demo Node and fails on a real one. The
+ * inventory is what turns somebody else's copy — `rclone`, an R2 bucket-to-bucket job — into a copy that can
+ * be verified. That is the honest division, and the receipt says so.
+ *
+ * **Verify by default.** `--verify` runs the evidence sweep first and records what it found, which opens every
+ * object and costs accordingly. Without it the index records `verified: null`, and `verify-backup` reports
+ * that as *not asked* rather than as clean.
+ */
+async function backup(argv) {
+  const ready = await runPreflight(argv);
+  if (!ready.ok) fail(ready.report);
+  const origin = ready.origin;
+
+  const out = flag(argv, "out");
+  if (out === null) {
+    fail("usage: mailda backup --url https://your-node --out ./backup-2026-08-31\n"
+      + "  why      a backup is files you hold. D1 Time Travel and Durable Object recovery both restore\n"
+      + "           only into the account that failed, which is the one thing a customer-owned deployment\n"
+      + "           has to survive losing\n"
+      + "  fix      pass --out with a directory to write");
+  }
+
+  const email = process.env.MAILDA_EMAIL;
+  const password = process.env.MAILDA_PASSWORD;
+  if (email === undefined || password === undefined) {
+    fail("set MAILDA_EMAIL and MAILDA_PASSWORD\n"
+      + "  why      the inventory is administrator-only: it lists every object this organization holds\n"
+      + "  fix      export them, then re-run");
+  }
+  const cookie = await deployCookie(origin);
+  if (cookie === null) fail("could not sign in, so the inventory cannot be read.");
+
+  mkdirSync(out, { recursive: true });
+
+  process.stdout.write("\n== exporting the catalog\n");
+  const catalogPath = `${out}/catalog.sql`;
+  if (run("npx", ["wrangler", "d1", "export", "CATALOG", "--remote", "--output", catalogPath,
+    "--skip-confirmation", ...ENV]) !== 0) {
+    fail("exporting D1 failed, so there is no backup. Nothing was written that could be mistaken for one.");
+  }
+
+  process.stdout.write("\n== listing the evidence\n");
+  let cursor = null;
+  let objects = 0;
+  let unaccounted = 0;
+  const lines = [];
+  for (;;) {
+    const query = cursor === null ? "" : `?after=${encodeURIComponent(cursor)}`;
+    const response = await fetch(`${origin}/api/evidence/inventory${query}`, {
+      headers: { accept: "application/json", cookie },
+    }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+    if (!response.ok) {
+      fail(`/api/evidence/inventory answered ${response.status}, so the backup is incomplete and was not `
+        + `indexed. ${objects} object(s) had been listed.`);
+    }
+    const page = await response.json();
+    for (const object of page.objects ?? []) lines.push(JSON.stringify(object));
+    objects += (page.objects ?? []).length;
+    unaccounted += page.unaccounted ?? 0;
+    process.stdout.write(`   ${objects} object(s)\r`);
+    if (page.resumeAfter === null || page.resumeAfter === undefined) break;
+    cursor = page.resumeAfter;
+  }
+  process.stdout.write(`   ${objects} object(s) listed\n`);
+
+  let verified = null;
+  if (argv.includes("--verify")) {
+    process.stdout.write("\n== checking the evidence before recording it\n");
+    let after = null;
+    let checked = 0;
+    let faults = 0;
+    for (;;) {
+      const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
+      const response = await fetch(`${origin}/api/evidence/verify${query}`, {
+        method: "POST", headers: { "content-type": "application/json", cookie }, body: "{}",
+      }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+      if (!response.ok) fail(`/api/evidence/verify answered ${response.status}; the backup was not indexed.`);
+      const page = await response.json();
+      checked += page.checked ?? 0;
+      faults += (page.faults ?? []).length;
+      for (const fault of page.faults ?? []) {
+        process.stdout.write(`   ${fault.kind}  ${fault.receiptId}  ${fault.detail}\n`);
+      }
+      if (page.resumeAfter === null || page.resumeAfter === undefined) break;
+      after = page.resumeAfter;
+    }
+    verified = { checked, faults };
+    process.stdout.write(`   ${checked} checked, ${faults} fault(s)\n`);
+  }
+
+  const inventoryText = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+  writeFileSync(`${out}/inventory.jsonl`, inventoryText);
+
+  const report = await doctorReport(origin, { cookie });
+  const index = backupIndex({
+    node: origin,
+    nodeVersion: typeof report.version === "string" ? report.version : null,
+    takenAt: new Date().toISOString(),
+    catalog: readFileSync(catalogPath),
+    inventory: inventoryText,
+    objects,
+    unaccounted,
+    verified,
+  });
+  writeFileSync(`${out}/index.json`, `${JSON.stringify(index, null, 2)}\n`);
+
+  process.stdout.write(
+    `\n   written to ${out}\n`
+    + `   catalog    ${index.catalog.bytes} bytes\n`
+    + `   inventory  ${objects} object(s), ${unaccounted} named by no live row\n`
+    + `   version    ${index.nodeVersion ?? "not reported by this Node"}\n`,
+  );
+  /*
+   * The bucket, said plainly and last, because it is the half this command does not do and the half an
+   * operator will assume it did. An inventory without the objects restores nothing.
+   */
+  process.stdout.write(
+    "\n   the evidence bytes are NOT in this backup — copy the R2 bucket separately (rclone, or an R2\n"
+    + "   bucket-to-bucket job). The inventory is what makes that copy checkable afterwards.\n\n",
+  );
+}
+
+/**
+ * Checks that a backup on disk is the one its index describes (#92).
+ *
+ * Reads the artifact and nothing else — no Node, no network — so it can run on the copy an operator keeps
+ * rather than on the machine that took it. That is the point: the failures it catches are a truncated copy, a
+ * partial download and a directory somebody edited, which is most of how a backup is discovered to be
+ * useless, and all of it discoverable before the day it is needed.
+ *
+ * What it cannot establish is stated in its own output rather than left to a reader, because *"the backup
+ * verified"* is the sentence somebody will remember on the day it matters.
+ */
+function verifyBackup(argv) {
+  const dir = flag(argv, "in");
+  if (dir === null) fail("usage: mailda verify-backup --in ./backup-2026-08-31");
+
+  const read = (name) => {
+    try {
+      return readFileSync(`${dir}/${name}`);
+    } catch {
+      return null;
+    }
+  };
+  const indexBytes = read("index.json");
+  let index = null;
+  if (indexBytes !== null) {
+    try {
+      index = JSON.parse(indexBytes.toString("utf8"));
+    } catch {
+      index = null;
+    }
+  }
+
+  const outcome = checkBackup({ index, catalog: read("catalog.sql"), inventory: read("inventory.jsonl") });
+
+  if (index !== null) {
+    process.stdout.write(
+      `\n== ${dir}\n`
+      + `   taken       ${index.takenAt ?? "(unrecorded)"}\n`
+      + `   from        ${index.node ?? "(unrecorded)"}\n`
+      + `   version     ${index.nodeVersion ?? "not reported by that Node"}\n`
+      + `   objects     ${index.inventory?.objects ?? "?"}\n`,
+    );
+  }
+  for (const note of outcome.notes) process.stdout.write(`\n   note: ${note}\n`);
+
+  if (!outcome.ok) {
+    fail(
+      `${outcome.problems.length} problem(s) with this backup.\n\n`
+      + outcome.problems.map((one, at) => `  ${at + 1}. ${one.what}\n     fix      ${one.fix}`).join("\n\n"),
+    );
+  }
+
+  process.stdout.write(
+    "\n   this backup is the one its index describes: every file present, every hash matching.\n\n"
+    + "   what that does not establish, said here rather than left implied:\n"
+    + "     - that the evidence decrypts. The objects are not in the backup; the inventory lists them.\n"
+    + "     - that the catalog restores. Both are properties of a restore, which is the step that makes\n"
+    + "       the rest true.\n\n",
+  );
+}
+
 const USAGE = `mailda — operate a Mailda Node
 
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
@@ -1218,6 +1429,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda recovery-codes confirm      prove you hold one; compared, never spent
   mailda search list                 what the body index failed on, and why
   mailda search repair --id <id>     put a message back in the body index's queue
+  mailda backup --url <o> --out <d>   catalog, evidence inventory and an index you can check
+  mailda verify-backup --in <dir>     is this backup the one its index describes
   mailda preflight [--url <origin>]  what a deploy needs, checked before it changes anything
   mailda verify-evidence --url <o>   open every stored message and check it against its ingress hash
 
@@ -1238,6 +1451,8 @@ switch (verb) {
   case "claim-secret": claimSecret(rest); break;
   case "set-password": setPassword(rest); break;
   case "recovery-codes": await recoveryCodes(rest); break;
+  case "backup": await backup(rest); break;
+  case "verify-backup": verifyBackup(rest); break;
   case "preflight": await preflight(rest); break;
   case "verify-evidence": await verifyEvidence(rest); break;
   case "search": await search(rest); break;

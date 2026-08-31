@@ -170,7 +170,7 @@ export const BUDGETS = {
   "reconcile.orphan_grace_seconds": 3600,
   "reseal.batch_size": 100,
   "reseal.subrequests_per_message": 6,
-  "prose.references.max_exemptions": 26,
+  "prose.references.max_exemptions": 30,
   "prose.references.min_scanned": 2000,
   "freeplan.inbound_to_worker": 1,
   "freeplan.send_error_names_the_plan": 0,

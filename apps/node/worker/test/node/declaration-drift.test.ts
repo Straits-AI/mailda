@@ -47,6 +47,11 @@ const PAIRS = [
     module: "packages/cli/src/preflight.mjs",
     declaration: "packages/cli/src/preflight.d.mts",
   },
+  {
+    what: "the backup index and its checker",
+    module: "packages/cli/src/backup.mjs",
+    declaration: "packages/cli/src/backup.d.mts",
+  },
 ] as const;
 
 describe("hand-written declarations match their modules", () => {

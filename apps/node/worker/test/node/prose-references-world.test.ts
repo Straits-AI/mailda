@@ -54,6 +54,16 @@ const NOT_FILES: ReadonlyArray<{ readonly file: string; readonly path: string; r
   // Names inside a payload rather than in the repository.
   { file: "apps/node/worker/src/exports.ts", path: "manifest.json", why: "an entry inside an export archive" },
   { file: "apps/node/worker/test/ediscovery-export.test.ts", path: "manifest.json", why: "the same archive entry" },
+  /*
+   * Files `mailda backup` *writes*, into a directory an operator chooses (#92). The same class as the export
+   * archive above and the reason the class was worth naming: a command that produces files has to document
+   * their names, and those names are not paths in this repository. `inventory.jsonl` needs no entry — the
+   * extension is not one this scan resolves.
+   */
+  { file: "packages/cli/src/backup.mjs", path: "catalog.sql", why: "a file mailda backup writes" },
+  { file: "packages/cli/src/backup.mjs", path: "index.json", why: "a file mailda backup writes" },
+  { file: "packages/cli/src/mailda.mjs", path: "catalog.sql", why: "the same, in the command that writes it" },
+  { file: "packages/cli/src/mailda.mjs", path: "index.json", why: "the same, in the command that writes it" },
 
   // Written by the customer, or by a repository that consumes these instructions.
   { file: "Mailda-Full-Engineering-Blueprint.md", path: "mailda.yaml", why: "the butler source a customer authors" },

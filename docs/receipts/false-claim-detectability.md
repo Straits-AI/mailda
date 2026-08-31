@@ -11,7 +11,7 @@ stale_when: >
   longer holds
 values:
   prose.references.min_scanned: 2000
-  prose.references.max_exemptions: 26
+  prose.references.max_exemptions: 30
 ---
 
 # Which false claims in prose can be caught mechanically
@@ -132,8 +132,15 @@ fail.
 
 ## The cap
 
-`prose.references.max_exemptions: 26` is the number of legitimately-absent paths at this measurement, and
-the test fails if the list grows. Six of the 26 are in the shipped check's own files, where the explanation
+`prose.references.max_exemptions: 30` is the number of legitimately-absent paths, and the test fails if the
+list grows. It was 26 at the first measurement; four were added on 31 August for `mailda backup`, which
+documents the names of the files it **writes** into an operator's directory (#92). That is the same class as the
+entry names inside an eDiscovery export archive — a command that produces files has to name them, and those
+names are not paths in this repository — which is why the class was worth naming rather than expanding case
+by case.
+
+Worth recording: writing the sentence above tripped this very check, because it cited that entry name inline.
+An inline backtick is a citation and must resolve; the rule caught its own receipt. Six of the 26 are in the shipped check's own files, where the explanation
 above quotes the bad paths as examples — the file that documents the defect is necessarily exempt from it.
 The remaining 20 are runtime module names, build outputs, payload entries inside an export archive,
 customer-authored config, layout files these instructions tell a *consuming* repository to create, and four
