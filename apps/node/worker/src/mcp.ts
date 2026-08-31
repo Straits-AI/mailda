@@ -1,6 +1,8 @@
 import * as z from "zod";
 
-import { ROUTES, agentCapabilities, methodNameFor, path, route, type RouteSpec } from "@mailda/contract";
+import {
+  ROUTES, agentCapabilities, methodNameFor, path, route, sessionCapabilities, type RouteSpec,
+} from "@mailda/contract";
 
 /**
  * The MCP server (#89, ADR 12).
@@ -97,11 +99,43 @@ function published(node: unknown): unknown {
   );
 }
 
-export function tools(): Tool[] {
+/**
+ * Who is asking, because "machine caller" is two classes and one catalogue served both.
+ *
+ * - `session` — an MCP or Skill client inside a signed-in person's live session. It acts *as* that person,
+ *   with that person's current authority, so its surface is the tier question alone.
+ * - `agent` — a delegated `agt_` credential, with the ceiling pinned when it was minted. Its surface is the
+ *   machine-useful routes intersected with that ceiling: a tool outside the pinned set is one this credential
+ *   is refused on, and advertising it teaches a retry loop.
+ * - `anonymous` — nobody. Served the machine-useful set with no ceiling, which is the conservative answer: it
+ *   advertises what this server offers a machine without naming an administrator's tools to a stranger.
+ */
+export type McpCaller =
+  | { readonly kind: "session" }
+  | { readonly kind: "agent"; readonly ceiling: readonly string[] }
+  | { readonly kind: "anonymous" };
+
+/**
+ * The tools offered to one caller.
+ *
+ * A single static catalogue treated every machine alike, which cost
+ * `POST /api/butlers/:butlerId/simulate` its place: #87 built the dry run to be offered, its handler requires
+ * `org.admin`, and a delegated agent can never hold that — so under one list it had to be withheld from the
+ * administrator too. **Nothing is weakened to bring it back.** The handler still calls `isAdmin` first; what
+ * changes is only whether a caller who could complete the call is told the tool exists.
+ */
+export function tools(caller: McpCaller = { kind: "anonymous" }): Tool[] {
   const all: readonly RouteSpec[] = ROUTES;
   const byName = new Map(all.map((spec) => [`${spec.method} ${spec.path}`, spec]));
 
-  return agentCapabilities(methodNameFor).map((capability) => {
+  const offered = caller.kind === "session"
+    ? sessionCapabilities(methodNameFor)
+    : agentCapabilities(methodNameFor).filter((capability) =>
+      // The pinned ceiling, for a delegated credential only. An anonymous caller has none to intersect with.
+      caller.kind !== "agent" || caller.ceiling.includes(`${capability.method} ${capability.path}`)
+    );
+
+  return offered.map((capability) => {
     const spec = byName.get(`${capability.method} ${capability.path}`)!;
     const parameters = [...spec.path.matchAll(/:(\w+)/g)].map((match) => match[1]!);
 
@@ -184,7 +218,11 @@ export type Dispatch = (request: Request) => Promise<Response>;
  * subrequest from a budget this Node counts, and in workerd it fails outright. Re-entering the router keeps
  * every property the round trip was for — same handler, same guards, same refusals — and costs nothing.
  */
-export async function handleMcp(request: Request, dispatch: Dispatch): Promise<Response> {
+export async function handleMcp(
+  request: Request,
+  dispatch: Dispatch,
+  caller: McpCaller = { kind: "anonymous" },
+): Promise<Response> {
   const parsed = rpcRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return failure(null, -32600, "not a JSON-RPC 2.0 request");
   const { id, method, params } = parsed.data;
@@ -211,14 +249,22 @@ export async function handleMcp(request: Request, dispatch: Dispatch): Promise<R
 
   if (method === "tools/list") {
     return result(id, {
-      tools: tools().map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+      tools: tools(caller).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     });
   }
 
   if (method === "tools/call") {
     const name = String(params?.name ?? "");
     const args = (params?.arguments ?? {}) as Record<string, unknown>;
-    const tool = tools().find((one) => one.name === name);
+    /*
+     * Looked up in **this caller's** catalogue, so a tool it was never offered is unknown to it rather than
+     * refused by the route later. That keeps the protocol error honest: "not on the list you were given".
+     *
+     * The route still decides. A tool found here is dispatched into the ordinary router and meets
+     * `principalFor`, the authorization check and the audit entry exactly as an HTTP caller would — this
+     * catalogue narrows what is advertised, never what is permitted.
+     */
+    const tool = tools(caller).find((one) => one.name === name);
     /*
      * An unknown tool is a protocol error rather than a tool result: the caller asked for something that is
      * not on the list it was given, which is a mistake about *this server* rather than an answer from it.

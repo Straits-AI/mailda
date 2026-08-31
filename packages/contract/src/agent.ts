@@ -481,6 +481,48 @@ export function agentCapabilities(nameFor: (spec: RouteSpec) => string): AgentCa
  * defect rather than as tidiness. `whyMachinesCannotUse` supplies the sentence, so the two lists are now
  * complementary and exhaustive, and `test/node/agent-exposure-world.test.ts` holds them to it.
  */
+/**
+ * What a **live administrator session** may be offered, which is a different question from what a delegated
+ * credential may hold.
+ *
+ * ## Why one catalogue was wrong
+ *
+ * `agentCapabilities` answers "what can a machine be provisioned for", and `tools()` used it for every caller
+ * — so "machine caller" was one homogeneous class. It is two:
+ *
+ * - A **delegated `agt_` credential** is a long-lived principal that deliberately cannot hold `org.admin`.
+ *   Its surface is the machine-useful routes intersected with the ceiling pinned when it was minted.
+ * - An **MCP or Skill caller inside a signed-in person's session** acts as that person, with that person's
+ *   current authority. An administrator using an assistant to dry-run a Butler is the administrator.
+ *
+ * Collapsing them cost `POST /api/butlers/:butlerId/simulate`, which #87 built to be offered — *"offering
+ * this to an agent is the point of having built it"* — and whose handler requires `org.admin`. Under one
+ * catalogue it had to be withheld from everybody, because a delegated agent could never satisfy the gate.
+ *
+ * **Nothing is weakened to make it appear.** The handler still calls `isAdmin` first; a session that is not
+ * an administrator's is refused there exactly as before. What changes is only whether the tool is *advertised*
+ * to a caller who could complete it.
+ *
+ * So this is the tier question alone — read, or a reversible act — with no provisionability filter, because a
+ * person's session is not provisioned.
+ */
+export function sessionCapabilities(nameFor: (spec: RouteSpec) => string): AgentCapability[] {
+  const all: readonly RouteSpec[] = ROUTES;
+  return all
+    .map((spec) => ({ spec, classification: exposureOf(spec) }))
+    .filter(({ classification }) => classification.tier === "read" || classification.tier === "act")
+    .map(({ spec, classification }) => ({
+      name: nameFor(spec),
+      summary: spec.summary,
+      method: spec.method,
+      path: spec.path,
+      tier: classification.tier,
+    }))
+    .sort((left, right) => (left.path === right.path
+      ? left.method.localeCompare(right.method)
+      : left.path.localeCompare(right.path)));
+}
+
 export function withheldCapabilities(
   nameFor: (spec: RouteSpec) => string = (spec) => `${spec.method} ${spec.path}`,
 ): Array<{ name: string; route: string; tier: Exposure; why: string }> {
