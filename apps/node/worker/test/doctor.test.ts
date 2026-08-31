@@ -81,6 +81,38 @@ beforeEach(async () => {
 });
 
 describe("doctor", () => {
+  /*
+   * The report names the version that produced it (#98).
+   *
+   * Not cosmetic, and not for humans. `mailda deploy` checks a canary by sending
+   * `Cloudflare-Workers-Version-Overrides` to the production hostname, because Cloudflare generates no
+   * preview URL for a Worker with Durable Objects. When an override cannot be applied Cloudflare does not
+   * error — it routes by traffic percentage, to the version already serving. So the CLI's gate is
+   * `report.version === the id it uploaded`, and this field is the only thing standing between that gate and
+   * an assertion that cannot fail.
+   *
+   * Worth a test in *this* suite specifically: the CLI's own tests check `servedVersionOf` against literals,
+   * so every one of them would still pass if the Worker stopped reporting the field at all.
+   */
+  it("names the version that answered, because the deploy gate compares it", async () => {
+    const report = await runDoctor(testEnv, createSystemCtx());
+    const bound = (testEnv as unknown as { CF_VERSION: { id: string } }).CF_VERSION;
+    expect(report.version).toBe(bound.id);
+    expect(report.version).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("reports no version rather than throwing when the binding is absent", async () => {
+    /*
+     * A Node installed before the binding existed. `null` is deliberate and is **not** treated as a pass by
+     * the CLI — it refuses, because a Node that cannot say which version it is cannot be gated. What must not
+     * happen is a `TypeError`: the one caller whose job is to report trouble would answer 500 instead.
+     */
+    const older = { ...testEnv, CF_VERSION: undefined } as unknown as Env;
+    const report = await runDoctor(older, createSystemCtx());
+    expect(report.version).toBeNull();
+    expect(report.findings.length).toBeGreaterThan(0);
+  });
+
   it("passes on a healthy unclaimed Node", async () => {
     const report = await runDoctor(testEnv, createSystemCtx());
     expect(report.claimed).toBe(false);

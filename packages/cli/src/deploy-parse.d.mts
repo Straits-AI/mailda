@@ -13,8 +13,21 @@
 /** A version id out of wrangler's prose, or `null` — never a guess. */
 export function versionIdFrom(text: string): string | null;
 
-/** The canary's preview URL, trailing sentence punctuation removed. */
-export function previewUrlFrom(text: string): string | null;
+/**
+ * The version currently serving, out of `wrangler deployments list` — the last one holding traffic.
+ *
+ * Replaced `previewUrlFrom`, which parsed a hostname that can never exist: Cloudflare does not generate
+ * preview URLs for Workers implementing a Durable Object.
+ */
+export function activeVersionFrom(text: string): string | null;
+
+/**
+ * The version id a doctor report says answered, or `null` if it did not say so in a form worth trusting.
+ *
+ * `unknown` rather than a report interface, because the caller has just parsed arbitrary JSON off the
+ * network. Narrowing that to a shape here would be a claim about a response this function exists to doubt.
+ */
+export function servedVersionOf(report: unknown): string | null;
 
 /** The pending migrations that contract, read from this repository's own files. */
 export function contractingAmong(listOutput: string, migrationsDir: string): string[];

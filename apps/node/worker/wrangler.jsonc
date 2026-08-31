@@ -10,18 +10,41 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
   /*
-   * Preview URLs, declared rather than inherited (#98).
+   * Preview URLs, off because this Worker cannot have one (#98).
    *
-   * `mailda deploy` uploads a canary version and checks it before moving traffic, and the canary is only
-   * reachable at `<alias>-<worker>.<subdomain>.workers.dev` if preview URLs are on. Cloudflare's default for
-   * this setting has changed **three times since September 2025** — enabled, then disabled, then "matches
-   * `workers_dev`" — so a Node relying on the default is a Node whose deploy gate works or does not depending
-   * on which wrangler an operator has. Measured: with neither setting declared and wrangler 4.118.0, the
-   * alias answered 404 and the canary could not be checked at all.
+   * This said `true` for three deploys, on the theory that the canary's 404 was an unset default. It was
+   * not. Measured against the live account: the script's subdomain settings already read
+   * `{"enabled": true, "previews_enabled": true}`, the alias `canary` is recorded on every version, and no
+   * preview hostname routes at all — Cloudflare's generic 404, not a Worker refusing. The version API
+   * carries no preview-URL field either.
    *
-   * Not account-specific, so declaring it keeps ADR 24's byte-identical repository intact.
+   * The cause is a documented platform limitation: **preview URLs are not generated for Workers that
+   * implement a Durable Object.** This one declares `KEY_VAULT` and `OUTBOX_SWEEPER` — ADR 28 put both root
+   * keys in a Durable Object — so no setting here can produce a canary hostname, and the previous `true` was
+   * a declaration with no effect standing where a reader would look for the reason.
+   *
+   * `false` rather than deleted, for two reasons: it is the safer default if a future version drops its
+   * Durable Objects, and it stops wrangler's inherited default from silently exposing one. The deploy gate
+   * no longer depends on it — see `deploy` in `packages/cli/src/mailda.mjs`, which checks the canary through
+   * a version override on the production hostname instead. Recorded in
+   * `docs/receipts/preview-urls-and-durable-objects.md`.
    */
-  "preview_urls": true,
+  "preview_urls": false,
+
+  /*
+   * The version this code is (#98).
+   *
+   * The deploy gate checks the canary by sending `Cloudflare-Workers-Version-Overrides` to the **production**
+   * hostname, because a Worker with Durable Objects gets no preview URL to check instead. Cloudflare is
+   * explicit that an override which cannot be applied is not an error: the request is then "routed according
+   * to the percentages set in the gradual deployment configuration" — that is, to the version already
+   * serving, which would pass every check and promote an unexamined canary.
+   *
+   * So the gate cannot ask *"is the Node healthy"*; it has to ask *"is the version that answered the one I
+   * uploaded"*. That requires the Worker to be able to name itself, which is what this binding is for.
+   * Without it the check would be an assertion that cannot fail.
+   */
+  "version_metadata": { "binding": "CF_VERSION" },
 
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "EVIDENCE" }],
@@ -176,18 +199,41 @@
     // omit: the vault generates its own keys and works identically in tests and in production.
     "test": {
       /*
-   * Preview URLs, declared rather than inherited (#98).
+   * Preview URLs, off because this Worker cannot have one (#98).
    *
-   * `mailda deploy` uploads a canary version and checks it before moving traffic, and the canary is only
-   * reachable at `<alias>-<worker>.<subdomain>.workers.dev` if preview URLs are on. Cloudflare's default for
-   * this setting has changed **three times since September 2025** — enabled, then disabled, then "matches
-   * `workers_dev`" — so a Node relying on the default is a Node whose deploy gate works or does not depending
-   * on which wrangler an operator has. Measured: with neither setting declared and wrangler 4.118.0, the
-   * alias answered 404 and the canary could not be checked at all.
+   * This said `true` for three deploys, on the theory that the canary's 404 was an unset default. It was
+   * not. Measured against the live account: the script's subdomain settings already read
+   * `{"enabled": true, "previews_enabled": true}`, the alias `canary` is recorded on every version, and no
+   * preview hostname routes at all — Cloudflare's generic 404, not a Worker refusing. The version API
+   * carries no preview-URL field either.
    *
-   * Not account-specific, so declaring it keeps ADR 24's byte-identical repository intact.
+   * The cause is a documented platform limitation: **preview URLs are not generated for Workers that
+   * implement a Durable Object.** This one declares `KEY_VAULT` and `OUTBOX_SWEEPER` — ADR 28 put both root
+   * keys in a Durable Object — so no setting here can produce a canary hostname, and the previous `true` was
+   * a declaration with no effect standing where a reader would look for the reason.
+   *
+   * `false` rather than deleted, for two reasons: it is the safer default if a future version drops its
+   * Durable Objects, and it stops wrangler's inherited default from silently exposing one. The deploy gate
+   * no longer depends on it — see `deploy` in `packages/cli/src/mailda.mjs`, which checks the canary through
+   * a version override on the production hostname instead. Recorded in
+   * `docs/receipts/preview-urls-and-durable-objects.md`.
    */
-  "preview_urls": true,
+  "preview_urls": false,
+
+  /*
+   * The version this code is (#98).
+   *
+   * The deploy gate checks the canary by sending `Cloudflare-Workers-Version-Overrides` to the **production**
+   * hostname, because a Worker with Durable Objects gets no preview URL to check instead. Cloudflare is
+   * explicit that an override which cannot be applied is not an error: the request is then "routed according
+   * to the percentages set in the gradual deployment configuration" — that is, to the version already
+   * serving, which would pass every check and promote an unexamined canary.
+   *
+   * So the gate cannot ask *"is the Node healthy"*; it has to ask *"is the version that answered the one I
+   * uploaded"*. That requires the Worker to be able to name itself, which is what this binding is for.
+   * Without it the check would be an assertion that cannot fail.
+   */
+  "version_metadata": { "binding": "CF_VERSION" },
 
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],

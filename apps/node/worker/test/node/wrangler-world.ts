@@ -84,6 +84,17 @@ const entriesUnder = (key: string): ReadEntries => (block) => {
   return Array.isArray(inner) ? inner : null;
 };
 
+/**
+ * A block that *is* one entry, rather than a list of them — `version_metadata: { binding: "CF_VERSION" }`.
+ *
+ * The third shape in this file, and worth its own reader rather than a special case at the call site. An
+ * array reader handed this object returns `null`, which `blocksWithUnreadableShape` reports as "shape
+ * changed" — correct behaviour for an unknown block, and the wrong answer for one whose shape is simply
+ * singular.
+ */
+const singleEntry: ReadEntries = (block) =>
+  block !== null && typeof block === "object" && !Array.isArray(block) ? [block] : null;
+
 interface BindingBlock {
   /** The entries in the block that each declare one binding. */
   entries: ReadEntries;
@@ -133,6 +144,16 @@ export const BINDING_BLOCKS: Record<string, BindingBlock> = {
     note: "declared: BUTLER_RUNS, one generic ButlerRun for every Butler on the Node (#50). No resource "
       + "id, and no schedules — #48 established that this Node declares none, so the wrangler 4.97.0 floor "
       + "never binds.",
+  },
+  version_metadata: {
+    entries: singleEntry,
+    nameKey: "binding",
+    // The one block that is a single object rather than a list, hence `singleEntry`.
+    note: "declared: CF_VERSION (#98). The deploy gate checks a canary through a version override on the "
+      + "production hostname — no preview URL exists for a Worker with Durable Objects — and Cloudflare "
+      + "routes by traffic percentage when an override cannot be applied. So the gate has to compare the "
+      + "responder's version id against the uploaded one, which means the Worker must be able to name "
+      + "itself. See docs/receipts/preview-urls-and-durable-objects.md.",
   },
   kv_namespaces: { entries: arrayOfEntries, nameKey: "binding", note: "not declared. Nothing needs it yet." },
   secrets_store_secrets: {

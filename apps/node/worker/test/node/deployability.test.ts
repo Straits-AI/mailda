@@ -107,6 +107,17 @@ const BINDING_KINDS = {
     provisionedByButton: true,
     how: "Created by the migrations block on first deploy. No account-level resource to provision.",
   },
+  version_metadata: {
+    provisionedByButton: true,
+    how:
+      "Not a resource at all: Cloudflare populates it from the version being run, so there is nothing an " +
+      "install can fail to create and nothing account-specific to write into a fork (ADR 24). It exists " +
+      "because `mailda deploy` checks a canary through a version override and Cloudflare falls back to the " +
+      "traffic percentages when an override cannot be applied — so the gate compares the responder's " +
+      "version id with the uploaded one, and the Worker has to be able to name itself " +
+      "(preview-urls-and-durable-objects.md). A Node installed before this binding existed reports " +
+      "`version: null`, which the CLI treats as a refusal rather than a pass.",
+  },
   queues: {
     /*
      * The **queue** is provisioned by the deploy. The **consumer** is not, and since #72 cannot be.

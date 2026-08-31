@@ -293,8 +293,18 @@ export function metering(env: Env): { env: Env; cost: Cost } {
     ...(sendingEvents === undefined ? {} : { SENDING_EVENTS: sendingEvents }),
   };
 
-  /** Not bindings, so nothing to meter: values passed through by the test harness or by config. */
-  const FREE = new Set(["TEST_MIGRATIONS"]);
+  /**
+   * Nothing to meter, for two different reasons — worth distinguishing rather than lumping.
+   *
+   * `TEST_MIGRATIONS` is not a binding at all: a value the test harness passes through.
+   *
+   * `CF_VERSION` **is** a binding, and the first one here that costs nothing. Cloudflare populates it at
+   * isolate start from the version being run, so reading `.id` is a property access on an object already in
+   * memory — no subrequest, no round trip, nothing that could grow with mailbox size. It is metered as free
+   * because it is free, not because it was overlooked, and it is listed rather than excluded from the world
+   * so the distinction survives somebody adding a binding that only *looks* similar.
+   */
+  const FREE = new Set(["TEST_MIGRATIONS", "CF_VERSION"]);
 
   const wrapped = new Proxy(env as unknown as Record<string, unknown>, {
     get(target, property) {
