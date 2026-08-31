@@ -2231,6 +2231,49 @@ Still not verified end to end: the sequence needs a deploy against a live Node, 
 produced the measurement above are the reason it is written this way. Every refusal in it leaves the incumbent
 serving 100%.
 
+## A customer can now check what they merged, and cannot yet check who wrote it (#102)
+
+#102's argument is that the update model — merge this repository into the software holding your organization's
+mail — has to be verifiable. Three of its six parts were already done: the Apache-2.0 licence, `SECURITY.md`
+with private disclosure, and a protected `main` with the CI verdict required and no bypass actors.
+
+Two more are now done. Every push to `main` publishes a **CycloneDX SBOM** and a Sigstore-backed
+**provenance attestation** over it, after the suite passes:
+
+```sh
+gh run download --repo Straits-AI/mailda --name mailda-sbom
+gh attestation verify mailda-sbom.cdx.json --repo Straits-AI/mailda
+```
+
+It is keyless — GitHub's OIDC identity rather than a maintainer's key — which is why it could ship now while
+commit signing cannot.
+
+The generator reads `pnpm-lock.yaml`, not `node_modules`, and both reasons are the point. `pnpm list` needs a
+completed install, so the inventory would describe the runner rather than the commit; and it reports resolved
+URLs but **no integrity hashes**, which is the one field that makes an entry checkable rather than a name
+somebody typed. 386 entries, every one carrying the hash the install would have verified.
+
+It parses YAML with regular expressions, whose failure mode is silent under-reporting — and an SBOM missing a
+dependency is worse than no SBOM, because it answers *"is this dependency here?"* with a confident no. So an
+entry the parser cannot read **fails the build**, and the count is checked against a second, independent scan
+of the same section rather than against the generator's own parser. The document is byte-identical across runs
+of the same commit, because "reproducible" was the word #102 used.
+
+**What is still missing, and it is the half that needs a person.** Commits authored here are unsigned —
+`git log --format='%G?'` reports `N` — and there are no signed tags. So the attestation establishes that the
+inventory came from a workflow run in this repository over a commit that passed `check`; it establishes
+nothing about who wrote that commit. Enabling a signed-commits rule needs a key you hold, and turning it on
+without one would lock the repository against its own maintainer. It is listed in `SECURITY.md` as known
+rather than left pending quietly.
+
+Two lexical assertions were caught proving nothing while this landed, both by mutation. The test requiring the
+attestation to run only on a push searched backwards from the step for the nearest `if:` — with the job's own
+condition deleted, it ran on into the **`check` job** and found `if: always() && github.event_name == 'push'`
+there. Green, against a workflow that attests every pull request. It reads one job's block now. And
+`deploy-parse.d.mts` — whose own header said the drift it allowed was *"bounded"* and that *"nothing checks the
+pair"* — had kept exporting a function that no longer existed. Both hand-written declarations are now compared
+against their modules as sets, in both directions, in `test/node/declaration-drift.test.ts`.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

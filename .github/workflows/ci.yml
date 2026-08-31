@@ -139,3 +139,56 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/verdict-gaps.mjs ${{ github.run_id }}
+
+  # What a customer can check the merge against (#102).
+  #
+  # The update model asks a customer to merge this repository into the software holding their organization's
+  # mail. Two questions follow from that and neither had an answer: *what is in it* and *did it come from
+  # here*. The SBOM answers the first; the attestation answers the second, and it is Sigstore-backed through
+  # GitHub's OIDC token, so it needs no signing key anybody has to keep — which matters because the other
+  # halves of #102, signed commits and signed tags, do need one and are therefore not this job's business.
+  #
+  # A separate job, for the permissions. `id-token: write` mints signatures, and handing that to the job that
+  # runs the test suite would give every dependency in the toolchain a token that can sign as this repository.
+  # It `needs: check`, so nothing is attested that did not pass.
+  sbom:
+    needs: check
+    # Only a push to main. An attestation over a pull-request branch would verify correctly and assert
+    # provenance for code that is not in the product, which is worse than having none.
+    if: github.event_name == 'push'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # No install: the generator reads `pnpm-lock.yaml`, deliberately, because `pnpm list` needs a completed
+      # install and reports no integrity hashes — so the inventory would describe the runner rather than the
+      # commit, and carry no field a customer could check an entry against.
+      #
+      # `--at` takes the commit's own date rather than the clock, so re-running this workflow over the same
+      # commit produces identical bytes. #102 asked for reproducible artifacts, and a document that differs
+      # per run is not one.
+      - name: Build the SBOM
+        run: |
+          node .github/scripts/sbom.mjs \
+            --at "$(git show -s --format=%cI HEAD)" \
+            --commit "${{ github.sha }}" > mailda-sbom.cdx.json
+          node -e 'const d=require("./mailda-sbom.cdx.json");
+            if (!Array.isArray(d.components) || d.components.length < 100) {
+              throw new Error(`sbom: ${d.components?.length ?? 0} components — too few to be this repository`);
+            }
+            console.log(`sbom: ${d.components.length} components`);'
+
+      - name: Attest it
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: mailda-sbom.cdx.json
+
+      - name: Keep it with the run
+        uses: actions/upload-artifact@v5
+        with:
+          name: mailda-sbom
+          path: mailda-sbom.cdx.json
