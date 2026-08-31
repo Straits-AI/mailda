@@ -26,6 +26,16 @@ import { pathsIn, proseLines, referencesUnder, resolves, type Reference } from "
  * because a reference that is gone is never unresolvable. Existence is the part that mechanises. Accuracy
  * is not, and [the receipt](../../../../../docs/receipts/false-claim-detectability.md) records what was
  * measured before concluding that.
+ *
+ * ## A trap for anyone editing prose and running the suite locally
+ *
+ * This test reads the **whole repository**, including files outside the package it lives in. Turbo's cache
+ * keys on the package's own inputs, so a change to the root `README.md` alone leaves the cached result in
+ * place and `pnpm test` reports green without re-running this. That happened while #92's backup commands were
+ * landing: two references added to the README passed locally and failed in CI, which runs clean.
+ *
+ * Run it directly — `npx vitest run --config vitest.node.config.ts test/node/prose-references-world.test.ts`
+ * — after editing prose outside this package, or trust CI to be the one that actually looked.
  */
 
 const ROOT = new URL("../../../../../", import.meta.url).pathname.replace(/\/$/, "");
@@ -54,6 +64,16 @@ const NOT_FILES: ReadonlyArray<{ readonly file: string; readonly path: string; r
   // Names inside a payload rather than in the repository.
   { file: "apps/node/worker/src/exports.ts", path: "manifest.json", why: "an entry inside an export archive" },
   { file: "apps/node/worker/test/ediscovery-export.test.ts", path: "manifest.json", why: "the same archive entry" },
+  /*
+   * Files `mailda backup` *writes*, into a directory an operator chooses (#92). The same class as the export
+   * archive above and the reason the class was worth naming: a command that produces files has to document
+   * their names, and those names are not paths in this repository. `inventory.jsonl` needs no entry — the
+   * extension is not one this scan resolves.
+   */
+  { file: "packages/cli/src/backup.mjs", path: "catalog.sql", why: "a file mailda backup writes" },
+  { file: "packages/cli/src/backup.mjs", path: "index.json", why: "a file mailda backup writes" },
+  { file: "packages/cli/src/mailda.mjs", path: "catalog.sql", why: "the same, in the command that writes it" },
+  { file: "packages/cli/src/mailda.mjs", path: "index.json", why: "the same, in the command that writes it" },
 
   // Written by the customer, or by a repository that consumes these instructions.
   { file: "Mailda-Full-Engineering-Blueprint.md", path: "mailda.yaml", why: "the butler source a customer authors" },

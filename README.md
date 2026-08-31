@@ -2551,6 +2551,63 @@ and real: another organization's row naming an object under *our* prefix would o
 recorded hash for *our* object, and a restored copy would be verified against another tenant's number. That
 case is now a test, so the line can fail.
 
+## A backup an operator holds, and a check that runs without the Node (#92)
+
+Cloudflare's own recovery — D1 Time Travel, Durable Object point-in-time — covers thirty days and restores
+**into the account that failed**. #92 puts it plainly: *"A backup that only restores into the account that
+failed is not a backup for a product whose selling point is that you own the account."*
+
+`mailda backup --url <origin> --out <dir>` writes three files:
+
+```text
+catalog.sql       wrangler d1 export. The thing you restore — and it carries the manifests, the
+                  audit chain and the wrapped vault escrow, because all three are rows.
+inventory.jsonl   every R2 object with the hash its plaintext should have.
+index.json        what the other two should contain, with a SHA-256 of each.
+```
+
+That the escrow is a row is why #92's layers had to come in the order they did: exporting evidence nobody can
+decrypt is a backup that proves nothing, so the keys had to exist first.
+
+**It deliberately does not copy the evidence bytes.** Streaming a mailbox's worth of R2 through a laptop is not
+a backup strategy, and a command that pretends otherwise works on a demo Node and fails on a real one. The
+inventory is what turns somebody else's copy — `rclone`, an R2 bucket-to-bucket job — into a copy that can be
+**verified object by object** afterwards. The command says so last, where it is read, because that is the half
+an operator will assume it did.
+
+`mailda verify-backup --in <dir>` reads the artifact and nothing else — no Node, no network — so it runs on the
+copy you keep rather than the machine that took it. It answers exactly one question: *is this backup the one
+that was taken?* Every file present, every hash matching, the line count agreeing with the index. That catches
+a truncated copy, a partial download, a corrupted transfer and a directory somebody edited, which is most of how
+a backup is discovered to be useless — and all of it discoverable **before** the day it is needed.
+
+What it cannot establish is printed in its own output rather than left to a reader, because *"the backup
+verified"* is the sentence somebody will remember on the day it matters: not that the evidence decrypts (the
+objects are not in the backup), and not that the catalog restores. Both are properties of a restore.
+
+Three judgements worth naming:
+
+**`verified: null` is "not asked", never "clean".** `--verify` runs the evidence sweep first and records what
+it found; without it the field is empty, and the checker reports the absence rather than letting a reader infer
+a clean bill of health from a quiet field. Faults found *at backup time* are a failure, not a note — a backup
+of a known-broken state discovered on restore day is the whole thing this ticket is about.
+
+**Every problem at once.** A backup is checked rarely and in a hurry; being told about a missing file, then a
+bad hash, then a short inventory across three runs is how a restore becomes an evening.
+
+**An unknown format declines rather than guessing.** A future backup read by an older CLI would otherwise be
+checked against today's rules and produce confident nonsense. Declining leaves the operator their files.
+
+The prose-reference tripwire from #103 caught this change **three times**, which is the return on having built
+it: the docstrings naming files the command *writes* — the same class as an export archive's entries, so the
+exemption cap moved from 26 to 30 with the reason recorded — then the sentence in the receipt explaining that
+exemption, which cited one of those names inline, and then this very section.
+
+The third catch came from CI rather than locally, and the reason is worth knowing: **this test reads the whole
+repository, and turbo caches on the package's own inputs.** A change to the root README alone leaves the
+cached result in place, so `pnpm test` reports green without re-running it. Recorded in the test itself, since
+anyone editing prose will meet it.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
