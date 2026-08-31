@@ -4,6 +4,23 @@ name: ci
 # remembered, which is the same failure the ctx-seam lint had: a check that exists and is not invoked
 # reads exactly like a check that passed.
 #
+# ## The verdict is enforced by a ruleset, not by convention (#111)
+#
+# The `check` job below is a required status check on `main`, and until 31 August the same ruleset carried
+# `RepositoryRole: admin / always` as a bypass actor — so the people the rule protects `main` from could push
+# straight past it. `strict_required_status_checks_policy` was also `false`, so a merge did not have to be
+# current with `main`.
+#
+# Both are fixed: `bypass_actors` is empty, strict is `true`, and the ruleset API reports
+# `current_user_can_bypass: never` for an administrator. A direct push to `main` carrying no green `check` is
+# rejected for everybody, which is a property this file cannot assert about itself — it lives in repository
+# administration, and #111 records the settings and how to verify them.
+#
+# Worth knowing for whoever checks next: the legacy branch-protection endpoint
+# (`/repos/:owner/:repo/branches/main`) still reports `required_status_checks.contexts: []`, because
+# enforcement comes from a ruleset rather than classic protection. Reading that endpoint is what led the
+# original audit to conclude no check was required at all. Read `/rulesets/:id`.
+#
 # Runners are Blacksmith's. `runs-on` is the only thing that selects them; the cache actions are
 # upstream GitHub ones on purpose — Blacksmith archived its `useblacksmith/*` cache forks and now
 # optimises `actions/cache` and `actions/setup-node` transparently, so a fork here would be a
