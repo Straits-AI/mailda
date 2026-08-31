@@ -352,6 +352,16 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/audit/verify",
     "GET /api/logs",
     "POST /api/evidence/verify",
+    /*
+     * The bucket's inventory (#92). A `GET`, so the derivation rule would have made it `read` and offered it
+     * — which the closed world caught, against a route whose own documentation said it was withheld. The
+     * declaration is what withholds; prose is not.
+     *
+     * It is the widest description of an organization's mail that contains no mail: every object with its
+     * size and timestamp, which is who was busy, when, and how much. And it is a backup's index — a machine
+     * that can enumerate what exists can tell what to ask for next.
+     */
+    "GET /api/evidence/inventory",
   ),
   ...changing("operator",
     "Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or "

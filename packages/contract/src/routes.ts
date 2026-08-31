@@ -462,6 +462,15 @@ export const ROUTES = [
    * `machineUseful` would be a lie here in the other direction, which is why no mint can confer it.
    */
   { method: "POST", path: "/api/evidence/verify", summary: "Check that stored evidence still matches the hashes recorded at ingress", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceVerifyResponse },
+  /**
+   * The bucket's inventory, for a backup that can be checked after it is restored (#92).
+   *
+   * `org.admin` and withheld from machines for the same reasons as the verifier beside it, plus one of its
+   * own: an inventory is a complete list of every object this organization holds, with sizes and timestamps.
+   * That is a map of the organization's mail traffic even without a single byte of content — who was busy,
+   * when, and how much.
+   */
+  { method: "GET", path: "/api/evidence/inventory", summary: "Every stored object with the hash its plaintext should have, for a restorable backup", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceInventoryResponse },
   {
     method: "GET", path: "/api/logs", summary: "The operational log",
     response: S.logListResponse,

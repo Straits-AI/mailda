@@ -862,6 +862,28 @@ export const evidenceVerifyResponse = z.object({
   bytesRead: z.number().int().nonnegative(),
 }).strict();
 
+/**
+ * What the bucket holds, and what each object should hash to (#92).
+ *
+ * `recordedSha256` is nullable on purpose: `null` means the bucket holds something no live row names, which is
+ * `reconcile.ts`'s "object, no referent". Reported rather than omitted — a backup that silently drops what it
+ * cannot explain restores less than the operator thinks.
+ */
+export const inventoryObject = z.object({
+  key: z.string(),
+  bytes: z.number().int().nonnegative(),
+  uploaded: z.string(),
+  keyGeneration: z.number().int().nonnegative(),
+  recordedSha256: z.string().nullable(),
+}).strict();
+
+export const evidenceInventoryResponse = z.object({
+  objects: z.array(inventoryObject),
+  /** Opaque: it encodes which prefix is being walked and where in it. Never construct one by hand. */
+  resumeAfter: z.string().nullable(),
+  unaccounted: z.number().int().nonnegative(),
+}).strict();
+
 /* ------------------------------------------------------------------ policy authoring (#60, #93) ---- */
 
 /**

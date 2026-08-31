@@ -12,6 +12,7 @@ import { audit, log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
 import { auditedBatch } from "./audit.ts";
 import { verifyEvidence } from "./evidence-audit.ts";
+import { inventoryPage } from "./evidence-inventory.ts";
 import {
   assertRoomForAnother, credentialsOf, forgetCredential, mintChallenge, relyingPartyFor,
 } from "./auth/passkey.ts";
@@ -3267,6 +3268,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         },
       });
       return Response.json(verdict);
+    }
+
+    /*
+     * The bucket's inventory (#92). A read, so no audit entry: it discloses no content and writes nothing,
+     * and `GET /api/audit` is the precedent — reading is gated, not recorded.
+     *
+     * Paged by an opaque cursor that walks all four prefixes the Worker writes. The page bound comes from the
+     * reconciler's measured figure rather than from the query string, so a caller cannot ask for a page that
+     * will not fit in an invocation.
+     */
+    if (url.pathname === "/api/evidence/inventory" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      await assertAdmin(env, who.orgId, who.userId);
+      const after = url.searchParams.get("after");
+      return Response.json(await inventoryPage(env, who.orgId, after === "" ? null : after));
     }
 
     if (url.pathname === "/api/logs" && request.method === "GET") {

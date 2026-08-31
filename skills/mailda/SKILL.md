@@ -62,7 +62,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 85 withheld
+## What you cannot do, and why — 86 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -125,7 +125,7 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (31)
+### Operator — running the Node rather than using it (32)
 
 - **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getPeopleByUserIdMailboxes`, `postAgents`**
 
@@ -135,7 +135,7 @@ so you are that one person and can never be the second. These are not permission
 
   Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or register a passkey would be administering the way in rather than using it.
 
-- **`getAudit`, `getLogs`, `postAuditVerify`, `postEvidenceVerify`**
+- **`getAudit`, `getEvidenceInventory`, `getLogs`, `postAuditVerify`, `postEvidenceVerify`**
 
   The organization's own record. An agent that can read every act taken on a Node can find the one act nobody watched — the same map of how to escalate that listing agents is, arrived at from the other side. Verification belongs with reading rather than with the harmless reads, because it reports WHERE the chain broke, which is a fact about the trail somebody who may not read the trail has no business learning. Sweeping the evidence is here for the same reason and one more: it opens every object in its batch, so a machine could spend the Node's whole subrequest budget by asking a question.
 

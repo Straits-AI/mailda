@@ -2509,6 +2509,48 @@ compared and how many were withheld, because *"the gate passed"* is worth less w
 see. An ordinary member's credentials buy nothing here and it says so: the full report needs `org.admin`, and
 anything less is reduced to the same 9.
 
+## An inventory, so a restored bucket can be checked object by object (#92)
+
+The verifier from #117 proves an object is what was recorded. It cannot say **what should be there at all** —
+and a copy of a bucket into a fresh Cloudflare account is a copy nobody has checked without that. #92's step 1
+asks for D1, the R2 object inventory, and the manifests; `wrangler d1 export` covers the first, the manifests
+live in D1, and this is the missing middle.
+
+`GET /api/evidence/inventory` walks every prefix the Worker writes and returns each object's key, size,
+timestamp, key generation, and **the hash its plaintext should have**. The prefixes come from
+`scannedPrefixes` — the function #67 and #74 both exist because of, each a prefix the Worker wrote and no
+listing covered — whose completeness is enforced by a test that derives the written set from `src/`. Building
+a *backup* on a second, copied list would be that defect in the place it costs most.
+
+All four prefixes turn out to have a referent row carrying their objects' SHA-256, which is better than a
+listing of sizes: `raw/` from `ingress_receipts`, `drafts/` from `drafts`, `exports/` from `exports`, and
+`sent/` from three columns on `send_manifests`. So a restored copy is checkable object by object rather than in
+aggregate, and the existing verifier is the thing that would run over it in the new account.
+
+**An object no row names is reported, not omitted.** `recordedSha256: null` is `reconcile.ts`'s "object, no
+referent" — safe to delete after a grace period, and never safe to leave out of an inventory: a backup that
+silently drops what it cannot explain restores less than the operator thinks, and the gap is invisible
+precisely because nothing references it.
+
+Three things the build was taught rather than reasoned into:
+
+**D1 refused a six-arm `UNION ALL`** — *"too many terms in compound SELECT"* — which turned out to be the right
+design pressure. A page is always from one prefix, so only that prefix's referents can name its keys; joining
+a page of raw mail against the drafts table was pointless work as well as one arm too many. Worst case is now
+three arms, for `sent/`.
+
+**The closed world caught my own route contradicting itself.** The route's documentation said it was withheld
+from machines, and nothing classified it — so the GET-derivation rule offered it. An inventory is the widest
+description of an organization's mail that contains no mail: every object with its size and timestamp, which
+is who was busy, when, and how much. It is also a backup's index, which is a list of what to ask for next.
+*The declaration is what withholds; prose is not.*
+
+**One filter was decorative until a test made it load-bearing.** Removing `org_id` from the hash join passed
+every test, because keys are org-scoped by the R2 prefix they were listed under. What it defends is narrower
+and real: another organization's row naming an object under *our* prefix would otherwise supply *their*
+recorded hash for *our* object, and a restored copy would be verified against another tenant's number. That
+case is now a test, so the line can fail.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

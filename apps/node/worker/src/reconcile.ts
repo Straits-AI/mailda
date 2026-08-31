@@ -103,8 +103,12 @@ export function draftBodyPrefix(orgId: string): string {
  * `test/node/evidence-prefix-world.test.ts` derives the written set from `src/` and compares it against this
  * function, so the completeness claim is enforced rather than asserted — the distinction #67 and #74 were
  * both filed over.
+ *
+ * **Exported since #92**, so the disaster-recovery inventory covers the same complete set rather than
+ * carrying a second list of prefixes. One list, one world test, two readers — a second copy is how #67 and
+ * #74 happened, and adding one to build a *backup* would be the same defect in the place it costs most.
  */
-function scannedPrefixes(orgId: string): string[] {
+export function scannedPrefixes(orgId: string): string[] {
   return [rawPrefix(orgId), draftBodyPrefix(orgId), exportsPrefix(orgId), sentPrefix(orgId)];
 }
 
