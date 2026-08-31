@@ -154,6 +154,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@mailda/budgets':
+        specifier: workspace:*
+        version: link:../budgets
       '@mailda/worker':
         specifier: workspace:*
         version: link:../../apps/node/worker

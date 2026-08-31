@@ -42,6 +42,11 @@ const PAIRS = [
     module: ".github/scripts/sbom.mjs",
     declaration: ".github/scripts/sbom.d.mts",
   },
+  {
+    what: "the deploy preflight",
+    module: "packages/cli/src/preflight.mjs",
+    declaration: "packages/cli/src/preflight.d.mts",
+  },
 ] as const;
 
 describe("hand-written declarations match their modules", () => {
