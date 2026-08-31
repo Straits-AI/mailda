@@ -894,6 +894,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Check that stored evidence still matches the hashes recorded at ingress
+   *
+   * `POST /api/evidence/verify`
+   */
+  async postEvidenceVerify(body?: unknown): Promise<z.infer<typeof S.evidenceVerifyResponse>> {
+    return await this.json("POST", "/api/evidence/verify", {}, body) as z.infer<typeof S.evidenceVerifyResponse>;
+  }
+
+  /**
    * The operational log
    *
    * `GET /api/logs`

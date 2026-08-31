@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -191,6 +192,37 @@ describe("nothing that needs two people is offered to something that can only be
     // Non-vacuity in both directions: a rule that offered everything, or nothing, would be no rule.
     expect(offered.length).toBeGreaterThan(20);
     expect(withheld.length).toBeGreaterThan(20);
+  });
+
+  it("declares each route once, which the count above cannot see", () => {
+    /*
+     * The gap the test above has, found by adding a route and reading the file it goes in.
+     *
+     * `POST /api/audit/verify` was declared **twice**: as `act` — *"verifying the audit chain reads the world
+     * and changes nothing a person would need to undo"* — and again inside the `operator` block. Object
+     * spread means the later one wins, so the `act` classification and its reasoning were dead code, and the
+     * route was withheld with a `why` inherited from a block about *"installation and the account
+     * lifecycle"*. That string is what the Skill and the MCP server quote to explain the absence.
+     *
+     * `DECLARED_ROUTES` has already collapsed the duplicate by the time any test reads it, and both entries
+     * were plausible, so nothing could notice: the counts matched, and every withheld route had *a* reason.
+     * The only place the duplicate exists is the source, which is why this reads it.
+     */
+    const source = readFileSync(
+      join(import.meta.dirname, "../../../../../packages/contract/src/agent.ts"),
+      "utf8",
+    );
+    const declarations = source.slice(source.indexOf("export const DECLARED_ROUTES"));
+    const named = [...declarations.matchAll(/^\s*"((?:GET|POST|PUT|PATCH|DELETE) [^"]+)",$/gm)]
+      .map((one) => one[1] as string);
+
+    expect(named.length, "no route strings found — has the file's shape changed?").toBeGreaterThan(40);
+    const twice = named.filter((route, at) => named.indexOf(route) !== at);
+    expect(
+      [...new Set(twice)],
+      "declared more than once. The later entry silently wins, so the earlier reasoning is dead and the "
+        + "surviving `why` may belong to a different group of routes entirely.",
+    ).toEqual([]);
   });
 
   it("gives every withheld route a reason a person can read", () => {

@@ -452,6 +452,16 @@ export const ROUTES = [
     response: S.auditListResponse,
   },
   { method: "POST", path: "/api/audit/verify", summary: "Verify the audit chain", response: S.auditVerifyResponse },
+  /**
+   * Whether the evidence still hashes to what ingress recorded (#92).
+   *
+   * `org.admin`, for the same reason `/api/audit/verify` is: the answer is a fact about the whole
+   * organization's evidence — how many messages are missing, and which — and that is not a mailbox grant. It
+   * is also not delegable to a machine. The route opens every object in its batch, so an agent holding it
+   * could read every message in the organization by asking for a verification and watching nothing;
+   * `machineUseful` would be a lie here in the other direction, which is why no mint can confer it.
+   */
+  { method: "POST", path: "/api/evidence/verify", summary: "Check that stored evidence still matches the hashes recorded at ingress", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceVerifyResponse },
   {
     method: "GET", path: "/api/logs", summary: "The operational log",
     response: S.logListResponse,

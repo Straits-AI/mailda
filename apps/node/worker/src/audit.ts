@@ -698,6 +698,35 @@ export const AUDIT_ACTIONS = {
   "agent.revoked": {
     says: "An administrator withdrew an agent's credential. It stops working on the next request.",
   },
+
+  /**
+   * Sweeping stored evidence against the hashes recorded at ingress (#92).
+   *
+   * ## Why `standalone` and not `disclosure`, which it looks like
+   *
+   * The verification **opens every object in its batch**, so the first instinct is that this is the broadest
+   * content read the Node performs and therefore belongs with the supervised reads. It is not, and the
+   * distinction is worth being exact about rather than classifying defensively.
+   *
+   * A disclosure is an act that puts content in front of somebody. This one decrypts inside the isolate,
+   * hashes the plaintext, and discards it: what reaches the caller is a count, a cursor, and — for a message
+   * that failed — its receipt id and which of the three ways it failed. No byte of any message, and nothing
+   * from which one could be reconstructed. So the contract `recordDisclosure` enforces (*if the Node cannot
+   * record the act, it does not perform the act*) would be protecting against something that does not happen
+   * here, while making a diagnostic fail in the state where an operator most needs it to run.
+   *
+   * What it *is* is a broad, expensive act on the organization's evidence whose result an operator will act
+   * on, and whose absence from the trail would mean nobody could later establish when the evidence was last
+   * known good. That is the same shape as a refusal: record it, never fail the request for it.
+   *
+   * The subject is the **cursor**, never a message id. The entry says which span was swept; the faults stay
+   * in the response, because a fault names a message and the trail is read by people who are not entitled to
+   * know which messages exist.
+   */
+  "evidence.verified": {
+    standalone: true,
+    says: "Somebody checked this organization's stored evidence against the hashes taken when it arrived.",
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

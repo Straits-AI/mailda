@@ -62,7 +62,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 84 withheld
+## What you cannot do, and why — 85 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -125,23 +125,39 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (30)
+### Operator — running the Node rather than using it (31)
 
-- **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getAudit`, `getLogs`, `getPeopleByUserIdMailboxes`, `getSearchFailed`, `postAgents`, `postAuditVerify`, `postClaim`, `postInvitationsRedeem`, `postPrepare`, `postRecoveryCodesConfirm`, `postRecoveryCodesRotate`, `postRecoveryRedeem`, `postSearchRepair`**
+- **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getPeopleByUserIdMailboxes`, `postAgents`**
 
-  Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
+  Agent identities. An agent that could mint agents can escape its own ceiling: the pinned action list is the whole mechanism, and a machine creating a second machine with a wider one has stepped around it in one call. Listing is withheld with them because it enumerates every machine identity with its sponsor and reach, which is a map of how to escalate.
 
 - **`deleteAuthPasskeys`, `postAuthLogin`, `postAuthLogout`, `postAuthLogoutEverywhere`, `postAuthPasskeys`, `postAuthPasskeysChallenge`, `postAuthPasskeysVerify`, `postAuthRefresh`, `postAuthRotateSigningKey`, `putTransport`**
 
   Credentials and sessions. A machine that could rotate a signing key, sign itself out everywhere or register a passkey would be administering the way in rather than using it.
 
+- **`getAudit`, `getLogs`, `postAuditVerify`, `postEvidenceVerify`**
+
+  The organization's own record. An agent that can read every act taken on a Node can find the one act nobody watched — the same map of how to escalate that listing agents is, arrived at from the other side. Verification belongs with reading rather than with the harmless reads, because it reports WHERE the chain broke, which is a fact about the trail somebody who may not read the trail has no business learning. Sweeping the evidence is here for the same reason and one more: it opens every object in its batch, so a machine could spend the Node's whole subrequest budget by asking a question.
+
 - **`getIndexHtml`**
 
   The interface shell. A page rather than a question anybody would ask a Node — offering it as a capability would put "fetch the HTML" in a list of things an agent can do, which is noise at best and an invitation to scrape at worst.
 
+- **`getSearchFailed`, `postSearchRepair`**
+
+  Maintenance of the body index rather than work on anybody's mail, and its listing names message ids across the whole organization. A machine could safely call it; the reason it is withheld is that deciding WHICH failures are worth retrying is the whole job, and some are deterministically unparseable — repairing those spends the backfill's budget on work that cannot succeed.
+
 - **`patchMailboxesByMailboxId`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
+
+- **`postClaim`, `postInvitationsRedeem`, `postPrepare`**
+
+  Installation and the account lifecycle. Not acts a second person could approve for a machine — acts of standing a Node up, which is why they are separate from `governed` rather than a stricter shade of it.
+
+- **`postRecoveryCodesConfirm`, `postRecoveryCodesRotate`, `postRecoveryRedeem`**
+
+  The last resort. A recovery code IS the credential — redeem is unauthenticated on purpose, because the state it exists for is one where session keys are unopenable — so an agent able to call these holds this Node's escrow. There are ten codes, single-use: an agent retrying a mistyped one burns the escrow it was trying to use, and rotate destroys the operator's paper set to return successors into a transcript. A second person cannot make any of it safe for a machine, which is why it is `operator` rather than `governed`.
 
 ### Out of reach — an ordinary act, and no credential can be provisioned for it (23)
 

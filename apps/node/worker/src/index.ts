@@ -8,9 +8,10 @@ import {
   unsatisfiedCapabilities,
 } from "@mailda/contract/capability";
 
-import { log, trimLogs, verifyChain } from "./audit.ts";
+import { audit, log, trimLogs, verifyChain } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
 import { auditedBatch } from "./audit.ts";
+import { verifyEvidence } from "./evidence-audit.ts";
 import {
   assertRoomForAnother, credentialsOf, forgetCredential, mintChallenge, relyingPartyFor,
 } from "./auth/passkey.ts";
@@ -3227,6 +3228,45 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       await assertAdmin(env, who.orgId, who.userId);
       const from = Number(url.searchParams.get("from") ?? "1");
       return Response.json(await verifyChain(env, who.orgId, Number.isFinite(from) ? from : 1));
+    }
+
+    /*
+     * Does the evidence still say what ingress recorded it saying? (#92)
+     *
+     * The step #92 calls the one that makes the rest true — *"prove a sampled set of raw messages decrypt and
+     * hash-verify"* — and it applies to the live Node as much as to a restored copy. `doctor` sends one HEAD
+     * at the bucket, which answers whether R2 is reachable and nothing about what is in it.
+     *
+     * Audited as `standalone`, and the classification is argued in `audit.ts` rather than picked. It opens
+     * every object in its batch, which looks like the broadest content read the Node performs — but the
+     * plaintext is hashed inside the isolate and discarded, and what reaches the caller is a count, a cursor,
+     * and for a failed message its receipt id and which of the three ways it failed. Nothing from which a
+     * message could be reconstructed, so the disclosure contract would guard against something that does not
+     * happen here while making a diagnostic fail exactly when it is needed.
+     *
+     * The subject is the cursor, never a message id: the entry records the span that was swept, and the
+     * faults stay in the response, because a fault names a message and the trail is read by people who are
+     * not entitled to know which messages exist.
+     */
+    if (url.pathname === "/api/evidence/verify" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      await assertAdmin(env, who.orgId, who.userId);
+      const after = url.searchParams.get("after");
+      const verdict = await verifyEvidence(env, who.orgId, after === null || after === "" ? null : after);
+      await audit(env, clock, who.orgId, {
+        action: "evidence.verified",
+        outcome: verdict.intact ? "ok" : "refused",
+        actorUserId: who.userId,
+        subject: verdict.after ?? "beginning",
+        detail: {
+          checked: verdict.checked,
+          faults: verdict.faults.length,
+          bytesRead: verdict.bytesRead,
+          resumeAfter: verdict.resumeAfter,
+        },
+      });
+      return Response.json(verdict);
     }
 
     if (url.pathname === "/api/logs" && request.method === "GET") {

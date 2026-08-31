@@ -293,7 +293,10 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // Classified here because this is the table the act is about — `message.exported`'s subject is the
     // receipt id, which is what makes "who has taken a copy of this message" one filter. The `hold.blocked`
     // and `supervised.query` shape: no write, and the table it belongs to is the one it names.
-    actions: ["message.exported"],
+    // `evidence.verified` joins it for the same reason and from the other side (#92): a sweep reads this
+    // table, opens each object it names, and writes nothing. It is the table the act is about, so "what has
+    // happened to this evidence" stays one filter — copies taken out, and checks that it is still intact.
+    actions: ["message.exported", "evidence.verified"],
   },
   outbox: { exempt: "Internal work queue. Its effects are audited where they land, not on enqueue." },
   send_counters: { exempt: "Aggregate counters derived from send_manifests, which is audited." },
@@ -657,7 +660,19 @@ describe("audit coverage", () => {
       .map(([action]) => action)
       .sort();
 
-    expect(standalone).toEqual(["auth.locked_out", "hold.blocked"]);
+    //
+    // `evidence.verified` (#92) earns it on the same premise reached from a third direction, and the
+    // classification is worth spelling out because the instinct is to call it a disclosure. The sweep opens
+    // every object in its batch — so it *looks* like the broadest content read the Node performs — but it
+    // hashes the plaintext inside the isolate and discards it, and the caller receives a count, a cursor,
+    // and for a failed message its receipt id and which of the three ways it failed. Nothing from which a
+    // message could be reconstructed, so `recordDisclosure`'s contract (*if it cannot be recorded, it does
+    // not happen*) would be guarding against something that does not occur here, at the price of making a
+    // diagnostic fail in the state where an operator most needs to run one.
+    //
+    // What is left is a broad, expensive act whose result an operator acts on: record it, never fail the
+    // request for it. Same direction as a lockout and a blocked deletion.
+    expect(standalone).toEqual(["auth.locked_out", "evidence.verified", "hold.blocked"]);
   });
 
   it("keeps the set of disclosure actions to the ones deliberately chosen", () => {
