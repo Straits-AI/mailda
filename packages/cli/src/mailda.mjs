@@ -35,7 +35,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import {
-  activeVersionFrom, contractingAmong, promotionVerdict, servedVersionOf, versionIdFrom,
+  activeVersionFrom, contractingAmong, deployExitCode, doctorExitCode, promotionVerdict, servedVersionOf,
+  versionIdFrom,
 } from "./deploy-parse.mjs";
 import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
@@ -155,9 +156,73 @@ async function doctor(argv) {
   }
 
   process.stdout.write(wantsJson ? `${JSON.stringify(JSON.parse(body), null, 2)}\n` : body);
-  const verdict = wantsJson ? JSON.parse(body).verdict : body.split(/\s+/)[2]?.toLowerCase();
-  // The exit code is the verdict, so this is usable in a deploy script or a health check.
-  process.exit(verdict === "refuse" ? 2 : verdict === "degraded" ? 1 : 0);
+
+  /*
+   * Returned rather than exited, which is the change. This used to end in
+   * `process.exit(verdict === "refuse" ? 2 : ...)` — right for somebody running the command, and wrong for
+   * the deploy that calls it as a closing step: a Node reporting `degraded` made a **successful** deploy
+   * exit 1, and on a fresh Node `degraded` means `signing_key`, which self-heals on the next sign-in. Every
+   * green deploy reported failure.
+   *
+   * The dispatch below still exits on this command's own verdict. What moved is *who decides*, because the
+   * two commands are asked different questions — argued in `doctorExitCode`.
+   */
+  return wantsJson ? JSON.parse(body).verdict : body.split(/\s+/)[2]?.toLowerCase();
+}
+
+/**
+ * A session cookie for the deploy's own checks, or `null` if none was asked for (#98).
+ *
+ * ## Why this exists, measured rather than supposed
+ *
+ * The canary check was anonymous, and the 31 August drill measured what that cost: the Node served **9
+ * findings of 21**, because `withoutDataFindings` withholds everything classified as describing the
+ * organization's mail from a caller who is not an administrator. So the differential gate compared 9, and a
+ * regression confined to one of the withheld 12 would not have blocked a promotion.
+ *
+ * ## Why signing in reaches the canary at all
+ *
+ * A session is signed by the Node's own key, and that key lives in D1 and the vault — **state, not code**. Two
+ * versions of the Worker share it. So a cookie obtained from the incumbent is honoured by the canary, and
+ * sending it *with* the override header reaches the new version authenticated. Nothing about it is
+ * version-specific, which is what makes this possible at all.
+ *
+ * ## Optional, and honest about the cost when it is absent
+ *
+ * No credentials means the anonymous check, which is weaker rather than broken — it still carries every
+ * `infrastructure` finding: the bindings, the schema, the vault. The deploy says which of the two it did, so
+ * "the gate passed" always comes with how much the gate could see.
+ *
+ * An **ordinary member's** credentials buy nothing here: the full report needs `org.admin`, and anything less
+ * is reduced with a different reason and the same 9 findings. Said plainly, because supplying a non-admin
+ * account and believing the check widened is worse than knowing it did not.
+ */
+async function deployCookie(origin) {
+  const email = process.env.MAILDA_EMAIL;
+  const password = process.env.MAILDA_PASSWORD;
+  if (email === undefined || password === undefined) return null;
+
+  const signIn = await fetch(`${origin}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  }).catch(() => null);
+  if (signIn === null || !signIn.ok) {
+    /*
+     * Not fatal. A failed sign-in falls back to the anonymous check rather than stopping a deploy — the
+     * alternative is a Node that cannot be deployed to because its credentials are wrong, which is a worse
+     * failure than a narrower gate. It says so, because a silent downgrade is the thing this file keeps
+     * removing.
+     */
+    process.stdout.write(
+      `   note: sign-in failed (${signIn === null ? "unreachable" : signIn.status}), so the canary is checked\n`
+      + "         anonymously and the gate compares only the findings an anonymous caller may see.\n",
+    );
+    return null;
+  }
+  const cookies = signIn.headers.getSetCookie?.() ?? [];
+  if (cookies.length === 0) return null;
+  return cookies.map((line) => line.split(";")[0]).join("; ");
 }
 
 /**
@@ -441,7 +506,21 @@ async function deploy(argv) {
     }
     if (origin !== null) {
       process.stdout.write("\n== asking the Node how it is\n");
-      await doctor(["--url", origin]);
+      /*
+       * The same rule as the canary path: a first install that ends with the Node refusing exits 2, and
+       * anything less than that is not this command's failure. There is no previous version to name here —
+       * that is what makes a first install a first install — so the refusal below prints no rollback.
+       */
+      const verdict = await doctor(["--url", origin]);
+      if (verdict === "refuse") {
+        process.stderr.write(
+          "\n  the first install completed and the Node reports `refuse`.\n\n"
+          + "  why      there is no previous version to fall back to on a first install, which is also why\n"
+          + "           this step could not be a gate.\n"
+          + "  fix      read the findings above; `mailda doctor` repeats them.\n\n",
+        );
+      }
+      process.exit(deployExitCode(verdict));
     }
     return;
   }
@@ -553,7 +632,19 @@ async function deploy(argv) {
    * be applied, so a report that came from the incumbent would say `ok` and promote an unexamined canary.
    */
   process.stdout.write(`\n== asking the canary how it is (${origin}, version ${version})\n`);
+
+  /*
+   * One cookie, used for **both** reports, and that is load-bearing rather than tidy. Asking the canary
+   * authenticated and the incumbent anonymously would compare 21 findings against 9 — twelve of them would
+   * read as new, and every deploy would be blocked by a difference in who was asking rather than in what
+   * the code does. Like for like or not at all.
+   */
+  const cookie = await deployCookie(origin);
+  const asked = cookie === null ? {} : { cookie };
+  process.stdout.write(`   checking ${cookie === null ? "anonymously" : "signed in"}\n`);
+
   const report = await doctorReport(origin, {
+    ...asked,
     "Cloudflare-Workers-Version-Overrides": `mailda="${version}"`,
   });
   const answered = servedVersionOf(report);
@@ -579,12 +670,23 @@ async function deploy(argv) {
    * 100% of the traffic. Asked after the canary rather than before, so the two are as close together in time
    * as the sequence allows — a finding that appeared between them belongs to the Node, not to the canary.
    */
-  const incumbent = await doctorReport(origin);
+  const incumbent = await doctorReport(origin, asked);
   const gate = promotionVerdict({ canary: report, incumbent });
 
   for (const check of gate.carried) {
     process.stdout.write(`   carried  ${check}  — the version now serving reports this too\n`);
   }
+
+  /*
+   * How much the gate could see, printed next to its verdict. A reduced report says so in a finding of its
+   * own, and the number it withholds is the honest measure of this check's reach — 9 of 21 on the Node this
+   * was drilled against. "The gate passed" is worth less without it.
+   */
+  const withheld = (report.findings ?? []).find((one) => one?.check === "report_reduced");
+  process.stdout.write(
+    `   compared ${(report.findings ?? []).length} finding(s)`
+    + `${withheld === undefined ? " — the whole report" : `, and ${withheld.detail}`}\n`,
+  );
 
   if (!gate.promote) {
     fail(
@@ -617,7 +719,28 @@ async function deploy(argv) {
    * after traffic moves.
    */
   process.stdout.write("\n== asking the live Node how it is\n");
-  await doctor(["--url", origin]);
+  const after = await doctor(["--url", origin]);
+
+  /*
+   * The deploy's own exit code, not doctor's. A carried degradation is the incumbent's condition and the gate
+   * already refused anything the canary made worse, so it is not this command's failure — see
+   * `deployExitCode`.
+   *
+   * `refuse` is different and is the one case the canary gate provably cannot have caught: Durable Object code
+   * runs the promoted version only **after** traffic moves, so a broken `KeyVault` or `OutboxSweeper` appears
+   * exactly here and nowhere earlier. Hence the rollback command, with the version that was serving before
+   * this ran — the one value a person cannot look up mid-incident.
+   */
+  if (after === "refuse") {
+    process.stderr.write(
+      `\n  the deploy completed and the Node now reports \`refuse\`.\n\n`
+      + "  why      the canary gate cannot see this one. A Durable Object runs the promoted version only\n"
+      + "           after traffic moves, so a fault inside `KeyVault` or `OutboxSweeper` appears here and\n"
+      + "           could not have appeared earlier.\n"
+      + `  fix      to put the previous version back: \`wrangler versions deploy ${serving}@100\`\n\n`,
+    );
+  }
+  process.exit(deployExitCode(after));
 }
 
 
@@ -1111,7 +1234,7 @@ Two things this cannot verify, said here rather than discovered later:
 const [verb, ...rest] = process.argv.slice(2);
 switch (verb) {
   case "deploy": await deploy(rest); break;
-  case "doctor": await doctor(rest); break;
+  case "doctor": process.exit(doctorExitCode(await doctor(rest))); break;
   case "claim-secret": claimSecret(rest); break;
   case "set-password": setPassword(rest); break;
   case "recovery-codes": await recoveryCodes(rest); break;

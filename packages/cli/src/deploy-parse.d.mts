@@ -44,3 +44,14 @@ export function promotionVerdict(args: { canary: unknown; incumbent: unknown }):
   carried: string[];
   why: string | null;
 };
+
+/** `mailda doctor`'s exit code: its verdict is its answer. refuse=2, degraded=1, ok=0. */
+export function doctorExitCode(verdict: string | undefined): number;
+
+/**
+ * `mailda deploy`'s exit code. A deploy that happened is a success unless the Node now refuses.
+ *
+ * A pre-existing degradation is not a deploy failure — and the gate already refused anything the canary made
+ * worse, so a carried finding is the incumbent's condition rather than this command's doing.
+ */
+export function deployExitCode(verdict: string | undefined): number;

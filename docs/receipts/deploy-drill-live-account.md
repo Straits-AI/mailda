@@ -200,8 +200,11 @@ The current route reduces that case too. Nothing was removed — four checks wer
 tightening is an improvement. Worth recording because the first reading of a shrinking number is that coverage
 was lost.
 
-**One thing worth fixing separately:** `mailda deploy` takes its exit code from the closing `doctor` run, so a
-Node reporting `degraded` makes a **successful** deploy exit 1. In a pipeline that reads as a failed deploy.
+**Both findings above are closed.** `mailda deploy` no longer inherits `doctor`'s exit code — a deploy is
+asked whether it happened, so a carried degradation exits 0 while a post-promotion `refuse` exits 2 and prints
+the rollback. And the canary check signs in when credentials are present, so the gate compares the whole
+report rather than the 9 findings an anonymous caller may see; both sides are asked with the same credentials,
+because authenticated-canary against anonymous-incumbent would compare 21 to 9 and block every deploy.
 
 ## An unexplained D1 API failure during migration, 28 August 2026
 
