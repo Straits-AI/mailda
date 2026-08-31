@@ -69,7 +69,7 @@ as known, and each has an issue or a source comment explaining the reasoning:
   `check`. **What it does not answer is who wrote that commit.** Repository access is the control there:
   protected `main`, no bypass actors, a required green check, and a reviewed pull request per change.
 
-  This changes if the update path ever verifies: shipping `git pull --verify-signatures` into `mailda update`,
+  This changes if the update path ever verifies: shipping `git pull --verify-signatures` into an update command,
   or a preflight that checks the upstream commit against a known key, would make signing load-bearing. Signing
   should follow that, not precede it.
 
