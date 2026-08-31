@@ -1,6 +1,7 @@
 /**
- * Types for a module imported at runtime rather than bundled — see `../externals-note.md` reasoning in
- * `session.client.js`/`delivery.client.js`. Mapped onto the specifier `/app/delivery.js` by
+ * Types for a module imported at runtime rather than bundled — the module is
+ * `src/client/delivery.client.js`, and the reason it stays out of the bundle is the `external:` list in
+ * `scripts/build-client.mjs`. Mapped onto the specifier `/app/delivery.js` by
  * `src/client/tsconfig.json`'s `paths`, because TypeScript reads a leading slash as a path on disk and so
  * an ambient `declare module` for it never matches.
  *

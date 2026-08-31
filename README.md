@@ -2130,6 +2130,57 @@ The accessibility harness broke on the CSP, which was the useful signal: it inje
 have disabled enforcement for the application too and hidden the one regression the harness is now placed to
 notice.
 
+## A comment that cites a file which isn't there, and the three checks not worth building (#103)
+
+Nine authorization gaps in one audit turned out to be one test-oracle defect. The follow-up question was
+narrower and more uncomfortable: the *comments* were wrong too, repeatedly, including comments written while
+fixing wrong comments. One cited a test file that has never existed:
+
+```text
+test/composer.test.ts   — the real file is test/drafts.test.ts
+```
+
+That reads exactly like a citation of a real file, and nothing in the toolchain resolves a path inside a
+comment, so it is wrong at the moment it is written and stays wrong. #103 asked whether that has a mechanical
+countermeasure and said the honest answer might be no, but that it should be **concluded, not assumed**.
+
+One of four candidates paid, and it widens a check that was already here. `test/node/receipt-references.test.ts`
+resolves citations shaped `docs/receipts/<id>.md` in the worker's `src`, `test` and `scripts`; the question was
+whether the idea holds for *every* path in *every* prose region. It does.
+`test/node/prose-references-world.test.ts` extracts all 2,931 of them and fails on any that does not resolve.
+It found four stale references nobody had caught — all outside the older check's scope, three of them outside
+the worker's source tree — including a receipt whose **Measured:** line named a path that its own line 140
+contradicted, and two client type declarations pointing at an `externals-note` document that exists nowhere.
+
+The scan deliberately stops where the toolchain starts. Sweeping code as well raised the candidate set to
+3,851 and the unresolvable set from 33 to 86 — and all 53 extra were false: template holes, property reads,
+package specifiers. A check whose new findings are all false is a check that gets muted.
+
+Two holes turned up in the checker itself, both found by measuring rather than reasoning. The suffix match
+was built as `"/" + path` without stripping a leading `./`, so it reported a live file as missing; and the
+token pattern allowed only one leading `../`, which skipped every deep relative reference in the repository
+without mis-resolving one — the scan simply reported clean. That is the defect the check exists to catch,
+twice, inside the check.
+
+**What it cannot catch is the sharper half.** A wrong claim *about a real file* resolves fine. While fixing
+the two declarations above, the first attempt **deleted** a correct reference after an `ls` of the wrong
+directory — a false claim introduced by the act of removing one, and structurally invisible here, because a
+reference that is gone is never unresolvable. Existence mechanises. Accuracy does not.
+
+So the rule the check depends on is now written down: an inline `` `path` `` is a citation and must resolve; a
+fenced block holds a literal and is skipped. Without that line, every document explaining a broken reference
+would need exempting from the rule it explains.
+
+Three detectors were rejected, each with the measurement that rejected it, in
+[`false-claim-detectability`](./docs/receipts/false-claim-detectability.md). Counts in prose — 261 of them,
+and the class most of the session's own errors fell into — because verifying a count needs to know *which
+set* it counts and the prose never says. Release gates in prose — 14 matches, zero genuine orphans, and
+"ship" turns out to be polysemous. And prose citing a test by name, which is perfectly checkable and appears
+**once**: a tripwire over a single instance cannot fail for the reason it was built, which §2b forbids. An
+earlier, broader phrase list looked far more productive at 36 apparent orphans, until reading them showed it
+was flagging `unmeasured` — which in this repository is overwhelmingly a deliberate honest-limit statement,
+the receipt discipline working. It would have punished the practice it was meant to protect.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
