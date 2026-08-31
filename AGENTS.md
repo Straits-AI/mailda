@@ -283,6 +283,17 @@ derivatives — and must actually be rebuildable, tested.
 updates `README.md` and the relevant technical docs in the same change. A receipt that no
 longer matches the code is deleted or remeasured, never left to rot.
 
+**A path in prose is a citation; a path in a fence is a literal.** Comments and paragraphs here
+carry the evidence, so a path named inline in backticks must resolve —
+`test/node/prose-references-world.test.ts` scans every one of them and fails the build on a
+reference to a file that is not there. When you need to name a path that deliberately does
+*not* exist — a wrong reference quoted as evidence, an illustrative tree, a file a consuming
+repository is told to create — put it in a fenced block, which the scan skips. The measurement
+behind the rule, and the three detectors rejected as not worth their cost, are in
+[`false-claim-detectability`](docs/receipts/false-claim-detectability.md). Existence is the part
+that mechanises; accuracy is not, so a claim about a file the reader can check cheaply — a count,
+a test name — is worth writing in a form that a check can resolve.
+
 ## Before you call it done
 
 1. Every new number has a receipt, an adapter capability field, or is `0`/`1`.
@@ -290,7 +301,8 @@ longer matches the code is deleted or remeasured, never left to rot.
 3. No `catch` swallows — each one re-raises, records, or surfaces an operational state.
 4. Names don't overclaim, and match across code, CLI, API and UI.
 5. The layer below still works.
-6. Blueprint, README and technical docs reflect what the code now does.
+6. Blueprint, README and technical docs reflect what the code now does, and every path your prose
+   names in backticks resolves to a file that is there.
 7. You can answer "why is this here?" for every line, in one sentence, without reading it again.
 8. Every new assertion has been seen to fail. Break the line it covers, watch it go red, restore it — or run
    `pnpm --filter @mailda/worker mutants <source> <test>` and read the survivors.

@@ -38,7 +38,7 @@ import { hashPassword, needsRehash, verifyPassword } from "./password.ts";
  * token, no new rotation, no family revocation. After the window it is cleared and reuse means
  * theft again.
  *
- * The client is expected to single-flight its refreshes (`client.ts`); this window is what
+ * The client is expected to single-flight its refreshes (`src/client/session.client.js`); this window is what
  * makes correctness not *depend* on the client having got that right.
  */
 

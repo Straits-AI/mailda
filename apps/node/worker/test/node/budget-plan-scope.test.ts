@@ -631,6 +631,12 @@ const FIGURES: Record<string, Classification> = {
     "validator.typical_command_us", "validator.worst_realistic_command_us", "validator.bundle_bytes",
   ),
 
+  // docs/receipts/false-claim-detectability.md
+  ...mailda(
+    "how much prose this repository carries, and how much of it names something absent on purpose",
+    "prose.references.min_scanned", "prose.references.max_exemptions",
+  ),
+
   // docs/receipts/test-timeout-headroom.md
   ...mailda(
     "how long Mailda's own suite takes on the machines that run it",

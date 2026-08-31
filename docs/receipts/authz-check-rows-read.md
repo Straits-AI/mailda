@@ -16,7 +16,7 @@ values:
   authz.supervised_read.max_queries: 4
 ---
 
-**Measured:** `apps/node/workers/state/test/authz.measure.test.ts`, run under
+**Measured:** `apps/node/worker/test/authz.measure.test.ts`, run under
 `@cloudflare/vitest-pool-workers` inside the real Workers runtime against a seeded D1.
 
 Corpus: 400 users, 40 teams, 600 mailboxes, 2,160 relationship tuples, 900 team
