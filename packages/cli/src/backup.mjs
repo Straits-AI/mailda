@@ -150,3 +150,33 @@ export function checkBackup({ index, catalog, inventory }) {
 
   return { ok: problems.length === 0, problems, notes };
 }
+
+/**
+ * Why an administrator's credentials cannot exist on this Node, or `null` if they can (#92).
+ *
+ * ## The confusing message this replaces
+ *
+ * `mailda backup` and `mailda verify-evidence` both need `org.admin`, so both asked for `MAILDA_EMAIL` and
+ * `MAILDA_PASSWORD` and then failed at sign-in. On an **unclaimed** Node that is a request for something that
+ * cannot exist: claiming is the step that creates the first organization, the first user and that user's
+ * password — `claim.ts` says so in as many words, *"Claim is also where the owner sets a password, and that is
+ * not incidental"*. No organization means no users, so there is nobody to be an administrator.
+ *
+ * The old path told the operator to go and find credentials, which is the one thing that cannot work. This
+ * says what is actually missing.
+ *
+ * Reading `claimed` rather than probing the login route on purpose: a failed sign-in is recorded and counts
+ * toward lockout, so diagnosing an unclaimed Node by attempting to authenticate against it would leave a
+ * trail of failures for a Node that has nobody to lock out.
+ */
+export function whyAdminCannotExist(report) {
+  if (report?.claimed !== false) return null;
+  return {
+    what: "this Node has not been claimed, so it has no administrator to sign in as",
+    why: "claiming creates the first organization, its first user, and that user's password — until then "
+      + "there is no organization, so there are no users and nobody holds `org.admin`. There is also nothing "
+      + "to back up yet: an unclaimed Node holds no mail",
+    fix: "claim it first — `mailda claim-secret` writes the install secret, and the claim sets the first "
+      + "administrator's email and password. Then re-run this with those in MAILDA_EMAIL and MAILDA_PASSWORD",
+  };
+}

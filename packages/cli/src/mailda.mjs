@@ -42,7 +42,7 @@ import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
 } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
-import { backupIndex, checkBackup } from "./backup.mjs";
+import { backupIndex, checkBackup, whyAdminCannotExist } from "./backup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
@@ -988,6 +988,13 @@ async function verifyEvidence(argv) {
       + "  fix      pass --url, or set MAILDA_URL");
   }
 
+  // The same check `backup` makes, for the same reason: this route is administrator-only too, and on an
+  // unclaimed Node there is no administrator to be.
+  const unclaimed = whyAdminCannotExist(await doctorReport(origin));
+  if (unclaimed !== null) {
+    fail(`${unclaimed.what}.\n\n  why      ${unclaimed.why}.\n  fix      ${unclaimed.fix}.`);
+  }
+
   const email = process.env.MAILDA_EMAIL;
   const password = process.env.MAILDA_PASSWORD;
   if (email === undefined || password === undefined) {
@@ -1256,6 +1263,16 @@ async function backup(argv) {
       + "           only into the account that failed, which is the one thing a customer-owned deployment\n"
       + "           has to survive losing\n"
       + "  fix      pass --out with a directory to write");
+  }
+
+  /*
+   * The claim state first, because the answer changes what to ask for. On an unclaimed Node the credentials
+   * this command needs cannot exist at all, and telling the operator to go and find them sends them after the
+   * one thing that cannot work.
+   */
+  const unclaimed = whyAdminCannotExist(await doctorReport(origin));
+  if (unclaimed !== null) {
+    fail(`${unclaimed.what}.\n\n  why      ${unclaimed.why}.\n  fix      ${unclaimed.fix}.`);
   }
 
   const email = process.env.MAILDA_EMAIL;

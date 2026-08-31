@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
-const { backupIndex, checkBackup, sha256Of } = backup;
+const { backupIndex, checkBackup, sha256Of, whyAdminCannotExist } = backup;
 
 /**
  * Whether a backup on disk is the one its index describes (#92).
@@ -172,6 +172,41 @@ describe("what the index says about its own limits", () => {
   });
 });
 
+describe("asking for credentials that cannot exist", () => {
+  it("refuses an unclaimed Node instead of demanding an email and password", () => {
+    /*
+     * Both `backup` and `verify-evidence` need `org.admin`, and both used to ask for `MAILDA_EMAIL` and
+     * `MAILDA_PASSWORD` and then fail at sign-in. On an unclaimed Node that is a request for something that
+     * **cannot exist**: claiming is what creates the first organization, the first user and that user's
+     * password, so until then there are no users and nobody holds anything.
+     *
+     * The old message sent an operator to find credentials, which is the one thing that cannot work.
+     */
+    const refusal = whyAdminCannotExist({ claimed: false, verdict: "degraded" });
+    expect(refusal).not.toBeNull();
+    expect(refusal?.what).toContain("has not been claimed");
+    expect(refusal?.fix).toContain("claim-secret");
+    // And it names the deeper point: there is nothing to back up on such a Node either.
+    expect(refusal?.why).toContain("nothing to back up");
+  });
+
+  it("says nothing about a claimed Node, whatever else it reports", () => {
+    expect(whyAdminCannotExist({ claimed: true, verdict: "degraded" })).toBeNull();
+    expect(whyAdminCannotExist({ claimed: true, verdict: "refuse" })).toBeNull();
+  });
+
+  it("does not guess when the report never said", () => {
+    /*
+     * A report with no `claimed` field is a Node this check cannot read — an older version, or a response
+     * that was not what it looked like. Treating that as unclaimed would refuse a working backup; the
+     * credentials path is what handles it, and it fails with the truth rather than a guess.
+     */
+    expect(whyAdminCannotExist({})).toBeNull();
+    expect(whyAdminCannotExist(undefined)).toBeNull();
+    expect(whyAdminCannotExist(null)).toBeNull();
+  });
+});
+
 describe("the command says what a passing check does not mean", () => {
   const cli = readFileSync(
     join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"),
@@ -184,6 +219,27 @@ describe("the command says what a passing check does not mean", () => {
      * the objects restores nothing — so `backup` says so last, where it is read, rather than only in a doc.
      */
     expect(cli).toContain("the evidence bytes are NOT in this backup");
+  });
+
+  it("checks the claim state before it asks for credentials", () => {
+    /*
+     * Scoped to `backup`'s own body, and that is the sixth time in this repository a lexical assertion has
+     * been caught reaching across a function boundary. Searching the whole file for
+     * `set MAILDA_EMAIL and MAILDA_PASSWORD` finds `recoveryCodes`' prompt fifty thousand characters earlier,
+     * so the order assertion compared two unrelated functions and failed against correct code.
+     */
+    const body = cli.slice(cli.indexOf("async function backup(argv)"), cli.indexOf("function verifyBackup"));
+    expect(body.length, "the backup function could not be isolated").toBeGreaterThan(500);
+
+    // Order is the whole point: asking first and refusing second is what produced the misleading message.
+    const claimCheck = body.indexOf("whyAdminCannotExist(await doctorReport(origin))");
+    const asksFor = body.indexOf("set MAILDA_EMAIL and MAILDA_PASSWORD");
+    expect(claimCheck, "backup no longer checks whether an administrator can exist").toBeGreaterThan(-1);
+    expect(asksFor, "backup no longer asks for credentials at all").toBeGreaterThan(-1);
+    expect(claimCheck).toBeLessThan(asksFor);
+
+    // Both administrator-only commands, not just the one that prompted it.
+    expect(cli.split("whyAdminCannotExist(await doctorReport(origin))").length - 1).toBe(2);
   });
 
   it("tells the operator what a verified backup has not established", () => {
