@@ -2259,12 +2259,24 @@ entry the parser cannot read **fails the build**, and the count is checked again
 of the same section rather than against the generator's own parser. The document is byte-identical across runs
 of the same commit, because "reproducible" was the word #102 used.
 
-**What is still missing, and it is the half that needs a person.** Commits authored here are unsigned —
-`git log --format='%G?'` reports `N` — and there are no signed tags. So the attestation establishes that the
-inventory came from a workflow run in this repository over a commit that passed `check`; it establishes
-nothing about who wrote that commit. Enabling a signed-commits rule needs a key you hold, and turning it on
-without one would lock the repository against its own maintainer. It is listed in `SECURITY.md` as known
-rather than left pending quietly.
+**The sixth part was considered and rejected, which is the more useful half to record.** Maintainer commit
+signing is not adopted. Merge commits into `main` are already signed by GitHub's web-flow key, so every change
+that lands carries a signature over the merge that put it there; authored commits report `N`.
+
+The argument against went: a signature is worth what its verification is worth, and **nothing in this
+product's update path verifies one.** `git pull` does not check signatures unless an operator configures an
+allowed-signers file and passes `--verify-signatures`, which nobody does. Requiring them would constrain every
+commit in order to produce a property no consumer reads — a condition backed by nothing, which is the defect
+this repository spends most of its effort removing.
+
+What answers the question that matters — *did this come from there* — is the attestation above: one command,
+tied to a workflow run over a commit that passed `check`. What it does not answer is *who wrote* that commit,
+and the control there is repository access: protected `main`, no bypass actors, a required green check, a
+reviewed pull request per change.
+
+It changes if the update path ever verifies. Shipping `git pull --verify-signatures` into an update command,
+or a preflight that checks the upstream commit against a known key, would make signing load-bearing — and
+signing should follow that rather than precede it.
 
 Two lexical assertions were caught proving nothing while this landed, both by mutation. The test requiring the
 attestation to run only on a push searched backwards from the step for the nearest `if:` — with the job's own
