@@ -1196,6 +1196,21 @@ export function page(): string {
   </div>
 </div>
 <main id="app"></main>
+<!--
+  What an operator sees when the bundle does not run (#92, found by driving the browser).
+  Without this the page rendered the wordmark and nothing else: no form, no error, no hint — and the first
+  screen a Node ever shows is the claim, so the failure landed on the one page whose whole job is to be
+  reachable. A blank page is the worst available diagnostic because it looks like a network problem.
+-->
+<noscript>
+  <div class="rack"><div class="rack-inner">
+    <p><strong>This page needs JavaScript.</strong></p>
+    <p>Claiming a Node, signing in and reading the diagnostic all run in the browser. Nothing here is
+    rendered on the server, so with scripting disabled this page can show you only this notice.</p>
+    <p>The diagnostic is available as plain text and needs no scripting:
+    <a href="/api/doctor?format=text">/api/doctor?format=text</a>.</p>
+  </div></div>
+</noscript>
 
 <script type="module" src="/app/app.js"></script>
 </body>

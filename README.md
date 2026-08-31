@@ -2658,6 +2658,36 @@ fixing: each time the cheapest correct move was to describe the defect instead o
 that left the prose better. A checker that objects to its own documentation is usually objecting to a quote
 that did not need to be there.
 
+## The claim page was a blank page without JavaScript, and a comment said otherwise (#92)
+
+Found by driving a browser at the claim screen — the point of doing it that way rather than reading.
+
+`main.tsx` stated that three screens *"stay **server-rendered** with no framework, because they are the
+screens an operator sees when the Node is broken and they must **work before any bundle loads**"*. The
+reasoning is right. The mechanism was not there. `ui.ts` exports `page()`, which ships
+`<main id="app"></main>` and a script tag; nothing in `src/*.ts` renders a claim form, and the only place the
+form's text exists is the framework-free client script.
+
+Measured by fetching it: **2.4 KB, and the only visible text was the wordmark.** No form, no error, no hint —
+on the first screen a Node ever shows. That is the worst available diagnostic, because a blank page reads as a
+network problem rather than as a requirement, and an operator claiming a Node has no reason yet to suspect
+their own browser.
+
+Half the comment was true and worth keeping: those screens use **no framework**, and React is imported
+dynamically only after sign-in, so somebody staring at a 500 does not download a hundred kilobytes to find out
+why. What was false was *server-rendered*, and it was false on the one screen where the stated reason matters
+most.
+
+There is a `<noscript>` in the shell now — it says the page needs scripting, says plainly that nothing here is
+rendered on the server so a reader stops looking for a path that does not exist, and points at
+`/api/doctor?format=text`, which genuinely needs no scripting because the server renders it. The comment says
+what ships. **Actually server-rendering those three screens is a larger change and a decision**, not an
+omission to fix quietly, so it is stated rather than done.
+
+One assertion in the new test is the measurement itself: strip the scripts, the SVG and the tags, and what a
+browser without JavaScript can show is the wordmark plus the notice. If server-rendering ever arrives, that
+test fails and should be rewritten rather than deleted.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

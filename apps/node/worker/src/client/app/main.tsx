@@ -26,11 +26,23 @@ import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
  *
  * ## What this file is not
  *
- * It is not the whole interface. Sign-in, first-run claim and a locked-out `doctor` stay server-rendered
- * with no framework, because they are the screens an operator sees when the Node is broken and they must
- * work before any bundle loads or any binding resolves. Nothing here is reachable until somebody is
- * signed in, and the framework-free script imports it dynamically at that moment — so an operator staring
- * at a 500 never downloads a hundred kilobytes of React to find out why.
+ * It is not the whole interface. Sign-in, first-run claim and a locked-out `doctor` are rendered by the
+ * **framework-free** script (`src/client/app.client.js`), because they are the screens an operator sees when
+ * the Node is broken. Nothing here is reachable until somebody is signed in, and that script imports React
+ * dynamically at that moment — so an operator staring at a 500 never downloads a hundred kilobytes of it to
+ * find out why. That part works and is the point.
+ *
+ * ## What this comment used to claim, and did not deliver
+ *
+ * It said those three screens *"stay **server-rendered** … and must work before any bundle loads"*. They are
+ * not server-rendered. `ui.ts` exports `page()`, which ships `<main id="app"></main>` and a script tag; the
+ * only thing rendered without JavaScript was the wordmark. Measured by fetching the claim page: 2.4 KB, one
+ * word of visible text, no form.
+ *
+ * So the stated *reason* was sound and the stated *mechanism* was false, on the one screen where the reason
+ * matters most — the claim page is the first thing a Node ever shows. There is a `<noscript>` in `page()` now
+ * saying so, which is the honest minimum. Actually server-rendering these three is a larger change and a
+ * decision, not an omission to fix quietly.
  *
  * ## Routing is code-based on purpose
  *
