@@ -37,6 +37,10 @@ import { dirname, resolve } from "node:path";
 import {
   activeVersionFrom, contractingAmong, servedVersionOf, shouldPromote, versionIdFrom,
 } from "./deploy-parse.mjs";
+import {
+  accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
+} from "./preflight.mjs";
+import { BUDGETS } from "@mailda/budgets";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
@@ -53,11 +57,17 @@ function fail(message) {
  * canary upload is different: its version id is the thing the next two steps act on, so it has to be parsed.
  * The output is echoed as well, because a step whose output vanishes is a step nobody can debug.
  */
-function capture(command, args, { cwd = workerDir } = {}) {
+function capture(command, args, { cwd = workerDir, quiet = false } = {}) {
   const outcome = spawnSync(command, args, { cwd, encoding: "utf8", env: process.env });
   if (outcome.error !== undefined) fail(`could not run ${command}: ${outcome.error.message}`);
   const text = `${outcome.stdout ?? ""}${outcome.stderr ?? ""}`;
-  process.stdout.write(text);
+  /*
+   * `quiet` exists for preflight, which asks `wrangler whoami` a question and then answers it in its own
+   * words. Echoing the raw account table above a summary of that same table is noise an operator has to read
+   * twice — and the deploy steps below still echo, because a step whose output vanishes is a step nobody can
+   * debug. Nothing that *acts* is quiet; only the one call that is purely a question.
+   */
+  if (!quiet) process.stdout.write(text);
   return { status: outcome.status ?? 1, text };
 }
 
@@ -386,7 +396,17 @@ function refuseIfWorkflowBelongsElsewhere() {
  */
 async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
-  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "") || null;
+
+  /*
+   * Preflight first, and before `refuseIfWorkflowBelongsElsewhere` specifically. That guard is the one that
+   * used to run first and silently no-op: on an ambiguous account `wrangler workflows list` fails, and the
+   * guard printed a note and returned, so #99's protection against one Node stealing another's Butler engine
+   * was skipped in exactly the situation where nothing else worked either. Settling the account before the
+   * guard runs is what makes the guard's answer mean something.
+   */
+  const ready = await runPreflight(argv);
+  if (!ready.ok) fail(ready.report);
+  const origin = ready.origin;
 
   /*
    * **Is there anything here yet?** Measured against a real account rather than assumed, and it changed this
@@ -423,6 +443,12 @@ async function deploy(argv) {
    * been applied or a version uploaded. The canary used to be checked at a preview URL that wrangler
    * printed, so no origin was needed; it is needed now because that URL does not exist for a Worker with
    * Durable Objects, and the check reaches the canary through the production hostname instead.
+   */
+  /*
+   * Unreachable in practice: preflight above refuses a missing origin as one of its numbered problems, and
+   * this deploy needs one for the canary gate. Kept as an assertion rather than deleted, because "some other
+   * caller cannot reach here" is the kind of claim that stops being true quietly — and the cost of it being
+   * wrong is a gate that checks `undefined/api/doctor` and reads as an unreachable canary.
    */
   if (origin === null) {
     fail(
@@ -900,6 +926,140 @@ async function verifyEvidence(argv) {
   process.exit(1);
 }
 
+/* ------------------------------------------------------------------ preflight ---------------------- */
+
+/**
+ * Everything a deploy needs, checked before a deploy changes anything (#98).
+ *
+ * ## The failure that produced this
+ *
+ * `mailda deploy` refused on an ordinary machine and named the wrong cause. The operator's wrangler token
+ * could see four Cloudflare accounts, which makes every non-interactive wrangler call fail with *"More than
+ * one account available but unable to select one in non-interactive mode"*. What the operator was told, in
+ * order: a **note** that the Workflow-theft guard had been skipped — so #99's protection silently did not
+ * run — and then *"could not tell whether this account already has a Mailda Worker"*, with the actual remedy
+ * mentioned in passing at the end of an advice block about something else.
+ *
+ * One `wrangler whoami` answers it. That is what this does, first, before anything is touched.
+ *
+ * ## Why it reports everything rather than stopping at the first problem
+ *
+ * An operator standing up a Node has several of these wrong at once, and a check that stops at the first
+ * turns one setup into a sequence of round trips, each ending in a message about a different thing. So the
+ * failures gather and print together.
+ *
+ * Returned rather than only printed, because `deploy` calls it and needs the resolved account.
+ */
+async function runPreflight(argv, { announce = true } = {}) {
+  const problems = [];
+  const notes = [];
+
+  const whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
+  const version = wranglerVersionFrom(whoami.text);
+  const floor = BUDGETS["workflow.schedules_min_wrangler"];
+
+  if (!signedIn(whoami.text)) {
+    problems.push({
+      what: "wrangler is not signed in",
+      why: "every step of a deploy is a wrangler call against your account",
+      fix: "run `wrangler login`, or set CLOUDFLARE_API_TOKEN",
+    });
+  }
+
+  const account = resolveAccount({
+    accounts: accountsFrom(whoami.text),
+    chosen: process.env.CLOUDFLARE_ACCOUNT_ID,
+  });
+  if (!account.ok) {
+    // Headline, reason and remedy all come from the resolver, because the three cases it distinguishes —
+    // ambiguous, wrong id, not signed in — fail differently and a shared sentence would be wrong for two.
+    problems.push({ what: account.what, why: account.why, fix: account.fix });
+  }
+
+  if (!atLeast(version, floor)) {
+    /*
+     * A floor rather than a preference: below it wrangler **discards** a Workflow's `schedules` block with
+     * exit 0 (`workflow-provisioning.md`), so a deploy appears to succeed and the Butler engine is not what
+     * the config asked for. Compared numerically, because "4.118.0" sorts below "4.97.0" as a string.
+     */
+    problems.push({
+      what: `wrangler ${version ?? "(version unknown)"} is below the measured floor of ${floor}`,
+      why: "below it a Workflow's `schedules` block is discarded with exit 0, so the deploy looks fine and "
+        + "the Butler engine is not what this config declares (docs/receipts/workflow-provisioning.md)",
+      fix: "run `pnpm add -D wrangler@latest` in apps/node/worker, or use `npx wrangler@latest`",
+    });
+  }
+
+  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "") || null;
+  if (origin === null) {
+    problems.push({
+      what: "the Node's URL is not known",
+      why: "the canary is checked by overriding to it on the Node's own hostname — there is no preview URL "
+        + "for a Worker with Durable Objects — so a deploy cannot verify what it is about to promote",
+      fix: "pass `--url https://<your-node>`, or set MAILDA_URL",
+    });
+  } else {
+    /*
+     * Asked of the Node rather than assumed, and a **note** rather than a problem. A Node deployed before the
+     * `version_metadata` binding existed cannot name itself, which does not stop a deploy: the canary carries
+     * the new code and will name itself, and a fall-through to the incumbent then reports no version at all,
+     * which is precisely what the gate refuses on. Worth saying in advance so the refusal is not a surprise.
+     */
+    const response = await fetch(`${origin}/api/doctor`, { headers: { accept: "application/json" } })
+      .catch(() => null);
+    if (response === null) {
+      notes.push(`could not reach ${origin}. If this is a first install that is expected — there is no Node `
+        + "yet. Otherwise the canary gate will have nothing to check.");
+    } else {
+      const report = await response.json().catch(() => null);
+      if (report === null) {
+        notes.push(`${origin}/api/doctor did not answer JSON, so its verdict cannot be read.`);
+      } else {
+        if (!reportsItsVersion(report)) {
+          notes.push("this Node does not report which version answered, so it predates the "
+            + "`version_metadata` binding. The next deploy installs it. Until then a version override that "
+            + "fails to apply is reported as `the report named no version`, which is the gate refusing "
+            + "correctly rather than a fault.");
+        }
+        if (report.verdict === "refuse") {
+          notes.push("this Node currently reports `refuse`. A deploy will still run — the gate judges the "
+            + "canary, not the incumbent — but the finding behind it is worth reading first: `mailda doctor`.");
+        }
+      }
+    }
+  }
+
+  if (announce) {
+    process.stdout.write("\n== preflight\n");
+    process.stdout.write(`   wrangler        ${version ?? "unknown"} (floor ${floor})\n`);
+    process.stdout.write(`   account         ${account.ok ? `${account.id}  ${account.name}` : "unresolved"}\n`);
+    process.stdout.write(`   node            ${origin ?? "not given"}\n`);
+    for (const note of notes) process.stdout.write(`\n   note: ${note}\n`);
+  }
+
+  if (problems.length > 0) {
+    const rendered = problems.map((one, at) =>
+      `  ${at + 1}. ${one.what}\n     why      ${one.why}\n     fix      ${one.fix}`).join("\n\n");
+    return {
+      ok: false,
+      accountId: null,
+      origin,
+      report: `${problems.length} thing(s) must be settled before a deploy can run — nothing has been `
+        + `changed.\n\n${rendered}`,
+    };
+  }
+
+  if (announce) process.stdout.write("\n   ready\n");
+  return { ok: true, accountId: account.ok ? account.id : null, origin, report: null };
+}
+
+/** `mailda preflight` — the same checks, on their own, so they can be run before committing to a deploy. */
+async function preflight(argv) {
+  const outcome = await runPreflight(argv);
+  if (!outcome.ok) fail(outcome.report);
+  process.stdout.write("\n");
+}
+
 const USAGE = `mailda — operate a Mailda Node
 
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
@@ -910,6 +1070,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda recovery-codes confirm      prove you hold one; compared, never spent
   mailda search list                 what the body index failed on, and why
   mailda search repair --id <id>     put a message back in the body index's queue
+  mailda preflight [--url <origin>]  what a deploy needs, checked before it changes anything
   mailda verify-evidence --url <o>   open every stored message and check it against its ingress hash
 
 Two things this cannot verify, said here rather than discovered later:
@@ -929,6 +1090,7 @@ switch (verb) {
   case "claim-secret": claimSecret(rest); break;
   case "set-password": setPassword(rest); break;
   case "recovery-codes": await recoveryCodes(rest); break;
+  case "preflight": await preflight(rest); break;
   case "verify-evidence": await verifyEvidence(rest); break;
   case "search": await search(rest); break;
   default:

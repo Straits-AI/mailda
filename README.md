@@ -2335,6 +2335,69 @@ operative value — and a test reads the source for a route declared more than o
 receipt names, and anything that never reached ingress. And the clean-account restore drill is still ahead of
 this — it needs a second Cloudflare account, and the export it verifies is the next layer.
 
+## The deploy refused for the right reason and named the wrong one (#98)
+
+Found while working out what a live deploy drill needed, on an ordinary machine, with nothing misconfigured
+except one thing nobody had thought to ask about: the operator's wrangler token could see **four Cloudflare
+accounts**. That makes every non-interactive wrangler call fail with a message about non-interactive mode. What
+the operator was told, in order:
+
+1. a **note** that the Workflow-theft guard had been skipped — so #99's protection against one Node stealing
+   another's Butler engine silently did not run, in exactly the situation where nothing else worked either;
+2. *"could not tell whether this account already has a Mailda Worker"*, with `CLOUDFLARE_ACCOUNT_ID` mentioned
+   in passing at the end of a three-line advice block about something else.
+
+It failed safe. It also diagnosed the wrong thing, and the guard that quietly stopped guarding is the more
+serious half — a check that treats *"I could not look"* as *"nothing to check"* reads exactly like a pass.
+
+`mailda preflight` now answers all of it in one `wrangler whoami`, before anything is touched, and `deploy`
+runs it first — **before the Workflow guard**, because settling the account is what makes that guard's answer
+mean anything:
+
+```
+== preflight
+   wrangler        4.118.0 (floor 4.97)
+   account         unresolved
+   node            https://mailda.mystraits-ai.workers.dev
+
+1 thing(s) must be settled before a deploy can run — nothing has been changed.
+
+  1. the Cloudflare account is ambiguous
+     why      this token can see 4 accounts and nothing says which one to deploy to, so every wrangler
+              call fails with a message about non-interactive mode — and the Workflow-theft guard (#99)
+              is skipped rather than enforced
+     fix      export CLOUDFLARE_ACCOUNT_ID=<one of these>
+             e842216b23604d45c318ae890bbd2999  Admin@arbuilder.app's Account
+             ...
+```
+
+Every problem is reported together rather than one per round trip, because an operator standing a Node up has
+several wrong at once and each round trip otherwise ends in a message about a different thing.
+
+**Three account failures, three messages.** One account needs no environment variable — demanding one would be
+ceremony. Several with no choice made is the defect above. And an id that is set but *not in the token's list*
+gets its own wording, because wrangler answers that with a permissions error which reads like an expired login
+and sends people to re-authenticate instead of to their typo.
+
+**The version floor is compared numerically, and that is not pedantry.** As strings `"4.118.0" < "4.97.0"`,
+because `1` sorts before `9` — so a floor checked the obvious way rejects every wrangler released after 4.99
+and accepts the ones actually too old. The exact inversion, presenting as a broken toolchain on an up-to-date
+machine. There is a test asserting the string comparison is wrong, so nobody simplifies it back.
+
+It also warns, without refusing, when a Node cannot report which version answered — that Node predates the
+`version_metadata` binding, so a version override that fails to apply is reported as *"the report named no
+version"*, which is the canary gate refusing correctly rather than a fault. Better read in advance than
+investigated mid-deploy.
+
+Its parsers are tested against **real** `wrangler whoami` output, box-drawing and all, from the machine that
+hit this. A parser tested against a fixture written from memory is a parser tested against its author's belief
+about the format, and the format is the entire difficulty — wrangler offers no structured way to ask.
+
+And the fifth lexical assertion in this repository was caught the same way as the four before it: the test
+requiring preflight to precede the Workflow guard searched for `refuseIfWorkflowBelongsElsewhere()`, which
+matched the function's **definition** two thousand characters earlier and failed against correct code. It
+matches the call site now.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
