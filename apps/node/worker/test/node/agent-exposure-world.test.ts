@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are seven", () => {
+  it("derives read for every GET but the named exceptions, and there are eight", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -68,6 +68,12 @@ describe("every route is classified, and a new one cannot default", () => {
      * a named person holds on it — and that is the same map of how to escalate that listing agents is, read
      * from the direction of the people rather than the machines.
      *
+     * `GET /api/evidence/inventory` (#92) is the eighth, and it was found the way this list is supposed to
+     * find things: the route's own documentation said it was withheld from machines, and nothing had
+     * classified it, so the GET rule offered it. It is the widest description of an organization's mail that
+     * contains no mail — every object with its size and timestamp — and it is a backup's index, which is a
+     * list of what to ask for next.
+     *
      * `GET /api/agent-capabilities` is the same reasoning about the other half. It publishes the vocabulary a
      * ceiling is chosen from — every name, and the routes behind each one — so a machine reading it is reading
      * the list of what machines may be granted. That is the map from the other direction, and it is withheld
@@ -75,7 +81,8 @@ describe("every route is classified, and a new one cannot default", () => {
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
-      "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit", "GET /api/logs",
+      "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit",
+      "GET /api/evidence/inventory", "GET /api/logs",
       "GET /api/people/:userId/mailboxes", "GET /api/search/failed", "GET /index.html",
     ]);
 

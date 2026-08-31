@@ -700,6 +700,38 @@ describe("the acts answer what the contract says they do", () => {
     expect(verdict.resumeAfter).toBeNull();
   });
 
+  it("the bucket's inventory, with the hash the seeded object should have", async () => {
+    const held = await cookie();
+
+    /*
+     * Seeded here rather than relying on the verify driver above, because ordering between `it` blocks is not
+     * a thing to depend on — and an inventory driven against an empty bucket would check the shape of an
+     * empty array, which is the shape a broken walk also returns.
+     */
+    const receipt = createSystemCtx().id("rcpt");
+    const blobKey = `${ORG}/raw/${receipt}.eml`;
+    const raw = utf8("From: a@b.test\r\nSubject: inventory\r\n\r\nbody");
+    const stored = await putEvidence(env, blobKey, raw);
+    await env.CATALOG.prepare(
+      `INSERT OR IGNORE INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to,
+         raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).bind(receipt, ORG, `evt_${receipt}`, "a@b.test", "c@d.test", raw.byteLength, blobKey,
+      stored.plaintextSha256, new Date().toISOString()).run();
+
+    const inventory = await answers("GET", "/api/evidence/inventory", { cookie: held }) as {
+      objects: Array<{ key: string; bytes: number; recordedSha256: string | null; keyGeneration: number }>;
+      resumeAfter: string | null;
+      unaccounted: number;
+    };
+
+    const found = inventory.objects.find((one) => one.key === blobKey);
+    expect(found, "the seeded object is not in the inventory").toBeDefined();
+    expect(found?.recordedSha256).toBe(stored.plaintextSha256);
+    // The sealed object is larger than its plaintext, which is what a restored copy is compared on.
+    expect(found?.bytes).toBeGreaterThan(raw.byteLength);
+    expect(found?.keyGeneration).toBeGreaterThanOrEqual(0);
+  });
+
   it("signing out, which answers the same shape an expired session does", async () => {
     /*
      * A `200` carrying an `error` field reads oddly and is correct: one shape means a client has a single
@@ -1613,7 +1645,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * bytes. A target that counts routes no schema can ever describe is one nobody can reach.
      */
     /*
-     * 99 of 104 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
+     * 100 of 105 routes: four answer something other than JSON (`NOT_JSON`) and one answers a shape MCP
      * specifies rather than this contract (`EXTERNALLY_SPECIFIED`). Both are excluded from the denominator,
      * because a target counting routes no schema can describe is one nobody aims at.
      *
@@ -1646,8 +1678,14 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * whether R2 is reachable and nothing about whether what is in it is what ingress recorded. This opens
      * each object in a bounded batch and compares the plaintext hash — the step #92 calls the one that makes
      * the rest of a restore true, and which applies to the live Node as much as to a restored copy.
+     *
+     * The 104th is `GET /api/evidence/inventory` (#92). The other half of the same step: the verifier proves
+     * an object is what was recorded, and this says what should be there at all — a copy of a bucket into
+     * another account is a copy nobody has checked without it. Every one of the four prefixes turns out to
+     * have a referent row carrying its objects' SHA-256, so a restored copy is checkable object by object
+     * rather than in aggregate.
      */
-    expect(coverage.total).toBe(103);
+    expect(coverage.total).toBe(104);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

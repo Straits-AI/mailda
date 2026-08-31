@@ -903,6 +903,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Every stored object with the hash its plaintext should have, for a restorable backup
+   *
+   * `GET /api/evidence/inventory`
+   */
+  async getEvidenceInventory(): Promise<z.infer<typeof S.evidenceInventoryResponse>> {
+    return await this.json("GET", "/api/evidence/inventory", {}, undefined) as z.infer<typeof S.evidenceInventoryResponse>;
+  }
+
+  /**
    * The operational log
    *
    * `GET /api/logs`
