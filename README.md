@@ -2454,6 +2454,23 @@ property is countable instead: exactly one request in the CLI overrides a versio
 `shouldPromote` is gone rather than left as an export nothing calls, with the expensive lesson from its
 docstring folded into its replacement.
 
+**Then it was promoted, and the drill measured what the gate can actually see.** `c7e7b917` at 100%; the Node
+now reports its own version, so every future gate can run; `migrations_applied` reads *"All 52 expected tables
+present"*; the events consumer was already attached, so the step the refusal interrupted had nothing left to do.
+
+The canary check is unauthenticated, which costs something now measured: **9 findings of 21.** The other 12
+describe the organization's mail and are withheld from an anonymous caller, so the differential comparison
+covers 9 and a regression confined to a data-disclosing finding would not block a promotion. Fixable —
+sessions are signed by the Node's key and that state is shared across versions, so signing in and sending the
+cookie *with* the override header would reach the canary authenticated — and deliberately not fixed, because it
+needs credentials in the deploy path, which is a decision about what `mailda deploy` may hold.
+
+One number moved that looked alarming and was not: the report went from 20 findings to 9 across the promotion.
+The old route reduced only `if (orgId !== null && !signedIn)`, so an **unclaimed** Node served its *full*
+report to anonymous callers; the current one reduces that case too. Nothing was removed — four checks were
+added since — and the tightening is an improvement. Recorded because the first reading of a shrinking number is
+that coverage was lost.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

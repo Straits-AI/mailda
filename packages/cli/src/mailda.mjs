@@ -172,10 +172,18 @@ async function doctor(argv) {
  * an override cannot be applied — so `verdict` alone cannot distinguish "the canary is healthy" from "the
  * version already serving is healthy". The caller compares `version` against the id it uploaded.
  *
- * Deliberately **unauthenticated**. A canary has never been signed into and `MAILDA_EMAIL` would sign in to
- * the *live* Node, not this version — so the reduced report (`withoutDataFindings`) is what this reads, which
- * is the right amount: it carries every `infrastructure` finding, including the bindings and schema checks
- * that are what a fresh version can get wrong.
+ * Deliberately **unauthenticated**, and the 31 August drill measured what that costs. The reduced report
+ * (`withoutDataFindings`) carries every `infrastructure` finding — the bindings, the schema, the vault — which
+ * is most of what a fresh version can get wrong. On the drilled Node it was **9 findings of 21**: the other 12
+ * describe the organization's mail and are withheld from an anonymous caller.
+ *
+ * So the differential gate below compares 9 findings, not 21, and a regression confined to a data-disclosing
+ * finding is invisible to it. Written here rather than left for somebody to infer from a passing deploy.
+ *
+ * It is fixable and deliberately not fixed yet: sessions are signed by the Node's own key and that state is
+ * shared across versions, so signing in normally and then sending the session cookie **with** the override
+ * header would reach the canary authenticated and compare all 21. That needs credentials in the deploy path,
+ * which is a decision about what `mailda deploy` may hold rather than a line of code.
  */
 async function doctorReport(origin, extraHeaders = {}) {
   const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
