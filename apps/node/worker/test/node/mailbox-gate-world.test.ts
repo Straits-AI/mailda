@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
 
+import { reachableRelations } from "./support/mailbox-gates.ts";
+
 /**
  * A route whose handler consults a mailbox relation must **declare** that it does.
  *
@@ -77,21 +79,6 @@ const MAILBOX_GATES = [
   "hasAnyRelation",
 ] as const;
 
-/**
- * Routes whose gate lives one call deeper than this scan can see, with the function that holds it.
- *
- * Named rather than missed. Each is declared `mailbox` in the registry on the strength of that function, so
- * `route-authority-parity.test.ts` covers them; this list records why the scan below does not find them
- * itself.
- */
-const GATED_INDIRECTLY: Readonly<Record<string, string>> = {
-  "PUT /api/drafts": "saveDraft → assertMaySend (src/drafts.ts)",
-  "POST /api/sends/:sendId/release": "releaseButlerSend → maySend (src/butler/release.ts)",
-  "POST /api/sends/:sendId/release-hold": "releasePolicyHold → maySend (src/outbound/dispatch.ts)",
-  "POST /api/sends": "sealManifest → assertMaySend (src/outbound/manifest.ts)",
-  "POST /api/sends/:sendId/retry": "retrySend → maySend (src/outbound/dispatch.ts)",
-  "DELETE /api/drafts/:draftId": "discardDraft → assertMaySend (src/drafts.ts)",
-};
 
 /**
  * Every handler block, as a **list** rather than a map, with the path it serves where that is derivable.
@@ -225,25 +212,62 @@ describe("a mailbox-gated route says so in the registry", () => {
     ).toEqual([]);
   });
 
-  it("declares every route whose gate lives one call deeper", () => {
+  it("declares every route whose gate lives below its first call", () => {
     /*
-     * The half the scan cannot see, held as an exact map rather than trusted. Every entry must be declared
-     * `mailbox`, so removing a declaration fails here even though no gate appears in `index.ts` itself.
+     * The half the block scan cannot see, **derived** rather than listed.
+     *
+     * This was `GATED_INDIRECTLY`, a six-entry object mapping route to gating function, written by hand — a
+     * second source of truth with nothing guaranteeing completeness, and incomplete the day it was written:
+     * `POST /api/cases/:caseId/:action`, `POST /api/exports`, `POST /api/exports/:exportId/run` and
+     * `GET /api/butler-runs/:runId/inspect` were all missing.
+     *
+     * `support/mailbox-gates.ts` walks the Worker's sources and answers the mechanical question — which
+     * grantable relations can this handler reach — and this asserts the registry agrees. It does not judge
+     * whether the gate is right; `route-authority-parity.test.ts` does that by granting every neighbouring
+     * relation, which is the assertion that found nine holes.
      */
-    const declared = new Map(
-      (ROUTES as readonly RouteSpec[]).map((spec) => [`${spec.method} ${spec.path}`, spec.authority?.scope]),
-    );
-    const wrong = Object.entries(GATED_INDIRECTLY)
-      .filter(([route]) => declared.get(route) !== "mailbox")
-      .map(([route, gate]) => `${route} — gated by ${gate}, declared ${declared.get(route) ?? "nothing"}`);
+    const reach = reachableRelations();
+    const declaredScopes = new Map<string, Set<string | undefined>>();
+    for (const spec of ROUTES as readonly RouteSpec[]) {
+      const key = registryTemplate(spec.path);
+      declaredScopes.set(key, (declaredScopes.get(key) ?? new Set()).add(spec.authority?.scope));
+    }
+
+    const undeclared: string[] = [];
+    let gated = 0;
+    for (const { path, source } of handlerBlocks()) {
+      if (path === null) continue;
+      const relations = reach(source);
+      if (relations.size === 0) continue;
+      gated += 1;
+      /*
+       * `mailbox`, `export` and `filtered` all state a relation requirement the parity suite drives.
+       * `filtered` was missing from the first version, which demanded a declaration for
+       * `GET /api/notifications` — whose authority is `{scope:"filtered", by:"relation", relations:
+       * ["mailbox.content.read"]}`, i.e. exactly the relation the analyser found. A check that rejects the
+       * correct declaration is worse than no check, because the only way to satisfy it is to make the
+       * registry lie.
+       */
+      const scopes = declaredScopes.get(registryTemplate(path));
+      const states = ["mailbox", "export", "filtered"].some((one) => scopes?.has(one) === true);
+      if (!states) {
+        undeclared.push(`${path} — reaches ${[...relations].sort().join(", ")}, declared ${
+          [...(scopes ?? [])].join("/") || "nothing"
+        }`);
+      }
+    }
 
     expect(
-      wrong,
-      "these routes are gated by a mailbox relation inside the function they call, and the registry does not "
-      + "say so:",
+      undeclared,
+      "these handlers can reach a grantable mailbox relation below their first call and the registry does not "
+      + "say so, so route-authority-parity.test.ts never drives them:",
     ).toEqual([]);
 
-    // The control: an empty map would satisfy the filter without checking anything.
-    expect(Object.keys(GATED_INDIRECTLY).length).toBeGreaterThan(3);
+    /*
+     * The control the hand-written map could not have: if the walk finds no gates at all — a renamed
+     * primitive, a broken import resolver — every assertion above passes over nothing.
+     */
+    expect(gated, "the walk found no gated handler, so it is reading the source wrongly").toBeGreaterThan(10);
   });
+
 });
