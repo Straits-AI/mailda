@@ -6,6 +6,7 @@ import { createSystemCtx } from "@mailda/runtime";
 import { ROUTES, machineUseful, methodNameFor, type RouteSpec } from "@mailda/contract";
 
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
+import { tools } from "../src/mcp.ts";
 
 /**
  * The MCP server (#89, ADR 12).
@@ -338,5 +339,112 @@ describe("a paged read carries its position, and a bad one is refused by the rou
       name: "getMessages", arguments: {},
     }, await cookie()) as { result: { isError: boolean } };
     expect(answer.result.isError).toBe(false);
+  });
+});
+
+describe("the catalogue depends on which class of caller is asking", () => {
+  /*
+   * One static catalogue treated every machine alike, and the cost was a tool #87 built to be offered.
+   *
+   * `POST /api/butlers/:butlerId/simulate` walks a Butler over a real past delivery, causes nothing and
+   * cannot write — the curation says *"offering this to an agent is the point of having built it"*. Its
+   * handler requires `org.admin`. A delegated `agt_` credential can never hold that, so a single list had to
+   * withhold the dry run from **everybody**, including the administrator whose assistant is the caller it was
+   * built for.
+   *
+   * Two classes, because there are two:
+   *
+   * - a person's live session acts with that person's current authority;
+   * - a delegated credential acts within the ceiling pinned when it was minted, and a tool outside that
+   *   ceiling is one it will be refused on — advertising it teaches a retry loop.
+   *
+   * **Nothing was weakened.** The handler still calls `isAdmin` first, which the third assertion below proves
+   * by driving the tool as an agent and watching the route refuse.
+   */
+  async function toolNames(headers: Record<string, string>): Promise<string[]> {
+    const response = await SELF.fetch(`${ORIGIN}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    const answer = await response.json() as { result: { tools: { name: string }[] } };
+    return answer.result.tools.map((one) => one.name);
+  }
+
+  /** A delegated credential whose ceiling is exactly `mail.read`'s routes. */
+  async function agentToken(): Promise<string> {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const mailbox = "mbx_mcpagent0000000000000000";
+    await testEnv.CATALOG.prepare(
+      "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+    ).bind(mailbox, ORG, "Enquiries", at).run();
+    for (const relation of ["mailbox.content.read", "message.export"]) {
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,'mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, USER, relation, mailbox, at).run();
+    }
+    const { mintAgent } = await import("../src/agents.ts");
+    const minted = await mintAgent(testEnv as never, createSystemCtx(), ORG, USER, {
+      name: "mcp catalogue", sponsorUserId: USER, capabilities: ["mail.read"],
+      grants: [
+        { mailboxId: mailbox, relation: "mailbox.content.read" },
+        { mailboxId: mailbox, relation: "message.export" },
+      ],
+    });
+    return minted.token;
+  }
+
+  const SIMULATE = "postButlersByButlerIdSimulate";
+
+  it("offers the Butler dry run to an administrator's session", async () => {
+    const offered = await toolNames({ cookie: await cookie() });
+    expect(
+      offered,
+      "the tool #87 built to be offered is withheld from the administrator whose assistant is asking",
+    ).toContain(SIMULATE);
+  });
+
+  it("refuses a delegated credential the endpoint itself, which is why the agent branch is unreachable", async () => {
+    /*
+     * **The finding that came out of building this**, recorded rather than papered over.
+     *
+     * `POST /mcp` is tier `surface` — *"a surface is not a capability on itself"* — so it is in no agent's
+     * pinned ceiling and `authz-read.ts` refuses the token before any catalogue is consulted. A delegated
+     * credential cannot list MCP tools at all today.
+     *
+     * So the agent branch of `tools()` is correct and currently **unreachable**. It is kept rather than
+     * deleted because the intersection it performs — machine-useful ∩ pinned ceiling — is the right answer
+     * the moment somebody decides `/mcp` should be reachable by a credential, and that is a product decision
+     * about what a long-lived machine identity may do, not something to settle inside a catalogue. This test
+     * is what will fail on the day it changes, with the reason attached.
+     */
+    const response = await SELF.fetch(`${ORIGIN}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await agentToken()}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(response.status, "a delegated credential reached /mcp, so the agent catalogue is now live and "
+      + "needs the offered/ceiling assertions this test replaced").toBe(403);
+    expect((await response.json() as { error: string }).error).toBe("E_AGENT_ACTION_NOT_PERMITTED");
+  });
+
+  it("intersects a delegated ceiling with the machine-useful set, for when the endpoint opens", () => {
+    /*
+     * The agent branch driven at the seam instead of over HTTP, since the endpoint refuses the credential.
+     * Asserting it directly is weaker than an integration test and stronger than nothing: it proves the
+     * intersection is real, so the unreachable branch is not quietly wrong.
+     */
+    const ceiling = ["GET /api/messages", "GET /api/messages/:receiptId/body"];
+    const offered = tools({ kind: "agent", ceiling }).map((one) => one.name);
+    expect(offered.sort(), "the agent catalogue is not its ceiling intersected with the machine-useful set")
+      .toEqual(["getMessages", "getMessagesByReceiptIdBody"]);
+
+    // The control: a session is offered more than that, so the intersection is doing something.
+    expect(
+      tools({ kind: "session" }).length,
+      "a session is offered no more than a two-route agent, so the split is not splitting",
+    ).toBeGreaterThan(offered.length);
   });
 });

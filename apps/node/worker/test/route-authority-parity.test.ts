@@ -478,7 +478,13 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
      * else is reported by name: a 404 that means "no such route" and a 404 that means "you may not" are
      * indistinguishable from outside, so only the status that unambiguously means *authenticate* counts.
      */
-    const anonymousIds: Record<string, string> = { mailboxId: MAILBOX, userId: MEMBER };
+    /*
+     * `action` is here for the same reason `mailboxId` is: the cases handler's regex alternates
+     * `claim|steal|release|close`, so a placeholder in that segment never matches and the router 404s before
+     * the principal check — the vacuity real ids were introduced to remove, arriving through a second segment
+     * the day a route with two of them was declared.
+     */
+    const anonymousIds: Record<string, string> = { mailboxId: MAILBOX, userId: MEMBER, action: "claim" };
     const wrong: string[] = [];
     for (const spec of scoped) {
       const path = spec.path.replace(
@@ -909,6 +915,21 @@ const UNDISCLOSING: readonly string[] = [
    * sweep touched this mailbox. Its observable is the **effect**, asserted directly in the block below.
    */
   "POST /api/sends/dispatch",
+  /*
+   * Declared because `test/node/support/mailbox-gates.ts` found their gates two and three calls below the
+   * handler — all four were absent from the hand-written map that analyser replaced, which is the argument for
+   * having replaced it. Their fixtures do not reach a disclosure here: `claim`/`steal` need a case row,
+   * `merge` needs two conversations to join, and the export routes need a request carried through the
+   * approval ceremony.
+   *
+   * Each is held by a named test elsewhere — `layer3-queue.test.ts` for the queue acts,
+   * `ediscovery-export.test.ts` for both export routes — and named here rather than passing quietly, because
+   * an absence checked against an absence is how six gates stayed untested.
+   */
+  "POST /api/cases/:caseId/:action",
+  "POST /api/conversations/merge",
+  "POST /api/exports",
+  "POST /api/exports/:exportId/run",
 ];
 
 describe("forcing the dispatch sweep reaches only mailboxes the caller may send from", () => {

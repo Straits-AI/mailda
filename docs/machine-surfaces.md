@@ -78,6 +78,33 @@ already validates.
 > agent author reading the old sentence would have expected `?q=` to be dropped and seen it forwarded, which is
 > the specific way stale documentation costs more than none.
 
+## Two classes of machine caller, not one
+
+`tools()` served one static catalogue to every caller, which treated "machine" as homogeneous. It is two:
+
+| caller | offered |
+|:--|:--|
+| a person's **live session** — MCP or Skill inside a signed-in browser or CLI | read ∪ reversible-act routes |
+| a delegated **`agt_` credential** | machine-useful routes ∩ the ceiling pinned at mint |
+| a stranger | machine-useful routes, no ceiling — the conservative answer |
+
+The cost of collapsing them was a specific tool. `POST /api/butlers/:butlerId/simulate` walks a Butler over a
+real past delivery, causes nothing and cannot write; the curation says *"offering this to an agent is the point
+of having built it"*. Its handler requires `org.admin`. A delegated credential can never hold that, so a single
+list had to withhold the dry run from **everybody** — including the administrator whose assistant is exactly
+the caller it was built for.
+
+**Nothing was weakened to bring it back.** The handler still calls `isAdmin` first. What changed is only
+whether a caller who could complete the call is told the tool exists. Every tool call still re-enters the
+ordinary router and meets `principalFor`, the route's own check and its audit entry.
+
+**A delegated credential cannot reach `/mcp` today**, and that is worth stating rather than implying
+otherwise: `POST /mcp` is tier `surface` — a surface is not a capability on itself — so it is in no agent's
+pinned ceiling and the token is refused before any catalogue is consulted. The agent branch is therefore
+correct and unreachable. It is kept because the intersection is the right answer the moment somebody decides
+a credential should reach the endpoint, and `test/mcp.test.ts` asserts the 403 so that decision announces
+itself rather than arriving silently.
+
 ## `governed` is not about permission
 
 §18 and #61 count **distinct people**. An agent acting inside somebody's session *is* that person — not a

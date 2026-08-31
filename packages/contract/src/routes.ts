@@ -326,6 +326,12 @@ export const ROUTES = [
     method: "POST",
     path: "/api/cases/:caseId/:action",
     /*
+     * `send.propose`, found by `test/node/support/mailbox-gates.ts` rather than by anybody remembering:
+     * `claim` and `steal` both gate on it two calls below this handler, and the route carried no declaration
+     * at all. It was one of four families missing from the hand-written map the analyser replaced.
+     */
+    authority: { scope: "mailbox", allOf: ["send.propose"] },
+    /*
      * One route, four acts, because the handler is one regex with an alternation — `claim|steal|release|close`
      * — rather than four guards. Registered as it is served rather than expanded into four entries that no
      * handler corresponds to one-for-one: this file's job is to describe what exists.
@@ -333,7 +339,7 @@ export const ROUTES = [
     summary: "Claim, steal, release or close a case",
     response: S.caseActionResponse,
   },
-  { method: "POST", path: "/api/conversations/merge", summary: "Merge two conversations into one", response: S.conversationMergedResponse },
+  { method: "POST", path: "/api/conversations/merge", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 
   // ---- drafting and sending (ADR 36, #61) ------------------------------------------------------------
   { method: "GET", path: "/api/drafts", summary: "Drafts this person is writing", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftListResponse },
@@ -451,8 +457,8 @@ export const ROUTES = [
     response: S.logListResponse,
   },
   { method: "GET", path: "/api/exports", summary: "Export jobs", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.exportListResponse },
-  { method: "POST", path: "/api/exports", summary: "Start an e-discovery export", response: S.exportRequestedResponse },
-  { method: "POST", path: "/api/exports/:exportId/run", summary: "Advance an export", response: S.exportRunResponse },
+  { method: "POST", path: "/api/exports", authority: { scope: "mailbox", allOf: ["ediscovery.export"] }, summary: "Start an e-discovery export", response: S.exportRequestedResponse },
+  { method: "POST", path: "/api/exports/:exportId/run", authority: { scope: "mailbox", allOf: ["ediscovery.export"] }, summary: "Advance an export", response: S.exportRunResponse },
   { method: "GET", path: "/api/exports/:exportId/objects/:objectId", summary: "One object from a completed export" , authority: { scope: "export", allOf: ["ediscovery.export"], owner: "requester" } },
 
   // ---- the sending transport's credentials (#86, ADR 33) ------------------------------------------

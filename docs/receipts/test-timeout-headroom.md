@@ -191,6 +191,29 @@ than a `projects` block *because `vitest.config.ts` is the one carrying the meas
 sentence naming the exact thing it drops, in the file dropping it. A comment describing an invariant
 reads as evidence the invariant holds, which is the trap this repository keeps walking into.
 
+### Every package, not only the worker's three
+
+The first pass fixed `apps/node/worker`'s three configs and left **six packages running `vitest run` with no
+config at all** — `butler-ast`, `contract`, `evidence`, `receipts`, `runtime`, `sdk` — each therefore on the
+5,000 ms default this receipt exists to reject. The tripwire named them in a `NO_CONFIG` list described as one
+that "can only shrink", which is the weaker form of the invariant: it tolerates the omission and asks people to
+be honest about it. `packages/evidence` then flaked once under `turbo test` at ~1.2 s idle, which is the same
+shape as the `attach-queue-consumer` failure that started this.
+
+All six carry a config now, and the allowlist is gone: the assertion is that the missing set is **empty**, so a
+seventh configless package fails immediately instead of joining a queue.
+
+`vitest.shared.ts` at the repository root is what made that affordable. It reads the value out of
+`packages/budgets/src/generated.ts` by regex rather than importing `@mailda/budgets`, because one of the six is
+`packages/receipts`, which **generates** that file — importing the package would point it at its own output,
+and exempting it would have left the gap in the package hardest to reason about. Test infrastructure sits above
+the package dependency graph; a config is not part of a package's dependency closure.
+
+The module **throws** on a missing budget rather than defaulting, and that direction is the point: a budget
+silently becoming `undefined` is how a config comes to carry vitest's default while looking like it carries a
+measurement. Mutation-proven three ways — deleting a package's config, dropping the spread from one, and making
+the module fall back to 5,000 — each fails the tripwire by name.
+
 ### Two holes, and the second one is why it stayed hidden
 
 The timeout was missing, and **the ceiling could not see the suite either.**

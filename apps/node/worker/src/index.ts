@@ -18,6 +18,7 @@ import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/p
 
 import { claimNode } from "./claim.ts";
 import { acknowledgeKeyConflict, confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
+import { agentFor } from "./agents.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
 import { agentReach, listAgents, mintAgent, revokeAgent, sponsorReach } from "./agents.ts";
 import { migrate } from "./migrate.ts";
@@ -2031,7 +2032,39 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
        * Node counts, and fails outright in workerd. The property the round trip was for — same handler,
        * same guards, same refusals — survives without it.
        */
-      return await handleMcp(request, (inner) => handler.fetch(inner, env, ctx));
+      /*
+       * **Which class of caller**, decided here because this is where the credential is.
+       *
+       * One catalogue treated every machine alike, and the cost was `POST /api/butlers/:butlerId/simulate`:
+       * #87 built the dry run to be offered to machines, its handler requires `org.admin`, and a delegated
+       * agent can never hold that — so a single list had to withhold it from the administrator as well.
+       *
+       * A person's session acts with that person's authority; a delegated credential acts within the ceiling
+       * pinned when it was minted. Advertising a tool outside that ceiling teaches a retry loop against a
+       * route that will refuse, which is the same defect as offering an `org.admin` tool to an agent.
+       *
+       * Nothing here authorizes anything. Every tool call re-enters `handler.fetch` and meets `principalFor`,
+       * the route's own check and its audit entry — this only decides what the caller is *told* exists.
+       */
+      /*
+       * The same extraction `principalFor` does. Read here rather than returned by it, because a `Principal`
+       * deliberately carries no credential — the token is a secret and the principal is the fact derived
+       * from it, which is the separation that keeps the token out of every downstream signature.
+       */
+      const authorization = request.headers.get("authorization");
+      const bearer = authorization?.startsWith("Bearer ") === true ? authorization.slice(7) : "";
+
+      const who = await principalFor(env, clock, request);
+      const caller = who === null
+        ? { kind: "anonymous" as const }
+        : who.userId.startsWith(ID_PREFIXES.agent)
+          ? {
+            kind: "agent" as const,
+            ceiling: (await agentFor(env, clock, bearer))?.actions ?? [],
+          }
+          : { kind: "session" as const };
+
+      return await handleMcp(request, (inner) => handler.fetch(inner, env, ctx), caller);
     }
 
     if (url.pathname === "/api/transport" && request.method === "GET") {
