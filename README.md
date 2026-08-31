@@ -2471,6 +2471,44 @@ report to anonymous callers; the current one reduces that case too. Nothing was 
 added since — and the tightening is an improvement. Recorded because the first reading of a shrinking number is
 that coverage was lost.
 
+## A successful deploy reported failure, and the gate saw less than it looked (#98)
+
+Two findings the drill left, both now closed.
+
+**`mailda deploy` inherited `doctor`'s exit code.** So a Node reporting `degraded` made a *successful* deploy
+exit 1 — and on a fresh Node `degraded` means `signing_key`, which self-heals on the next sign-in. Every green
+deploy to a new Node reported failure, indistinguishable in a pipeline from a deploy that never happened.
+
+The two commands are asked different questions. `doctor` is asked *how is this Node*, so its verdict **is** its
+answer and the mapping is a faithful translation. `deploy` is asked *did the deploy happen*, and a pre-existing
+degradation is neither its doing nor its subject — the gate already refused anything the canary made worse.
+
+`refuse` is the exception, and it earns an exit code for a specific reason: it is the one case the canary gate
+provably cannot catch. A Durable Object runs the promoted version only **after** traffic moves, so a fault
+inside `KeyVault` or `OutboxSweeper` appears exactly there and could not have appeared earlier. So a deploy
+ending in `refuse` exits 2 and prints the rollback with the version that was serving before it ran — the one
+value nobody can look up mid-incident.
+
+**The gate compared 9 findings of 21.** The canary check was anonymous, and `withoutDataFindings` withholds
+everything describing the organization's mail from a caller who is not an administrator. A regression confined
+to the withheld 12 would not have blocked a promotion.
+
+It can sign in now, and the reason it works is worth stating: a session is signed by the Node's own key, and
+that key lives in D1 and the vault — **state, not code** — so two versions share it. A cookie obtained from the
+incumbent is honoured by the canary, and sending it *with* the override header reaches the new version
+authenticated.
+
+The trap that shapes the implementation is not the signing in; it is the asymmetry. **Asking the canary
+authenticated and the incumbent anonymously compares 21 findings against 9**, twelve read as new, and every
+deploy is blocked by a difference in who was asking rather than in what the code does. One headers object is
+built once and used for both; the override is the only thing added on top.
+
+Credentials stay optional — a Node that cannot be deployed to because its credentials are wrong is a worse
+failure than a narrower gate — and the downgrade announces itself. The deploy now prints how many findings it
+compared and how many were withheld, because *"the gate passed"* is worth less without how much the gate could
+see. An ordinary member's credentials buy nothing here and it says so: the full report needs `org.admin`, and
+anything less is reduced to the same 9.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents

@@ -25,7 +25,7 @@ const cli = readFileSync(cliPath, "utf8")
  * the top level, so importing it would *run* it — the same defect the SDK's generator had, where a top-level
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
-const { activeVersionFrom, promotionVerdict, servedVersionOf, versionIdFrom } =
+const { activeVersionFrom, deployExitCode, doctorExitCode, promotionVerdict, servedVersionOf, versionIdFrom } =
   await import("../../../../../packages/cli/src/deploy-parse.mjs");
 
 /**
@@ -261,6 +261,98 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
   });
 });
 
+describe("what an exit code says, which the two commands answer differently", () => {
+  it("makes a degraded Node a failing doctor and a succeeding deploy", () => {
+    /*
+     * **The defect.** `mailda deploy` ended with a `doctor` run and inherited its exit code, so a Node
+     * reporting `degraded` made a *successful* deploy exit 1. On a fresh Node `degraded` means `signing_key`,
+     * which self-heals on the next sign-in — so every green deploy to a new Node reported failure, and in a
+     * pipeline that is indistinguishable from a deploy that did not happen.
+     *
+     * The two commands are asked different questions. `doctor` is asked how the Node is, so its verdict is
+     * its answer. `deploy` is asked whether the deploy happened, and a pre-existing degradation is neither
+     * its doing nor its subject — the gate already refused anything the canary made worse.
+     */
+    expect(doctorExitCode("degraded")).toBe(1);
+    expect(deployExitCode("degraded")).toBe(0);
+  });
+
+  it("makes a refusing Node fail both, because that one the gate cannot have caught", () => {
+    /*
+     * `refuse` is the exception worth an exit code, and the reason is the gate's one documented blind spot: a
+     * Durable Object runs the promoted version only **after** traffic moves, so a fault inside `KeyVault` or
+     * `OutboxSweeper` appears here and could not have appeared earlier.
+     */
+    expect(doctorExitCode("refuse")).toBe(2);
+    expect(deployExitCode("refuse")).toBe(2);
+  });
+
+  it("treats ok as ok and an unreadable verdict as neither command's success", () => {
+    expect(doctorExitCode("ok")).toBe(0);
+    expect(deployExitCode("ok")).toBe(0);
+    /*
+     * An unrecognised verdict exits 0 on both, and that is deliberate rather than overlooked: the callers
+     * refuse earlier on a report they could not read, so a verdict reaching here is one the Node produced. A
+     * non-zero default would make every future verdict name a failure until somebody updated this function.
+     */
+    expect(doctorExitCode(undefined)).toBe(0);
+    expect(deployExitCode(undefined)).toBe(0);
+  });
+
+  it("names the rollback when a promoted deploy leaves the Node refusing", () => {
+    // The one value a person cannot look up mid-incident: which version was serving before this ran.
+    const refusal = cli.indexOf("the deploy completed and the Node now reports");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(cli.slice(refusal, refusal + 700)).toContain("wrangler versions deploy ${serving}@100");
+  });
+
+  it("does not exit from inside doctor, which is what made the deploy inherit its code", () => {
+    /*
+     * `doctor` returns its verdict now; the dispatch exits on it. Asserted because the regression is a
+     * one-line convenience — putting `process.exit` back inside the function — and it would restore the
+     * defect silently, since a deploy exiting 1 after succeeding looks like a deploy that failed.
+     */
+    const body = cli.slice(cli.indexOf("async function doctor(argv)"), cli.indexOf("async function deployCookie"));
+    expect(body).not.toContain("process.exit");
+    expect(cli).toContain("process.exit(doctorExitCode(await doctor(rest)))");
+    expect(cli).toContain("process.exit(deployExitCode(after))");
+  });
+});
+
+describe("how much the gate could see, since the canary check can sign in", () => {
+  it("uses one set of credentials for both reports", () => {
+    /*
+     * Measured on the live Node: anonymous gets **9 findings of 21**, because everything describing the
+     * organization's mail is withheld from a caller who is not an administrator. So an anonymous gate compares
+     * 9, and a regression confined to the withheld 12 would not block a promotion.
+     *
+     * Signing in reaches the canary because a session is signed by the Node's own key, which lives in D1 and
+     * the vault — state, not code — and two versions share it.
+     */
+    expect(cli).toContain("deployCookie(origin)");
+    expect(cli).toContain("await doctorReport(origin, asked)");
+  });
+
+  it("prints how much it compared, so a pass carries its own reach", () => {
+    // A reduced report says so in a finding of its own; the deploy repeats the withheld count beside its
+    // verdict, because "the gate passed" is worth less without how much the gate could see.
+    expect(cli).toContain("report_reduced");
+    expect(cli).toContain("compared ");
+  });
+
+  it("falls back to anonymous rather than refusing to deploy", () => {
+    /*
+     * A Node that cannot be deployed to because its credentials are wrong is a worse failure than a narrower
+     * gate. The downgrade is allowed and is announced — a silent one is the defect this file keeps removing.
+     */
+    expect(cli).toContain("sign-in failed");
+    expect(cli).toContain("anonymously");
+    // And it is a note, not a refusal: nothing in the fallback path calls `fail(`.
+    const note = cli.indexOf("sign-in failed");
+    expect(cli.slice(note, note + 400)).not.toContain("fail(");
+  });
+});
+
 describe("the canary is reached without a preview URL, because it cannot have one", () => {
   /*
    * Cloudflare does not generate preview URLs for Workers that implement a Durable Object, and this one holds
@@ -326,8 +418,16 @@ describe("the canary is reached without a preview URL, because it cannot have on
     expect(overrides, "the canary is no longer reached by a version override").toBeGreaterThan(0);
     expect(overrides, "more than one request overrides a version — is the incumbent one of them?").toBe(1);
 
-    // And the incumbent is asked with no extra headers at all, which is what reaches the version at 100%.
-    expect(cli).toContain("await doctorReport(origin)");
+    /*
+     * And both sides are asked **alike**. Since the canary check can now sign in, the second trap is a
+     * mismatch rather than an override: authenticated canary against anonymous incumbent compares 21 findings
+     * to 9, twelve read as new, and every deploy is blocked by a difference in who was asking rather than in
+     * what the code does. So one headers object is built once and used for both, and the override is the only
+     * thing added on top of it.
+     */
+    expect(cli, "the incumbent is not asked with the same credentials as the canary")
+      .toContain("await doctorReport(origin, asked)");
+    expect(cli, "the canary does not carry the shared headers").toContain("...asked,");
   });
 
   it("refuses a deploy with no origin before it changes anything", () => {

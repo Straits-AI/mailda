@@ -167,3 +167,34 @@ export function promotionVerdict({ canary, incumbent }) {
   }
   return { promote: true, blocking, carried, why: null };
 }
+
+/**
+ * What a command's exit code should say, and why the two commands differ (#98).
+ *
+ * ## The defect
+ *
+ * `mailda deploy` ended with a `doctor` run and inherited its exit code, so a Node reporting `degraded` made
+ * a **successful** deploy exit 1. In a pipeline that reads as a failed deploy — and `degraded` on this
+ * product's most common starting state is `signing_key`, which self-heals on the next sign-in. Every green
+ * deploy to a fresh Node reported failure.
+ *
+ * ## Why they are not the same question
+ *
+ * `mailda doctor` is asked *"how is this Node?"*, so its verdict **is** its answer and the mapping is a
+ * faithful translation. `mailda deploy` is asked *"did the deploy happen?"*. A pre-existing degradation is
+ * not a deploy failure, and the gate has already refused anything the canary made **worse** — a carried
+ * finding is the incumbent's condition, which this command neither caused nor was asked about.
+ *
+ * `refuse` is the exception, and it is the case worth an exit code. It means the version now serving says it
+ * cannot do its job — and the canary gate cannot have caught it, because the one thing the gate provably does
+ * not check is Durable Object code, which runs the promoted version only after traffic moves. So a deploy
+ * that ends in `refuse` exits 2 and names the rollback.
+ */
+export function doctorExitCode(verdict) {
+  return verdict === "refuse" ? 2 : verdict === "degraded" ? 1 : 0;
+}
+
+/** A deploy that happened is a success unless the Node now refuses. See `doctorExitCode` for the argument. */
+export function deployExitCode(verdict) {
+  return verdict === "refuse" ? 2 : 0;
+}
