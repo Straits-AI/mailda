@@ -74,6 +74,13 @@ starts.
 lookbehind also blocks a mid-string match, those references were not mis-resolved but never extracted at
 all, and the scan reported clean. Both are the defect this check exists to catch, in the check itself.
 
+**A third hole, found by CI.** The control proving the walk had reached the whole repository asserted a file
+count above 500 — a bare number nobody had measured. It passed locally at 5xx and failed CI at **499**, the
+difference being build artefacts a clean checkout does not have. A count of files on disk is a property of
+the machine, not of this repository, so the control now names three files the walk must have reached: the
+root, the deepest directory it must descend into, and a package outside the worker. Environment-independent,
+and it still dies when the walk is broken.
+
 ## What this does not catch, and cannot
 
 A wrong claim *about a real file*. The `session.ts` reference above was caught only because it resolved

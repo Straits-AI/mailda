@@ -132,7 +132,18 @@ describe("the scan itself", () => {
      * it is a chosen number rather than one somebody typed.
      */
     expect(scan.refs.length).toBeGreaterThan(BUDGETS["prose.references.min_scanned"]);
-    expect(scan.disk.size).toBeGreaterThan(500);
+
+    /*
+     * The walk is checked by naming files it must have reached, not by counting what it found. The first
+     * version of this line asserted a file count above 500, which passed locally at 5xx and failed CI at
+     * 499 — the difference being build artefacts a clean checkout does not have. A count of files on disk is
+     * not a property of this repository, it is a property of the machine, and it was a bare number nobody
+     * had measured. These three are the root, the deepest directory the scan must descend into, and a
+     * package outside the worker.
+     */
+    expect(scan.disk.has("AGENTS.md")).toBe(true);
+    expect(scan.disk.has("apps/node/worker/src/client/app/types/session.d.ts")).toBe(true);
+    expect(scan.disk.has("packages/contract/src/routes.ts")).toBe(true);
   });
 
   it("keeps the exemption list from growing", () => {
