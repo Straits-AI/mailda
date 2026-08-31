@@ -2615,6 +2615,49 @@ repository, and turbo caches on the package's own inputs.** A change to the root
 cached result in place, so `pnpm test` reports green without re-running it. Recorded in the test itself, since
 anyone editing prose will meet it.
 
+## A runbook written before the drill, and a check that its commands exist (#92)
+
+Three deploy drills each spent their time rediscovering a precondition — an ambiguous account, a preview URL
+that cannot exist, a gate comparing against the wrong thing. [`docs/disaster-recovery.md`](./docs/disaster-recovery.md)
+is the restore drill's sequence written down **first**, so the fourth one can be followed rather than improvised.
+
+It names its preconditions because each has already cost something: the source Node must be claimed (an
+unclaimed one has no administrator, so the commands that need one refuse by name); the destination account must
+have **R2 enabled**, which is a dashboard-and-billing action a deploy cannot do for you; `CLOUDFLARE_ACCOUNT_ID`
+must be set when the token sees several accounts. Two facts found while writing it: there is no
+`wrangler d1 import` — `execute --file` is the restore path — and **the destination needs no claim**, because
+the catalog carries the organization and its users, so a restored Node arrives already claimed.
+
+What it will not do is pretend. It says it has not been run end to end, and it splits RTO rather than offering
+one number: **restore-to-readable** is measurable, and **restore-to-receiving** needs DNS propagation, which is
+not the product's to control. A receipt recording the first and stating the second is unmeasured is worth more
+than one figure covering both.
+
+`test/node/runbook.test.ts` is the #103 defect in a new place: the path tripwire catches a comment citing a
+file that is not there, and nothing caught a **document citing a command** that is not there. Both are claims a
+reader follows and nothing resolves — and a runbook is read once, under pressure, by somebody who cannot tell a
+stale document from a broken Node.
+
+Mutation testing found the first version checking the wrong half of its own document. The pattern was
+`\bmailda\s+`, and an actual invocation reads `node packages/cli/src/mailda.mjs backup` — after "mailda" comes
+`.mjs`, not a space. So it was matching the **prose** mentions and none of the commands an operator copies,
+which are the only ones that fail at three in the morning. Renaming a command inside the runbook's own code
+block passed. It matches both spellings now.
+
+The second gap was subtler: the blueprint and `AGENTS.md` are exempt, because one sketches thirty-three verbs
+by design and the other names two as illustrations of an error message's shape. A mutation adding the *runbook*
+to that exemption list also passed — the general non-vacuity check was satisfied by the README while the one
+document the test exists for went unchecked. It is now pinned in scope by name. And writing this turned up one
+real instance: `SECURITY.md` named a CLI command that does not exist, in my own sentence about signing.
+Rephrased rather than exempted.
+
+That is the third time in this session a checker for wrong claims has made it awkward to *write about* wrong
+claims — the path tripwire caught its own receipt, then a README section explaining an exemption, and now this
+sentence, which named the very command it was reporting as absent. The pattern is worth knowing rather than
+fixing: each time the cheapest correct move was to describe the defect instead of quoting it, and each time
+that left the prose better. A checker that objects to its own documentation is usually objecting to a quote
+that did not need to be there.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
