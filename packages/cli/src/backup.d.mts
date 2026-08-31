@@ -51,3 +51,11 @@ export function checkBackup(args: {
   problems: Array<{ what: string; fix: string }>;
   notes: string[];
 };
+
+/**
+ * Why an administrator's credentials cannot exist on this Node, or `null` if they can.
+ *
+ * An unclaimed Node has no organization, therefore no users, therefore nobody holding `org.admin`. Asking
+ * such an operator for credentials is asking for something that cannot exist.
+ */
+export function whyAdminCannotExist(report: unknown): { what: string; why: string; fix: string } | null;

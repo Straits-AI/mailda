@@ -2598,6 +2598,13 @@ bad hash, then a short inventory across three runs is how a restore becomes an e
 **An unknown format declines rather than guessing.** A future backup read by an older CLI would otherwise be
 checked against today's rules and produce confident nonsense. Declining leaves the operator their files.
 
+**Both administrator-only commands now refuse an unclaimed Node with the accurate reason.** They used to ask
+for `MAILDA_EMAIL` and `MAILDA_PASSWORD` and then fail at sign-in — which on an unclaimed Node is a request for
+something that *cannot exist*, since claiming is the step that creates the first organization, its first user,
+and that user's password. There is also nothing to back up on such a Node. The old message sent an operator
+after the one thing that cannot work; the check reads `claimed` rather than probing the login route, because a
+failed sign-in is recorded and counts toward lockout.
+
 The prose-reference tripwire from #103 caught this change **three times**, which is the return on having built
 it: the docstrings naming files the command *writes* — the same class as an export archive's entries, so the
 exemption cap moved from 26 to 30 with the reason recorded — then the sentence in the receipt explaining that
