@@ -26,6 +26,16 @@ import { pathsIn, proseLines, referencesUnder, resolves, type Reference } from "
  * because a reference that is gone is never unresolvable. Existence is the part that mechanises. Accuracy
  * is not, and [the receipt](../../../../../docs/receipts/false-claim-detectability.md) records what was
  * measured before concluding that.
+ *
+ * ## A trap for anyone editing prose and running the suite locally
+ *
+ * This test reads the **whole repository**, including files outside the package it lives in. Turbo's cache
+ * keys on the package's own inputs, so a change to the root `README.md` alone leaves the cached result in
+ * place and `pnpm test` reports green without re-running this. That happened while #92's backup commands were
+ * landing: two references added to the README passed locally and failed in CI, which runs clean.
+ *
+ * Run it directly — `npx vitest run --config vitest.node.config.ts test/node/prose-references-world.test.ts`
+ * — after editing prose outside this package, or trust CI to be the one that actually looked.
  */
 
 const ROOT = new URL("../../../../../", import.meta.url).pathname.replace(/\/$/, "");

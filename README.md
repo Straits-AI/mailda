@@ -2559,11 +2559,12 @@ failed is not a backup for a product whose selling point is that you own the acc
 
 `mailda backup --url <origin> --out <dir>` writes three files:
 
-| file | what it is |
-|---|---|
-| `catalog.sql` | `wrangler d1 export`. The thing you restore — and it carries the manifests, the audit chain and the **wrapped vault escrow**, because all three are rows |
-| `inventory.jsonl` | every R2 object with the hash its plaintext should have |
-| `index.json` | what the other two should contain, with a SHA-256 of each |
+```text
+catalog.sql       wrangler d1 export. The thing you restore — and it carries the manifests, the
+                  audit chain and the wrapped vault escrow, because all three are rows.
+inventory.jsonl   every R2 object with the hash its plaintext should have.
+index.json        what the other two should contain, with a SHA-256 of each.
+```
 
 That the escrow is a row is why #92's layers had to come in the order they did: exporting evidence nobody can
 decrypt is a backup that proves nothing, so the keys had to exist first.
@@ -2597,10 +2598,15 @@ bad hash, then a short inventory across three runs is how a restore becomes an e
 **An unknown format declines rather than guessing.** A future backup read by an older CLI would otherwise be
 checked against today's rules and produce confident nonsense. Declining leaves the operator their files.
 
-The prose-reference tripwire from #103 caught this change twice, which is the return on having built it: first
-the docstrings naming files the command *writes* — the same class as an export archive's entries, so the
-exemption cap moved from 26 to 30 with the reason recorded — and then the sentence in the receipt explaining
-that exemption, which cited one of those names inline. **The rule caught its own receipt.**
+The prose-reference tripwire from #103 caught this change **three times**, which is the return on having built
+it: the docstrings naming files the command *writes* — the same class as an export archive's entries, so the
+exemption cap moved from 26 to 30 with the reason recorded — then the sentence in the receipt explaining that
+exemption, which cited one of those names inline, and then this very section.
+
+The third catch came from CI rather than locally, and the reason is worth knowing: **this test reads the whole
+repository, and turbo caches on the package's own inputs.** A change to the root README alone leaves the
+cached result in place, so `pnpm test` reports green without re-running it. Recorded in the test itself, since
+anyone editing prose will meet it.
 
 ## Contributing
 
