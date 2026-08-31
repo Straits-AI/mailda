@@ -94,22 +94,76 @@ export function contractingAmong(listOutput, migrationsDir) {
 }
 
 /**
- * Whether a canary's verdict is good enough to move traffic to.
+ * Whether the canary is safe to promote, judged against **what is already serving** (#98).
  *
- * A function rather than an inline comparison, and the reason is a test that failed to catch anything. The
- * gate was `if (verdict !== "ok") fail(...)`, asserted **lexically** — a test read the source between the
- * check and the traffic shift and required it to contain `fail(` and to mention `verdict !== "ok"`. Both
- * remained true when the condition was mutated to `if (false && verdict !== "ok")`, which disables the gate
- * entirely. The test passed against a deploy that promotes a broken canary.
+ * ## The defect this replaces, found by running the drill
  *
- * So the decision moves here, where it can be called with a value and checked against an answer. The lexical
- * test keeps only the claim it can actually support: that the call site consults this before promoting.
+ * The gate was `shouldPromote(canary.verdict)` — promote only on `ok`. Against a live Node that refused, and
+ * the refusal was correct by its own rule and wrong for the operator:
  *
- * `degraded` does **not** promote. That is the interesting half: a degraded Node is one with a real finding —
- * no key escrow, a blind delivery channel, a stalled outbox — and "it started up" is not the bar for moving
- * every request onto it. An operator who has read the finding and decided it is acceptable promotes by hand,
- * with the command the refusal prints.
+ *   - the canary reported `degraded`, one finding: `signing_key`, *"No current signing key. One is generated
+ *     on the next sign-in, so this self-heals"*;
+ *   - the incumbent reported `degraded`, **the same one finding**.
+ *
+ * So the deploy refused to promote a version that was neither better nor worse than the one already taking
+ * every request, and told the operator to promote it by hand. A Node in a self-healing degraded state — which
+ * an unclaimed Node is, by construction, until somebody signs in — would refuse **every** deploy that way,
+ * and a gate that always has to be overridden has stopped being a gate. That is the same weak
+ * "upload, check by hand, promote" path the earlier drills recorded, arrived at from a different direction.
+ *
+ * ## What a canary can actually answer
+ *
+ * Whether the **new code** is worse. A finding the incumbent already has is not information about the new
+ * version; it is information about the Node, and it is the incumbent's problem whether or not this deploy
+ * happens. Refusing on it withholds the fix as readily as the regression.
+ *
+ * So the comparison is differential: a finding the canary has and the incumbent does not blocks. Shared
+ * findings are **carried** — reported, never silently dropped, because "it was already broken" is a sentence
+ * an operator should read rather than one a tool should act on alone.
+ *
+ * ## The one absolute rule kept
+ *
+ * `refuse` still refuses, whatever the incumbent says. `degraded` is a Node with a finding; `refuse` is a Node
+ * saying it cannot do its job, and moving every request onto one of those is not made acceptable by the fact
+ * that the current version is also broken. Two broken versions is a reason to stop, not to proceed.
+ *
+ * ## Why the decision is a function at all
+ *
+ * Inherited from `shouldPromote`, which this replaced, and kept because the reason was expensive. The gate
+ * used to be an inline `if (verdict !== "ok") fail(...)` asserted **lexically** — a test read the source
+ * between the check and the traffic shift and required it to contain `fail(` and to mention
+ * `verdict !== "ok"`. Both stayed true when the condition was mutated to `if (false && verdict !== "ok")`,
+ * which disables the gate completely, so the test passed against a deploy that promotes a broken canary.
+ *
+ * So the decision lives here, where it can be called with values and checked against answers, and the
+ * lexical test keeps only the claim it can support: that the call site consults this before shifting traffic.
  */
-export function shouldPromote(verdict) {
-  return verdict === "ok";
+export function promotionVerdict({ canary, incumbent }) {
+  const notOk = (report) =>
+    (report?.findings ?? []).filter((one) => one?.ok === false).map((one) => String(one.check));
+
+  const canaryFaults = notOk(canary);
+  const already = new Set(notOk(incumbent));
+  const blocking = canaryFaults.filter((check) => !already.has(check));
+  const carried = canaryFaults.filter((check) => already.has(check));
+
+  if (canary?.verdict === "refuse") {
+    return { promote: false, blocking, carried, why: "the canary reports `refuse`, not merely a finding" };
+  }
+  if (blocking.length > 0) {
+    return {
+      promote: false,
+      blocking,
+      carried,
+      why: `the canary has ${blocking.length} finding(s) the version now serving does not: ${blocking.join(", ")}`,
+    };
+  }
+  /*
+   * A canary that could not be read is not a canary that passed. `verdict` absent means the report was not
+   * the shape this expects, and treating that as "no new findings" would promote on a parse failure.
+   */
+  if (typeof canary?.verdict !== "string") {
+    return { promote: false, blocking, carried, why: "the canary's report carried no verdict" };
+  }
+  return { promote: true, blocking, carried, why: null };
 }

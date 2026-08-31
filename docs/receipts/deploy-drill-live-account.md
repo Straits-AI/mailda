@@ -137,6 +137,50 @@ the uploaded version — measured and reasoned in
 [`preview-urls-and-durable-objects`](./preview-urls-and-durable-objects.md). The degraded
 "upload, check by hand, promote" path recorded above is therefore history, not current behaviour.
 
+## The fourth drill, 31 August 2026: the sequence works, and the gate was wrong
+
+The first drill since the preview-URL cause was established and the gate rebuilt around a version override.
+Run against the live Node with `CLOUDFLARE_ACCOUNT_ID` set, seven pending migrations (0045–0051, all
+expansion; 0048 swaps an index and recreates it in the same file).
+
+**Every step of the sequence ran, in order, and the mechanism works:**
+
+```text
+preflight                    account resolved, wrangler 4.118.0 above the 4.97 floor
+workflow guard               mailda-butler-runs owned by mailda — ran, rather than being skipped
+migrations                   0045–0051 applied
+reading the serving version  d27a228d  (the last percentage line, parsed correctly)
+canary upload                c7e7b917
+canary at 0%                 SUCCESS: c7e7b917 at 0% and d27a228d at 100%
+override probe               answered version: c7e7b917  ← the identity gate passed
+```
+
+That seventh line is the result the previous three drills could not reach. The version override **does** reach
+a 0% version on the production hostname, and the canary named itself, so the identity check — the thing
+standing between this gate and an assertion that cannot fail — works against a real account. The incumbent
+still carries no `version` field, which makes a fall-through unmistakable rather than ambiguous.
+
+**Then the gate refused, and the refusal was the defect.** The canary reported `degraded` with one finding,
+`signing_key` — *"No current signing key. One is generated on the next sign-in, so this self-heals"*. The
+incumbent reported `degraded` with **the same one finding**. So a version neither better nor worse than the
+one already taking every request was withheld, and the operator was told to promote it by hand.
+
+An unclaimed Node is in that state by construction until somebody signs in, so every deploy to one would have
+gone the same way — which is the weak *"upload, check by hand, promote"* path the earlier drills recorded,
+reached from a different direction and for a different reason.
+
+The gate is differential now: a finding the canary has and the incumbent does not blocks; shared findings are
+reported as **carried**. `refuse` still refuses whatever the incumbent says, because two broken versions is a
+reason to stop rather than to proceed. Re-run against the same account, the gate answers
+`promote: true, carried: ["signing_key"]`.
+
+**Left in a deliberate state:** canary at 0%, incumbent serving 100%, schema advanced. Safe by design —
+expansion is backward-compatible ahead of the code — and the promotion is an operator's decision rather than
+a drill's.
+
+**One thing worth fixing separately:** `mailda deploy` takes its exit code from the closing `doctor` run, so a
+Node reporting `degraded` makes a **successful** deploy exit 1. In a pipeline that reads as a failed deploy.
+
 ## An unexplained D1 API failure during migration, 28 August 2026
 
 Not given a `values` key, because it is a **negative result whose cause is not established** and a number

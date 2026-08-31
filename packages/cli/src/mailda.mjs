@@ -35,7 +35,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import {
-  activeVersionFrom, contractingAmong, servedVersionOf, shouldPromote, versionIdFrom,
+  activeVersionFrom, contractingAmong, promotionVerdict, servedVersionOf, versionIdFrom,
 } from "./deploy-parse.mjs";
 import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
@@ -560,13 +560,30 @@ async function deploy(argv) {
       + `           \`wrangler versions deploy ${version}@100\`.`,
     );
   }
-  const verdict = report.verdict ?? "refuse";
-  if (!shouldPromote(verdict)) {
+  /*
+   * Judged against what is already serving, not against perfection — and the drill is what taught this. The
+   * gate was `shouldPromote(canary.verdict)`, which refused a canary whose only finding was the *same* one
+   * the incumbent had (`signing_key`, self-healing on an unclaimed Node). A version neither better nor worse
+   * than the one taking every request was withheld, and an operator was told to promote it by hand. Every
+   * deploy to such a Node would go that way, and a gate that always has to be overridden is not a gate.
+   *
+   * The incumbent's report is fetched **without** the override header, which reaches it because it holds
+   * 100% of the traffic. Asked after the canary rather than before, so the two are as close together in time
+   * as the sequence allows — a finding that appeared between them belongs to the Node, not to the canary.
+   */
+  const incumbent = await doctorReport(origin);
+  const gate = promotionVerdict({ canary: report, incumbent });
+
+  for (const check of gate.carried) {
+    process.stdout.write(`   carried  ${check}  — the version now serving reports this too\n`);
+  }
+
+  if (!gate.promote) {
     fail(
-      `the canary reports \`${verdict}\`, so traffic was not moved.\n\n`
+      `${gate.why}, so traffic was not moved.\n\n`
       + "  why      the version that was serving before this command ran is still the one serving. There is\n"
       + "           nothing to roll back, which is why the canary is uploaded before it is promoted.\n"
-      + "  fix      read the findings above. To promote it anyway once you have decided the finding is\n"
+      + "  fix      read the findings above. To promote it anyway once you have decided they are\n"
       + `           acceptable: \`wrangler versions deploy ${version}@100\`.`,
     );
   }

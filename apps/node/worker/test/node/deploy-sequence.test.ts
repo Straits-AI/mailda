@@ -25,7 +25,7 @@ const cli = readFileSync(cliPath, "utf8")
  * the top level, so importing it would *run* it — the same defect the SDK's generator had, where a top-level
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
-const { activeVersionFrom, servedVersionOf, shouldPromote, versionIdFrom } =
+const { activeVersionFrom, promotionVerdict, servedVersionOf, versionIdFrom } =
   await import("../../../../../packages/cli/src/deploy-parse.mjs");
 
 /**
@@ -109,7 +109,7 @@ describe("expand, canary, check, then shift", () => {
      * The decision now lives in `shouldPromote`, which is tested with values below. What is left here is the
      * one claim a lexical read can actually support: that the call site asks it, before it shifts.
      */
-    const check = cli.indexOf("shouldPromote(verdict)");
+    const check = cli.indexOf("promotionVerdict(");
     const shift = cli.indexOf("\"versions\", \"deploy\", `${version}@100`");
     expect(check, "the promotion gate is not consulted at all").toBeGreaterThan(-1);
     expect(shift).toBeGreaterThan(-1);
@@ -156,18 +156,64 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
     expect(versionIdFrom("Total Upload: 512 KiB")).toBeNull();
   });
 
-  it("promotes only an ok canary, and not a degraded one", () => {
+  it("promotes a canary no worse than what is serving, and blocks a new finding", () => {
     /*
-     * `degraded` is the interesting case. It means a real finding — no key escrow, a blind delivery channel,
-     * a stalled outbox — and "it started up" is not the bar for moving every request onto it. An operator who
-     * has read the finding and accepts it promotes by hand, with the command the refusal prints.
+     * **The defect the live drill found**, and the reason this replaced `shouldPromote(verdict)`.
+     *
+     * The old gate promoted only on `ok`. Run against the real Node: the canary reported `degraded` with one
+     * finding, `signing_key` — and the incumbent reported `degraded` with *the same one finding*. So a version
+     * neither better nor worse than the one already taking every request was withheld, and the operator was
+     * told to promote by hand. An unclaimed Node is in that state by construction until somebody signs in, so
+     * every deploy to one would have gone that way, and a gate always overridden is not a gate.
      */
-    expect(shouldPromote("ok")).toBe(true);
-    expect(shouldPromote("degraded")).toBe(false);
-    expect(shouldPromote("refuse")).toBe(false);
-    // Anything unrecognised is not a promotion either: an unparseable verdict is not a passing one.
-    expect(shouldPromote("")).toBe(false);
-    expect(shouldPromote("OK")).toBe(false);
+    const finding = (check: string) => ({ check, ok: false });
+    const clean = { verdict: "ok", findings: [] };
+
+    // The drill's exact case: identical single finding on both sides.
+    const carriedOnly = promotionVerdict({
+      canary: { verdict: "degraded", findings: [finding("signing_key")] },
+      incumbent: { verdict: "degraded", findings: [finding("signing_key")] },
+    });
+    expect(carriedOnly.promote).toBe(true);
+    expect(carriedOnly.carried).toEqual(["signing_key"]);
+    expect(carriedOnly.blocking).toEqual([]);
+
+    // A finding the incumbent does not have is the regression a canary exists to catch.
+    const regressed = promotionVerdict({
+      canary: { verdict: "degraded", findings: [finding("signing_key"), finding("evidence_bucket")] },
+      incumbent: { verdict: "degraded", findings: [finding("signing_key")] },
+    });
+    expect(regressed.promote).toBe(false);
+    expect(regressed.blocking).toEqual(["evidence_bucket"]);
+    expect(regressed.why).toContain("evidence_bucket");
+
+    // `refuse` refuses regardless: two broken versions is a reason to stop, not to proceed.
+    expect(promotionVerdict({
+      canary: { verdict: "refuse", findings: [finding("schema")] },
+      incumbent: { verdict: "refuse", findings: [finding("schema")] },
+    }).promote).toBe(false);
+
+    // The healthy case still promotes.
+    expect(promotionVerdict({ canary: clean, incumbent: clean }).promote).toBe(true);
+
+    /*
+     * A canary whose report could not be read is not a canary that passed. Treating a missing verdict as "no
+     * new findings" would promote on a parse failure — the same shape as the identity check above.
+     */
+    expect(promotionVerdict({ canary: {}, incumbent: clean }).promote).toBe(false);
+    expect(promotionVerdict({ canary: { findings: [] }, incumbent: clean }).why)
+      .toContain("no verdict");
+
+    /*
+     * An improvement promotes, which is the direction nobody thinks to check: a canary that *fixes* the
+     * incumbent's finding has fewer, not more, and must not be blocked by a comparison written backwards.
+     */
+    const improved = promotionVerdict({
+      canary: clean,
+      incumbent: { verdict: "degraded", findings: [finding("signing_key")] },
+    });
+    expect(improved.promote).toBe(true);
+    expect(improved.carried).toEqual([]);
   });
 
   it("reads the serving version as the last one with traffic, not the first named", () => {
@@ -259,10 +305,29 @@ describe("the canary is reached without a preview URL, because it cannot have on
      * substring, and the reason the value-level tests above carry the real weight.
      */
     const identity = cli.indexOf("servedVersionOf(report)");
-    const verdict = cli.indexOf("shouldPromote(");
+    const verdict = cli.indexOf("promotionVerdict(");
     expect(identity, "the responder's identity is never checked").toBeGreaterThan(-1);
     expect(verdict, "the promotion gate is never consulted").toBeGreaterThan(-1);
     expect(identity).toBeLessThan(verdict);
+  });
+
+  it("overrides to the canary exactly once, so the incumbent is really the incumbent", () => {
+    /*
+     * The mutation that survived everything else, and the most dangerous one in this sequence: fetch the
+     * incumbent's report **with** the override header and both reports come from the canary — so `blocking`
+     * is always empty and every canary promotes, including one that broke the Node. The pure function cannot
+     * see it, because it is handed two reports and has no way to know they came from the same version.
+     *
+     * The property is countable rather than a shape: there is exactly one request in this file that overrides
+     * a version, and it is the canary's. A second occurrence means either the incumbent is being overridden
+     * or somebody added a call this reasoning has not considered — both worth stopping for.
+     */
+    const overrides = cli.split("Cloudflare-Workers-Version-Overrides").length - 1;
+    expect(overrides, "the canary is no longer reached by a version override").toBeGreaterThan(0);
+    expect(overrides, "more than one request overrides a version — is the incumbent one of them?").toBe(1);
+
+    // And the incumbent is asked with no extra headers at all, which is what reaches the version at 100%.
+    expect(cli).toContain("await doctorReport(origin)");
   });
 
   it("refuses a deploy with no origin before it changes anything", () => {
