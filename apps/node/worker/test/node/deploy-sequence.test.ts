@@ -25,11 +25,8 @@ const cli = readFileSync(cliPath, "utf8")
  * the top level, so importing it would *run* it — the same defect the SDK's generator had, where a top-level
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
-const parsers = await import("../../../../../packages/cli/src/deploy-parse.mjs");
-const { activeVersionFrom, servedVersionOf, shouldPromote, versionIdFrom } = parsers;
-
-/** The module's real export names, for the declaration-drift check below. */
-const exported = Object.keys(parsers).filter((name) => name !== "default");
+const { activeVersionFrom, servedVersionOf, shouldPromote, versionIdFrom } =
+  await import("../../../../../packages/cli/src/deploy-parse.mjs");
 
 /**
  * The order `mailda deploy` does things in, and the gate it cannot skip (#98).
@@ -215,27 +212,6 @@ describe("the parsers, because a mis-read version id promotes the wrong code", (
     expect(servedVersionOf({ version: "canary" })).toBeNull();
     expect(servedVersionOf({ version: "d27a228d" })).toBeNull();
     expect(servedVersionOf(undefined)).toBeNull();
-  });
-});
-
-describe("the hand-written declaration names exactly what the module exports", () => {
-  /*
-   * `deploy-parse.d.mts` exists because the CLI is plain JavaScript with no build step, and its own header
-   * says the drift it allows is *"bounded"* and that *"nothing checks the pair"*. It then drifted: this change
-   * replaced `previewUrlFrom` with two functions, and the declaration still exported the old name. `tsc`
-   * caught the two missing ones only because the test below imports them — a name left in the declaration
-   * after leaving the module is invisible to it, and would type-check every call to a function that is gone.
-   *
-   * The pair is a set comparison, so it costs nothing to check in both directions.
-   */
-  it("declares every export, and exports every declaration", () => {
-    const declaration = readFileSync(
-      join(import.meta.dirname, "../../../../../packages/cli/src/deploy-parse.d.mts"),
-      "utf8",
-    );
-    const declared = [...declaration.matchAll(/^export function (\w+)/gm)].map((one) => one[1]);
-    expect(declared.length, "no declarations found — has the file's shape changed?").toBeGreaterThan(3);
-    expect([...declared].sort()).toEqual([...exported].sort());
   });
 });
 

@@ -53,6 +53,32 @@ as known, and each has an issue or a source comment explaining the reasoning:
   unauthenticated on purpose, because the state it exists for has no verifiable session keys. What it can do
   is bounded and asserted: it installs keys this Node already escrowed, issues no session, and grants nothing.
 
+- **Commits and tags are unsigned.** `main` is protected by a ruleset with no bypass actors and a required
+  green `check`, so what lands there has passed the suite and has gone through a pull request. What is *not*
+  yet true is cryptographic authorship: `git log --format='%G?'` reports `N` for commits authored here, and
+  there are no signed tags. This is the remaining half of [#102](https://github.com/Straits-AI/mailda/issues/102)
+  and it needs a key held by a person, which is why it is stated here rather than quietly pending.
+
+## Verifying what you merged
+
+Every push to `main` publishes a CycloneDX SBOM and a Sigstore-backed provenance attestation for it, produced
+by the `sbom` job in `.github/workflows/ci.yml` after the suite passes. The attestation is keyless — GitHub's
+OIDC identity rather than a maintainer's key — so it is available today, unlike commit signing above.
+
+```sh
+gh run download --repo Straits-AI/mailda --name mailda-sbom
+gh attestation verify mailda-sbom.cdx.json --repo Straits-AI/mailda
+```
+
+What this establishes: the inventory came from a workflow run in this repository, over a commit that passed
+`check`. What it does **not** establish: that the commit was authored by anyone in particular. That is the
+signing gap above, and the distinction is the whole reason both are listed.
+
+The SBOM is generated from `pnpm-lock.yaml` rather than from an install, so every third-party entry carries
+the integrity hash the install would have verified, and the document is byte-identical across runs of the same
+commit. A lockfile entry the generator cannot read fails the build instead of being omitted — an inventory
+missing a dependency answers "is this here?" with a confident no.
+
 ## What is in scope and worth reporting
 
 Anything that breaks a claim the code makes about itself. This project's own findings are almost all of that
