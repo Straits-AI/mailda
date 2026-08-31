@@ -19,6 +19,23 @@ const { backupIndex, checkBackup, sha256Of, whyAdminCannotExist } = backup;
  * is bad" sends an operator back to a Node that may no longer exist.
  */
 
+/**
+ * The CLI's **code**, with comments stripped.
+ *
+ * Stripped for a reason that cost a test: an assertion here searched for `"Every one opened and"` to locate
+ * the clean-sweep message, and found it four hundred characters earlier inside a **comment quoting that very
+ * message** — so an ordering check compared a comment against the code it documents and failed against
+ * correct source. That is the seventh time a lexical assertion in this repository has been defeated by a
+ * substring, and `deploy-sequence.test.ts` had already learned it; this file had not.
+ */
+const cli = readFileSync(join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"), "utf8")
+  .split("\n")
+  .filter((line) => {
+    const trimmed = line.trimStart();
+    return !(trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*"));
+  })
+  .join("\n");
+
 const CATALOG = "PRAGMA foreign_keys=OFF;\nINSERT INTO messages VALUES ('msg_1');\n";
 const INVENTORY = [
   JSON.stringify({ key: "org_x/raw/a.eml", bytes: 100, uploaded: "2026-08-31T00:00:00.000Z", keyGeneration: 1, recordedSha256: "a".repeat(64) }),
@@ -207,11 +224,32 @@ describe("asking for credentials that cannot exist", () => {
   });
 });
 
+describe("a sweep that checked nothing does not report a clean sweep", () => {
+
+  it("says there was nothing to check, rather than that everything passed", () => {
+    /*
+     * Found by running `mailda verify-evidence` against a freshly claimed Node, which printed:
+     *
+     *     0 message(s) checked in 1 batch(es), 0.0 MiB read. Every one opened and
+     *     hashed to what was recorded when it arrived.
+     *
+     * True, and it reads as reassurance about evidence that does not exist. The verifier has a test making
+     * exactly this point — `intact: true` with `checked: 0` is honest *only because the caller reads
+     * `checked`* — and then the caller wrote a sentence that did not read it. A vacuous pass in the reporting
+     * layer is the same defect as one in the assertion layer, and harder to notice because it is prose.
+     */
+    expect(cli).toContain("nothing to check: this Node holds no stored evidence yet");
+    expect(cli).toContain("That is not a clean sweep");
+
+    // And it returns before the clean-sweep sentence rather than printing both.
+    const empty = cli.indexOf("nothing to check: this Node holds no stored evidence yet");
+    const clean = cli.indexOf("Every one opened and");
+    expect(empty).toBeLessThan(clean);
+    expect(cli.slice(empty, clean)).toContain("return;");
+  });
+});
+
 describe("the command says what a passing check does not mean", () => {
-  const cli = readFileSync(
-    join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"),
-    "utf8",
-  );
 
   it("tells the operator the evidence bytes are not in the backup", () => {
     /*
@@ -232,14 +270,27 @@ describe("the command says what a passing check does not mean", () => {
     expect(body.length, "the backup function could not be isolated").toBeGreaterThan(500);
 
     // Order is the whole point: asking first and refusing second is what produced the misleading message.
-    const claimCheck = body.indexOf("whyAdminCannotExist(await doctorReport(origin))");
+    const claimCheck = body.indexOf("whyAdminCannotExist(");
     const asksFor = body.indexOf("set MAILDA_EMAIL and MAILDA_PASSWORD");
     expect(claimCheck, "backup no longer checks whether an administrator can exist").toBeGreaterThan(-1);
     expect(asksFor, "backup no longer asks for credentials at all").toBeGreaterThan(-1);
     expect(claimCheck).toBeLessThan(asksFor);
 
-    // Both administrator-only commands, not just the one that prompted it.
-    expect(cli.split("whyAdminCannotExist(await doctorReport(origin))").length - 1).toBe(2);
+    /*
+     * Both administrator-only commands, not just the one that prompted it — two calls, counted rather than
+     * asserted as "present", because applying this to one command and not the other is the likely half-fix.
+     * The count is over comment-stripped source, so it counts calls and not the prose about them.
+     */
+    expect(cli.split("whyAdminCannotExist(").length - 1).toBe(2);
+
+    /*
+     * And it reads the claim state from a probe that tolerates a 401, not from the refusing report helper.
+     * The first version called `doctorReport`, which fails on any non-2xx — fine on an unclaimed Node whose
+     * report is public, and a 401 on every claimed one, so a check added to improve one message broke both
+     * commands for the normal case. Found by running them against a real claimed Node.
+     */
+    expect(cli).toContain("async function claimState(origin)");
+    expect(cli).toContain('if (response.status === 401) return "claimed"');
   });
 
   it("tells the operator what a verified backup has not established", () => {

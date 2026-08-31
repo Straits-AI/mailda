@@ -172,7 +172,7 @@ async function doctor(argv) {
 }
 
 /**
- * A session cookie for the deploy's own checks, or `null` if none was asked for (#98).
+ * A session cookie, or `null` if none could be had (#98, #92).
  *
  * ## Why this exists, measured rather than supposed
  *
@@ -188,7 +188,14 @@ async function doctor(argv) {
  * sending it *with* the override header reaches the new version authenticated. Nothing about it is
  * version-specific, which is what makes this possible at all.
  *
- * ## Optional, and honest about the cost when it is absent
+ * ## Four callers, and only one treats absence as acceptable
+ *
+ * The deploy falls back to an anonymous canary check, because a Node that cannot be deployed to because its
+ * credentials are wrong is a worse failure than a narrower gate. `backup`, `verify-evidence` and
+ * `recovery-codes` cannot fall back at all — their routes are administrator-only — so each checks for `null`
+ * and refuses. The decision is the caller's, which is why this returns rather than exits.
+ *
+ * ## Optional for the deploy, and honest about the cost when it is absent
  *
  * No credentials means the anonymous check, which is weaker rather than broken — it still carries every
  * `infrastructure` finding: the bindings, the schema, the vault. The deploy says which of the two it did, so
@@ -198,7 +205,7 @@ async function doctor(argv) {
  * is reduced with a different reason and the same 9 findings. Said plainly, because supplying a non-admin
  * account and believing the check widened is worse than knowing it did not.
  */
-async function deployCookie(origin) {
+async function sessionCookie(origin) {
   const email = process.env.MAILDA_EMAIL;
   const password = process.env.MAILDA_PASSWORD;
   if (email === undefined || password === undefined) return null;
@@ -251,23 +258,35 @@ async function deployCookie(origin) {
  * header would reach the canary authenticated and compare all 21. That needs credentials in the deploy path,
  * which is a decision about what `mailda deploy` may hold rather than a line of code.
  */
-async function doctorReport(origin, extraHeaders = {}) {
+async function doctorReport(origin, extraHeaders = {}, subject = "the Node") {
+  /*
+   * `subject` exists because this helper's refusals used to be written for its first caller only. Four
+   * commands share it now, and `mailda verify-evidence` against a claimed Node answered:
+   *
+   *     the canary answered 401 at /api/doctor
+   *     fix  the previous version is still serving; nothing was promoted
+   *
+   * — three sentences about a deploy, from a command that deploys nothing. A message that names the wrong
+   * act sends its reader to the wrong place, which costs more than saying nothing.
+   */
   const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
     headers: { accept: "application/json", ...extraHeaders },
-  }).catch((error) => fail(`could not reach the canary at ${origin}: ${error.message}`));
+  }).catch((error) => fail(`could not reach ${subject} at ${origin}: ${error.message}`));
   const text = await response.text();
   if (!response.ok && response.status !== 503) {
     fail(
-      `the canary answered ${response.status} at /api/doctor\n${text.slice(0, 400)}\n\n`
-      + "  why      an unreachable or unreadable canary is not a version to move traffic to\n"
-      + "  fix      the previous version is still serving; nothing was promoted",
+      `${subject} answered ${response.status} at /api/doctor\n${text.slice(0, 400)}\n\n`
+      + `  why      an unreachable or unreadable report is not something to act on\n`
+      + `  fix      ${response.status === 401
+        ? "sign in — set MAILDA_EMAIL and MAILDA_PASSWORD. A claimed Node gates its report."
+        : "read the body above; nothing was changed"}`,
     );
   }
   let report;
   try {
     report = JSON.parse(text);
   } catch {
-    fail(`the canary's report was not JSON:\n${text.slice(0, 400)}`);
+    fail(`${subject}'s report was not JSON:\n${text.slice(0, 400)}`);
   }
   for (const finding of report.findings ?? []) {
     if (!finding.ok) process.stdout.write(`   ${finding.severity}  ${finding.check}  ${finding.detail}\n`);
@@ -640,14 +659,14 @@ async function deploy(argv) {
    * read as new, and every deploy would be blocked by a difference in who was asking rather than in what
    * the code does. Like for like or not at all.
    */
-  const cookie = await deployCookie(origin);
+  const cookie = await sessionCookie(origin);
   const asked = cookie === null ? {} : { cookie };
   process.stdout.write(`   checking ${cookie === null ? "anonymously" : "signed in"}\n`);
 
   const report = await doctorReport(origin, {
     ...asked,
     "Cloudflare-Workers-Version-Overrides": `mailda="${version}"`,
-  });
+  }, "the canary");
   const answered = servedVersionOf(report);
   if (answered !== version) {
     fail(
@@ -671,7 +690,7 @@ async function deploy(argv) {
    * 100% of the traffic. Asked after the canary rather than before, so the two are as close together in time
    * as the sequence allows — a finding that appeared between them belongs to the Node, not to the canary.
    */
-  const incumbent = await doctorReport(origin, asked);
+  const incumbent = await doctorReport(origin, asked, "the version now serving");
   const gate = promotionVerdict({ canary: report, incumbent });
 
   for (const check of gate.carried) {
@@ -818,18 +837,21 @@ async function recoveryCodes(argv) {
       + "  fix      export them, or use the dashboard");
   }
 
-  const signIn = await fetch(`${origin}/api/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
-  if (!signIn.ok) fail(`sign-in failed (${signIn.status}) — these routes need an administrator`);
-  const token = (await signIn.json()).access_token;
+  /*
+   * A **cookie**, not a bearer token. `POST /api/auth/login` answers
+   * `{signedIn, userId, organizationId, accessExpiresAt}` and sets cookies — it has never returned an
+   * `access_token`. This read `(await signIn.json()).access_token`, which is `undefined`, and sent
+   * `Authorization: Bearer undefined`, so every one of these routes answered 401. Found by running the
+   * command against a real claimed Node; nothing in the suite could see it, because the tests drive the
+   * routes directly and never the CLI's own sign-in.
+   */
+  const cookie = await sessionCookie(origin);
+  if (cookie === null) fail("could not sign in — these routes need an administrator.");
 
   const post = async (path, body) => {
     const response = await fetch(`${origin}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify(body ?? {}),
     }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
     const payload = await response.json().catch(() => ({}));
@@ -898,14 +920,10 @@ async function search(argv) {
     fail("set MAILDA_EMAIL and MAILDA_PASSWORD — both routes are administrator-only");
   }
 
-  const signIn = await fetch(`${origin}/api/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
-  if (!signIn.ok) fail(`sign-in failed (${signIn.status}) — these routes need an administrator`);
-  const token = (await signIn.json()).access_token;
-  const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  // A cookie, for the reason argued at `recovery-codes`: the login route has never returned a bearer token.
+  const held = await sessionCookie(origin);
+  if (held === null) fail("could not sign in — these routes need an administrator.");
+  const auth = { cookie: held, "content-type": "application/json" };
 
   const listed = await fetch(`${origin}/api/search/failed`, { headers: auth })
     .then((response) => response.json())
@@ -990,7 +1008,7 @@ async function verifyEvidence(argv) {
 
   // The same check `backup` makes, for the same reason: this route is administrator-only too, and on an
   // unclaimed Node there is no administrator to be.
-  const unclaimed = whyAdminCannotExist(await doctorReport(origin));
+  const unclaimed = whyAdminCannotExist({ claimed: await claimState(origin) === "unclaimed" ? false : true });
   if (unclaimed !== null) {
     fail(`${unclaimed.what}.\n\n  why      ${unclaimed.why}.\n  fix      ${unclaimed.fix}.`);
   }
@@ -1004,13 +1022,9 @@ async function verifyEvidence(argv) {
       + "  fix      export them, then re-run");
   }
 
-  const signIn = await fetch(`${origin}/api/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
-  if (!signIn.ok) fail(`sign-in failed (${signIn.status}) — this route needs an administrator`);
-  const token = (await signIn.json()).access_token;
+  // A cookie, for the reason argued at `recovery-codes`: the login route has never returned a bearer token.
+  const cookie = await sessionCookie(origin);
+  if (cookie === null) fail("could not sign in — this route needs an administrator.");
 
   process.stdout.write("\n== checking stored evidence against the hashes taken at ingress\n");
 
@@ -1029,7 +1043,7 @@ async function verifyEvidence(argv) {
     const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
     const response = await fetch(`${origin}/api/evidence/verify${query}`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: "{}",
     }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
     const payload = await response.json().catch(() => ({}));
@@ -1049,6 +1063,23 @@ async function verifyEvidence(argv) {
   }
 
   const megabytes = (bytes / 1024 / 1024).toFixed(1);
+
+  /*
+   * Nothing checked is not a clean bill of health, and this said it was. Run against a freshly claimed Node
+   * it printed *"0 message(s) checked … Every one opened and hashed to what was recorded"*, which is true and
+   * reads as reassurance about evidence that does not exist. The verifier itself has a test for exactly this
+   * — `intact: true` with `checked: 0` is honest only because the caller reads `checked` — and then the
+   * caller wrote a sentence that did not.
+   */
+  if (checked === 0) {
+    process.stdout.write(
+      "\n   nothing to check: this Node holds no stored evidence yet.\n"
+      + "   That is not a clean sweep. A Node that has received no mail has nothing to verify, and this\n"
+      + "   command cannot tell you anything about one until it does.\n\n",
+    );
+    return;
+  }
+
   if (faults.length === 0) {
     process.stdout.write(
       `\n   ${checked} message(s) checked in ${batches} batch(es), ${megabytes} MiB read. Every one opened and\n`
@@ -1216,6 +1247,41 @@ async function preflight(argv) {
   process.stdout.write("\n");
 }
 
+/**
+ * Whether this Node has been claimed, without needing to be signed in (#92).
+ *
+ * ## The regression this exists to fix
+ *
+ * The unclaimed check went in as `whyAdminCannotExist(await doctorReport(origin))`, and `doctorReport`
+ * **refuses** on a non-2xx. That works on an unclaimed Node, whose report is public — and 401s on a claimed
+ * one, which is every Node anybody actually uses. So a check added to make one message clearer broke both
+ * commands for the normal case, and the failure was invisible until the commands were run against a claimed
+ * Node.
+ *
+ * ## Why a 401 is the answer rather than an obstacle
+ *
+ * `/api/doctor` is public on an unclaimed Node and gated once claimed — that gating *is* the signal. A 401
+ * here means there is an organization to sign in to, which is precisely what these commands need to know.
+ * So the states are read from the status code and only then from the body:
+ *
+ *   401                  claimed. Gated, therefore claimed.
+ *   200, claimed: false   unclaimed. There is no administrator to be.
+ *   200, claimed: true    claimed, and this caller is somehow already authorized.
+ *   anything else         unknown — and unknown proceeds, because refusing on an unreadable probe would
+ *                         block a working backup over a network hiccup.
+ */
+async function claimState(origin) {
+  const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
+    headers: { accept: "application/json" },
+  }).catch(() => null);
+  if (response === null) return "unknown";
+  if (response.status === 401) return "claimed";
+  if (!response.ok) return "unknown";
+  const report = await response.json().catch(() => null);
+  if (report === null || typeof report.claimed !== "boolean") return "unknown";
+  return report.claimed ? "claimed" : "unclaimed";
+}
+
 /* ------------------------------------------------------------------ backup ------------------------- */
 
 /**
@@ -1270,7 +1336,7 @@ async function backup(argv) {
    * this command needs cannot exist at all, and telling the operator to go and find them sends them after the
    * one thing that cannot work.
    */
-  const unclaimed = whyAdminCannotExist(await doctorReport(origin));
+  const unclaimed = whyAdminCannotExist({ claimed: await claimState(origin) === "unclaimed" ? false : true });
   if (unclaimed !== null) {
     fail(`${unclaimed.what}.\n\n  why      ${unclaimed.why}.\n  fix      ${unclaimed.fix}.`);
   }
@@ -1282,7 +1348,7 @@ async function backup(argv) {
       + "  why      the inventory is administrator-only: it lists every object this organization holds\n"
       + "  fix      export them, then re-run");
   }
-  const cookie = await deployCookie(origin);
+  const cookie = await sessionCookie(origin);
   if (cookie === null) fail("could not sign in, so the inventory cannot be read.");
 
   mkdirSync(out, { recursive: true });
