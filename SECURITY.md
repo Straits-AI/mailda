@@ -53,11 +53,25 @@ as known, and each has an issue or a source comment explaining the reasoning:
   unauthenticated on purpose, because the state it exists for has no verifiable session keys. What it can do
   is bounded and asserted: it installs keys this Node already escrowed, issues no session, and grants nothing.
 
-- **Commits and tags are unsigned.** `main` is protected by a ruleset with no bypass actors and a required
-  green `check`, so what lands there has passed the suite and has gone through a pull request. What is *not*
-  yet true is cryptographic authorship: `git log --format='%G?'` reports `N` for commits authored here, and
-  there are no signed tags. This is the remaining half of [#102](https://github.com/Straits-AI/mailda/issues/102)
-  and it needs a key held by a person, which is why it is stated here rather than quietly pending.
+- **Authored commits are unsigned, and this is a decision rather than a gap.** Merge commits into `main` *are*
+  signed — GitHub's web-flow key, `B5690EEEBB952194` — so every change that reaches `main` carries a signature
+  over the merge that put it there. Individually authored commits report `N`, and there are no signed tags.
+
+  Maintainer commit signing was considered under
+  [#102](https://github.com/Straits-AI/mailda/issues/102) and **not adopted**, because a signature is worth
+  what its verification is worth and nothing in this product's update path verifies one. `git pull` does not
+  check signatures unless an operator configures `gpg.ssh.allowedSignersFile` and passes
+  `--verify-signatures`, which nobody does. Requiring signatures would have constrained every commit to
+  produce a property no consumer reads — the same defect as a condition backed by nothing.
+
+  What answers the actual question — *did this come from there* — is the provenance attestation below, which
+  is verifiable in one command and is tied to a workflow run in this repository over a commit that passed
+  `check`. **What it does not answer is who wrote that commit.** Repository access is the control there:
+  protected `main`, no bypass actors, a required green check, and a reviewed pull request per change.
+
+  This changes if the update path ever verifies: shipping `git pull --verify-signatures` into `mailda update`,
+  or a preflight that checks the upstream commit against a known key, would make signing load-bearing. Signing
+  should follow that, not precede it.
 
 ## Verifying what you merged
 
