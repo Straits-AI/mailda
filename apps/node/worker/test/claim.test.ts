@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createFrozenCtx } from "@mailda/runtime";
 
 import { claimNode, seedClaimSecret } from "../src/claim.ts";
+import { isAdmin } from "../src/access.ts";
 import { verifyAccessToken } from "../src/auth/jwt.ts";
 import { clearKeyCache } from "../src/auth/keys.ts";
 import { drainOutbox, pendingEvents } from "../src/outbox.ts";
@@ -54,6 +55,55 @@ describe("node claim (§5A)", () => {
     const user = await env.CATALOG.prepare("SELECT email FROM users WHERE id = ?")
       .bind(r.userId).first<{ email: string }>();
     expect(user?.email).toBe("owner@example.com");
+  });
+
+  it("makes the owner an administrator, which is what the whole admin surface rests on", async () => {
+    /*
+     * **The deadlock this closes (#129).** The claim granted three relations, all on the first mailbox, and no
+     * `org.admin`. That relation is `conferredBy: "admin_grant"` and `grant()` calls `assertAdmin` first — so
+     * with no tuple in existence nobody held it and nobody could confer it. Every administrator route was
+     * unreachable on every Node ever claimed.
+     *
+     * Measured on a live Node before the fix: the owner got 403 on `/api/audit`, `/api/logs` and
+     * `/api/agents`, and 404 on `/api/people` and `/api/policies` — §5C answering as though they did not
+     * exist. An operator who claimed a Node could read one mailbox and send from it.
+     *
+     * It went unnoticed because every other test inserts this tuple directly, so the admin routes were always
+     * exercised with an administrator the claim would never have produced. This is the one test that asks
+     * whether a **claimed** Node has one, which is the property an install actually depends on.
+     */
+    const ctx = createFrozenCtx(1_800_000_000_000);
+    await seedClaimSecret(env, ctx, SECRET);
+    const claimed = await claimNode(env, ctx, SECRET, "owner@example.test", PASSWORD, "Acme");
+    expect(claimed.status).toBe("claimed");
+
+    // From the claim's own return rather than from a table lookup: it reports both ids, and querying for
+    // them would be a second source that can disagree with the rows it just wrote.
+    expect(claimed.orgId).toBeDefined();
+    expect(claimed.userId).toBeDefined();
+
+    /*
+     * Asked through `isAdmin` rather than by counting tuples, because that function is what every route
+     * consults — a test reading the row directly would pass against a tuple shaped wrongly for the query
+     * (the object type, or the object id being the mailbox rather than the organization).
+     */
+    expect(await isAdmin(env, claimed.orgId!, claimed.userId!)).toBe(true);
+  });
+
+  it("grants nothing on the organization beyond that, so the claim is not a blanket", async () => {
+    /*
+     * The other direction, and the reason this is a separate assertion: "the owner can do everything" is a
+     * fix that would also pass the test above. What the claim should produce is one organization-scoped
+     * relation and the mailbox grants it already made — not every relation in the registry.
+     */
+    const ctx = createFrozenCtx(1_800_000_000_000);
+    await seedClaimSecret(env, ctx, SECRET);
+    await claimNode(env, ctx, SECRET, "owner@example.test", PASSWORD, "Acme");
+
+    const rows = await env.CATALOG.prepare(
+      "SELECT relation FROM relationship_tuples WHERE object_type = 'organization' ORDER BY relation",
+    ).all<{ relation: string }>();
+    expect(rows.results.map((one) => one.relation)).toEqual(["org.admin"]);
   });
 
   it("is one-time: a second claim is refused even with the right secret", async () => {

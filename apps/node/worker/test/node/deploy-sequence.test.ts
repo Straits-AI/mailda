@@ -312,7 +312,7 @@ describe("what an exit code says, which the two commands answer differently", ()
      * one-line convenience — putting `process.exit` back inside the function — and it would restore the
      * defect silently, since a deploy exiting 1 after succeeding looks like a deploy that failed.
      */
-    const body = cli.slice(cli.indexOf("async function doctor(argv)"), cli.indexOf("async function deployCookie"));
+    const body = cli.slice(cli.indexOf("async function doctor(argv)"), cli.indexOf("async function sessionCookie"));
     expect(body).not.toContain("process.exit");
     expect(cli).toContain("process.exit(doctorExitCode(await doctor(rest)))");
     expect(cli).toContain("process.exit(deployExitCode(after))");
@@ -329,8 +329,8 @@ describe("how much the gate could see, since the canary check can sign in", () =
      * Signing in reaches the canary because a session is signed by the Node's own key, which lives in D1 and
      * the vault — state, not code — and two versions share it.
      */
-    expect(cli).toContain("deployCookie(origin)");
-    expect(cli).toContain("await doctorReport(origin, asked)");
+    expect(cli).toContain("sessionCookie(origin)");
+    expect(cli).toContain("await doctorReport(origin, asked,");
   });
 
   it("prints how much it compared, so a pass carries its own reach", () => {
@@ -426,7 +426,7 @@ describe("the canary is reached without a preview URL, because it cannot have on
      * thing added on top of it.
      */
     expect(cli, "the incumbent is not asked with the same credentials as the canary")
-      .toContain("await doctorReport(origin, asked)");
+      .toContain("await doctorReport(origin, asked,");
     expect(cli, "the canary does not carry the shared headers").toContain("...asked,");
   });
 

@@ -109,6 +109,29 @@ export async function claimNode(
     // identity should be held by fewer of them. Granting `send.propose` in the *same batch* as the check
     // that requires it is not tidiness — a check shipped without its grant denies the Node's own owner
     // and leaves a freshly claimed Node unable to send at all.
+    /*
+     * **The owner is this organization's administrator** (#129).
+     *
+     * Absent until now, and its absence was a deadlock rather than a missing convenience. `org.admin` is
+     * declared `conferredBy: "admin_grant"` and `grant()` calls `assertAdmin` before it writes — so with no
+     * `org.admin` tuple in existence, nobody could hold it and nobody could confer it. Every administrator
+     * route was unreachable on every Node ever claimed: the audit trail, the log, people, agents, policies,
+     * holds, transport, recovery-code rotation, and the evidence verification #92's backup needs. An operator
+     * who claimed a Node could read one mailbox and send from it.
+     *
+     * It went unnoticed because fixtures insert this tuple directly, so every admin route was tested with an
+     * administrator the claim would never have produced. `test/claim.test.ts` now claims a Node and asks
+     * whether its owner is one.
+     *
+     * On the **organization**, directly, because that is what `isAdmin` reads. An owners *team* would make a
+     * later transfer of ownership tidier and is a design question rather than a fix — recorded on the issue
+     * rather than decided here.
+     */
+    env.CATALOG.prepare(
+      `INSERT INTO relationship_tuples
+         (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("rt"), orgId, userId, "org.admin", "organization", orgId, at),
     env.CATALOG.prepare(
       `INSERT INTO relationship_tuples
          (id, org_id, subject_id, relation, object_type, object_id, created_at)
