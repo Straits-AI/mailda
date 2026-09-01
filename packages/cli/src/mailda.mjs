@@ -42,7 +42,9 @@ import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
 } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
-import { backupIndex, checkBackup, whyAdminCannotExist } from "./backup.mjs";
+import {
+  backupIndex, checkBackup, exportableTables, migrationsToReapply, whyAdminCannotExist,
+} from "./backup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workerDir = resolve(here, "../../../apps/node/worker");
@@ -1353,11 +1355,54 @@ async function backup(argv) {
 
   mkdirSync(out, { recursive: true });
 
+  /*
+   * Which tables to ask for, derived from the database rather than listed. `wrangler d1 export` refuses a
+   * whole database that contains a virtual table — *"cannot export databases with Virtual Tables (fts5)"* —
+   * and this catalog has two, so asking for the database exported nothing at all. Naming the tables is
+   * accepted; the reasoning about which to leave out is in `exportableTables`.
+   */
+  process.stdout.write("\n== reading the catalog's shape\n");
+  const schema = capture("npx", ["wrangler", "d1", "execute", "CATALOG", "--remote", "--json",
+    "--command", "SELECT name, sql FROM sqlite_master WHERE type = 'table'", ...ENV], { quiet: true });
+  if (schema.status !== 0) fail(`could not read the catalog's table list (exit ${schema.status}).`);
+  let master;
+  try {
+    const parsed = JSON.parse(schema.text.slice(schema.text.indexOf("[")));
+    master = parsed[0]?.results ?? [];
+  } catch {
+    fail("could not parse the catalog's table list. Nothing was written.");
+  }
+  const { included, excluded } = exportableTables(master);
+  if (included.length === 0) fail("the catalog reported no exportable tables. Nothing was written.");
+  process.stdout.write(`   ${included.length} table(s) to export, ${excluded.length} left out\n`);
+  for (const one of excluded) process.stdout.write(`   omitting  ${one.name}  — ${one.why}\n`);
+
   process.stdout.write("\n== exporting the catalog\n");
   const catalogPath = `${out}/catalog.sql`;
   if (run("npx", ["wrangler", "d1", "export", "CATALOG", "--remote", "--output", catalogPath,
-    "--skip-confirmation", ...ENV]) !== 0) {
+    "--skip-confirmation", ...ENV, ...included.flatMap((name) => ["--table", name])]) !== 0) {
     fail("exporting D1 failed, so there is no backup. Nothing was written that could be mistaken for one.");
+  }
+
+  /*
+   * Which migrations a restore must re-run. `d1_migrations` is an ordinary table and therefore exported, so a
+   * restored catalog claims the search migrations were applied while the virtual tables they create are
+   * absent — and `migrations apply` will believe it and skip. Read from the exported rows so the list
+   * describes this backup rather than whatever checkout restores it.
+   */
+  const applied = capture("npx", ["wrangler", "d1", "execute", "CATALOG", "--remote", "--json",
+    "--command", "SELECT name FROM d1_migrations", ...ENV], { quiet: true });
+  let reapply = [];
+  if (applied.status === 0) {
+    try {
+      const rows = JSON.parse(applied.text.slice(applied.text.indexOf("[")))[0]?.results ?? [];
+      reapply = migrationsToReapply(master, rows);
+    } catch {
+      /* Left empty rather than guessed at; `verify-backup` reports an empty list as unknown. */
+    }
+  }
+  if (reapply.length > 0) {
+    process.stdout.write(`\n   a restore must re-run: ${reapply.join(", ")}\n`);
   }
 
   process.stdout.write("\n== listing the evidence\n");
@@ -1378,7 +1423,11 @@ async function backup(argv) {
     for (const object of page.objects ?? []) lines.push(JSON.stringify(object));
     objects += (page.objects ?? []).length;
     unaccounted += page.unaccounted ?? 0;
-    process.stdout.write(`   ${objects} object(s)\r`);
+    /*
+     * `\r` only on a terminal. Piped or captured, a carriage return is not a rewind — the drill's log read
+     * `3 object(s)   3 object(s)   3 object(s) listed`, one copy per page, because nothing overwrote anything.
+     */
+    if (process.stdout.isTTY) process.stdout.write(`   ${objects} object(s)\r`);
     if (page.resumeAfter === null || page.resumeAfter === undefined) break;
     cursor = page.resumeAfter;
   }
@@ -1422,6 +1471,8 @@ async function backup(argv) {
     objects,
     unaccounted,
     verified,
+    excludedTables: excluded,
+    migrationsToReapply: reapply,
   });
   writeFileSync(`${out}/index.json`, `${JSON.stringify(index, null, 2)}\n`);
 
