@@ -2688,6 +2688,66 @@ One assertion in the new test is the measurement itself: strip the scripts, the 
 browser without JavaScript can show is the wordmark plus the notice. If server-rendering ever arrives, that
 test fails and should be rewritten rather than deleted.
 
+## The ten recovery codes were minted, hashed, escrowed, and thrown away by the interface (#134)
+
+The operator who claimed a Node was never shown them. They asked whether they had missed a screen; they had
+not, because there was no screen.
+
+`claimNode` returns them — `claim.ts:186`, `recoveryCodes: escrow.codes` — and the contract is explicit that
+this is the only place they ever appear, *"the Node keeps a hash to recognise one and an escrow only the code
+itself opens, so nothing can produce them again."* The claim handler did:
+
+```js
+if (response.ok) { adopt(); startSessionTicker(); return route(); }
+```
+
+The body was never read. `src/client/` contained **zero** references to `recoveryCodes`. So the one artifact
+that decrypts an organization's mail was returned once and dropped on the floor, and `doctor` correctly
+reported *"10 recovery codes exist and nobody has confirmed holding one"* about codes nobody could ever have
+held.
+
+**And there was no way to spend one either.** `POST /api/recovery/redeem` exists and is deliberately
+unauthenticated — the state it exists for is one where the signing key cannot be unwrapped, so no session can
+be issued. But no screen referenced it and the CLI had no verb: the only way to redeem was a hand-written
+`curl`, for the operation whose entire purpose is to be performed during a disaster by somebody who has lost
+everything else.
+
+Measured, in #92's restore drill: a full catalog and every object restored into a different Cloudflare
+account, the destination holding all ten hashes and escrow blobs, and it refuses —
+`signing_key: E_EVIDENCE_AUTH_FAILED`. The escrow ADR 28 says it does not ship without was present, correct,
+and unusable.
+
+Now the claim shows them on a screen of their own with one way forward, and the button says what it asserts —
+*"I have saved these ten codes"* — rather than "OK", because a person clicking it should know what they are
+claiming. And `mailda recovery-codes redeem` reads the code from a terminal, never an argument, for the reason
+`set-password` already gives: a secret on a command line ends up in shell history.
+
+### Why nothing caught it, and what that cost
+
+`src/client/app.client.js` renders the claim, the sign-in and a locked-out doctor — and **no test had ever
+loaded it.** Its imports name the session and config modules the way the Worker serves them, not as files on
+disk, so it could not be resolved under vitest. The React suite drives the screens *after* sign-in. This file
+was outside both, and the claim screen is the first thing a Node ever shows.
+
+Three aliases and a stub make it importable, so the pre-authentication surface is now testable at all. That is
+the more valuable half of this change: the fix is four lines, and the reason it was possible to ship is that
+nothing could see the file.
+
+Two mutations survived the first version of the tests, and both are worth naming. Adding an unconditional
+`route()` to the new screen — rendering ten codes and navigating past them, the original defect wearing the
+fix's clothes — **passed**, because `route()` is async and the assertions read the DOM in the same tick. And
+softening the heading from *"Write these down now."* to *"Recovery codes"* passed, because the substantive
+warnings live in the paragraphs. The tests yield before asserting now, and the heading is pinned.
+
+### Eight, and a helper
+
+The claim-path assertion searched for `return route()` and found it inside a comment saying *"this used to be
+`return route()`"*. That is the **eighth** time in this repository a lexical assertion has matched its own
+documentation, three of them caught only by mutation testing — which means the others were luck.
+`test/without-comments.ts` now exists, lists all eight, and strips comments by default rather than by each
+test remembering. It does not fix the class: a lexical test can still match the wrong call site, and scoping to
+a function's body is the other half.
+
 ## Contributing
 
 Read [`AGENTS.md`](./AGENTS.md) first — it's short, and it's binding on humans and agents
