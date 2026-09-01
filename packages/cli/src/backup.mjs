@@ -39,7 +39,10 @@ export function sha256Of(bytes) {
  * restored into code that predates its migrations is a Node answering requests it cannot honour, which is the
  * failure #98 spent its length on from the other direction.
  */
-export function backupIndex({ node, nodeVersion, takenAt, catalog, inventory, objects, unaccounted, verified }) {
+export function backupIndex({
+  node, nodeVersion, takenAt, catalog, inventory, objects, unaccounted, verified,
+  excludedTables = [], migrationsToReapply = [],
+}) {
   return {
     format: "mailda-backup/1",
     node,
@@ -66,6 +69,15 @@ export function backupIndex({ node, nodeVersion, takenAt, catalog, inventory, ob
      * reader inferring a clean bill of health from a quiet field.
      */
     verified,
+    /**
+     * What the export left out, and what a restore has to do about it.
+     *
+     * Both carried in the index rather than left to a runbook, because both are properties of **this**
+     * backup: which tables the database had when it was taken, and which migrations it believed were
+     * applied. A runbook describes the general case; a restore needs the particular one.
+     */
+    excludedTables,
+    migrationsToReapply,
   };
 }
 
@@ -136,10 +148,31 @@ export function checkBackup({ index, catalog, inventory }) {
       + "back and nothing will reference them — `mailda doctor` reports the same figure as evidence orphans.",
     );
   }
+  if ((index.migrationsToReapply ?? []).length > 0) {
+    notes.push(
+      `this backup excludes the search index, so a restore must re-run ${index.migrationsToReapply.join(", ")} `
+      + "and rebuild it. `d1_migrations` travels with the dump and says they were applied, so `migrations "
+      + "apply` will skip them unless those rows are removed first.",
+    );
+  }
   if (index.verified === null || index.verified === undefined) {
     notes.push(
       "nothing verified the evidence when this backup was taken, so the hashes in it are what the Node "
       + "recorded rather than what its objects currently contain. `mailda backup --verify` does that sweep.",
+    );
+  } else if (index.verified.checked === 0) {
+    /*
+     * A sweep that examined nothing is not a verified backup, and the index cannot tell the difference on its
+     * own: `{checked: 0, faults: 0}` is what both a clean Node with no mail and a broken sweep produce.
+     *
+     * This is the third time the same vacuity has had to be caught in this feature — once in the verifier's
+     * own tests (`intact: true` over zero receipts), once in the CLI's success message, and now in the
+     * index. Each layer reported the layer below's honest zero as its own good news.
+     */
+    notes.push(
+      "the sweep that ran when this backup was taken checked **nothing** — zero messages. That is not a clean "
+      + "bill of health. On a Node holding evidence it means the sweep found no receipts to check, which is "
+      + "worth understanding before relying on this backup.",
     );
   } else if (index.verified.faults > 0) {
     problems.push({
@@ -179,4 +212,89 @@ export function whyAdminCannotExist(report) {
     fix: "claim it first — `mailda claim-secret` writes the install secret, and the claim sets the first "
       + "administrator's email and password. Then re-run this with those in MAILDA_EMAIL and MAILDA_PASSWORD",
   };
+}
+
+/**
+ * Which tables a D1 export may include, and which it must leave out (#92).
+ *
+ * ## The platform limit that made this necessary
+ *
+ * `wrangler d1 export` refuses a whole database outright:
+ *
+ *     D1 Export error: cannot export databases with Virtual Tables (fts5)
+ *
+ * Mailda's catalog has two — `message_search` and `message_body_search` — so **no Mailda Node could be
+ * exported at all**. `mailda backup` was unusable from the day it shipped, and the first real run is what
+ * found it. A selective export (`--table` per name) is accepted, so the fix is to name the tables rather than
+ * ask for the database.
+ *
+ * ## Why excluding the index is right rather than a workaround
+ *
+ * `AGENTS.md`: *"Parsed forms, search indexes and AI outputs are rebuildable derivatives — and must actually
+ * be rebuildable, tested."* The search index is derived from evidence that **is** in the backup, so carrying
+ * it would be backing up a cache. The platform limit pushed the design where the repository's own rule
+ * already pointed.
+ *
+ * ## What is excluded, and why each
+ *
+ *   virtual tables       fts5, which is what the exporter refuses.
+ *   their shadow tables  `<name>_data`, `_idx`, `_content`, `_docsize`, `_config` — created and owned by
+ *                        fts5, meaningless without it, and named by prefix rather than by a list so a
+ *                        future suffix cannot be missed.
+ *   `_cf_KV`             Cloudflare's own internal table, not this Node's data.
+ *   `sqlite_*`           SQLite's own.
+ *
+ * Everything else is included by **derivation**, not by a list: a table added to a migration is in the next
+ * backup without anybody remembering, which is the property a hardcoded list would quietly lose.
+ */
+export function exportableTables(sqliteMaster) {
+  const tables = sqliteMaster.filter((row) => typeof row.name === "string");
+  const virtual = tables
+    .filter((row) => typeof row.sql === "string" && /VIRTUAL\s+TABLE/i.test(row.sql))
+    .map((row) => row.name);
+
+  const excluded = [];
+  const included = [];
+  for (const { name } of tables) {
+    if (virtual.includes(name)) {
+      excluded.push({ name, why: "a virtual table; `wrangler d1 export` refuses a database containing one" });
+    } else if (virtual.some((v) => name.startsWith(`${v}_`))) {
+      excluded.push({ name, why: "an fts5 shadow table, owned by a virtual table and meaningless without it" });
+    } else if (name === "_cf_KV") {
+      excluded.push({ name, why: "Cloudflare's internal table, not this Node's data" });
+    } else if (name.startsWith("sqlite_")) {
+      excluded.push({ name, why: "SQLite's own" });
+    } else {
+      included.push(name);
+    }
+  }
+  return { included: included.sort(), excluded: excluded.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+/**
+ * The migrations a restore has to re-run, because the tables they create are not in the backup.
+ *
+ * ## The trap this names
+ *
+ * `d1_migrations` **is** exported — it is an ordinary table. So a restored catalog says migration 0040 has
+ * been applied while the virtual table it creates is absent, and `wrangler d1 migrations apply` will believe
+ * it and skip. The restored Node then has a search index that exists in its bookkeeping and nowhere else,
+ * and the failure surfaces the first time somebody searches.
+ *
+ * Recorded in the backup rather than left to the runbook alone, because the list is a property of the
+ * migrations that were applied when the backup was taken — not of whatever the restoring checkout happens to
+ * contain.
+ */
+export function migrationsToReapply(sqliteMaster, migrationRows) {
+  const { excluded } = exportableTables(sqliteMaster);
+  if (excluded.every((one) => !one.why.startsWith("a virtual table"))) return [];
+  /*
+   * Matched on the migration's own name rather than by number: the numbers move when migrations are
+   * renamed, and a name that no longer exists in the restoring checkout is more obviously wrong than a
+   * number that silently points at a different file.
+   */
+  return migrationRows
+    .filter((row) => typeof row.name === "string" && /search/i.test(row.name))
+    .map((row) => row.name)
+    .sort();
 }

@@ -59,3 +59,31 @@ export function checkBackup(args: {
  * such an operator for credentials is asking for something that cannot exist.
  */
 export function whyAdminCannotExist(report: unknown): { what: string; why: string; fix: string } | null;
+
+export interface ExcludedTable {
+  name: string;
+  why: string;
+}
+
+/**
+ * Which tables a D1 export may include, and which it must leave out.
+ *
+ * `wrangler d1 export` refuses a whole database containing an fts5 virtual table, so the tables are named
+ * rather than the database. The search index is excluded because it is a rebuildable derivative — carrying it
+ * would be backing up a cache.
+ */
+export function exportableTables(sqliteMaster: Array<{ name?: unknown; sql?: unknown }>): {
+  included: string[];
+  excluded: ExcludedTable[];
+};
+
+/**
+ * The migrations a restore has to re-run, because the tables they create are not in the backup.
+ *
+ * `d1_migrations` is exported like any table, so a restored catalog claims they were applied while the
+ * virtual tables they create are absent.
+ */
+export function migrationsToReapply(
+  sqliteMaster: Array<{ name?: unknown; sql?: unknown }>,
+  migrationRows: Array<{ name?: unknown }>,
+): string[];

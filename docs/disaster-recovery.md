@@ -65,6 +65,23 @@ Without it the index says `verified: null`, which `verify-backup` reports as **n
 clean. On a first drill, use it: a backup of a state nobody checked is the thing the drill exists to stop
 being routine.
 
+**The export names its tables rather than asking for the database**, and the reason is a platform limit found
+on the first real run:
+
+```text
+D1 Export error: cannot export databases with Virtual Tables (fts5)
+```
+
+This catalog has two — the message and body search indexes — so a whole-database export produced nothing and
+`mailda backup` was unusable from the day it shipped. A selective export is accepted, so the command reads
+`sqlite_master`, excludes the virtual tables, their fts5 shadow tables, `_cf_KV` and `sqlite_*`, and names the
+rest. The list is **derived**, so a table added by a later migration is in the next backup without anybody
+remembering.
+
+Excluding the index is not a workaround. This repository already says search indexes are rebuildable
+derivatives, and it is derived from evidence that *is* in the backup — carrying it would be backing up a
+cache. The limit pushed the design where the rule already pointed.
+
 Three files come out:
 
 ```text
@@ -115,6 +132,24 @@ npx wrangler d1 execute CATALOG --remote --file=../../../backup-<date>/catalog.s
 Node arrives already claimed, with the source's administrators and their password hashes. That is also why the
 restore has to come before anything that needs `org.admin` there.
 
+**The search index has to be rebuilt, and `d1_migrations` will lie about it.** That table is exported like any
+other, so the restored catalog says the search migrations were applied while the virtual tables they create are
+absent — and `migrations apply` believes it and skips, leaving an index that exists in the bookkeeping and
+nowhere else. It fails the first time somebody searches. The backup's own index names the migrations to re-run, read
+from the backup rather than from whatever checkout is restoring:
+
+```sh
+# 1. Forget the search migrations, so the next step re-runs them and recreates the virtual tables.
+npx wrangler d1 execute CATALOG --remote --env "" \
+  --command "DELETE FROM d1_migrations WHERE name IN ('0040_message_search.sql','0041_body_search.sql')"
+
+# 2. Re-apply, which creates the index's tables and nothing else — the rest are already there.
+npx wrangler d1 migrations apply CATALOG --remote --env ""
+```
+
+Then rebuild the index itself: the backfill repopulates it from the evidence, and `mailda search list` reports
+what it could not parse.
+
 **The vault is the part that needs a person.** Content keys live in a Durable Object, which is *not* in the D1
 dump — that is ADR 28 working as designed, and it is why the escrow exists. Redeem one of the ten ADR 29
 recovery codes against the destination Node to install the keys the catalog's evidence was sealed under. Ten
@@ -157,7 +192,11 @@ more than one number covering both.
 
 ## Not verified
 
-**This runbook has not been run end to end.** Every command in it exists — the `mailda` verbs are checked
+**The backup half has now been run against a real Node** — claim, deploy, drafts, `backup --verify`,
+`verify-backup`, all green, and it found the fts5 limit, a bootstrap deadlock (#129), three CLI commands that
+could not authenticate, and two vacuous success messages. What follows the backup has **not** been run.
+
+**The restore half of this runbook has not been run end to end.** Every command in it exists — the `mailda` verbs are checked
 against the CLI's dispatch by `test/node/runbook.test.ts`, and the `wrangler` subcommands were confirmed
 against 4.118.0 — but a sequence of real commands is not a sequence that has worked. The three deploy drills
 that preceded this each found something reading could not have found, and there is no reason to expect this to

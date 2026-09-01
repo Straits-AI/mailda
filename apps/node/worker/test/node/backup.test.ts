@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
-const { backupIndex, checkBackup, sha256Of, whyAdminCannotExist } = backup;
+const {
+  backupIndex, checkBackup, exportableTables, migrationsToReapply, sha256Of, whyAdminCannotExist,
+} = backup;
 
 /**
  * Whether a backup on disk is the one its index describes (#92).
@@ -78,6 +80,103 @@ describe("a backup that is what it says it is", () => {
     expect(taken().nodeVersion).toBe("c7e7b917-0402-4ea5-b868-aa8e2f574dc4");
     expect(taken().takenAt).toBe("2026-08-31T12:00:00.000Z");
     expect(taken().format).toBe("mailda-backup/1");
+  });
+});
+
+describe("which tables a D1 export may ask for", () => {
+  /*
+   * The platform limit that made this necessary, from the first real run of `mailda backup`:
+   *
+   *     D1 Export error: cannot export databases with Virtual Tables (fts5)
+   *
+   * This catalog has two, so **no Mailda Node could be exported at all** — the command was unusable from the
+   * day it shipped, and only running it found that. A selective export is accepted, so the tables are named.
+   *
+   * Excluding the search index is not a workaround: `AGENTS.md` already says search indexes are rebuildable
+   * derivatives, and it is derived from evidence that *is* in the backup. The platform limit pushed the design
+   * where the repository's own rule pointed.
+   */
+  const MASTER = [
+    { name: "users", sql: "CREATE TABLE users (id TEXT)" },
+    { name: "d1_migrations", sql: "CREATE TABLE d1_migrations (id INTEGER, name TEXT)" },
+    { name: "message_search", sql: "CREATE VIRTUAL TABLE message_search USING fts5(subject)" },
+    { name: "message_search_data", sql: "CREATE TABLE message_search_data (id INTEGER)" },
+    { name: "message_search_idx", sql: "CREATE TABLE message_search_idx (segid)" },
+    { name: "message_body_search", sql: "CREATE VIRTUAL TABLE message_body_search USING fts5(body)" },
+    { name: "message_body_search_config", sql: "CREATE TABLE message_body_search_config (k)" },
+    { name: "_cf_KV", sql: "CREATE TABLE _cf_KV (key)" },
+    { name: "sqlite_sequence", sql: "CREATE TABLE sqlite_sequence (name)" },
+  ];
+
+  it("keeps the real tables and drops the index, its shadows, and what is not ours", () => {
+    const { included, excluded } = exportableTables(MASTER);
+    expect(included).toEqual(["d1_migrations", "users"]);
+    expect(excluded.map((one) => one.name)).toEqual([
+      "_cf_KV", "message_body_search", "message_body_search_config",
+      "message_search", "message_search_data", "message_search_idx", "sqlite_sequence",
+    ]);
+  });
+
+  it("finds shadow tables by their owner's prefix, not by a list of suffixes", () => {
+    /*
+     * fts5 owns `_data`, `_idx`, `_content`, `_docsize`, `_config` today and is free to add another. A list of
+     * suffixes would let a new one through into the export, where it would restore as a table fts5 does not
+     * expect — so the rule is "named after a virtual table" rather than "ends in one of these".
+     */
+    const withNewSuffix = [...MASTER, { name: "message_search_futurething", sql: "CREATE TABLE x (y)" }];
+    const { included } = exportableTables(withNewSuffix);
+    expect(included).not.toContain("message_search_futurething");
+  });
+
+  it("includes a table added later without anybody listing it", () => {
+    // Derivation rather than a list: the property a hardcoded set would quietly lose is that a new table is
+    // in the next backup by default. A backup silently missing a table is the worst available outcome.
+    const { included } = exportableTables([...MASTER, { name: "invented_later", sql: "CREATE TABLE x (y)" }]);
+    expect(included).toContain("invented_later");
+  });
+
+  it("says which migrations a restore must re-run, because the dump claims they are applied", () => {
+    /*
+     * `d1_migrations` is an ordinary table and therefore exported. So a restored catalog says the search
+     * migrations ran while the virtual tables they create are absent, and `migrations apply` believes it and
+     * skips — leaving an index that exists in the bookkeeping and nowhere else, failing the first time
+     * somebody searches.
+     */
+    const rows = [
+      { name: "0039_recovery_codes.sql" },
+      { name: "0040_message_search.sql" },
+      { name: "0041_body_search.sql" },
+    ];
+    expect(migrationsToReapply(MASTER, rows))
+      .toEqual(["0040_message_search.sql", "0041_body_search.sql"]);
+  });
+
+  it("names nothing to re-run when the database has no virtual tables", () => {
+    // A Node before the search migrations: nothing was excluded, so nothing needs re-running. Returning the
+    // list unconditionally would send a restore chasing migrations that were never the problem.
+    const plain = [{ name: "users", sql: "CREATE TABLE users (id TEXT)" }];
+    expect(migrationsToReapply(plain, [{ name: "0040_message_search.sql" }])).toEqual([]);
+  });
+});
+
+describe("a verification that examined nothing", () => {
+  it("is reported as such, rather than as a verified backup", () => {
+    /*
+     * `{checked: 0, faults: 0}` is what both a Node with no mail and a broken sweep produce, and the checker
+     * used to look only at `faults`. Measured: the first real backup recorded `verified: {checked: 0}` beside
+     * `inventory: {objects: 3}` — three sealed objects with recorded hashes, none examined (#131).
+     *
+     * Third time this same vacuity has had to be caught in this feature: in the verifier's tests, in the CLI's
+     * success message, and now in the index. Each layer read the layer below's honest zero as its own good news.
+     */
+    const outcome = checkBackup({
+      index: taken({ verified: { checked: 0, faults: 0 } }),
+      catalog: bytes(CATALOG),
+      inventory: bytes(INVENTORY),
+    });
+    expect(outcome.ok).toBe(true);
+    expect(outcome.notes.join(" ")).toContain("checked **nothing**");
+    expect(outcome.notes.join(" ")).toContain("not a clean bill of health");
   });
 });
 
@@ -250,6 +349,21 @@ describe("a sweep that checked nothing does not report a clean sweep", () => {
 });
 
 describe("the command says what a passing check does not mean", () => {
+
+  it("names the tables in the export rather than asking for the database", () => {
+    /*
+     * The one line that makes `mailda backup` work at all. `wrangler d1 export` refuses a database containing
+     * an fts5 virtual table — *"cannot export databases with Virtual Tables (fts5)"* — and this catalog has
+     * two, so a whole-database export produced nothing and the command was unusable from the day it shipped.
+     *
+     * Asserted lexically because the suite does not run wrangler: a mutation reverting to the whole-database
+     * form passed every value-level test here, and would have shipped a backup command that cannot back up.
+     */
+    expect(cli).toContain('included.flatMap((name) => ["--table", name])');
+    // And the list is derived from the database, not written down.
+    expect(cli).toContain("exportableTables(master)");
+    expect(cli).toContain("SELECT name, sql FROM sqlite_master");
+  });
 
   it("tells the operator the evidence bytes are not in the backup", () => {
     /*
