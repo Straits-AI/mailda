@@ -139,16 +139,15 @@ nowhere else. It fails the first time somebody searches. The backup's own index 
 from the backup rather than from whatever checkout is restoring:
 
 ```sh
-# 1. Forget the search migrations, so the next step re-runs them and recreates the virtual tables.
-npx wrangler d1 execute CATALOG --remote --env "" \
-  --command "DELETE FROM d1_migrations WHERE name IN ('0040_message_search.sql','0041_body_search.sql')"
-
-# 2. Re-apply, which creates the index's tables and nothing else — the rest are already there.
-npx wrangler d1 migrations apply CATALOG --remote --env ""
+npx wrangler d1 execute CATALOG --remote --env "" --file=../../../backup-<date>/catalog.sql -y
 ```
 
-Then rebuild the index itself: the backfill repopulates it from the evidence, and `mailda search list` reports
-what it could not parse.
+The backup is **data only** and excludes `d1_migrations`, so nothing here conflicts with the schema the
+destination's own migrations created — measured against a fresh destination whose 53 tables already existed
+and whose 51 migration rows were already correct.
+
+The search index's tables exist for the same reason; only their contents are missing. The backfill repopulates
+them from the evidence, and `mailda search list` reports what it could not parse.
 
 **The vault is the part that needs a person.** Content keys live in a Durable Object, which is *not* in the D1
 dump — that is ADR 28 working as designed, and it is why the escrow exists. Redeem one of the ten ADR 29
@@ -192,7 +191,20 @@ more than one number covering both.
 
 ## Not verified
 
-**The backup half has now been run against a real Node** — claim, deploy, drafts, `backup --verify`,
+**The whole sequence has now been run, and it stops in one place.** Backup, deploy into a different account,
+restore, copy — all green, and then the destination refuses:
+
+```text
+refuse  signing_key  Could not use the current signing key:
+                     E_EVIDENCE_AUTH_FAILED  frame 0 of 1 failed authentication
+```
+
+The signing key came across as a row and is wrapped under the source's credential KEK, which lives in the
+Durable Object and not in a D1 export. So the restore leaves a Node that knows who everybody is and cannot let
+anybody in. **Redeeming a recovery code is not a step to remember — it is the step the rest depends on**, and
+this drill is the measurement that says so.
+
+**The backup half has been run against a real Node** — claim, deploy, drafts, `backup --verify`,
 `verify-backup`, all green, and it found the fts5 limit, a bootstrap deadlock (#129), three CLI commands that
 could not authenticate, and two vacuous success messages. What follows the backup has **not** been run.
 

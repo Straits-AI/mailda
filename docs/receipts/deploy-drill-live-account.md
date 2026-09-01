@@ -206,6 +206,54 @@ the rollback. And the canary check signs in when credentials are present, so the
 report rather than the 9 findings an anonymous caller may see; both sides are asked with the same credentials,
 because authenticated-canary against anonymous-incumbent would compare 21 to 9 and block every deploy.
 
+## The restore drill, 1 September 2026: the escrow is load-bearing, measured
+
+Not given a `values` key: what it establishes is a property, and the numbers in it describe one drill's
+fixtures rather than a bound anybody should hold.
+
+The first restore into a **different Cloudflare account**. Source: the claimed Node on
+`Mystraits.ai@gmail.com`, holding three drafts. Destination: a fresh Node on `Admin@arbuilder.app`, deployed
+by `mailda deploy` as a first install.
+
+```text
+backup            52 tables, data only, 29,199 bytes; search index excluded; 3 objects inventoried
+deploy            first install into the destination account, exit 0
+restore           wrangler d1 execute --file  →  313 rows written
+identity          the destination reports claimed: true — organization, users, tuples, drafts all present
+objects           3 copied source → destination, each at the size the inventory recorded
+```
+
+**And then it refuses.**
+
+```text
+/api/doctor   503
+  refuse    signing_key   Could not use the current signing key:
+                          E_EVIDENCE_AUTH_FAILED  frame 0 of 1 failed authentication
+/api/auth/login  500
+```
+
+The signing key row came across in the dump — it is an ordinary row — but it is **wrapped under the source
+Node's credential KEK**, which lives in the `KeyVault` Durable Object and is not in a D1 export. The
+destination generated its own KEK at first install, so the unwrap fails AES-GCM authentication.
+
+So a restore that carries every row and every object produces a Node that **knows who everybody is and cannot
+let anybody in**, and cannot read a single message. That is exactly what ADR 28 says — *"Lose it and every
+message is permanently unreadable"* — and why `keyvault.ts` said ADR 28 does not ship without ADR 29's escrow.
+
+**The escrow is now measured as load-bearing rather than argued to be.** The remaining step is redeeming one
+of the ten recovery codes against the destination, which installs the source's keys; it needs a code, which is
+held by a person by design and is the one part of this drill a tool cannot do.
+
+**What the drill taught about the backup itself**, each found by running it and each fixed:
+
+  - `wrangler d1 export` refuses any database containing an fts5 virtual table, so no Mailda catalog could be
+    exported at all. The command names its tables now.
+  - The export must be **data only**. A destination is deployed before it is restored into, so its 53 tables
+    already exist and `CREATE TABLE` fails on the first statement.
+  - `d1_migrations` must be **excluded**, not restored. It describes the database rather than the
+    organization, and overwriting the destination's own rows was what made a restored Node believe its search
+    index existed when it did not.
+
 ## An unexplained D1 API failure during migration, 28 August 2026
 
 Not given a `values` key, because it is a **negative result whose cause is not established** and a number

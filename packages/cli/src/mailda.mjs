@@ -43,7 +43,7 @@ import {
 } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
 import {
-  backupIndex, checkBackup, exportableTables, migrationsToReapply, whyAdminCannotExist,
+  backupIndex, checkBackup, exportableTables, needsIndexRebuild, whyAdminCannotExist,
 } from "./backup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1203,6 +1203,17 @@ async function runPreflight(argv, { announce = true } = {}) {
       const report = await response.json().catch(() => null);
       if (report === null) {
         notes.push(`${origin}/api/doctor did not answer JSON, so its verdict cannot be read.`);
+      } else if (typeof report.verdict !== "string") {
+        /*
+         * A JSON body that is not a report — a 401 from a claimed Node, or an error. Said as such, because
+         * the version note below used to fire here and claim the Node "predates the `version_metadata`
+         * binding", which was false three times in one afternoon's logs: twice against a claimed Node whose
+         * report is simply gated, and once against a Node that did not exist yet. A note that names the wrong
+         * cause is worse than no note, because it is read and believed.
+         */
+        notes.push(`${origin}/api/doctor answered ${response.status} rather than a report`
+          + `${response.status === 401 ? " — a claimed Node gates it, which is expected here" : ""}.`
+          + " Nothing about the Node's version could be read, and nothing is inferred from that.");
       } else {
         if (!reportsItsVersion(report)) {
           notes.push("this Node does not report which version answered, so it predates the "
@@ -1380,29 +1391,19 @@ async function backup(argv) {
   process.stdout.write("\n== exporting the catalog\n");
   const catalogPath = `${out}/catalog.sql`;
   if (run("npx", ["wrangler", "d1", "export", "CATALOG", "--remote", "--output", catalogPath,
-    "--skip-confirmation", ...ENV, ...included.flatMap((name) => ["--table", name])]) !== 0) {
+    "--skip-confirmation", "--no-schema", ...ENV,
+    ...included.flatMap((name) => ["--table", name])]) !== 0) {
     fail("exporting D1 failed, so there is no backup. Nothing was written that could be mistaken for one.");
   }
 
   /*
-   * Which migrations a restore must re-run. `d1_migrations` is an ordinary table and therefore exported, so a
-   * restored catalog claims the search migrations were applied while the virtual tables they create are
-   * absent — and `migrations apply` will believe it and skip. Read from the exported rows so the list
-   * describes this backup rather than whatever checkout restores it.
+   * **Data only.** The schema comes from the restoring Node's own migrations — ADR 24 makes the repository
+   * the source of truth for it, and the runbook deploys before it restores, so the tables already exist.
+   * Carrying `CREATE TABLE` as well would make every restore fail on its first statement.
    */
-  const applied = capture("npx", ["wrangler", "d1", "execute", "CATALOG", "--remote", "--json",
-    "--command", "SELECT name FROM d1_migrations", ...ENV], { quiet: true });
-  let reapply = [];
-  if (applied.status === 0) {
-    try {
-      const rows = JSON.parse(applied.text.slice(applied.text.indexOf("[")))[0]?.results ?? [];
-      reapply = migrationsToReapply(master, rows);
-    } catch {
-      /* Left empty rather than guessed at; `verify-backup` reports an empty list as unknown. */
-    }
-  }
-  if (reapply.length > 0) {
-    process.stdout.write(`\n   a restore must re-run: ${reapply.join(", ")}\n`);
+  const rebuild = needsIndexRebuild(master);
+  if (rebuild) {
+    process.stdout.write("\n   the search index is excluded and must be rebuilt after restoring\n");
   }
 
   process.stdout.write("\n== listing the evidence\n");
@@ -1472,7 +1473,7 @@ async function backup(argv) {
     unaccounted,
     verified,
     excludedTables: excluded,
-    migrationsToReapply: reapply,
+    rebuildSearchIndex: rebuild,
   });
   writeFileSync(`${out}/index.json`, `${JSON.stringify(index, null, 2)}\n`);
 

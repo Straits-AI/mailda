@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
 const {
-  backupIndex, checkBackup, exportableTables, migrationsToReapply, sha256Of, whyAdminCannotExist,
+  backupIndex, checkBackup, exportableTables, needsIndexRebuild, sha256Of, whyAdminCannotExist,
 } = backup;
 
 /**
@@ -110,9 +110,9 @@ describe("which tables a D1 export may ask for", () => {
 
   it("keeps the real tables and drops the index, its shadows, and what is not ours", () => {
     const { included, excluded } = exportableTables(MASTER);
-    expect(included).toEqual(["d1_migrations", "users"]);
+    expect(included).toEqual(["users"]);
     expect(excluded.map((one) => one.name)).toEqual([
-      "_cf_KV", "message_body_search", "message_body_search_config",
+      "_cf_KV", "d1_migrations", "message_body_search", "message_body_search_config",
       "message_search", "message_search_data", "message_search_idx", "sqlite_sequence",
     ]);
   });
@@ -135,27 +135,27 @@ describe("which tables a D1 export may ask for", () => {
     expect(included).toContain("invented_later");
   });
 
-  it("says which migrations a restore must re-run, because the dump claims they are applied", () => {
+  it("leaves out the destination's own migration bookkeeping", () => {
     /*
-     * `d1_migrations` is an ordinary table and therefore exported. So a restored catalog says the search
-     * migrations ran while the virtual tables they create are absent, and `migrations apply` believes it and
-     * skips — leaving an index that exists in the bookkeeping and nowhere else, failing the first time
-     * somebody searches.
+     * `d1_migrations` describes the **database**, not the organization. A destination is deployed before it
+     * is restored into, so its own migrations have already run and its own rows already describe the schema
+     * its code created; restoring the source's rows would overwrite that with a claim about a different
+     * database.
+     *
+     * That was the cause of a trap this command shipped with: the restored catalog said the search migrations
+     * were applied while the virtual tables they create were absent, so `migrations apply` believed it and
+     * skipped. Excluding the table removes the trap rather than documenting a workaround for it.
      */
-    const rows = [
-      { name: "0039_recovery_codes.sql" },
-      { name: "0040_message_search.sql" },
-      { name: "0041_body_search.sql" },
-    ];
-    expect(migrationsToReapply(MASTER, rows))
-      .toEqual(["0040_message_search.sql", "0041_body_search.sql"]);
+    const { included, excluded } = exportableTables(MASTER);
+    expect(included).not.toContain("d1_migrations");
+    expect(excluded.find((one) => one.name === "d1_migrations")?.why).toContain("destination's own");
   });
 
-  it("names nothing to re-run when the database has no virtual tables", () => {
-    // A Node before the search migrations: nothing was excluded, so nothing needs re-running. Returning the
-    // list unconditionally would send a restore chasing migrations that were never the problem.
-    const plain = [{ name: "users", sql: "CREATE TABLE users (id TEXT)" }];
-    expect(migrationsToReapply(plain, [{ name: "0040_message_search.sql" }])).toEqual([]);
+  it("says the search index needs rebuilding, and only when one was excluded", () => {
+    // The one derivative the export leaves out. Its tables exist on a restored Node — its own migrations
+    // create them — and only their contents are missing.
+    expect(needsIndexRebuild(MASTER)).toBe(true);
+    expect(needsIndexRebuild([{ name: "users", sql: "CREATE TABLE users (id TEXT)" }])).toBe(false);
   });
 });
 
@@ -360,6 +360,12 @@ describe("the command says what a passing check does not mean", () => {
      * form passed every value-level test here, and would have shipped a backup command that cannot back up.
      */
     expect(cli).toContain('included.flatMap((name) => ["--table", name])');
+    /*
+     * And **data only**. The schema comes from the restoring Node's own migrations, so an export carrying
+     * `CREATE TABLE` would make every restore fail on its first statement — measured against a freshly
+     * deployed destination, whose 53 tables already existed.
+     */
+    expect(cli).toContain('"--no-schema"');
     // And the list is derived from the database, not written down.
     expect(cli).toContain("exportableTables(master)");
     expect(cli).toContain("SELECT name, sql FROM sqlite_master");
