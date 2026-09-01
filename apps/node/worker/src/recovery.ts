@@ -435,6 +435,10 @@ export async function redeemForVault(
    * The live key is kept, because losing newer mail to recover older is the worse trade. **Mail sealed under
    * the escrowed key stays unreadable**, and this field is how the operator finds that out at the moment it
    * happens rather than the next time somebody opens an old message.
+   *
+   * It was not, in practice. #92's drill spent a code, collided on both generations, and every layer above
+   * read two empty arrays and two non-empty ones as a success — so `conflictNotice` below says it in words a
+   * caller cannot mistake, and the route puts it in the payload.
    */
   conflicted: { content: number[]; credential: number[] };
 }> {
@@ -809,6 +813,44 @@ export async function redeemForVault(
   }
 
   return { restored, conflicted };
+}
+
+/**
+ * What a caller must be told when a generation could not be put back (#138).
+ *
+ * ## Why this is words and not a status code
+ *
+ * `redeemForVault` settles a wholly-collided restore as `ok`, and that is right: nothing broke and nothing was
+ * lost. But #92's drill measured what "nothing broke" looks like from outside — `200`, two empty arrays, two
+ * non-empty ones — and every layer above it, including this repository's own CLI, called it a restore. The
+ * operator had spent one of ten codes and their mail was still unreadable.
+ *
+ * So the outcome stays `ok` and the *answer* stops being silent. Three things a caller cannot work out from
+ * integers: the code is gone, the mail sealed under the escrowed key cannot be read, and **another code will
+ * not help** — all ten carry the same generations, so a retry spends a second one for the same result. That
+ * last sentence is the one worth the most: without it an operator burns the sheet.
+ *
+ * Returns `null` when nothing collided, so a clean restore carries no warning and the field's presence is
+ * itself the signal.
+ */
+export function conflictNotice(
+  conflicted: { content: number[]; credential: number[] },
+  restored: { content: number[]; credential: number[] },
+): string | null {
+  const collided = conflicted.content.length + conflicted.credential.length;
+  if (collided === 0) return null;
+  const installed = restored.content.length + restored.credential.length;
+  const generations = [
+    conflicted.content.length > 0 ? `content ${conflicted.content.join(", ")}` : null,
+    conflicted.credential.length > 0 ? `credential ${conflicted.credential.join(", ")}` : null,
+  ].filter((one) => one !== null).join("; ");
+
+  return `${collided} escrowed key generation(s) could not be installed (${generations})`
+    + (installed === 0 ? " and nothing was restored" : `; ${installed} was installed`)
+    + ". This Node already holds keys of those generation numbers under a different secret, and one number "
+    + "cannot hold both — it keeps the live key, because losing newer mail to recover older is the worse "
+    + "trade. The code is spent, and mail sealed under the escrowed key stays unreadable. Redeeming another "
+    + "code will not change this: all ten carry the same generations.";
 }
 
 /**

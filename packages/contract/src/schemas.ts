@@ -1442,6 +1442,16 @@ export const vaultRestoredResponse = z.object({
     content: z.array(z.number().int().nonnegative()),
     credential: z.array(z.number().int().nonnegative()),
   }).strict(),
+  /**
+   * What a collision means, present **exactly when `conflicted` is not empty** (#138).
+   *
+   * In the payload rather than only in a document, for the reason `recoveryCodesMintedResponse` gives about
+   * its own notice. #92's drill answered this route with `200`, both generations conflicted and nothing
+   * restored, and every client read it as a success — including this repository's own CLI, which printed
+   * *"the vault is restored"*. Two arrays of integers do not tell a caller that a single-use code has been
+   * spent and the mail is still unreadable, and that is the one thing they have to know.
+   */
+  notice: z.string().min(1).optional(),
 }).strict();
 
 /**

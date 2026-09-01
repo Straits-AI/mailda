@@ -121,7 +121,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 
 | | |
 |---|---|
-| **Recovery is half built** | The key vault is escrowed under ADR 29's recovery codes (#92), so losing Durable Object storage is survivable. Exporting D1, R2 and the manifests and restoring them into a **clean** Cloudflare account is not, and no drill has measured an RPO or RTO. |
+| **The escrow has never been installed on any Node, so recovery does not work yet** | Backup, cross-account catalog restore and a checked evidence copy have all been run against real Nodes (#92). The step they exist for has not succeeded: redeeming a recovery code answers `200` and installs **nothing**, because a fresh Node mints its own key generation 1 before it can be claimed and the escrow carries generation 1 too — one number cannot hold both, and the Node keeps its live key (#138). So no restored Node has ever read a message, and there is no measured RPO or RTO. The [runbook](./docs/disaster-recovery.md) says where it stops and what the drill measured on the way. |
 | **Deployment promotes by hand on a Free account** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). It has now been run against a live account ([receipt](./docs/receipts/deploy-drill-live-account.md)) — and `versions upload --preview-alias` returned **no reachable preview URL**, so the gate cannot probe the canary and degrades to a safe manual promotion. The cause is not established, which is why that receipt records it without a number. |
 | **Two Nodes in one account collide on the Workflow, and the deploy refuses** | Measured rather than suspected ([receipt](./docs/receipts/deploy-drill-live-account.md)): every other resource derives its name from the Worker's, the Workflow does not, and deploying a second Node **succeeded with exit 0 and silently took ownership** — leaving the first Node's `BUTLER_RUNS` binding pointing at a Workflow now running the second Node's code against the second Node's bindings. `mailda deploy` now refuses when the Workflow belongs to another Worker and names the fix. The config still ships a fixed name, so the refusal is the guard rather than the naming. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
@@ -2767,6 +2767,54 @@ documentation, three of them caught only by mutation testing — which means the
 `test/without-comments.ts` now exists, lists all eight, and strips comments by default rather than by each
 test remembering. It does not fix the class: a lexical test can still match the wrong call site, and scoping to
 a function's body is the other half.
+
+The **ninth** arrived while fixing #138, and it is that other half rather than a comment. A test asserting the
+collision branch exits non-zero took nine hundred characters from the branch's start, ran past it into the guard
+below, and found *that* `fail(`. Swapping the branch's own `fail(` for a `process.stdout.write(` passed.
+Delimiting the slice at both ends killed it.
+
+## The restore drill: what running it found that reading could not (#92, #138)
+
+Two full runs against two real Cloudflare accounts. The backup half works. The half it exists for does not, and
+that is now measured rather than assumed.
+
+**The redemption installs nothing.** On a clean destination — Worker, D1, R2 and queue all provisioned from
+scratch, catalog restored, evidence copied and byte-checked — spending a recovery code answered:
+
+```text
+HTTP 200
+{"restored":{"content":[],"credential":[]},"conflicted":{"content":[1],"credential":[1]}}
+```
+
+A fresh Node mints its own content and credential generation 1 **before it can be claimed** — `mailda deploy`'s
+closing `doctor` says so on a brand-new unclaimed install — and the escrow carries generation 1 too. One number
+cannot hold both, and the Node keeps its live key, which is the right trade in the scenario the code was written
+for and the wrong one here: the destination's generation 1 has sealed nothing, so keeping it costs the whole
+organization's mail to protect an empty key. The runbook's own order forces the collision, because the redeem
+route needs a claimed Node and the claim arrives with the catalog.
+
+**And every layer read it as a success.** The route returned two arrays and a 200; the CLI printed *"the vault
+is restored"* — a false success message I had shipped less than an hour earlier in the #134 fix, over the exact
+case where an operator most needs the truth. The Node already knew better: `vault.restore` answers
+`restored | conflict | identical`, so it can tell a harmless re-run from a real collision, and only the API
+threw the distinction away. The answer now carries what happened, including the sentence worth the most —
+**another code will not help, because all ten carry the same generations.** Without it an operator spends the
+sheet.
+
+**Seven more findings between "the destination exists" and "the destination is clean"**, each in the runbook
+now: a second restore onto a restored Node fails with the opaque `{"D1_RESET_DO":true}`; a deleted D1 is never
+re-provisioned by `wrangler deploy`, because the binding is linked server-side, so the Worker kept reading a
+dead database id while the CLI resolved the name to a live one; **the fix the Node printed therefore ran
+successfully and changed nothing**, applying 51 migrations to a database the Worker does not read; `/health`
+calls a missing database "no schema"; `mailda deploy` lists migrations before the deploy that provisions them;
+auto-provisioning never adopts an existing resource, and fails *after* creating the earlier ones, so each retry
+needs a manual unwind; and a Worker cannot be deleted while it consumes a queue.
+
+The pattern across all of them is one thing: **a layer's honest output read as the layer above's good news.**
+`backup --verify` reported `0 checked, 0 fault(s)` over three objects — true, and worthless, because the sweep
+reads `ingress_receipts` and this Node's evidence is drafts (#131). `verify-backup` was the only thing in the
+chain that said it: *"the sweep that ran when this backup was taken checked **nothing** … That is not a clean
+bill of health."*
 
 ## Contributing
 

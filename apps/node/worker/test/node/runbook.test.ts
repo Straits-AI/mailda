@@ -66,7 +66,13 @@ function cited(): Array<{ file: string; verb: string }> {
        * Inside fenced blocks as well as outside, which is the opposite of the path-reference rule and
        * deliberate. A fence there marks an illustrative literal; a fence here is where the instruction is.
        */
-      for (const match of text.matchAll(/\bmailda(?:\.mjs)?\s+([a-z][a-z-]+)\b/g)) {
+      /*
+       * `[ \t]` rather than `\s`, because `\s` crosses a newline. A reset block ending one line with the
+       * Worker's name — `wrangler queues consumer worker remove mailda-sending-events mailda` — and beginning
+       * the next with `pnpm` was reported as `mailda pnpm`, a command nothing dispatches. An invocation is on
+       * one line by construction, so matching across a break can only ever be wrong.
+       */
+      for (const match of text.matchAll(/\bmailda(?:\.mjs)?[ \t]+([a-z][a-z-]+)\b/g)) {
         found.push({ file: path, verb: match[1] as string });
       }
     }
@@ -139,13 +145,21 @@ describe("a document cannot tell an operator to run a command that does not exis
 describe("the runbook says what it has not established", () => {
   const runbook = readFileSync(join(ROOT, "docs/disaster-recovery.md"), "utf8");
 
-  it("states that it has not been run end to end", () => {
+  it("states that the restore does not complete, and names the reason", () => {
     /*
-     * The claim most likely to rot into a false one. Three deploy drills each found something reading could
-     * not have found; a runbook that reads as tested when it is not is the same defect as a comment asserting
-     * a property the code lacks, in the document somebody follows during an incident.
+     * This asserted `has not been run end to end` until the drill ran it end to end (#138). The phrase had to
+     * go, and what replaces it guards the same property from the other side: the risk was a runbook reading as
+     * *tested* when it was not, and the risk now is one reading as *working* when it does not.
+     *
+     * It does not work. The redemption answers 200 and installs nothing, because a fresh Node mints its own
+     * generation 1 before it can be claimed and the escrow carries generation 1 too. So the escrow has never
+     * been installed on any Node, and this document has to say that where somebody reaches it during an
+     * incident rather than where a reader might scroll past.
      */
-    expect(runbook).toContain("has not been run end to end");
+    expect(runbook).toContain("#138");
+    expect(runbook).toContain("the escrow has never been installed on any");
+    // And the sentence that stops an operator spending the other nine codes on the same answer.
+    expect(runbook).toContain("all ten carry the same generations");
   });
 
   it("splits RTO rather than offering one number", () => {

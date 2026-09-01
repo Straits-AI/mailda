@@ -866,11 +866,71 @@ async function recoveryCodes(argv) {
       );
     }
 
-    process.stdout.write(
-      `\n   the vault is restored: ${JSON.stringify(body)}\n\n`
-      + "   That code is spent. Run `mailda doctor --url " + origin + "` to see what the Node says now —\n"
-      + "   a restored vault should clear the signing-key refusal, and the Node should sign people in again.\n\n",
-    );
+    /*
+     * **Read what came back before saying what happened** (#138).
+     *
+     * This printed `the vault is restored` over whatever the body said, and #92's drill answered:
+     *
+     *     HTTP 200
+     *     {"restored":{"content":[],"credential":[]},"conflicted":{"content":[1],"credential":[1]}}
+     *
+     * Nothing installed, a single-use code spent, and this command called it a restore. A generation the
+     * vault already holds under a *different* key cannot take the escrowed one — `redeemForVault` keeps the
+     * live key deliberately, because losing newer mail to recover older is the worse trade — and the mail
+     * sealed under the escrowed key stays unreadable. That is the moment an operator has to be told, and it
+     * was the moment this told them the opposite.
+     *
+     * Counted rather than described: the sum is what decides which of the three things happened, so a partial
+     * restore cannot read as either a success or a failure.
+     */
+    const installed = (body.restored?.content?.length ?? 0) + (body.restored?.credential?.length ?? 0);
+    const collided = (body.conflicted?.content?.length ?? 0) + (body.conflicted?.credential?.length ?? 0);
+
+    if (installed > 0) {
+      process.stdout.write(
+        `\n   ${installed} key generation(s) installed`
+        + (collided > 0 ? `, and ${collided} could not be — see below` : "") + ".\n\n"
+        + "   That code is spent. Run `mailda doctor --url " + origin + "` to see what the Node says now —\n"
+        + "   a restored vault should clear the signing-key refusal, and the Node should sign people in again.\n\n",
+      );
+    }
+
+    if (collided > 0) {
+      /*
+       * The **Node's** words when it has them, and the decision made from the counts either way.
+       *
+       * Deciding on `body.notice` alone would make an older Node — one that answers without the field, which
+       * is every Node deployed before this — look like a clean restore again, which is the whole defect. And
+       * restating the explanation here would give an operator two texts to reconcile during an incident.
+       *
+       * `fail` rather than a note, even when something was installed: a generation that could not be put back
+       * is mail that cannot be read, and an exit code is the only part of this a script notices.
+       */
+      fail(
+        `${collided} escrowed key generation(s) could NOT be installed`
+        + (installed === 0 ? " — nothing was restored" : "") + ".\n\n"
+        + "  what     content " + JSON.stringify(body.conflicted?.content ?? [])
+        + ", credential " + JSON.stringify(body.conflicted?.credential ?? []) + "\n"
+        + "  why      " + (typeof body.notice === "string" && body.notice !== ""
+          ? body.notice
+          : "this Node already holds keys of those generation numbers under a different secret, and one "
+            + "number cannot hold both. The code is spent and mail sealed under the escrowed key stays "
+            + "unreadable. Another code will not help — all ten carry the same generations")
+        + "\n"
+        + "  fix      do NOT spend more codes on it. See #138.",
+      );
+    }
+
+    if (installed === 0) {
+      // Neither installed nor collided: a 200 that did nothing at all, which no known path produces.
+      fail(
+        "the Node answered success and reported no keys at all.\n\n"
+        + `  what     ${JSON.stringify(body)}\n`
+        + "  why      unknown. A redemption installs generations, collides with them, or refuses — this is\n"
+        + "           none of the three, so nothing here will guess which\n"
+        + "  fix      `mailda doctor --url " + origin + "` and read `recovery_restore_state`.",
+      );
+    }
     return;
   }
 
