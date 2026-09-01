@@ -359,6 +359,15 @@ prefix `pad_`):
   strength of a code from the old one. It is now conditional on the set the code belongs to, so a set that has
   since been replaced marks nothing and the count says so.
 
+**The confirmation is typed by a person, and nothing else can make it** (#136). `mailda recovery-codes confirm`
+prompts for the code and refuses `--code`, which it used to require. Two reasons, and the order matters:
+confirming does not spend the code, so one on a command line is a *live* key to the escrow in shell history —
+strictly worse than the spent one `redeem` already refuses to take that way. And a code a script reads from a
+file cannot make the assertion at all. The condition asks whether a **human** holds the sheet, so automating
+the answer clears the warning without changing the fact, which is 2b: an assertion that cannot fail. The route
+is unchanged; what changed is that the only client shipped for it can no longer be handed the code by a
+machine.
+
 Three details that are load-bearing rather than incidental:
 
 - **Retirement is a deletion, not a state.** Each row carries the vault *sealed under its own code*, so a

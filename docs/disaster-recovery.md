@@ -154,6 +154,17 @@ dump — that is ADR 28 working as designed, and it is why the escrow exists. Re
 recovery codes against the destination Node to install the keys the catalog's evidence was sealed under. Ten
 codes, single-use: a mistyped one is spent.
 
+```sh
+# Typed at a prompt, and it refuses a pipe: a code in a shell history is a code in a backup of one. So this is
+# the one step in this runbook that cannot be scripted — by design, and it is worth knowing before the day.
+node packages/cli/src/mailda.mjs recovery-codes redeem --url https://<destination-node>
+```
+
+Unauthenticated on purpose, and this is the reason: the state it exists for is one where the signing key cannot
+be unwrapped, so the Node can issue no session and nobody can prove they are an administrator. Requiring
+credentials would put the door behind the lock it opens. Measured — the destination answered 500 to every
+sign-in while its own `doctor` said `signing_key: E_EVIDENCE_AUTH_FAILED`.
+
 ## Proving it worked
 
 ```sh
