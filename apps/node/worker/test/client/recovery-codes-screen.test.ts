@@ -29,6 +29,17 @@ const CODES = [
   "pppp-qqqq-rrrr", "ssss-tttt-uuuu", "vvvv-wwww-xxxx", "yyyy-zzzz-0000", "1111-2222-3333",
 ];
 
+/** Polls a condition rather than sleeping for a guessed interval. Throws with `why` if it never holds. */
+async function until(holds: () => boolean, why: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (holds()) return;
+    await new Promise((settle) => setTimeout(settle, 5));
+  }
+  throw new Error(why);
+}
+
+let screen: { renderRecoveryCodes: (codes: string[]) => void };
+
 /*
  * Built **once**, not per test. `app.client.js` captures `document.getElementById("app")` at module load, the
  * way a script served to a browser does — so replacing the body between tests leaves the module holding a
@@ -36,17 +47,38 @@ const CODES = [
  * fixture bug that looks exactly like a rendering bug.
  *
  * `show()` replaces the element's children anyway, so tests do not leak into each other.
+ *
+ * ## The module boots on import, and the boot writes to the same element
+ *
+ * Its last line is `route().catch(...)`, because a script a browser loads has no other place to start. So
+ * importing it starts an asynchronous render into `#app` that lands whenever it lands — and with no `fetch`
+ * answering `/health`, it lands as `Could not reach this Node`, replacing whatever a test had put there.
+ *
+ * That raced, and CI is where it was caught: locally the rejection resolved before the second test began, on a
+ * loaded runner it resolved *during* it, and ten codes became zero. A `setTimeout` long enough to be safe today
+ * is the kind of number that starts failing again on a different machine.
+ *
+ * So `/health` is answered before the import, and the boot is then **waited for by its effect** rather than by a
+ * duration: nothing below runs until the claim screen the boot renders is on the page. After that the file's own
+ * `route()` is finished and no longer competing for the element.
  */
-beforeAll(() => {
+beforeAll(async () => {
   document.body.innerHTML = '<div class="rack"><div class="rack-inner"><div id="status"></div></div></div>'
     + '<main id="app"></main>';
+  globalThis.fetch = (async () =>
+    Response.json({ claimed: false, outboxPending: 0 })) as unknown as typeof fetch;
+
+  screen = await import("../../src/client/app.client.js") as unknown as typeof screen;
+
+  const app = document.getElementById("app") as HTMLElement;
+  await until(
+    () => app.childElementCount > 0,
+    "the module's own route() never rendered, so nothing here can tell its output from a test's",
+  );
 });
 
 async function render(codes: string[]): Promise<HTMLElement> {
-  const module = await import("../../src/client/app.client.js") as unknown as {
-    renderRecoveryCodes: (codes: string[]) => void;
-  };
-  module.renderRecoveryCodes(codes);
+  screen.renderRecoveryCodes(codes);
   /*
    * A macrotask before asserting, and it is a real assertion rather than a wait for convenience.
    *
