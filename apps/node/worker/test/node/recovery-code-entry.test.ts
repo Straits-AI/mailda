@@ -99,3 +99,55 @@ describe("a recovery code is typed, never passed", () => {
     expect(source).toContain("does not spend the code");
   });
 });
+
+describe("redeem does not announce a restore it did not get", () => {
+  /**
+   * The defect this closes was in this file's own author's hands (#138).
+   *
+   * `redeem` printed `the vault is restored: ${JSON.stringify(body)}` over whatever came back, and #92's drill
+   * answered `200` with both generations collided and nothing installed. A single-use code spent, the mail
+   * still unreadable, and the command called it a restore — shipped less than an hour before the drill ran it.
+   *
+   * Lexical, and narrowly so: what is checked is that the success line is reached only through a count, and
+   * that a collision exits non-zero. The words themselves are the Node's, and `test/conflict-notice.test.ts`
+   * holds those.
+   */
+  it("counts what came back before saying anything", () => {
+    const source = body();
+    expect(source).toMatch(/body\.restored\?\.content\?\.length/);
+    expect(source).toMatch(/body\.conflicted\?\.content\?\.length/);
+    // The old unconditional claim, in the words it used. Nothing may assert a restore without checking.
+    expect(source).not.toContain("the vault is restored:");
+  });
+
+  it("exits non-zero on a collision, because a script sees nothing else", () => {
+    /*
+     * Delimited at both ends, and the first version was not — it took 900 characters from the branch's start,
+     * which ran past the branch into the `installed === 0` guard below and found *that* `fail(`. Swapping the
+     * collision branch's `fail(` for a `process.stdout.write(` **passed**. That is the ninth time a lexical
+     * assertion in this repository has matched the wrong thing; see `test/without-comments.ts` for the other
+     * eight. Comment-stripping does not help here, because the match was live code — scoping is the half that
+     * does.
+     */
+    const source = body();
+    const opens = source.indexOf("if (collided > 0)");
+    const closes = source.indexOf("if (installed === 0)", opens);
+    expect(opens, "the collision branch could not be found").toBeGreaterThan(-1);
+    expect(closes, "the branch after the collision branch could not be found").toBeGreaterThan(opens);
+
+    const branch = source.slice(opens, closes);
+    // `fail` is this CLI's non-zero exit. A `process.stdout.write` here would be a warning nothing acts on.
+    expect(branch).toContain("fail(");
+  });
+
+  it("prefers the Node's own explanation but does not depend on it", () => {
+    /*
+     * A Node deployed before the notice existed answers without the field. Deciding on `body.notice` alone
+     * would make every one of those look like a clean restore again — the original defect, reintroduced by the
+     * fix for it.
+     */
+    const source = body();
+    expect(source).toContain("body.notice");
+    expect(source).toMatch(/collided\s*>\s*0/);
+  });
+});

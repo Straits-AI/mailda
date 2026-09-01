@@ -19,7 +19,9 @@ import {
 import { finishPasskeyAuthentication, finishPasskeyRegistration } from "./auth/passkey-verify.ts";
 
 import { claimNode } from "./claim.ts";
-import { acknowledgeKeyConflict, confirmRecoveryCodes, mintRecoveryCodes, redeemForVault } from "./recovery.ts";
+import {
+  acknowledgeKeyConflict, conflictNotice, confirmRecoveryCodes, mintRecoveryCodes, redeemForVault,
+} from "./recovery.ts";
 import { agentFor } from "./agents.ts";
 import { failedBodyIndex, repairBodyIndex } from "./search.ts";
 import { agentReach, listAgents, mintAgent, revokeAgent, sponsorReach } from "./agents.ts";
@@ -2557,8 +2559,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       if (claimed?.org_id == null) {
         return Response.json({ error: "not_claimed" }, { status: 409 });
       }
-      const restored = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
-      return Response.json(restored);
+      const outcome = await redeemForVault(env, clock, claimed.org_id, body.code ?? "");
+      /*
+       * The notice travels **in the payload** (#138), for the reason the mint's does: a caller that reads only
+       * the numbers has no way to know a single-use code is gone and the mail is still unreadable. #92's drill
+       * answered here with 200, both generations collided, and every layer above called it a restore.
+       *
+       * Still a 200. Nothing broke and nothing was lost, and the settlement records `ok` for that reason — the
+       * change is that the answer now says what happened rather than leaving it to be inferred from two arrays.
+       */
+      const notice = conflictNotice(outcome.conflicted, outcome.restored);
+      return Response.json(notice === null ? outcome : { ...outcome, notice });
     }
 
     /*
