@@ -166,3 +166,33 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 export function sessionExpiry(): number | null {
   return null;
 }
+
+/* ------------------------------------------------------------------ the framework-free script's needs --- */
+
+/**
+ * What `src/client/app.client.js` imports beyond `apiFetch` (#134).
+ *
+ * That script renders the claim, the sign-in and a locked-out doctor, and **no test had ever loaded it** —
+ * its imports are names the Worker serves rather than files on disk, so it could not be resolved. The cost
+ * was measured: the claim screen received ADR 29's ten recovery codes and dropped them, and neither suite was
+ * positioned to notice, because the React tests do not drive this file and this file would not load.
+ *
+ * These are inert on purpose. A test of a pre-authentication screen has no session and needs none; giving
+ * them behaviour would invite tests that assert against this stub's idea of a session rather than the real
+ * module's. Anything that genuinely needs session behaviour should say so by failing here.
+ */
+export function adopt(): void {}
+export function start(): void {}
+export function isSignedIn(): boolean {
+  return false;
+}
+export function accessExpiresAt(): number | null {
+  return null;
+}
+export async function ensureFresh(): Promise<boolean> {
+  return false;
+}
+export async function refresh(): Promise<boolean> {
+  return false;
+}
+export function onSessionChange(): void {}

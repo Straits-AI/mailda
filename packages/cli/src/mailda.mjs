@@ -818,13 +818,60 @@ function setPassword(argv) {
  */
 async function recoveryCodes(argv) {
   const action = argv[0];
-  if (action !== "rotate" && action !== "confirm") {
-    fail("usage: mailda recovery-codes rotate|confirm --url https://your-node.workers.dev\n"
+  if (action !== "rotate" && action !== "confirm" && action !== "redeem") {
+    fail("usage: mailda recovery-codes rotate|confirm|redeem --url https://your-node.workers.dev\n"
       + "  rotate   mint ten replacement codes and print them once\n"
       + "  confirm  type one back, proving you hold the set. Compared, never spent\n"
+      + "  redeem   spend one to restore this Node's key vault. The disaster path\n"
       + "  why      the codes open the escrow holding this Node's content and credential keys. They are\n"
       + "           shown once, so an unconfirmed set is one nobody can prove reached a human\n"
       + "  fix      set MAILDA_EMAIL and MAILDA_PASSWORD, then pass --url");
+  }
+
+  /*
+   * **Redeem is handled before anything else, because it is the one that must work when nothing does** (#134).
+   *
+   * `POST /api/recovery/redeem` is deliberately unauthenticated: the state it exists for is one where the
+   * signing key cannot be unwrapped, so no session can be issued and no administrator can prove they are one.
+   * Requiring credentials here would put the door behind the lock it opens — measured during #92's restore
+   * drill, where the destination Node answered 500 to every sign-in and its own doctor said
+   * `signing_key: E_EVIDENCE_AUTH_FAILED`.
+   *
+   * It had no interface at all until now: no screen, and no verb here. The only way to spend a code was a
+   * hand-written `curl`, for the operation whose entire purpose is to be performed during a disaster by
+   * somebody who has lost everything else.
+   */
+  if (action === "redeem") {
+    const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
+    if (origin === "") fail("usage: mailda recovery-codes redeem --url https://your-node.workers.dev");
+
+    // Read from the terminal, never from a flag: the CLI's own rule, and a recovery code in shell history is
+    // a recovery code in a backup of the shell history.
+    const code = (await readSecret("Recovery code: ")).trim();
+    if (code === "") fail("no code entered; nothing was spent.");
+
+    const response = await fetch(`${origin}/api/recovery/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      fail(
+        `the Node refused the code (${response.status}).\n\n`
+        + `  why      ${body.message ?? body.error ?? "no detail given"}\n`
+        + "  fix      each code is single-use, so a code spent earlier will not work twice. Try another\n"
+        + "           from the same set — the set that was shown when this Node was claimed.",
+      );
+    }
+
+    process.stdout.write(
+      `\n   the vault is restored: ${JSON.stringify(body)}\n\n`
+      + "   That code is spent. Run `mailda doctor --url " + origin + "` to see what the Node says now —\n"
+      + "   a restored vault should clear the signing-key refusal, and the Node should sign people in again.\n\n",
+    );
+    return;
   }
 
   const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
@@ -1295,6 +1342,54 @@ async function claimState(origin) {
   return report.claimed ? "claimed" : "unclaimed";
 }
 
+/**
+ * Reads a secret from the terminal without echoing it.
+ *
+ * ## Why this is here and not imported
+ *
+ * `apps/node/worker/scripts/set-password.mjs` has the same function, and duplicating one is normally how a
+ * repository drifts. That script dispatches on `process.argv` at the top level, so importing it would *run*
+ * it — the same reason `deploy-parse.mjs` exists as a separate module. The CLI invokes it as a subprocess
+ * instead, which is right for a password prompt and wrong as a way to borrow a helper.
+ *
+ * The duplication is bounded and the behaviour is the part that matters: a secret typed at a prompt never
+ * reaches `process.argv`, and therefore never reaches shell history, which is the rule both copies exist to
+ * keep.
+ */
+function readSecret(prompt) {
+  if (process.stdin.isTTY !== true) {
+    fail("refusing to read a recovery code from a pipe — run this in a terminal.\n\n"
+      + "  why      a code passed through a pipe or an argument is a code in a shell history, a process\n"
+      + "           list, and whatever captured this session's output\n"
+      + "  fix      run it interactively");
+  }
+  process.stdout.write(prompt);
+  return new Promise((done, reject) => {
+    let value = "";
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+
+    const finish = (result, error) => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+      process.stdout.write("\n");
+      if (error !== undefined) reject(error); else done(result);
+    };
+
+    const onData = (chunk) => {
+      for (const char of chunk) {
+        if (char === "\r" || char === "\n") return finish(value);
+        if (char === "\u0003") return finish(undefined, new Error("cancelled"));
+        if (char === "\u007f" || char === "\b") { value = value.slice(0, -1); continue; }
+        value += char;
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+}
+
 /* ------------------------------------------------------------------ backup ------------------------- */
 
 /**
@@ -1562,6 +1657,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda set-password <email>        set a password from the terminal, never echoed
   mailda recovery-codes rotate       mint ten replacement recovery codes, printed once
   mailda recovery-codes confirm      prove you hold one; compared, never spent
+  mailda recovery-codes redeem       spend one to restore the key vault — the disaster path
   mailda search list                 what the body index failed on, and why
   mailda search repair --id <id>     put a message back in the body index's queue
   mailda backup --url <o> --out <d>   catalog, evidence inventory and an index you can check

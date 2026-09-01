@@ -62,10 +62,31 @@ export default defineConfig({
        * restate, and a stub of it here would be exactly the second copy that rule exists to prevent.
        */
       "/app/delivery.js": fileURLToPath(new URL("./src/client/delivery.client.js", import.meta.url)),
+      /*
+       * The framework-free script's own relative imports (#134).
+       *
+       * `src/client/app.client.js` imports the session and config modules by the relative names the Worker serves,
+       * which are `session.client.js` on disk and generated per request. Neither resolves under vitest, so
+       * **the script could not be imported by a test at all**, and it is the one that renders the claim, the
+       * sign-in and a locked-out doctor.
+       *
+       * That is not a small gap: the claim screen received ADR 29's ten recovery codes and dropped them, and
+       * no test in either suite was positioned to see it, because the React tests do not drive this file and
+       * this file could not be loaded. Aliasing the two specifiers is what makes it testable.
+       */
+      "./session.js": fileURLToPath(new URL("./test/client/session-stub.ts", import.meta.url)),
+      "./config.js": fileURLToPath(new URL("./test/client/config-stub.ts", import.meta.url)),
+      /*
+       * The React bundle, which `app.client.js` imports dynamically after sign-in. vite resolves the
+       * specifier at transform time even though the import is lazy, so the script cannot load without this.
+       * Stubbed rather than pointed at the real bundle: that is build output a clean checkout lacks, and every
+       * screen it mounts is already covered by the `.test.tsx` files.
+       */
+      "/app/shell.js": fileURLToPath(new URL("./test/client/shell-stub.ts", import.meta.url)),
     },
   },
   test: {
-    include: ["test/client/**/*.test.tsx"],
+    include: ["test/client/**/*.test.tsx", "test/client/**/*.test.ts"],
     environment: "happy-dom",
     // Testing Library's `cleanup` between tests. Without it, a component from the previous test is still
     // mounted and its effects are still live, so a leaked timer lands in the next test's assertions —

@@ -615,6 +615,13 @@ tbody td {
   word-break: break-word;
 }
 .mono { font-family: var(--mono); }
+
+/* The ten recovery codes (#134). Spaced and numbered, because they are read off a screen and typed
+   somewhere else, and a dense block is where a transcription error hides. Each item selects whole, so one
+   click takes a complete code rather than part of one.
+   No backticks in this comment: the whole stylesheet is a template literal, and one would end it. */
+.codes { margin: 0 0 1rem; padding-left: 1.9rem; display: grid; gap: .34rem; }
+.codes li { font-size: .82rem; letter-spacing: .02em; user-select: all; }
 td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.dim { color: var(--dim); }
 

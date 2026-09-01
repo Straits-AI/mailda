@@ -163,6 +163,24 @@ function renderClaim() {
       if (response.ok) {
         adopt();
         startSessionTicker();
+        /*
+         * The response body is read, and that is the fix (#134).
+         *
+         * This used to be `adopt(); startSessionTicker(); return route();` — the body was never touched. The
+         * claim returns ADR 29's ten recovery codes in plaintext, and the contract says it is *"the only
+         * response in this contract that carries them: the Node keeps a hash to recognise one and an escrow
+         * only the code itself opens, so nothing can produce them again."* So the interface received the one
+         * artifact that decrypts an organization's mail and routed straight past it into the inbox.
+         *
+         * Measured, during #92's restore drill: a full catalog and every object restored into a different
+         * Cloudflare account, the destination came up holding all ten code hashes and escrow blobs, and
+         * refused — `signing_key: E_EVIDENCE_AUTH_FAILED` — because the vault needs a code and no code had
+         * ever been obtainable. `doctor` had been saying so since the claim.
+         */
+        const claimed = await response.json().catch(() => ({}));
+        if (Array.isArray(claimed.recoveryCodes) && claimed.recoveryCodes.length > 0) {
+          return renderRecoveryCodes(claimed.recoveryCodes);
+        }
         return route();
       }
       const body = await response.json().catch(() => ({}));
@@ -186,6 +204,61 @@ function renderClaim() {
         }),
       ]),
       panel("First run", null, [form]),
+    ]),
+  );
+}
+
+/**
+ * The ten recovery codes, shown once, with no way past them but acknowledgement (#134).
+ *
+ * ## Why this is a screen of its own rather than a banner
+ *
+ * They cannot be produced again — the Node stores a hash to recognise a code and an escrow that only the
+ * code's plaintext opens. An interface that shows them beside something else to do is an interface that will
+ * be navigated away from, and the cost of that is the whole organization's mail.
+ *
+ * So there is one thing on the screen and one way forward, and the button says what it is asserting rather
+ * than "OK": a person clicking *"I have saved these"* has been told what they are claiming.
+ *
+ * ## Why the session is adopted before this, not after
+ *
+ * The server has already set the cookies — the claim succeeded. Adopting first means the session ticker runs
+ * while somebody copies ten strings into a password manager, so a slow, careful reader does not come back to
+ * an expired session. Nothing here needs the session; it is the *next* screen that would.
+ */
+export function renderRecoveryCodes(codes) {
+  const acknowledged = el("button", {
+    class: "primary", type: "button", text: "I have saved these ten codes",
+  });
+  acknowledged.addEventListener("click", () => route());
+
+  show(
+    el("div", { class: "split" }, [
+      el("div", { class: "split-lede", "data-reveal": "" }, [
+        el("h1", { text: "Write these down now." }),
+        el("p", {
+          text:
+            "These ten codes are the only way to recover this Node's keys. They open the escrow holding the "
+            + "content and credential keys — the ones that decrypt your mail — and they are shown here once. "
+            + "The Node keeps only a hash of each, so nothing, including us, can produce them again.",
+        }),
+        el("p", {
+          text:
+            "Put them somewhere that survives losing this computer and this Cloudflare account. A password "
+            + "manager, or paper in a different building. Each is single-use.",
+        }),
+      ]),
+      panel("Recovery codes", "Shown once. Not recoverable.", [
+        el("ol", { class: "codes" }, codes.map((code) => el("li", { class: "mono", text: code }))),
+        el("p", {
+          class: "hint",
+          text:
+            "Next: run `mailda recovery-codes confirm` and type one back. That proves a person holds them — "
+            + "until it is done, this Node reports degraded, because ten codes nobody has read are the same "
+            + "as none.",
+        }),
+        acknowledged,
+      ]),
     ]),
   );
 }
