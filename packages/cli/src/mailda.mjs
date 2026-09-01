@@ -924,13 +924,34 @@ async function recoveryCodes(argv) {
     return;
   }
 
-  const typed = flag(argv, "code");
-  if (typed === undefined) {
-    fail("pass --code <one of the codes>\n"
-      + "  why      confirmation is proof you hold the sheet. It compares against the stored hash and does\n"
-      + "           not spend the code, so all ten stay usable\n"
-      + "  fix      mailda recovery-codes confirm --url <origin> --code XXXX-XXXX-...");
+  /*
+   * **Typed at a prompt, not passed as a flag** (#136), for two reasons and the second is the load-bearing one.
+   *
+   * This command required `--code` while `redeem`, forty lines up, refuses one — and confirm's leak is the
+   * worse of the two. A redeemed code in a shell history is a *spent* code; a confirmed one is live, because
+   * confirming deliberately does not spend it. So the command with the gentler verb was the one putting a
+   * working key to the escrow into `~/.zsh_history`, a CI log and a `ps` snapshot.
+   *
+   * And a code a script reads from a file cannot make this assertion at all. Confirmation asserts exactly one
+   * thing — that a **person** holds the sheet — and `doctor`'s warning is worded as that: *"nobody has
+   * confirmed holding one"*. Automating it clears the warning without the fact becoming true, which is 2b: an
+   * assertion that cannot fail. The agent that found this had just rotated a Node's codes and could have
+   * cleared its warning from the file it had written, making the Node claim a human held codes no human had
+   * read.
+   *
+   * `--code` is refused **by name** rather than ignored, because somebody has it in a script and a silent
+   * behaviour change would leave them with a Node that stays degraded for no stated reason.
+   */
+  if (flag(argv, "code") !== undefined) {
+    fail("--code is not accepted; the code is typed at a prompt.\n\n"
+      + "  why      confirming does not spend the code, so one on a command line is a live key to this\n"
+      + "           organization's escrow sitting in shell history — worse than the spent one `redeem`\n"
+      + "           already refuses to take that way. And a code a script reads from a file proves nothing\n"
+      + "           about a person holding the sheet, which is the only thing confirmation asserts\n"
+      + "  fix      mailda recovery-codes confirm --url " + origin);
   }
+  const typed = (await readSecret("Recovery code: ")).trim();
+  if (typed === "") fail("no code entered; nothing was confirmed.");
   const { message } = await post("/api/recovery-codes/confirm", { code: typed });
   process.stdout.write(`\n${message}\n\n`);
 }

@@ -1870,8 +1870,10 @@ of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
 - **A recovery code set nobody has confirmed is reported degraded.** Minting returns the plaintext once, so a
   lost response leaves this Node looking exactly as it would if the codes had been written down — ten rows,
   good hashes, current escrow — and health over an organization that cannot recover is the failure the whole
-  escrow exists to prevent. `mailda recovery-codes confirm` compares one code without spending it. A freshly
-  claimed Node is therefore degraded until an operator confirms, which is intended rather than noise.
+  escrow exists to prevent. `mailda recovery-codes confirm` compares one code without spending it, and it is
+  typed at a prompt rather than passed as a flag — a confirmation a script can make from a file proves nothing
+  about a person holding the sheet, which is the only thing it asserts (#136). A freshly claimed Node is
+  therefore degraded until an operator confirms, which is intended rather than noise.
 - **A person cannot be removed.** Deleting an account with audit entries, cases and sealed manifests
   attributed to it is a different question with its own answer, and guessing it would be worse than
   leaving it. Revoking every relation is the available act, and it takes effect on the next request.
@@ -2721,6 +2723,24 @@ Now the claim shows them on a screen of their own with one way forward, and the 
 *"I have saved these ten codes"* — rather than "OK", because a person clicking it should know what they are
 claiming. And `mailda recovery-codes redeem` reads the code from a terminal, never an argument, for the reason
 `set-password` already gives: a secret on a command line ends up in shell history.
+
+### The command with the gentler verb was leaking the worse secret (#136)
+
+Walking the drill with that fix in place found the rule broken forty lines from where it is written. `redeem`
+refuses a code as an argument; `confirm` **required** one. And confirming is the more dangerous place to leak,
+because confirming deliberately does not spend the code: a redeemed code in a shell history is spent, while a
+confirmed one still opens the escrow holding the organization's content and credential keys.
+
+The second reason is the one that decided it. Confirmation asserts exactly one thing — that a **person** holds
+the sheet — and `doctor` words its warning as that: *"nobody has confirmed holding one"*. A code a script reads
+from a file clears the warning without the fact becoming true, which is 2b: an assertion that cannot fail. The
+agent that found this had just rotated a Node's codes and could have cleared its warning from the file it had
+written, making the Node report that a human held codes no human had read.
+
+So `confirm` prompts, and refuses `--code` **by name** with the reason rather than ignoring it. The test is
+written over the whole function rather than over the one command, because the rule had been living in a comment
+next to a single caller — `test/node/recovery-code-entry.test.ts` requires that *every* code the CLI sends is
+one somebody typed, which is a rule the next recovery verb has to meet.
 
 ### Why nothing caught it, and what that cost
 
