@@ -148,18 +148,51 @@ describe("the measured timeout reaches every suite", () => {
       .toBeGreaterThanOrEqual(2);
   });
 
-  it("gives every config the measured timeout rather than vitest's default", async () => {
+  /*
+   * Its own timeout, measured rather than chosen — the reasoning is in the receipt under *"One test is exempt"*.
+   * This file imports nine vitest configs the way vitest does, so vite transforms each one; alone that takes
+   * 7.6 seconds, and under the full suite's parallel load it was measured at 25.2, 30.4 and 42.5 seconds.
+   * It therefore exceeded the 30-second global timeout in about one local run in two: a test asserting that
+   * every suite carries the measured timeout, failing on one.
+   *
+   * The global figure is deliberately **not** raised. Doing so would slacken every test in the repository so
+   * that a genuinely hung one takes three times as long to fail, to accommodate a cost that belongs to the
+   * toolchain rather than to the Node.
+   */
+  it("gives every config the measured timeout rather than vitest's default", { timeout: BUDGETS["test.config_resolution_timeout_ms"] }, async () => {
     /*
      * Named against the budget rather than against a literal, so that re-measuring the receipt moves every
      * suite at once. A config left at `undefined` inherits 5,000 ms — which is the defect, not a default.
      */
+    /*
+     * Imported **concurrently**, and that is a flake fix rather than a tidy-up.
+     *
+     * Each `import()` makes vite transform a TypeScript config and its transitive imports, and there are nine
+     * of them. Serially that took 8.5 seconds alone and **timed out at 30 seconds under the full suite's
+     * parallel load** — reproduced at roughly one run in two. A test asserting that every suite carries the
+     * measured timeout was itself failing on one, which is the most embarrassing available flake.
+     *
+     * The alternative considered and rejected was reading the configs as text. That would be fast and would
+     * destroy the property: this imports them **the way vitest does**, so it sees a config exported as a
+     * function of the vite env, and it sees the *resolved* value rather than the spelling. A lexical version
+     * would pass on a config that computes the wrong number.
+     *
+     * Raising this test's own timeout was the other option, and it is worse: the budget is a bound on
+     * Mailda's tests, and lifting it here to accommodate the toolchain would put an unmeasured number in the
+     * one file whose subject is measured numbers.
+     */
+    const read = await Promise.all(configs(REPO).map(async (path) => ({
+      relative: path.slice(REPO.length),
+      ...await timeouts(path),
+    })));
+
     const wrong: string[] = [];
-    for (const path of configs(REPO)) {
-      const relative = path.slice(REPO.length);
-      const { test, hook } = await timeouts(path);
+    for (const { relative, test, hook } of read) {
       if (test !== BUDGETS["test.timeout_ms"]) wrong.push(`${relative}: testTimeout is ${String(test)}`);
       if (hook !== BUDGETS["test.hook_timeout_ms"]) wrong.push(`${relative}: hookTimeout is ${String(hook)}`);
     }
+    // Non-vacuity: a discovery that found nothing would pass this having checked nothing.
+    expect(read.length).toBeGreaterThan(5);
 
     expect(
       wrong,

@@ -41,7 +41,7 @@ export function sha256Of(bytes) {
  */
 export function backupIndex({
   node, nodeVersion, takenAt, catalog, inventory, objects, unaccounted, verified,
-  excludedTables = [], migrationsToReapply = [],
+  excludedTables = [], rebuildSearchIndex = false,
 }) {
   return {
     format: "mailda-backup/1",
@@ -77,7 +77,7 @@ export function backupIndex({
      * applied. A runbook describes the general case; a restore needs the particular one.
      */
     excludedTables,
-    migrationsToReapply,
+    rebuildSearchIndex,
   };
 }
 
@@ -148,11 +148,11 @@ export function checkBackup({ index, catalog, inventory }) {
       + "back and nothing will reference them — `mailda doctor` reports the same figure as evidence orphans.",
     );
   }
-  if ((index.migrationsToReapply ?? []).length > 0) {
+  if (index.rebuildSearchIndex === true) {
     notes.push(
-      `this backup excludes the search index, so a restore must re-run ${index.migrationsToReapply.join(", ")} `
-      + "and rebuild it. `d1_migrations` travels with the dump and says they were applied, so `migrations "
-      + "apply` will skip them unless those rows are removed first.",
+      "this backup excludes the search index, which is a rebuildable derivative rather than evidence. A "
+      + "restored Node's own migrations create its tables; their contents come from the backfill. Until that "
+      + "runs, search returns nothing on a Node whose mail is all present.",
     );
   }
   if (index.verified === null || index.verified === undefined) {
@@ -260,6 +260,20 @@ export function exportableTables(sqliteMaster) {
       excluded.push({ name, why: "a virtual table; `wrangler d1 export` refuses a database containing one" });
     } else if (virtual.some((v) => name.startsWith(`${v}_`))) {
       excluded.push({ name, why: "an fts5 shadow table, owned by a virtual table and meaningless without it" });
+    } else if (name === "d1_migrations") {
+      /*
+       * The **database's** bookkeeping, not the organization's data — and restoring it is actively wrong.
+       *
+       * A destination Node is deployed before it is restored into, so its own migrations have already run and
+       * its own `d1_migrations` already describes the schema its code created. Carrying the source's rows in
+       * would overwrite that with a claim about a different database, and it was the cause of a trap this
+       * command shipped with: the restored catalog said the search migrations were applied while the virtual
+       * tables they create were absent, so `migrations apply` believed it and skipped.
+       *
+       * Leaving it out removes the trap rather than documenting a workaround for it. The schema comes from
+       * the code (ADR 24 makes the repository the source of truth for it), and the backup carries data.
+       */
+      excluded.push({ name, why: "the destination's own migration bookkeeping, which its code already wrote" });
     } else if (name === "_cf_KV") {
       excluded.push({ name, why: "Cloudflare's internal table, not this Node's data" });
     } else if (name.startsWith("sqlite_")) {
@@ -272,29 +286,20 @@ export function exportableTables(sqliteMaster) {
 }
 
 /**
- * The migrations a restore has to re-run, because the tables they create are not in the backup.
+ * Whether a restore has to rebuild the search index, and why it is the only thing it must rebuild.
  *
- * ## The trap this names
+ * The index is excluded from the export because `wrangler d1 export` refuses a database containing an fts5
+ * virtual table — and because it is a rebuildable derivative, which `AGENTS.md` already says of search
+ * indexes. Its **tables** exist on a restored Node, created by that Node's own migrations; what is missing is
+ * their contents.
  *
- * `d1_migrations` **is** exported — it is an ordinary table. So a restored catalog says migration 0040 has
- * been applied while the virtual table it creates is absent, and `wrangler d1 migrations apply` will believe
- * it and skip. The restored Node then has a search index that exists in its bookkeeping and nowhere else,
- * and the failure surfaces the first time somebody searches.
- *
- * Recorded in the backup rather than left to the runbook alone, because the list is a property of the
- * migrations that were applied when the backup was taken — not of whatever the restoring checkout happens to
- * contain.
+ * This replaced a list of migrations to re-run, which was the right answer to the wrong question. That list
+ * existed because `d1_migrations` was being restored, so the destination's bookkeeping was overwritten with a
+ * claim about a database whose virtual tables had not come along. Excluding that table removes the problem
+ * instead of documenting a way around it, and what is left is one true sentence: the index is empty until it
+ * is rebuilt from the evidence it derives from.
  */
-export function migrationsToReapply(sqliteMaster, migrationRows) {
-  const { excluded } = exportableTables(sqliteMaster);
-  if (excluded.every((one) => !one.why.startsWith("a virtual table"))) return [];
-  /*
-   * Matched on the migration's own name rather than by number: the numbers move when migrations are
-   * renamed, and a name that no longer exists in the restoring checkout is more obviously wrong than a
-   * number that silently points at a different file.
-   */
-  return migrationRows
-    .filter((row) => typeof row.name === "string" && /search/i.test(row.name))
-    .map((row) => row.name)
-    .sort();
+export function needsIndexRebuild(sqliteMaster) {
+  return exportableTables(sqliteMaster).excluded
+    .some((one) => one.why.startsWith("a virtual table"));
 }

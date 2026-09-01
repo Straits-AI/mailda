@@ -12,6 +12,7 @@ values:
   test.hook_timeout_ms: 30000
   test.slowest_test_ms_idle: 1417
   test.slowest_test_ms_under_load: 5790
+  test.config_resolution_timeout_ms: 120000
   test.migration_hook_ms_under_load: 77
   test.slowest_test_ms_ci: 753
   test.headroom_ceiling_percent: 50
@@ -247,6 +248,43 @@ node -e 'const r=require("/tmp/loaded.json");
   const t=r.testResults.flatMap(f=>f.assertionResults.map(a=>({n:a.fullName,d:a.duration||0})));
   t.sort((a,b)=>b.d-a.d); console.log(t[0].d,"ms", t[0].n)'
 ```
+
+## One test is exempt, and the exemption is measured rather than assumed
+
+`test/node/vitest-timeout-world.test.ts` imports every vitest config in the repository — nine of them — the
+way vitest does, so that it reads the **resolved** timeout rather than the spelling, and so that a config
+exported as a function of the vite env is read correctly. Each import makes vite transform a TypeScript file
+and its transitive imports.
+
+Measured on 1 September 2026, on the machine that runs the suite:
+
+| condition | duration |
+| --- | --- |
+| the file alone | 7,636 ms |
+| under the full node suite, run 1 | 25,185 ms |
+| under the full node suite, run 2 | 30,392 ms — **timed out** |
+| under the full node suite, run 3 | 42,526 ms |
+
+So it exceeded `test.timeout_ms` in roughly one local run in two: a test asserting that every suite carries
+the measured timeout, failing on one. Importing the configs concurrently rather than serially was tried first
+and moved the figure by under a second — the cost is the transformation, not the sequencing.
+
+`test.config_resolution_timeout_ms: 120000` is its own bound, at roughly 3× the worst observed. It is a
+separate figure on purpose:
+
+- **The global timeout stays at 30,000.** Raising it to accommodate this one test would slacken every test in
+  the repository, so a genuinely hung Mailda test would take three times as long to fail. The receipt's own
+  rule — do not raise the ceiling alone — argues against raising it *at all* here, because the floor that
+  moved is not Mailda's.
+- **`test.slowest_test_ms_under_load` is left at 5,790**, and that is deliberate rather than an oversight. It
+  records a measurement of *CI* hardware; the figures above are a laptop under full parallel load. Overwriting
+  one with the other would merge two different measurements into a number describing neither. CI's headroom
+  gate reads the live report rather than this value, and has not flagged this test — on Blacksmith runners it
+  comes in under the ceiling.
+
+What this exemption is **not** is a licence for slow tests. It applies to one file, whose cost is the
+toolchain rather than the Node, and which cannot be made cheap without giving up the property it exists to
+prove: reading a config the way vitest reads it.
 
 If the worst case has moved above `test.slowest_test_ms_under_load`, update that value and reconsider
 `test.timeout_ms` — do not raise the timeout alone, because the interesting number is the headroom

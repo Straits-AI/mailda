@@ -83,7 +83,5 @@ export function exportableTables(sqliteMaster: Array<{ name?: unknown; sql?: unk
  * `d1_migrations` is exported like any table, so a restored catalog claims they were applied while the
  * virtual tables they create are absent.
  */
-export function migrationsToReapply(
-  sqliteMaster: Array<{ name?: unknown; sql?: unknown }>,
-  migrationRows: Array<{ name?: unknown }>,
-): string[];
+/** Whether a restore must rebuild the search index — the one derivative the export leaves out. */
+export function needsIndexRebuild(sqliteMaster: Array<{ name?: unknown; sql?: unknown }>): boolean;
