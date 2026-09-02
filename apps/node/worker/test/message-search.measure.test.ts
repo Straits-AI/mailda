@@ -372,3 +372,123 @@ describe("what a date window costs", () => {
     expect(selective.rowsRead).toBeLessThanOrEqual(budget);
   });
 });
+
+/**
+ * What a **time-ordered** windowed search would cost (#153).
+ *
+ * ## The candidate this measures, and why it is the one worth measuring
+ *
+ * `q` with a date window is refused today: inside a ranked arm the window is a residual filter, so the arm
+ * scans further through its MATCH result to fill `LIMIT` — 4,335 rows against a 1,000-row budget on a term
+ * the index cannot narrow. #153 names three directions and calls this the first: give up rank inside the
+ * arm, drive from `ir_org_accepted` with the window as a **seek**, and test membership in the MATCH set.
+ *
+ * The trade inverts, and that is the interesting part. The rank-driven shape's cost depends on the *term's
+ * selectivity*, which the caller cannot know and cannot control. This shape's cost depends on the *window's
+ * width*, which is exactly what the caller chose — so a narrow window is cheap and a wide one is expensive
+ * because somebody asked for the archive.
+ *
+ * It also restores the cursor. `(accepted_at, id)` is the ordering again, so a windowed search pages like
+ * the inbox — which is what #107 wanted and could not have while the arms ranked.
+ *
+ * ## What this file can and cannot settle
+ *
+ * It measures **one arm** — subject and sender — with the metadata authorization the real plan uses. The
+ * shipped query has a second arm over the body index with a different relation set, and the two would have
+ * to become one predicate rather than a union for the ordering to hold. So these figures decide whether the
+ * *shape* is affordable, not whether the implementation is done.
+ */
+describe("a time-ordered windowed search, measured rather than argued", () => {
+  const MIDPOINT = new Date(AUGUST + 10 * 60 * 60_000).toISOString();
+
+  /** The candidate: driven by the time index, the window a range, the MATCH a membership test. */
+  async function timeOrdered(term: string, since: string | null): Promise<Cost> {
+    const grants = liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA);
+    const sql = `SELECT r.id, r.accepted_at, m.id AS message_id
+       FROM ingress_receipts r
+       JOIN messages m ON m.ingress_receipt_id = r.id
+       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+       LEFT JOIN (${grants.sql}) sgm ON sgm.mailbox_id = a.mailbox_id
+      WHERE r.org_id = ?
+        ${since === null ? "" : "AND r.accepted_at >= ?"}
+        AND m.id IN (SELECT message_id FROM message_search
+                      WHERE message_search MATCH ? AND org_id = ?)
+        AND (sgm.mailbox_id IS NOT NULL OR EXISTS (
+              SELECT 1 FROM relationship_tuples t
+               WHERE t.org_id = r.org_id AND t.subject_id = ?
+                 AND t.object_type = 'mailbox' AND t.object_id = a.mailbox_id
+                 AND t.relation IN ('mailbox.metadata.read', 'mailbox.content.read')))
+      ORDER BY r.accepted_at DESC, r.id DESC
+      LIMIT ?`;
+    const params = [
+      ...grants.params, ORG,
+      ...(since === null ? [] : [since]),
+      ftsQuery(term), ORG, READER, BUDGETS["messages.page_size"] + 1,
+    ];
+    const result = await testEnv.CATALOG.prepare(sql).bind(...params).all<{ id: string }>();
+    return { rowsRead: result.meta.rows_read ?? 0, rows: result.results.length };
+  }
+
+  it("shows the plan materialising the match set, which is where the cost is", async () => {
+    /*
+     * The explanation, taken from the planner rather than inferred from a number. If the window were a seek
+     * and the MATCH a membership test, the plan would drive from `ir_org_accepted`. It does not.
+     */
+    const grants = liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA);
+    const explained = await testEnv.CATALOG.prepare(`EXPLAIN QUERY PLAN
+      SELECT r.id FROM ingress_receipts r
+       JOIN messages m ON m.ingress_receipt_id = r.id
+      WHERE r.org_id = ? AND r.accepted_at >= ?
+        AND m.id IN (SELECT message_id FROM message_search WHERE message_search MATCH ? AND org_id = ?)
+      ORDER BY r.accepted_at DESC LIMIT ?`)
+      .bind(ORG, MIDPOINT, ftsQuery("shipment"), ORG, 52)
+      .all<{ detail: string }>();
+    const plan = explained.results.map((row) => row.detail).join(" | ");
+
+    console.log(`MEASURE time_ordered_plan ${plan}`);
+    void grants;
+    // The list subquery is the whole finding: it is built before anything is filtered.
+    expect(plan.toLowerCase()).toMatch(/list subquery|materiali/);
+  });
+
+  it("costs the window's width rather than the term's selectivity", async () => {
+    const budget = BUDGETS["authz.list.max_rows_read"];
+    const commonWide = await timeOrdered("shipment", null);
+    const commonWindowed = await timeOrdered("shipment", MIDPOINT);
+    const rareWindowed = await timeOrdered("demurrage", MIDPOINT);
+    const rareWide = await timeOrdered("demurrage", null);
+
+    console.log(
+      `MEASURE time_ordered_search budget=${budget}\n`
+      + `  common, no window      ${commonWide.rowsRead} rows read (${commonWide.rows} rows)\n`
+      + `  common, since midpoint ${commonWindowed.rowsRead} rows read (${commonWindowed.rows} rows)\n`
+      + `  rare,   since midpoint ${rareWindowed.rowsRead} rows read (${rareWindowed.rows} rows)\n`
+      + `  rare,   no window      ${rareWide.rowsRead} rows read (${rareWide.rows} rows)`,
+    );
+
+    /*
+     * The comparison that decides it. The ranked shape costs **4,335** for the common windowed term; if this
+     * shape brings the same query inside the budget, the refusal in `messagePageQuery` has an answer and
+     * #153 is buildable. If it does not, the refusal stands and the next direction gets measured.
+     */
+    expect(commonWindowed.rows).toBeGreaterThan(0);
+    expect(rareWindowed.rows).toBeGreaterThan(0);
+
+    /*
+     * **Measured and rejected**, and the numbers say why rather than merely that. The window changes
+     * nothing — 1,495 with it and 1,495 without — because `m.id IN (SELECT … MATCH …)` has to materialise
+     * the whole match set before the window can filter anything. So the cost is *the match set plus the
+     * window*, and for a term the index cannot narrow the match set is the corpus.
+     *
+     * It is also worse than the shape it would replace for the query people actually run: a rare term
+     * unwindowed costs 2,461 here against the ranked plan's 188, because ranking lets that plan stop after
+     * a page and this one cannot.
+     *
+     * Asserted so the conclusion cannot rot into an assumption: if a future SQLite or a different predicate
+     * makes this shape cheap, this test fails and #153 gets reopened with the reason.
+     */
+    expect(commonWindowed.rowsRead).toBeGreaterThan(budget);
+    expect(commonWindowed.rowsRead).toBe(commonWide.rowsRead);
+    expect(rareWide.rowsRead).toBeGreaterThan(budget);
+  });
+});
