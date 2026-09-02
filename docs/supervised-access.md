@@ -280,6 +280,23 @@ and is corrected: `send.propose` and `mailbox.content.read` are separate, so a d
 sends from a mailbox they may not read is expressible, and for that person a grant is exactly what puts
 subject lines on the screen. The arm is live, it owes a record, and `queueFor` writes one.
 
+### What a query entry does not capture: a search that matched nothing (#158)
+
+The entry is written only when the page returned rows, and that is right for a **listing** — paging past the
+end of a scope discloses nothing, so recording it would put an act in the trail that showed nobody anything.
+
+**A search inverts the argument, and the body index is why.** ADR 28's amendment states what a contentless
+index gives somebody with the data: the ability to *confirm a guess* — to learn that a given word occurs in a
+given message. A **null** answer is half of that capability, and it is the half this trail cannot see. So a
+supervised reader can search a colleague's mailbox for a word, learn it is not there, and leave no record;
+repeated, that is dictionary-style probing with §7's record blind to it, which is the shape `SECURITY.md`
+lists as reportable.
+
+Stated here rather than left for somebody to discover, because a document describing this trail's coverage
+must not overstate it. #158 carries the decision, and the hard half is not whether to record a probe but what
+the entry says: an entry that does not name the term answers nothing, and a term in the audit trail is the
+investigator's own search words, retained for whoever reads it.
+
 ### The id list is bounded, and it is never truncated
 
 A query entry carries **which ids it returned**, not just how many — a result list renders subject and
