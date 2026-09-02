@@ -148,6 +148,8 @@ interface FetchedEvidence {
   header: Bytes;
   body: Bytes;
   generation: number;
+  /** False when the object carried no generation metadata, so `generation` is a default and not a claim. */
+  declared: boolean;
 }
 
 /**
@@ -182,7 +184,58 @@ async function fetchSealed(env: Env, blobKey: string): Promise<FetchedEvidence> 
     header: all.subarray(0, HEADER_BYTES),
     body: all.subarray(HEADER_BYTES),
     generation: generationOf(object),
+    /*
+     * Whether the object **said** which key sealed it, as opposed to the generation-0 default standing in
+     * for silence (#142). `generationOf` cannot distinguish the two — both answer 0 — and the difference
+     * decides whether a failed open is a lost key or a lost label.
+     */
+    declared: object.customMetadata?.[GENERATION_META] !== undefined,
   };
+}
+
+/**
+ * Opens an object whose metadata does not say which key sealed it, by trying the ones this vault holds.
+ *
+ * ## Why a Node should not need the label
+ *
+ * `putEvidence` records the sealing generation in R2 custom metadata, and **ordinary tooling drops it**:
+ * `wrangler r2 object get | put` has no flag for custom metadata, so a bucket copied that way arrives
+ * byte-perfect and unreadable. Measured in #92's restore drill, on objects whose correct key was sitting in
+ * the destination's vault the whole time — the evidence was intact, the key was present, and a label lost in
+ * transit was the only thing between them.
+ *
+ * A runbook warning is the wrong shape for that. The generation is a **hint**, not the authority: AES-GCM
+ * authenticates, so a wrong key does not decrypt to wrong plaintext, it fails. Trying the small set the
+ * vault holds either finds the one that works or proves none does, and it cannot be fooled.
+ *
+ * ## What it costs, and when
+ *
+ * Nothing in the ordinary case: an object that carries its label takes exactly the path it always did, and
+ * this function is not called. On the fallback path it costs one extra decrypt of the **first frame** per
+ * candidate, bounded by the number of generations in the vault — small, because rotation is rare, and
+ * enumerated from storage rather than assumed.
+ *
+ * Generation 0 is tried first and separately: it is the published pre-vault constant, so an object genuinely
+ * written before the vault existed opens immediately rather than after every real key has been tried.
+ */
+async function openWithoutALabel(
+  env: Env,
+  fetched: FetchedEvidence,
+  cache?: RunKeyCache,
+): Promise<{ plaintext: Bytes; generation: number }> {
+  const candidates = [LEGACY_KEY_GENERATION, ...await vault(env).generations("content")];
+  let last: unknown = null;
+  for (const generation of candidates) {
+    try {
+      const plaintext = await openFrames(await contentKeyFor(env, generation, cache), fetched);
+      return { plaintext, generation };
+    } catch (error) {
+      // Kept, not swallowed: if every candidate fails the caller gets a real decrypt error rather than a
+      // summary this function invented, and the last one is the most informative.
+      last = error;
+    }
+  }
+  throw last ?? new Error("E_EVIDENCE_NO_KEY  the vault holds no key that opens this object");
 }
 
 /**
@@ -196,6 +249,7 @@ export async function getEvidence(
   cache?: RunKeyCache,
 ): Promise<Bytes> {
   const fetched = await fetchSealed(env, blobKey);
+  if (!fetched.declared) return (await openWithoutALabel(env, fetched, cache)).plaintext;
   return openFrames(await contentKeyFor(env, fetched.generation, cache), fetched);
 }
 
@@ -205,7 +259,42 @@ export async function getEvidence(
  */
 export async function streamEvidence(env: Env, blobKey: string): Promise<ReadableStream<Uint8Array>> {
   const fetched = await fetchSealed(env, blobKey);
+  if (!fetched.declared) {
+    /*
+     * Same recovery as `openWithoutALabel`, and it cannot share that function because a response path must
+     * not materialise the plaintext (#16). What it can do is **probe one frame**: the sealed bytes are
+     * already in memory, so a candidate key is tested by pulling the first chunk and discarding it, then
+     * streaming properly with the key that worked. One frame's decrypt per candidate, and only for an object
+     * whose label was lost — never on the ordinary path.
+     *
+     * The header is AES-GCM additional data, so a cheaper probe over a truncated copy is not available: any
+     * edit to the header fails authentication by design, which is the property that makes the probe
+     * trustworthy in the first place.
+     */
+    const key = await keyThatOpensTheFirstFrame(env, fetched);
+    return openStream(key, fetched);
+  }
   return openStream(await contentKeyFor(env, fetched.generation), fetched);
+}
+
+/** The first candidate key whose first frame authenticates. Throws the last failure if none does. */
+async function keyThatOpensTheFirstFrame(env: Env, fetched: FetchedEvidence): Promise<CryptoKey> {
+  const candidates = [LEGACY_KEY_GENERATION, ...await vault(env).generations("content")];
+  let last: unknown = null;
+  for (const generation of candidates) {
+    const key = await contentKeyFor(env, generation);
+    const reader = openStream(key, fetched).getReader();
+    try {
+      await reader.read();
+      return key;
+    } catch (error) {
+      last = error;
+    } finally {
+      // Cancelled either way: a reader left open on a stream nobody consumes holds the object's bytes.
+      await reader.cancel().catch(() => {});
+    }
+  }
+  throw last ?? new Error("E_EVIDENCE_NO_KEY  the vault holds no key that opens this object");
 }
 
 /** For `reseal.ts`: the plaintext plus the generation it was found under. */
@@ -214,6 +303,12 @@ export async function openForReseal(
   blobKey: string,
 ): Promise<{ plaintext: Bytes; generation: number }> {
   const fetched = await fetchSealed(env, blobKey);
+  /*
+   * The generation is **what opened it**, not what the object claimed, and for `reseal.ts` that is the
+   * difference between re-sealing correctly and skipping. An unlabelled object read as generation 0 would
+   * look older than the target and be re-sealed under a key it was never sealed with.
+   */
+  if (!fetched.declared) return openWithoutALabel(env, fetched);
   return {
     plaintext: await openFrames(await contentKeyFor(env, fetched.generation), fetched),
     generation: fetched.generation,
