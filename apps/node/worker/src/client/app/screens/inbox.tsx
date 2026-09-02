@@ -217,30 +217,67 @@ function SearchField({ term, onSearch }: {
         onSearch(draft.trim() === "" ? null : draft);
       }}
     >
-      <label htmlFor="inbox-q" className="dim">search</label>
-      {" "}
-      <input
-        id="inbox-q"
-        type="search"
-        value={draft}
-        placeholder="sender, subject or message text"
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      {" "}
-      <button type="submit">Search</button>
+      {/*
+        * The brand's search pill (#128), and the **form is unchanged**: a label, a real input and a real
+        * submit. What was here was a native `<button>Search</button>` sitting beside an unstyled field —
+        * the one control on the interface that had not been dressed at all, which is what made it the thing
+        * a person noticed first.
+        *
+        * The submit button is still a button, and now carries the magnifier. That matters more than it
+        * looks: the mockup shows an icon inside a field, which is usually built as a decorative glyph and a
+        * field that submits on Enter — and that loses the button, so a person navigating by keyboard has
+        * nothing to land on and a screen reader is told there is no way to run the search. The icon is the
+        * button's face, not a picture beside it.
+        */}
+      <label htmlFor="inbox-q" className="visually-hidden">Search mail</label>
+      <span className="search-pill">
+        <input
+          id="inbox-q"
+          type="search"
+          value={draft}
+          placeholder="Search mail"
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        {/*
+          * "Search", not "Search mail" — the label above already uses that, and **two controls in one form
+          * sharing an accessible name is ambiguous**: a screen reader announces "Search mail, edit" then
+          * "Search mail, button" with nothing to tell them apart. Caught by `search-field.test.tsx`, which
+          * could no longer find either of them unambiguously. The field names itself; the button names the
+          * act.
+          */}
+        <button type="submit" className="search-go" aria-label="Search">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="6.6" cy="6.6" r="4.6" stroke="currentColor" strokeWidth="1.7" />
+            <path d="M10.1 10.1 L14 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+          </svg>
+        </button>
+      </span>
+      {/*
+        * **The capability, said where somebody can discover it** — and it is a tripwire, not a nicety.
+        *
+        * The field used to be labelled "search" with the placeholder "sender, subject or message text". The
+        * brand's pill wants "Search mail", which is shorter and denies a feature the Node has:
+        * `search-copy-world.test.ts` failed on exactly that, and its reasoning is that *"people do not
+        * discover a feature the interface denies having"*. Putting the three fields back into the
+        * placeholder would either overflow the pill or truncate at the tail, hiding "message text" —
+        * the one word the test exists for.
+        *
+        * So the pill keeps the brand's two words and the hint carries the rest. The narrower half —
+        * that content access decides how much of it a reader reaches — is on the empty state, where a person
+        * who searched and found nothing is the one who needs it.
+        */}
+      <p className="hint search-hint">Searches senders, subjects and message text.</p>
       {term === null ? null : (
-        <>
-          {" "}
-          <button
-            type="button"
-            onClick={() => {
-              setDraft("");
-              onSearch(null);
-            }}
-          >
-            Clear
-          </button>
-        </>
+        <button
+          type="button"
+          className="search-clear"
+          onClick={() => {
+            setDraft("");
+            onSearch(null);
+          }}
+        >
+          Clear
+        </button>
       )}
     </form>
   );

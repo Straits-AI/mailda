@@ -12,7 +12,7 @@ import jakartaBold from "../fonts/jakarta-700.woff2";
 import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
-import { faviconDataUri, markSvg } from "./brand.ts";
+import { MARK_IS_AUTHORED, faviconDataUri, markSvg } from "./brand.ts";
 
 /**
  * The Node's interface shell.
@@ -72,6 +72,33 @@ const SHELL_CSS = `
   --rule: rgba(15, 23, 32, .10);
   --rule-strong: rgba(15, 23, 32, .22);
 
+  /* The edge of a control, and it is the one place the brand sheet and WCAG 1.4.11 disagree (#128).
+     1.4.11 wants 3:1 for the visual information that identifies a control. The brand's search field is a
+     Mist pill on a White header, and **Mist on White is 1.10** — so the fill does not identify anything, and
+     neither rule does either: .10 gives 1.23 and .22 gives 1.61. Measured, not estimated.
+     .47 is the first alpha that clears 3:1 on all three light grounds — 3.13 on White, 3.08 on Mist, 3.03
+     on Sky. It is heavier than the mockup's hairline and it is what makes the field a field rather than a
+     shape somebody has to guess at. The airy version is in the receipt, with the number, so the choice is
+     legible rather than looking like a designer's line got thicker by accident. */
+  --control-edge: rgba(15, 23, 32, .47);
+
+  /* The rail is a **dark-theme island in a light page**, per the brand sheet's product mockup, so its tokens
+     are the dark theme's — already measured there rather than invented here. Named separately because the
+     rail keeps them in *both* schemes: at Ink on a Mist page it is a deliberate contrast, and at Ink on an
+     Ink page it is the right-hand rule that separates them.
+     15.33 for text on Ink, 6.15 for the dim label, and the accent lifts to #6E93CC for anything read on it
+     (5.76) while Flow Blue itself stays for fills and borders (3.99 — a UI component, not text). */
+  --rail-ground: #0F1720;
+  --rail-text: #E8EDF3;
+  --rail-dim: rgba(232, 237, 243, .60);
+  --rail-accent: #6E93CC;
+  --rail-rule: rgba(232, 237, 243, .12);
+  /* --live is tuned for a light ground and reads **3.01 on Ink** — a UI component's threshold, not text's,
+     and .rail-mine is text. The dark theme's value is 9.37 there, so the rail borrows it for the same
+     reason it borrows the rest: the surface is dark, so the tokens that work on a dark surface are the
+     right ones. Found by measuring the rail's descendants rather than only its own rules. */
+  --rail-live: #86C9A4;
+
   /* Flow Blue, and it is **not a small-text colour on anything but pure white**: 4.53:1 on white — which
      passes AA by 0.03 — then 4.11 on Mist and 3.87 on Sky, both failing. So --accent is for the things
      that need 3:1 (fills, borders, focus rings, icons, the dot) and --accent-text carries the same hue
@@ -116,6 +143,18 @@ const SHELL_CSS = `
     --dim: rgba(232, 237, 243, .60);
     --rule: rgba(232, 237, 243, .12);
     --rule-strong: rgba(232, 237, 243, .26);
+    /* .37 rather than light's .47, the same asymmetry --dim carries and for the same reason: it is the
+       first alpha clearing 3:1 across Ink, the lifted surface and the dark sky (3.01 at worst). */
+    --control-edge: rgba(232, 237, 243, .37);
+    /* The rail keeps Ink here too, where it coincides with the page ground — so what separates them is the
+       rule, not the fill. A rail lifted *above* a dark page would invert the mockup's relationship, in
+       which the rail is the darker surface. */
+    --rail-ground: #0F1720;
+    --rail-text: #E8EDF3;
+    --rail-dim: rgba(232, 237, 243, .60);
+    --rail-accent: #6E93CC;
+    --rail-rule: rgba(232, 237, 243, .12);
+    --rail-live: #86C9A4;
 
     /* Flow Blue reads 3.99:1 on Ink — fine for a border or a focus ring, short of AA for text. So the dark
        theme lifts the accent rather than keeping the brand hex and failing quietly: #6E93CC is 5.76 on Ink
@@ -774,22 +813,39 @@ tbody a { font-size: .8rem; }
   min-height: 100vh;
 }
 
+/* The rail is **Ink in both schemes**, which is the brand sheet's product mockup rather than a theme
+   decision: the rail is the dark surface and the mail sits on the light one. Its own tokens, so a reader of
+   this block can see that every colour inside it is measured against Ink and not against the page.
+
+   What is *not* taken from the mockup is the shape. There the rail is a narrow strip of icons; here it
+   carries mailboxes and ledgers with their counts, because chrome.tsx argues for that and the mockup was
+   not drawn against this product's information architecture. Adopting the surface and the mark while keeping
+   the structure is the honest half to take. */
 .rail {
   grid-area: rail;
-  border-right: 1px solid var(--rule);
+  border-right: 1px solid var(--rail-rule);
   padding: 1rem 0 1rem 0;
   display: flex;
   flex-direction: column;
   gap: .35rem;
-  background: color-mix(in oklab, var(--ground-2) 45%, transparent);
+  background: var(--rail-ground);
+  color: var(--rail-text);
 }
-.rail .wordmark { border-right: 0; padding: 0 1rem .75rem 1rem; font-size: 1rem; }
+.rail .wordmark {
+  border-right: 0;
+  padding: 0 1rem .9rem 1rem;
+  font-size: 1rem;
+  color: var(--rail-text);
+}
+/* The mark's stroke inherits, so one variant serves both schemes; the dot keeps Flow Blue, which is the
+   brand's monochrome-versus-full choice made explicitly rather than by whatever colour was nearest. */
+.rail .wordmark svg { color: var(--rail-text); }
 .rail-heading {
   font-family: var(--mono);
   font-size: .62rem;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--dim);
+  color: var(--rail-dim);
   margin: .9rem 1rem .2rem 1rem;
 }
 .rail-list { list-style: none; margin: 0; padding: 0; }
@@ -800,15 +856,24 @@ tbody a { font-size: .8rem; }
   justify-content: space-between;
   gap: .5rem;
   padding: .34rem 1rem;
-  color: var(--text);
+  color: var(--rail-text);
   text-decoration: none;
   /* A 2px transparent marker rather than a border that appears on selection: a border that only exists
      when current shifts every other row by two pixels as you navigate. */
   border-left: 2px solid transparent;
 }
-.rail-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
-.rail-row.current { border-left-color: var(--accent); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
-.rail-row .num { font-family: var(--mono); font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--dim); }
+.rail-row:hover { background: color-mix(in oklab, var(--rail-text) 10%, transparent); }
+/* Selected is the brand's Sky pill, and on Ink that is a **light fill in a dark rail** — 15.41 either way,
+   so the row's text flips to Ink rather than staying light. The left marker keeps Flow Blue at 3.99 on Ink,
+   which is a UI component's 3:1 and not text. */
+.rail-row.current {
+  border-left-color: var(--accent);
+  background: var(--sky);
+  color: var(--text);
+}
+.rail-row .num { font-family: var(--mono); font-size: .74rem; font-variant-numeric: tabular-nums; color: var(--rail-dim); }
+/* The count inside a selected row sits on Sky, so it takes the light theme's dim rather than the rail's. */
+.rail-row.current .num { color: var(--dim); }
 .rail-name { font-size: .95rem; }
 .rail-note { padding: .2rem 1rem .4rem 1rem; }
 
@@ -861,6 +926,83 @@ tbody a { font-size: .8rem; }
   .rail-foot { margin-top: 0; }
   .split { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Text for a screen reader and not for the eye. The repository had no such utility, which is why the search
+   field carried a visible lowercase "search" label beside it — a label doing an accessible name's job and
+   taking up the room the brand's pill needs. clip-path rather than display:none, which would take it out of
+   the accessibility tree along with the layout. */
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- the search pill (#128) ---------------------------------------------------------------- */
+
+.inbox-search { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+
+/* The brand sheet draws this as a Mist fill on a White header with a hairline. **Mist on White is 1.10**,
+   so the fill identifies nothing, and WCAG 1.4.11 wants 3:1 for the visual information that identifies a
+   control — see --control-edge, which is the measured answer. The fill is kept because it is the brand's;
+   the edge is what makes it a field. */
+.search-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  background: var(--ground);
+  border: 1px solid var(--control-edge);
+  border-radius: 999px;
+  padding: .1rem .3rem .1rem .7rem;
+  min-width: min(22rem, 100%);
+}
+.search-pill input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: .85rem;
+  padding: .32rem 0;
+}
+/* The pill takes the focus ring, not the input inside it: a ring drawn around a borderless input inside a
+   rounded container reads as a rectangle inside a pill. */
+.search-pill input:focus { outline: none; }
+.search-pill:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.search-pill input::placeholder { color: var(--dim); opacity: 1; }
+/* Chrome and Safari draw their own clear affordance on a search input, inside our pill and in their own
+   idiom. Ours is a labelled button that also tells the Node to drop the filter, which theirs does not. */
+.search-pill input::-webkit-search-decoration,
+.search-pill input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* The magnifier **is** the submit button, so a keyboard reaches it and a screen reader is told the search
+   can be run. A decorative glyph beside a field that submits on Enter loses both. */
+.search-go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem; height: 1.7rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+.search-go:hover { background: var(--sky); }
+.search-clear { font-size: .8rem; }
+/* The hint sits with the field rather than under the whole toolbar, so it reads as a description of the
+   box beside it. Flex order keeps it after the pill and before Clear on one line, and it wraps below on a
+   narrow screen rather than squeezing the pill. */
+.search-hint { flex: 1 1 14rem; margin: 0; font-size: .72rem; }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
 .message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1090,7 +1232,7 @@ body.shell main#app {
   padding: .16rem 1rem .16rem 1.9rem;
   font-size: .8rem;
 }
-.rail-mine { color: var(--live); }
+.rail-mine { color: var(--rail-live); }
 /* ---- the first-response clock ------------------------------------------------------------- */
 
 /* Each carries a word, so none of them depends on colour being measured. --warn and --alarm are still
@@ -1198,7 +1340,7 @@ export function page(): string {
 <body>
 <div class="rack">
   <div class="rack-inner">
-    <p class="wordmark">${markSvg({ size: 26 })}<span>Mailda</span></p>
+    <p class="wordmark">${MARK_IS_AUTHORED ? markSvg({ size: 26 }) : ""}<span>Mailda</span></p>
     <div id="status"></div>
   </div>
 </div>

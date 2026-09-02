@@ -172,3 +172,88 @@ describe("token contrast (WCAG 2.2 AA)", () => {
       .toBe(BUDGETS["contrast.accent_ui_worst"]);
   });
 });
+
+/**
+ * The rail is a dark surface in both schemes, so its tokens are measured against Ink and not the page (#128).
+ *
+ * ## Why the existing checks cannot see it
+ *
+ * Every assertion above measures against `GROUNDS` — `--ground`, `--ground-2`, `--sky` — which in the light
+ * theme are Mist, White and Sky. The rail is Ink there. So a light-theme token placed in the rail is checked
+ * against three grounds it never sits on, and passes while being unreadable on the one it does.
+ *
+ * That is not hypothetical: `.rail-mine` used `--live`, which is `#2F6F4E` in the light theme and reads
+ * **3.01 on Ink** — a UI component's threshold, applied to text. Found by measuring the rail's descendants
+ * rather than only the rules that name it, and the reason `--rail-live` exists.
+ *
+ * ## And the one place the brand and WCAG disagree
+ *
+ * The brand sheet's search field is a Mist pill on a White header. Mist on White is **1.10**, so the fill
+ * identifies nothing, and 1.4.11 wants 3:1 for the visual information that identifies a control. Neither
+ * rule token reaches it either — `.10` is 1.23 and `.22` is 1.61. `--control-edge` is the measured answer,
+ * and this is what stops it drifting back to a hairline that looks nicer and says less.
+ */
+describe("the rail's own surface, and the edge of a control", () => {
+  const RAIL = "rail-ground";
+
+  /** What a token reaches against the rail, which is the only ground its contents sit on. */
+  function againstRail(name: string, scope: "dark" | "light"): number {
+    const ground = hex(token(RAIL, scope));
+    const raw = token(name, scope);
+    if (raw.startsWith("rgba")) {
+      const value = rgba(raw);
+      return contrast(over(value.rgb, value.alpha, ground), ground);
+    }
+    return contrast(hex(raw), ground);
+  }
+
+  for (const scope of ["dark", "light"] as const) {
+    it(`the ${scope} rail's text and label clear AA on Ink`, () => {
+      /*
+       * Both, because they fail differently: `--rail-text` failing would make the rail unreadable and
+       * obvious, while `--rail-dim` failing would leave the headings and counts readable-ish to whoever
+       * wrote the CSS and not to somebody with low vision.
+       */
+      expect(againstRail("rail-text", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(againstRail("rail-dim", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it(`the ${scope} rail's accent and status colours clear AA on Ink`, () => {
+      // Text, so AA and not the 3:1 a fill would need. This is why the rail lifts both rather than
+      // inheriting the light theme's, where they are tuned against Mist.
+      expect(againstRail("rail-accent", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(againstRail("rail-live", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+    });
+
+    it(`the ${scope} control edge clears 3:1 on every ground a control sits on`, () => {
+      /*
+       * 1.4.11's threshold, not AA's — this is a boundary rather than text. Measured across all three
+       * grounds because a search pill sits on the header and a field can sit on any of them, and the
+       * weakest is what decides whether the control is identifiable.
+       */
+      const worst = worstTranslucent("control-edge", scope);
+      expect(worst).toBeGreaterThanOrEqual(BUDGETS["contrast.aa_nontext_ratio"] / 100);
+    });
+  }
+
+  it("keeps the light theme's status green out of the rail, which is where it fails", () => {
+    /*
+     * The specific defect, pinned. `--live` is correct on Mist and wrong on Ink, so a version of this change
+     * that dressed the rail dark and left `.rail-mine` alone would look finished and be unreadable. Asserted
+     * as an inequality rather than a number so it states the reason: this token does **not** belong here.
+     */
+    const light = hex(token("live", "light"));
+    const ink = hex(token(RAIL, "light"));
+    expect(contrast(light, ink)).toBeLessThan(AA_NORMAL);
+    // And the token that replaced it does clear it, so the fix is the fix and not a second failure.
+    expect(againstRail("rail-live", "light")).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it("matches the ratios the receipt recorded, so the receipt cannot go stale unnoticed", () => {
+    const round = (n: number) => Math.round(n * 100);
+    expect(round(againstRail("rail-text", "light"))).toBe(BUDGETS["contrast.rail_text_worst"]);
+    expect(round(againstRail("rail-dim", "light"))).toBe(BUDGETS["contrast.rail_dim_worst"]);
+    expect(round(worstTranslucent("control-edge", "light")))
+      .toBe(BUDGETS["contrast.control_edge_light_worst"]);
+  });
+});

@@ -1,6 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { accessExpiresAt, isSignedIn, logout } from "/app/session.js";
+import { MARK_IS_AUTHORED } from "../../brand.ts";
+import { Mark } from "./mark.tsx";
 
 import {
   useApprovals, useDoctor, useMailboxes, useMessages, useNotifications, useSends, type NotificationRow,
@@ -148,8 +150,26 @@ export function Rail() {
 
   return (
     <nav className="rail" aria-label="Mailboxes and ledgers">
+      {/*
+        * The brand's primary lockup: symbol then word (#128).
+        *
+        * This read `MAIL<span class="accent">DA</span>` — the instrument panel's idea of a wordmark, which
+        * survived the brand landing in the pre-authentication shell because nothing connected the two. The
+        * mark existed in `brand.ts` and was consumed exactly once, by `ui.ts`, so the screen a person
+        * actually works in was the one place the identity was absent.
+        *
+        * The word is real text in the display face, not a path: selectable, translatable, and read aloud as
+        * a name rather than skipped as a picture. `brand.ts` argues that at length.
+        *
+        * The **symbol** is gated on `MARK_IS_AUTHORED`, which is false: the mark in `brand.ts` is a by-eye
+        * reconstruction that does not read as the symbol at 26px — a squiggle with a dot, checked against a
+        * screenshot rather than against the sentence that claimed otherwise. So the interim is the wordmark
+        * in type, which is a design decision rather than an approximation of somebody else's, and the
+        * symbol appears the moment the designer's vector replaces the path.
+        */}
       <p className="wordmark">
-        MAIL<span className="accent">DA</span>
+        {MARK_IS_AUTHORED ? <Mark size={26} /> : null}
+        <span>Mailda</span>
       </p>
 
       <p className="rail-heading" id="rail-mailboxes">

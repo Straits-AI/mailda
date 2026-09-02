@@ -1,21 +1,28 @@
 ---
 id: contrast-tokens
 kind: measured-tripwire
-measured_on: 2026-08-28
+measured_on: 2026-09-02
 stale_when: >
   any of --text, --dim, --ground, --ground-2, --sky, --accent, --accent-text, --warn, --alarm or --live
-  changes in either theme; a fourth ground is introduced, since the worst case below is the minimum over
-  three; the interface adopts a text size above 24px for --dim-coloured text, which would move it into AA's
-  large-text threshold; --accent starts being used for text rather than for fills, borders and focus rings;
-  or WCAG revises the 4.5:1 normal-text ratio
+  changes in either theme; a fourth **page** ground is introduced, since the worst case below is the minimum
+  over three — the rail is a fourth surface and is measured separately for exactly that reason; --rail-ground,
+  --rail-text, --rail-dim, --rail-accent, --rail-live or --control-edge changes; a token tuned for a page
+  ground starts being used inside the rail, which is how --live got there; the interface adopts a text size
+  above 24px for --dim-coloured text, which would move it into AA's large-text threshold; --accent starts
+  being used for text rather than for fills, borders and focus rings; or WCAG revises the 4.5:1 normal-text
+  or 3:1 non-text ratio
 values:
   contrast.aa_normal_ratio: 450
   contrast.aa_large_ratio: 300
+  contrast.aa_nontext_ratio: 300
   contrast.dim_dark_worst: 553
   contrast.dim_light_worst: 544
   contrast.accent_text_light_worst: 459
   contrast.accent_text_dark_worst: 477
   contrast.accent_ui_worst: 387
+  contrast.rail_text_worst: 1533
+  contrast.rail_dim_worst: 615
+  contrast.control_edge_light_worst: 303
 ---
 
 **Every ratio here is stored ×100**, because the receipt pipeline emits integers and a contrast ratio
@@ -140,3 +147,54 @@ interface. `--signal`, `--alarm` and `--live` are used for state chips and headl
 sizes vary by context, and the state chips also carry a border, so colour is not their only channel
 (§16). Those need their own measurement when the real component system lands. Recorded so the gap is
 visible rather than implied — this receipt proves one token, not the palette.
+
+## The rail is a fourth surface, and the existing worst cases could not see it (#128)
+
+The brand sheet's product mockup puts the mail on a light page and the rail on a dark one, so the rail is
+**Ink in both schemes**. Every measurement above is the minimum across `--ground`, `--ground-2` and `--sky` —
+Mist, White and Sky in the light theme. The rail is none of them.
+
+So a light-theme token used inside the rail was checked against three grounds it never sits on, and passed
+while being unreadable on the one it does. That is not a hypothetical: `.rail-mine` used `--live`, which is
+`#2F6F4E` and reads **3.01 on Ink** — a UI component's threshold, applied to text. It was found by measuring
+the rail's *descendants* rather than the rules that name it, which is the check that did not exist.
+
+| pairing | measured | wants |
+| --- | --- | --- |
+| `--rail-text` `#E8EDF3` on Ink | **15.33** | 4.5 |
+| `--rail-dim` `rgba(232,237,243,.60)` on Ink | **6.15** | 4.5 |
+| `--rail-accent` `#6E93CC` on Ink | 5.76 | 4.5 |
+| `--rail-live` `#86C9A4` on Ink | 9.37 | 4.5 |
+| Flow Blue `#4C77B8` on Ink — the current row's marker | 3.99 | 3.0 (a component) |
+| the Sky selected pill against the Ink rail | 15.41 | 3.0 |
+| `--live` `#2F6F4E` on Ink — **the defect** | 3.01 | 4.5 |
+
+The rail's tokens are the dark theme's values, and that is the finding rather than a shortcut: a dark surface
+wants the colours that were tuned for a dark surface. Naming them separately is what lets the rail keep them
+in *both* schemes — at Ink on a Mist page it is a deliberate contrast, and at Ink on an Ink page the
+right-hand rule is what separates them.
+
+## Where the brand sheet and WCAG 1.4.11 disagree
+
+The sheet draws the search field as a **Mist pill on a White header** with a hairline. Measured:
+
+| the pill's boundary | ratio |
+| --- | --- |
+| Mist fill against White — the control's only edge | **1.10** |
+| `--rule` `rgba(15,23,32,.10)` on White | 1.23 |
+| `--rule-strong` `rgba(15,23,32,.22)` on White | 1.61 |
+| `.34` | 2.18 |
+| `.40` | 2.56 |
+| **`.47`** — the first alpha clearing 3:1 on all three | **3.03** |
+
+1.4.11 wants 3:1 for the visual information that identifies a control. The brand's fill identifies nothing,
+and neither rule token gets close, so `--control-edge` is `rgba(15, 23, 32, .47)` in light and `.37` in dark —
+the same asymmetry `--dim` carries, and for the same reason.
+
+It is heavier than the mockup's hairline. That is the disagreement, recorded rather than resolved by
+pretending: the field keeps the brand's fill and gains an edge that makes it a field rather than a shape
+somebody has to guess at.
+
+**`contrast.aa_nontext_ratio` is a separate value from `contrast.aa_large_ratio` even though both are 300.**
+They are different rules — 1.4.11's non-text contrast and AA's large-text threshold — and one number serving
+both is how a threshold gets revised for one and silently moves the other. The scale is still ×100.

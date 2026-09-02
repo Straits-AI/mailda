@@ -4,13 +4,23 @@
  * ## The mark in this file is a reconstruction, not the authored artwork
  *
  * **Read this before using it anywhere that matters.** The path below was drawn by eye from raster
- * screenshots of the brand sheet, because that is what was available. It reads as the Mailda symbol at
- * interface sizes and it is *not* the designer's vector: the curve tensions, the exact stroke weight, the
- * loop's proportions and the optical corrections are approximations.
+ * screenshots of the brand sheet, because that is what was available. It is *not* the designer's vector: the
+ * curve tensions, the exact stroke weight, the loop's proportions and the optical corrections are
+ * approximations.
  *
- * That is fine for a screen at 24–40 px and not fine for print, a favicon at 16 px, an app-store icon, or
- * anything a customer sees as the identity. A logo that is nearly right is wrong, and saying so here is
- * cheaper than somebody discovering it downstream.
+ * ## And it does not work — measured, not supposed (#128)
+ *
+ * This paragraph used to say the reconstruction "reads as the Mailda symbol at interface sizes" and that
+ * this was "fine for a screen at 24–40 px". **Both are false.** Rendered at 26 px in the rail and zoomed,
+ * it is a small squiggle with a dot beside it: it does not read as an M, and nobody shown it would connect
+ * it to the brand sheet. It was on the sign-in page for a week on the strength of a sentence nobody checked
+ * against a screenshot.
+ *
+ * So `MARK_IS_AUTHORED` is false and **nothing renders it**. The geometry stays because it is the drop-in
+ * point the next paragraph describes, and because deleting it would lose the coordinate space the dot and
+ * the stroke width are expressed in. A logo that is nearly right is wrong; one that is not even nearly right
+ * is worse, and the honest interim is the wordmark set in type, which is a real design decision rather than
+ * an approximation of somebody else's.
  *
  * **Replacing it is one edit.** `MARK_PATH` and `MARK_VIEWBOX` are the only two values that describe the
  * geometry; every consumer — the pre-authentication shell, the React chrome, the favicon, the app icon —
@@ -66,6 +76,19 @@ export const BRAND = {
  *
  * One of the two values that describe the geometry. See the header.
  */
+/**
+ * Whether `MARK_PATH` is the designer's artwork rather than the by-eye reconstruction (#128).
+ *
+ * **The one line to flip when the real SVG arrives.** While it is false, both shells render the wordmark as
+ * type alone and no consumer draws the mark — because the reconstruction does not read as the symbol, which
+ * is stated with the evidence in this file's header.
+ *
+ * A flag rather than deleting the path: the geometry is the drop-in point, the dot and the stroke width are
+ * expressed in its coordinate space, and `markSvg()` and the React `Mark` are both tested against it. What
+ * is wrong is the curve data, and that is exactly one edit away from being right.
+ */
+export const MARK_IS_AUTHORED = false;
+
 export const MARK_VIEWBOX = "0 0 60 52";
 
 /**
@@ -160,6 +183,28 @@ export function markSvg(options: MarkOptions = {}): string {
  * treats the icon as final.
  */
 export function faviconDataUri(): string {
+  /*
+   * **The letter, until the artwork is real** (#128). This file's header already said the reconstruction was
+   * "not fine for a favicon at 16 px", and this is the favicon — a tab icon is the smallest and least
+   * forgiving place a mark appears, and the one where a wrong shape is least recoverable because nobody
+   * looks at it closely enough to notice it is wrong, only that the tab is unfamiliar.
+   *
+   * An M in the display face on the brand's Ink is not the identity, and it does not pretend to be: it is a
+   * legible placeholder that reads as *something deliberate* rather than as a smudge. `MARK_IS_AUTHORED`
+   * flips both this and the two shells at once.
+   */
+  if (!MARK_IS_AUTHORED) {
+    const letter = [
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`,
+      `<rect width="64" height="64" rx="14" fill="${BRAND.ink}"/>`,
+      `<text x="32" y="45" text-anchor="middle" fill="${BRAND.white}"`,
+      ` font-family="Satoshi, 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"`,
+      ` font-size="42" font-weight="700">M</text>`,
+      `<circle cx="47" cy="20" r="5" fill="${BRAND.blue}"/>`,
+      `</svg>`,
+    ].join("");
+    return `data:image/svg+xml,${encodeURIComponent(letter)}`;
+  }
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`,
     `<rect width="64" height="64" rx="14" fill="${BRAND.ink}"/>`,

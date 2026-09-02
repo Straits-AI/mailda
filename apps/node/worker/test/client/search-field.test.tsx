@@ -38,6 +38,14 @@ async function type(field: HTMLElement, text: string): Promise<void> {
   }
 }
 
+/**
+ * Submits by **clicking the button**, which is the assertion rather than the mechanism (#128).
+ *
+ * The brand's field is a pill with a magnifier inside it, and the usual way that is built is a decorative
+ * glyph beside an input that submits on Enter — which loses the button, so a keyboard has nothing to land on
+ * and a screen reader is told the search cannot be run. Finding the control by its accessible name, and
+ * clicking it, is what keeps the icon a button rather than a picture.
+ */
 async function submit(): Promise<void> {
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
@@ -97,7 +105,7 @@ describe("searching from the inbox", () => {
     await waitFor(() => expect(seen("/api/messages").length).toBe(1));
 
     const before = seen("/api/messages").length;
-    await type(screen.getByLabelText("search"), "demurrage");
+    await type(screen.getByLabelText("Search mail"), "demurrage");
     expect(
       seen("/api/messages").length,
       "typing sent a request — the field is subscribed to the keyboard rather than submitted",
@@ -117,7 +125,7 @@ describe("searching from the inbox", () => {
     mounted();
     await waitFor(() => expect(seen("/api/messages").length).toBe(1));
 
-    await type(screen.getByLabelText("search"), "Demurrage  Hapag");
+    await type(screen.getByLabelText("Search mail"), "Demurrage  Hapag");
     await submit();
 
     await waitFor(() => {
@@ -137,7 +145,7 @@ describe("searching from the inbox", () => {
     mounted();
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
 
-    await type(screen.getByLabelText("search"), "kumquat");
+    await type(screen.getByLabelText("Search mail"), "kumquat");
     await submit();
 
     await waitFor(() => expect(screen.getByText(/No mail matches those words/)).toBeTruthy());
@@ -169,7 +177,7 @@ describe("searching from the inbox", () => {
     mounted();
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
 
-    await type(screen.getByLabelText("search"), "kumquat");
+    await type(screen.getByLabelText("Search mail"), "kumquat");
     await submit();
     await waitFor(() => expect(screen.getByText(/No mail matches those words/)).toBeTruthy());
 
@@ -191,12 +199,12 @@ describe("searching from the inbox", () => {
     mounted();
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(3));
 
-    await type(screen.getByLabelText("search"), "shipment");
+    await type(screen.getByLabelText("Search mail"), "shipment");
     await submit();
     await waitFor(() => expect(screen.getByText(/best matches/)).toBeTruthy());
 
     // A short page of results is complete, so it must not claim to be capped.
-    await type(screen.getByLabelText("search"), "kumquat");
+    await type(screen.getByLabelText("Search mail"), "kumquat");
     answer("/api/messages", (url) => (url.includes("q=") ? page(2) : page(3)));
     await submit();
     await waitFor(() => expect(screen.getAllByRole("listitem").length).toBe(2));
@@ -213,7 +221,7 @@ describe("searching from the inbox", () => {
     mounted();
     await waitFor(() => expect(screen.getByRole("button", { name: "older" })).toBeTruthy());
 
-    await type(screen.getByLabelText("search"), "shipment");
+    await type(screen.getByLabelText("Search mail"), "shipment");
     await submit();
 
     await waitFor(() => expect(screen.getByText(/best matches/)).toBeTruthy());
