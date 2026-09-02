@@ -77,7 +77,7 @@ async function pageCost(options: {
     },
     // `q: null` — this file prices the plain listing. Search has its own receipt and its own measurement,
     // because a searched page is a different plan and averaging the two would describe neither.
-    page: { after: options.after, mailboxId: options.mailboxId, q: null, since: null, until: null },
+    page: { after: options.after, mailboxId: options.mailboxId, q: null, since: null, until: null, from: null },
     limit: options.limit,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)

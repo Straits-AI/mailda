@@ -2999,10 +2999,42 @@ what exists"*. Two of the three are, and the third is a different problem wearin
 **`since` and `until` reach the index.** They are bounds on `accepted_at` — the column `ir_org_accepted` is
 built on — so they are the same shape as the keyset cursor, and the planner seeks with them. Shipped.
 
-**`from` does not.** There is no index on `from_addr`, and one cannot be added that helps: `from_addr` is on
-`messages`, `accepted_at` is on `ingress_receipts`, so **no single index can serve sender-filtered time
-order.** The join is the barrier, not a missing line. That is #152, with the three options and what each
-costs.
+**`from` does not — and then it turned out to be filtering the wrong column.** #152 was filed saying this
+could not be made cheap, because `from_addr` is on `messages` and `accepted_at` on `ingress_receipts`, so no
+single index can serve sender-filtered time order.
+
+True of the **`From:` header**, which is what `from_addr` holds — and that is what the sender chose to
+display. `ingress_receipts.envelope_from` is what the sending server handed over, the transmission fact this
+Node recorded, and it sits on the **same table** as `accepted_at`. One index serves both, the seek survives,
+and the keyset cursor keeps working. The ticket's three options were all answers to a problem that only
+exists for the header, which stays searchable through `q` and the FTS index: two questions, two surfaces.
+
+Measured on 1,200 deliveries, the index dropped and re-created inside the measurement so the figures are
+genuinely a before and after:
+
+| query | rows read |
+| --- | --- |
+| rare sender, no index | **1,207** — over the 1,000-row budget |
+| rare sender, `ir_org_sender` | **9** |
+| bulk sender, either | 208 — unchanged, so the index is free rather than a trade |
+
+The corpus puts the rare sender's only message at the *oldest* position deliberately: a time-ordered scan
+starts at the newest and reaches it last, which is the worst case for a plan that filters instead of seeking
+and the ordinary case for an investigation looking for something old.
+
+The index is on **`lower(envelope_from)`**, because `envelope_to` is lowercased at ingress and
+`envelope_from` is not — an asymmetry that predates this. Normalising in storage would need a backfill over
+every receipt ever written; the expression buys the same case-insensitive matching with no data rewrite, and
+D1's SQLite does use it (`SEARCH r USING INDEX ir_org_sender (org_id=? AND <expr>=?)`), which was the open
+question rather than an assumption.
+
+**Two mutations survived and are worth naming.** The measurement creates its own index, so dropping
+`lower(...)` from the shipped migration left all three of its assertions passing — an index the planner
+declines, every sender page back to scanning, and the only symptom a query slower than a receipt claims.
+`sender-index-matches-predicate.test.ts` couples the two texts, because SQLite matches an expression index by
+its text and "these strings agree" is the property rather than a proxy for it. And a test of mine asserted
+`not.toBeNull()` on a field that was `undefined`, which passes — the listing does return the sender, but the
+assertion would have passed if it did not.
 
 That is the whole test for whether a filter belongs in a listing: does the predicate reach the index, or is
 it applied to rows already read. Two filters can look alike in a ticket and sit on opposite sides of it.

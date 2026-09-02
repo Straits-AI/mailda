@@ -1,0 +1,28 @@
+-- Filtering the inbox by sender (#152). Additive (#10 expand/contract): one index, no DROP.
+--
+-- `#152` was filed saying this could not be made cheap -- "no single index can serve sender-filtered time
+-- order", because `from_addr` is on `messages` and `accepted_at` is on `ingress_receipts`. That is true of
+-- the **From: header** and it is the wrong column to filter on.
+--
+-- `envelope_from` is the address the sending server handed over: the transmission fact this Node recorded,
+-- rather than what the sender chose to display. It sits on the same table as `accepted_at`, so one index
+-- serves both, the seek survives, and the keyset cursor keeps working. The header stays searchable through
+-- `q` and the FTS index, which is a different question with a different answer.
+--
+-- **On the expression, not the column.** `envelope_to` is lowercased at ingress and `envelope_from` is not,
+-- an asymmetry that predates this. Normalising in storage would need a backfill over every receipt ever
+-- written; an index on `lower(envelope_from)` buys the same case-insensitive matching with no data rewrite,
+-- and `messagePageQuery` spells the predicate the same way so the planner can use it.
+--
+-- Measured on 1,200 deliveries, in `test/sender-filter.measure.test.ts` rather than asserted here:
+--
+--   rare sender, no index    1,207 rows read   (over the 1,000-row list budget)
+--   rare sender, this index      9 rows read
+--   bulk sender, either        208 rows read   (the page fills at once; no regression)
+--
+-- The rare case is the one an investigation is made of, and it was the one that could not be afforded. The
+-- plan confirms the seek: `SEARCH r USING INDEX ir_org_sender (org_id=? AND <expr>=?)`.
+--
+-- `accepted_at, id` trail the sender for `ir_org_accepted`'s reason: they make the index a total order, so a
+-- sender-filtered page is still a seek into the keyset position rather than a sort of that sender's mail.
+CREATE INDEX ir_org_sender ON ingress_receipts (org_id, lower(envelope_from), accepted_at, id);

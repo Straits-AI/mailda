@@ -82,7 +82,7 @@ async function search(term: string | null, who = READER, org = ORG): Promise<str
       metadata: liveGrantsBySubject(org, who, AT, SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(org, who, AT, SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null },
+    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null },
     limit: 51,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
@@ -627,7 +627,7 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
         metadata: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_METADATA),
         content: liveGrantsBySubject(ORG, STANDING_PLUS_META_GRANT, AT, SCOPES_FOR_CONTENT),
       },
-      page: { after: null, mailboxId: null, q: ftsQuery("cabotage"), since: null, until: null },
+      page: { after: null, mailboxId: null, q: ftsQuery("cabotage"), since: null, until: null, from: null },
       limit: 51,
     });
     const rows = await testEnv.CATALOG.prepare(query.sql).bind(...query.params)
@@ -831,7 +831,7 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
 
     const lease = await testEnv.CATALOG.prepare(
       "SELECT body_index_lease_until AS until FROM messages WHERE id = ?",
-    ).bind(messageId).first<{ until: string | null }>();
+    ).bind(messageId).first<{ until: string | null, from: null }>();
     expect(lease?.until, "repair left a live claim on the message it just queued").toBeNull();
 
     // And the claim actually reaches it, which is what "cleared" has to mean.

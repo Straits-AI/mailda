@@ -79,7 +79,14 @@ function atTime(millis: number): Ctx {
   return { now: () => millis, id: (p) => system.id(p), random: (n) => system.random(n) };
 }
 
-interface Row { id: string; mailbox_id: string; accepted_at: string; subject: string | null }
+interface Row {
+  id: string;
+  mailbox_id: string;
+  accepted_at: string;
+  subject: string | null;
+  /** The envelope sender, which is what `from` filters on (#152) — not the `From:` header. */
+  envelope_from: string;
+}
 interface Page { messages: Row[]; next_cursor: string | null }
 
 function requestFor(token: string, query?: Record<string, string>): Request {
@@ -723,6 +730,67 @@ describe("a date window on the listing", () => {
       [MESSAGE_PAGE_PARAMS.until]: "2026-08-19",
     }));
     await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW/);
+  });
+
+  it("narrows to one sender, matched case-insensitively", async () => {
+    /*
+     * The **envelope** sender, which is what the sending server handed over rather than the `From:` header
+     * the sender chose to display (#152). The fixture's receipts carry `envelope_from`, so this is filtering
+     * the transmission fact.
+     *
+     * Case-insensitively because `envelope_to` is lowercased at ingress and `envelope_from` is not: a filter
+     * comparing raw values would answer an empty page to somebody who typed the address correctly, and an
+     * empty page is indistinguishable from a sender who never wrote.
+     */
+    const token = await sessionFor(READER);
+    const everything = await page(token);
+    const sender = everything.messages[0]?.envelope_from;
+    /*
+     * `toBeTruthy`, not `not.toBeNull` — the first version used the latter, and `undefined` is not
+     * null, so it would have passed against a listing that returned no sender at all and then
+     * failed obscurely one line later. The contract requires the field; this is what says so.
+     */
+    expect(sender, "the listing returns no envelope sender, so this checks nothing").toBeTruthy();
+
+    const filtered = await page(token, { [MESSAGE_PAGE_PARAMS.from]: (sender as string).toUpperCase() });
+
+    expect(filtered.messages.length).toBeGreaterThan(0);
+    for (const message of filtered.messages) {
+      expect(message.envelope_from.toLowerCase()).toBe((sender as string).toLowerCase());
+    }
+  });
+
+  it("answers an empty page for a sender who never wrote, rather than the newest page", async () => {
+    // The widening this and every other filter here guards against: a dropped predicate answers more than
+    // was asked for, and more is indistinguishable from an honest answer.
+    const token = await sessionFor(READER);
+    const none = await page(token, { [MESSAGE_PAGE_PARAMS.from]: "nobody@nowhere.example" });
+    expect(none.messages).toEqual([]);
+  });
+
+  it("carries the sender across a page, and composes with a date window", async () => {
+    /*
+     * Both predicates sit on `ingress_receipts` and both are served by `ir_org_sender`, so this is the
+     * combination the index was chosen for — one seek, still ordered, still pageable. A search term is the
+     * one thing that cannot join them (#153), and that is refused rather than answered expensively.
+     */
+    const token = await sessionFor(READER);
+    const everything = await page(token);
+    const sender = everything.messages[0]?.envelope_from as string;
+    const query = {
+      [MESSAGE_PAGE_PARAMS.from]: sender,
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-01",
+    };
+
+    const first = await page(token, query);
+    expect(first.messages.length).toBeGreaterThan(0);
+    if (first.next_cursor !== null) {
+      const second = await page(token, { ...query, [MESSAGE_PAGE_PARAMS.cursor]: first.next_cursor });
+      for (const message of second.messages) {
+        expect(message.envelope_from.toLowerCase(), "page two left the sender page one was asked with")
+          .toBe(sender.toLowerCase());
+      }
+    }
   });
 
   it("refuses a window with a search term, because it measured at four times the budget", async () => {

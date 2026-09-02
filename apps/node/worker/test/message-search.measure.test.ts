@@ -81,7 +81,7 @@ async function cost(
     },
     page: {
       after: null, mailboxId, q: term === null ? null : ftsQuery(term),
-      since: window.since ?? null, until: window.until ?? null,
+      since: window.since ?? null, until: window.until ?? null, from: null,
     },
     limit: BUDGETS["messages.page_size"] + 1,
   });
@@ -98,7 +98,7 @@ async function planFor(term: string | null): Promise<string> {
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null },
+    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null, from: null },
     limit: BUDGETS["messages.page_size"] + 1,
   });
   const explained = await testEnv.CATALOG.prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
