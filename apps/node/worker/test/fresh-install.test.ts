@@ -73,6 +73,75 @@ describe("a Node with no schema, which is what a fresh install is", () => {
     expect(body.fix).toContain("migrations apply");
   });
 
+  it("does not call an unreachable database a missing schema, and does not name a fix that lies", async () => {
+    /*
+     * Two states reached one branch, and only one of them had the fix that was printed (#149).
+     *
+     * Measured on a Node whose D1 had been deleted: `/health` said *"This Node has no schema"* and named
+     * `wrangler d1 migrations apply CATALOG --remote`, which resolves `CATALOG` **by name**, found a
+     * different live database, applied all 51 migrations, and changed nothing the Worker reads — because the
+     * binding is linked server-side to the dead id. Fifty-one green ticks, identical `/health`, no thread to
+     * pull.
+     *
+     * The fixture is a binding whose queries fail the way D1 fails for an absent database, rather than the
+     * way it fails for an absent table. A proxy is the only way to reach it: the test pool's D1 always
+     * exists, which is exactly why this state shipped.
+     */
+    const brokenCatalog = new Proxy(testEnv.CATALOG, {
+      get(target, property) {
+        if (property !== "prepare") {
+          const value = Reflect.get(target, property) as unknown;
+          return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+        }
+        return () => ({
+          bind: () => ({ first: () => Promise.reject(new Error("D1_ERROR: no such database")) }),
+          first: () => Promise.reject(new Error("D1_ERROR: no such database")),
+        });
+      },
+    });
+
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request("https://node.example/health"),
+      { ...testEnv, CATALOG: brokenCatalog } as Env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(503);
+    const body = await response.json<{ healthy: boolean; reason: string; fix: string }>();
+    expect(body.healthy).toBe(false);
+    // Named as what it is, and explicitly not as the other thing.
+    expect(body.reason).toContain("cannot reach its catalog database");
+    expect(body.reason).toContain("not a missing schema");
+    /*
+     * The half that matters most: the fix must not send somebody to a command that reports success. This is
+     * the assertion a mutation restoring the old single message would fail on, and the reason the wording is
+     * negative rather than merely different.
+     */
+    expect(body.fix).toContain("do NOT run `migrations apply`");
+    expect(body.fix).toContain("disaster-recovery");
+  });
+
+  it("still calls a genuinely absent table a missing schema, which is the common case", async () => {
+    /*
+     * The control. A fix that refused to name `migrations apply` for a Node that has never been migrated
+     * would be the new message swallowing the old one — and a fresh install is far more common than a
+     * deleted database, so getting that wrong costs more.
+     */
+    await withNoSchema();
+
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new Request("https://node.example/health"), testEnv, ctx);
+    await waitOnExecutionContext(ctx);
+
+    const body = await response.json<{ reason: string; fix: string }>();
+    expect(body.reason).toContain("no schema");
+    expect(body.reason).not.toContain("cannot reach its catalog database");
+    expect(body.fix).toContain("migrations apply");
+    expect(body.fix).not.toContain("do NOT");
+  });
+
   it("serves /api/doctor rather than failing the request that would explain the failure", async () => {
     await withNoSchema();
 
