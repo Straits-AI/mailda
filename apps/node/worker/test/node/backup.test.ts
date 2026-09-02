@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { withoutComments } from "../without-comments.ts";
+
+/** The CLI on disk, for the lexical checks below. The module also reads it eagerly as `cli`. */
+const CLI_PATH = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
+
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
 const {
   backupIndex, checkBackup, exportableTables, needsIndexRebuild, sha256Of, whyAdminCannotExist,
@@ -418,5 +423,62 @@ describe("the command says what a passing check does not mean", () => {
     expect(cli).toContain("what that does not establish");
     expect(cli).toContain("that the evidence decrypts");
     expect(cli).toContain("that the catalog restores");
+  });
+});
+
+
+describe("a backup does not give up on one bad sign-in", () => {
+  /**
+   * #148, measured during #92's drill: a single `500` aborted the whole backup, and the identical command
+   * succeeded seconds later against a healthy Node.
+   *
+   * **A backup that fails on a blip is a backup that does not happen.** This runs unattended on a schedule,
+   * and the failure is silent from the operator's side — the command exits, nothing is written, and the next
+   * thing anybody learns is that the newest artifact is a week old. #92's premise is that losing the account
+   * is survivable, which is only true if the artifact exists.
+   *
+   * It was also the opposite call from the one the same function already makes: `sessionCookie` treats a
+   * failed sign-in as *not fatal* for the deploy gate, with a written reason, and the backup treated it as
+   * terminal — on the more consequential path.
+   *
+   * Lexical, over `sessionCookie`'s body with comments stripped. What cannot be checked here is the timing;
+   * the loop bound and the 401 exemption are the properties that decide whether a scheduled backup survives
+   * a cold start, and both are visible in source.
+   */
+  function signIn(): string {
+    const source = withoutComments(CLI_PATH);
+    const opens = source.indexOf("async function sessionCookie(");
+    expect(opens, "sessionCookie could not be found").toBeGreaterThan(-1);
+    const closes = source.indexOf("\nasync function ", opens + 1);
+    return source.slice(opens, closes === -1 ? source.length : closes);
+  }
+
+  it("retries, and bounds the retries", () => {
+    const source = signIn();
+    expect(source).toMatch(/for \(let attempt = 0; attempt < \d+; attempt \+= 1\)/);
+    // A bound, not a loop that waits out an outage: a Node that is down should fail and be re-run.
+    expect(source).not.toMatch(/while \(true\)/);
+  });
+
+  it("does not retry a 401, because wrong credentials will be wrong again", () => {
+    /*
+     * The exemption that keeps this from becoming something else. Retrying a refusal turns a clear answer
+     * into a slow one, and repeated failed logins from a scheduled job against a Node that records login
+     * attempts is a shape nobody wants.
+     */
+    expect(signIn()).toMatch(/status === 401/);
+  });
+
+  it("still refuses rather than writing a backup with no inventory", () => {
+    /*
+     * The direction that must not change. An artifact whose inventory is absent cannot be checked
+     * afterwards, and one that *looks* complete is the failure this command exists to prevent — so the
+     * fatal path stays fatal, and only the number of attempts before it changed.
+     */
+    const source = withoutComments(CLI_PATH);
+    const opens = source.indexOf("could not sign in, so the inventory cannot be read");
+    expect(opens, "the backup's refusal could not be found").toBeGreaterThan(-1);
+    expect(source.slice(opens - 200, opens)).toContain("fail(");
+    expect(source.slice(opens, opens + 700)).toContain("no backup was written");
   });
 });

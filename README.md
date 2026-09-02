@@ -2894,6 +2894,17 @@ beside it. The existing reasoning is sound for a *missing* object — losing the
 would be worse — but it swallows a decrypt failure too, and an empty body in a composer is an invitation to
 type over evidence that was only unreadable, not lost.
 
+**Three of the side-findings were ours, and are fixed** (#148, #149, #150). A **backup aborted on one
+transient sign-in `500`** with nothing retried — and a backup that fails on a blip is a backup that does not
+happen, since it runs unattended and the next thing anybody learns is that the newest artifact is a week old.
+It retries now, three times with a short backoff, and never retries a `401`, because wrong credentials will be
+wrong again and a scheduled job hammering a login is a different problem. **`/health` called a missing
+database "no schema"** and named `migrations apply` — which resolves the binding *by name*, applies every
+migration to a live database the Worker does not read, and reports success; the two states are now told apart
+and the second says plainly not to run it. And **`mailda deploy` stopped on a raw wrangler error** when a
+Node's script existed but its bindings did not, a state that is routine because every failed provisioning
+retry produces it; it is now named, with the path that works.
+
 **Seven more findings between "the destination exists" and "the destination is clean"**, each in the runbook
 now: a second restore onto a restored Node fails with the opaque `{"D1_RESET_DO":true}`; a deleted D1 is never
 re-provisioned by `wrangler deploy`, because the binding is linked server-side, so the Worker kept reading a

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { withoutComments } from "../without-comments.ts";
 
 const cliPath = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
 
@@ -437,5 +438,63 @@ describe("the canary is reached without a preview URL, because it cannot have on
     const migrate = cli.indexOf("== applying migrations\\n");
     expect(refusal).toBeGreaterThan(-1);
     expect(refusal).toBeLessThan(migrate);
+  });
+});
+
+describe("a Node whose bindings are gone is a state, not a failed listing", () => {
+  /**
+   * #150, measured during #92's drill.
+   *
+   * `firstInstall()` asks whether the **Worker** exists. That was the same question as "are the bindings
+   * there" only until a resource could be deleted independently of the script — and it can be, routinely:
+   * auto-provisioning creates or fails and never adopts, so every retry of a half-finished install leaves
+   * behind whatever the previous attempt made.
+   *
+   * Such a Node is not a first install, takes the canary path, and dies on the migration listing. The whole
+   * sequence stopped on wrangler's raw error and a two-word summary — and wrangler's own advice, *"Run
+   * 'wrangler deploy' to provision it"*, is a dead end, because the binding is linked server-side so a
+   * deploy inherits the dead one and reports success having changed nothing.
+   *
+   * Lexical, over the deploy function's body with comments stripped, which is both halves of the technique
+   * this repository has been bitten by nine times.
+   */
+  const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
+
+  /** The migration-listing guard, delimited at both ends so nothing matches the branch after it. */
+  function guard(): string {
+    const source = withoutComments(CLI);
+    const opens = source.indexOf("checking which migrations are pending");
+    const closes = source.indexOf("== applying", opens);
+    expect(opens, "the migration step could not be found").toBeGreaterThan(-1);
+    const slice = source.slice(opens, closes === -1 ? source.length : closes);
+    expect(slice.length, "the guard is empty, so nothing below is checked").toBeGreaterThan(200);
+    return slice;
+  }
+
+  it("recognises the state by wrangler's own words, and by nothing looser", () => {
+    /*
+     * The ambiguity rule `firstInstall` argues for, and it matters more here because the fix this branch
+     * names **deletes a Worker**. A network failure read as "unprovisioned" would send somebody deleting a
+     * live Node's script.
+     */
+    expect(guard()).toMatch(/Couldn't find an auto-provisioned/);
+  });
+
+  it("refuses `wrangler deploy` as the fix, because it reports success and changes nothing", () => {
+    const source = guard();
+    expect(source).toContain("do NOT run `wrangler deploy`");
+    // The path that does work, named rather than implied.
+    expect(source).toContain("docs/disaster-recovery.md");
+  });
+
+  it("keeps a general refusal for every other listing failure", () => {
+    /*
+     * Non-vacuity in the direction that matters: a version recognising only the provisioning case would
+     * carry on past a listing that failed for any other reason, and the expand step decides what is safe to
+     * apply *before* the canary is uploaded. A sequence that cannot read the pending list must stop.
+     */
+    const source = guard();
+    expect(source).toContain("could not list migrations");
+    expect(source).toMatch(/pending\.status !== 0/);
   });
 });

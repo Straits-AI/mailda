@@ -212,11 +212,35 @@ async function sessionCookie(origin) {
   const password = process.env.MAILDA_PASSWORD;
   if (email === undefined || password === undefined) return null;
 
-  const signIn = await fetch(`${origin}/api/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  }).catch(() => null);
+  /*
+   * **Retried, and only for a failure worth retrying** (#148).
+   *
+   * A backup that fails on a blip is a backup that does not happen: this runs unattended on a schedule, and
+   * the failure is silent from the operator's side — the command exits, nothing is written, and the next
+   * thing anybody learns is that the newest artifact is a week old. Measured during #92's drill, where a
+   * single `500` aborted the whole backup and the identical command succeeded seconds later against a
+   * healthy Node.
+   *
+   * A `401` is **not** retried. Wrong credentials will be wrong on the fourth attempt too, so retrying turns
+   * a clear refusal into a slow one — and repeated failed logins against a Node that records login attempts
+   * is a shape nobody wants a scheduled job producing.
+   *
+   * Three attempts and a short linear backoff, because the failure this is for is a cold start or a D1
+   * hiccup. A longer schedule would be a Node that is down, and waiting minutes to discover it is worse than
+   * failing and being re-run.
+   */
+  let signIn = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await new Promise((settle) => setTimeout(settle, attempt * 500));
+    signIn = await fetch(`${origin}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).catch(() => null);
+    if (signIn !== null && signIn.ok) break;
+    // Understood and refused: the answer will not change. Anything else — unreachable, 5xx — may.
+    if (signIn !== null && signIn.status === 401) break;
+  }
   if (signIn === null || !signIn.ok) {
     /*
      * Not fatal. A failed sign-in falls back to the anonymous check rather than stopping a deploy — the
@@ -576,7 +600,47 @@ async function deploy(argv) {
    */
   process.stdout.write("\n== checking which migrations are pending\n");
   const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...ENV]);
-  if (pending.status !== 0) fail(`could not list migrations (exit ${pending.status}).`);
+  if (pending.status !== 0) {
+    /*
+     * **"The bindings are not provisioned" is a state, not a failure to list migrations** (#150).
+     *
+     * `firstInstall()` above asks whether the *Worker* exists, and that was the same question as "are the
+     * bindings there" only until a resource could be deleted independently of the script. It can be: an
+     * operator tidying up, a Cloudflare-side incident, or — routinely — a half-finished provisioning run,
+     * since auto-provisioning creates or fails and never adopts, so every retry leaves the resources the
+     * previous attempt made.
+     *
+     * Such a Node is not a first install, so it takes the canary path and dies here. Measured during #92's
+     * drill, where the whole sequence stopped on wrangler's raw error and a two-word summary.
+     *
+     * And wrangler's advice — *"Run 'wrangler deploy' to provision it"* — is a dead end: the binding is
+     * linked server-side, so a deploy inherits the dead one and provisions nothing. Following it produces no
+     * error and no change, which is worse than the refusal.
+     *
+     * Matched on wrangler's own words for an absent auto-provisioned resource, and on nothing else — the
+     * ambiguity rule `firstInstall` argues for. A network failure must not be read as "unprovisioned",
+     * because the fix named below deletes a Worker.
+     */
+    if (/Couldn't find an auto-provisioned/i.test(pending.text)) {
+      fail(
+        "this Node's script exists but its bindings do not, so there is nothing to migrate.\n\n"
+        + "  why      a deleted or half-provisioned D1, R2 bucket or queue leaves a Worker that is not a\n"
+        + "           first install and cannot be deployed to. Auto-provisioning creates or fails and never\n"
+        + "           adopts, so a leftover from one attempt blocks the next\n"
+        + "  fix      do NOT run `wrangler deploy` — the binding is linked server-side, so it inherits the\n"
+        + "           dead one, provisions nothing, and reports success. Delete the Worker and redeploy:\n"
+        + "           docs/disaster-recovery.md has the order, including that the queue consumer must be\n"
+        + "           removed first and the Workflow deleted separately.\n"
+        + `           wrangler said: ${pending.text.trim().split("\n").slice(-2).join(" ")}`,
+      );
+    }
+    fail(
+      `could not list migrations (exit ${pending.status}).\n\n`
+      + "  why      the expand step decides what is safe to apply before the canary is uploaded, so a\n"
+      + "           sequence that cannot read the pending list must not continue\n"
+      + `  fix      ${pending.text.trim().split("\n").slice(-3).join(" ")}`,
+    );
+  }
   const contractions = contractingAmong(pending.text, resolve(workerDir, "migrations"));
   if (contractions.length > 0 && !contracting) {
     fail(
@@ -1550,7 +1614,22 @@ async function backup(argv) {
       + "  fix      export them, then re-run");
   }
   const cookie = await sessionCookie(origin);
-  if (cookie === null) fail("could not sign in, so the inventory cannot be read.");
+  if (cookie === null) {
+    /*
+     * Still fatal, and deliberately: a backup whose inventory is absent cannot be checked afterwards, and
+     * writing one that *looks* complete is the failure this whole command exists to prevent. What changed is
+     * that the sign-in above no longer gives up after one attempt (#148), so reaching here means three tries
+     * failed or the Node refused outright.
+     */
+    fail(
+      "could not sign in, so the inventory cannot be read and no backup was written.\n\n"
+      + "  why      three attempts failed, or this Node refused the credentials outright — a 401 is not\n"
+      + "           retried, because wrong credentials will be wrong again\n"
+      + "  fix      check MAILDA_EMAIL and MAILDA_PASSWORD, then `mailda doctor --url " + origin + "`. A\n"
+      + "           Node that answers 500 to sign-in may have an unusable signing key, which\n"
+      + "           `doctor`'s signing_key finding names.",
+    );
+  }
 
   mkdirSync(out, { recursive: true });
 

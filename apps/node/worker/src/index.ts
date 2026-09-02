@@ -488,15 +488,52 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       // A health endpoint that throws when the Node is unhealthy is a health endpoint that reports
       // nothing. On a fresh install these tables do not exist yet, and 500 with an opaque body is the
       // least useful answer available — so the state is named, with the command that resolves it.
-      const claimed = await env.CATALOG.prepare(
+      /*
+       * **The failure is kept, not discarded** (#149), because two states reached this branch and only one
+       * of them had the fix that was printed.
+       *
+       * `.catch(() => undefined)` collapsed "the tables are not there yet" together with "the database is
+       * not there at all". Measured: a Node whose D1 had been deleted answered *"This Node has no schema"*
+       * and named `wrangler d1 migrations apply CATALOG --remote` — which resolves `CATALOG` **by name**,
+       * found a live database, applied all 51 migrations, and changed nothing the Worker reads, because the
+       * binding is linked server-side to the dead id. The operator runs the fix, sees fifty-one green ticks,
+       * reloads, and gets the same sentence. There is no thread to pull.
+       *
+       * D1 answers a missing database with an API-level failure rather than an empty result, so the words in
+       * the error are what tell them apart. Matched on D1's own vocabulary rather than on a status code: a
+       * binding to a deleted database and a table that does not exist both surface as a query failure.
+       */
+      const probe = await env.CATALOG.prepare(
         "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
-      ).first<{ org_id: string }>().catch(() => undefined);
+      ).first<{ org_id: string }>().then(
+        (row) => ({ row, error: null as string | null }),
+        (error: unknown) => ({
+          row: undefined,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      const claimed = probe.row;
       if (claimed === undefined) {
+        /*
+         * "no such table" is a schema that has not been applied. Anything else from a query this simple —
+         * and in particular D1 reporting that the database itself could not be found — is not, and must not
+         * be answered with a command that will report success.
+         */
+        const noSchema = probe.error === null || /no such table/i.test(probe.error);
         return Response.json({
           node: "mailda",
           healthy: false,
-          reason: "This Node has no schema, so it cannot accept mail.",
-          fix: "POST /api/prepare to apply the schema, or run `wrangler d1 migrations apply CATALOG --remote`",
+          reason: noSchema
+            ? "This Node has no schema, so it cannot accept mail."
+            : "This Node cannot reach its catalog database, so it cannot accept mail. This is not a "
+              + "missing schema: the CATALOG binding does not resolve to a database this Worker can query.",
+          fix: noSchema
+            ? "POST /api/prepare to apply the schema, or run `wrangler d1 migrations apply CATALOG --remote`"
+            : "do NOT run `migrations apply` — it resolves CATALOG by name and will report success against a "
+              + "database this Worker does not read. A deleted D1 is not re-provisioned by a deploy either, "
+              + "because the binding is linked server-side. See docs/disaster-recovery.md, which deletes the "
+              + "Worker and redeploys, and note the queue consumer must be removed first.",
+          ...(noSchema ? {} : { detail: probe.error }),
         }, { status: 503 });
       }
       const pending = await env.CATALOG.prepare(
