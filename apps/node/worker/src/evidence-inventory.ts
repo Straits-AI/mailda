@@ -165,7 +165,26 @@ export async function inventoryPage(
   let listed: R2Objects | null = null;
   let carried = within;
   while (at < prefixes.length) {
-    listed = await env.EVIDENCE.list({ prefix: prefixes[at], cursor: carried, limit: page });
+    /*
+     * **`include: ["customMetadata"]`, or `keyGeneration` is a constant** (#141).
+     *
+     * R2 returns custom metadata from `list` only when asked — honoured since compatibility date 2022-08-04,
+     * and this Worker's is far later. Without it `generationOf` saw `customMetadata: undefined` on every
+     * object and fell back to generation 0, so **every inventory ever produced recorded generation 0 for
+     * everything**, including objects `putEvidence` had sealed under generation 1. Measured on two live
+     * Nodes, which both reported 0 for objects their own Workers could open.
+     *
+     * That is the field saying *which key opens this object*, in a backup artifact, wrong in the direction
+     * that looks harmless — and it is the one check that would have caught #142, a copy whose metadata was
+     * stripped, before an operator relied on it.
+     *
+     * Cloudflare documents that a page with `include` may return **fewer** than `limit` objects to make room
+     * for the metadata. That is already safe here: `truncated` decides whether to continue, never the page
+     * being full, and the comment on `resumeAfter` below says why.
+     */
+    listed = await env.EVIDENCE.list({
+      prefix: prefixes[at], cursor: carried, limit: page, include: ["customMetadata"],
+    });
     if (listed.objects.length > 0 || listed.truncated) break;
     at += 1;
     carried = undefined;

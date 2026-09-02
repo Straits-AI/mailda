@@ -119,8 +119,9 @@ drill, having made exactly that mistake.
 
 So: whatever tool is used, **custom metadata must survive**. Check it rather than trust it — the inventory
 reports `keyGeneration` per object, which is the field that gets lost, so comparing the two Nodes' inventories
-catches this in one request each. Note that check is only useful once #141 is fixed; the inventory currently
-reports 0 for everything because it never asks R2 for the metadata.
+catches this in one request each. That check only started working with #141 — the inventory reported 0 for
+every object until it began asking R2 for the metadata, so an inventory taken before that says nothing about
+which key opens anything.
 
 ## Restoring
 
