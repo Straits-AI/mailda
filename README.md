@@ -121,7 +121,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 
 | | |
 |---|---|
-| **The escrow has never been installed on any Node, so recovery does not work yet** | Backup, cross-account catalog restore and a checked evidence copy have all been run against real Nodes (#92). The step they exist for has not succeeded: redeeming a recovery code answers `200` and installs **nothing**, because a fresh Node mints its own key generation 1 before it can be claimed and the escrow carries generation 1 too — one number cannot hold both, and the Node keeps its live key (#138). So no restored Node has ever read a message, and there is no measured RPO or RTO. The [runbook](./docs/disaster-recovery.md) says where it stops and what the drill measured on the way. |
+| **A restored Node can be signed into and cannot yet read its mail** | Measured against two live Cloudflare accounts (#92): backup, cross-account catalog restore, escrow redemption, and **sign-in at the destination as the source's administrator**. What fails is the evidence. The copy was made with `wrangler r2 object get \| put`, which carries every byte and drops the custom metadata naming the key that sealed it, so all three objects read `E_EVIDENCE_AUTH_FAILED` (#142). The check that would have caught it — `keyGeneration` in the inventory — reports 0 for everything, because the list never asks R2 for metadata (#141). No restored Node has yet read a message, and there is no measured RPO or RTO. The [runbook](./docs/disaster-recovery.md) says where it stops. |
 | **Deployment promotes by hand on a Free account** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). It has now been run against a live account ([receipt](./docs/receipts/deploy-drill-live-account.md)) — and `versions upload --preview-alias` returned **no reachable preview URL**, so the gate cannot probe the canary and degrades to a safe manual promotion. The cause is not established, which is why that receipt records it without a number. |
 | **Two Nodes in one account collide on the Workflow, and the deploy refuses** | Measured rather than suspected ([receipt](./docs/receipts/deploy-drill-live-account.md)): every other resource derives its name from the Worker's, the Workflow does not, and deploying a second Node **succeeded with exit 0 and silently took ownership** — leaving the first Node's `BUTLER_RUNS` binding pointing at a Workflow now running the second Node's code against the second Node's bindings. `mailda deploy` now refuses when the Workflow belongs to another Worker and names the fix. The config still ships a fixed name, so the refusal is the guard rather than the naming. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
@@ -2819,6 +2819,35 @@ case where an operator most needs the truth. The Node already knew better: `vaul
 threw the distinction away. The answer now carries what happened, including the sentence worth the most —
 **another code will not help, because all ten carry the same generations.** Without it an operator spends the
 sheet.
+
+**The escrow installs now, and the trade that blocked it was real.** `restore` never overwrote a generation
+already present, and the argument is good: a code redeemed against a healthy vault by somebody uncertain what
+state it is in would otherwise replace live keys with older copies and make everything sealed since the escrow
+unreadable. That trade only exists when there **is** newer mail. A generation nothing has ever sealed under is
+a reserved number, not a protected key — so an escrowed key may now take it, and a generation that has sealed
+is still refused. The vault records the difference at the first seal rather than at the mint, which is why
+`doctor` moved from `sealingKey` to a new `ensureKey`: a diagnostic that wraps a constant and throws it away
+was marking the generation load-bearing, and that alone made the escrow uninstallable on every fresh Node.
+
+Measured on the drill's destination: both generations installed, `adopted` naming what they displaced, and
+**sign-in returned `200` for the first time** — the restored Node authenticating the source's administrator,
+with the source's user id.
+
+**Then the evidence failed, and it was my own copy that did it.** `verify-evidence` opened all three objects
+and reported all three unreadable. `wrangler r2 object get | put` carries the bytes and drops the custom
+metadata naming the key that sealed them; there is no flag for it. The destination fell back to generation 0,
+the published constant, and authentication failed on every frame. The runbook warned about that command for
+its **cost**, which is the smaller objection, and now warns about correctness (#142).
+
+The check designed to catch exactly this was already built and already silent: the inventory reports
+`keyGeneration` per object, and it reports `0` for everything, because `list()` is never passed
+`include: ["customMetadata"]` and R2 returns none without it (#141). A wrong number in a backup artifact, in
+the one field saying which key opens each object.
+
+**And a draft whose body cannot be decrypted reads as an empty body** (#143), with `bodyBytes: 180` returned
+beside it. The existing reasoning is sound for a *missing* object — losing the recipients and subject as well
+would be worse — but it swallows a decrypt failure too, and an empty body in a composer is an invitation to
+type over evidence that was only unreadable, not lost.
 
 **Seven more findings between "the destination exists" and "the destination is clean"**, each in the runbook
 now: a second restore onto a restored Node fails with the opaque `{"D1_RESET_DO":true}`; a deleted D1 is never

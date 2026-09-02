@@ -2569,7 +2569,18 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
        * change is that the answer now says what happened rather than leaving it to be inferred from two arrays.
        */
       const notice = conflictNotice(outcome.conflicted, outcome.restored);
-      return Response.json(notice === null ? outcome : { ...outcome, notice });
+      /*
+       * `adopted` is dropped when empty rather than sent as two empty arrays, so its presence is the signal
+       * that something was displaced — the same rule `notice` follows one line down.
+       */
+      const displaced = outcome.adopted.content.length + outcome.adopted.credential.length;
+      const answer = {
+        restored: outcome.restored,
+        conflicted: outcome.conflicted,
+        ...(displaced === 0 ? {} : { adopted: outcome.adopted }),
+        ...(notice === null ? {} : { notice }),
+      };
+      return Response.json(answer);
     }
 
     /*

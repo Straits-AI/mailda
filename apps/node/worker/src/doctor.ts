@@ -2,7 +2,7 @@ import type { Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { agentGrantableActions } from "@mailda/contract/agent";
 
-import { unwrapCredential, wrapCredential } from "./auth/kek.ts";
+import { probeCredentialKey } from "./auth/kek.ts";
 import { mintAccessToken, verifyAccessToken } from "./auth/jwt.ts";
 import { vault } from "./keyvault.ts";
 import { escrowState, RESTORE_LEASE_MS } from "./recovery.ts";
@@ -685,8 +685,12 @@ async function checkVault(env: Env): Promise<Finding[]> {
     // *detected* by comparing it against a newer key, so a Node that predates the vault would never
     // learn it has a backlog until something happened to seal. Generating is idempotent, and
     // `sealingKey` never returns the legacy constant, so this cannot create an unprotected state.
-    const content = await vault(env).sealingKey("content");
-    const credential = await vault(env).sealingKey("credential");
+    // `ensureKey`, not `sealingKey`: this initialises the vault and seals nothing, so the generation it
+    // mints stays *reserved* rather than load-bearing — which is what lets an escrowed key of the same
+    // number take its place during a restore (#138). Marking it used here made the documented recovery
+    // path unable to install the escrow on any fresh Node.
+    const content = await vault(env).ensureKey("content");
+    const credential = await vault(env).ensureKey("credential");
     inventory = { content: content.generation, credential: credential.generation };
   } catch (error) {
     return [{
@@ -736,18 +740,19 @@ async function checkVault(env: Env): Promise<Finding[]> {
  * that was interrupted. Presence was never the interesting question; usability is.
  */
 async function checkCredentialKek(env: Env): Promise<Finding[]> {
-  const probe = "doctor-credential-key-round-trip";
   try {
-    const recovered = await unwrapCredential(env, await wrapCredential(env, probe));
+    // `probeCredentialKey`, not `wrapCredential`: a diagnostic that wraps a constant and discards it seals
+    // nothing, and marking the generation used made the escrow unable to install on a fresh Node (#138).
+    const recovered = await probeCredentialKey(env);
     return [{
       check: "credential_key",
       severity: "refuse",
       discloses: "infrastructure",
-      ok: recovered === probe,
-      detail: recovered === probe
+      ok: recovered,
+      detail: recovered
         ? "Wrap/unwrap round trip succeeded."
         : "Wrap/unwrap round trip returned different bytes.",
-      ...(recovered === probe ? {} : {
+      ...(recovered ? {} : {
         fix: "the credential key changed; existing signing keys cannot be unwrapped and must be rotated",
       }),
     }];
@@ -2348,19 +2353,36 @@ async function checkRecoveryConflicts(env: Env, orgId: string | null): Promise<F
         unresolved.length === 0
           ? `${settled.length} restore(s) collided with a live key. Every one has been assessed, and every `
             + "collision is still permanent: the loss does not clear, only the alarm does."
-          : `${unresolved.length} restore(s) collided with a live key and have not been assessed, and each `
-            + "collision is permanent — two different secrets cannot share one generation number, so mail "
-            + "sealed under the escrowed key of that generation stays unreadable: "
-            + `${unresolved.map(describe).join("; ")}. A later clean restore does not repair this and must `
-            + "not appear to: `recovery_restore_state` above reports the newest operation only.",
+          : `${unresolved.length} restore(s) collided with a live key and have not been assessed: `
+            + `${unresolved.map(describe).join("; ")}. Two different secrets cannot share one generation `
+            + "number, so mail sealed under the escrowed key of that generation stays unreadable. A "
+            + "collision against a generation this Node had already sealed under is permanent, and that is "
+            + "the only kind recorded since a reserved generation began being adopted instead — an older "
+            + "record may clear on the next redemption. `recovery_restore_state` above reports the newest "
+            + "operation only, so a later clean restore does not repair this record and must not appear to.",
         ...settled.map((one) =>
           `Assessed: ${describe(one)} — by ${one.ack!.assessed_by} on ${one.ack!.assessed_at}.`
         ),
       ].join(" "),
     ...(unresolved.length === 0 ? {} : {
-      fix: "assess what was sealed under those generations — `evidence_lifecycle` describes the window — and "
-        + "record the outcome with POST /api/recovery/conflicts/:restoreId/acknowledge. That does not repair "
-        + "the collision, which nothing can; it records that somebody has established what was lost",
+      /*
+       * **This used to say the collision was permanent and that nothing could repair it** (#138). That was
+       * true of every collision the vault could produce at the time, and it stopped being true: a generation
+       * nothing has ever sealed under is now adopted rather than refused, so a record written before that
+       * change may describe a collision a fresh redemption resolves. A collision recorded *since* is against
+       * a generation that had already sealed, and that one is permanent.
+       *
+       * `doctor` cannot tell the two apart from the record — the outcome was stored, the reason was not — so
+       * it names the cheap thing to try instead of asserting a loss it cannot confirm. Claiming permanence
+       * where a recovery code would have worked is the worse of the two mistakes: it tells somebody holding
+       * the remedy not to bother.
+       */
+      fix: "redeem a recovery code and read this finding again. A generation nothing had sealed under is "
+        + "adopted rather than refused, so a collision recorded before that behaviour existed may clear. If "
+        + "it does not, the generation had already sealed and the loss is permanent: assess what was under "
+        + "it — `evidence_lifecycle` describes the window — and record the outcome with "
+        + "POST /api/recovery/conflicts/:restoreId/acknowledge, which does not repair the collision but "
+        + "records that somebody established what was lost",
     }),
   }];
 }

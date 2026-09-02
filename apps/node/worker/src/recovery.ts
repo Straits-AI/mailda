@@ -420,7 +420,7 @@ export async function redeemForVault(
    */
   restoreKey: (
     purpose: KeyPurpose, generation: number, secret: string,
-  ) => Promise<"restored" | "conflict" | "identical"> = (purpose, generation, secret) =>
+  ) => Promise<"restored" | "conflict" | "identical" | "adopted"> = (purpose, generation, secret) =>
     vault(env).restore(purpose, generation, secret),
 ): Promise<{
   restored: { content: number[]; credential: number[] };
@@ -441,6 +441,8 @@ export async function redeemForVault(
    * caller cannot mistake, and the route puts it in the payload.
    */
   conflicted: { content: number[]; credential: number[] };
+  /** The subset of `restored` that displaced a reserved, never-sealed generation of the same number. */
+  adopted: { content: number[]; credential: number[] };
 }> {
   const hash = await codeHash(code);
   const row = await env.CATALOG.prepare(
@@ -708,6 +710,15 @@ export async function redeemForVault(
 
   const restored = { content: [] as number[], credential: [] as number[] };
   const conflicted = { content: [] as number[], credential: [] as number[] };
+  /**
+   * The subset of `restored` that displaced a generation this Node had **reserved and never sealed under**
+   * (#138).
+   *
+   * Counted as restored, because it was: the escrowed key is in the vault and the mail it sealed opens. Named
+   * separately because it is a materially different event from installing into an empty slot — something was
+   * replaced — and an operator reading a recovery's record should not have to infer that from silence.
+   */
+  const adopted = { content: [] as number[], credential: [] as number[] };
   /*
    * `failure` records a vault refusal part way through, and the branch it feeds settles as `failed` and does
    * **not** spend the code — the difference between an operator losing one of ten to a crash and being able
@@ -735,6 +746,16 @@ export async function redeemForVault(
          */
         const outcome = await restoreKey(purpose, key.generation, key.secret);
         if (outcome === "restored") restored[purpose].push(key.generation);
+        /*
+         * `adopted` is a restore. The generation was present under a different secret and nothing had ever
+         * sealed with it — a number this Node reserved when `doctor` initialised the vault — so the escrowed
+         * key took its place and the mail sealed under it opens. Both lists get it: `restored` because that
+         * is what happened to the evidence, `adopted` because something was displaced.
+         */
+        else if (outcome === "adopted") {
+          restored[purpose].push(key.generation);
+          adopted[purpose].push(key.generation);
+        }
         else if (outcome === "conflict") conflicted[purpose].push(key.generation);
       }
     }
@@ -751,6 +772,10 @@ export async function redeemForVault(
     restore: restoreId,
     restored: { content: restored.content, credential: restored.credential },
     conflicted: { content: conflicted.content, credential: conflicted.credential },
+    // Only when something was displaced, so the trail does not carry two empty arrays on every recovery.
+    ...(adopted.content.length + adopted.credential.length === 0
+      ? {}
+      : { adopted: { content: adopted.content, credential: adopted.credential } }),
     ...(failure === null ? {} : { error: failure }),
   };
 
@@ -812,7 +837,7 @@ export async function redeemForVault(
     });
   }
 
-  return { restored, conflicted };
+  return { restored, conflicted, adopted };
 }
 
 /**

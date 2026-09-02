@@ -145,21 +145,25 @@ describe("a document cannot tell an operator to run a command that does not exis
 describe("the runbook says what it has not established", () => {
   const runbook = readFileSync(join(ROOT, "docs/disaster-recovery.md"), "utf8");
 
-  it("states that the restore does not complete, and names the reason", () => {
+  it("states that the restore does not complete, and names the step it stops at", () => {
     /*
-     * This asserted `has not been run end to end` until the drill ran it end to end (#138). The phrase had to
-     * go, and what replaces it guards the same property from the other side: the risk was a runbook reading as
-     * *tested* when it was not, and the risk now is one reading as *working* when it does not.
+     * This assertion has now been rewritten twice, and the rewrites are the point.
      *
-     * It does not work. The redemption answers 200 and installs nothing, because a fresh Node mints its own
-     * generation 1 before it can be claimed and the escrow carries generation 1 too. So the escrow has never
-     * been installed on any Node, and this document has to say that where somebody reaches it during an
-     * incident rather than where a reader might scroll past.
+     * It began as `has not been run end to end`, which stopped being true when the drill ran it. It became
+     * `the escrow has never been installed on any Node`, which stopped being true when #138 landed and the
+     * redemption installed both generations on a live destination. Each time the property being guarded was
+     * the same and the sentence carrying it was not: **the risk was a runbook reading as tested when it was
+     * not, and it is now one reading as working when it does not.**
+     *
+     * What is left failing is the evidence, and the cause moved to the copy (#142): `wrangler r2 object
+     * get | put` drops the custom metadata naming the key that sealed each object, so a copy made that way
+     * arrives byte-perfect and undecryptable. A document that omitted that would send somebody to make the
+     * same copy.
      */
-    expect(runbook).toContain("#138");
-    expect(runbook).toContain("the escrow has never been installed on any");
-    // And the sentence that stops an operator spending the other nine codes on the same answer.
-    expect(runbook).toContain("all ten carry the same generations");
+    expect(runbook).toContain("#142");
+    expect(runbook).toContain("custom metadata must survive");
+    // The step that does work now, named, so the document does not read as more broken than it is.
+    expect(runbook).toContain("sign-in at the destination returned");
   });
 
   it("splits RTO rather than offering one number", () => {

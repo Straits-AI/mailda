@@ -886,9 +886,14 @@ async function recoveryCodes(argv) {
     const installed = (body.restored?.content?.length ?? 0) + (body.restored?.credential?.length ?? 0);
     const collided = (body.conflicted?.content?.length ?? 0) + (body.conflicted?.credential?.length ?? 0);
 
+    const displaced = (body.adopted?.content?.length ?? 0) + (body.adopted?.credential?.length ?? 0);
+
     if (installed > 0) {
       process.stdout.write(
         `\n   ${installed} key generation(s) installed`
+        + (displaced > 0
+          ? `, ${displaced} of them replacing a generation this Node had reserved and never sealed under`
+          : "")
         + (collided > 0 ? `, and ${collided} could not be — see below` : "") + ".\n\n"
         + "   That code is spent. Run `mailda doctor --url " + origin + "` to see what the Node says now —\n"
         + "   a restored vault should clear the signing-key refusal, and the Node should sign people in again.\n\n",
