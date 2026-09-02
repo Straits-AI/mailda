@@ -593,10 +593,13 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
-  // docs/receipts/contrast-tokens.md — the three the brand palette added
+  // docs/receipts/contrast-tokens.md — the brand palette, the rail's own surface, and a control's edge
   ...mailda(
-    "contrast ratios between Mailda's own design tokens. A Cloudflare plan does not have a colour",
+    "contrast ratios between Mailda's own design tokens, and the WCAG thresholds they are measured "
+      + "against. A Cloudflare plan does not have a colour",
     "contrast.accent_text_light_worst", "contrast.accent_text_dark_worst", "contrast.accent_ui_worst",
+    "contrast.aa_nontext_ratio", "contrast.rail_text_worst", "contrast.rail_dim_worst",
+    "contrast.control_edge_light_worst",
   ),
 
   // docs/receipts/message-search-cost.md

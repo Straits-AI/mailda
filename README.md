@@ -2920,6 +2920,77 @@ reads `ingress_receipts` and this Node's evidence is drafts (#131). `verify-back
 chain that said it: *"the sweep that ran when this backup was taken checked **nothing** … That is not a clean
 bill of health."*
 
+## The brand reached one shell and not the other (#128)
+
+The palette, the fonts and `brand.ts` all shipped. `markSvg()` was consumed **exactly once** — by `ui.ts`,
+which builds the pre-authentication shell — and the React chrome went on rendering
+`MAIL<span class="accent">DA</span>`, the instrument panel's wordmark it had replaced everywhere else. Every
+file was individually correct and nothing joined them, so the identity was on the sign-in page and absent
+from the product. Reported by the operator looking at their own Node.
+
+**The rail is now Ink in both schemes**, which is the brand sheet's product mockup rather than a theme
+choice: the mail sits on the light surface and the rail is the dark one. What is *not* taken from the mockup
+is the shape — there the rail is a strip of icons, and here it carries mailboxes and ledgers with their
+counts, because `chrome.tsx` argues for that and the mockup was not drawn against this product's
+information architecture. Adopting the surface and leaving the structure is the honest half to take.
+
+### A dark rail is a fourth surface, and every existing measurement was blind to it
+
+`contrast.test.ts` measures against `--ground`, `--ground-2` and `--sky` — Mist, White and Sky in the light
+theme. The rail is none of them, so a light-theme token used inside it was checked against three grounds it
+never sits on and passed while being unreadable on the one it does. Not hypothetical: `.rail-mine` used
+`--live`, which reads **3.01 on Ink**. Every page-tuned token fails there —
+
+```text
+--live  3.01   --warn  3.14   --alarm  2.68   --accent-text  3.36   --text  1.00 (invisible)
+```
+
+— so the rail has its own tokens, which are the dark theme's values, and a **closed world over the rail's
+rules** forbids reaching for a page-tuned colour inside one. That last test exists because a mutation put
+`--live` back and every contrast assertion still passed: measuring a value is not the same as measuring
+where it is used.
+
+### Where the brand sheet and WCAG disagree
+
+The sheet draws the search field as a Mist pill on a White header. **Mist on White is 1.10**, and WCAG 1.4.11
+wants 3:1 for the visual information identifying a control — so the brand's fill identifies nothing, and
+neither rule token helps (`.10` is 1.23, `.22` is 1.61). `--control-edge` is `rgba(15,23,32,.47)`, the first
+alpha clearing 3:1 on all three grounds. Heavier than the mockup's hairline, and
+[recorded](./docs/receipts/contrast-tokens.md) with the numbers so the choice is legible rather than looking
+like a line got thicker by accident.
+
+The magnifier **is** the submit button. The usual way that mockup gets built is a decorative glyph beside a
+field that submits on Enter, which loses the button — so a keyboard has nothing to land on and a screen
+reader is told the search cannot be run.
+
+### Two things the tests caught that review would not
+
+**Two controls with one accessible name.** The field and the button were both "Search mail", and
+`search-field.test.tsx` could then find neither unambiguously — which is the test noticing what a screen
+reader would: *"Search mail, edit"* then *"Search mail, button"*, with nothing to tell them apart. The field
+names itself; the button names the act.
+
+**The brand's short placeholder denied a feature.** "Search mail" replaced "sender, subject or message text",
+and `search-copy-world.test.ts` failed on exactly that, because *"people do not discover a feature the
+interface denies having"*. The pill keeps the brand's two words and a hint beside it carries the rest.
+
+### And the mark is not shipped, because it does not work
+
+`brand.ts` said its by-eye reconstruction *"reads as the Mailda symbol at interface sizes"* and that this was
+*"fine for a screen at 24–40 px"*. Rendered at 26px and zoomed, it is a small squiggle with a dot: it does
+not read as an M, and it had been on the sign-in page on the strength of a sentence nobody had checked
+against a screenshot. It was drawing the favicon too — the place the same file called *"not fine"*.
+
+So `MARK_IS_AUTHORED` is false, both shells set the name in the display face alone, and the favicon is a
+letter on Ink. A logo that is nearly right is wrong; one that is not even nearly right is worse, and type is
+a real decision rather than an approximation of somebody else's. The designer's vector flips one line.
+
+**Satoshi is still not shipped, and the licence is why.** The ITF Free Font Licence permits self-hosting and
+forbids redistribution *"through another font website, font library, marketplace, repository… or publicly
+accessible servers"*, and requires each third party to obtain their own copy. ADR 24 has customers clone this
+repository, so committing it would be redistribution to every one of them — and subsetting it for size is
+the modification the same clause names. `fonts/README.md` had this right before the question was asked.
+
 ## Two filters that look identical and are not (#107)
 
 `since`, `until` and `from` were one line of a ticket: *"ordinary range predicates and want no index beyond
