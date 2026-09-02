@@ -198,6 +198,32 @@ describe("the inventory covers every prefix this Worker writes", () => {
       .bind("org_somebody_else").run();
   });
 
+  it("reports the generation that actually sealed each object, not a constant", async () => {
+    /*
+     * **This field was 0 for every object in every inventory ever produced** (#141), and the eight tests in
+     * this file passed throughout, because not one of them asserted it. `generationOf` reads
+     * `object.customMetadata`, and R2 returns custom metadata from `list` only when `include` says so —
+     * honoured since compatibility date 2022-08-04, and this Worker's is far later. So the fallback ran every
+     * time: absent metadata means generation 0, the published development constant.
+     *
+     * It is the field that says which key opens an object, in a backup artifact, and it is what would have
+     * caught #142 — a cross-account copy that carried every byte and dropped the metadata — before an
+     * operator trusted it. A number nobody asserted, in the place it costs most.
+     *
+     * The assertion is against the generation the vault reports rather than a literal 1, so it holds however
+     * many times this pool's vault has rotated.
+     */
+    const key = `${ORG}/raw/sealed-under-a-real-key.eml`;
+    const stored = await putEvidence(testEnv, key, utf8("sealed by this Node"));
+    expect(stored.keyGeneration, "putEvidence sealed under generation 0, so this checks nothing")
+      .toBeGreaterThan(0);
+
+    const inventory = await everything();
+    const found = inventory.objects.find((one) => one.key === key);
+
+    expect(found?.keyGeneration).toBe(stored.keyGeneration);
+  });
+
   it("says nothing at all about a Node with an empty bucket", async () => {
     const inventory = await everything();
     expect(inventory.objects).toEqual([]);

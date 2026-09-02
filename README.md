@@ -2839,10 +2839,11 @@ metadata naming the key that sealed them; there is no flag for it. The destinati
 the published constant, and authentication failed on every frame. The runbook warned about that command for
 its **cost**, which is the smaller objection, and now warns about correctness (#142).
 
-The check designed to catch exactly this was already built and already silent: the inventory reports
-`keyGeneration` per object, and it reports `0` for everything, because `list()` is never passed
-`include: ["customMetadata"]` and R2 returns none without it (#141). A wrong number in a backup artifact, in
-the one field saying which key opens each object.
+The check designed to catch exactly this was already built and already silent: the inventory reported
+`keyGeneration` per object as `0` for **everything**, because `list()` was never passed
+`include: ["customMetadata"]` and R2 returns none without it — honoured since compatibility date 2022-08-04
+(#141, fixed). A wrong number in a backup artifact, in the one field saying which key opens each object, and
+the eight tests over that inventory passed throughout because not one of them asserted it.
 
 **And a draft whose body cannot be decrypted reads as an empty body** (#143), with `bodyBytes: 180` returned
 beside it. The existing reasoning is sound for a *missing* object — losing the recipients and subject as well
