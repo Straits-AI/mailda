@@ -282,16 +282,22 @@ Node reports `claimed: true` from the catalog alone); and a cross-account eviden
 inventory's byte counts.
 
 **What is known not to work**: the redemption, and therefore everything downstream of it — `verify-evidence` on
-the destination, and the restore-to-readable RTO this runbook says it times.
+the destination, and the restore-to-readable RTO this runbook says it times. The sweep itself is no longer the
+blocker (#131 is fixed): it would now open all three of this Node's drafts rather than none of them, if the
+vault could open them at all.
 
 **What remains unmeasurable here**: restore-to-receiving, which needs a domain and DNS propagation.
 
-**A backup's `--verify` sweep can check nothing and say so.** On this Node it reported `0 checked, 0 fault(s)`
-over three objects, because the evidence is three drafts and the sweep reads `ingress_receipts` (#131). The
-count is honest and the conclusion would not have been: `verify-backup` is what says *"the sweep that ran when
-this backup was taken checked **nothing** … That is not a clean bill of health."* Until #131 is fixed, a clean
-`verify-evidence` on a restored Node would be a sweep of nothing, so step 5 needs #131 before it can mean
-anything.
+**A backup's `--verify` sweep could check nothing and say so — and now it cannot (#131).** On this Node it
+reported `0 checked, 0 fault(s)` over three objects, because the evidence is three drafts and the sweep read
+`ingress_receipts` alone. Every number honest, and the conclusion drawn from them false; `verify-backup` was
+the only thing in the chain that said so — *"the sweep that ran when this backup was taken checked
+**nothing** … That is not a clean bill of health."*
+
+The verifier now sweeps all four prefixes, taking its tables from the inventory's referent list rather than a
+second one. So a sweep pages **table by table**: `resumeAfter` hands on to the next table when one runs out
+and is null only when every one has been walked. A caller that stops at the first null after receipts is back
+to the defect, which is why both the CLI and the runbook page until null rather than counting batches.
 
 **The restore half of this runbook has now been run end to end** — and it does not complete. Every command in it
 exists (the `mailda` verbs are checked against the CLI's dispatch by `test/node/runbook.test.ts`, and the

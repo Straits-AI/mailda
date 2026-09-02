@@ -57,14 +57,29 @@ import { scannedPrefixes } from "./reconcile.ts";
  * mail against the drafts table was pointless work as well as one arm too many.
  *
  * Worst case is now three arms, for `sent/`.
+ *
+ * **`bytes` is here for the verifier, which reads this same list** (#131). It names the column recording the
+ * plaintext's length at the time it was sealed, and it is `null` on two tables that never recorded one — so
+ * an `altered` fault on a draft can say *"1,024 bytes when sealed, 900 now"* and one on a send cannot. Stated
+ * in the list rather than discovered per caller: the alternative was the verifier keeping a second table of
+ * which columns exist, and a second list of prefixes is precisely how #67, #74 and #131 happened.
  */
 const REFERENTS = [
-  { segment: "raw", table: "ingress_receipts", key: "blob_key", hash: "blob_sha256" },
-  { segment: "drafts", table: "drafts", key: "body_key", hash: "body_sha256" },
-  { segment: "exports", table: "exports", key: "manifest_key", hash: "manifest_sha256" },
-  { segment: "sent", table: "send_manifests", key: "body_typed_key", hash: "body_typed_sha256" },
-  { segment: "sent", table: "send_manifests", key: "body_normalized_key", hash: "body_normalized_sha256" },
-  { segment: "sent", table: "send_manifests", key: "submitted_key", hash: "submitted_sha256" },
+  { segment: "raw", table: "ingress_receipts", key: "blob_key", hash: "blob_sha256", bytes: "raw_bytes" },
+  { segment: "drafts", table: "drafts", key: "body_key", hash: "body_sha256", bytes: "body_bytes" },
+  { segment: "exports", table: "exports", key: "manifest_key", hash: "manifest_sha256", bytes: null },
+  {
+    segment: "sent", table: "send_manifests",
+    key: "body_typed_key", hash: "body_typed_sha256", bytes: null,
+  },
+  {
+    segment: "sent", table: "send_manifests",
+    key: "body_normalized_key", hash: "body_normalized_sha256", bytes: null,
+  },
+  {
+    segment: "sent", table: "send_manifests",
+    key: "submitted_key", hash: "submitted_sha256", bytes: null,
+  },
 ] as const;
 
 /**
@@ -106,13 +121,21 @@ export interface InventoryPage {
 }
 
 /**
- * A cursor over four prefixes, as `<index>:<r2 cursor>`.
+ * A cursor that walks a list of things and holds a position inside one, as `<index>:<within>`.
  *
  * R2 gives a cursor per `list`, and there are four prefixes to walk, so paging needs to remember both. The
- * index is first and the R2 cursor is the remainder — split once rather than on every colon, because an R2
- * cursor is opaque and may contain anything.
+ * index is first and the remainder is `within` — split once rather than on every colon, because an R2 cursor
+ * is opaque and may contain anything.
+ *
+ * Exported because `evidence-audit.ts` needs the same shape for a different `within` — a row id rather than
+ * an R2 cursor (#131). One implementation, because two cursor formats that are *nearly* the same is how a
+ * resumed sweep silently restarts at the beginning of the wrong table.
+ *
+ * Malformed input decodes to the beginning rather than throwing. A cursor is an opaque string a caller echoes
+ * back, so the reachable faults are truncation and hand-editing, and starting over is the only answer that
+ * cannot skip evidence — the direction this must never be wrong in.
  */
-function decode(cursor: string | null): { index: number; within: string | undefined } {
+export function splitCursor(cursor: string | null): { index: number; within: string | undefined } {
   if (cursor === null || cursor === "") return { index: 0, within: undefined };
   const split = cursor.indexOf(":");
   if (split === -1) return { index: 0, within: undefined };
@@ -131,7 +154,7 @@ export async function inventoryPage(
   page: number = PAGE,
 ): Promise<InventoryPage> {
   const prefixes = scannedPrefixes(orgId);
-  const { index, within } = decode(cursor);
+  const { index, within } = splitCursor(cursor);
 
   /*
    * Walk forward until a prefix yields something or they are exhausted. An empty prefix must not end the

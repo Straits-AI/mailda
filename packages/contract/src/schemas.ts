@@ -846,15 +846,28 @@ export const auditVerifyResponse = z.object({
  * bytes changed after ingress, which cannot happen by accident.
  */
 export const evidenceFault = z.object({
-  receiptId: z.string(),
+  /**
+   * The row that names the object, and where to find it.
+   *
+   * `receiptId` until #131, which stopped being true the moment the sweep covered drafts, exports and sends
+   * as well as inbound mail — a draft's id under that name is a field lying about which table to look in,
+   * read by somebody trying to find one row during an incident. `column` distinguishes the three objects a
+   * single send stages.
+   */
+  rowId: z.string(),
+  table: z.string(),
+  column: z.string(),
   blobKey: z.string(),
   kind: z.enum(["missing", "unreadable", "altered"]),
   detail: z.string(),
 }).strict();
 
 export const evidenceVerifyResponse = z.object({
+  /** Objects opened and hashed — not rows read. A send stages up to three; a structured one, two. */
   checked: z.number().int().nonnegative(),
   after: z.string().nullable(),
+  /** The table this batch swept, so a partial sweep says what it covered and not only how much (#131). */
+  table: z.string().nullable(),
   intact: z.boolean(),
   /** Every fault in the batch. Evidence objects are independent, so stopping at the first would hide a count. */
   faults: z.array(evidenceFault),
