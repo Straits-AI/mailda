@@ -601,8 +601,11 @@ const FIGURES: Record<string, Classification> = {
 
   // docs/receipts/message-search-cost.md
   ...mailda(
-    "rows read by Mailda's own searched-page statement, measured against a seeded corpus",
-    "search.max_rows_read_per_page",
+    "rows read by Mailda's own listing statements, measured against a seeded corpus. The searched figures "
+      + "price a ranked, capped plan and the unsearched ones price a seek against `ir_org_accepted`; both "
+      + "are properties of statements this repository writes, not of anything Cloudflare sells",
+    "search.max_rows_read_per_page", "search.windowed_rows_read",
+    "page.rows_read_unbounded", "page.rows_read_short_window",
   ),
 
   // docs/receipts/d1-fts5-search.md

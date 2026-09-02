@@ -630,3 +630,115 @@ describe("each page is one supervised act, and records the ids that page showed"
     expect(entries[0]!.detail.ids).toHaveLength(PAGE);
   });
 });
+
+/**
+ * Bounding the listing by when mail arrived (#107, item 4).
+ *
+ * ## The hazard these exist for
+ *
+ * `accepted_at` is compared as a **string**, which the cursor's own note beside it records the cost of:
+ * `Date.parse` accepted `"2027"` and `"2026-08"`, so a truncated value became a silent wrong answer. A date
+ * makes it worse rather than better, because the short form is the one a person types:
+ *
+ *     '2026-08-20'               <  '2026-08-20T00:00:00.000Z'
+ *     '2026-08-20T09:00:00.000Z' >  '2026-08-20'
+ *
+ * So `until=2026-08-20` compared as typed excludes **every** message accepted on the day named — silently,
+ * and in the direction that hides mail. Somebody asking "did anything arrive by Thursday" is told no. The
+ * whole of this fixture's corpus is accepted on 2026-08-20, so that day as a window is the sharpest test
+ * available: normalised it returns everything, unnormalised it returns nothing.
+ */
+describe("a date window on the listing", () => {
+  it("includes the whole of a day named as a date, at both edges", async () => {
+    const token = await sessionFor(READER);
+    const everything = await page(token);
+    const thatDay = await page(token, {
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+      [MESSAGE_PAGE_PARAMS.until]: "2026-08-20",
+    });
+
+    expect(thatDay.messages.length).toBeGreaterThan(0);
+    expect(thatDay.messages.map((m) => m.id)).toEqual(everything.messages.map((m) => m.id));
+  });
+
+  it("narrows to an instant, and carries the window across a page", async () => {
+    /*
+     * The second half is the one that catches a widening: a filtered page one followed by an unfiltered page
+     * two is how a bounded listing quietly stops being bounded, and this fixture's `nextPage` helper exists
+     * because that happened once already with the mailbox filter.
+     */
+    const token = await sessionFor(READER);
+    const since = new Date(AUGUST_20 - 20 * 60_000).toISOString();
+    const query = { [MESSAGE_PAGE_PARAMS.since]: since };
+
+    const first = await page(token, query);
+    expect(first.messages.length).toBeGreaterThan(0);
+    for (const message of first.messages) expect(message.accepted_at >= since).toBe(true);
+
+    if (first.next_cursor !== null) {
+      const second = await page(token, { ...query, [MESSAGE_PAGE_PARAMS.cursor]: first.next_cursor });
+      for (const message of second.messages) {
+        expect(message.accepted_at >= since, "page two left the window page one was asked with").toBe(true);
+      }
+    }
+  });
+
+  it("returns nothing for a window before the archive, rather than the newest page", async () => {
+    // The failure the refusals below are also about: a dropped bound answers a *wider* page, and a wider
+    // page is indistinguishable from an honest one.
+    const token = await sessionFor(READER);
+    const before = await page(token, { [MESSAGE_PAGE_PARAMS.until]: "2026-08-19" });
+    expect(before.messages).toEqual([]);
+  });
+
+  for (const [param, value] of [
+    [MESSAGE_PAGE_PARAMS.since, "2026-08"],
+    [MESSAGE_PAGE_PARAMS.since, "2027"],
+    [MESSAGE_PAGE_PARAMS.until, "yesterday"],
+    [MESSAGE_PAGE_PARAMS.until, "2026-08-20T09:00:00Z"],
+  ] as const) {
+    it(`refuses ${param}=${JSON.stringify(value)} rather than ignoring it`, async () => {
+      /*
+       * `2026-08` and `2027` are the two `Date.parse` accepted, and they are the reason the shape is checked
+       * with a pattern rather than parsed. `2026-08-20T09:00:00Z` is the near miss that matters most: a
+       * valid ISO instant of the **wrong width**, which sorts between the day's messages rather than at
+       * either edge, so it would silently return part of a day.
+       */
+      const token = await sessionFor(READER);
+      const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, { [param]: value }));
+      await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_BOUND/);
+      await expect(attempt).rejects.toThrow(/as a string/);
+    });
+  }
+
+  it("refuses a window that cannot contain anything, rather than answering it empty", async () => {
+    /*
+     * A swapped pair is a mistake somebody made, and an empty page in reply reads exactly like "no mail
+     * arrived then" — which is the conclusion they would act on. §5C's absent-and-invisible rule is about
+     * things a caller may not see; a request that cannot have an answer is a different thing.
+     */
+    const token = await sessionFor(READER);
+    const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+      [MESSAGE_PAGE_PARAMS.until]: "2026-08-19",
+    }));
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW/);
+  });
+
+  it("refuses a window with a search term, because it measured at four times the budget", async () => {
+    /*
+     * Both were meant to ship together, and the measurement said otherwise: a windowed search on a term the
+     * index cannot narrow reads 4,335 rows against a 1,000-row budget, returning the same page as the 771
+     * the unwindowed one costs. `message-search.measure.test.ts` holds the figures; this holds the refusal,
+     * so the two cannot drift apart.
+     */
+    const token = await sessionFor(READER);
+    const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+    }));
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH/);
+    // The way forward, not merely the refusal: a window pages with the cursor, which a search cannot.
+    await expect(attempt).rejects.toThrow(/page the window with the cursor/);
+  });
+});

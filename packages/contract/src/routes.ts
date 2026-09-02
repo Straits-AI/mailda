@@ -124,7 +124,8 @@ export interface RouteSpec {
  * spelling it in three places would be a way to reintroduce it one refactor later. Path templates are
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
-export const MESSAGE_PAGE_PARAMS = { cursor: "cursor", mailbox: "mailbox", q: "q" } as const;
+export const MESSAGE_PAGE_PARAMS =
+  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until" } as const;
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -272,6 +273,17 @@ export const ROUTES = [
         name: MESSAGE_PAGE_PARAMS.q,
         description: "Words that must all appear in the subject or sender address. The last word matches as "
           + "a prefix, so a part-typed word narrows. Not a query language: operators are read as words.",
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.since,
+        description: "Only mail accepted at or after this point: a date (2026-09-01), which means from the "
+          + "start of that day UTC, or a full instant (2026-09-01T08:30:00.000Z). When this Node accepted "
+          + "it, never the sender's Date header, which the sender chooses.",
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.until,
+        description: "Only mail accepted at or before this point, in the same two shapes. A date means the "
+          + "**end** of that day UTC, so `until=2026-09-01` includes 1 September.",
       },
     ],
     response: S.messageListResponse,
