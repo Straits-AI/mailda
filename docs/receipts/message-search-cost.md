@@ -1,14 +1,20 @@
 ---
 id: message-search-cost
 kind: measured-tripwire
-measured_on: 2026-08-27
+measured_on: 2026-09-02
 stale_when: >
   either arm of messagePageQuery's searched plan stops being driven by its virtual table; an arm's inner
-  ORDER BY changes from rank; a third arm is added; messages.page_size moves; RELATIONS_FOR_METADATA or
+  ORDER BY changes from rank; a third arm is added; **a predicate is added to or removed from the searched
+  arms, since a residual filter changes how far an arm scans to fill its cap — which is what
+  search.windowed_rows_read measures**; messages.page_size moves; RELATIONS_FOR_METADATA or
   BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
-  text per row; or authz.list.max_rows_read moves
+  text per row; ir_org_accepted changes, since the unsearched figures below are seeks against it; or
+  authz.list.max_rows_read moves
 values:
   search.max_rows_read_per_page: 771
+  search.windowed_rows_read: 4335
+  page.rows_read_unbounded: 208
+  page.rows_read_short_window: 101
 ---
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -225,3 +231,41 @@ deliberate rather than being discovered by somebody whose search mysteriously fa
   estimated.
 - **How the figures move with corpus size.** 1,200 deliveries shows the ranked plan does not track the match
   set and the time-ordered one does. It does not establish the curve.
+
+## What a date window costs, and why it is refused with a search term (#107)
+
+`since` and `until` were meant to land beside `q`. The searched page is ranked, capped and cursor-less, so a
+date range looked like the **only** way to reach past the cap — more valuable there than on the inbox, not
+less. The measurement said the opposite.
+
+| query | rows read | page |
+| --- | --- | --- |
+| common term, no window | 771 | 51 |
+| common term, `since` at the corpus midpoint | **4,335** | 51 |
+| selective term, `since` at the midpoint | 134 | 12 |
+| unsearched, no window | 208 | 51 |
+| unsearched, window over half the corpus | 208 | 51 |
+| unsearched, window holding less than a page | 101 | 24 |
+
+`authz.list.max_rows_read` is **1,000**.
+
+**On the searched plan a window is a residual filter inside each ranked arm**, so the arm scans further
+through its MATCH result to fill `LIMIT` — five and a half times further on a term the index cannot narrow,
+for the same page of results. A selective term is affordable, and that is the trap rather than the
+reassurance: selectivity is not knowable before the query runs, so there is no per-request rule that admits
+the cheap case and refuses the expensive one.
+
+Filtering the union **outside** the arms was the alternative, and it keeps the cost exactly. It also changes
+the meaning: the arms cap by rank first, so *"mail about demurrage since October"* answers nothing whenever
+October's demurrage mail ranks below the cap. A wrong answer to a reasonable question, silently, is worse
+than a refusal — so `q` with `since`/`until` is refused, and #153 carries the plan a windowed search needs.
+
+**On the unsearched plan a window never costs more, and the reason it sometimes costs less is specific.** It
+is a bound on `accepted_at`, the column `ir_org_accepted` is built on, so it is the same shape as the cursor.
+A window over half the corpus reads **exactly** what an unbounded page reads, because the scan stops at
+`LIMIT` either way — the claim that a bounded page is simply cheaper was wrong, and this is where it was
+corrected. A window holding **less** than a page is where the bound pays: the backward scan reaches the lower
+bound and stops rather than continuing to look for rows that are not there.
+
+That distinction is the whole test for whether a filter belongs here. `since` reaches the index; the sender
+filter in #152 does not, which is why it is a different ticket rather than the same one.

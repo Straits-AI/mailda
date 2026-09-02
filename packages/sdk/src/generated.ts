@@ -437,9 +437,13 @@ export class GeneratedClient extends Transport {
    *
    * @param query.q Words that must all appear in the subject or sender address. The last word matches as a prefix, so a part-typed word narrows. Not a query language: operators are read as words.
    *
+   * @param query.since Only mail accepted at or after this point: a date (2026-09-01), which means from the start of that day UTC, or a full instant (2026-09-01T08:30:00.000Z). When this Node accepted it, never the sender's Date header, which the sender chooses.
+   *
+   * @param query.until Only mail accepted at or before this point, in the same two shapes. A date means the **end** of that day UTC, so `until=2026-09-01` includes 1 September.
+   *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; until?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 

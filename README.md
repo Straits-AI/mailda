@@ -125,7 +125,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 | **Deployment promotes by hand on a Free account** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). It has now been run against a live account ([receipt](./docs/receipts/deploy-drill-live-account.md)) — and `versions upload --preview-alias` returned **no reachable preview URL**, so the gate cannot probe the canary and degrades to a safe manual promotion. The cause is not established, which is why that receipt records it without a number. |
 | **Two Nodes in one account collide on the Workflow, and the deploy refuses** | Measured rather than suspected ([receipt](./docs/receipts/deploy-drill-live-account.md)): every other resource derives its name from the Worker's, the Workflow does not, and deploying a second Node **succeeded with exit 0 and silently took ownership** — leaving the first Node's `BUTLER_RUNS` binding pointing at a Workflow now running the second Node's code against the second Node's bindings. `mailda deploy` now refuses when the Workflow belongs to another Worker and names the fix. The config still ships a fixed name, so the refusal is the guard rather than the naming. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
-| **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; search over subjects, senders and message bodies in #107. The rest has not. |
+| **The mail client is thin** | No threads, no forwarding, no attachments in the composer, no folders. Pagination and per-mailbox filtering landed in #91; search over subjects, senders and message bodies in #107, and `since`/`until` date bounds on the listing. Filtering by **sender** is not built (#152) and a date window cannot be combined with a search term (#153) — both because the plan reads more than the budget allows, measured rather than assumed. The rest has not. |
 | **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
 
 What it is genuinely good for now: a controlled design-partner alpha, a non-critical shared mailbox, and
@@ -2919,6 +2919,69 @@ The pattern across all of them is one thing: **a layer's honest output read as t
 reads `ingress_receipts` and this Node's evidence is drafts (#131). `verify-backup` was the only thing in the
 chain that said it: *"the sweep that ran when this backup was taken checked **nothing** … That is not a clean
 bill of health."*
+
+## Two filters that look identical and are not (#107)
+
+`since`, `until` and `from` were one line of a ticket: *"ordinary range predicates and want no index beyond
+what exists"*. Two of the three are, and the third is a different problem wearing the same clothes.
+
+**`since` and `until` reach the index.** They are bounds on `accepted_at` — the column `ir_org_accepted` is
+built on — so they are the same shape as the keyset cursor, and the planner seeks with them. Shipped.
+
+**`from` does not.** There is no index on `from_addr`, and one cannot be added that helps: `from_addr` is on
+`messages`, `accepted_at` is on `ingress_receipts`, so **no single index can serve sender-filtered time
+order.** The join is the barrier, not a missing line. That is #152, with the three options and what each
+costs.
+
+That is the whole test for whether a filter belongs in a listing: does the predicate reach the index, or is
+it applied to rows already read. Two filters can look alike in a ticket and sit on opposite sides of it.
+
+### The off-by-a-day this would have shipped
+
+`accepted_at` is compared as a **string**, and the cursor beside it already records what that costs:
+`Date.parse` accepted `"2027"` and `"2026-08"`, so a truncated value became a silent wrong answer. A date is
+worse, because the short form is the one a person types:
+
+```text
+'2026-08-20'               <  '2026-08-20T00:00:00.000Z'
+'2026-08-20T09:00:00.000Z' >  '2026-08-20'
+```
+
+So `until=2026-08-20` compared as typed excludes **every message accepted on the day named** — silently, in
+the direction that hides mail. Somebody asking "did anything arrive by Thursday" is told no. A day therefore
+widens to its own edge, and the two edges differ: `since` takes the day's first instant, `until` its last, so
+`since=X&until=X` returns X's mail rather than nothing. A near-miss instant of the wrong width
+(`2026-08-20T09:00:00Z`, no milliseconds) is refused for the same reason — it sorts *between* a day's
+messages rather than at either edge.
+
+### And the measurement that reversed the plan
+
+A date window was meant to ship on the searched page too, and looked *more* valuable there: that page is
+ranked, capped and cursor-less, so a date range is the only way to reach past the cap. The figures said
+otherwise ([receipt](./docs/receipts/message-search-cost.md), `authz.list.max_rows_read` is 1,000):
+
+| query | rows read | page |
+| --- | --- | --- |
+| common term, no window | 771 | 51 |
+| common term, `since` at the corpus midpoint | **4,335** | 51 |
+| selective term, `since` at the midpoint | 134 | 12 |
+| unsearched, window over half the corpus | 208 | 51 |
+| unsearched, window holding less than a page | 101 | 24 |
+
+Same page, five and a half times the reading: inside a ranked arm a window is a residual filter, so the arm
+scans further to fill its cap. A selective term is affordable, and that is the trap rather than the
+reassurance — **selectivity is not knowable before the query runs**, so there is no per-request rule that
+admits the cheap case.
+
+Filtering the union *outside* the arms keeps the cost exactly and changes the meaning: the arms cap by rank
+first, so "mail about demurrage since October" would answer nothing whenever October's demurrage mail ranks
+below the cap. A wrong answer to a reasonable question, silently, is worse than a refusal — so the
+combination is refused, and #153 carries the plan a windowed search needs.
+
+Two claims of mine died here too. A bounded page is **not** simply cheaper: over half the corpus it reads
+exactly what an unbounded page reads, because the scan stops at `LIMIT` either way. And that receipt's
+`stale_when` did not anticipate a new predicate, so adding one would have left `771` describing a query that
+no longer existed — a landmine by this repository's own definition, in the file whose job is to prevent them.
 
 ## Contributing
 

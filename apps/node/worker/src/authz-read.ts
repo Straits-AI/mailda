@@ -859,6 +859,18 @@ export interface MessagePage {
   /** Bound the page to one mailbox, or null for every mailbox this reader may read. */
   mailboxId: string | null;
   /**
+   * Accepted at or after this instant, and at or before that one — both already normalised to
+   * `accepted_at`'s exact width, or null for unbounded (#107).
+   *
+   * Normalised at the edge rather than compared as given, for the reason the cursor beside them documents:
+   * `accepted_at` is compared as a **string**, so a value of a different width sorts somewhere nobody
+   * intended. A date-only `until` is the sharp case — `'2026-09-01' < '2026-09-01T00:00:00.000Z'`, so
+   * `accepted_at <= '2026-09-01'` excludes every message accepted **on** the day the caller named. Silently,
+   * and off by a day in the direction that hides mail.
+   */
+  since: string | null;
+  until: string | null;
+  /**
    * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
    *
    * **Already rebuilt, never the caller's text.** The raw parameter is turned into a quoted expression at the
@@ -907,6 +919,44 @@ function cursorOf(row: { accepted_at: string; id: string }): string {
  * already does — the keyset predicate simply finds nothing at that position.
  */
 const CURSOR_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/** A calendar day, which a person types far more often than an instant. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A `since` or `until` value, widened to exactly what `accepted_at` holds (#107).
+ *
+ * ## Why the width is the whole job
+ *
+ * `accepted_at` is compared as a **string** in the same predicate as the cursor, and the cursor's own note
+ * above records what that cost once: `Date.parse` accepted `"2027"` and `"2026-08"`, so a truncated value
+ * became a silent wrong answer rather than a refusal. Dates make it worse rather than better, because the
+ * plausible input *is* the short one — nobody types an instant.
+ *
+ *     '2026-09-01'               <  '2026-09-01T00:00:00.000Z'
+ *     '2026-09-01T08:00:00.000Z' >  '2026-09-01'
+ *
+ * So `until=2026-09-01` compared as given excludes **every message accepted on 1 September** — the day the
+ * caller asked for, missing, with no error. A person checking "did anything arrive by Tuesday" is told no.
+ *
+ * A day therefore widens to its own edge and the two edges differ: `since` takes the day's first instant,
+ * `until` its last, so a range of one date means that whole day. That is what a person means by "until the
+ * first", and it is the only reading under which `since=X&until=X` returns X's mail rather than nothing.
+ *
+ * Anything that is neither shape is **refused**, not ignored — the rule the cursor states: dropping a filter
+ * answers a wider page than was asked for, and a wider page is indistinguishable from an honest one.
+ */
+function instantBound(raw: string | null, edge: "start" | "end", param: string): string | null {
+  if (raw === null || raw === "") return null;
+  if (CURSOR_INSTANT.test(raw)) return raw;
+  if (DATE_ONLY.test(raw)) return `${raw}T${edge === "start" ? "00:00:00.000" : "23:59:59.999"}Z`;
+  throw unprocessable("E_MESSAGE_PAGE_BOUND", {
+    what: `\`${param}\` is not a date or an instant`,
+    why: "it is compared against `accepted_at` as a string, so a value of any other width sorts somewhere "
+      + "nobody intended — and a filter that is quietly dropped answers a wider page than was asked for",
+    fix: `pass \`${param}=2026-09-01\` for a whole day UTC, or \`${param}=2026-09-01T08:30:00.000Z\` for an `
+      + "instant",
+  });
+}
 const CURSOR_ID = idPattern(ID_PREFIXES.ingressReceipt);
 
 /**
@@ -938,7 +988,59 @@ export function messagePageRequest(url: URL): MessagePage {
    * meaning no predicate at all rather than a filter matching nothing.
    */
   const q = ftsQuery(url.searchParams.get(MESSAGE_PAGE_PARAMS.q));
-  if (raw === null) return { after: null, mailboxId, q };
+  const since = instantBound(
+    url.searchParams.get(MESSAGE_PAGE_PARAMS.since), "start", MESSAGE_PAGE_PARAMS.since,
+  );
+  const until = instantBound(
+    url.searchParams.get(MESSAGE_PAGE_PARAMS.until), "end", MESSAGE_PAGE_PARAMS.until,
+  );
+  /*
+   * **An impossible window is refused, not answered empty.** `since=Tuesday&until=Monday` is a mistake
+   * somebody made — a swapped pair, or a date picker that let it happen — and an empty page in reply is
+   * indistinguishable from "no mail arrived then", which is the answer they will act on. §5C's
+   * absent-and-invisible rule is about things a caller may not see; this is a request that cannot have an
+   * answer, and those are different.
+   */
+  if (since !== null && until !== null && since > until) {
+    throw unprocessable("E_MESSAGE_PAGE_WINDOW", {
+      what: `\`since\` (${since}) is after \`until\` (${until}), so no mail can be in that window`,
+      why: "answering an empty page would read exactly like a window in which nothing arrived, and that is "
+        + "the conclusion a caller would draw from it",
+      fix: "swap them, or drop one",
+    });
+  }
+  /*
+   * **A date window and a search term are refused together, and the number is why** (#107, #153).
+   *
+   * Both were meant to land here. The searched plan is one capped, ranked, cursor-less page, so a date range
+   * looked like the *only* way to reach past the cap — which made it more valuable there than on the inbox,
+   * not less. Measured on the 1,200-delivery corpus in `message-search.measure.test.ts`, it is the opposite:
+   *
+   *     common term, no window   771 rows read
+   *     common term, since=…   4,335 rows read      (`authz.list.max_rows_read` is 1,000)
+   *
+   * Both return a full page. The window is a residual filter inside each ranked arm, so the arm scans
+   * further through its MATCH result to fill `LIMIT` — five and a half times further on a term the index
+   * cannot narrow. A selective term is fine (134), and selectivity is not knowable before the query runs, so
+   * there is no per-request answer.
+   *
+   * The alternative was to filter the union **outside** the arms, which keeps the cost exactly and changes
+   * the meaning: the arms cap by rank first, so "mail about demurrage since October" would answer nothing
+   * whenever October's demurrage mail ranks below the cap. A wrong answer to a reasonable question, silently.
+   * Refusing is the honest one, and #153 carries the plan a windowed search actually needs.
+   */
+  if (q !== null && (since !== null || until !== null)) {
+    throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH", {
+      what: "a date window cannot be combined with a search term yet",
+      why: "a searched page is ranked and capped, so a date filter inside it makes the query scan far "
+        + "deeper to fill the page — measured at 4,335 rows read against a 1,000-row budget on a term the "
+        + "index cannot narrow. Filtering after the cap instead would answer emptily whenever the matches "
+        + "in your window rank below it, which is worse than refusing",
+      fix: `search without \`${MESSAGE_PAGE_PARAMS.since}\`/\`${MESSAGE_PAGE_PARAMS.until}\`, or drop `
+        + `\`${MESSAGE_PAGE_PARAMS.q}\` and page the window with the cursor. See issue 153.`,
+    });
+  }
+  if (raw === null) return { after: null, mailboxId, q, since, until };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -954,7 +1056,7 @@ export function messagePageRequest(url: URL): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId, q };
+  return { after: { at: instant, id }, mailboxId, q, since, until };
 }
 
 /**
@@ -1020,6 +1122,31 @@ export function messagePageQuery(args: {
   if (args.page.mailboxId !== null) {
     filters.push("AND a.mailbox_id = ?");
     filterParams.push(args.page.mailboxId);
+  }
+  /*
+   * **Bounds on `accepted_at`, which is the column the ordering index is built on** (#107).
+   *
+   * Column against a value, so on the unsearched plan these are range constraints the planner uses against
+   * `ir_org_accepted (org_id, accepted_at, id)` — the same index and the same shape as the cursor two blocks
+   * down. `since` is the one that pays for itself: the scan runs backwards through the index, so a lower
+   * bound lets it **stop** rather than run to the beginning of the archive. A bounded page is cheaper than an
+   * unbounded one, which is the opposite of what a filter usually costs.
+   *
+   * On the searched plan they are residual filters inside each ranked arm, and there they do cost: an arm
+   * scans further through its MATCH result to fill `LIMIT`. Measured in `message-search-cost.md` rather than
+   * assumed, and that receipt's `stale_when` now names this predicate, because it did not anticipate one.
+   *
+   * `accepted_at`, never the sender's `Date` header. The header is chosen by whoever sent the mail, so a
+   * filter on it is a filter the sender controls — and "when did this arrive" is the question an
+   * investigation asks.
+   */
+  if (args.page.since !== null) {
+    filters.push("AND r.accepted_at >= ?");
+    filterParams.push(args.page.since);
+  }
+  if (args.page.until !== null) {
+    filters.push("AND r.accepted_at <= ?");
+    filterParams.push(args.page.until);
   }
   if (args.page.after !== null && args.page.q === null) {
     /*

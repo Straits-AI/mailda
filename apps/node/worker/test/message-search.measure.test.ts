@@ -66,7 +66,11 @@ const RARE_EVERY = 100;
 
 interface Cost { rowsRead: number; rows: number }
 
-async function cost(term: string | null, mailboxId: string | null = null): Promise<Cost> {
+async function cost(
+  term: string | null,
+  mailboxId: string | null = null,
+  window: { since?: string | null; until?: string | null } = {},
+): Promise<Cost> {
   const query = messagePageQuery({
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
@@ -75,7 +79,10 @@ async function cost(term: string | null, mailboxId: string | null = null): Promi
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId, q: term === null ? null : ftsQuery(term) },
+    page: {
+      after: null, mailboxId, q: term === null ? null : ftsQuery(term),
+      since: window.since ?? null, until: window.until ?? null,
+    },
     limit: BUDGETS["messages.page_size"] + 1,
   });
   const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
@@ -91,7 +98,7 @@ async function planFor(term: string | null): Promise<string> {
       metadata: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_METADATA),
       content: liveGrantsBySubject(ORG, READER, new Date(AUGUST).toISOString(), SCOPES_FOR_CONTENT),
     },
-    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term) },
+    page: { after: null, mailboxId: null, q: term === null ? null : ftsQuery(term), since: null, until: null },
     limit: BUDGETS["messages.page_size"] + 1,
   });
   const explained = await testEnv.CATALOG.prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
@@ -283,5 +290,85 @@ describe("what a searched page costs", () => {
       "a page of a common term now costs more than twenty reads per row returned — a plan sorting the whole "
       + "match set rather than taking the top of it, which is the shape this design replaced",
     ).toBeLessThan(common.rows * 20);
+  });
+});
+
+/**
+ * What a date window costs, on each of the two plans (#107).
+ *
+ * The ticket claimed `since` and `until` are *"ordinary range predicates and want no index beyond what
+ * exists"*. That is true, and it undersells them on one plan and oversells them on the other — which is why
+ * this is measured rather than asserted.
+ *
+ * On the **unsearched** plan they are bounds on `accepted_at`, the column `ir_org_accepted` is built on. So
+ * they are the same shape as the cursor, and `since` lets the backward scan **stop** instead of running to
+ * the beginning of the archive: a bounded page costs less than an unbounded one, which is the opposite of
+ * what a filter usually does.
+ *
+ * On the **searched** plan there is no such seek. Each arm is driven by its virtual table and capped by
+ * `ORDER BY rank LIMIT ?`, so a window is a residual filter and the arm scans **further** through its MATCH
+ * result to fill the cap. That direction has to be measured against `authz.list.max_rows_read`, because it
+ * is the one that can grow.
+ */
+describe("what a date window costs", () => {
+  /** Half way through the seeded twenty hours, so a window genuinely excludes most of the corpus. */
+  const MIDPOINT = new Date(AUGUST + 10 * 60 * 60_000).toISOString();
+
+  it("never costs an unsearched page more, and costs it less when the window is short", async () => {
+    /*
+     * The ticket claimed these are *"ordinary range predicates"*, and the honest figures are more specific
+     * than that in both directions.
+     *
+     * A window over half the corpus reads **exactly** what an unbounded page reads: the scan stops at
+     * `LIMIT` either way, so nothing is saved. My own claim that a bounded page is cheaper was wrong for the
+     * common case, and the measurement is what said so.
+     *
+     * A window holding **less** than a page is where the bound pays: the backward scan reaches the lower
+     * bound and stops, instead of continuing to look for rows that are not there. That is the property that
+     * distinguishes `since` from the sender filter in #152 — one reaches the index, the other does not.
+     */
+    const unbounded = await cost(null);
+    const half = await cost(null, null, { since: MIDPOINT });
+    const narrow = await cost(null, null, {
+      since: MIDPOINT, until: new Date(AUGUST + 10 * 60 * 60_000 + 20 * 60_000).toISOString(),
+    });
+
+    console.log(
+      `MEASURE page_rows_read unbounded=${unbounded.rowsRead} half=${half.rowsRead}(${half.rows} rows) `
+      + `narrow=${narrow.rowsRead}(${narrow.rows} rows)`,
+    );
+
+    expect(half.rows).toBe(unbounded.rows);
+    expect(half.rowsRead).toBeLessThanOrEqual(unbounded.rowsRead);
+    // Short window: fewer rows returned **and** fewer read, which is the bound reaching the index.
+    expect(narrow.rows).toBeLessThan(unbounded.rows);
+    expect(narrow.rowsRead).toBeLessThan(unbounded.rowsRead);
+  });
+
+  it("is why a window and a search term are refused together", async () => {
+    /*
+     * The figure the refusal in `messagePageRequest` rests on, measured here so the two cannot drift. Both
+     * queries return a full page; the windowed one reads five and a half times as much, because the window
+     * is a residual filter inside each ranked arm and the arm scans further to fill `LIMIT`.
+     *
+     * A selective term is affordable, and that is the trap rather than the reassurance: selectivity is not
+     * knowable before the query runs, so there is no per-request rule that admits the cheap case and refuses
+     * the expensive one.
+     */
+    const budget = BUDGETS["authz.list.max_rows_read"];
+    const common = await cost("shipment");
+    const windowed = await cost("shipment", null, { since: MIDPOINT });
+    const selective = await cost("demurrage", null, { since: MIDPOINT });
+
+    console.log(
+      `MEASURE search_windowed_rows_read unwindowed=${common.rowsRead} windowed=${windowed.rowsRead} `
+      + `selective=${selective.rowsRead} budget=${budget}`,
+    );
+
+    expect(common.rowsRead).toBeLessThanOrEqual(budget);
+    expect(windowed.rowsRead).toBeGreaterThan(budget);
+    // Same page, five and a half times the reading — so the cost is the filter, not the result set.
+    expect(windowed.rows).toBe(common.rows);
+    expect(selective.rowsRead).toBeLessThanOrEqual(budget);
   });
 });
