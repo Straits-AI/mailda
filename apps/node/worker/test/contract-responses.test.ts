@@ -690,14 +690,20 @@ describe("the acts answer what the contract says they do", () => {
       stored.plaintextSha256, new Date().toISOString()).run();
 
     const verdict = await act("POST", "/api/evidence/verify", { body: {}, cookie: held }) as {
-      checked: number; intact: boolean; faults: unknown[]; resumeAfter: string | null;
+      checked: number; intact: boolean; faults: unknown[]; resumeAfter: string | null; table: string | null;
     };
 
     // Non-vacuity: `intact: true` over nothing checks no shape and asserts nothing about the Node.
     expect(verdict.checked).toBeGreaterThan(0);
     expect(verdict.intact).toBe(true);
     expect(verdict.faults).toEqual([]);
-    expect(verdict.resumeAfter).toBeNull();
+    expect(verdict.table).toBe("ingress_receipts");
+    /*
+     * **Not null**, and this assertion used to say the opposite (#131). Receipts running out ends that table
+     * and hands on to the next; ending the whole sweep there is what let a Node whose evidence is drafts or
+     * staged sends report a clean bill of health with nothing opened. A caller pages until this is null.
+     */
+    expect(verdict.resumeAfter).toBe("1:");
   });
 
   it("the bucket's inventory, with the hash the seeded object should have", async () => {

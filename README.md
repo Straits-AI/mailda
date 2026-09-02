@@ -2300,10 +2300,29 @@ decrypt and hash-verify: *"Step 5 is the one that makes the rest true. An export
 claim, and this ticket exists because of a claim."* That step needs a verifier. There wasn't one — for a
 backup **or** for the running Node.
 
-`POST /api/evidence/verify` opens each object in a bounded batch and compares the plaintext hash against
-`ingress_receipts.blob_sha256`, recorded at arrival. `mailda verify-evidence --url <origin>` pages until the
-Node says there is no more, and prints the total it actually covered — the route cannot sweep everything in
-one invocation, and a single call that looked complete is the failure this feature exists to prevent.
+`POST /api/evidence/verify` opens each object in a bounded batch and compares the plaintext hash against the
+one recorded when it was sealed. `mailda verify-evidence --url <origin>` pages until the Node says there is no
+more, and prints the total it actually covered — the route cannot sweep everything in one invocation, and a
+single call that looked complete is the failure this feature exists to prevent.
+
+**It swept inbound mail only, and said nothing was wrong (#131).** The inventory next door walked all four
+prefixes the Worker writes; the verifier read `ingress_receipts`. So a Node whose evidence is drafts or staged
+sends — every Node before its domain is bound, and any Node that composes more than it receives — verified
+nothing and reported a clean sweep. Measured on the first real backup: three sealed drafts, `3 object(s)
+listed`, `0 checked, 0 fault(s)`. Every number honest and the conclusion drawn from them false.
+
+Neither list was wrong on its own. They had stopped agreeing, and nothing could tell — which is #67 and #74 a
+third time, arriving as a difference in *coverage* rather than a gap in one list. So the verifier now groups
+`INVENTORY_REFERENTS` by table instead of naming any, and a test asserts it names **no** evidence table in its
+own code: a mutation swapping the derivation for a literal of the same four names passed a test that compared
+values, because the literal is right today. The property is that a fifth prefix arrives without anybody
+remembering.
+
+Two consequences worth stating. The batch bound now counts **objects, not rows** — one `send_manifests` row
+stages three, so a row bound meant three different per-invocation costs depending on which table was reached
+([re-measured](./docs/receipts/evidence-integrity-cost.md), and the old receipt's `stale_when` named this
+change as the thing that would invalidate it). And a fault reports its **table**: a bare id was unambiguous
+when one table was swept, and sends somebody looking in the wrong place now.
 
 **The recorded hash is of the plaintext, not the stored bytes**, and that decision — made at ingress, long
 before this — is what makes the check survive ADR 28's key rotation. `reseal.ts` rewrites every object under a

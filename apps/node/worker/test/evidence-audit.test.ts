@@ -7,7 +7,8 @@ import { BUDGETS } from "@mailda/budgets";
 import { utf8 } from "@mailda/evidence";
 
 import { putEvidence, sha256Hex } from "../src/evidence-store.ts";
-import { verifyEvidence } from "../src/evidence-audit.ts";
+import { VERIFIED_TABLES, verifyEvidence } from "../src/evidence-audit.ts";
+import { INVENTORY_REFERENTS } from "../src/evidence-inventory.ts";
 
 /**
  * Does the verifier notice? (#92)
@@ -44,7 +45,11 @@ async function seedReceipt(body: string): Promise<{ id: string; blobKey: string;
 }
 
 beforeEach(async () => {
-  await testEnv.CATALOG.prepare("DELETE FROM ingress_receipts WHERE org_id = ?").bind(ORG).run();
+  // Every table the verifier sweeps, not only the one the original tests seeded — a leftover draft would
+  // otherwise be counted by a receipts test and read as the verifier checking more than it was given.
+  for (const table of ["ingress_receipts", "drafts", "exports", "send_manifests"]) {
+    await testEnv.CATALOG.prepare(`DELETE FROM ${table} WHERE org_id = ?`).bind(ORG).run();
+  }
 });
 
 describe("verifying stored evidence against what ingress recorded", () => {
@@ -83,7 +88,7 @@ describe("verifying stored evidence against what ingress recorded", () => {
     const verdict = await verifyEvidence(testEnv, ORG);
 
     expect(verdict.intact).toBe(false);
-    expect(verdict.faults.map((one) => one.receiptId).sort()).toEqual([first.id, second.id].sort());
+    expect(verdict.faults.map((one) => one.rowId).sort()).toEqual([first.id, second.id].sort());
     expect(verdict.faults.every((one) => one.kind === "missing")).toBe(true);
     /*
      * All three examined. `verifyChain` stops at the first break because a hash chain after one is
@@ -117,11 +122,11 @@ describe("verifying stored evidence against what ingress recorded", () => {
     const verdict = await verifyEvidence(testEnv, ORG);
 
     expect(verdict.intact).toBe(false);
-    expect(verdict.faults.map((one) => one.receiptId).sort()).toEqual([first.id, second.id].sort());
+    expect(verdict.faults.map((one) => one.rowId).sort()).toEqual([first.id, second.id].sort());
     expect(verdict.faults.every((one) => one.kind === "altered")).toBe(true);
     expect(verdict.checked).toBe(3);
     // The detail carries both hashes, so an investigation starts from the report rather than from a re-run.
-    const reported = verdict.faults.find((one) => one.receiptId === first.id);
+    const reported = verdict.faults.find((one) => one.rowId === first.id);
     expect(reported?.detail).toContain(first.sha.slice(0, 16));
   });
 
@@ -140,7 +145,7 @@ describe("verifying stored evidence against what ingress recorded", () => {
 
     expect(verdict.intact).toBe(false);
     expect(verdict.faults[0]?.kind).toBe("unreadable");
-    expect(verdict.faults[0]?.receiptId).toBe(broken.id);
+    expect(verdict.faults[0]?.rowId).toBe(broken.id);
   });
 
   it("does not confuse one organization's evidence with another's", async () => {
@@ -168,7 +173,7 @@ describe("verifying stored evidence against what ingress recorded", () => {
      * (`docs/receipts/evidence-integrity-cost.md`). Read from the receipt rather than restated, so the test
      * cannot disagree with the number the route enforces.
      */
-    const batch = BUDGETS["evidence.verify_batch"];
+    const batch = BUDGETS["evidence.verify_objects"];
     expect(batch).toBeGreaterThan(1);
 
     const ids: string[] = [];
@@ -183,11 +188,18 @@ describe("verifying stored evidence against what ingress recorded", () => {
      */
     const all = await verifyEvidence(testEnv, ORG);
     expect(all.checked).toBe(3);
-    // A short page is the end. Reporting a cursor here would loop a sweeping caller for ever.
-    expect(all.resumeAfter).toBeNull();
+    /*
+     * A short page ends **this table** and hands on to the next, which is the #131 correction: returning null
+     * because receipts ran out would report drafts, exports and sends as verified without opening one.
+     */
+    expect(all.resumeAfter).toBe("1:");
 
-    const resumed = await verifyEvidence(testEnv, ORG, ids[0]);
-    expect(resumed.after).toBe(ids[0]);
+    /*
+     * The cursor is `<table index>:<row id>` since #131 — a bare id would be ambiguous across four tables,
+     * and resuming in the wrong one is how a sweep silently skips evidence. `ingress_receipts` is index 0.
+     */
+    const resumed = await verifyEvidence(testEnv, ORG, `0:${ids[0]}`);
+    expect(resumed.after).toBe(`0:${ids[0]}`);
     expect(resumed.checked).toBe(2);
     expect(resumed.intact).toBe(true);
 
@@ -199,11 +211,12 @@ describe("verifying stored evidence against what ingress recorded", () => {
      */
     const page = await verifyEvidence(testEnv, ORG, null, 2);
     expect(page.checked).toBe(2);
-    expect(page.resumeAfter).toBe(ids[1]);
+    expect(page.resumeAfter).toBe(`0:${ids[1]}`);
 
     const rest = await verifyEvidence(testEnv, ORG, page.resumeAfter, 2);
     expect(rest.checked).toBe(1);
-    expect(rest.resumeAfter).toBeNull();
+    // Receipts are exhausted, so it hands on rather than ending — the tables after this one are unswept.
+    expect(rest.resumeAfter).toBe("1:");
     // Every message reached exactly once across the two pages, which is what makes a paged sweep complete.
     expect(page.checked + rest.checked).toBe(3);
   });
@@ -239,5 +252,175 @@ describe("verifying stored evidence against what ingress recorded", () => {
     const verdict = await verifyEvidence(testEnv, ORG);
     expect(verdict.intact).toBe(true);
     expect(verdict.checked).toBe(1);
+  });
+});
+
+/**
+ * The prefixes that were never swept (#131).
+ *
+ * ## What this file could not see before
+ *
+ * Every test above seeds `ingress_receipts`, so every one of them passed while the verifier covered inbound
+ * mail alone — and the inventory next door covered all four prefixes. A Node whose evidence is drafts or
+ * staged sends verified nothing and reported a clean sweep, which is every Node before its domain is bound.
+ *
+ * Measured on the first real backup: three sealed drafts, `3 object(s) listed`, `0 checked, 0 fault(s)`.
+ *
+ * So these tests seed **only** the other tables. A verifier that still reads receipts alone fails them by
+ * checking zero, which is the state that used to look like health.
+ */
+describe("every prefix the Worker writes, not only inbound mail", () => {
+  /** Everything the sweep can reach, paged to the end the way a real caller does. */
+  async function sweep(batch?: number) {
+    const faults = [];
+    const tables: string[] = [];
+    let checked = 0;
+    let after: string | null = null;
+    for (let page = 0; page < 40; page += 1) {
+      const verdict = await verifyEvidence(testEnv, ORG, after, batch);
+      checked += verdict.checked;
+      faults.push(...verdict.faults);
+      if (verdict.table !== null && verdict.checked > 0) tables.push(verdict.table);
+      if (verdict.resumeAfter === null) return { checked, faults, tables };
+      after = verdict.resumeAfter;
+    }
+    throw new Error("the sweep never finished");
+  }
+
+  it("checks a draft's body, which is the case that was measured failing", async () => {
+    const id = ctx.id("drf");
+    const key = `${ORG}/drafts/${id}`;
+    const body = utf8("a draft nobody has sent");
+    const stored = await putEvidence(testEnv, key, body);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO drafts (id, org_id, mailbox_id, author_user_id, to_addresses, subject, body_bytes,
+         body_key, body_sha256, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(id, ORG, "mbx_x", "usr_x", '["c@d.test"]', "a draft", body.byteLength, key,
+      stored.plaintextSha256, new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString()).run();
+
+    const result = await sweep();
+
+    expect(result.checked).toBe(1);
+    expect(result.faults).toEqual([]);
+    expect(result.tables).toEqual(["drafts"]);
+  });
+
+  it("names the table on a fault, so an operator knows where to look for the row", async () => {
+    const id = ctx.id("drf");
+    const key = `${ORG}/drafts/${id}`;
+    const body = utf8("this one gets tampered with");
+    const stored = await putEvidence(testEnv, key, body);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO drafts (id, org_id, mailbox_id, author_user_id, to_addresses, subject, body_bytes,
+         body_key, body_sha256, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(id, ORG, "mbx_x", "usr_x", '["c@d.test"]', "a draft", body.byteLength, key,
+      stored.plaintextSha256, new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString()).run();
+    await putEvidence(testEnv, key, utf8("something else entirely"));
+
+    const result = await sweep();
+
+    expect(result.faults).toHaveLength(1);
+    expect(result.faults[0]?.kind).toBe("altered");
+    expect(result.faults[0]?.rowId).toBe(id);
+    // A bare id was unambiguous when one table was swept. It is not now.
+    expect(result.faults[0]?.table).toBe("drafts");
+    expect(result.faults[0]?.column).toBe("body_key");
+    // The byte counts come from `body_bytes`, which is why `bytes` is on the shared referent list.
+    expect(result.faults[0]?.detail).toContain("bytes when sealed");
+  });
+
+  it("checks all three of a send's staged objects from one row", async () => {
+    /*
+     * The reason the batch bound counts **objects** and not rows. One `send_manifests` row is three R2 gets,
+     * so a row bound would mean three different per-invocation costs depending on which table was reached.
+     */
+    const id = ctx.id("snd");
+    const typed = utf8("as typed");
+    const normalized = utf8("as normalized");
+    const submitted = utf8("as submitted");
+    const a = await putEvidence(testEnv, `${ORG}/sent/${id}/typed`, typed);
+    const b = await putEvidence(testEnv, `${ORG}/sent/${id}/normalized`, normalized);
+    const c = await putEvidence(testEnv, `${ORG}/sent/${id}/submitted.eml`, submitted);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to,
+         subject, rfc_message_id, fidelity, body_typed_key, body_typed_sha256,
+         body_normalized_key, body_normalized_sha256, submitted_key, submitted_sha256,
+         sealed_at, release_at, state, state_at, attempts)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(id, ORG, "mbx_x", "usr_x", "a@b.test", '["c@d.test"]', "s", `<${id}@b.test>`, "authored",
+      `${ORG}/sent/${id}/typed`, a.plaintextSha256,
+      `${ORG}/sent/${id}/normalized`, b.plaintextSha256,
+      `${ORG}/sent/${id}/submitted.eml`, c.plaintextSha256,
+      new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString(), "sealed",
+      new Date(ctx.now()).toISOString(), 0).run();
+
+    const result = await sweep();
+
+    expect(result.checked).toBe(3);
+    expect(result.faults).toEqual([]);
+  });
+
+  it("does not report a send that staged no submitted bytes as missing evidence", async () => {
+    /*
+     * `submitted_key` is null unless the send had authored fidelity, so a structured send stages two objects
+     * and not three. Treating null as an absent object would put a `missing` fault on every structured send
+     * the Node ever made — a verifier crying wolf over correct data, which is how a real fault stops being
+     * read. The count is the assertion: two, not three, and no fault.
+     */
+    const id = ctx.id("snd");
+    const typed = utf8("structured, as typed");
+    const normalized = utf8("structured, as normalized");
+    const a = await putEvidence(testEnv, `${ORG}/sent/${id}/typed`, typed);
+    const b = await putEvidence(testEnv, `${ORG}/sent/${id}/normalized`, normalized);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to,
+         subject, rfc_message_id, fidelity, body_typed_key, body_typed_sha256,
+         body_normalized_key, body_normalized_sha256, submitted_key, submitted_sha256,
+         sealed_at, release_at, state, state_at, attempts)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(id, ORG, "mbx_x", "usr_x", "a@b.test", '["c@d.test"]', "s", `<${id}@b.test>`, "structured",
+      `${ORG}/sent/${id}/typed`, a.plaintextSha256,
+      `${ORG}/sent/${id}/normalized`, b.plaintextSha256,
+      null, null,
+      new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString(), "sealed",
+      new Date(ctx.now()).toISOString(), 0).run();
+
+    const result = await sweep();
+
+    expect(result.checked).toBe(2);
+    expect(result.faults).toEqual([]);
+  });
+
+  it("does not stop at an empty table, which would report the rest as verified", async () => {
+    /*
+     * The sharpest failure available, and the same one `inventoryPage` guards against for an empty prefix.
+     * `ingress_receipts` is swept first; a Node with no inbound mail and a draft would, with a walk that ends
+     * on an empty page, return `resumeAfter: null` after checking nothing — indistinguishable from a finished
+     * sweep of a healthy Node. That is #131 rebuilt inside the fix for it.
+     */
+    const id = ctx.id("drf");
+    const key = `${ORG}/drafts/${id}`;
+    const body = utf8("the only evidence on this Node");
+    const stored = await putEvidence(testEnv, key, body);
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO drafts (id, org_id, mailbox_id, author_user_id, to_addresses, subject, body_bytes,
+         body_key, body_sha256, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(id, ORG, "mbx_x", "usr_x", '["c@d.test"]', "a draft", body.byteLength, key,
+      stored.plaintextSha256, new Date(ctx.now()).toISOString(), new Date(ctx.now()).toISOString()).run();
+
+    // The first page, unpaged by the caller: it must not report the sweep finished having checked nothing.
+    const first = await verifyEvidence(testEnv, ORG);
+    expect(first.checked).toBe(1);
+    expect(first.table).toBe("drafts");
+  });
+
+  it("sweeps the same tables the inventory can name, rather than a second list", async () => {
+    /*
+     * The closed-world check, and the reason #131 was possible at all: two lists of prefixes that were each
+     * correct on their own. `VERIFIED_TABLES` is grouped from `INVENTORY_REFERENTS`, so this cannot drift —
+     * what it stops is somebody replacing that derivation with a literal.
+     */
+    expect(VERIFIED_TABLES).toEqual([...new Set(INVENTORY_REFERENTS.map((one) => one.table))]);
+    expect(VERIFIED_TABLES).toHaveLength(BUDGETS["evidence.verify_tables"]);
   });
 });

@@ -1226,12 +1226,19 @@ async function verifyEvidence(argv) {
     return;
   }
 
-  process.stdout.write(`\n   ${faults.length} fault(s) across ${checked} message(s) checked:\n\n`);
+  process.stdout.write(`\n   ${faults.length} fault(s) across ${checked} object(s) checked:\n\n`);
   for (const kind of ["altered", "missing", "unreadable"]) {
     const group = faults.filter((one) => one.kind === kind);
     if (group.length === 0) continue;
     process.stdout.write(`   ${kind} (${group.length})\n`);
-    for (const fault of group) process.stdout.write(`     ${fault.receiptId}  ${fault.detail}\n`);
+    /*
+     * The table as well as the row id (#131). This swept `ingress_receipts` only, so a bare id was
+     * unambiguous; it now covers drafts, exports and sends, and an id with no table sends somebody looking
+     * in the wrong one during an incident.
+     */
+    for (const fault of group) {
+      process.stdout.write(`     ${fault.table ?? "?"}  ${fault.rowId}  ${fault.detail}\n`);
+    }
     process.stdout.write("\n");
   }
   process.stderr.write(
@@ -1626,7 +1633,7 @@ async function backup(argv) {
       checked += page.checked ?? 0;
       faults += (page.faults ?? []).length;
       for (const fault of page.faults ?? []) {
-        process.stdout.write(`   ${fault.kind}  ${fault.receiptId}  ${fault.detail}\n`);
+        process.stdout.write(`   ${fault.kind}  ${fault.table ?? "?"}  ${fault.rowId}  ${fault.detail}\n`);
       }
       if (page.resumeAfter === null || page.resumeAfter === undefined) break;
       after = page.resumeAfter;

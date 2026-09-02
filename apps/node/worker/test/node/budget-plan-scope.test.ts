@@ -634,7 +634,7 @@ const FIGURES: Record<string, Classification> = {
   // docs/receipts/evidence-integrity-cost.md
   ...mailda(
     "what it costs this Node to prove its own evidence still hashes to what ingress recorded",
-    "evidence.verify_batch", "evidence.verify_subrequests_per_receipt",
+    "evidence.verify_objects", "evidence.verify_subrequests_per_object", "evidence.verify_tables",
   ),
 
   // docs/receipts/preview-urls-and-durable-objects.md
