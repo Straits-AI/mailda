@@ -609,6 +609,7 @@ const FIGURES: Record<string, Classification> = {
       + "are properties of statements this repository writes, not of anything Cloudflare sells",
     "search.max_rows_read_per_page", "search.windowed_rows_read",
     "page.rows_read_unbounded", "page.rows_read_short_window",
+    "sender.rows_read_indexed", "sender.rows_read_unindexed",
   ),
 
   // docs/receipts/d1-fts5-search.md

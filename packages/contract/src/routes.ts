@@ -125,7 +125,7 @@ export interface RouteSpec {
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
 export const MESSAGE_PAGE_PARAMS =
-  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until" } as const;
+  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from" } as const;
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -279,6 +279,13 @@ export const ROUTES = [
         description: "Only mail accepted at or after this point: a date (2026-09-01), which means from the "
           + "start of that day UTC, or a full instant (2026-09-01T08:30:00.000Z). When this Node accepted "
           + "it, never the sender's Date header, which the sender chooses.",
+      },
+      {
+        name: MESSAGE_PAGE_PARAMS.from,
+        description: "Only mail transmitted by this sender, matched exactly and case-insensitively. This is "
+          + "the **envelope** sender — the address the sending server handed over, which is the fact this "
+          + "Node recorded. It is not the `From:` header, which is what the sender chose to display and is "
+          + "what `q` searches; the two differ on forwarded mail and mailing lists.",
       },
       {
         name: MESSAGE_PAGE_PARAMS.until,

@@ -8,13 +8,15 @@ stale_when: >
   arms, since a residual filter changes how far an arm scans to fill its cap — which is what
   search.windowed_rows_read measures**; messages.page_size moves; RELATIONS_FOR_METADATA or
   BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
-  text per row; ir_org_accepted changes, since the unsearched figures below are seeks against it; or
+  text per row; ir_org_accepted or ir_org_sender changes, since the unsearched figures below are seeks against them; `envelope_from` starts being normalised at ingress, which would make the expression index redundant; or
   authz.list.max_rows_read moves
 values:
   search.max_rows_read_per_page: 771
   search.windowed_rows_read: 4335
   page.rows_read_unbounded: 208
   page.rows_read_short_window: 101
+  sender.rows_read_indexed: 9
+  sender.rows_read_unindexed: 1207
 ---
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -269,3 +271,46 @@ bound and stops rather than continuing to look for rows that are not there.
 
 That distinction is the whole test for whether a filter belongs here. `since` reaches the index; the sender
 filter in #152 does not, which is why it is a different ticket rather than the same one.
+
+## Filtering by sender, and the column #152 was written about (#152)
+
+#152 said a sender filter could not be made cheap: *"no single index can serve sender-filtered time order"*,
+because `from_addr` is on `messages` and `accepted_at` is on `ingress_receipts`. True of the **`From:`
+header**, and it is the wrong column to filter on.
+
+`envelope_from` is the address the sending server handed over — the transmission fact this Node recorded,
+rather than what the sender chose to display — and it sits on the **same table** as `accepted_at`. So one
+index serves both, and the ticket's three options were all answers to a problem that only exists for the
+header. The header stays searchable through `q` and the FTS index: two questions, two surfaces, and the
+parameter's description says which is which.
+
+Measured on 1,200 deliveries, the index dropped and re-created inside the measurement so the two figures are
+genuinely a before and an after:
+
+| query | rows read | page |
+| --- | --- | --- |
+| rare sender, no index | **1,207** | 1 |
+| rare sender, `ir_org_sender` | **9** | 1 |
+| bulk sender, no index | 208 | 51 |
+| bulk sender, `ir_org_sender` | 208 | 51 |
+
+`authz.list.max_rows_read` is **1,000**, so the rare case was **over budget** — and the rare case is what an
+investigation is made of. The corpus puts that sender's only message at the *oldest* position on purpose: a
+time-ordered scan starts at the newest and reaches it last, which is the worst case for a plan that filters
+instead of seeking and the ordinary case for somebody looking for something old.
+
+The bulk sender is unchanged, which is what makes the index free rather than a trade: the page fills at once
+either way.
+
+**The index is on the expression.** `envelope_to` is lowercased at ingress and `envelope_from` is not, an
+asymmetry that predates this. Normalising in storage would need a backfill over every receipt ever written;
+`lower(envelope_from)` in the index buys the same case-insensitive matching with no data rewrite — and D1's
+SQLite does use it, which was the open question rather than an assumption:
+
+```text
+SEARCH r USING INDEX ir_org_sender (org_id=? AND <expr>=?)
+```
+
+The predicate has to spell the expression identically or the planner declines it, and the failure would look
+like an index that does not help rather than a predicate that does not match. The measurement asserts the
+plan names the index for that reason.

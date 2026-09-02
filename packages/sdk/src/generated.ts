@@ -439,11 +439,13 @@ export class GeneratedClient extends Transport {
    *
    * @param query.since Only mail accepted at or after this point: a date (2026-09-01), which means from the start of that day UTC, or a full instant (2026-09-01T08:30:00.000Z). When this Node accepted it, never the sender's Date header, which the sender chooses.
    *
+   * @param query.from Only mail transmitted by this sender, matched exactly and case-insensitively. This is the **envelope** sender — the address the sending server handed over, which is the fact this Node recorded. It is not the `From:` header, which is what the sender chose to display and is what `q` searches; the two differ on forwarded mail and mailing lists.
+   *
    * @param query.until Only mail accepted at or before this point, in the same two shapes. A date means the **end** of that day UTC, so `until=2026-09-01` includes 1 September.
    *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; until?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 

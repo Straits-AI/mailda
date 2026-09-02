@@ -871,6 +871,19 @@ export interface MessagePage {
   since: string | null;
   until: string | null;
   /**
+   * One sender's mail, lowercased at the edge, or null for every sender (#152).
+   *
+   * **The envelope sender, not the `From:` header**, and the difference is the point rather than a detail.
+   * `ingress_receipts.envelope_from` is what the sending server handed over — the transmission fact this
+   * Node recorded. `messages.from_addr` is the parsed header, which is what the sender chose to display, and
+   * `q` already searches that through the FTS index. Two questions, two surfaces.
+   *
+   * It is also the one that can be answered cheaply: `envelope_from` sits on the same table as
+   * `accepted_at`, so one index serves sender-filtered time order. The header does not, and #152 was written
+   * believing that was true of both.
+   */
+  from: string | null;
+  /**
    * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
    *
    * **Already rebuilt, never the caller's text.** The raw parameter is turned into a quoted expression at the
@@ -988,6 +1001,13 @@ export function messagePageRequest(url: URL): MessagePage {
    * meaning no predicate at all rather than a filter matching nothing.
    */
   const q = ftsQuery(url.searchParams.get(MESSAGE_PAGE_PARAMS.q));
+  /*
+   * Lowercased here rather than in the predicate, so the bound value and the index's expression agree — and
+   * so an address that differs only in case is the same sender, which is what a person means. Addresses are
+   * compared case-insensitively in practice, and `envelope_to` already takes that position at ingress.
+   */
+  const fromRaw = url.searchParams.get(MESSAGE_PAGE_PARAMS.from);
+  const from = fromRaw === null || fromRaw.trim() === "" ? null : fromRaw.trim().toLowerCase();
   const since = instantBound(
     url.searchParams.get(MESSAGE_PAGE_PARAMS.since), "start", MESSAGE_PAGE_PARAMS.since,
   );
@@ -1040,7 +1060,7 @@ export function messagePageRequest(url: URL): MessagePage {
         + `\`${MESSAGE_PAGE_PARAMS.q}\` and page the window with the cursor. See issue 153.`,
     });
   }
-  if (raw === null) return { after: null, mailboxId, q, since, until };
+  if (raw === null) return { after: null, mailboxId, q, since, until, from };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -1056,7 +1076,7 @@ export function messagePageRequest(url: URL): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId, q, since, until };
+  return { after: { at: instant, id }, mailboxId, q, since, until, from };
 }
 
 /**
@@ -1147,6 +1167,18 @@ export function messagePageQuery(args: {
   if (args.page.until !== null) {
     filters.push("AND r.accepted_at <= ?");
     filterParams.push(args.page.until);
+  }
+  /*
+   * `lower(...)` on both sides, matching `ir_org_sender`'s expression exactly (#152).
+   *
+   * The index is on the **expression**, so the predicate has to spell it the same way or the planner cannot
+   * use it and the seek becomes a scan. `envelope_to` is lowercased at ingress and `envelope_from` is not —
+   * an asymmetry that predates this — so normalising at storage would need a backfill, and an expression
+   * index buys the same matching with no data rewrite.
+   */
+  if (args.page.from !== null) {
+    filters.push("AND lower(r.envelope_from) = ?");
+    filterParams.push(args.page.from);
   }
   if (args.page.after !== null && args.page.q === null) {
     /*
