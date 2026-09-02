@@ -280,3 +280,195 @@ describe("a save that changes nothing writes nothing", () => {
     expect((await readDraft(testEnv, ORG, AUTHOR, first.id))?.to).toEqual(["someone.else@example.net"]);
   });
 });
+
+/**
+ * A body this Node cannot read (#143).
+ *
+ * ## Measured, on a restored Node
+ *
+ * `GET /api/drafts/:id` answered `200` with `body: ""` and `bodyBytes: 180` beside it. The row contradicted
+ * the answer and nothing said which of two very different states it was: the object gone, or the object
+ * present and sealed under a key this vault does not hold — the ADR 28 loss the recovery codes exist for,
+ * which **clears** when one is redeemed.
+ *
+ * ## Two losses were reachable from the empty box, and neither announced itself
+ *
+ * An empty body in a composer is an invitation to type. From there:
+ *
+ *   - a **non-empty** save re-seals to `bodyKeyFor(orgId, id)`, which is deterministic, so it overwrites the
+ *     object it could not open — evidence that was recoverable becomes evidence that is gone;
+ *   - an **empty** save leaves `body_key` pointing at the old object while writing `body_sha256 = NULL` and
+ *     `body_bytes = 0`. The bytes survive and stop being verifiable, because the verifier skips a row with
+ *     no recorded hash.
+ *
+ * The second is the one reasoning alone would have missed, and it is why these tests assert on the stored
+ * object and the row rather than only on the refusal.
+ */
+describe("a draft body the vault cannot open", () => {
+  /** Replaces a saved draft's object with bytes no key opens, leaving the row exactly as it was. */
+  async function makeItUnreadable(draftId: string): Promise<string> {
+    const row = await testEnv.CATALOG.prepare("SELECT body_key FROM drafts WHERE id = ?")
+      .bind(draftId).first<{ body_key: string }>();
+    const key = row!.body_key;
+    const object = await testEnv.EVIDENCE.get(key);
+    const bytes = new Uint8Array(await object!.arrayBuffer());
+    // The 32-byte header is left intact and the last byte of the body flipped, so the object parses as
+    // evidence and fails **authentication** — which is what a wrong key looks like, and not what a truncated
+    // object looks like.
+    bytes[bytes.length - 1] = (bytes.at(-1) ?? 0) ^ 0xff;
+    await testEnv.EVIDENCE.put(key, bytes, {
+      customMetadata: { ...(object!.customMetadata ?? {}) },
+    });
+    return key;
+  }
+
+  it("says the body is unreadable rather than reporting an empty one", async () => {
+    const saved = await saveDraft(testEnv, atTime(3_100_000_000_000), ORG, AUTHOR, null, composition);
+    await makeItUnreadable(saved.id);
+
+    const read = await readDraft(testEnv, ORG, AUTHOR, saved.id);
+
+    expect(read?.body).toBe("");
+    expect(read?.bodyUnavailable).toBe("unreadable");
+    /*
+     * The contradiction that used to be the only clue, and it is deliberately still here: the row's own
+     * count says there was writing. What changed is that the answer now explains itself rather than leaving
+     * a reader to notice the mismatch.
+     */
+    expect(read?.bodyBytes).toBeGreaterThan(0);
+    // The recipients and subject are intact, which is why the read does not simply fail.
+    expect(read?.subject).toBe(composition.subject);
+    expect(read?.to).toEqual(composition.to);
+  });
+
+  it("says nothing when the body reads, so the field is a signal and not decoration", async () => {
+    const saved = await saveDraft(testEnv, atTime(3_100_000_100_000), ORG, AUTHOR, null, composition);
+    const read = await readDraft(testEnv, ORG, AUTHOR, saved.id);
+    expect(read?.body).toBe(composition.body);
+    expect(read?.bodyUnavailable).toBeNull();
+  });
+
+  it("distinguishes a body that is gone from one that will not open", async () => {
+    /*
+     * Different fixes: `missing` is ADR 32's reportable-only side and nothing recovers it, `unreadable` is
+     * recoverable with a recovery code. Collapsing them into one word would send somebody hunting for a key
+     * that would not help, or give up on writing that is still there.
+     */
+    const saved = await saveDraft(testEnv, atTime(3_100_000_200_000), ORG, AUTHOR, null, composition);
+    const row = await testEnv.CATALOG.prepare("SELECT body_key FROM drafts WHERE id = ?")
+      .bind(saved.id).first<{ body_key: string }>();
+    await testEnv.EVIDENCE.delete(row!.body_key);
+
+    expect((await readDraft(testEnv, ORG, AUTHOR, saved.id))?.bodyUnavailable).toBe("missing");
+  });
+
+  it("refuses to write over it, which is the loss that used to be reachable", async () => {
+    const saved = await saveDraft(testEnv, atTime(3_100_000_300_000), ORG, AUTHOR, null, composition);
+    const key = await makeItUnreadable(saved.id);
+    const before = new Uint8Array(await (await testEnv.EVIDENCE.get(key))!.arrayBuffer());
+
+    const typedOver = saveDraft(testEnv, atTime(3_100_000_360_000), ORG, AUTHOR, saved.id, {
+      ...composition, body: "rewriting this from scratch because the box was empty",
+    });
+
+    await expect(typedOver).rejects.toThrow(/E_DRAFT_BODY_UNREADABLE/);
+    // The bytes are still there, which is the whole point: they were never lost, only unopenable.
+    const after = new Uint8Array(await (await testEnv.EVIDENCE.get(key))!.arrayBuffer());
+    expect([...after]).toEqual([...before]);
+  });
+
+  it("refuses an empty save too, which would have stranded the object instead of destroying it", async () => {
+    /*
+     * The subtler of the two. An empty body skips the `putEvidence` branch, so the bytes survive — and the
+     * row is rewritten with `body_sha256 = NULL` and `body_bytes = 0`, which makes the surviving object
+     * unverifiable: the verifier skips a row carrying no recorded hash, so it becomes an object nothing
+     * accounts for. A refusal written only for the overwrite would have let this through.
+     */
+    const saved = await saveDraft(testEnv, atTime(3_100_000_400_000), ORG, AUTHOR, null, composition);
+    await makeItUnreadable(saved.id);
+
+    await expect(saveDraft(testEnv, atTime(3_100_000_460_000), ORG, AUTHOR, saved.id, {
+      ...composition, body: "",
+    })).rejects.toThrow(/E_DRAFT_BODY_UNREADABLE/);
+
+    const row = await testEnv.CATALOG.prepare("SELECT body_sha256, body_bytes FROM drafts WHERE id = ?")
+      .bind(saved.id).first<{ body_sha256: string | null; body_bytes: number }>();
+    expect(row?.body_sha256, "the row's hash was nulled, so the object is no longer verifiable").not.toBeNull();
+    expect(row?.body_bytes).toBeGreaterThan(0);
+  });
+
+  it("lets a save carrying the same text through, and that repairs the object", async () => {
+    /*
+     * The cost gate, and it turns out to be more than an optimisation — this is what the test measured
+     * rather than what it was written to expect.
+     *
+     * The check costs an R2 get and a decrypt, and drafts autosave, so it is skipped when the incoming body
+     * digest matches the stored hash. The reasoning was "nothing would be replaced". What actually happens
+     * is better: the save re-seals the **same plaintext** to the same deterministic key under the current
+     * generation, so the unreadable object becomes readable again.
+     *
+     * And that is sound rather than lucky. A caller can only produce a matching digest by already holding
+     * the text, which is proof the writing was never lost — so writing it back cannot destroy anything. A
+     * client that rendered an empty box would send an empty body, whose digest does **not** match, and the
+     * refusal catches it.
+     */
+    const saved = await saveDraft(testEnv, atTime(3_100_000_500_000), ORG, AUTHOR, null, composition);
+    await makeItUnreadable(saved.id);
+    expect((await readDraft(testEnv, ORG, AUTHOR, saved.id))?.bodyUnavailable).toBe("unreadable");
+
+    const again = await saveDraft(testEnv, atTime(3_100_000_560_000), ORG, AUTHOR, saved.id, {
+      ...composition, subject: "Re: Invoice 4500219877 (corrected)",
+    });
+
+    expect(again.subject).toBe("Re: Invoice 4500219877 (corrected)");
+    const read = await readDraft(testEnv, ORG, AUTHOR, saved.id);
+    expect(read?.bodyUnavailable, "the same text written back should have repaired it").toBeNull();
+    expect(read?.body).toBe(composition.body);
+  });
+
+  it("lets a save through when the body is genuinely gone, rather than stranding the draft", async () => {
+    /*
+     * The limit of the refusal, and a mutation found this untested: making the write treat a **missing**
+     * object as unreadable passed every other test here.
+     *
+     * `missing` is ADR 32's reportable-only side. The writing is already lost and no key brings it back, so
+     * blocking the write would strand the recipients and subject too — punishing somebody for a loss they
+     * cannot undo, on a draft they are trying to salvage. Only `unreadable` is refused, because only
+     * `unreadable` is recoverable.
+     */
+    const saved = await saveDraft(testEnv, atTime(3_100_000_700_000), ORG, AUTHOR, null, composition);
+    const row = await testEnv.CATALOG.prepare("SELECT body_key FROM drafts WHERE id = ?")
+      .bind(saved.id).first<{ body_key: string }>();
+    await testEnv.EVIDENCE.delete(row!.body_key);
+    expect((await readDraft(testEnv, ORG, AUTHOR, saved.id))?.bodyUnavailable).toBe("missing");
+
+    const rewritten = await saveDraft(testEnv, atTime(3_100_000_760_000), ORG, AUTHOR, saved.id, {
+      ...composition, body: "written again, because the original is gone",
+    });
+
+    expect(rewritten.body).toBe("written again, because the original is gone");
+    expect((await readDraft(testEnv, ORG, AUTHOR, saved.id))?.bodyUnavailable).toBeNull();
+  });
+
+  it("still refuses a body that never reads, rather than deleting the draft to make progress", async () => {
+    // A draft is not a thing to discard on the Node's initiative. Deleting is an operator's act, and the
+    // refusal names it as the way out rather than taking it.
+    const saved = await saveDraft(testEnv, atTime(3_100_000_600_000), ORG, AUTHOR, null, composition);
+    await makeItUnreadable(saved.id);
+    const failed = await saveDraft(testEnv, atTime(3_100_000_660_000), ORG, AUTHOR, saved.id, {
+      ...composition, body: "anything",
+    }).catch((error: CallerError) => error);
+
+    expect((failed as CallerError).status).toBe(422);
+    /*
+     * **The `fix` line specifically**, not the message as a whole. Asserting the whole message survived a
+     * mutation that replaced the fix with "the body cannot be replaced", because `why` mentions recovery
+     * codes too — so the test passed while the refusal had stopped naming any way forward, which is the one
+     * thing a refusal during an incident has to do.
+     */
+    const message = (failed as CallerError).message;
+    expect(message.slice(message.indexOf("fix "))).toContain("redeeming one of the ten recovery codes");
+    // And the draft is still there to be recovered or deleted deliberately.
+    expect(await readDraft(testEnv, ORG, AUTHOR, saved.id)).not.toBeNull();
+  });
+});

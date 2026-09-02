@@ -1,10 +1,10 @@
 import type { Ctx } from "@mailda/runtime";
 import { utf8 } from "@mailda/evidence";
 
-import { getEvidence, putEvidence, sha256Hex } from "./evidence-store.ts";
+import { EvidenceMissing, getEvidence, putEvidence, sha256Hex } from "./evidence-store.ts";
 import { assertNotHeld } from "./holds.ts";
 import { maySend } from "./authz-read.ts";
-import { CallerError, notFound } from "./errors.ts";
+import { CallerError, notFound, unprocessable } from "./errors.ts";
 
 /**
  * Drafts that survive a reload.
@@ -48,6 +48,21 @@ export interface DraftRecord {
   subject: string;
   body: string;
   bodyBytes: number;
+  /**
+   * Why `body` is empty when the row says it should not be (#143).
+   *
+   * `null` when the body is genuinely what was written. Otherwise the two states are kept apart because an
+   * operator does something different with each, exactly as `EvidenceFault` keeps its three apart:
+   *
+   *   - **missing** — the object is gone and the row saying it existed is not. ADR 32's reportable-only
+   *     side; the reconciler is what notices.
+   *   - **unreadable** — the object is *there* and this vault cannot open it. The ADR 28 loss the recovery
+   *     codes exist for, and it may clear: redeeming one can install the key.
+   *
+   * This used to be silence. An empty `body` with `bodyBytes: 180` beside it was the only clue, and an empty
+   * body in a composer is an invitation to type over evidence that was never lost.
+   */
+  bodyUnavailable: "missing" | "unreadable" | null;
   updatedAt: string;
 }
 
@@ -148,6 +163,7 @@ export async function saveDraft(
   ) {
     return {
       id,
+      bodyUnavailable: null,
       mailboxId: existing.mailbox_id,
       inReplyToMessageId: existing.in_reply_to_message_id,
       to: parseAddresses(existing.to_addresses),
@@ -173,6 +189,49 @@ export async function saveDraft(
   // body written here has no row for the width of the gap below, so collecting it fast would delete
   // somebody's writing mid-save. This comment said "no code path can collect it at all" until the pass
   // existed; `test/stranded-draft-bodies.test.ts` is what keeps that from silently reverting.
+  /*
+   * **A body this Node cannot read is not a blank page to write over** (#143).
+   *
+   * Two different losses were reachable from here, and neither announced itself:
+   *
+   *   - a **non-empty** save re-seals to `bodyKeyFor(orgId, id)`, which is deterministic — so it overwrites
+   *     the very object it could not open. Evidence that was intact and merely waiting for a key becomes
+   *     evidence that is gone.
+   *   - an **empty** save takes the branch below and leaves `body_key` pointing at the old object while
+   *     recording `body_sha256 = NULL` and `body_bytes = 0`. The bytes survive and stop being verifiable:
+   *     the verifier skips a row with no recorded hash, so the object becomes unaccounted for.
+   *
+   * Both are reached by opening a draft on a Node whose vault is incomplete and pressing save, which is the
+   * ordinary thing to do with what looks like an empty draft. So the write refuses while the body is
+   * unreadable, and says what would clear it. The refusal is on **unreadable** only: a `missing` object is
+   * ADR 32's reportable-only side, already lost, and blocking writes over it would strand the recipients and
+   * subject too.
+   */
+  /*
+   * **Gated on the body actually changing**, because this costs an R2 `get` and a decrypt and drafts
+   * autosave. When the incoming digest equals the stored one there is nothing to replace: the body survives
+   * this write untouched whether it opens or not, so asking would be paying on the hot path for an answer
+   * that changes nothing. A save that alters only the subject is the common case and skips it.
+   *
+   * The check therefore runs exactly when a replacement would occur, which is also exactly when it can lose
+   * something.
+   */
+  if (existing?.body_key != null && existing.body_sha256 !== bodyDigest) {
+    const readable = await getEvidence(env, existing.body_key).then(() => true).catch(
+      (error: unknown) => error instanceof EvidenceMissing,
+    );
+    if (!readable) {
+      throw unprocessable("E_DRAFT_BODY_UNREADABLE", {
+        what: "this draft's body is stored but cannot be opened on this Node, so it will not be replaced",
+        why: "the object is intact and sealed under a key generation this vault does not hold — the ADR 28 "
+          + "loss the recovery codes exist for. It reads as an empty body, and saving over it would "
+          + "destroy writing that is still recoverable",
+        fix: "restore the vault first: `mailda doctor` reports the escrow, and redeeming one of the ten "
+          + "recovery codes installs the keys. If the body is genuinely not wanted, delete the draft",
+      });
+    }
+  }
+
   let bodyKey = existing?.body_key ?? null;
   let bodySha: string | null = null;
   let bodyBytes = 0;
@@ -209,6 +268,8 @@ export async function saveDraft(
 
   return {
     id,
+    // A write that got this far either replaced the body or left one that reads.
+    bodyUnavailable: null,
     mailboxId: input.mailboxId,
     inReplyToMessageId: input.inReplyToMessageId ?? null,
     to: input.to,
@@ -244,13 +305,24 @@ export async function readDraft(
   await assertMaySend(env, orgId, userId, row.mailbox_id);
 
   let body = "";
+  let bodyUnavailable: "missing" | "unreadable" | null = null;
   if (row.body_key !== null) {
-    // A body whose object is gone is reported as an empty body rather than failing the read. The
-    // alternative is a draft nobody can open, which loses the recipients and subject as well as the
-    // writing — and the reconciler is the thing that notices a missing blob (ADR 32).
-    body = await getEvidence(env, row.body_key)
-      .then((bytes) => new TextDecoder().decode(bytes))
-      .catch(() => "");
+    /*
+     * A body whose object cannot be read is still reported as an empty body rather than failing the read,
+     * and that part of the original reasoning stands: the alternative is a draft nobody can open, which
+     * loses the recipients and subject as well as the writing, and the reconciler is what notices a missing
+     * blob (ADR 32).
+     *
+     * **What changed is that it says so** (#143). `.catch(() => "")` swallowed every failure alike, so a
+     * body that was merely unopenable — present, intact, waiting for a key — was indistinguishable from one
+     * that had never been written. Measured on a restored Node: `body: ""` returned with `bodyBytes: 180`
+     * beside it, the row contradicting the answer, and nothing said which of the two states it was.
+     */
+    try {
+      body = new TextDecoder().decode(await getEvidence(env, row.body_key));
+    } catch (error) {
+      bodyUnavailable = error instanceof EvidenceMissing ? "missing" : "unreadable";
+    }
   }
 
   return {
@@ -263,6 +335,7 @@ export async function readDraft(
     subject: row.subject,
     body,
     bodyBytes: row.body_bytes,
+    bodyUnavailable,
     updatedAt: row.updated_at,
   };
 }
