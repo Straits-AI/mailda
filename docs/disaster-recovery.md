@@ -110,18 +110,24 @@ of the restore below, and the command says so in its own output.
 Not a Mailda command, deliberately. Either an R2 bucket-to-bucket job or `rclone` with both accounts
 configured. The keys are listed in `inventory.jsonl`, so a copy can be checked afterwards rather than trusted.
 
-**`wrangler r2 object get | put` does not work for this, and the reason is correctness rather than cost**
-(#142). It is one request per object from a laptop, which is the obvious objection and the smaller one. The
-real problem: `putEvidence` records which key sealed an object in R2 **custom metadata**, `wrangler r2 object
-put` has no flag for it, and a copy made this way arrives with every byte intact and no way to decrypt it.
-The destination falls back to generation 0 and every object reads `E_EVIDENCE_AUTH_FAILED`. Measured on this
-drill, having made exactly that mistake.
+**A copy that loses custom metadata is survivable, and it did not used to be** (#142). `putEvidence` records
+which key sealed an object in R2 custom metadata; `wrangler r2 object get | put` has no flag for it, so a copy
+made that way arrives with every byte intact and — until this was fixed — no way to decrypt it. The
+destination fell back to generation 0 and every object read `E_EVIDENCE_AUTH_FAILED`. Measured on this drill,
+having made exactly that mistake.
 
-So: whatever tool is used, **custom metadata must survive**. Check it rather than trust it — the inventory
-reports `keyGeneration` per object, which is the field that gets lost, so comparing the two Nodes' inventories
-catches this in one request each. That check only started working with #141 — the inventory reported 0 for
-every object until it began asking R2 for the metadata, so an inventory taken before that says nothing about
-which key opens anything.
+A Node now recovers: when an object carries no label the read tries the generations its vault holds, which is
+sound because AES-GCM authenticates — a wrong key fails rather than producing wrong plaintext. **So the copy
+tool no longer decides whether the mail is readable**, which is the property that matters during a disaster,
+when nobody is going to have used the blessed tool.
+
+It is still worth preserving. An unlabelled object costs one extra decrypt per candidate generation on every
+read until something re-seals it, and `keyGeneration` in the inventory is how to tell: compare the two Nodes'
+inventories, and the field that got lost is the one that differs. That check itself reported `0` for
+everything until #141 — the list was never asking R2 for the metadata, so both sides agreed and the agreement
+meant nothing.
+
+`wrangler r2 object get` is also simply the wrong tool at size: one request per object, from a laptop.
 
 ## Restoring
 
@@ -221,113 +227,113 @@ receipt names, and anything that never reached ingress.
 
 **RTO** splits, and the split has to be stated or the number means whatever the reader assumes:
 
-- **restore-to-readable**: how long until the mail can be decrypted and verified in the new account. Fully
-  measurable, and it is what this runbook times.
+- **restore-to-readable**: how long until the mail can be decrypted and verified in the new account. Measured
+  below, with the caveat that makes the figure worth less than it looks.
 - **restore-to-receiving**: how long until the Node accepts new mail again. Needs a domain, Email Routing bound
   to the zone's MX, and DNS propagation — the last of which is not the product's to control. **Unmeasured**,
   and it should stay unmeasured rather than be estimated.
 
-A receipt recording restore-to-readable and saying plainly that restore-to-receiving is unmeasured is worth
-more than one number covering both.
+## What this runbook has established, and what it has not
 
-## Not verified
+Issue [#92](https://github.com/Straits-AI/mailda/issues/92), step 5: *"prove a sampled set of raw messages
+decrypt and hash-verify against the manifests. Step 5 is the one that makes the rest true. An export nobody
+has restored is a claim, and this ticket exists because of a claim."*
 
-**The whole sequence has now been run twice, and it stops in the same place.** Backup, deploy into a second
-Cloudflare account, restore the catalog, copy the evidence — all green — and then the destination refuses:
+It has now been run, on 2 September 2026. This records what was measured, including the **five** defects that
+made the first two attempts fail — those are the part a future operator needs, and none of them was visible
+from reading.
 
-```text
-refuse  signing_key  Could not use the current signing key:
-                     E_EVIDENCE_AUTH_FAILED  frame 0 of 1 failed authentication
-```
+### What was restored, and to where
 
-The signing key came across as a row and is wrapped under the source's credential KEK, which lives in the
-Durable Object and not in a D1 export. So the restore leaves a Node that knows who everybody is and cannot let
-anybody in. **Redeeming a recovery code is not a step to remember — it is the step the rest depends on**, and
-this drill is the measurement that says so.
+| | |
+| --- | --- |
+| source | `mailda.mystraits-ai.workers.dev`, account `dc8d1b7d…` |
+| destination | `mailda.arbuilder-app.workers.dev`, account `e842216b…` — a **different** Cloudflare account, no shared resources |
+| catalog | 36,124 bytes, data only, 395 rows across 64 tables |
+| evidence | 3 objects (three drafts; this Node has no domain, so it has never received mail) |
+| backup taken | 2026-09-01T18:27:29Z |
 
-**The redemption now clears it (#138).** On the second run the vault refused everything and spent a code,
-because a fresh Node mints generation 1 before it can be claimed. An escrowed key may now take a generation
-nothing has sealed under, and one that has sealed is still refused. Measured on the third run: both
-generations installed, and **sign-in at the destination returned `200` for the first time in the drill** —
-the restored Node authenticating the source's administrator, with the source's user id.
+The destination was provisioned from nothing by `mailda deploy`'s first-install path: Worker, D1, R2 bucket,
+queue and Workflow.
 
-**What still fails is the evidence, and the cause is the copy (#142).** `verify-evidence` opens all three
-objects now and reports all three `unreadable`:
+### The result
 
 ```text
-   3 fault(s) across 3 object(s) checked:
-   unreadable (3)
-     drafts  dft_01M1DDNNADF5XRZE8YRT72554S  E_EVIDENCE_AUTH_FAILED  frame 0 of 1 failed authentication
+== checking stored evidence against the hashes taken at ingress
+   batch 1: 3 checked, 0 fault(s)
+   batch 2: 0 checked, 0 fault(s)
+
+   3 message(s) checked in 2 batch(es), 0.0 MiB read. Every one opened and
+   hashed to what was recorded when it arrived.
 ```
 
-The copy was made with `wrangler r2 object get | put`, which carries the bytes and **drops the custom
-metadata naming the key that sealed them** — there is no flag for it. So the destination falls back to
-generation 0, the published constant, and authentication fails. The bytes are all present and the objects are
-unopenable, which is why the copy step below now warns about correctness rather than cost.
+And the same draft, read through the API on both Nodes:
 
-### What the second run measured on the way
-
-Six things stood between "the destination exists" and "the destination is clean", none of them in this runbook
-before:
-
-- **A second restore onto an already-restored Node fails with `{"D1_RESET_DO":true}`** — no table, no
-  constraint, no explanation (wrangler's log says `d1 execute import polling failed`). D1 rolls the whole file
-  back, so nothing is damaged. **Do not retry a restore on top of a restore**: stand the destination up clean.
-- **Once a D1 has been deleted, `wrangler deploy` will not re-provision it.** The link is stored server-side —
-  Cloudflare's own changelog says resources *"stay linked across future deploys even without adding the
-  resource IDs"* — so the deployed Worker stayed bound to the dead id while `wrangler d1 … CATALOG` resolved by
-  name to a different one. The two disagreed silently, and 51 migrations were applied to the database the
-  Worker does not read. `EVIDENCE` is bound by **name** and recovers; `CATALOG` is bound by **id** and does
-  not.
-- **`/health` calls a missing database "no schema"**, and the fix it names cannot work.
-- **`mailda deploy` lists migrations before the deploy that provisions them.** A Node whose script exists but
-  whose D1 does not is not a first install, so it takes the canary path and stops at `could not list
-  migrations`.
-- **Auto-provisioning never adopts an existing resource — it creates or fails**, and it fails *after* creating
-  the earlier ones. Three attempts died on D1, then R2, then the queue, each leaving behind what the last had
-  made. Every retry needs the leftovers deleted by hand.
-- **A Worker cannot be deleted while it consumes a queue** (`code: 10064`), so even the blunt reset needs
-  `wrangler queues consumer worker remove <queue> <worker>` first.
-
-### The reset that works, when a destination has to be stood up clean
-
-```sh
-export CLOUDFLARE_ACCOUNT_ID=<the destination account>
-cd apps/node/worker
-pnpm exec wrangler queues consumer worker remove mailda-sending-events mailda
-pnpm exec wrangler delete --env "" --force
-# Every provisioned resource, or the next deploy fails on whichever one is left.
-pnpm exec wrangler d1 delete mailda-catalog -y
-pnpm exec wrangler r2 bucket delete mailda-evidence     # objects first; a non-empty bucket refuses
-pnpm exec wrangler queues delete mailda-sending-events
+```text
+source       'The first draft body, written to exercise evidence sealing.\n'  (180 chars, row says 180)
+destination  'The first draft body, written to exercise evidence sealing.\n'  (180 chars, row says 180)
 ```
 
-Then `mailda deploy` takes the first-install path, provisions all three, and applies the migrations.
+Sign-in at the destination answered `200` for the source's administrator, with the source's user id, after a
+recovery code reinstated the vault.
 
-**What is known to work**, from this drill: `mailda backup --verify` and `verify-backup` against a real claimed
-Node; a data-only catalog restore into a fresh account in a different Cloudflare account (395 rows, and the
-Node reports `claimed: true` from the catalog alone); and a cross-account evidence copy checked against the
-inventory's byte counts.
+### Timings, and what each one is worth
 
-**What is known not to work**: the redemption, and therefore everything downstream of it — `verify-evidence` on
-the destination, and the restore-to-readable RTO this runbook says it times. The sweep itself is no longer the
-blocker (#131 is fixed): it would now open all three of this Node's drafts rather than none of them, if the
-vault could open them at all.
+Measured on this drill. **Three objects is not a sample from which to extrapolate**, and the numbers are
+recorded as what they are — the shape of the sequence, not a promise about a full mailbox.
 
-**What remains unmeasurable here**: restore-to-receiving, which needs a domain and DNS propagation.
+| step | measured | extrapolates? |
+| --- | --- | --- |
+| first install, including provisioning and 51 migrations | ~2 min | yes, it is fixed work |
+| catalog restore, 395 rows via `d1 execute --file` | ~40 s | with the catalog's size |
+| evidence copy, 3 objects | ~4 s | **no** — this was one request per object from a laptop, which is the wrong tool at any real size |
+| `verify-evidence` over 3 objects, 2 batches | 2 s | with the object count, at 200 objects per invocation |
+| redeeming one recovery code | < 1 s | yes |
 
-**A backup's `--verify` sweep could check nothing and say so — and now it cannot (#131).** On this Node it
-reported `0 checked, 0 fault(s)` over three objects, because the evidence is three drafts and the sweep read
-`ingress_receipts` alone. Every number honest, and the conclusion drawn from them false; `verify-backup` was
-the only thing in the chain that said so — *"the sweep that ran when this backup was taken checked
-**nothing** … That is not a clean bill of health."*
+**RPO** is the age of the backup, so it is a schedule decision rather than a product limit. On this drill the
+catalog and the inventory were taken in one command, so there is no window between them to record.
 
-The verifier now sweeps all four prefixes, taking its tables from the inventory's referent list rather than a
-second one. So a sweep pages **table by table**: `resumeAfter` hands on to the next table when one runs out
-and is null only when every one has been walked. A caller that stops at the first null after receipts is back
-to the defect, which is why both the CLI and the runbook page until null rather than counting batches.
+**Restore-to-readable RTO — the figure #92 asks for — is not honestly available from this drill**, and saying
+so is worth more than a number. The steps above total about three minutes. The actual elapsed time was
+**several hours**, spent on four defects that no longer exist and one that is a Cloudflare behaviour rather
+than ours. A three-minute figure would describe a run nobody has had; a several-hour figure would describe
+bugs that are fixed. The honest statement is: the sequence is about three minutes of work on a Node this
+size, and it has been run successfully exactly once.
 
-**The restore half of this runbook has now been run end to end** — and it does not complete. Every command in it
-exists (the `mailda` verbs are checked against the CLI's dispatch by `test/node/runbook.test.ts`, and the
-`wrangler` subcommands against 4.118.0), and the four deploy drills that preceded this each found something
-reading could not have found. This one found eight.
+**Restore-to-receiving remains unmeasured.** It needs a domain, Email Routing bound to the zone's MX, and DNS
+propagation, and the last is not the product's to control.
+
+### What the drill found, which is the part worth keeping
+
+Four defects sat on this path, each of which made the restore fail while reporting success.
+
+1. **The claim granted no `org.admin`** (#129) — a bootstrap deadlock; nothing could authenticate to take a
+   backup at all.
+2. **`wrangler d1 export` refuses any database containing an fts5 virtual table** (#132), so the export was
+   unusable from the day it shipped. The backup now names its tables, derived from `sqlite_master`.
+3. **The ten recovery codes were minted, escrowed, and discarded by the interface** (#134). Nobody could ever
+   have held one, so the escrow could not be spent.
+4. **The escrow could not be installed even when held** (#138). A fresh Node mints generation 1 the first time
+   `doctor` initialises the vault — sealing nothing — and the escrow carries generation 1 too. The redeem
+   answered `200`, installed nothing, and spent a code. An escrowed key may now take a generation nothing has
+   sealed under; one that has sealed is still refused.
+5. **The evidence copy silently dropped the metadata naming each object's key** (#142). `wrangler r2 object
+   get | put` has no flag for custom metadata. Every byte arrived and nothing could be opened.
+
+The fifth is the one that changed a design rather than fixing a bug. The first answer was a runbook warning
+and a list of approved copy tools; the answer that shipped is that a Node no longer depends on the label. The
+generation is a hint, and when it is missing the read tries the generations the vault holds — sound because
+AES-GCM authenticates, so a wrong key fails rather than producing wrong plaintext.
+
+**And the check that would have caught it was already built and silently returning a constant** (#141): the
+inventory reported `keyGeneration: 0` for every object, because `list()` was never passed
+`include: ["customMetadata"]`. Both Nodes agreed, and the agreement meant nothing.
+
+### What a clean sweep here still does not establish
+
+Printed by the command rather than left implied: an R2 object no receipt names, and anything that never
+reached ingress. Neither is visible to a row-driven verifier, and the inventory is the other half.
+
+This drill also says nothing about scale. Three objects and 395 rows exercise every step in the sequence and
+none of the limits — a mailbox-sized restore has a D1 import size to respect and a bucket copy that must not
+be one request per object.

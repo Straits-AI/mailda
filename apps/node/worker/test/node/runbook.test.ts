@@ -145,40 +145,24 @@ describe("a document cannot tell an operator to run a command that does not exis
 describe("the runbook says what it has not established", () => {
   const runbook = readFileSync(join(ROOT, "docs/disaster-recovery.md"), "utf8");
 
-  it("states that the restore does not complete, and names the step it stops at", () => {
+  it("says what the drill established without letting it read as more than it is", () => {
     /*
-     * This assertion has now been rewritten twice, and the rewrites are the point.
+     * **This assertion has been rewritten three times, and the rewrites are the point.**
      *
      * It began as `has not been run end to end`, which stopped being true when the drill ran it. It became
-     * `the escrow has never been installed on any Node`, which stopped being true when #138 landed and the
-     * redemption installed both generations on a live destination. Each time the property being guarded was
-     * the same and the sentence carrying it was not: **the risk was a runbook reading as tested when it was
-     * not, and it is now one reading as working when it does not.**
+     * `the escrow has never been installed on any Node`, which stopped being true when #138 landed. It became
+     * `custom metadata must survive`, which stopped being true when #142 made a Node recover without the
+     * label. Each time the property guarded was the same and the sentence carrying it was not.
      *
-     * What is left failing is the evidence, and the cause moved to the copy (#142): `wrangler r2 object
-     * get | put` drops the custom metadata naming the key that sealed each object, so a copy made that way
-     * arrives byte-perfect and undecryptable. A document that omitted that would send somebody to make the
-     * same copy.
+     * The risk has now inverted. It was a runbook reading as tested when it was not; it is now one reading as
+     * a **proven** recovery when what happened was a single run, over three objects, on a Node with no
+     * domain. A document that lets a reader take that for a guarantee is the same defect pointing the other
+     * way, and it is the more tempting one to write, because the drill did finally work.
      */
-    expect(runbook).toContain("#142");
-    expect(runbook).toContain("custom metadata must survive");
-    // The step that does work now, named, so the document does not read as more broken than it is.
-    expect(runbook).toContain("sign-in at the destination returned");
-  });
-
-  it("splits RTO rather than offering one number", () => {
-    /*
-     * restore-to-readable is measurable; restore-to-receiving needs DNS propagation, which is not the
-     * product's to control. One number covering both would mean whatever the reader assumed — and #92 asks
-     * for a measured figure, which makes the distinction the substance rather than a caveat.
-     */
-    expect(runbook).toContain("restore-to-readable");
-    expect(runbook).toContain("restore-to-receiving");
-    expect(runbook).toContain("Unmeasured");
-  });
-
-  it("says the evidence bytes are not in the backup", () => {
-    // The half an operator will assume the backup did. An inventory without the objects restores nothing.
-    expect(runbook).toContain("evidence bytes are not in the backup");
+    expect(runbook).toContain("run successfully exactly once");
+    // Three objects exercise every step and none of the limits. Extrapolating from them is the live error.
+    expect(runbook).toContain("not a sample from which to extrapolate");
+    // The half a domain is needed for, which no amount of drilling in these accounts can reach.
+    expect(runbook).toContain("estore-to-receiving remains unmeasured");
   });
 });
