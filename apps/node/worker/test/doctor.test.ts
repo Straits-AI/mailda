@@ -57,9 +57,19 @@ function withUnopenableCredentialKey(base: Env): Env {
             // Returned unbound, unlike the namespace above: an RPC stub's properties are themselves
             // proxies that carry their target, and calling `.bind` on one sends `bind` over the wire —
             // "The RPC receiver does not implement the method bind", observed before this comment existed.
-            if (stubProperty !== "sealingKey") return Reflect.get(stub, stubProperty) as unknown;
+            /*
+             * **Both key-issuing methods**, since #138 split them: `sealingKey` records the generation as
+             * used and `ensureKey` does not, and `doctor`'s round trip moved to the second so a diagnostic
+             * would stop reserving the generation the escrow needs. Intercepting only `sealingKey` left this
+             * fixture handing the probe the *real* key, so the round trip succeeded and the test asserting a
+             * broken credential key failed for a reason that had nothing to do with what it tests.
+             */
+            if (stubProperty !== "sealingKey" && stubProperty !== "ensureKey") {
+              return Reflect.get(stub, stubProperty) as unknown;
+            }
+            const issue = stubProperty as "sealingKey" | "ensureKey";
             return async (purpose: "content" | "credential") => {
-              const real = await stub.sealingKey(purpose);
+              const real = await stub[issue](purpose);
               if (purpose !== "credential") return real;
               // Same generation, different bytes. The generation is what `key_vault` reports, so that
               // finding stays green and the failure is isolated to the round trip.

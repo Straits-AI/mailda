@@ -35,8 +35,7 @@ import { aesKeyFrom, vault } from "../keyvault.ts";
 const HEADER_BYTES = 32;
 const PREFIX = /^v(\d+)\./;
 
-export async function wrapCredential(env: Env, plaintext: string): Promise<string> {
-  const sealing = await vault(env).sealingKey("credential");
+async function wrapWith(sealing: { generation: number; secret: string }, plaintext: string) {
   const sealed = await seal(
     await aesKeyFrom(sealing.secret),
     utf8(plaintext),
@@ -46,6 +45,31 @@ export async function wrapCredential(env: Env, plaintext: string): Promise<strin
   bytes.set(sealed.header, 0);
   bytes.set(sealed.body, sealed.header.length);
   return `v${sealing.generation}.${btoa(String.fromCharCode(...bytes))}`;
+}
+
+export async function wrapCredential(env: Env, plaintext: string): Promise<string> {
+  return wrapWith(await vault(env).sealingKey("credential"), plaintext);
+}
+
+/**
+ * Whether the credential key can wrap and unwrap, without recording it as **used** (#138).
+ *
+ * `doctor` checks this key by using it, which is right — presence was never the interesting question. But it
+ * wraps a constant and throws the result away, so nothing durable is sealed, and going through
+ * `wrapCredential` marked the generation as load-bearing anyway. On a fresh Node that made the escrow's
+ * generation 1 unusable before the Node could even be claimed: measured in #92's drill as a redemption that
+ * answered 200 and installed nothing.
+ *
+ * A separate entry point rather than a `probe: true` parameter on `wrapCredential`. The hazard runs the other
+ * way too — a real caller passing the flag would leave a genuinely used generation looking reserved, and a
+ * later restore would then replace the key that opens this Node's signing keys. A function named for probing
+ * cannot be mistaken for one that wraps something worth keeping, and both share `wrapWith`, so there is one
+ * implementation of the crypto.
+ */
+export async function probeCredentialKey(env: Env): Promise<boolean> {
+  const probe = "doctor-credential-key-round-trip";
+  return (await unwrapCredential(env, await wrapWith(await vault(env).ensureKey("credential"), probe)))
+    === probe;
 }
 
 export async function unwrapCredential(env: Env, wrapped: string): Promise<string> {

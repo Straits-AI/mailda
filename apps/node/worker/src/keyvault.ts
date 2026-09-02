@@ -69,6 +69,15 @@ const LEGACY_SECRETS: Record<KeyPurpose, string> = {
 
 const CURRENT = (purpose: KeyPurpose) => `${purpose}:current`;
 const AT = (purpose: KeyPurpose, generation: number) => `${purpose}:gen:${generation}`;
+/**
+ * Whether a generation has ever been handed out to **seal** something (#138).
+ *
+ * Written on first use rather than at mint, and that distinction is the whole point. A fresh Node's
+ * generation 1 is minted by `doctor`, which calls `ensureKey` to initialise the vault so it can detect
+ * generation-0 evidence — a diagnostic, sealing nothing. Until something actually seals under it, the number
+ * is reserved and the key protects no mail, so an escrowed key of the same number may take its place.
+ */
+const USED = (purpose: KeyPurpose, generation: number) => `${purpose}:used:${generation}`;
 
 export class KeyVault extends DurableObject<Env> {
   /**
@@ -80,6 +89,35 @@ export class KeyVault extends DurableObject<Env> {
    * sealed under a key the vault no longer names as current.
    */
   async sealingKey(purpose: KeyPurpose): Promise<VaultKey> {
+    const key = await this.ensureKey(purpose);
+    /*
+     * **Marked here and not in `ensureKey`**, which is what makes `restore` able to tell a reserved
+     * generation from a load-bearing one (#138). One extra storage read per seal, and a write only on the
+     * first — Durable Object storage is local, so neither is a subrequest and the cost meter does not move.
+     *
+     * Read-then-write rather than an unconditional put: an unconditional one would be simpler and would
+     * rewrite the same value on every message this Node ever seals.
+     */
+    if ((await this.ctx.storage.get<boolean>(USED(purpose, key.generation))) !== true) {
+      await this.ctx.storage.put(USED(purpose, key.generation), true);
+    }
+    return key;
+  }
+
+  /**
+   * The current key, minting one if this vault is empty, **without recording it as used**.
+   *
+   * For `doctor`, which initialises the vault deliberately — generation-0 evidence can only be detected by
+   * comparing it against a newer key, so a Node that predates the vault would never learn it has a backlog.
+   * That reasoning still holds. What it could not anticipate is #138: the diagnostic ran on every fresh
+   * install, minted generation 1, and thereby collided with the escrow's generation 1 before the Node could
+   * even be claimed — so the escrow could never be installed by the documented restore path.
+   *
+   * Anything that actually seals must call `sealingKey`. The split is deliberately not a boolean parameter:
+   * a call site that passes the wrong one would silently make a real seal look reserved, and losing mail is
+   * the failure this file is most careful about.
+   */
+  async ensureKey(purpose: KeyPurpose): Promise<VaultKey> {
     const existing = await this.ctx.storage.get<number>(CURRENT(purpose));
     if (existing !== undefined) {
       const secret = await this.ctx.storage.get<string>(AT(purpose, existing));
@@ -175,7 +213,7 @@ export class KeyVault extends DurableObject<Env> {
    */
   async restore(
     purpose: KeyPurpose, generation: number, secret: string,
-  ): Promise<"restored" | "identical" | "conflict"> {
+  ): Promise<"restored" | "identical" | "conflict" | "adopted"> {
     if (generation === LEGACY_GENERATION) {
       /*
        * Generation 0 is the published development constant and `openingKey` returns it without storage.
@@ -184,7 +222,7 @@ export class KeyVault extends DurableObject<Env> {
        */
       return "identical";
     }
-    let outcome: "restored" | "identical" | "conflict" = "identical";
+    let outcome: "restored" | "identical" | "conflict" | "adopted" = "identical";
     await this.ctx.blockConcurrencyWhile(async () => {
       const present = await this.ctx.storage.get<string>(AT(purpose, generation));
       if (present !== undefined) {
@@ -200,7 +238,33 @@ export class KeyVault extends DurableObject<Env> {
          * newer mail for older; skipping quietly, which is what the first version did, told the operator the
          * generation had been restored when it had not.
          */
-        outcome = present === secret ? "identical" : "conflict";
+        if (present === secret) {
+          outcome = "identical";
+          return;
+        }
+        /*
+         * **A generation nothing has sealed under is a reserved number, not a protected key** (#138).
+         *
+         * The never-overwrite rule above exists to stop a code redeemed against a healthy vault trading
+         * newer mail for older. That trade only exists when there *is* newer mail. A fresh Node mints
+         * generation 1 the first time `doctor` initialises the vault — sealing nothing — and the escrow it
+         * is about to be handed carries generation 1 too. Keeping the live key there costs the whole
+         * organization's mail to protect a key that protects nothing, which measured out as: restore into a
+         * clean account answers 200, installs nothing, and spends one of ten codes.
+         *
+         * So the escrowed key is installed **only** when this generation has never sealed, and the refusal
+         * stands whenever it has. `USED` is written by `sealingKey` on first use and never cleared, so the
+         * safe answer is the default: an unmarked generation on a Node whose storage predates this change
+         * reads as unused, and the one way that can be wrong — a Node that sealed under generation 1 before
+         * this shipped, then lost its storage, then restored — is a Node whose objects are already
+         * unreadable, since the key that sealed them is the one that went missing.
+         */
+        if ((await this.ctx.storage.get<boolean>(USED(purpose, generation))) === true) {
+          outcome = "conflict";
+          return;
+        }
+        await this.ctx.storage.put(AT(purpose, generation), secret);
+        outcome = "adopted";
         return;
       }
       await this.ctx.storage.put(AT(purpose, generation), secret);

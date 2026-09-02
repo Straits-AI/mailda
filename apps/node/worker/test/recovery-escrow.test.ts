@@ -1792,7 +1792,11 @@ describe("a later clean restore does not hide an earlier permanent conflict", ()
    * it stays unreadable — permanently, because two secrets cannot share one generation number.
    *
    * A later clean restore then becomes the newest row and the conflict leaves the verdict without anything
-   * having repaired it. Nothing repaired it; nothing can.
+   * having repaired it. Nothing repaired it, and nothing can — **because this fixture seals first**, which
+   * since #138 is what makes a collision permanent. A generation nothing had sealed under is adopted rather
+   * than refused, so it can no longer produce the record this test is about; the `sealingKey` call below is
+   * therefore load-bearing rather than scene-setting, and swapping it for `ensureKey` makes the fixture
+   * produce no collision at all.
    */
   it("keeps reporting a collision after a clean restore has happened since", async () => {
     const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
@@ -2192,5 +2196,133 @@ describe("a vault that refuses part way costs no code, and the attempt says what
       outcome.restored.content.length + outcome.conflicted.content.length,
       "the default restore path installed nothing",
     ).toBe(2);
+  });
+});
+
+/**
+ * A generation this Node reserved and never sealed under is not a key worth protecting (#138).
+ *
+ * ## What was measured
+ *
+ * #92's restore drill, on a destination provisioned from scratch: catalog restored, evidence copied and
+ * byte-checked, and then redeeming one of the ten codes answered
+ *
+ *     HTTP 200
+ *     {"restored":{"content":[],"credential":[]},"conflicted":{"content":[1],"credential":[1]}}
+ *
+ * Nothing installed, a code spent, the mail unreadable. `doctor` initialises the vault on every fresh
+ * install — deliberately, so generation-0 evidence can be detected — which minted generation 1 before the
+ * Node could be claimed. The escrow carries generation 1 too, and one number cannot hold both.
+ *
+ * ## Why the refusal was right and still is
+ *
+ * `restore` never overwrote, and the argument is good: a code redeemed against a **healthy** vault, by
+ * somebody uncertain what state it is in, would otherwise replace live keys with older copies and make
+ * everything sealed since the escrow unreadable. That trade only exists when there *is* newer mail. A
+ * reserved generation has sealed nothing, so keeping it costs the whole organization's mail to protect a key
+ * that protects none.
+ *
+ * So the two cases below are the whole feature, and the second matters more than the first: the refusal must
+ * still stand the moment anything has been sealed.
+ */
+describe("an escrowed key may take a reserved generation, and never a used one", () => {
+  it("adopts the escrowed key when nothing has ever sealed under that generation", async () => {
+    await loseTheVault();
+    // What `doctor` does on a fresh Node: initialise, sealing nothing.
+    const reserved = await vault(testEnv).ensureKey("content");
+    expect(reserved.generation).toBe(1);
+
+    const outcome = await vault(testEnv).restore("content", 1, "an-escrowed-secret");
+
+    expect(outcome).toBe("adopted");
+    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe("an-escrowed-secret");
+  });
+
+  it("still refuses once something has sealed under it, which is the safety argument", async () => {
+    /*
+     * The case the never-overwrite rule exists for, and the one that must not regress: a Node that is
+     * working, holding mail, whose operator redeems a code by mistake. Overwriting here would make every
+     * message sealed since the escrow was taken unreadable — the mechanism destroying what it exists to
+     * protect.
+     */
+    await loseTheVault();
+    const live = await vault(testEnv).sealingKey("content");
+    expect(live.generation).toBe(1);
+
+    const outcome = await vault(testEnv).restore("content", 1, "an-escrowed-secret");
+
+    expect(outcome).toBe("conflict");
+    // Untouched: the live key still opens what it sealed.
+    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(live.secret);
+  });
+
+  it("treats a generation as used from the first seal, not from the tenth", async () => {
+    // One `sealingKey` is enough. A marker written on some later call would leave a window in which a
+    // Node holding one message answers as though it held none.
+    await loseTheVault();
+    const live = await vault(testEnv).sealingKey("credential");
+
+    expect(await vault(testEnv).restore("credential", live.generation, "escrowed")).toBe("conflict");
+  });
+
+  it("does not let the doctor's probe reserve a generation out of an escrow's reach", async () => {
+    /*
+     * The end-to-end statement of #138, at the seam where it was created. `runDoctor` initialises the vault
+     * exactly as a fresh install does; a redemption afterwards must still install. A regression to
+     * `sealingKey` here fails this and nothing else, because every other test in this file seals first.
+     */
+    await loseTheVault();
+    await runDoctor(testEnv, createSystemCtx());
+
+    const outcome = await vault(testEnv).restore("content", 1, "escrowed-after-a-diagnostic");
+
+    expect(outcome).toBe("adopted");
+    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe("escrowed-after-a-diagnostic");
+  });
+
+  it("reports an adopted generation as restored, and names what it displaced", async () => {
+    /*
+     * Both lists, and the reason is that they answer different questions. `restored` is what happened to the
+     * evidence — it opens now — and a reader totalling it must not have to know about adoption. `adopted` is
+     * what happened to the vault, which is that a key was replaced; leaving that to silence would make a
+     * recovery's record say less than the recovery did.
+     *
+     * The whole path, not a seam: mint against a vault that has sealed, lose it, let a diagnostic reserve
+     * generation 1 the way a fresh install does, and redeem. That is #92's destination Node exactly.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+    const sealed = await vault(testEnv).openingKey("content", 1);
+
+    await loseTheVault();
+    await runDoctor(testEnv, createSystemCtx());
+
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    expect(outcome.conflicted).toEqual({ content: [], credential: [] });
+    expect(outcome.restored.content).toContain(1);
+    // Every generation put back displaced a reserved one, because the diagnostic had reserved both.
+    expect(outcome.adopted).toEqual(outcome.restored);
+    // And the escrowed key is the one in the vault, which is the only thing that makes the mail readable.
+    expect((await vault(testEnv).openingKey("content", 1)).secret).toBe(sealed.secret);
+  });
+
+  it("leaves a used generation conflicted while adopting the reserved one beside it", async () => {
+    /*
+     * The mixed case, and the one a single-outcome implementation gets wrong. Content has sealed and
+     * credential has not, so one must be refused and the other installed **in the same redemption** — a
+     * version that decided per-redemption rather than per-generation passes every test above.
+     */
+    const { codes } = await mintRecoveryCodes(testEnv, createSystemCtx(), ORG);
+
+    await loseTheVault();
+    await vault(testEnv).sealingKey("content");
+    await vault(testEnv).ensureKey("credential");
+
+    const outcome = await redeemForVault(testEnv, createSystemCtx(), ORG, codes[0]!);
+
+    expect(outcome.conflicted.content).toContain(1);
+    expect(outcome.restored.credential).toContain(1);
+    expect(outcome.adopted.credential).toContain(1);
+    expect(outcome.adopted.content).toEqual([]);
   });
 });

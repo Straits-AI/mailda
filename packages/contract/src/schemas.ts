@@ -1456,6 +1456,17 @@ export const vaultRestoredResponse = z.object({
     credential: z.array(z.number().int().nonnegative()),
   }).strict(),
   /**
+   * The subset of `restored` that displaced a generation this Node had reserved and never sealed under.
+   *
+   * Present only when something was displaced. Counted in `restored` as well, because it was restored — the
+   * escrowed key is in the vault and the mail it sealed opens. Named separately because replacing a key is a
+   * different event from filling an empty slot, and a reader should not have to infer that from silence.
+   */
+  adopted: z.object({
+    content: z.array(z.number().int().nonnegative()),
+    credential: z.array(z.number().int().nonnegative()),
+  }).strict().optional(),
+  /**
    * What a collision means, present **exactly when `conflicted` is not empty** (#138).
    *
    * In the payload rather than only in a document, for the reason `recoveryCodesMintedResponse` gives about
