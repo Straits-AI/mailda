@@ -82,6 +82,7 @@ export interface ComposerContext {
   to?: string;
   subject?: string;
   body?: string;
+  bodyUnavailable?: "missing" | "unreadable" | null;
 }
 
 interface DraftResponse {
@@ -90,6 +91,8 @@ interface DraftResponse {
     to: string[];
     subject: string;
     body: string;
+    /** Why `body` is empty when the row says it should not be — see `drafts.ts` (#143). */
+    bodyUnavailable?: "missing" | "unreadable" | null;
     updatedAt: string;
   } | null;
 }
@@ -123,6 +126,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   const [to, setTo] = useState(context.to ?? "");
   const [subject, setSubject] = useState(context.subject ?? "");
   const [body, setBody] = useState(context.body ?? "");
+  const [bodyUnavailable, setBodyUnavailable] = useState(context.bodyUnavailable ?? null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "empty" });
   const [sealing, setSealing] = useState(false);
@@ -188,6 +192,14 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
         setTo(draft.to.join(", "));
         setSubject(draft.subject);
         setBody(draft.body);
+        /*
+         * An empty body this Node could not read is not an empty draft (#143). Left unsaid, the composer
+         * shows a blank box, and the ordinary response to a blank box is to type in it — which on the
+         * server would replace an object that is intact and merely waiting for a key. The write refuses,
+         * so nothing is lost either way; this is what stops somebody wasting the afternoon rewriting a
+         * draft that is still there.
+         */
+        setBodyUnavailable(draft.bodyUnavailable ?? null);
         // Recorded as already-saved, so resuming is not mistaken for editing.
         saved.current = { to: draft.to.join(", "), subject: draft.subject, body: draft.body };
         setPhase({ kind: "saved", at: draft.updatedAt });
@@ -545,6 +557,22 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
             required
           />
         </label>
+
+        {bodyUnavailable === null ? null : (
+          /*
+           * Said where the empty box is, not in a banner somewhere else (#143). The two states get different
+           * words because the reader does different things with them: one is recoverable and names the act
+           * that recovers it, the other is not and says so rather than offering hope.
+           */
+          <p className="notice bad" role="status">
+            {bodyUnavailable === "unreadable"
+              ? "This draft's text is stored on this Node and cannot be opened — it is sealed under a key "
+                + "generation the vault does not hold. It is not lost, and saving over it is refused. "
+                + "Restore the vault with one of the ten recovery codes, then reopen this draft."
+              : "This draft's text is gone: the row recording it is here and the stored object is not. The "
+                + "recipients and subject above are intact. Nothing can recover the writing."}
+          </p>
+        )}
 
         <p className="hint">
           This will be sent from the mailbox, not from you. Who wrote it is recorded here and does not

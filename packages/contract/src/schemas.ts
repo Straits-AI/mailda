@@ -797,6 +797,17 @@ export const draftRow = z.object({
   body: z.string(),
   /** The body's size beside the body, so a list can render one without measuring the other. */
   bodyBytes: z.number().int().nonnegative(),
+  /**
+   * Why `body` is empty when `bodyBytes` says it should not be (#143).
+   *
+   * `null` when the body is what was written. `unreadable` means the object is present and this vault cannot
+   * open it — the ADR 28 loss the recovery codes exist for, and it may clear. `missing` means the object is
+   * gone and the row saying it existed is not, which is ADR 32's reportable-only side.
+   *
+   * In the payload because it was silence, and an empty body in a composer is an invitation to type over
+   * evidence that was never lost. A client that cannot tell the states apart cannot help.
+   */
+  bodyUnavailable: z.enum(["missing", "unreadable"]).nullable(),
   updatedAt: isoDate,
 }).strict();
 

@@ -201,6 +201,50 @@ sign-in while its own `doctor` said `signing_key: E_EVIDENCE_AUTH_FAILED`.
 > Measured on the drill's destination: after redeeming, sign-in returned `200` for the first time — the
 > restored Node authenticated the source's administrator, with the source's user id.
 
+## Standing a destination up clean, and tearing one down
+
+A restore must go into a Node that has never been restored into. **A second restore on top of a first fails
+with `{"D1_RESET_DO":true}`** — no table, no constraint, no explanation, and wrangler's log says only
+`d1 execute import polling failed`. D1 rolls the whole file back, so nothing is damaged, but a retry is the
+first thing anybody does and it is not the way forward. Start clean instead.
+
+The order matters, and every step of it was found by getting it wrong:
+
+```sh
+export CLOUDFLARE_ACCOUNT_ID=<the account>
+cd apps/node/worker
+
+# 1. The Worker cannot be deleted while it consumes a queue (`code: 10064`).
+pnpm exec wrangler queues consumer worker remove mailda-sending-events mailda
+pnpm exec wrangler delete --env "" --force
+
+# 2. Every provisioned resource, because auto-provisioning **creates or fails and never adopts** — it will
+#    not reuse an existing `mailda-catalog`, and it fails *after* creating whatever came before it in the
+#    list, so a leftover from one attempt breaks the next.
+pnpm exec wrangler r2 object delete mailda-evidence/<key> --remote   # per key; a non-empty bucket refuses
+pnpm exec wrangler r2 bucket delete mailda-evidence
+pnpm exec wrangler d1 delete mailda-catalog -y
+pnpm exec wrangler queues delete mailda-sending-events
+
+# 3. The Workflow **survives the script's deletion** and keeps pointing at a script that no longer exists.
+#    It is also the one name that collides between Nodes (#99), so leaving it behind leaves the name taken:
+#    the next install either refuses on `mailda deploy`'s guard or silently takes it over.
+pnpm exec wrangler workflows delete mailda-butler-runs
+```
+
+Then `mailda deploy` takes the first-install path, provisions all three bindings, and applies the migrations.
+
+**Verify the teardown rather than assume it.** `wrangler d1 list`, `wrangler r2 bucket list`, `wrangler queues
+list` and `wrangler workflows list` should each show nothing named `mailda`, and the Worker's URL should answer
+404. The Workflow was the one that did not, which is why this check is written down rather than implied.
+
+**Do not use `wrangler deploy` to repair a Node whose D1 was deleted.** The binding is linked server-side —
+Cloudflare's changelog says resources *"stay linked across future deploys even without adding the resource
+IDs"* — so the deploy inherits a binding to the dead database and provisions nothing, while
+`wrangler d1 … CATALOG` resolves the same name to a different, live one. The two disagree silently, and
+`wrangler d1 migrations apply CATALOG --remote` then reports success having applied every migration to a
+database the Worker does not read. Delete and redeploy, as above.
+
 ## Proving it worked
 
 ```sh

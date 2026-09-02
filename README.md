@@ -2792,6 +2792,38 @@ collision branch exits non-zero took nine hundred characters from the branch's s
 below, and found *that* `fail(`. Swapping the branch's own `fail(` for a `process.stdout.write(` passed.
 Delimiting the slice at both ends killed it.
 
+### An empty box is not an empty draft (#143)
+
+The drill's last finding, and the one with a person on the other end of it. `GET /api/drafts/:id` on a Node
+whose vault was incomplete answered `200` with `body: ""` and **`bodyBytes: 180` beside it** — the row
+contradicting the answer, and nothing saying which of two very different states it was.
+
+`.catch(() => "")` swallowed both alike. The reasoning behind it was sound and is still in place: a draft
+whose body is gone should not fail to open, because that loses the recipients and the subject as well as the
+writing. What was missing is that the two cases need different words. **missing** is ADR 32's
+reportable-only side and nothing recovers it. **unreadable** means the object is *there*, sealed under a key
+generation the vault does not hold — the ADR 28 loss the recovery codes exist for, and it clears when one is
+redeemed.
+
+**And an empty box invites typing.** Two losses were reachable from there, and the second is the one
+reasoning alone would have missed:
+
+- a non-empty save re-seals to `bodyKeyFor(orgId, id)`, which is deterministic, so it **overwrites the object
+  it could not open** — recoverable evidence becomes gone evidence;
+- an empty save skips that branch entirely and leaves `body_key` pointing at the old object while writing
+  `body_sha256 = NULL` and `body_bytes = 0`. The bytes survive and stop being **verifiable**, because the
+  verifier skips a row carrying no recorded hash.
+
+So the read says which state it is, the composer says it where the empty box is, and the write refuses while
+the body is unreadable — naming the recovery code as the way out. Only `unreadable` is refused: blocking a
+write over a body that is genuinely gone would strand the recipients and subject too, punishing somebody for
+a loss they cannot undo. A mutation over-blocking that case **passed** until a test was written for it.
+
+The refusal is gated on the body actually changing, which costs nothing on autosave — and the gate turned out
+to be better than its own justification. A caller can only produce a matching digest by already holding the
+text, so writing it back is proof the writing was never lost, and it **repairs** the object. The test that
+went looking for persistence found that instead.
+
 ## The restore drill: what running it found that reading could not (#92, #138)
 
 Two full runs against two real Cloudflare accounts. The backup half works. The half it exists for does not, and
