@@ -280,6 +280,25 @@ export class KeyVault extends DurableObject<Env> {
     return outcome;
   }
 
+  /**
+   * Every generation this vault actually holds for a purpose, newest first (#142).
+   *
+   * Listed from storage rather than inferred as `1..current`, because a **restored** vault is exactly the
+   * case this exists for and it holds whatever the escrow carried — which need not be a contiguous run from
+   * one. Inferring would hand a caller generation numbers this vault cannot open and miss ones it can.
+   *
+   * Generation 0 is not here: it is the published constant, returned by `openingKey` without storage, and a
+   * caller that wants to try it does not need to ask.
+   */
+  async generations(purpose: KeyPurpose): Promise<number[]> {
+    const prefix = AT(purpose, 0).replace(/0$/, "");
+    const held = await this.ctx.storage.list<string>({ prefix });
+    return [...held.keys()]
+      .map((name) => Number(name.slice(prefix.length)))
+      .filter((generation) => Number.isInteger(generation) && generation > 0)
+      .sort((one, two) => two - one);
+  }
+
   /** What the vault holds, for `doctor`. Generations only — never key material. */
   async inventory(): Promise<{ content: number; credential: number }> {
     return {

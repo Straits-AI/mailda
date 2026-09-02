@@ -121,7 +121,7 @@ tracker](https://github.com/Straits-AI/mailda/issues):
 
 | | |
 |---|---|
-| **A restored Node can be signed into and cannot yet read its mail** | Measured against two live Cloudflare accounts (#92): backup, cross-account catalog restore, escrow redemption, and **sign-in at the destination as the source's administrator**. What fails is the evidence. The copy was made with `wrangler r2 object get \| put`, which carries every byte and drops the custom metadata naming the key that sealed it, so all three objects read `E_EVIDENCE_AUTH_FAILED` (#142). The check that would have caught it — `keyGeneration` in the inventory — reports 0 for everything, because the list never asks R2 for metadata (#141). No restored Node has yet read a message, and there is no measured RPO or RTO. The [runbook](./docs/disaster-recovery.md) says where it stops. |
+| **A restore has worked once, on three objects, with no domain** | Measured end to end against two Cloudflare accounts (#92): backup, cross-account catalog restore, escrow redemption, sign-in as the source's administrator, and `verify-evidence` reporting **3 checked, 0 faults** — the same draft byte-identical on both Nodes. That is the step #92 calls the one that makes the rest true, and it has been run **once**, over three objects, on a Node with no domain. It exercises every step in the sequence and none of the limits: a mailbox-sized restore has a D1 import size to respect and a bucket copy that must not be one request per object. Restore-to-receiving needs DNS and is unmeasured. The [runbook](./docs/disaster-recovery.md) records what was measured and the five defects the drill found. |
 | **Deployment promotes by hand on a Free account** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is not `ok` (#98). It has now been run against a live account ([receipt](./docs/receipts/deploy-drill-live-account.md)) — and `versions upload --preview-alias` returned **no reachable preview URL**, so the gate cannot probe the canary and degrades to a safe manual promotion. The cause is not established, which is why that receipt records it without a number. |
 | **Two Nodes in one account collide on the Workflow, and the deploy refuses** | Measured rather than suspected ([receipt](./docs/receipts/deploy-drill-live-account.md)): every other resource derives its name from the Worker's, the Workflow does not, and deploying a second Node **succeeded with exit 0 and silently took ownership** — leaving the first Node's `BUTLER_RUNS` binding pointing at a Workflow now running the second Node's code against the second Node's bindings. `mailda deploy` now refuses when the Workflow belongs to another Worker and names the fix. The config still ships a fixed name, so the refusal is the guard rather than the naming. |
 | **Mail security is absent** | No attachment scanning, no spam or phishing classification, no URL reputation, no suppression management. A public mailbox should not be accepting attachments. |
@@ -2836,8 +2836,20 @@ with the source's user id.
 **Then the evidence failed, and it was my own copy that did it.** `verify-evidence` opened all three objects
 and reported all three unreadable. `wrangler r2 object get | put` carries the bytes and drops the custom
 metadata naming the key that sealed them; there is no flag for it. The destination fell back to generation 0,
-the published constant, and authentication failed on every frame. The runbook warned about that command for
-its **cost**, which is the smaller objection, and now warns about correctness (#142).
+the published constant, and authentication failed on every frame.
+
+The first answer was a runbook warning and a list of approved copy tools. That is the wrong shape: **a Node's
+ability to read its own mail should not depend on an annotation any S3 client may normalise away**, and an
+operator recovering from a disaster is the least likely person to have used the blessed tool. So the
+generation went back to being a hint (#142). When an object carries no label, the read tries the generations
+the vault holds — sound rather than a guess, because AES-GCM authenticates: a wrong key fails rather than
+producing wrong plaintext, so the sweep either finds the key that works or proves none does.
+
+Bounded, and off the ordinary path entirely: an object with its label takes the route it always did. And the
+frame header has three unused bytes already covered by the authentication tag, so a later change can put the
+generation in the object's own bytes, where no copy can lose it.
+
+**With that, the drill completed**: `3 checked, 0 fault(s)`, and the same draft byte-identical on both Nodes.
 
 The check designed to catch exactly this was already built and already silent: the inventory reported
 `keyGeneration` per object as `0` for **everything**, because `list()` was never passed
