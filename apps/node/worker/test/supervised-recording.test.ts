@@ -11,6 +11,7 @@ import { recordDisclosure } from "../src/audit.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { login } from "../src/auth/session.ts";
 import { runDoctor, type Finding } from "../src/doctor.ts";
+import { metering } from "../src/cost-meter.ts";
 import { queueFor } from "../src/cases.ts";
 import { closeMatter, openMatter } from "../src/matters.ts";
 import { deliverDueNotifications } from "../src/notice-delivery.ts";
@@ -229,6 +230,183 @@ describe("every supervised read leaves an entry naming the grant it was made und
     expect(openedEntries[0]?.subject).toBe(grant.grantId);
     expect(JSON.parse(openedEntries[0]?.detail ?? "{}")).toMatchObject({ opened: RECEIPTS[0] });
     expect(JSON.parse(rawEntries[0]?.detail ?? "{}")).toMatchObject({ opened: RECEIPTS[1] });
+  });
+
+  it("records a search that matched nothing, which is the probe nothing recorded before (#158)", async () => {
+    /*
+     * The defect: on a **contentless** body index a null answer is as informative as a hit — ADR 28's
+     * amendment calls it *"the ability to confirm a guess"* — so a supervised reader could search a
+     * colleague's mailbox for a word, learn it does not occur, and leave the trail empty.
+     */
+    const token = await sessionFor(INVESTIGATOR);
+    const grant = await approvedGrant();
+
+    const answered = await listMessages(
+      testEnv, atTime(AUGUST_20), requestAs(token, "/api/messages?q=zzzznonexistentterm"),
+    );
+    const body = await answered.json() as { messages: unknown[] };
+    // It really did match nothing, so this is the empty case and not a page of results.
+    expect(body.messages).toHaveLength(0);
+
+    const entries = await auditRows("supervised.query_empty");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.subject).toBe(grant.grantId);
+    expect(entries[0]?.actor_user_id).toBe(INVESTIGATOR);
+    const detail = JSON.parse(entries[0]?.detail ?? "{}") as {
+      returned: number; termDigest: string; keyGeneration: number; mailboxId: string;
+    };
+    expect(detail.returned).toBe(0);
+    expect(detail.mailboxId).toBe(MAILBOX);
+    // Which key generation the digest is comparable within, so a rotation does not read as probing stopping.
+    expect(typeof detail.keyGeneration).toBe("number");
+
+    /*
+     * **The term is not in the entry, in any form the trail's reader could read.** This is the decision #158
+     * settled: an auditor learns that a mailbox was probed and how often, never for what. The digest is
+     * checked for shape rather than value, because its value depends on this Node's content key.
+     */
+    expect(entries[0]?.detail).not.toContain("zzzznonexistentterm");
+    expect(detail.termDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it("gives the same digest to the same term and a different one to a different term", async () => {
+    /*
+     * The property that makes the digest worth storing at all: *"this mailbox was probed 47 times, 12 of them
+     * the same term"*. Without stability there is nothing to count, and the choice would have collapsed into
+     * the count-only option it was picked over.
+     */
+    const token = await sessionFor(INVESTIGATOR);
+    await approvedGrant();
+
+    const search = async (term: string) => {
+      await listMessages(testEnv, atTime(AUGUST_20), requestAs(token, `/api/messages?q=${term}`));
+      const rows = await auditRows("supervised.query_empty");
+      return (JSON.parse(rows[rows.length - 1]?.detail ?? "{}") as { termDigest: string }).termDigest;
+    };
+
+    const first = await search("zzzzalpha");
+    const again = await search("zzzzalpha");
+    const other = await search("zzzzbeta");
+    expect(again).toBe(first);
+    expect(other).not.toBe(first);
+    // Case and surrounding whitespace collapse, so trivial variants count as the same probe.
+    expect(await search("ZZZZALPHA")).toBe(first);
+  });
+
+  it("records nothing for an unsearched supervised page past the end, which discloses nothing", async () => {
+    /*
+     * The control for #158, and the reason its condition is narrow. The original gate's argument — *"a page
+     * that matched nothing records nothing, so paging past the end of a scope records the last fruitful page
+     * and not the empty one after it"* — is still right for a **listing**. It is only a *search* that
+     * inverts it, because there the query is the disclosure.
+     *
+     * **Non-vacuity note:** the failure mode is an extra entry on every empty page any supervised reader ever
+     * loads, which no other assertion in this file would notice.
+     */
+    const token = await sessionFor(INVESTIGATOR);
+    await approvedGrant();
+
+    // A cursor past everything: an empty page, with no search term.
+    await listMessages(
+      testEnv, atTime(AUGUST_20),
+      /*
+       * The instant and the receipt id separated by **one space**, which is the format `next_cursor` returns.
+       * The first version of this test used a pipe and was refused with `E_PAGE_CURSOR_MALFORMED` — the
+       * refusal working, on a test that had guessed at the shape.
+       */
+      requestAs(token, `/api/messages?cursor=${
+        encodeURIComponent("1970-01-01T00:00:00.000Z rcpt_00000000000000000000000000")}`),
+    );
+    expect(await auditRows("supervised.query_empty")).toHaveLength(0);
+  });
+
+  it("records nothing when somebody with no grant searches their own mail", async () => {
+    /*
+     * The second control, and the one that keeps the cost claim honest: this branch reads the reader's live
+     * grants, and an ordinary reader has none — so a search by anybody but a supervised reader costs one
+     * query and writes nothing. That is every search on this Node except the case #158 is about.
+     */
+    const token = await sessionFor(MEMBER);
+    await listMessages(
+      testEnv, atTime(AUGUST_20), requestAs(token, "/api/messages?q=zzzznonexistentterm"),
+    );
+    expect(await auditRows("supervised.query_empty")).toHaveLength(0);
+  });
+
+  it("prints what the probe record costs, on both the path that pays it and the one that does not", async () => {
+    /*
+     * **Measured because the first version of the claim was wrong.** The comment beside this code said an
+     * ordinary reader's search *"costs nothing extra"*. It does: the grant read runs before anybody knows
+     * whether there are grants to find, and *"does this reader hold a live grant"* is the query — there is no
+     * cheaper question to ask first.
+     *
+     * `supervised-access.md` refused this trade once, on the grounds that it meant *"a second query on the
+     * hot read path for a record of having seen nothing"*. So the figure that matters is not the probe's
+     * total, it is **where** the cost falls: an unsearched listing must be unchanged, and it is the searched
+     * empty page that pays.
+     *
+     * Printed rather than bounded. A budget key here would need a receipt for a figure whose interesting
+     * property is a difference, and the differences are asserted below.
+     */
+    const grantToken = await sessionFor(INVESTIGATOR);
+    await approvedGrant();
+    const plainToken = await sessionFor(MEMBER);
+
+    const measure = async (token: string, path: string) => {
+      const metered = metering(testEnv);
+      await listMessages(metered.env, atTime(AUGUST_20), requestAs(token, path));
+      return metered.cost;
+    };
+
+    const pastTheEnd = `/api/messages?cursor=${
+      encodeURIComponent("1970-01-01T00:00:00.000Z rcpt_00000000000000000000000000")}`;
+    const SEARCH = "/api/messages?q=zzzznonexistentterm";
+
+    /*
+     * **Like against like, and the first version of this test was not.** It compared a *fruitful* listing
+     * against an empty search, and the fruitful one costs more because it writes a `supervised.query` entry
+     * for the rows it returned — so the difference came out negative and measured nothing about the probe.
+     *
+     * Every pair below returns **zero rows**, so no other recording is in the way.
+     */
+    const plainEmptyListing = await measure(plainToken, pastTheEnd);
+    const plainEmptySearch = await measure(plainToken, SEARCH);
+    const grantEmptyListing = await measure(grantToken, pastTheEnd);
+    const grantEmptySearch = await measure(grantToken, SEARCH);
+
+    console.log(
+      `MEASURE supervised_probe  plain_empty_listing=${plainEmptyListing.subrequests}  `
+      + `plain_empty_search=${plainEmptySearch.subrequests}  `
+      + `grant_empty_listing=${grantEmptyListing.subrequests}  `
+      + `grant_empty_search=${grantEmptySearch.subrequests}  `
+      + `probe_do_rpcs=${grantEmptySearch.doRpcs}  probe_batches=${grantEmptySearch.d1Batches}`,
+    );
+
+    /*
+     * **The hot path, which is the assertion the refused trade was about.** An *unsearched* empty page must
+     * cost the same whether or not the reader holds a grant: the branch is gated on `page.q !== null`, so a
+     * mutation removing that gate makes both of these rise and this fire.
+     */
+    expect(grantEmptyListing.subrequests).toBe(plainEmptyListing.subrequests);
+    expect(grantEmptyListing.doRpcs).toBe(0);
+
+    /*
+     * **What every reader pays on a searched empty page: one indexed read.** This is the figure the comment
+     * in `authz-read.ts` originally got wrong by claiming it was zero — a reader with no grant still pays the
+     * query that establishes they have none.
+     */
+    expect(plainEmptySearch.subrequests - plainEmptyListing.subrequests).toBe(1);
+    // And nothing more: no key, no entry, because there was no grant to attribute a probe to.
+    expect(plainEmptySearch.doRpcs).toBe(0);
+    expect(plainEmptySearch.d1Batches).toBe(0);
+
+    /*
+     * **What a supervised reader pays on top**: the vault round trip for the key, and one batch carrying the
+     * entry. The `+1` beyond those two is the audit chain's tip read, which every audited act pays.
+     */
+    expect(grantEmptySearch.subrequests - plainEmptySearch.subrequests).toBe(3);
+    expect(grantEmptySearch.doRpcs).toBe(1);
+    expect(grantEmptySearch.d1Batches).toBe(1);
   });
 
   it("records nothing when a standing relation is what answered", async () => {

@@ -575,6 +575,12 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     actions: [
       "approval.requested", "supervised.granted",
       "supervised.query", "supervised.opened", "supervised.attachment",
+      /*
+       * The probe (#158). Against this table for `supervised.query`'s reason and one more: it names a grant
+       * and a mailbox, and its whole content is that a reader learned something about that mailbox from an
+       * **empty** answer. There is no message row to hang it on — that is the case it exists for.
+       */
+      "supervised.query_empty",
     ],
   },
   notifications: {
@@ -735,8 +741,20 @@ describe("audit coverage", () => {
     // It is the one disclosure action emitted for an **ordinary** reader as well as a supervised one, which
     // is the point — the three above only ever fire under a grant, so the question "who has a copy of this
     // message" was unanswerable for everybody who held the plain relation.
+    /*
+     * `supervised.query_empty` is the fifth (#158), and it is the one that tests whether this classification
+     * was understood or merely applied. The others withhold **bytes** until the entry lands. This one
+     * withholds an *absence*: a Node that cannot append it does not answer the search, so a supervised reader
+     * never learns "no match" off the record.
+     *
+     * That is the contract read exactly as written — *if it cannot be recorded, it does not happen* — for a
+     * disclosure that consists of nothing being returned. Putting it in `standalone` instead would have been
+     * the easy reading and the wrong one: a probe recorded on a best-effort basis is a probe that goes
+     * unrecorded precisely when the trail is under pressure.
+     */
     expect(disclosure).toEqual([
       "message.exported", "supervised.attachment", "supervised.opened", "supervised.query",
+      "supervised.query_empty",
     ]);
   });
 

@@ -12,9 +12,11 @@ import { CallerError, unprocessable } from "./errors.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 import {
-  buildSupervisedQuery, liveGrantsBySubject, liveGrantOnMailbox, SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA,
+  buildSupervisedProbe, buildSupervisedQuery, liveGrantsBySubject, liveGrantOnMailbox,
+  SCOPES_FOR_CONTENT, SCOPES_FOR_METADATA,
   supervisedActEvent, type SupervisedAct, type SupervisedScope,
 } from "./supervised.ts";
+import { digestProbe } from "./probe-digest.ts";
 
 /**
  * Read authorization for Layer 1 (§7).
@@ -1612,6 +1614,65 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     await recordDisclosure(env, ctx, who.orgId, [...byGrant].flatMap(
       ([grantId, seen]) => buildSupervisedQuery(grantId, who.userId, seen.mailboxId, seen.ids),
     ));
+  } else if (page.q !== null) {
+    /*
+     * **A supervised search that matched nothing** (#158), which the branch above cannot record because there
+     * is no row to learn a grant from.
+     *
+     * The gate beside `supervised.query` is right for a listing — paging past the end of a mailbox discloses
+     * nothing — and wrong for a search. ADR 28's amendment says what the contentless body index gives an
+     * attacker: *"the ability to confirm a guess"*. A null answer is the other half of that capability, so a
+     * supervised reader could search a colleague's mailbox for a word, learn it does not occur, and leave the
+     * trail empty. Repeated, that is dictionary-style probing with §7's record blind to it.
+     *
+     * ## The condition is narrow on purpose, and each clause excludes a case that discloses nothing
+     *
+     * `byGrant.size === 0` — a page that returned supervised rows is recorded by the branch above.
+     * `page.q !== null` — an unsearched supervised page past the end of a mailbox genuinely discloses
+     * nothing, which is the original argument and it still holds.
+     * And the grant read below returning nothing — somebody searching only their own mail has probed nobody.
+     *
+     * ## What this costs, stated correctly rather than optimistically
+     *
+     * The first draft of this comment said *"an ordinary reader's search costs nothing extra"*. **That is
+     * false**, and the ordering above is why: the grant read runs before anybody knows whether there are
+     * grants to find, so a reader with none pays it too. It cannot be avoided by asking a cheaper question
+     * first — "does this reader hold a live grant" *is* the query.
+     *
+     * So the honest figure is **one indexed read on a searched page that returned nothing**, for every
+     * reader, and the digest and the audit write on top of that only when a grant is found. An unsearched
+     * listing — the hot path `supervised-access.md` was protecting when it refused this trade — is untouched.
+     * `supervised-recording.test.ts` measures both.
+     */
+    const scope = liveGrantsBySubject(who.orgId, who.userId, grantsAt, SCOPES_FOR_METADATA);
+    /*
+     * The **same query the page was authorized by**, executed rather than re-derived. Writing a second
+     * definition of "which grants are live for this reader" is how the record would come to disagree with the
+     * read it describes — and the disagreement would be silent, because both would be plausible.
+     *
+     * `SCOPES_FOR_METADATA` is the wider set (`metadata` and `content`), which is exactly what `listMessages`
+     * accepts. A `metadata` grant reaches the subject index, and *"does this word appear in a subject line"*
+     * is the same confirm-a-guess question the body index answers.
+     */
+    const probed = await env.CATALOG.prepare(scope.sql).bind(...scope.params)
+      .all<{ mailbox_id: string; grant_id: string }>();
+
+    if (probed.results.length > 0) {
+      /*
+       * The digest is computed once for the term and shared across the entries, because it is the same probe
+       * — one query, one word, several mailboxes it was not in. Computing it per grant would be the same value
+       * derived N times through N Durable Object round trips.
+       */
+      const probe = await digestProbe(env, page.q);
+      /*
+       * `recordDisclosure`, which **throws** where `audit` swallows. That is the contract read exactly as
+       * written for a case where the disclosure is the *absence* of a result: a Node that cannot append this
+       * entry does not answer the search, so the reader never gets to learn "no match" off the record.
+       */
+      await recordDisclosure(env, ctx, who.orgId, probed.results.map(
+        (row) => buildSupervisedProbe(row.grant_id, who.userId, row.mailbox_id, probe),
+      ));
+    }
   }
 
   return Response.json({
