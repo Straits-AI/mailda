@@ -109,11 +109,17 @@ async function answers(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   template: string,
   init: { params?: Record<string, string>; body?: unknown; cookie?: string } = {},
+  /*
+   * A query string, appended verbatim. Added for `GET /oauth/cloudflare/callback`, whose whole input is
+   * query parameters Cloudflare chose — there is no request schema to put them in, and building one would
+   * describe a body that route never receives.
+   */
+  query = "",
 ): Promise<unknown> {
   const spec = route(method as never, template as never);
   expect(spec.response, `${method} ${template} has no response schema to check`).toBeDefined();
 
-  const response = await SELF.fetch(`${ORIGIN}${path(spec, init.params ?? {})}`, {
+  const response = await SELF.fetch(`${ORIGIN}${path(spec, init.params ?? {})}${query}`, {
     method,
     headers: {
       "content-type": "application/json",
@@ -226,6 +232,67 @@ describe("every schema-bearing route answers what the contract says it does", ()
     });
     const reported = JSON.stringify(await answers("GET", "/api/transport", { cookie: held }));
     expect(reported).not.toContain("a-token-value");
+  });
+
+  it("the Cloudflare grant's five routes, and none of them returns a secret", async () => {
+    /*
+     * The third place `.strict()` is a security property, and the widest: the binding row holds a client
+     * secret, an access token and a refresh token, and `GET /api/provider` reads it to derive a state. The
+     * schema has no field for any of the three, so a handler that grew one fails here rather than leaking.
+     *
+     * Driven end to end rather than named in `response-drivers-world.test.ts`'s exception list, because an
+     * undriven route's success shape is unchecked — and the shape is what the protection *is*.
+     */
+    const held = await cookie();
+
+    const before = await answers("GET", "/api/provider", { cookie: held }) as {
+      provider: { state: string; evidence: string };
+      ceremony: { redirectUri: string; unmeasured: string };
+    };
+    expect(before.provider.state).toBe("no_client");
+    // The ceremony's redirect URI is this Node's own origin, which is the one value only the request knows.
+    expect(before.ceremony.redirectUri).toBe(`${ORIGIN}/oauth/cloudflare/callback`);
+    // The admission is a required field, so a surface cannot render the steps and drop it.
+    expect(before.ceremony.unmeasured.length).toBeGreaterThan(40);
+
+    const registered = await answers("PUT", "/api/provider/client", {
+      body: { clientId: "cf-contract-client", clientSecret: "the-contract-secret" }, cookie: held,
+    }) as { provider: { state: string; clientId: string } };
+    expect(registered.provider.state).toBe("awaiting_consent");
+    expect(registered.provider.clientId).toBe("cf-contract-client");
+
+    const authorized = await answers("POST", "/api/provider/authorize", {
+      body: { scopes: ["a-scope"] }, cookie: held,
+    }) as { authorize: { url: string } };
+    const authorizeUrl = new URL(authorized.authorize.url);
+    expect(authorizeUrl.host).toBe("dash.cloudflare.com");
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    const state = authorizeUrl.searchParams.get("state")!;
+
+    /*
+     * The callback, driven with an `error` so nothing has to reach Cloudflare. It is the branch that matters
+     * most anyway: a declined consent must answer 200 with `ok: false` rather than write a grant, because a
+     * refusal reported as a connection is the failure #162's honest states exist to prevent.
+     */
+    const consent = await answers("GET", "/oauth/cloudflare/callback", {
+      params: {},
+    }, `?state=${encodeURIComponent(state)}&error=access_denied&error_description=declined`) as {
+      consent: { ok: boolean; error: string; scopesDeclined: string[] };
+    };
+    expect(consent.consent.ok).toBe(false);
+    expect(consent.consent.error).toBe("access_denied");
+    expect(consent.consent.scopesDeclined).toContain("a-scope");
+
+    const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
+      provider: { state: string; evidence: string };
+    };
+    expect(reported.provider.state).toBe("account_not_selectable");
+    // The contract carries `evidence`, so no generated surface can show this state as a measurement.
+    expect(reported.provider.evidence).toBe("reported");
+
+    // And no secret anywhere in any of the five responses.
+    const everything = JSON.stringify([before, registered, authorized, consent, reported]);
+    expect(everything).not.toContain("the-contract-secret");
   });
 
   it("the Butler authoring routes", async () => {
@@ -1690,8 +1757,17 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * another account is a copy nobody has checked without it. Every one of the four prefixes turns out to
      * have a referent row carrying its objects' SHA-256, so a restored copy is checkable object by object
      * rather than in aggregate.
+     *
+     * The 105th through 109th are #162 L1's, and they arrived as a set because a grant is not usable in
+     * pieces: `GET /api/provider`, `PUT /api/provider/client`, `POST /api/provider/authorize`,
+     * `POST /api/provider/unselectable` and `GET /oauth/cloudflare/callback`.
+     *
+     * They matter to this count more than most, because the binding row holds **three** secrets — a client
+     * secret, an access token and a refresh token — and `GET /api/provider` reads it to derive a state. That
+     * makes `.strict()` a security property here for the third time in this file, and an undescribed route's
+     * success shape is exactly what nothing would have been checking.
      */
-    expect(coverage.total).toBe(104);
+    expect(coverage.total).toBe(109);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

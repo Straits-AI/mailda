@@ -378,6 +378,48 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "PUT /api/transport",
   ),
   ...changing("operator",
+    /*
+     * The Node's own Cloudflare grant (#162 L1, ADR 42). `operator` rather than `governed`, for the
+     * distinction this file draws: a second approver could not unlock these, because they are acts of
+     * *running* the Node — and two of them cannot be performed by a machine at all.
+     *
+     * **Registering the client and beginning a consent are unfinishable by construction.** The client id and
+     * secret exist only after a person has created them in Cloudflare's dashboard, and the authorization URL
+     * has to be opened by whoever holds the Cloudflare account, in a browser, past Cloudflare's own sign-in
+     * challenge. An agent offered these would read a printed ceremony and have nowhere to perform it — the
+     * offer-a-caller-can-never-complete failure this file's header names, in its purest form.
+     *
+     * **The report of an unselectable account is withheld for a different and sharper reason.** It is the one
+     * fact in this product recorded as *reported rather than observed*, precisely because the Node cannot
+     * measure it. A machine permitted to assert it could write an unfalsifiable claim about an
+     * administrator's account settings into the audit trail, and the trail's whole value is that a reported
+     * fact and a measured one stay distinguishable. Only a person who actually looked at a consent screen
+     * can make that report.
+     *
+     * **Both GETs are declared, because the derivation rule would have offered them.** The same trap
+     * `GET /api/evidence/inventory` fell into, and the declaration is what withholds — prose is not.
+     *
+     *   - `GET /api/provider` names which Cloudflare account holds this Node and which OAuth client reaches
+     *     it. That is the map of the infrastructure the mail sits on, handed to something that has no act on
+     *     it — and it carries the ceremony, which is an instruction for a person at a dashboard.
+     *   - `GET /oauth/cloudflare/callback` is not a question at all. It **consumes a single-use nonce** and
+     *     exchanges an authorization code. A machine that fetched it would spend a consent in flight, and
+     *     the operator waiting on that redirect would meet `E_PROVIDER_STATE_CONSUMED` from a request they
+     *     did not make. A `GET` that changes something is exactly what the exceptions list is for.
+     */
+    "The Node's own Cloudflare grant. Registering the OAuth client and beginning a consent cannot be "
+    + "completed by a machine — both require a person in Cloudflare's dashboard past its own sign-in "
+    + "challenge — and reporting an unselectable account is the one fact here recorded as reported rather "
+    + "than observed, so only somebody who looked at the consent screen may assert it. The two reads are "
+    + "declared because the derivation rule would otherwise offer them: one is the map of the infrastructure "
+    + "the mail sits on, and the other consumes a single-use nonce.",
+    "GET /api/provider",
+    "PUT /api/provider/client",
+    "POST /api/provider/authorize",
+    "POST /api/provider/unselectable",
+    "GET /oauth/cloudflare/callback",
+  ),
+  ...changing("operator",
     "Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and "
     + "reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.",
     "POST /api/maintenance/reseal",

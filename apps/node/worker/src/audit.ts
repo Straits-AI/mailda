@@ -727,6 +727,63 @@ export const AUDIT_ACTIONS = {
     standalone: true,
     says: "Somebody checked this organization's stored evidence against the hashes taken when it arrived.",
   },
+
+  /**
+   * The Node being given its own Cloudflare OAuth client (#162 L1, ADR 42).
+   *
+   * Audited for `transport.configured`'s reason and a wider one. This is not configuration: it decides which
+   * Cloudflare account this Node can act in, and every later provisioning act inherits it. The question an
+   * investigator has is *when did this Node gain the ability to change infrastructure, and who gave it that*.
+   *
+   * **The entry names the client id and the redirect URI and never the secret**, not even its length. A client
+   * id is not a secret — it appears in every authorization URL by construction — and the redirect URI is the
+   * half worth having later, because a URI that is not this Node's hostname is the shape of a grant pointed
+   * somewhere else.
+   */
+  "provider.client_registered": {
+    says: "An administrator gave this Node its own Cloudflare OAuth client.",
+  },
+
+  /**
+   * A consent that produced a grant.
+   *
+   * `actorUserId` is null, and that is accurate rather than a gap: the callback arrives from Cloudflare, and
+   * the person who authorized it did so in Cloudflare's own session. Who *started* the authorization is in
+   * `provider_authorizations.started_by`; who granted it is a fact only Cloudflare holds.
+   *
+   * **The entry names the scopes granted and those declined, and neither token.** The scopes are the half that
+   * matters later — the question is what this Node was permitted to do, not that it was permitted something.
+   */
+  "provider.consent_granted": {
+    says: "This Node obtained a Cloudflare grant for an account, with the scopes named in the entry.",
+  },
+
+  /**
+   * A consent that did not.
+   *
+   * Recorded because a declined consent and a consent that was never attempted are different histories, and
+   * only one of them means somebody looked at what this Node asked for and said no. Carries Cloudflare's own
+   * error code rather than a paraphrase.
+   */
+  "provider.consent_refused": {
+    standalone: true,
+    says: "A Cloudflare consent did not produce a grant, and the entry carries Cloudflare's own reason.",
+  },
+
+  /**
+   * An operator reporting that the consent screen did not list their account (#162).
+   *
+   * **The one entry in this table recording something the Node cannot observe**, and it says so in its own
+   * detail. An account administrator can disable public OAuth app access, and the consequence is an account
+   * that is simply absent from the consent screen — no error, and no response this Node ever sees.
+   *
+   * It is here rather than in a log because it is the operator's account of why a connection did not happen,
+   * and an audit trail read months later is exactly where a reported fact gets mistaken for a measured one.
+   */
+  "provider.account_reported_unselectable": {
+    says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
+      + "account of it, not this Node's measurement.",
+  },
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

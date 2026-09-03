@@ -252,6 +252,9 @@ const EXPECTED_TABLES = [
   // #109 L2: the agent identity and its pinned action ceiling.
   "agents",
   "agent_actions",
+  // Migration 0053 (#162 L1, ADR 42): the Node's own Cloudflare grant, and a consent in flight.
+  "provider_binding",
+  "provider_authorizations",
 ];
 
 export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
@@ -308,6 +311,7 @@ export async function runDoctor(rawEnv: Env, ctx: Ctx): Promise<DoctorReport> {
     ...(await checkButlerPauses(env, claim?.org_id ?? null)),
     planCheck(),
     ...(await checkTransportAdapters(env)),
+    ...(await checkProviderBinding(env)),
     ...(await checkInboundRouting(env, claim?.org_id ?? null)),
     ...(await checkRecoveryEscrow(env, claim?.org_id ?? null)),
     ...(await checkSearchIndex(env, claim?.org_id ?? null)),
@@ -2917,4 +2921,144 @@ export function withoutDataFindings(report: DoctorReport, reason: ReductionReaso
       },
     ],
   };
+}
+
+/**
+ * The Node's own Cloudflare grant, and whether the endpoints it holds are still where it read them (#162 L1).
+ *
+ * ## Two findings, because they fail for unrelated reasons
+ *
+ * **The connection state.** #162 requires every state be distinguishable in the interface *and* in the CLI,
+ * and `doctor` is the CLI's. It reports the state and, for the one state the Node cannot observe, says which
+ * of the two it is — an operator reading `account_not_selectable` in a report months later has no other way
+ * to know it was somebody's account of a consent screen rather than a measurement.
+ *
+ * **The endpoints.** `cloudflare-grant.ts` holds four URLs as constants and its own docstring says `doctor`
+ * compares them against live discovery. That promise is this check. It is here rather than on the
+ * authorization path for the reason the receipt records: `dash.cloudflare.com` answers the RFC 8414 path with
+ * a **200 carrying HTML**, so a Node discovering its endpoints at runtime would parse a web page and fail at
+ * the moment an operator was trying to connect.
+ *
+ * A network failure here is `ok` with a `report`, not a warning. `doctor` runs on a schedule and in a deploy,
+ * and a Node whose report degraded because a third party was briefly unreachable would teach an operator to
+ * ignore the report — the failure mode `checkTransportAdapters` and the deploy's canary both avoid.
+ */
+async function checkProviderBinding(env: Env): Promise<Finding[]> {
+  const { providerStatus, CLOUDFLARE_OAUTH } = await import("./provider/cloudflare-grant.ts");
+  const status = await providerStatus(env).catch(() => null);
+
+  const findings: Finding[] = [];
+
+  if (status === null) {
+    findings.push({
+      check: "provider_binding",
+      severity: "report",
+      discloses: "infrastructure",
+      ok: true,
+      detail: "The provider binding could not be read, which on a Node predating migration 0053 means the "
+        + "table does not exist yet rather than that anything is wrong.",
+    });
+  } else {
+    /*
+     * The state, and what kind of fact it is. `evidence` is carried into the detail rather than left in the
+     * API's JSON, because this text is what ends up pasted into an issue.
+     */
+    const said: Record<string, string> = {
+      no_client: "This Node has no Cloudflare OAuth client. It holds no grant and can read nothing about the "
+        + "account it runs in.",
+      awaiting_consent: "A Cloudflare OAuth client is registered and nobody has consented yet.",
+      account_not_selectable: "An operator reported that their account was not listed on Cloudflare's "
+        + "consent screen. This is their account of it and not this Node's measurement — the Node cannot see "
+        + "which accounts a consent screen lists, because the authorization request never returns.",
+      consent_granted: "This Node holds a Cloudflare grant. Nothing has been read with it yet.",
+      grant_refused: "Cloudflare rejected the grant this Node holds. Mail, users, Butlers, schedules, the "
+        + "API and recovery are unaffected: nothing on those paths uses this grant.",
+    };
+    findings.push({
+      check: "provider_binding",
+      /*
+       * **`report` with `ok: false`, which is the first finding in this file to use that pair.**
+       *
+       * `degraded` means *something is wrong here*, and it escalates the verdict — which `mailda deploy`
+       * reads as a failure. #162 requires that revoking this grant in Cloudflare leaves mail, users,
+       * Butlers, schedules, the API, backup and recovery working, and it does: nothing on those paths
+       * touches it. A Node reporting `degraded` because its operator revoked a grant on purpose would fail
+       * a deploy for a deliberate act, which is the failure this file's own comments call out twice.
+       *
+       * So the finding is not `ok` — something a person may want to act on is true — and the verdict does
+       * not move. That distinction is what `ok` and `severity` are two fields for.
+       */
+      severity: "report",
+      discloses: "infrastructure",
+      ok: status.state !== "grant_refused",
+      detail: `${said[status.state] ?? status.state} (state=${status.state}, evidence=${status.evidence}`
+        + `${status.clientId === null ? "" : `, client=${status.clientId}`}`
+        + `${status.accountId === null ? "" : `, account=${status.accountId}`}`
+        + `${status.scopesGranted === null ? "" : `, scopes=${status.scopesGranted.join(" ")}`})`,
+      ...(status.state === "grant_refused"
+        ? {
+          fix: "authorize again from the connection screen. If the grant was revoked deliberately, that is "
+            + "the expected state and nothing needs fixing — this Node keeps running without it",
+        }
+        : {}),
+      ...(status.state === "consent_granted" && status.accountId === null
+        ? {
+          fix: "no fix: Cloudflare's token response did not name the account, which this repository has not "
+            + "measured either way. The account is resolved by the first call that needs it",
+        }
+        : {}),
+    });
+  }
+
+  let live: Record<string, unknown> | null = null;
+  try {
+    const response = await fetch(CLOUDFLARE_OAUTH.discovery, { headers: { accept: "application/json" } });
+    live = response.ok ? ((await response.json()) as Record<string, unknown>) : null;
+  } catch {
+    live = null;
+  }
+
+  if (live === null) {
+    findings.push({
+      check: "provider_oauth_endpoints",
+      severity: "report",
+      discloses: "infrastructure",
+      ok: true,
+      detail: `Cloudflare's discovery document at ${CLOUDFLARE_OAUTH.discovery} could not be read, so the `
+        + "four endpoints this Node holds were not compared against it. Not a failure: a report that "
+        + "degraded because a third party was briefly unreachable is a report an operator learns to ignore.",
+    });
+    return findings;
+  }
+
+  const expected: Array<[string, string]> = [
+    ["issuer", CLOUDFLARE_OAUTH.issuer],
+    ["authorization_endpoint", CLOUDFLARE_OAUTH.authorize],
+    ["token_endpoint", CLOUDFLARE_OAUTH.token],
+    ["revocation_endpoint", CLOUDFLARE_OAUTH.revoke],
+  ];
+  const drifted = expected.filter(([field, held]) => live?.[field] !== held);
+
+  findings.push({
+    check: "provider_oauth_endpoints",
+    // Same pair, same reason: a moved Cloudflare endpoint stops *new* connections and touches no mail, so it
+    // is a finding to act on rather than a reason for this Node's deploy to fail.
+    severity: "report",
+    discloses: "infrastructure",
+    ok: drifted.length === 0,
+    receipt: "docs/receipts/cloudflare-oauth-endpoints.md",
+    detail: drifted.length === 0
+      ? `All four OAuth endpoints this Node holds match Cloudflare's discovery document (${expected.length} `
+        + "checked: issuer, authorization, token, revocation)."
+      : `${drifted.length} of ${expected.length} OAuth endpoints have moved: `
+        + drifted.map(([field, held]) => `${field} is ${String(live?.[field])}, this Node holds ${held}`)
+          .join("; "),
+    ...(drifted.length === 0 ? {} : {
+      fix: "the endpoints are constants in src/provider/cloudflare-grant.ts with a receipt behind them. "
+        + "Update both, and re-read cloudflare-oauth-endpoints.md's stale_when — a moved endpoint is one of "
+        + "the conditions it names",
+    }),
+  });
+
+  return findings;
 }
