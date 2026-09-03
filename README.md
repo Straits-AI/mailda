@@ -2920,6 +2920,57 @@ reads `ingress_receipts` and this Node's evidence is drafts (#131). `verify-back
 chain that said it: *"the sweep that ran when this backup was taken checked **nothing** … That is not a clean
 bill of health."*
 
+## Onboarding: what a Node's own Cloudflare grant costs, and one path that measurement closed (#108, ADR 42)
+
+#108 charted a journey in which Mailda provisions a Cloudflare account for a customer who has none, deploys
+into it, and hands over a claim URL. **That path is not available to this product**, and it was closed by
+running it rather than by reading the product list
+([receipt](./docs/receipts/temporary-account-provisioning.md)):
+
+```text
+Temporary account ready:  Claim within: 60 minutes
+Provisioning CATALOG (D1 Database)...  ✨ provisioned
+✘ /accounts/…/r2/buckets failed.  Authentication error [code: 10000]
+```
+
+An **authentication** error rather than a capability one, so it reads as a missing scope and there is none to
+add. It fails *part way through* — D1 is created first, and since auto-provisioning never adopts, the second
+attempt blames a Workers Free D1 quota and offers an upgrade link, misdirecting at billing for a
+product-support gap. And the temporary account is on **Workers Free**, which ADR 25 requires to be Paid, so
+the path stays closed even if R2, Workflows and Email Sending are added later.
+
+A second objection survives any product-list change. The claim window is sixty minutes and an unclaimed
+account is deleted with its resources — while ADR 28 puts the root keys in Durable Object storage, which
+#92's drill measured is **not** carried by a D1 export. A Node claimed inside an account that then expires
+leaves its operator holding ten recovery codes for a vault that no longer exists: the escrow's premise
+inverted, silently.
+
+**So the bootstrap orchestrator is dropped too**, because it existed for exactly one reason — *"the Node
+cannot store the grant before the Node exists"* — and that window was created by the path just struck. The
+operator has or creates an account, deploys, and only then is there a grant to store. Operating a hosted
+service to solve a problem measurement removed is the dependency AGENTS.md calls a hostage.
+
+**What replaces it: the Node is its own OAuth client.** Cloudflare supports only the Authorization Code flow
+for third-party clients, so a grant needs a browser redirect — and the Node has a browser interface. A shared
+Mailda-owned *public* client cannot serve it, because `redirect_uris` are enumerated per client and every
+Node has its own hostname, so the code would land on a Mailda-operated redirect and make Mailda the custodian
+by construction. A **private** client is authorizable only by members of the account that created it — the
+customer's — so the Node holds its own client credentials and **no Mailda-operated service ever holds a
+Cloudflare grant at any point.** That is the only shape in which "disconnecting Mailda stops nothing" needs
+no argument, because there was never anything to disconnect.
+
+The cost is one dashboard ceremony, stated rather than hidden: the operator creates an OAuth client and gives
+the Node two values. It is reduced rather than eliminated — the Node prints the exact steps with the required
+scopes and verifies the result.
+
+And the destination is restated, because as written it was unreachable. It promised a journey without
+learning the dashboard for *every* customer, and account creation cannot be orchestrated for this product —
+so a customer without a Cloudflare account performs one named ceremony first. #108's own rule is to remove
+routine dashboard work, not to disguise legal or security decisions as automation.
+
+One verification is outstanding and named rather than assumed: whether Cloudflare accepts a `workers.dev`
+hostname as a redirect target. If it does not, this needs a custom domain per Node and the ceremony grows.
+
 ## The brand reached one shell and not the other (#128)
 
 The palette, the fonts and `brand.ts` all shipped. `markSvg()` was consumed **exactly once** — by `ui.ts`,
