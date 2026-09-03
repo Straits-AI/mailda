@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are eight", () => {
+  it("derives read for every GET but the named exceptions, and there are ten", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -78,12 +78,25 @@ describe("every route is classified, and a new one cannot default", () => {
      * ceiling is chosen from — every name, and the routes behind each one — so a machine reading it is reading
      * the list of what machines may be granted. That is the map from the other direction, and it is withheld
      * for the same reason `GET /api/agents` is.
+     *
+     * The last two are #162's, and they are the two most different reasons on this list.
+     *
+     * `GET /api/provider` names which Cloudflare account holds this Node and which OAuth client reaches it —
+     * the map of the infrastructure the mail sits on, handed to something with no act on it. It also carries
+     * a printed ceremony, which is an instruction for a person standing at a dashboard.
+     *
+     * `GET /oauth/cloudflare/callback` is the one entry here that is **not a read at all**. It consumes a
+     * single-use nonce and exchanges an authorization code, so a machine that fetched it would spend a
+     * consent in flight — and the operator waiting on that redirect would meet `E_PROVIDER_STATE_CONSUMED`
+     * from a request they did not make. A `GET` that changes something is exactly what an exception list is
+     * for, and the derivation rule cannot see the difference.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
       "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit",
       "GET /api/evidence/inventory", "GET /api/logs",
-      "GET /api/people/:userId/mailboxes", "GET /api/search/failed", "GET /index.html",
+      "GET /api/people/:userId/mailboxes", "GET /api/provider", "GET /api/search/failed",
+      "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {

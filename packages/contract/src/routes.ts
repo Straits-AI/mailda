@@ -512,6 +512,49 @@ export const ROUTES = [
     request: S.transportRequest, response: S.transportConfiguredResponse,
   },
 
+  // ---- the Node's own Cloudflare grant (#162 L1, ADR 42) -------------------------------------------
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider",
+    summary: "Whether this Node holds a Cloudflare grant, and the guided steps to give it one",
+    response: S.providerResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "PUT", path: "/api/provider/client",
+    summary: "Supply the OAuth client id and secret. The secret is never returned, and this discards any "
+      + "grant the previous client obtained",
+    request: S.providerClientRequest, response: S.providerStateResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/authorize",
+    summary: "Begin a consent: answers with the URL to send a browser to",
+    request: S.providerAuthorizeRequest, response: S.providerAuthorizeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/unselectable",
+    summary: "Record that Cloudflare's consent screen did not list the operator's account — their report, "
+      + "which this Node cannot observe",
+    response: S.providerStateResponse,
+  },
+  {
+    /*
+     * **The one route here with no authority, and it is a decision rather than an omission.**
+     *
+     * The callback arrives from Cloudflare through the operator's browser. Requiring a Mailda session would
+     * fail whenever the consent was completed in a different browser profile — common, because an operator
+     * may hold their Cloudflare account somewhere other than where they administer their mail. What protects
+     * it is the `state` nonce: a callback carrying a state this Node did not issue is refused, and one
+     * carrying a state already spent is refused by the row rather than by a check in the handler. That is
+     * what the parameter is *for*, and a session check would be a second gate answering a different question.
+     */
+    method: "GET", path: "/oauth/cloudflare/callback",
+    summary: "Where Cloudflare sends the authorization response. Guarded by the state nonce, not a session",
+    response: S.providerConsentResponse,
+  },
+
   // ---- the MCP server (#89, ADR 12) ------------------------------------------------------------------
   {
     method: "POST", path: "/mcp",

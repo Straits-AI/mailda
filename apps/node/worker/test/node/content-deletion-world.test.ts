@@ -97,6 +97,21 @@ interface Site {
  */
 const SITES: Site[] = [
   {
+    file: "src/provider/cloudflare-grant.ts",
+    target: "provider_authorizations",
+    content: false,
+    why: "A consent in flight, discarded because the OAuth client was re-registered (#162, ADR 42). It "
+      + "carries a `state` nonce and a PKCE verifier and nothing else — no message, no attribution, no "
+      + "decision — and it is worthless by construction the moment the client changes: the verifier can only "
+      + "be exchanged by the client that issued the challenge, so a row surviving a re-registration is a "
+      + "secret that could never be spent. `WHERE consumed_at IS NULL` is what keeps it to those, and the "
+      + "reason is the audit trail rather than tidiness: a consumed row is the record that an authorization "
+      + "was completed, and deleting it would erase the difference between a consent that happened and one "
+      + "that never did. No legal-hold guard, because nothing here destroys anything a hold preserves — no "
+      + "mail, no evidence, no decision. The two provider.* audit entries are what record the registration "
+      + "and any grant it replaced.",
+  },
+  {
     file: "src/invitations.ts",
     target: "invitations",
     content: false,

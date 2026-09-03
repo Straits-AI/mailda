@@ -2181,6 +2181,134 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ configured: { accountId, configuredAt: at } });
     }
 
+    /**
+     * The Node's own Cloudflare grant (#162 L1, ADR 42).
+     *
+     * `GET  /api/provider`             — the connection state, the guided ceremony, and no secret
+     * `PUT  /api/provider/client`      — the client id and secret the operator created in the dashboard
+     * `POST /api/provider/authorize`   — mint a state and a PKCE challenge, and answer with the URL
+     * `POST /api/provider/unselectable`— record that the consent screen did not list the operator's account
+     * `GET  /oauth/cloudflare/callback`— where Cloudflare sends the authorization response
+     *
+     * Administrator-gated except the callback, and for a stronger reason than the transport's: this decides
+     * which Cloudflare account the Node can act in, and every later provisioning act inherits it.
+     *
+     * **The callback is not gated, and that is deliberate rather than an omission.** It arrives from
+     * Cloudflare through the operator's browser, and requiring a Mailda session would fail whenever the
+     * consent was completed in a different browser profile — which is common, because the operator may hold
+     * their Cloudflare account somewhere other than where they administer their mail. What protects it is the
+     * `state` nonce: a callback carrying a state this Node did not issue is refused, and one carrying a state
+     * already spent is refused by the row rather than by a check. That is what the parameter is *for*, and a
+     * session check would be a second gate that does not answer the same question.
+     */
+    if (url.pathname === "/api/provider" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { providerStatus, ceremony } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({
+        provider: await providerStatus(env),
+        /*
+         * The ceremony is returned beside the state rather than from a second route, because an operator in
+         * `no_client` needs the steps and an operator in `consent_granted` needs to be able to check that the
+         * redirect URI Cloudflare holds is still the one this Node is reachable on.
+         *
+         * `url.origin` is the one thing that knows what hostname the operator actually reached this Node on.
+         */
+        ceremony: ceremony(`${url.origin}/oauth/cloudflare/callback`),
+      });
+    }
+
+    if (url.pathname === "/api/provider/client" && request.method === "PUT") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const { registerClient, providerStatus } = await import("./provider/cloudflare-grant.ts");
+      await registerClient(env, clock, who.orgId, who.userId, {
+        clientId: String(body.clientId ?? ""),
+        clientSecret: String(body.clientSecret ?? ""),
+        /*
+         * Derived here and not taken from the body. A redirect URI the caller could choose is a redirect URI
+         * an attacker could choose, and the whole value of storing it is that the exchange sends what the
+         * authorization used — which has to be this Node's own hostname or Cloudflare refuses it anyway.
+         */
+        redirectUri: `${url.origin}/oauth/cloudflare/callback`,
+      });
+      return Response.json({ provider: await providerStatus(env) });
+    }
+
+    if (url.pathname === "/api/provider/authorize" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      /*
+       * The scopes come from the caller because this repository has not measured Cloudflare's scope names —
+       * `REQUIRED_CAPABILITIES` says why at length. The operator selected them in Cloudflare's own picker
+       * when they created the client, so they are the only party who knows the strings; the Node adds
+       * `offline_access` and reports what was actually granted.
+       */
+      const scopes = Array.isArray(body.scopes) ? body.scopes.map((one) => String(one)) : [];
+      const { beginAuthorization } = await import("./provider/cloudflare-grant.ts");
+      const begun = await beginAuthorization(env, clock, who.userId, scopes);
+      // The URL, not a redirect: the client decides whether to navigate or to show the operator the link.
+      return Response.json({ authorize: { url: begun.url } });
+    }
+
+    if (url.pathname === "/api/provider/unselectable" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { reportUnselectable, providerStatus } = await import("./provider/cloudflare-grant.ts");
+      await reportUnselectable(env, clock, who.orgId, who.userId);
+      return Response.json({ provider: await providerStatus(env) });
+    }
+
+    if (url.pathname === "/oauth/cloudflare/callback" && request.method === "GET") {
+      const { completeAuthorization } = await import("./provider/cloudflare-grant.ts");
+      const state = url.searchParams.get("state");
+      if (state === null || state === "") {
+        throw unprocessable("E_PROVIDER_NO_STATE", {
+          what: "the callback carried no state parameter",
+          why: "the state is what distinguishes a consent this Node started from one somebody else did, so a "
+            + "callback without one is not a callback it can act on",
+          fix: "start the connection from this Node's own screen rather than by visiting this URL",
+        });
+      }
+      /*
+       * The org is read from the claim rather than from a session, because there is no session here — see the
+       * route header. A Node has one organization, and the audit entry has to land in it.
+       */
+      const claim = await env.CATALOG.prepare(
+        // The same predicate every other unauthenticated path uses. `id = 1` was wrong: a row exists before
+        // it is claimed, so it would have found an org for a Node nobody had finished installing.
+        "SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1",
+      ).first<{ org_id: string }>().catch(() => null);
+      if (claim === null) {
+        throw unprocessable("E_PROVIDER_UNCLAIMED", {
+          what: "this Node has not been claimed, so a consent has nowhere to be recorded",
+          why: "the grant's audit entry belongs to an organization, and an unclaimed Node has none",
+          fix: "complete the install first; a Cloudflare grant is not part of claiming a Node",
+        });
+      }
+      const outcome = await completeAuthorization(env, clock, claim.org_id, {
+        state,
+        code: url.searchParams.get("code"),
+        error: url.searchParams.get("error"),
+        errorDescription: url.searchParams.get("error_description"),
+      });
+      return Response.json({ consent: outcome });
+    }
+
     const butlerSimulate = /^\/api\/butlers\/([^/]+)\/simulate$/.exec(url.pathname);
     if (butlerSimulate && request.method === "POST") {
       const who = await principalFor(env, clock, request);

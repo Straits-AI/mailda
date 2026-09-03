@@ -606,6 +606,14 @@ const FIGURES: Record<string, Classification> = {
     "oauth.min_state_length",
   ),
 
+  // docs/receipts/cloudflare-oauth-endpoints.md
+  ...bothPlans(
+    "where Cloudflare's authorization server publishes its endpoints, and whether S256 is available for "
+      + "PKCE. Both come from one discovery document served to everybody — it is read without any account "
+      + "context at all, which is the strongest possible form of not varying by plan",
+    "oauth.endpoints_from_discovery", "oauth.pkce_s256_available",
+  ),
+
   // docs/receipts/temporary-account-provisioning.md
   ...bothPlans(
     "what a **temporary preview account** is and is not, which does not vary with the customer's Cloudflare "

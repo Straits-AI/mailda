@@ -214,6 +214,98 @@ export const transportConfiguredResponse = z.object({
   configured: z.object({ accountId: z.string().min(1), configuredAt: isoDate }).strict(),
 }).strict();
 
+/* ---------------------------------------- the Node's Cloudflare grant (#162 L1, ADR 42) ------------- */
+
+export const providerState = z.enum([
+  "no_client", "awaiting_consent", "account_not_selectable", "consent_granted", "grant_refused",
+]);
+
+/**
+ * The connection state and the guided ceremony.
+ *
+ * `.strict()` is load-bearing for `transportResponse`'s reason and one more. This route reads a row holding
+ * **four** secrets — the client secret, the access token, the refresh token, and by association the PKCE
+ * verifier — and must return none of them. A schema tolerating extra keys would pass a handler that had grown
+ * an `accessToken` field, which is the one mistake this surface cannot afford.
+ *
+ * `evidence` is in the contract rather than left to prose. `account_not_selectable` is a state the Node
+ * **cannot observe** — an administrator disabling public OAuth app access produces a consent screen missing
+ * an account, with no error and no response the Node ever sees — so every generated surface has to be able to
+ * say which of the two kinds of fact it is showing. A field nobody can omit is how that stays true.
+ */
+export const providerStateResponse = z.object({
+  provider: z.object({
+    state: providerState,
+    evidence: z.enum(["observed", "reported"]),
+    clientId: z.string().nullable(),
+    redirectUri: z.string().nullable(),
+    registeredAt: isoDate.nullable(),
+    accountId: z.string().nullable(),
+    grantedAt: isoDate.nullable(),
+    scopesGranted: z.array(z.string()).nullable(),
+    refusedDetail: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/**
+ * The state **and** the guided ceremony, which only the read route returns.
+ *
+ * Two schemas rather than one with an optional `ceremony`, and the reason is what optional means here: a
+ * writer that forgot to return the steps and a reader that has none would be the same shape, so the route an
+ * operator reaches for guidance could stop carrying it without anything failing.
+ */
+export const providerResponse = z.object({
+  provider: providerStateResponse.shape.provider,
+  ceremony: z.object({
+    steps: z.array(z.string().min(1)).min(1),
+    redirectUri: z.string().min(1),
+    capabilities: z.array(z.object({
+      capability: z.string().min(1),
+      why: z.string().min(1),
+      layer: z.string().min(1),
+    }).strict()).min(1),
+    /*
+     * Not optional, and that is the point. The scope names are not measured, and an operator following
+     * printed steps is entitled to know which parts of them this Node has verified — so the admission is a
+     * required field rather than a sentence somebody may forget to render.
+     */
+    unmeasured: z.string().min(1),
+  }).strict(),
+}).strict();
+
+/** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
+export const providerClientRequest = z.object({
+  clientId: z.string().min(1).max(128),
+  clientSecret: z.string().min(1).max(512),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+export const providerAuthorizeRequest = z.object({
+  /*
+   * The operator supplies these because this repository has not measured Cloudflare's scope names: they
+   * correspond to API-token permission names and are enumerated from an endpoint needing a token. The
+   * operator selected them in Cloudflare's own picker when they created the client, so they are the only
+   * party who knows the strings.
+   */
+  scopes: z.array(z.string().min(1)).max(64),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+export const providerAuthorizeResponse = z.object({
+  authorize: z.object({ url: z.string().min(1) }).strict(),
+}).strict();
+
+/** What the callback did. Carries no token, by the same `.strict()` argument. */
+export const providerConsentResponse = z.object({
+  consent: z.object({
+    ok: z.boolean(),
+    error: z.string().nullable(),
+    detail: z.string().nullable(),
+    accountId: z.string().nullable(),
+    scopesGranted: z.array(z.string()),
+    /** Asked for and not granted. Computed by this Node, because Cloudflare reports only what it gave. */
+    scopesDeclined: z.array(z.string()),
+  }).strict(),
+}).strict();
+
 /* ------------------------------------------------------------------ Butlers (#49, #87) -------------- */
 
 export const butlerSourceFormat = z.enum(["json", "yaml"]);

@@ -95,6 +95,16 @@ describe("every closed set the contract declares is a closed set the boundary en
        * looking like a caller who passed nothing on purpose.
        */
       "POST /api/search/repair",
+      /*
+       * Registering the Node's OAuth client, and beginning a consent (#162 L1, ADR 42). Strict, and the
+       * argument is the sharpest of the four: a misspelled `clientSecret` silently dropped would be refused
+       * by `E_PROVIDER_NEEDS_BOTH` — a refusal telling an operator they forgot the secret when they had
+       * pasted it, at the one step of ADR 42's ceremony where Cloudflare shows that value **once**. A
+       * dropped `scopes` key would ask Cloudflare for `offline_access` alone and produce a grant that reads
+       * as connected and can do nothing.
+       */
+      "PUT /api/provider/client",
+      "POST /api/provider/authorize",
     ]));
     expect(sets.some((set) => set.path.join(".") === "conditions")).toBe(true);
     expect(sets.some((set) => set.path.join(".") === "stages.0")).toBe(true);
@@ -291,8 +301,9 @@ describe("strictness is decided per route, not turned on globally", () => {
       }
     }
     expect(strict.sort()).toEqual([
-      "POST /api/agents", "POST /api/policies", "POST /api/search/repair",
-      "PUT /api/policies/:policyId/draft",
+      "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
+      "POST /api/search/repair",
+      "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([
       "POST /api/auth/login",

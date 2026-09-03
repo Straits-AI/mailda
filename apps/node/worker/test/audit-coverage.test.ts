@@ -220,6 +220,29 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    */
   sending_transport: { actions: ["transport.configured"] },
   /*
+   * The Node's own Cloudflare grant (#162 L1, ADR 42), audited for `sending_transport`'s reason and a wider
+   * one: this decides which Cloudflare account the Node can act in, and every later provisioning act
+   * inherits it. The question an investigator has is *when did this Node gain the ability to change
+   * infrastructure, and who gave it that*.
+   *
+   * `provider.consent_granted` names the account and the scopes and neither token. `actorUserId` on it is
+   * null and that is accurate rather than a gap — the callback arrives from Cloudflare, and the person who
+   * authorized it did so in Cloudflare's own session. Who *started* the authorization is on the
+   * `provider_authorizations` row.
+   */
+  provider_binding: {
+    actions: [
+      "provider.client_registered", "provider.consent_granted",
+      "provider.account_reported_unselectable",
+    ],
+  },
+  /*
+   * A consent in flight. The only entry that lands against it is the refusal, because a consent that
+   * *succeeds* is recorded against the binding it produced — the row here is spent either way, and an
+   * authorization is not a thing an investigator asks about except when it did not become a grant.
+   */
+  provider_authorizations: { actions: ["provider.consent_refused"] },
+  /*
    * A passkey is a **way into an account**, so both ends of its life are audited: `access.granted` is the
    * shape, not `auth.signed_in`. Using an existing credential is an operational event and stays in the log;
    * adding or removing one changes what somebody can do afterwards, which is what this table is for.
@@ -672,7 +695,22 @@ describe("audit coverage", () => {
     //
     // What is left is a broad, expensive act whose result an operator acts on: record it, never fail the
     // request for it. Same direction as a lockout and a blocked deletion.
-    expect(standalone).toEqual(["auth.locked_out", "evidence.verified", "hold.blocked"]);
+    //
+    // `provider.consent_refused` (#162) earns it, and the reason is `hold.blocked`'s asymmetry rather than
+    // `evidence.verified`'s breadth.
+    //
+    // A consent that does not produce a grant writes **nothing to the binding** — that is the whole point of
+    // the state staying `awaiting_consent`. There is one write nearby, the `consumed_at` on the nonce, and it
+    // is deliberately *not* in the same transaction as this entry: the nonce must be spent whether or not the
+    // entry lands. A Node that rolled back the consumption because it could not append would leave a live
+    // state and a replayable PKCE verifier, which is a worse outcome than an unrecorded refusal — the same
+    // direction `hold.blocked` fails in, where the preserving act happens even if nothing records it.
+    //
+    // The refusal after the token endpoint answers is standalone for a simpler reason: by then the code is
+    // already spent and the decision is made, exactly like a lockout.
+    expect(standalone).toEqual([
+      "auth.locked_out", "evidence.verified", "hold.blocked", "provider.consent_refused",
+    ]);
   });
 
   it("keeps the set of disclosure actions to the ones deliberately chosen", () => {

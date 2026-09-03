@@ -1921,6 +1921,9 @@ docs/butler-engine.md                  what runs a Butler: the principal, the re
                                        the pause and the loop that places it, the run ledger and the
                                        four replay modes
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
+docs/cloudflare-grant.md               why the Node is its own OAuth client, the guided ceremony, the five
+                                       connection states and which one it cannot observe, and what is
+                                       still owed
 docs/agents/                           issue tracker and domain-doc conventions
 packages/receipts                      generates constants from receipts
 packages/budgets                       GENERATED — do not edit
@@ -2976,6 +2979,31 @@ unregistered, so redirecting an error to a URI is the server saying it accepted 
 no domain verification either, which matters because `workers.dev` is not a domain a customer could verify.
 Two smaller facts came out of it: the endpoint enforces a minimum `state` length of 8, and Cloudflare's own
 sign-in challenge sits between the request and the consent screen.
+
+**L1 is built** (#162): the Node holds a client, runs the redirect with PKCE, exchanges the code and stores
+the grant wrapped under the ADR 28 credential key. Five connection states, not three, and
+[`docs/cloudflare-grant.md`](./docs/cloudflare-grant.md) carries the whole design. The state worth naming here
+is `account_not_selectable` — an account administrator can disable public OAuth app access, and the
+consequence is that the consent screen simply does not list the account the operator means, with no error and
+**no response the Node ever sees.** So it is the one fact in this product recorded as *reported rather than
+observed*, said four times over: in the column names, in a required `evidence` field on the API, in the audit
+entry's own detail, and in `doctor`'s prose. A reported fact read months later is exactly where it gets
+mistaken for a measured one.
+
+The endpoints are constants with a receipt rather than runtime discovery, and the reason is measured:
+`dash.cloudflare.com` answers the RFC 8414 path with a **200 carrying HTML**, so a Node that discovered its
+endpoints would parse the dashboard's shell and fail on the authorization path at the moment an operator was
+connecting. `doctor` compares them against live discovery instead
+([receipt](./docs/receipts/cloudflare-oauth-endpoints.md)).
+
+**Four things this layer does not claim, and says so:** the scope matrix is unmeasured — the mechanism to
+produce it ships but no figures exist, and printing plausible scope names would be a fabrication an operator
+would find by pasting them into a picker that does not offer them; whether Cloudflare's token response names
+the account is unmeasured, so the surface says *not yet determined* rather than showing an empty one; the
+revocation drill is an argument from what the code touches rather than a measurement; and the same receipt
+records that Cloudflare's discovery document **advertises `client_credentials`** while its documentation says
+third-party clients cannot use it. If the document is right, this whole ceremony is unnecessary. The probe
+that would settle it is named and not run, because it creates a real client in a real account.
 
 ## The brand reached one shell and not the other (#128)
 
