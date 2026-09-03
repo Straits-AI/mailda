@@ -243,6 +243,7 @@ everything done under one access is one filter:
 | action | emitted by | says |
 |---|---|---|
 | `supervised.query` | `listMessages`, `queueFor` | a listing, **with the ids it returned** |
+| `supervised.query_empty` | `listMessages` | a **search** that matched nothing, with a keyed digest of the term and never the term (#158) |
 | `supervised.opened` | `GET /api/messages/:id/body` | one result's content |
 | `supervised.attachment` | `GET /api/messages/:id/raw`, `GET /api/sends/:id/submitted` | raw evidence — the `.eml`, which carries every attachment |
 
@@ -280,22 +281,80 @@ and is corrected: `send.propose` and `mailbox.content.read` are separate, so a d
 sends from a mailbox they may not read is expressible, and for that person a grant is exactly what puts
 subject lines on the screen. The arm is live, it owes a record, and `queueFor` writes one.
 
-### What a query entry does not capture: a search that matched nothing (#158)
+### A search that matched nothing is recorded, and the term is not (#158)
 
-The entry is written only when the page returned rows, and that is right for a **listing** — paging past the
-end of a scope discloses nothing, so recording it would put an act in the trail that showed nobody anything.
+`supervised.query` is written only when the page returned rows, and that is right for a **listing** — paging
+past the end of a scope discloses nothing, so recording it would put an act in the trail that showed nobody
+anything.
 
 **A search inverts the argument, and the body index is why.** ADR 28's amendment states what a contentless
 index gives somebody with the data: the ability to *confirm a guess* — to learn that a given word occurs in a
-given message. A **null** answer is half of that capability, and it is the half this trail cannot see. So a
-supervised reader can search a colleague's mailbox for a word, learn it is not there, and leave no record;
-repeated, that is dictionary-style probing with §7's record blind to it, which is the shape `SECURITY.md`
-lists as reportable.
+given message. A **null** answer is half of that capability. So a supervised reader could search a
+colleague's mailbox for a word, learn it is not there, and leave no record; repeated, that is
+dictionary-style probing with §7's record blind to it, which is the shape `SECURITY.md` lists as reportable.
 
-Stated here rather than left for somebody to discover, because a document describing this trail's coverage
-must not overstate it. #158 carries the decision, and the hard half is not whether to record a probe but what
-the entry says: an entry that does not name the term answers nothing, and a term in the audit trail is the
-investigator's own search words, retained for whoever reads it.
+`supervised.query_empty` closes it. The condition is narrow, and each clause excludes a case that genuinely
+discloses nothing: the page returned no supervised rows (otherwise `supervised.query` has it), a search term
+was given (an unsearched empty page is the original argument, still sound), and the reader holds at least one
+live grant (somebody searching only their own mail has probed nobody).
+
+**What it costs, and the first version of this sentence was wrong.** It said an ordinary reader's search costs
+nothing extra. It does: the grant read runs before anybody knows whether there are grants to find, and asking
+a cheaper question first is not possible because *"does this reader hold a live grant"* **is** the query.
+
+Measured in `supervised-recording.test.ts` rather than argued, every pair returning zero rows so no other
+recording is in the way:
+
+| page | subrequests |
+|:--|--:|
+| empty **listing**, reader with no grant | 2 |
+| empty **listing**, reader holding a grant | **2** — the hot path, unchanged |
+| empty **search**, reader with no grant | 3 |
+| empty **search**, reader holding a grant | 6 |
+
+So one indexed read on a searched empty page for **every** reader, and three more for a supervised one: the
+vault round trip for the key, the batch carrying the entry, and the audit chain's tip read that every audited
+act pays. The unsearched listing — the hot path this trade was refused to protect — costs the same whether or
+not the reader holds a grant, which is asserted rather than inspected.
+
+**One entry per live grant**, because the page is one query spanning everything the reader may see. An empty
+answer means the term occurs in none of it, which is a fact about each of those mailboxes individually — a
+reader with grants on two colleagues' mail who searches once has probed both, and one entry would understate
+it by a mailbox.
+
+#### The hard half was the entry's shape, not whether to write it
+
+An entry that does not name the term answers nothing; a term in the audit trail is the investigator's own
+search words, retained for whoever reads it. Three options, none free — the plain term, a digest, or a count
+alone — and the decision was the **digest**: an auditor learns that a mailbox was probed, how often, and how
+many probes were the same word, and never what the word was.
+
+**The digest is keyed, and that is the whole of it.** `sha256("redundancy package")` is reversible with a
+wordlist in seconds — the search space is English, not 2^256 — so an unkeyed digest would deliver the plain
+term to exactly the reader it was chosen to withhold it from, while looking cryptographic. So the digest is
+an HMAC under a key derived by HKDF from this Node's **content** key, which never enters D1.
+
+Content rather than credential, and that is the security argument rather than a preference. An attacker
+holding the content key can already read every message, so reversing a probe digest tells them strictly less
+than they have; the credential key forges sessions and reads no mail, so adding "and reverses every recorded
+search term" to its compromise would be a genuine widening — the opposite of what #7's key split is for.
+
+The key is read with `ensureKey` and **not** `sealingKey`, which would mark the generation used. #138 measured
+what that costs: on a fresh Node the escrow's generation 1 becomes unusable, a redemption that answers 200 and
+installs nothing. `doctor` triggered that once per install; this path would trigger it on an ordinary
+supervised search.
+
+`keyGeneration` rides in the entry beside the digest, because the derived key follows the content key — so a
+rotation makes old and new digests incomparable and repeat-counting restarts. An auditor who could not see
+that would read the reset as the probing having stopped.
+
+#### `disclosure: true`, for a disclosure that consists of nothing being returned
+
+`recordDisclosure` throws where `audit` swallows, so a Node that cannot append this entry **does not answer
+the search**: the reader never learns "no match" off the record. That is the contract read exactly as written
+for the one case where the disclosure is an absence. Classifying it `standalone` instead would have been the
+easy reading and the wrong one — a probe recorded on a best-effort basis goes unrecorded precisely when the
+trail is under pressure.
 
 ### The id list is bounded, and it is never truncated
 
@@ -506,14 +565,23 @@ hidden. **`doctor` counts the missing notices but does not name them**: a per-gr
 grant lost its row and would cost a query proportional to grants, where the count answers the question the
 finding exists to ask — *has anything been removed* — and the trail answers the next one.
 
-**A supervised query that returned nothing leaves no entry**, and this is stated because it is a real
-weakening of *"every query is recorded"* rather than an oversight. Both listings learn which grant answered
-**from the rows themselves** — `listMessages` from a `LEFT JOIN`, `queueFor` from a check whose subject is
-the mailbox and not the result — so a listing that matched nothing has no grant to attribute and produces
-no entry. Nothing was disclosed, so no *exposure* goes unrecorded; what goes unrecorded is the **attempt**,
-and a notice's `acts.queries` therefore counts fruitful queries rather than all of them. Closing it means
-asking which grants are live on every listing, whether or not one answered — a second query on the hot read
-path for a record of having seen nothing — and that trade was refused rather than missed.
+**A supervised *listing* that returned nothing leaves no entry, and a supervised *search* now does.** Both
+listings learn which grant answered **from the rows themselves** — `listMessages` from a `LEFT JOIN`,
+`queueFor` from a check whose subject is the mailbox and not the result — so a page that matched nothing has
+no grant to attribute.
+
+This paragraph used to say the remedy was refused: *"closing it means asking which grants are live on every
+listing, whether or not one answered — a second query on the hot read path for a record of having seen
+nothing."* That trade is still refused for a listing and **taken for a search** (#158), because the two are
+not the same act. An empty listing disclosed nothing; an empty search told the reader a word is absent from
+somebody else's mail, which on a contentless index is half of ADR 28's confirm-a-guess capability.
+
+The cost is confined to a **searched** page that returned nothing, where it is one indexed read for any
+reader plus a digest and a write when a grant is found. The hot path this paragraph was protecting — an
+ordinary listing, and an unsearched supervised page — is untouched.
+
+What still goes unrecorded is the empty **listing** attempt, and a notice's `acts.queries` therefore counts
+fruitful listings rather than all of them.
 
 ---
 
@@ -524,11 +592,13 @@ migrations/0023_supervised_read.sql            matters, supervised_grants, sgr_l
 migrations/0024_supervised_acts_and_notices.sql notifications; sgr_live widened to carry the grant id
 src/matters.ts                        MATTER_TYPES, open, close (which dates the notices), list
 src/supervised.ts                     SUPERVISED_SCOPES, LIVE_SUPERVISED_GRANT, the request, the report,
-                                      SupervisedAct and buildSupervisedQuery
+                                      SupervisedAct, buildSupervisedQuery and buildSupervisedProbe
+src/probe-digest.ts                   the keyed digest of a probed term, and why it is keyed rather than
+                                      hashed and derived from the content key rather than the credential one
 src/notifications.ts                  NOTIFICATION_KINDS, the statements that owe a notice, the feed,
                                       noticeState for doctor
 src/notice-delivery.ts                the cron scan and what a notice says
-src/audit.ts                          the three disclosure actions, DisclosureAction, recordDisclosure
+src/audit.ts                          the five disclosure actions, DisclosureAction, recordDisclosure
 src/access.ts                         supervised.read in GRANTABLE; Grantable derived so it is not admin-grantable
 src/authz-read.ts                     which read paths accept a grant, holdsStandingRead, and where the
                                       recording lives

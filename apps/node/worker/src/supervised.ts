@@ -647,3 +647,59 @@ export async function grantsForReport(
   ).bind(orgId).all<Row>();
   return results.map((row) => ({ ...grantOf(row), live: row.expires_at > at }));
 }
+
+/**
+ * The entry for a supervised search that matched nothing (#158).
+ *
+ * ## One entry per live grant, and that is the honest count rather than a convenient one
+ *
+ * `buildSupervisedQuery` groups by the grants that actually returned rows. There are none here, so there is
+ * nothing to group — and the question becomes *which mailboxes did this reader learn something about*.
+ *
+ * The answer is **every mailbox they hold a live grant on**, because the page is one query spanning
+ * everything they may see. An empty answer means the term occurs in none of it, which is a fact about each of
+ * those mailboxes individually. A reader with grants on two colleagues' mail who searches once and gets
+ * nothing has probed both, and recording one entry would understate it by one mailbox.
+ *
+ * It does mean an entry naming a mailbox the reader may not have been thinking about. That is the correct
+ * direction: they still learned the word is not in it.
+ *
+ * ## No `part`/`of`, because there is nothing to split
+ *
+ * `buildSupervisedQuery` splits across entries because a page of ids can exceed `audit.max_detail_bytes`.
+ * This detail is a grant id, a mailbox id, a fixed-length digest and a small integer — bounded by
+ * construction, with no list in it — so the splitting machinery would be dead code guarding a size that
+ * cannot occur.
+ */
+export function buildSupervisedProbe(
+  grantId: string,
+  userId: string,
+  mailboxId: string,
+  probe: { digest: string; keyGeneration: number },
+): AuditEvent<"supervised.query_empty"> {
+  return {
+    action: "supervised.query_empty" as const,
+    outcome: "ok" as const,
+    actorUserId: userId,
+    // The grant, matching `supervised.granted` and `supervised.query`, so every entry about one access lines
+    // up under one filter — including the probes that returned nothing.
+    subject: grantId,
+    detail: {
+      grantId,
+      mailboxId,
+      /*
+       * `returned: 0` stated rather than implied by the action's name. An auditor reading a detail should
+       * not have to know that one action means zero and its sibling means more — and the pair reads as a
+       * series when both carry the same field.
+       */
+      returned: 0,
+      termDigest: probe.digest,
+      /*
+       * Which key generation the digest is comparable within. The derived key follows the content key, so a
+       * rotation makes old and new digests incomparable and repeat-counting restarts — an auditor who could
+       * not see that would read the reset as the probing having stopped.
+       */
+      keyGeneration: probe.keyGeneration,
+    },
+  };
+}

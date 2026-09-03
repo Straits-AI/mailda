@@ -442,6 +442,44 @@ export const AUDIT_ACTIONS = {
     says: "A supervised reader ran a query; the entry names the ids it returned, not only how many.",
     disclosure: true,
   },
+
+  /**
+   * A supervised **search** that matched nothing (#158).
+   *
+   * ## Why an empty result is an act worth recording, when an empty listing is not
+   *
+   * `supervised.query` is deliberately not written for a page that returned nothing, and the reasoning beside
+   * it is right for a *listing*: paging past the end of a mailbox discloses nothing, so recording it would put
+   * an act in the trail that disclosed nothing.
+   *
+   * A **search** inverts that. ADR 28's amendment states what the contentless body index gives an attacker:
+   * *"the ability to confirm a guess — they can learn that a given word appears in a given message"*. A null
+   * answer is as informative as a hit; it is the other half of the same capability. So a supervised reader
+   * could search a colleague's mailbox for a word, learn it does not occur, and leave the trail empty —
+   * dictionary-style probing of somebody else's mail with §7's record blind to all of it.
+   *
+   * ## The digest, and what it deliberately does not answer
+   *
+   * The entry names a **keyed digest** of the term and never the term. An auditor can see that a mailbox was
+   * probed, how often, and how many of those probes were the same word; they cannot see what the word was.
+   * That is the decision, and both halves of it were live options — a plain term answers §7 fully and puts an
+   * investigator's own search words in the trail permanently, and a count alone cannot tell one word repeated
+   * from forty different ones.
+   *
+   * `src/probe-digest.ts` carries why it is keyed rather than hashed: an unkeyed digest of an English phrase
+   * is reversible with a wordlist, so it would have delivered the plain term to exactly the reader it was
+   * chosen to withhold it from, while looking cryptographic.
+   *
+   * `disclosure: true`, which is load-bearing here rather than a classification. `recordDisclosure` throws
+   * where `audit` swallows, so a Node that cannot append this entry **does not answer the search** — the
+   * reader does not get to learn "no match" off the record. That is the contract read exactly as written, for
+   * a case where the disclosure is the absence of a result.
+   */
+  "supervised.query_empty": {
+    says: "A supervised reader searched a mailbox and it matched nothing — which on a contentless index is "
+      + "itself a disclosure. The entry names a keyed digest of the term, never the term.",
+    disclosure: true,
+  },
   "supervised.opened": {
     says: "A supervised reader opened one result's content.",
     disclosure: true,

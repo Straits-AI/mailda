@@ -3014,6 +3014,43 @@ records that Cloudflare's discovery document **advertises `client_credentials`**
 third-party clients cannot use it. If the document is right, this whole ceremony is unnecessary. The probe
 that would settle it is named and not run, because it creates a real client in a real account.
 
+## A supervised search that matched nothing left no record (#158)
+
+`supervised.query` is written only when a page returned rows, and the argument beside it is right for a
+**listing**: paging past the end of a mailbox discloses nothing. A **search** inverts it. ADR 28's amendment
+says what the contentless body index gives somebody with the data — *the ability to confirm a guess* — and a
+**null** answer is half of that capability. So a supervised reader, somebody with a dual-approved time-boxed
+grant into a colleague's mailbox, could search it for a word, learn the word is not there, and leave the trail
+empty. Repeated, that is dictionary-style probing with §7's record blind to it.
+
+`supervised.query_empty` closes it, one entry per live grant, because the page is one query spanning
+everything the reader may see — an empty answer is a fact about each of those mailboxes individually.
+
+**The hard half was the entry's shape.** A record of a probe that does not say what was probed for answers
+nothing; a term in the audit trail is the investigator's own search words, retained for whoever reads it. Of
+the three options — the plain term, a digest, a count alone — the decision was the digest: an auditor learns
+that a mailbox was probed, how often, and how many probes were the same word, and never what the word was.
+
+**And a digest of a search term is a key problem, not a hash problem.** `sha256("redundancy package")` is
+reversible with a wordlist in seconds, because the search space is English rather than 2^256 — so an unkeyed
+digest would deliver the plain term to exactly the reader it was chosen to withhold it from, while looking
+cryptographic. It is therefore an HMAC under a key derived from this Node's **content** key, which never
+enters D1. Content rather than credential is the security argument rather than a preference: an attacker
+holding the content key already reads every message, so reversing a probe digest tells them strictly less
+than they have, where the credential key reads no mail and adding this to its compromise would be a genuine
+widening.
+
+Two mutations survived the first round of tests and both destroyed the design invisibly — a bare `SHA-256`
+(still 43 characters, still stable, still not the plain term, now wordlist-reversible) and `sealingKey` in
+place of `ensureKey`, which marks a content generation used on a *read* and is #138's defect in a worse place
+than #138 found it. Neither is visible in the entry; both are now asserted directly.
+
+The cost claim was wrong in the first draft too, in the comment justifying the code: it said an ordinary
+reader's search costs nothing extra. It does — the grant read runs before anybody knows whether there are
+grants to find. Measured instead of argued: an empty listing costs 2 subrequests whether or not the reader
+holds a grant, an empty search costs 3 for any reader, and 6 for a supervised one. See
+[`docs/supervised-access.md`](./docs/supervised-access.md).
+
 ## The brand reached one shell and not the other (#128)
 
 The palette, the fonts and `brand.ts` all shipped. `markSvg()` was consumed **exactly once** — by `ui.ts`,
