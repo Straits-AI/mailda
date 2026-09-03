@@ -509,6 +509,9 @@ const FIGURES: Record<string, Classification> = {
     // performs, and the pot is plan-named where the division happens (butler-step-cost.md).
     "the D1 operations Mailda's own eligibility check and approval decisions perform, measured in workerd",
     "approval.eligibility_max_subrequests", "approval.decision_max_subrequests",
+    // Same reason, and the same measurement, from the other side: what the seal costs when policy demanded no
+    // approval of it. Not plan-scoped for the same reason — it is a count of Mailda's own operations.
+    "approval.ungated_seal_max_subrequests",
   ),
 
   // docs/receipts/policy-evaluation-cost.md

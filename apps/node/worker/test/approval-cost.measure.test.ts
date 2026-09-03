@@ -238,6 +238,21 @@ describe("what an approval costs (#61)", () => {
     expect(gatedSealed.approvalId).not.toBeNull();
     report("seal/approval-gate", gated.cost);
 
+    /*
+     * The ungated path, bounded absolutely and with no headroom — because the difference below cannot see a
+     * cost added to *both* of its sides.
+     *
+     * A mutation putting `decidersOf` above `stagePolicy`'s `require_approval` branch — the regression #160's
+     * lift risks, and the one this scenario's own comment above forbids — moved these two figures from 12 and
+     * 14 to 13 and 15. The difference stayed 2. Every assertion in this file passed, and the gated seal's
+     * bound passed too, since 15 still fits `butler.step_cost_max_send_propose`. The laziness was claimed in
+     * three places and asserted in none.
+     *
+     * Zero headroom is the departure `approval-decision-cost.md` argues for at length: the claim is not "this
+     * does not get an order of magnitude worse", it is "this path does not touch the mechanism at all", and
+     * slack in that bound is room for the mechanism to leak in one query at a time.
+     */
+    expect(held.cost.subrequests).toBeLessThanOrEqual(BUDGETS["approval.ungated_seal_max_subrequests"]);
     // Two: the stage set of every matching version, and the eligible approvers on the mailbox. The approval and
     // its stage rows are extra *statements* in the batch the seal was already making, so they cost nothing.
     expect(gated.cost.subrequests - held.cost.subrequests).toBe(2);

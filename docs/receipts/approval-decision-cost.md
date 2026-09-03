@@ -1,18 +1,64 @@
 ---
 id: approval-decision-cost
 kind: measured-tripwire
-measured_on: 2026-08-21
+measured_on: 2026-09-03
 stale_when: >
   the eligible set gains a second narrowing constraint beyond #73's team, or the team constraint stops being
   resolved by one query over teams and team_members; a decision stops carrying its audit entry, its decision
   row and its state changes in one batch(), which is what makes the act one round trip; the completion
   predicate moves out of SQL into TypeScript, which would turn one batch into a read plus a write; the
-  approvals tables gain a column a decision has to read; a D1 batch() stops being one round trip; or the
-  seal's approval path gains or loses an I/O operation for any other reason
+  approvals tables gain a column a decision has to read; a D1 batch() stops being one round trip; the seal
+  itself gains a read on the path where policy demanded nothing, which is the figure with no headroom and the
+  one a refactor of stagePolicy breaks first; or the seal's approval path gains or loses an I/O operation for
+  any other reason
 values:
   approval.eligibility_max_subrequests: 3
   approval.decision_max_subrequests: 10
+  approval.ungated_seal_max_subrequests: 12
 ---
+
+## Correction, 3 September 2026: the laziness was claimed here and measured nowhere (#160)
+
+This file has said since it was written that *"a send gated by a hold, or not gated at all, pays nothing"* for
+the approval mechanism. The assertion backing it was
+`expect(gated.cost.subrequests - held.cost.subrequests).toBe(2)` — **a difference**, and a difference cannot
+see a cost added to both of its sides.
+
+Found by mutation while #160 lifted the staging out of `sealManifest` into `src/governed.ts`. The mutation put
+a `decidersOf` call *above* the `require_approval` branch — the exact regression the move risks, and the exact
+one the prose in this file forbids. Both figures went from 12 and 14 to 13 and 15, the difference stayed 2, and
+**every assertion in the file passed.** The gated seal's own bound did not catch it either: 15 still fits
+inside `butler.step_cost_max_send_propose = 20`.
+
+So the property was load-bearing in this receipt's prose, in the module docstring justifying the refactor, and
+in the review of that refactor — and unmeasured in all three. That is worse than an unmeasured figure, because
+readers had already relied on the claim.
+
+`approval.ungated_seal_max_subrequests = 12` is the missing measurement: what a seal costs when policy did not
+demand approval of it.
+
+**It is the one value in this file with no headroom, deliberately, and that is a departure from the doctrine
+the Sized section below argues for.** A bound with slack is right when the claim is *"this does not become an
+order of magnitude worse"*. The claim here is *"this path does not touch the mechanism at all"*, and slack in
+that bound is precisely room for the mechanism to leak into the path that must not reach it — one query at a
+time, each within the headroom, which is how the 11 in the Observed section below became 12 unnoticed. A
+legitimate new read on the seal path will fail this, and the re-measurement it forces is the review this exists
+to cause rather than a cost of it.
+
+Confirmed both directions: with the bound at 12 the mutation fails the run, and loosening the same bound to 13
+lets the identical mutation pass again — so what catches it is this figure at this value, not something else in
+the file.
+
+**Measured:** same instrument, same file, same run as the figures below — `metering()` from `src/cost-meter.ts`
+in the real `workerd` runtime. `seal/hold-gate` reads **12** subrequests (D1 8, batches 1, R2 2, DO RPCs 2) on
+3 September 2026, unchanged by #160's lift, which is the other thing this figure now pins: the refactor moved
+no I/O.
+
+**The whole file's `measured_on` moves to 3 September 2026, because every scenario in it was re-run today, not
+just the new one** — 12, 14, 14 and 15 for the four seal shapes, matching the 21 August figures exactly. A
+receipt that dated only its newest row would leave the rest reading as measured last month when they were
+confirmed this morning, and the reason a control is measured beside its subject in the section below is that a
+comparison against a number written down weeks ago is a comparison against a stale receipt.
 
 ## Correction, 21 August 2026: the team-scoped stage arrived, and the clause that named it fired (#73)
 
