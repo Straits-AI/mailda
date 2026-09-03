@@ -220,9 +220,90 @@ Stated here rather than left to be discovered:
   ceremony is unnecessary — [`cloudflare-oauth-endpoints.md`][r168] names the two-call probe that would settle
   it. Until then the Node does authorization-code, because trusting the document over the documentation would
   fail inside the token exchange with an error about the client rather than about the flow.
-- **Inventory and `deploy --plan`'s three verbs** — create, adopt and unwind — which are the rest of #162.
+- **Inventory read through the grant.** `deploy --plan` below reads the account through the operator's own
+  `wrangler` rather than through this grant, because a plan for a *first install* runs before there is a Node
+  to hold one. Reading zones and Email Service state through the grant, for a Node that already exists, is
+  what the ownership page needs and is not built.
 
 [108]: https://github.com/Straits-AI/mailda/issues/108
 [162]: https://github.com/Straits-AI/mailda/issues/162
 [r167]: receipts/cloudflare-oauth-node-as-client.md
 [r168]: receipts/cloudflare-oauth-endpoints.md
+
+## `deploy --plan`: what a deploy would do, before it does any of it
+
+`mailda deploy --plan` prints the plan and acts on nothing. It exits 0 for `install` and `redeploy`, and 1 for
+`blocked` or `unknown` — so it is usable as a gate.
+
+**It reads the account through the operator's own `wrangler`, not through the grant above.** A plan for a first
+install runs before there is a Node to hold a grant, so the chicken-and-egg is resolved by using the
+credentials the operator already has. The grant is for a Node that exists.
+
+### Three verbs, because a create-only plan is wrong in the expensive direction
+
+`packages/cli/src/deploy-plan.mjs` is pure — values in, values out — for `promotionVerdict`'s reason: the gate
+that function replaced was an inline `if` asserted *lexically*, and the assertion survived the condition being
+mutated to `if (false && …)`.
+
+| disposition | the account | what a deploy actually does |
+|:--|:--|:--|
+| `create` | absent | provisions it. The only case a create-only plan gets right |
+| `linked` | present, bound to this Worker | nothing. An ordinary redeploy |
+| `cannot_adopt` | present, no Worker | **fails on it**, after creating whatever comes before it |
+| `orphaned` | absent, Worker exists | **reports success and changes nothing** |
+| `stolen` | present, another script owns it | **succeeds and takes it** — exit 0, no warning |
+| `unknown` | list unreadable | anything. The plan names the gap instead of guessing |
+
+Three of those six are a deploy doing something other than what it looks like it does, and every one is
+measured — `deploy-drill-live-account.md` for the Workflow reassignment and the ordering, the runbook for the
+linked-binding repair that isn't one.
+
+`orphaned` is the worst, because the deploy **succeeds**: the binding is linked server-side, so the Worker
+keeps reading a dead resource id while the CLI resolves the same name to a live one. It is also the one
+blocking disposition that offers **no unwind** — a plan that printed a teardown there would be telling an
+operator to destroy a live Node's evidence bucket to fix its database.
+
+### The names are derived, because wrangler derives them
+
+`d1_databases`, `r2_buckets` and `queues` declare a binding and **no name and no id** — ADR 24 requires the
+repository byte-identical across installs. wrangler names them `<worker>-<binding>`, lowercased and
+hyphenated, which the drill measured on two Nodes: `mailda` got `mailda-catalog`, `mailda-evidence`,
+`mailda-sending-events`, and `mailda2` got the `mailda2-` set.
+
+**The Workflow is the exception and it is the whole of #99.** Its name is written in the config, so it does
+not follow the Worker's — and a Workflow is owned by exactly one script. `mailda deploy` already refuses a
+deploy that would take somebody else's; the plan reports it before the refusal, which is the difference
+between being stopped and knowing why.
+
+### The unwind is an order, and every step was found by getting it wrong
+
+1. `wrangler queues consumer worker remove <queue> <worker>` — a Worker cannot be deleted while it consumes a
+   queue (`code: 10064`).
+2. `wrangler delete --env "" --force`.
+3. R2 objects per key, then the bucket — a non-empty bucket refuses.
+4. `wrangler d1 delete <name> -y`.
+5. `wrangler queues delete <name>`.
+6. `wrangler workflows delete <name>` — a Workflow **survives its script's deletion**, and its name is the one
+   that collides between Nodes.
+
+The plan prints only the steps that apply. A leftover database on an account with no Worker needs step 4 and
+nothing else, and telling an operator to delete a Worker that is not there is how a teardown loses the reader's
+trust in the steps that *are* necessary.
+
+This sequence is also in [`disaster-recovery.md`](./disaster-recovery.md), which is where it was first written
+down. The two now say the same thing in two places, which is a correspondence worth naming: the runbook is
+prose for a person at three in the morning, and `UNWIND_ORDER` is what the plan filters. If they ever disagree,
+the code is the one that ran.
+
+### What the plan cannot see
+
+**Names, not ids.** It reports whether a name is taken, not whether a present resource is the one this
+Worker's binding points at. For `orphaned` that distinction *is* the defect, which is why the plan reports it
+as one — but a resource renamed out from under a live binding would read as `orphaned` plus `cannot_adopt`
+rather than as the one thing it is.
+
+**An unread list does not block.** `wrangler workflows list` needs a permission a deploy token may not carry,
+and refusing a plan because a *diagnostic* was unavailable is the wrong direction — the same trade the deploy
+path makes. The plan names it under `not checked` instead. The Worker's own existence is the exception and
+**does** stop the plan: the two deploy paths differ, and being wrong there means skipping the canary on a live
+Node.

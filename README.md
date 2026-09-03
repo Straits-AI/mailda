@@ -2996,6 +2996,15 @@ endpoints would parse the dashboard's shell and fail on the authorization path a
 connecting. `doctor` compares them against live discovery instead
 ([receipt](./docs/receipts/cloudflare-oauth-endpoints.md)).
 
+**`mailda deploy --plan` says what a deploy would do before it does it**, with three verbs rather than one,
+because #92's drill measured that a create-only plan is wrong in the expensive direction. Three of its six
+dispositions describe a deploy doing something *other* than what it looks like it does: a leftover from a
+failed attempt is not adopted but fails on, a resource deleted from under a live Worker makes the next deploy
+**report success and change nothing**, and a Workflow another Node owns is taken silently at exit 0. The
+unwind is an ordered sequence whose every step was found by getting it wrong, and the plan prints only the
+steps that apply. It reads the account through the operator's own `wrangler` and not through the grant, since
+a plan for a first install runs before there is a Node to hold one.
+
 **Four things this layer does not claim, and says so:** the scope matrix is unmeasured — the mechanism to
 produce it ships but no figures exist, and printing plausible scope names would be a fabrication an operator
 would find by pasting them into a picker that does not offer them; whether Cloudflare's token response names
