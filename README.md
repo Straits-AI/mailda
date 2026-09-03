@@ -2968,8 +2968,14 @@ learning the dashboard for *every* customer, and account creation cannot be orch
 so a customer without a Cloudflare account performs one named ceremony first. #108's own rule is to remove
 routine dashboard work, not to disguise legal or security decisions as automation.
 
-One verification is outstanding and named rather than assumed: whether Cloudflare accepts a `workers.dev`
-hostname as a redirect target. If it does not, this needs a custom domain per Node and the ceremony grows.
+The verification this rested on is **resolved**, and the proof is an error rather than a success
+([receipt](./docs/receipts/cloudflare-oauth-node-as-client.md)). A private client was created with one
+`workers.dev` redirect URI, and an authorization request with too short a `state` was answered by
+**redirecting to that URI** — and RFC 6749 requires a server *not* to redirect when the `redirect_uri` is
+unregistered, so redirecting an error to a URI is the server saying it accepted it. A private client needed
+no domain verification either, which matters because `workers.dev` is not a domain a customer could verify.
+Two smaller facts came out of it: the endpoint enforces a minimum `state` length of 8, and Cloudflare's own
+sign-in challenge sits between the request and the consent screen.
 
 ## The brand reached one shell and not the other (#128)
 
