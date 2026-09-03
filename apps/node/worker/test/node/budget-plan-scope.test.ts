@@ -593,6 +593,16 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/temporary-account-provisioning.md
+  ...bothPlans(
+    "what a **temporary preview account** is and is not, which does not vary with the customer's Cloudflare "
+      + "plan because a temporary account is always created on Workers Free — that is one of the reasons it "
+      + "cannot host this Node, since ADR 25 requires Paid. The claim window and the refusal are properties "
+      + "of the temporary-account product itself",
+    "temporary.supports_mailda_node", "temporary.claim_window_minutes",
+    "temporary.bindings_provisioned_before_refusal",
+  ),
+
   // docs/receipts/contrast-tokens.md — the brand palette, the rail's own surface, and a control's edge
   ...mailda(
     "contrast ratios between Mailda's own design tokens, and the WCAG thresholds they are measured "
