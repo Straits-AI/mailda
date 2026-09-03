@@ -38,6 +38,7 @@ import {
   activeVersionFrom, contractingAmong, deployExitCode, doctorExitCode, promotionVerdict, servedVersionOf,
   versionIdFrom,
 } from "./deploy-parse.mjs";
+import { planFor, renderPlan } from "./deploy-plan.mjs";
 import {
   accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
 } from "./preflight.mjs";
@@ -513,8 +514,55 @@ function refuseIfWorkflowBelongsElsewhere() {
  * account's plan and this CLI has no documented endpoint for it either; the honest state is unverified,
  * which is what `doctor` reports.
  */
+/**
+ * Reads this account's four resource lists, or admits it could not (#162 L1).
+ *
+ * Each list is a separate call and a separate answer, because they fail separately: `wrangler workflows list`
+ * needs a permission a deploy token may not carry, and the other three do not. A single "could not read the
+ * account" would throw away three answers to lose one.
+ *
+ * `null` for a failed call rather than an empty string. The distinction is the whole point —
+ * `deploy-plan.mjs` treats an unread list as *unknown* and an empty one as *absent*, and reporting "absent,
+ * will create" from a list nobody could read is how a plan promises a create that fails on a leftover.
+ */
+function accountInventory() {
+  const read = (args) => {
+    const outcome = capture("npx", ["wrangler", ...args, ...ENV], { quiet: true });
+    return outcome.status === 0 ? outcome.text : null;
+  };
+  return {
+    /*
+     * The Worker's own existence comes from `firstInstall`, which already refuses rather than guesses — being
+     * wrong there means skipping the canary on a live Node, and the plan inherits that judgement instead of
+     * making a second one that could disagree with it.
+     */
+    worker: !firstInstall(),
+    lists: {
+      d1: read(["d1", "list"]),
+      r2: read(["r2", "bucket", "list"]),
+      queue: read(["queues", "list"]),
+      workflow: read(["workflows", "list"]),
+    },
+  };
+}
+
 async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
+
+  /*
+   * `--plan` answers and stops. It runs preflight first for the same reason the deploy does — the account has
+   * to be settled before any list means anything — and then acts on nothing.
+   */
+  if (argv.includes("--plan")) {
+    const settled = await runPreflight(argv);
+    if (!settled.ok) fail(settled.report);
+    const plan = planFor({
+      configText: readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"),
+      inventory: accountInventory(),
+    });
+    process.stdout.write(renderPlan(plan));
+    process.exit(plan.verdict === "blocked" || plan.verdict === "unknown" ? 1 : 0);
+  }
 
   /*
    * Preflight first, and before `refuseIfWorkflowBelongsElsewhere` specifically. That guard is the one that
@@ -1823,6 +1871,7 @@ function verifyBackup(argv) {
 
 const USAGE = `mailda — operate a Mailda Node
 
+  mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
   mailda claim-secret [--local]      write the install secret and print it once

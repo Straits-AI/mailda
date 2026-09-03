@@ -234,6 +234,13 @@ pnpm exec wrangler workflows delete mailda-butler-runs
 
 Then `mailda deploy` takes the first-install path, provisions all three bindings, and applies the migrations.
 
+**`mailda deploy --plan` now says which of these steps an account actually needs** (#162), and it is the
+better place to start: it reads the four lists, reports each resource as create / linked / cannot-adopt /
+orphaned / stolen, and prints only the unwind steps that apply. This section stays because it is the record of
+*why* the order is the order, and because a plan is not much use to somebody whose `wrangler` will not run.
+The order itself lives in one place in code — `UNWIND_ORDER` in `packages/cli/src/deploy-plan.mjs` — and if
+the two ever disagree, the code is the one that ran. See [`cloudflare-grant.md`](./cloudflare-grant.md).
+
 **A temporary preview account is not a destination.** `wrangler deploy --temporary` creates an account and then refuses part way through provisioning — `Authentication error [code: 10000]` on the R2 bucket, after D1 has already been created — because temporary accounts do not support R2, Workflows or Email Sending, and are created on Workers Free where ADR 25 requires Paid ([receipt](./receipts/temporary-account-provisioning.md)).
 
 **Verify the teardown rather than assume it.** `wrangler d1 list`, `wrangler r2 bucket list`, `wrangler queues
