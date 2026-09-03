@@ -62,7 +62,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 86 withheld
+## What you cannot do, and why — 91 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -125,7 +125,7 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (32)
+### Operator — running the Node rather than using it (37)
 
 - **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getPeopleByUserIdMailboxes`, `postAgents`**
 
@@ -142,6 +142,10 @@ so you are that one person and can never be the second. These are not permission
 - **`getIndexHtml`**
 
   The interface shell. A page rather than a question anybody would ask a Node — offering it as a capability would put "fetch the HTML" in a list of things an agent can do, which is noise at best and an invitation to scrape at worst.
+
+- **`getOauthCloudflareCallback`, `getProvider`, `postProviderAuthorize`, `postProviderUnselectable`, `putProviderClient`**
+
+  The Node's own Cloudflare grant. Registering the OAuth client and beginning a consent cannot be completed by a machine — both require a person in Cloudflare's dashboard past its own sign-in challenge — and reporting an unselectable account is the one fact here recorded as reported rather than observed, so only somebody who looked at the consent screen may assert it. The two reads are declared because the derivation rule would otherwise offer them: one is the map of the infrastructure the mail sits on, and the other consumes a single-use nonce.
 
 - **`getSearchFailed`, `postSearchRepair`**
 

@@ -981,6 +981,51 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Whether this Node holds a Cloudflare grant, and the guided steps to give it one
+   *
+   * `GET /api/provider`
+   */
+  async getProvider(): Promise<z.infer<typeof S.providerResponse>> {
+    return await this.json("GET", "/api/provider", {}, undefined) as z.infer<typeof S.providerResponse>;
+  }
+
+  /**
+   * Supply the OAuth client id and secret. The secret is never returned, and this discards any grant the previous client obtained
+   *
+   * `PUT /api/provider/client`
+   */
+  async putProviderClient(body: z.infer<typeof S.providerClientRequest>): Promise<z.infer<typeof S.providerStateResponse>> {
+    return await this.json("PUT", "/api/provider/client", {}, body) as z.infer<typeof S.providerStateResponse>;
+  }
+
+  /**
+   * Begin a consent: answers with the URL to send a browser to
+   *
+   * `POST /api/provider/authorize`
+   */
+  async postProviderAuthorize(body: z.infer<typeof S.providerAuthorizeRequest>): Promise<z.infer<typeof S.providerAuthorizeResponse>> {
+    return await this.json("POST", "/api/provider/authorize", {}, body) as z.infer<typeof S.providerAuthorizeResponse>;
+  }
+
+  /**
+   * Record that Cloudflare's consent screen did not list the operator's account — their report, which this Node cannot observe
+   *
+   * `POST /api/provider/unselectable`
+   */
+  async postProviderUnselectable(body?: unknown): Promise<z.infer<typeof S.providerStateResponse>> {
+    return await this.json("POST", "/api/provider/unselectable", {}, body) as z.infer<typeof S.providerStateResponse>;
+  }
+
+  /**
+   * Where Cloudflare sends the authorization response. Guarded by the state nonce, not a session
+   *
+   * `GET /oauth/cloudflare/callback`
+   */
+  async getOauthCloudflareCallback(): Promise<z.infer<typeof S.providerConsentResponse>> {
+    return await this.json("GET", "/oauth/cloudflare/callback", {}, undefined) as z.infer<typeof S.providerConsentResponse>;
+  }
+
+  /**
    * MCP: tool discovery and invocation over JSON-RPC 2.0, exposing the curated capability list
    *
    * `POST /mcp`
