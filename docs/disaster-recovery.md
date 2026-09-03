@@ -234,6 +234,8 @@ pnpm exec wrangler workflows delete mailda-butler-runs
 
 Then `mailda deploy` takes the first-install path, provisions all three bindings, and applies the migrations.
 
+**A temporary preview account is not a destination.** `wrangler deploy --temporary` creates an account and then refuses part way through provisioning — `Authentication error [code: 10000]` on the R2 bucket, after D1 has already been created — because temporary accounts do not support R2, Workflows or Email Sending, and are created on Workers Free where ADR 25 requires Paid ([receipt](./receipts/temporary-account-provisioning.md)).
+
 **Verify the teardown rather than assume it.** `wrangler d1 list`, `wrangler r2 bucket list`, `wrangler queues
 list` and `wrangler workflows list` should each show nothing named `mailda`, and the Worker's URL should answer
 404. The Workflow was the one that did not, which is why this check is written down rather than implied.
