@@ -593,6 +593,16 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/cloudflare-oauth-node-as-client.md
+  ...bothPlans(
+    "how Cloudflare's OAuth authorization endpoint behaves — which redirect hosts it accepts, whether a "
+      + "private client needs domain verification, and the minimum `state` it enforces. None of it varies "
+      + "with the account's plan: OAuth is Cloudflare's identity surface rather than a metered product, and "
+      + "ADR 42 rests on the first of these",
+    "oauth.workers_dev_redirect_accepted", "oauth.private_client_needs_domain_verification",
+    "oauth.min_state_length",
+  ),
+
   // docs/receipts/temporary-account-provisioning.md
   ...bothPlans(
     "what a **temporary preview account** is and is not, which does not vary with the customer's Cloudflare "
