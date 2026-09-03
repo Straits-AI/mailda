@@ -6,9 +6,39 @@ decide it, what happens when two people act at once, and what is deliberately ab
 Implemented by `apps/node/worker/src/approvals.ts` with `migrations/0020_approvals.sql`,
 `0021_hold_lift.sql`, `0022_approval_expiry.sql` and `0026_send_breakers.sql`, on top of the policy object in `src/policy.ts`
 (`0019_policy.sql`) and the eligible-set query in `src/deciders.ts`; the dispatch-time recheck an approved send
-gets is `src/outbound/recheck.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
-approval hangs off, [#64][64] for the legal-hold lift and [#62][62] for the recheck, the effect envelope and
-expiry.
+gets is `src/outbound/recheck.ts`. The sequence *"evaluate policy, then plan the approval a policy demanded"*
+is `src/governed.ts`. Decision record: [#61][61], with [#60][60] for the policy outcomes a send's
+approval hangs off, [#64][64] for the legal-hold lift, [#62][62] for the recheck, the effect envelope and
+expiry, and [#160][160] for the gate.
+
+## The gate, and what it deliberately leaves to its caller
+
+`stagePolicy` in `src/governed.ts` is the sequence an act passes through to be governed: `evaluate`, then —
+only if a version required approval — `requiredStages`, `decidersOf`, `rostersOf` and `planApproval`, folded in
+that order. It returns a decision plus **the approval's rows for the caller's transaction**, and writes
+nothing itself. That is `planApproval`'s reason carried up one level: the approval and the act it gates are one
+act, so a gate that wrote its own rows would make a half-gated act representable.
+
+It exists because #160 found `requiredStages` had **exactly one caller**. Policy was not a plane acts pass
+through, it was a step inside a send's sealing — correct while sends were the only governed act, and a
+correspondence to maintain by hand the moment there was a second one. The lift removes a future duplication
+rather than adding an abstraction now, and `src/outbound/manifest.ts` calls it where those five calls used to
+be inline.
+
+Three things stay with the caller, and each is a decision rather than an omission:
+
+- **The conditions.** `evaluate` takes `SendFacts`, and `policy_versions`' `when_*` columns are send-shaped. A
+  second governed act either fits them or #60's policy object needs new conditions — which is a decision about
+  what a policy may *say*, not something to pre-build.
+- **The breakers.** The domain pause, the rate gate and #50's Butler release fold in *after* the gate, in the
+  total order `sealManifest` documents. They are properties of a send: a label has no recipient domain to pause.
+- **The subject's row.** 0021 settled that every subject is a row in a table of its own. The gate takes
+  `(subject_kind, subject_id)` and does not offer to store an act for you.
+
+`subjectKind` is typed `ApprovalSubjectKind`, not `string`, and that is the point of the type rather than a
+nicety — governing a new act *requires* declaring it in `APPROVAL_SUBJECT_KINDS` beside the five that exist.
+Widening it would let an act be governed without ever being classified, which is the generic subject 0021
+refused.
 
 ## Five subjects, one mechanism
 
@@ -426,11 +456,21 @@ Measured, not counted: `docs/receipts/approval-decision-cost.md`.
 | eligibility check on one mailbox | 1 |
 | any decision on a send — approve, final approve, deny | 6 |
 | any withdrawal | 6 |
-| seal gated by a hold | 11 |
-| seal gated by an approval | 13 |
+| seal where policy demanded no approval — a hold, or nothing matching | **12, bounded with no headroom** |
+| seal gated by an approval | 14 |
+| seal gated by a **team-scoped** approval | 15 |
 | requesting a legal-hold lift | 5 |
 | approving a lift, stage still open | 6 |
 | the approval that **applies** a lift | 7 |
+
+The first two rows read 11 and 13 in this document until 3 September 2026, when they were corrected to the
+receipt's figures — the receipt had recorded the drift on 21 August and this table was not updated with it,
+which is a document quoting numbers a reader has no way to know are a fortnight stale.
+
+**The 12 has no headroom on purpose.** It bounds the seal on the path where policy demanded no approval, and
+that path is supposed to pay *nothing* for the approval mechanism. Until #160 that property was asserted only
+as the difference between the first two rows, so a read added above the gate's `require_approval` branch lifted
+both figures and no assertion moved. `approval-decision-cost.md` carries the correction.
 
 And the dispatch, measured in `docs/receipts/dispatch-recheck-cost.md`:
 
@@ -519,5 +559,6 @@ see what they are agreeing to *before* they decide — a trail is where a decisi
 [64]: https://github.com/Straits-AI/mailda/issues/64
 [65]: https://github.com/Straits-AI/mailda/issues/65
 [66]: https://github.com/Straits-AI/mailda/issues/66
+[160]: https://github.com/Straits-AI/mailda/issues/160
 [73]: https://github.com/Straits-AI/mailda/issues/73
 [93]: https://github.com/Straits-AI/mailda/issues/93

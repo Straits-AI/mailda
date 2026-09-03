@@ -3,15 +3,15 @@ import { ID_PREFIXES, type Ctx } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AuditEvent, auditedBatchMany } from "../audit.ts";
-import { describeShortfall, planApproval, teamsNamedBy, type Shortfall } from "../approvals.ts";
-import { decidersOf, rostersOf } from "../deciders.ts";
+import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
 import { conflict, notFound } from "../errors.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
 import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
-import { domainOf, evaluate, requiredStages, STATE_FOR, type Outcome } from "../policy.ts";
+import { domainOf, type Outcome } from "../policy.ts";
+import { stagePolicy } from "../governed.ts";
 import { domainPaused } from "./recheck.ts";
 import { HeaderBlock, normalizeAddress } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
@@ -561,73 +561,28 @@ export async function sealManifest(
    * dispatch. The refusals above still come first: an unauthorized send is refused without a policy being
    * consulted, so a policy denial never becomes a way to learn that a mailbox exists.
    */
-  const decision = await evaluate(env, ctx, orgId, {
+  const staged = await stagePolicy(env, ctx, orgId, {
+    // The subject is this manifest, and `subject_kind` is written rather than implied by the id's prefix —
+    // 0021's reason: a kind the writer leaves out falls back on a column default, and a default is not a
+    // classification.
+    subjectKind: "send_manifest",
+    subjectId: manifestId,
+    scopeId: composition.mailboxId,
+    actorUserId: composition.authorUserId,
+  }, {
     mailboxId: composition.mailboxId,
     actorUserId: composition.authorUserId,
     recipients: [...to, ...cc, ...bcc],
     isReply: composition.inReplyToMessageId !== undefined,
   });
-  let { state: sealedState, reason: stateReason } = STATE_FOR[decision.outcome];
 
-  /**
-   * The approval (#61), planned before anything is persisted because it can change the state this manifest is
-   * sealed with.
-   *
-   * Costs two queries and **only on the `require_approval` path**, which is the same laziness `evaluate` uses
-   * for its two derived inputs: a send no policy gated pays nothing for a mechanism it does not touch
-   * (receipt: `approval-decision-cost.md`).
-   *
-   * The stage set is folded over every matching `require_approval` version — `max` per ordinal, which is #60's
-   * own conflict resolution rather than a second rule — because two policies requiring approval of one send are
-   * both in force.
-   */
-  let approvalId: string | null = null;
-  let approvalShortfall: Shortfall | null = null;
-  let approvalStatements: D1PreparedStatement[] = [];
-  let approvalEvent: AuditEvent | null = null;
-  if (decision.outcome === "require_approval") {
-    const stages = await requiredStages(
-      env,
-      decision.matched.filter((match) => match.outcome === "require_approval").map((match) => match.versionId),
-    );
-    const deciders = await decidersOf(env, orgId, composition.mailboxId);
-    /*
-     * The rosters of every team the folded stage set names (#73), and **only** when it names one.
-     *
-     * `teamsNamedBy` returns nothing for a stage set with no team constraint, and `rostersOf` short-circuits
-     * on an empty request with no query at all — so a send gated by an ordinary policy costs exactly what it
-     * cost before this existed, which is the laziness `evaluate` already uses for its two derived conditions.
-     * The figure is in `approval-decision-cost.md`, measured rather than argued.
-     *
-     * Read here rather than inside `planApproval` because that function is pure and returns statements for
-     * this transaction to carry; making it do I/O would put a read inside the thing whose whole shape is
-     * "decide, then hand back the rows".
-     */
-    const rosters = await rostersOf(env, orgId, teamsNamedBy(stages));
-    const planned = planApproval(env, ctx, orgId, {
-      // The subject is this manifest. `subject_kind` is written rather than implied by the id's prefix, for
-      // the reason 0021 gives: a kind the writer leaves out falls back on a column default, and a default is
-      // not a classification.
-      subjectKind: "send_manifest",
-      subjectId: manifestId,
-      scopeId: composition.mailboxId,
-      actorUserId: composition.authorUserId,
-      stages,
-    }, deciders, rosters);
-
-    if (planned.satisfiable) {
-      approvalId = planned.plan.approvalId;
-      approvalStatements = planned.plan.statements;
-      approvalEvent = planned.plan.event;
-    } else {
-      // Withheld rather than parked. The gate exists and nobody can clear it, so `awaiting` would be a state
-      // that reads as pending forever — the argument #60 made for keeping `deny` out of it, reached from the
-      // other side. Terminal, and the remedy is an administrator's grant plus a re-seal.
-      approvalShortfall = planned.shortfall;
-      sealedState = "withheld";
-      stateReason = "approval_unsatisfiable";
-    }
-  }
+  const decision = { outcome: staged.outcome, matched: staged.matched };
+  let sealedState: "held" | "awaiting" | "withheld" = staged.state;
+  let stateReason = staged.reason;
+  const approvalId = staged.approvalId;
+  const approvalShortfall = staged.shortfall;
+  const approvalStatements = staged.statements;
+  const approvalEvent = staged.event;
 
   /**
    * The circuit breakers (#66), evaluated after the policy and folded into the same state and reason.
