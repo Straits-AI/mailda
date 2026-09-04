@@ -738,10 +738,71 @@ describe("migrations cannot destroy content, because none of them could consult 
     expect(migrationFiles.length).toBeGreaterThanOrEqual(17);
   });
 
+  /**
+   * The one migration permitted to drop a table, and what it must do in the same file to be permitted it.
+   *
+   * ## Why an exception rather than a wider rule
+   *
+   * The rule above is right: a migration runs as raw SQL inside `batch()`, so no Worker code can stand
+   * between its statements and a legal hold. Nothing in a migration can ask whether a message is preserved.
+   *
+   * **A search index is not a message.** `evidence-lifecycle.md` settles this — the indexes are rebuildable
+   * derivatives of evidence, and a hold preserves the message, its bytes and its metadata, none of which
+   * live here. `message_body_search` is *contentless* by construction and holds no text at all;
+   * `message_search` holds subject and sender, and holds them as a copy of columns on `messages` that this
+   * migration does not touch.
+   *
+   * So the exception is narrow: **an FTS table whose content is derivable, dropped by a migration that puts
+   * it back.** That second clause is the safety property and it is asserted rather than trusted — a
+   * migration that dropped an index and left it empty would take away every search on the Node until
+   * somebody noticed, which is a silent loss of a feature even if it is not a loss of mail.
+   */
+  const REBUILDABLE_DROPS = [
+    {
+      file: "migrations/0054_search_day_token.sql",
+      tables: ["message_search", "message_body_search"],
+      why: "FTS5 has no ALTER TABLE ADD COLUMN, so adding #153's day token means a new table. Both are "
+        + "rebuildable derivatives of evidence: `message_search` is a copy of columns on `messages`, which "
+        + "this migration rebuilds in SQL, and `message_body_search` is contentless, which it requeues for "
+        + "the body backfill. No message, no byte and no piece of metadata a hold preserves is in either.",
+    },
+  ];
+
+  it("permits a drop only where the same migration puts the table back", () => {
+    /*
+     * The clause that makes the exception safe. Checked against the file's own text, so a future edit that
+     * removed the rebuild would fail here rather than ship an empty index — and the requeue is checked as
+     * well, because a contentless table cannot be rebuilt in SQL and its `CREATE` alone would be an index
+     * with nothing in it.
+     */
+    for (const { file, tables } of REBUILDABLE_DROPS) {
+      const sql = readFileSync(join(workerDir, file), "utf8");
+      for (const table of tables) {
+        expect(sql, `${file} drops ${table} without recreating it`)
+          .toMatch(new RegExp(`CREATE VIRTUAL TABLE ${table}\\b`));
+      }
+      // One of the two is refilled in SQL; the other is put back in the backfill's queue.
+      expect(sql, `${file} recreates message_search without repopulating it`)
+        .toMatch(/INSERT INTO message_search\b/);
+      expect(sql, `${file} recreates the contentless body index without requeueing the rebuild`)
+        .toMatch(/body_index_state = 'pending'/);
+    }
+  });
+
   it("contains no delete and no table or column drop", () => {
-    const found = matchesIn(migrationFiles, [SQL_DELETE, SQL_DROP]).map(
-      (match) => `${match.file}:${match.line}  ${match.text}`,
+    const permitted = new Set(
+      REBUILDABLE_DROPS.flatMap(({ file, tables }) => tables.map((table) => `${file}|${table}`)),
     );
+    const found = matchesIn(migrationFiles, [SQL_DELETE, SQL_DROP])
+      .filter((match) => {
+        /*
+         * Matched on the **table named in the statement**, not on the file. Exempting a whole file would let
+         * a later edit to `0054` drop anything at all, which is how a narrow exception becomes a hole.
+         */
+        const table = /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)/i.exec(match.text)?.[1];
+        return table === undefined || !permitted.has(`${match.file}|${table}`);
+      })
+      .map((match) => `${match.file}:${match.line}  ${match.text}`);
     // A migration runs as raw SQL inside `batch()`, so no Worker code can stand between its statements and a
     // hold. If one of these is genuinely needed, that is a decision to take on #64's terms — a bookmark gate
     // per #10's expand/contract rule, and an argument about what the hold means for a schema change — not a

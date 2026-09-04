@@ -101,9 +101,15 @@ describe("every migration declares whether it can run ahead of the code", () => 
 
   it("knows which ones contract, so the derivation is not matching everything or nothing", () => {
     /*
-     * The derivation itself, pinned. Exactly two migrations in this repository contract — both `RENAME COLUMN`
-     * on `approvals` — and if that set silently became empty (a broken regex) or everything (a regex matching
-     * prose) the assertion above would pass while checking nothing.
+     * The derivation itself, pinned. Three migrations in this repository contract — two `RENAME COLUMN` on
+     * `approvals`, and #153's `DROP TABLE` on the two search indexes — and if that set silently became empty
+     * (a broken regex) or everything (a regex matching prose) the assertion above would pass while checking
+     * nothing.
+     *
+     * `0054` is the first contraction that is not a rename, and it is worth naming why it is one: FTS5 has no
+     * `ALTER TABLE ADD COLUMN`, so #153's day token means a new table, and the new code queries a column the
+     * old table does not have. It is also the first whose expensive half is the point of running it
+     * deliberately — it requeues every message for the body backfill.
      *
      * Written as the expected set rather than a count, so a third contraction has to be added here
      * deliberately and a reader can see what the two are.
@@ -111,7 +117,9 @@ describe("every migration declares whether it can run ahead of the code", () => 
     const contracting = files.filter((name) => CONTRACTING.some(
       (pattern) => pattern.test(statementsOf(readFileSync(join(migrationsDir, name), "utf8"))),
     ));
-    expect(contracting).toEqual(["0021_hold_lift.sql", "0026_send_breakers.sql"]);
+    expect(contracting).toEqual([
+      "0021_hold_lift.sql", "0026_send_breakers.sql", "0054_search_day_token.sql",
+    ]);
   });
 
   it("does not mistake an annotation for a statement", () => {

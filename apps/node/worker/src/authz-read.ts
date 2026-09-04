@@ -5,7 +5,7 @@ import { ID_PREFIXES, idPattern, type Ctx } from "@mailda/runtime";
 import { BODY_SEARCH_RELATIONS, RELATIONS_FOR_METADATA, type MailboxRelation } from "./access.ts";
 import { agentFor } from "./agents.ts";
 import { sponsorTerm, type SponsorTerm } from "./delegation.ts";
-import { ftsQuery } from "./search.ts";
+import { daysAcross, ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
@@ -989,7 +989,21 @@ const CURSOR_ID = idPattern(ID_PREFIXES.ingressReceipt);
  * it would need an identifier pattern written by hand, which `test/node/id-prefix-world.test.ts` forbids, and
  * would buy a distinction the authorization model refuses to draw anyway.
  */
-export function messagePageRequest(url: URL): MessagePage {
+/**
+ * How many days one searched window may span.
+ *
+ * A bound on the **query's own size** rather than on the mail: the window is enumerated one token per day,
+ * so a year is 365 terms in a MATCH expression. Sized rather than measured, and sized generously — a quarter
+ * is the widest range anybody has asked for in this product's own use, and the figure that actually tracks
+ * cost is the volume bound `listMessages` applies beside it (`search.max_window_messages`).
+ *
+ * Kept here rather than in `packages/budgets` deliberately: it is not a measurement, and a receipt would
+ * have to invent a `values:` block for a number nothing measured. `message-search-cost.md` records the
+ * figures that *are* measured and names this one as sized.
+ */
+export const MAX_WINDOW_DAYS = 100;
+
+export function messagePageRequest(url: URL, nowIso: string): MessagePage {
   const raw = url.searchParams.get(MESSAGE_PAGE_PARAMS.cursor);
   const mailboxId = url.searchParams.get(MESSAGE_PAGE_PARAMS.mailbox);
   /*
@@ -1010,12 +1024,16 @@ export function messagePageRequest(url: URL): MessagePage {
    */
   const fromRaw = url.searchParams.get(MESSAGE_PAGE_PARAMS.from);
   const from = fromRaw === null || fromRaw.trim() === "" ? null : fromRaw.trim().toLowerCase();
-  const since = instantBound(
-    url.searchParams.get(MESSAGE_PAGE_PARAMS.since), "start", MESSAGE_PAGE_PARAMS.since,
-  );
-  const until = instantBound(
-    url.searchParams.get(MESSAGE_PAGE_PARAMS.until), "end", MESSAGE_PAGE_PARAMS.until,
-  );
+  /*
+   * The raw values are kept as well as the normalised ones, because a searched window can only be a whole
+   * day and `instantBound` erases the difference: it turns the date `2026-09-01` into
+   * `2026-09-01T00:00:00.000Z`, which is indistinguishable from a caller who asked for midnight exactly.
+   * Refusing an instant on a searched page therefore has to look at what arrived, not at what it became.
+   */
+  const rawSince = url.searchParams.get(MESSAGE_PAGE_PARAMS.since);
+  const rawUntil = url.searchParams.get(MESSAGE_PAGE_PARAMS.until);
+  const since = instantBound(rawSince, "start", MESSAGE_PAGE_PARAMS.since);
+  const until = instantBound(rawUntil, "end", MESSAGE_PAGE_PARAMS.until);
   /*
    * **An impossible window is refused, not answered empty.** `since=Tuesday&until=Monday` is a mistake
    * somebody made — a swapped pair, or a date picker that let it happen — and an empty page in reply is
@@ -1051,16 +1069,76 @@ export function messagePageRequest(url: URL): MessagePage {
    * whenever October's demurrage mail ranks below the cap. A wrong answer to a reasonable question, silently.
    * Refusing is the honest one, and #153 carries the plan a windowed search actually needs.
    */
+  /*
+   * ## A windowed search, and the three ways it is refused rather than answered wrongly (#153)
+   *
+   * This used to refuse **every** windowed search with `E_MESSAGE_PAGE_WINDOW_SEARCH`, because the window was
+   * a residual filter inside each ranked arm — 4,335 rows read against a 1,000-row budget — and filtering
+   * outside the arms would have answered emptily whenever the matches in the window ranked below the cap.
+   *
+   * Migration 0054 put the day in the index as a token, so the window now **narrows** the match instead of
+   * filtering it, and cost tracks the window: 20 rows for a day, 140 for a week. What is left are three
+   * conditions the token cannot honour, and each is refused by name rather than approximated.
+   */
   if (q !== null && (since !== null || until !== null)) {
-    throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH", {
-      what: "a date window cannot be combined with a search term yet",
-      why: "a searched page is ranked and capped, so a date filter inside it makes the query scan far "
-        + "deeper to fill the page — measured at 4,335 rows read against a 1,000-row budget on a term the "
-        + "index cannot narrow. Filtering after the cap instead would answer emptily whenever the matches "
-        + "in your window rank below it, which is worse than refusing",
-      fix: `search without \`${MESSAGE_PAGE_PARAMS.since}\`/\`${MESSAGE_PAGE_PARAMS.until}\`, or drop `
-        + `\`${MESSAGE_PAGE_PARAMS.q}\` and page the window with the cursor. See issue 153.`,
-    });
+    /*
+     * **1. An instant.** FTS5 matches tokens, not ranges, so the finest a search can express is a day. The
+     * alternative is rounding — and a caller asking for `since=…T10:30:00Z` who is handed the whole day
+     * receives mail from before the time they asked for. That is the class of silent wrongness this ticket
+     * refused when it rejected filtering outside the arms, so an instant is refused instead.
+     */
+    for (const [param, raw] of [
+      [MESSAGE_PAGE_PARAMS.since, rawSince], [MESSAGE_PAGE_PARAMS.until, rawUntil],
+    ] as const) {
+      if (raw !== null && raw !== "" && !DATE_ONLY.test(raw)) {
+        throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_INSTANT", {
+          what: `\`${param}=${raw}\` is an instant, and a searched window can only be a whole day`,
+          why: "the window narrows the search inside the index, where the date is one token per day — so "
+            + "there is no token finer than a day to match, and rounding your instant up or down would "
+            + "answer with mail from outside the window you asked for",
+          fix: `pass \`${param}=${raw.slice(0, 10)}\` for the whole day UTC. An instant works on an `
+            + `unsearched listing, which filters \`accepted_at\` directly — drop \`${MESSAGE_PAGE_PARAMS.q}\``,
+        });
+      }
+    }
+
+    /*
+     * **2. An open start.** `until` alone means *everything up to then*, which is unbounded backwards — and
+     * the token set is enumerated, so it would be one term per day back to the first message this Node ever
+     * received. `since` alone is fine: its open end is today, which is a real edge.
+     */
+    if (since === null) {
+      throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_OPEN", {
+        what: `a searched window needs a \`${MESSAGE_PAGE_PARAMS.since}\``,
+        why: "the window is matched as one token per day, so an open start is a query with one term per day "
+          + "back to the oldest mail here — a request whose size grows with the archive rather than with "
+          + "what was asked for",
+        fix: `add \`${MESSAGE_PAGE_PARAMS.since}=<date>\`. Without \`${MESSAGE_PAGE_PARAMS.q}\` an open `
+          + "start is fine, because a listing compares the instant directly",
+      });
+    }
+
+    /*
+     * **3. Too many days.** The token list *is* the query's size, so the cap is on the count of days rather
+     * than on anything about the mail — a bound the caller can understand before sending, and one that does
+     * not depend on how much mail happens to be in the range.
+     *
+     * `search.max_window_days` is measured in `message-search-cost.md`. It is not the only bound a windowed
+     * search meets: `listMessages` also refuses when the *volume* inside the window would exceed the row
+     * budget, which is the figure that actually tracks cost. This one exists because a query with ten
+     * thousand terms in it is not a query, whatever it would have read.
+     */
+    const spanDays = daysAcross(since, until ?? nowIso).length;
+    const maxDays = MAX_WINDOW_DAYS;
+    if (spanDays > maxDays) {
+      throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_WIDE", {
+        what: `that window is ${spanDays} days wide and a searched one may be at most ${maxDays}`,
+        why: "the window is matched as one token per day, so its width is the size of the query itself — "
+          + "and a search carrying hundreds of terms is slower to plan than the mail it would find",
+        fix: `narrow the window to ${maxDays} days or fewer, or search without `
+          + `\`${MESSAGE_PAGE_PARAMS.since}\`/\`${MESSAGE_PAGE_PARAMS.until}\` and read the ranked page`,
+      });
+    }
   }
   if (raw === null) return { after: null, mailboxId, q, since, until, from };
 
@@ -1137,6 +1215,13 @@ export function messagePageQuery(args: {
   page: MessagePage;
   /** How many rows to ask for. `listMessages` asks for the page plus one probe row — see `next_cursor`. */
   limit: number;
+  /**
+   * The caller's clock, for a searched window whose `until` is open (#153).
+   *
+   * Passed rather than read here, for the reason `@mailda/runtime` exists: a query that called `Date.now()`
+   * would build a different token set on two calls a day apart and neither would be testable.
+   */
+  nowIso: string;
 }): { sql: string; params: unknown[] } {
   const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
   const filters: string[] = [];
@@ -1162,11 +1247,19 @@ export function messagePageQuery(args: {
    * filter on it is a filter the sender controls — and "when did this arrive" is the question an
    * investigation asks.
    */
-  if (args.page.since !== null) {
+  /*
+   * **On a searched page the window does not go here** (#153). It rides inside the MATCH as a `day:` token
+   * set, which is what makes it a narrowing rather than a filter — see `searchedMatch` below. Adding it as a
+   * predicate *as well* would be free of charge and not free of consequence: `accepted_at <= '2026-09-01'`
+   * against a day token that covers the whole of 1 September would exclude everything after midnight, so a
+   * caller asking for a window ending that day would lose the day they asked for.
+   */
+  const windowInMatch = args.page.q !== null && (args.page.since !== null || args.page.until !== null);
+  if (args.page.since !== null && !windowInMatch) {
     filters.push("AND r.accepted_at >= ?");
     filterParams.push(args.page.since);
   }
-  if (args.page.until !== null) {
+  if (args.page.until !== null && !windowInMatch) {
     filters.push("AND r.accepted_at <= ?");
     filterParams.push(args.page.until);
   }
@@ -1317,6 +1410,58 @@ export function messagePageQuery(args: {
   });
   const authorized = authorizedBy(RELATIONS_FOR_METADATA);
 
+  /**
+   * The MATCH expression, with the window folded in as a `day:` token set (#153).
+   *
+   * ## Why the window belongs inside the expression
+   *
+   * A residual predicate makes the arm scan further through its MATCH result to fill `LIMIT` — measured at
+   * 4,335 rows read against a 1,000-row budget. A token set narrows the match **before** the cap, so cost
+   * tracks the window: 20 rows for a day, 140 for a week, against 2,376 unwindowed. And it is the only shape
+   * that keeps the *meaning*, because filtering after the cap answers emptily whenever the matches in the
+   * window rank below it.
+   *
+   * ## `day:(a OR b)` and not `(day:a OR day:b)`
+   *
+   * FTS5's column filter applies to the whole parenthesised group, so the first spelling is one filter over
+   * an alternation and the second is an alternation of filters. They match the same rows here, and the first
+   * is the one whose size is the day count rather than twice it.
+   *
+   * The term is parenthesised too. `q` has already been through `ftsQuery`, which may produce an alternation
+   * of its own — `shipment OR delay AND day:(…)` would bind the window to only the last branch, and the
+   * caller would get unwindowed results for the rest. That is a silent widening, so the grouping is
+   * explicit.
+   */
+  const searchedMatch = (() => {
+    if (args.page.q === null) return null;
+    if (args.page.since === null && args.page.until === null) return args.page.q;
+    /*
+     * An open end is the archive's end, not an error: `since` alone means *from then until now*, and `until`
+     * alone means *everything up to then*. The bounds are already normalised instants, so slicing the date
+     * off them is the whole conversion — and `messagePageRequest` has already refused a bound that was an
+     * instant rather than a date, so nothing is being rounded here.
+     */
+    /*
+     * Both ends are real by the time the query is built: `messagePageRequest` refuses a searched window with
+     * no `since`, and an open `until` resolves to the clock the caller passed. So there is no epoch fallback
+     * here — a default that enumerated back to 1970 would be a query the size of the archive's age, and
+     * having one available is how it eventually gets used.
+     */
+    if (args.page.since === null) {
+      /*
+       * Unreachable through `messagePageRequest`, which refuses a searched window with no `since`. Thrown
+       * rather than defaulted, because the default available here is the epoch and a token set enumerated
+       * from 1970 is a query the size of the archive's age — the exact shape the refusal exists to prevent.
+       */
+      throw new Error(
+        "E_SEARCH_WINDOW_NO_START  a searched window reached the query with no `since`\n"
+        + "  why  the window is enumerated one token per day, so an open start has no bound to enumerate to",
+      );
+    }
+    const days = daysAcross(args.page.since, args.page.until ?? args.nowIso);
+    return `(${args.page.q}) AND day:(${days.join(" OR ")})`;
+  })();
+
   if (args.page.q !== null) {
     /*
      * ## A searched page is a different plan, driven by the index, ranked and capped
@@ -1439,11 +1584,11 @@ export function messagePageQuery(args: {
       params: [
         // metadata arm: both grant subqueries, then the match, then the two org predicates
         ...args.supervised.metadata.params, ...args.supervised.content.params,
-        args.page.q, args.orgId, args.orgId, ...filterParams,
+        searchedMatch, args.orgId, args.orgId, ...filterParams,
         ...metadataArm.params, args.limit,
         // body arm: the same two subqueries again, because the same fragments appear twice
         ...args.supervised.metadata.params, ...args.supervised.content.params,
-        args.page.q, args.orgId, ...filterParams,
+        searchedMatch, args.orgId, ...filterParams,
         ...bodyArm.params, args.limit,
         // the outer page
         args.limit,
@@ -1552,7 +1697,7 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // Thrown, not returned: `index.ts` renders a `CallerError` as its four-part refusal, and a second spelling
   // of that shape here would be a second thing to keep in step. Parsed before the query so a bad cursor costs
   // one round trip rather than a page.
-  const page = messagePageRequest(new URL(request.url));
+  const page = messagePageRequest(new URL(request.url), new Date(ctx.now()).toISOString());
   /*
    * Both scopes, built once and handed to the builder together. The searched page needs them separate — a
    * grant of scope `metadata` must reach the subject index and not the body index — and building only the
@@ -1564,6 +1709,45 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     content: liveGrantsBySubject(who.orgId, who.userId, grantsAt, SCOPES_FOR_CONTENT),
   };
 
+  /*
+   * ## The bound a windowed search meets before it runs (#153)
+   *
+   * This is the rule #153 said could not exist. Its complaint was that *"selectivity is not knowable before
+   * the query runs, so there is no per-request rule that admits the cheap case and refuses the expensive
+   * one"* — true of a residual filter, where cost tracks the match set and the match set is the corpus for a
+   * term the index cannot narrow.
+   *
+   * With the window inside the index, cost tracks the **intersection** — measured at 20 rows for a day, 140
+   * for a week, 1,188 for sixty days, and 12 for a rare term in that same sixty-day window. Rows read ran at
+   * roughly twice the messages in the window, because the page is a union of two arms. So the volume in the
+   * window bounds the read, and the volume **is** knowable in advance: one seek on `ir_org_accepted`.
+   *
+   * Asked only for a searched window. An unsearched listing pages by cursor and is bounded already, and a
+   * search with no window is bounded by rank and the cap.
+   */
+  if (page.q !== null && page.since !== null) {
+    const counted = await env.CATALOG.prepare(
+      `SELECT COUNT(*) AS n FROM ingress_receipts
+        WHERE org_id = ? AND accepted_at >= ? AND accepted_at <= ?`,
+    ).bind(who.orgId, page.since, page.until ?? new Date(ctx.now()).toISOString())
+      .first<{ n: number }>();
+    const inWindow = counted?.n ?? 0;
+    const maxInWindow = BUDGETS["search.max_window_messages"];
+    if (inWindow > maxInWindow) {
+      throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_BUSY", {
+        what: `${inWindow} messages arrived in that window and a searched one may cover at most `
+          + `${maxInWindow}`,
+        why: "the window narrows the search inside the index, so what the page costs to read is set by how "
+          + "much mail is in the range rather than by how rare the word is — measured at about two rows "
+          + "read per message in the window, against a "
+          + `${BUDGETS["authz.list.max_rows_read"]}-row budget`,
+        fix: `narrow the window. This is counted before the search runs, so a narrower one is refused or `
+          + `answered rather than attempted — or drop \`${MESSAGE_PAGE_PARAMS.since}\` and read the ranked `
+          + "page, which is bounded by the cap instead",
+      });
+    }
+  }
+
   const size = BUDGETS["messages.page_size"];
   // Authorization is inside the query, not a filter applied afterwards — §5 forbids
   // returning counts or snippets for anything the caller cannot see. Re-run in full on every page: the
@@ -1571,6 +1755,7 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
   // pages takes effect on the second one. That is what the cursor carrying position only buys.
   const query = messagePageQuery({
     orgId: who.orgId,
+    nowIso: new Date(ctx.now()).toISOString(),
     subjects,
     /*
      * Empty for a human, and no query. An agent pays one extra read for the term that makes its sponsor a

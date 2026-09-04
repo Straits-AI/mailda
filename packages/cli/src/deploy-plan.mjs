@@ -141,53 +141,68 @@ function parseJsonc(text) {
 }
 
 /**
- * What a `wrangler … list` table said, as presence facts.
+ * How each `wrangler … info` command says a resource **is not there**.
  *
- * ## Substring matching, and why that is right here rather than lazy
+ * ## Why this replaced reading a list, and the bug that forced it
  *
- * These four commands have **no `--json`** — checked against wrangler 4.118.0, where `d1 list`,
- * `r2 bucket list`, `queues list` and `workflows list` all print a table and none accepts the flag. So the
- * only thing available is the text, and the question being asked of it is narrow: *does a resource with this
- * exact name appear*.
+ * The first version scanned `wrangler d1 list`, `r2 bucket list`, `queues list` and `workflows list` for the
+ * resource's name. It was wrong on the first live account it met, in the worst available direction.
  *
- * The names are matched with word-ish boundaries rather than bare `includes`, because
- * `mailda-catalog` is a substring of `mailda-catalog-2` and a plan that confused the two would report a
- * resource as present when the deploy would create it. This is the same failure the runbook's teardown check
- * exists for: *"`wrangler d1 list` … should each show nothing named `mailda`"*, which is true of a leftover
- * and of a lookalike.
+ * **`wrangler r2 bucket list` returns exactly 20 buckets and stops**, alphabetically, with no marker and no
+ * pagination flag. The account had `mailda-evidence`; the list stopped at `cardkeeper-storage`. So the plan
+ * reported the bucket **absent** on a Worker that exists — the `orphaned` disposition, which this file's own
+ * table calls the worst of the five because *"the deploy reports success and changes nothing"* — and told an
+ * operator their healthy Node was broken. A page of a list read as the whole account: a layer's honest
+ * output taken for the layer above's complete answer.
  *
- * `null` for a list that could not be read, which is **not** the same as an empty list. A missing permission
- * or a failed call means the plan does not know, and reporting "absent, will create" from an unread list is
- * how a plan promises a create that fails on a leftover.
+ * Asking about **one resource by name** removes the whole class. There is no pagination, no substring
+ * collision between `mailda-catalog` and `mailda-catalog-2`, and absence is asserted by the provider rather
+ * than inferred from something not appearing.
+ *
+ * ## The markers, measured against wrangler 4.118.0
+ *
+ * Each is the provider's own words for *this thing does not exist*, and each was produced by asking for a
+ * name that is not there. They are matched **specifically**: an error this does not recognise answers
+ * `unknown`, never `absent`. That is the fail-safe direction and it is exactly what the list version got
+ * wrong — a permission failure, a network error or a renamed message must not read as a missing resource.
  */
-export function presenceIn(listText, name) {
-  if (listText === null || listText === undefined) return null;
-  const pattern = new RegExp(`(^|[^A-Za-z0-9_-])${escapeForPattern(name)}([^A-Za-z0-9_-]|$)`, "m");
-  return pattern.test(listText);
-}
+export const ABSENT_MARKERS = {
+  d1: [/Couldn't find a D1 DB with name or binding/i],
+  r2: [/\[code: 10006\]/, /specified bucket does not exist/i],
+  queue: [/does not exist\. To create it/i],
+  workflow: [/\[code: 10200\]/, /workflow\.not_found/i],
+};
 
-function escapeForPattern(text) {
-  return text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Whether a resource is there, from what `wrangler … info` answered.
+ *
+ * Three outcomes and they are not interchangeable:
+ *
+ * - `true` — the command succeeded, so the provider found it.
+ * - `false` — the command failed **with that resource kind's own not-found marker**.
+ * - `null` — the command failed some other way. Not proof of absence, and the plan says so rather than
+ *   guessing, because guessing here is what produced a false `orphaned` against a live Node.
+ */
+export function presenceFrom(kind, outcome) {
+  if (outcome === null || outcome === undefined) return null;
+  if (outcome.status === 0) return true;
+  const markers = ABSENT_MARKERS[kind] ?? [];
+  return markers.some((marker) => marker.test(outcome.text)) ? false : null;
 }
 
 /**
- * Which script owns a Workflow, from `wrangler workflows list`.
+ * Which script owns a Workflow, from `wrangler workflows describe`.
  *
- * The row is `│ <name> │ <script> │ …`, matched on the Workflow's own name so a second unrelated Workflow in
- * the account cannot be mistaken for this one. Lifted from `refuseIfWorkflowBelongsElsewhere` in
- * `mailda.mjs`, which found this format against the live account during the drill — so the format is measured
- * and the two now read it the same way instead of twice.
+ * `Script Name: mailda` on its own line, which the command prints as a field rather than as a table cell —
+ * so this no longer parses `│`-separated columns and cannot be confused by a second Workflow whose name
+ * contains this one's.
  *
- * `null` when the list could not be read or the Workflow is not in it. A caller must not read that as
- * *nobody owns it*: the whole finding is that deploying over somebody else's Workflow does not refuse, it
- * reassigns, so an unknown owner is a reason to say so rather than to proceed.
+ * `null` when it cannot be established, and a caller must not read that as *nobody owns it*: the measured
+ * finding is that deploying over somebody else's Workflow does not refuse, it **reassigns**.
  */
-export function workflowOwnerIn(listText, name) {
-  if (listText === null || listText === undefined) return null;
-  const row = listText.split("\n").find((line) => line.includes(name));
-  if (row === undefined) return null;
-  const cells = row.split("│").map((cell) => cell.trim()).filter(Boolean);
-  return cells[1] ?? null;
+export function ownerFrom(outcome) {
+  if (outcome === null || outcome === undefined || outcome.status !== 0) return null;
+  return /^\s*Script Name:\s*(\S+)\s*$/m.exec(outcome.text)?.[1] ?? null;
 }
 
 /**
@@ -275,9 +290,13 @@ export function planFor({ configText, inventory }) {
   const installed = inventory.worker;
 
   const items = resources.map((resource) => {
-    const listText = inventory.lists[resource.kind];
-    const present = presenceIn(listText, resource.name);
-    const owner = resource.kind === "workflow" ? workflowOwnerIn(listText, resource.name) : null;
+    /*
+     * Keyed by **name** rather than by kind, because a config could legitimately declare two of one kind and
+     * the answer is about a specific resource. The list version keyed by kind and could not have.
+     */
+    const outcome = inventory.probes[resource.name] ?? null;
+    const present = presenceFrom(resource.kind, outcome);
+    const owner = resource.kind === "workflow" ? ownerFrom(outcome) : null;
     return {
       ...resource,
       present,

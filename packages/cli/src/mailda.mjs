@@ -38,9 +38,10 @@ import {
   activeVersionFrom, contractingAmong, deployExitCode, doctorExitCode, promotionVerdict, servedVersionOf,
   versionIdFrom,
 } from "./deploy-parse.mjs";
-import { planFor, renderPlan } from "./deploy-plan.mjs";
+import { planFor, renderPlan, resourcesFrom as resourcesFromConfig } from "./deploy-plan.mjs";
 import {
-  accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, wranglerVersionFrom,
+  accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, urlRequirement,
+  wranglerVersionFrom,
 } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
 import {
@@ -515,21 +516,46 @@ function refuseIfWorkflowBelongsElsewhere() {
  * which is what `doctor` reports.
  */
 /**
- * Reads this account's four resource lists, or admits it could not (#162 L1).
+ * Asks the account about each resource **by name**, or admits it could not (#162 L1).
  *
- * Each list is a separate call and a separate answer, because they fail separately: `wrangler workflows list`
- * needs a permission a deploy token may not carry, and the other three do not. A single "could not read the
- * account" would throw away three answers to lose one.
+ * ## This read a list once, and the list lied
  *
- * `null` for a failed call rather than an empty string. The distinction is the whole point —
- * `deploy-plan.mjs` treats an unread list as *unknown* and an empty one as *absent*, and reporting "absent,
- * will create" from a list nobody could read is how a plan promises a create that fails on a leftover.
+ * `wrangler r2 bucket list` returns exactly 20 buckets and stops — alphabetically, no marker, no flag. On the
+ * first live account this met, `mailda-evidence` was past that boundary, so the plan reported it absent on a
+ * Worker that exists and called a healthy Node `orphaned`. `deploy-plan.mjs` carries the full account.
+ *
+ * One `info` call per declared resource instead. Four calls rather than four, the same cost, and the answer
+ * is about the resource asked for rather than about whatever fitted on the first page.
+ *
+ * `quiet`, because these are questions rather than acts — `capture`'s own distinction — and echoing four
+ * error messages for resources a first install is *expected* not to have would bury the plan under them.
  */
 function accountInventory() {
-  const read = (args) => {
-    const outcome = capture("npx", ["wrangler", ...args, ...ENV], { quiet: true });
-    return outcome.status === 0 ? outcome.text : null;
+  const { resources } = resourcesFromConfig(readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"));
+
+  /**
+   * The `info` verb per kind, measured against wrangler 4.118.0.
+   *
+   * `"wrangler"` first, like every other `capture` call in this file. Omitting it produced
+   * `npm error could not determine executable to run` — status 1 with no resource-kind marker in it, so
+   * every probe answered **`unknown`** rather than `absent`. The plan printed four gaps instead of four
+   * false creates, which is the fail-safe direction working: a broken probe could not become a claim about
+   * the account.
+   */
+  const INFO = {
+    d1: (name) => ["wrangler", "d1", "info", name],
+    r2: (name) => ["wrangler", "r2", "bucket", "info", name],
+    queue: (name) => ["wrangler", "queues", "info", name],
+    workflow: (name) => ["wrangler", "workflows", "describe", name],
   };
+
+  const probes = {};
+  for (const resource of resources) {
+    const args = INFO[resource.kind];
+    if (args === undefined) continue;
+    probes[resource.name] = capture("npx", [...args(resource.name), ...ENV], { quiet: true });
+  }
+
   return {
     /*
      * The Worker's own existence comes from `firstInstall`, which already refuses rather than guesses — being
@@ -537,12 +563,7 @@ function accountInventory() {
      * making a second one that could disagree with it.
      */
     worker: !firstInstall(),
-    lists: {
-      d1: read(["d1", "list"]),
-      r2: read(["r2", "bucket", "list"]),
-      queue: read(["queues", "list"]),
-      workflow: read(["workflows", "list"]),
-    },
+    probes,
   };
 }
 
@@ -554,7 +575,13 @@ async function deploy(argv) {
    * to be settled before any list means anything — and then acts on nothing.
    */
   if (argv.includes("--plan")) {
-    const settled = await runPreflight(argv);
+    /*
+     * `needsUrl: false`. A plan promotes nothing, so the canary reason the URL exists for does not apply —
+     * and a plan for a **first install** runs before there is a Node to have a URL, which is the case this
+     * command was written for. The account still has to be settled, because a resource list read against the
+     * wrong account is worse than no list at all.
+     */
+    const settled = await runPreflight(argv, { needsUrl: false });
     if (!settled.ok) fail(settled.report);
     const plan = planFor({
       configText: readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"),
@@ -1391,7 +1418,7 @@ async function verifyEvidence(argv) {
  *
  * Returned rather than only printed, because `deploy` calls it and needs the resolved account.
  */
-async function runPreflight(argv, { announce = true } = {}) {
+async function runPreflight(argv, { announce = true, needsUrl = true } = {}) {
   const problems = [];
   const notes = [];
 
@@ -1432,14 +1459,11 @@ async function runPreflight(argv, { announce = true } = {}) {
   }
 
   const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "") || null;
-  if (origin === null) {
-    problems.push({
-      what: "the Node's URL is not known",
-      why: "the canary is checked by overriding to it on the Node's own hostname — there is no preview URL "
-        + "for a Worker with Durable Objects — so a deploy cannot verify what it is about to promote",
-      fix: "pass `--url https://<your-node>`, or set MAILDA_URL",
-    });
-  } else {
+  const needed = urlRequirement({ origin, needsUrl });
+  if (needed !== null) {
+    problems.push(needed);
+  }
+  if (origin !== null) {
     /*
      * Asked of the Node rather than assumed, and a **note** rather than a problem. A Node deployed before the
      * `version_metadata` binding existed cannot name itself, which does not stop a deploy: the canary carries

@@ -72,6 +72,7 @@ async function cost(
   window: { since?: string | null; until?: string | null } = {},
 ): Promise<Cost> {
   const query = messagePageQuery({
+    nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [READER],
@@ -91,6 +92,7 @@ async function cost(
 
 async function planFor(term: string | null): Promise<string> {
   const query = messagePageQuery({
+    nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [READER],
@@ -345,7 +347,42 @@ describe("what a date window costs", () => {
     expect(narrow.rowsRead).toBeLessThan(unbounded.rowsRead);
   });
 
-  it("is why a window and a search term are refused together", async () => {
+  it("prints what a windowed search costs now the day is in the index (#153)", async () => {
+    /*
+     * The measurement that replaces this file's refusal figure. The corpus here spans **under a day** — 1,200
+     * deliveries four minutes apart — so it cannot show a window narrowing anything, which is why the
+     * direction was probed on its own 120-day corpus first
+     * (`test/message-search-window.probe.test.ts`).
+     *
+     * What it *can* show is the case that matters for the shipped query: a window covering the whole corpus
+     * must cost no more than no window at all. A day token that cost extra when it excluded nothing would be
+     * a tax on every windowed search, and the arms' union would be where it hid.
+     */
+    const day = new Date(AUGUST).toISOString().slice(0, 10);
+    const unwindowed = await cost("shipment");
+    const wholeCorpus = await cost("shipment", null, { since: day, until: day });
+    const rareWindowed = await cost("demurrage", null, { since: day, until: day });
+
+    console.log(
+      `\nMEASURE search_windowed  unwindowed=${unwindowed.rowsRead} (${unwindowed.rows} rows)  `
+      + `windowed_same_day=${wholeCorpus.rowsRead} (${wholeCorpus.rows} rows)  `
+      + `rare_windowed=${rareWindowed.rowsRead} (${rareWindowed.rows} rows)  `
+      + `budget=${BUDGETS["authz.list.max_rows_read"]}\n`,
+    );
+
+    // The window returns the same page, because it covers everything.
+    expect(wholeCorpus.rows).toBe(unwindowed.rows);
+    /*
+     * And costs about the same. A bound rather than an equality: the token adds a term to the MATCH, and
+     * what must not happen is the *shape* changing — a windowed search that reads several times the
+     * unwindowed page would be the residual filter again under a new name.
+     */
+    expect(wholeCorpus.rowsRead).toBeLessThanOrEqual(unwindowed.rowsRead * 2);
+    // A selective term stays selective inside a window, which is what makes the volume bound the right one.
+    expect(rareWindowed.rowsRead).toBeLessThan(wholeCorpus.rowsRead);
+  });
+
+  it("no longer costs four times the budget to combine a window with a term (#153)", async () => {
     /*
      * The figure the refusal in `messagePageRequest` rests on, measured here so the two cannot drift. Both
      * queries return a full page; the windowed one reads five and a half times as much, because the window
@@ -365,9 +402,19 @@ describe("what a date window costs", () => {
       + `selective=${selective.rowsRead} budget=${budget}`,
     );
 
+    /*
+     * **This assertion was `windowed.rowsRead > budget`, and it is the figure #153 was opened about:** the
+     * window as a residual filter read 4,335 rows against a 1,000-row budget for the same 51-row page.
+     *
+     * Migration 0054 put the day in the index as a token, so the window now narrows the match instead of
+     * filtering it, and the same query reads **771 — the unwindowed figure exactly**, because on this corpus
+     * the window covers everything. The assertion is inverted rather than deleted: what used to prove the
+     * refusal necessary now proves it lifted, and the receipt records both numbers so the change is legible
+     * as a change.
+     */
     expect(common.rowsRead).toBeLessThanOrEqual(budget);
-    expect(windowed.rowsRead).toBeGreaterThan(budget);
-    // Same page, five and a half times the reading — so the cost is the filter, not the result set.
+    expect(windowed.rowsRead).toBeLessThanOrEqual(budget);
+    // Same page, and now the same reading — so the token costs nothing where it excludes nothing.
     expect(windowed.rows).toBe(common.rows);
     expect(selective.rowsRead).toBeLessThanOrEqual(budget);
   });

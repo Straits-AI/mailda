@@ -596,6 +596,15 @@ const FIGURES: Record<string, Classification> = {
     "deploy.second_node_reassigns_workflow",
   ),
 
+  // docs/receipts/wrangler-list-pagination.md
+  ...bothPlans(
+    "how many buckets `wrangler r2 bucket list` returns before it silently stops, and whether it says it "
+      + "did. A property of the CLI's own output rather than of an account's entitlement — the truncation "
+      + "happens at the same place on any plan, and it is recorded because reading a page of it as the whole "
+      + "account reported a healthy Node broken",
+    "wrangler.r2_bucket_list_page_size", "wrangler.r2_bucket_list_marks_truncation",
+  ),
+
   // docs/receipts/cloudflare-oauth-node-as-client.md
   ...bothPlans(
     "how Cloudflare's OAuth authorization endpoint behaves — which redirect hosts it accepts, whether a "
@@ -639,6 +648,10 @@ const FIGURES: Record<string, Classification> = {
       + "price a ranked, capped plan and the unsearched ones price a seek against `ir_org_accepted`; both "
       + "are properties of statements this repository writes, not of anything Cloudflare sells",
     "search.max_rows_read_per_page", "search.windowed_rows_read",
+    // #153's pre-run bound: how much mail a searched window may cover. Counted from `ir_org_accepted` before
+    // the search runs, and derived from the measured ratio of rows read to messages in the window — so it is
+    // a count of this Node's own reading, plan-independent like the two figures beside it.
+    "search.max_window_messages",
     "page.rows_read_unbounded", "page.rows_read_short_window",
     "sender.rows_read_indexed", "sender.rows_read_unindexed",
   ),

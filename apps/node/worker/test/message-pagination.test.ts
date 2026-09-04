@@ -5,7 +5,7 @@ import { BUDGETS } from "@mailda/budgets";
 import { MESSAGE_PAGE_PARAMS } from "@mailda/contract/routes";
 import { createSystemCtx, type Ctx } from "@mailda/runtime";
 
-import { listMessages } from "../src/authz-read.ts";
+import { listMessages, MAX_WINDOW_DAYS, messagePageRequest } from "../src/authz-read.ts";
 import { indexMessage } from "../src/search.ts";
 import { hashPassword } from "../src/auth/password.ts";
 import { login } from "../src/auth/session.ts";
@@ -793,20 +793,89 @@ describe("a date window on the listing", () => {
     }
   });
 
-  it("refuses a window with a search term, because it measured at four times the budget", async () => {
+  it("answers a windowed search now the day is in the index (#153)", async () => {
     /*
-     * Both were meant to ship together, and the measurement said otherwise: a windowed search on a term the
-     * index cannot narrow reads 4,335 rows against a 1,000-row budget, returning the same page as the 771
-     * the unwindowed one costs. `message-search.measure.test.ts` holds the figures; this holds the refusal,
-     * so the two cannot drift apart.
+     * **This test asserted the opposite until migration 0054**, and the sentence it carried is the reason:
+     * *"a windowed search on a term the index cannot narrow reads 4,335 rows against a 1,000-row budget,
+     * returning the same page as the 771 the unwindowed one costs."*
+     *
+     * The window is now a `day:` token set inside the MATCH rather than a residual filter, so it narrows
+     * before the cap and the same query reads 771. Inverted rather than deleted, so the change is legible as
+     * a change — `message-search.measure.test.ts` holds the figures and this holds the behaviour.
+     */
+    const token = await sessionFor(READER);
+    const answered = await listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+    }));
+    expect(answered.status).toBe(200);
+    const body = await answered.json() as { messages: unknown[]; next_cursor: string | null };
+    expect(Array.isArray(body.messages)).toBe(true);
+    // Still no cursor: the page is ranked, and #107's argument about rank shifting is untouched by the window.
+    expect(body.next_cursor).toBeNull();
+  });
+
+  it("refuses an instant on a searched window rather than rounding it to a day", async () => {
+    /*
+     * The product consequence of the token, and the one refusal that matters most: FTS5 matches tokens, not
+     * ranges, so the finest a search can express is a day. Rounding a caller's `10:30` to midnight would hand
+     * them mail from before the time they asked for — the same class of silent wrongness that ruled out
+     * filtering after the cap.
      */
     const token = await sessionFor(READER);
     const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
       [MESSAGE_PAGE_PARAMS.q]: "invoice",
-      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20T10:30:00.000Z",
     }));
-    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH/);
-    // The way forward, not merely the refusal: a window pages with the cursor, which a search cannot.
-    await expect(attempt).rejects.toThrow(/page the window with the cursor/);
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH_INSTANT/);
+    // The way forward, and it names the date the caller almost certainly meant.
+    await expect(attempt).rejects.toThrow(/2026-08-20/);
+  });
+
+  it("refuses a searched window with no start, which would enumerate back to the oldest mail", async () => {
+    const token = await sessionFor(READER);
+    const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      [MESSAGE_PAGE_PARAMS.until]: "2026-08-20",
+    }));
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH_OPEN/);
+    // And says the open start is fine without a term, because a listing compares the instant directly.
+    await expect(attempt).rejects.toThrow(/an open start is fine/);
+  });
+
+  it("refuses a searched window wider than the query can carry", async () => {
+    /*
+     * A bound on the query's own size rather than on the mail: the window is one token per day, so a year is
+     * 365 terms in a MATCH expression.
+     */
+    const token = await sessionFor(READER);
+    const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      [MESSAGE_PAGE_PARAMS.since]: "2024-01-01",
+      [MESSAGE_PAGE_PARAMS.until]: "2026-08-20",
+    }));
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH_WIDE/);
+    // The figure and the cap, not merely the refusal.
+    await expect(attempt).rejects.toThrow(new RegExp(`${MAX_WINDOW_DAYS}`));
+  });
+
+  it("still refuses a window on the listing that a search would have allowed, and vice versa", () => {
+    /*
+     * The two features' bounds are deliberately different, and this is what stops somebody "unifying" them.
+     * An **instant** is fine on a listing and refused on a search; an **open start** is fine on a listing and
+     * refused on a search. Both differences come from the same fact — the listing compares `accepted_at`
+     * directly and the search matches a token — and neither is an oversight.
+     */
+    const listing = messagePageRequest(
+      new URL("https://node.example/api/messages?since=2026-08-20T10:30:00.000Z"),
+      "2026-08-20T00:00:00.000Z",
+    );
+    expect(listing.since).toBe("2026-08-20T10:30:00.000Z");
+
+    const openEnded = messagePageRequest(
+      new URL("https://node.example/api/messages?until=2026-08-20"), "2026-08-20T00:00:00.000Z",
+    );
+    expect(openEnded.since).toBeNull();
+    expect(openEnded.until).toBe("2026-08-20T23:59:59.999Z");
   });
 });
