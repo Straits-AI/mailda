@@ -30,3 +30,16 @@ export function atLeast(version: string | null, floor: string | number): boolean
 
 /** Whether a doctor report names the version that produced it, which the canary gate compares against. */
 export function reportsItsVersion(report: unknown): boolean;
+
+/**
+ * Whether not knowing the Node's URL should stop this command.
+ *
+ * `null` when it should not: either the URL is known, or the command does not need one. `mailda deploy
+ * --plan` is the second case — it promotes nothing, and a plan for a first install runs before there is a
+ * Node to have a URL.
+ */
+export function urlRequirement(args: { origin: string | null; needsUrl: boolean }): {
+  what: string;
+  why: string;
+  fix: string;
+} | null;

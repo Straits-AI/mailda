@@ -1,6 +1,6 @@
 import { type Bytes, utf8 } from "@mailda/evidence";
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createSystemCtx } from "@mailda/runtime";
 
@@ -75,6 +75,8 @@ const FOREIGN = "rcpt_search000000000000000004";
 
 async function search(term: string | null, who = READER, org = ORG): Promise<string[]> {
   const query = messagePageQuery({
+    // Unwindowed here, so the clock is never read — a fixed value keeps the query byte-stable across runs.
+    nowIso: "2026-08-01T00:00:00.000Z",
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: org,
     subjects: [who],
@@ -620,6 +622,8 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
      * Found by the same external audit, in the matrix cell the first round of fixtures did not combine.
      */
     const query = messagePageQuery({
+    // Unwindowed here, so the clock is never read — a fixed value keeps the query byte-stable across runs.
+    nowIso: "2026-08-01T00:00:00.000Z",
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
       orgId: ORG,
       subjects: [STANDING_PLUS_META_GRANT],
@@ -1047,6 +1051,161 @@ describe("the body index and the state column cannot disagree (audit P1-3)", () 
  * `blob_key` points at nothing in R2 when `indexedText` is null — which is the failing-read case the second
  * test needs, and gets it without a fixture that has to be told to fail.
  */
+/**
+ * A window that actually excludes mail (#153).
+ *
+ * ## Why this needs its own corpus
+ *
+ * The fixture above seeds every delivery at one instant `AT`, which is right for the questions it asks and
+ * useless for this one: every row carries the same day token, so a window either matches everything or
+ * nothing and cannot be *seen* to narrow.
+ *
+ * **A mutation proved that gap rather than a review finding it.** Removing the `day:` token from the MATCH
+ * entirely — so a windowed search silently returns unwindowed results — passed all 94 tests in this suite,
+ * the pagination suite and the measurement suite. The refusals were covered, the cost was covered, and the
+ * one property the feature exists for was not: that mail outside the window is left out.
+ */
+describe("a windowed search leaves out the mail outside the window", () => {
+  const WINDOW_ORG = "org_search_window";
+  const WINDOW_READER = "usr_search_window";
+  const WINDOW_MAILBOX = "mbx_search_window";
+  const WINDOW_ADDRESS = "in@window.example";
+  /** Three days, one message each, all matching the same term. */
+  const DAYS = ["2026-07-01", "2026-07-02", "2026-07-03"] as const;
+
+  beforeEach(async () => {
+    const ctx = createSystemCtx();
+    const at = `${DAYS[0]}T00:00:00.000Z`;
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("DELETE FROM message_search WHERE org_id = ?").bind(WINDOW_ORG),
+      testEnv.CATALOG.prepare("DELETE FROM messages WHERE org_id = ?").bind(WINDOW_ORG),
+      testEnv.CATALOG.prepare("DELETE FROM ingress_receipts WHERE org_id = ?").bind(WINDOW_ORG),
+      testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(WINDOW_ORG),
+      testEnv.CATALOG.prepare("DELETE FROM mailboxes WHERE org_id = ?").bind(WINDOW_ORG),
+      testEnv.CATALOG.prepare("DELETE FROM relationship_tuples WHERE org_id = ?").bind(WINDOW_ORG),
+    ]);
+
+    const statements = [
+      testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(WINDOW_MAILBOX, WINDOW_ORG, "Window", at),
+      testEnv.CATALOG.prepare(
+        "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("addr"), WINDOW_ORG, WINDOW_ADDRESS, WINDOW_MAILBOX, at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).bind(ctx.id("rt"), WINDOW_ORG, WINDOW_READER, "mailbox.content.read", "mailbox", WINDOW_MAILBOX, at),
+    ];
+
+    for (const [index, day] of DAYS.entries()) {
+      const receiptId = `rcpt_win${String(index).padStart(21, "0")}`;
+      const messageId = `msg_win${String(index).padStart(22, "0")}`;
+      const acceptedAt = `${day}T09:00:00.000Z`;
+      statements.push(testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
+           blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(receiptId, WINDOW_ORG, `evt_${receiptId}`, "sender@supplier.example", WINDOW_ADDRESS, 18_000,
+        `${WINDOW_ORG}/raw/${receiptId}`, "0".repeat(64), acceptedAt));
+      statements.push(testEnv.CATALOG.prepare(
+        `INSERT INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id,
+           thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
+           thread_root_rfc_id, conversation_id)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(messageId, WINDOW_ORG, "2026-Q3", `${WINDOW_ORG}/raw/${receiptId}`, "0".repeat(64), 18_000,
+        `${receiptId}@example.net`, ctx.id("thr"), `Demurrage notice on day ${index}`,
+        "sender@supplier.example", acceptedAt, acceptedAt, receiptId, acceptedAt,
+        `${receiptId}@example.net`, ctx.id("cnv")));
+      statements.push(indexMessage(testEnv, messageId));
+    }
+    await testEnv.CATALOG.batch(statements);
+  });
+
+  /** The ids a searched page returns for a given window. */
+  async function searched(window: { since: string; until?: string }): Promise<string[]> {
+    const query = messagePageQuery({
+      nowIso: "2026-07-03T23:59:59.999Z",
+      orgId: WINDOW_ORG,
+      subjects: [WINDOW_READER],
+      sponsor: { sql: "", params: [] },
+      supervised: {
+        metadata: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_METADATA),
+        content: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_CONTENT),
+      },
+      page: {
+        after: null, mailboxId: null, q: ftsQuery("demurrage"), from: null,
+        since: `${window.since}T00:00:00.000Z`,
+        until: window.until === undefined ? null : `${window.until}T23:59:59.999Z`,
+      },
+      limit: 50,
+    });
+    const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
+    return result.results.map((row) => row.id).sort();
+  }
+
+  function at0(): string {
+    return "2026-07-03T23:59:59.999Z";
+  }
+
+  it("finds all three unwindowed, so the narrowing below is a narrowing", async () => {
+    const all = await searched({ since: "2026-06-01" });
+    expect(all).toHaveLength(3);
+  });
+
+  it("returns only the day asked for", async () => {
+    /*
+     * **The assertion the whole feature is for**, and the one a mutation removing the `day:` token slipped
+     * past everywhere else. All three messages match the term; exactly one is in the window.
+     */
+    const oneDay = await searched({ since: DAYS[1], until: DAYS[1] });
+    expect(oneDay).toEqual(["rcpt_win000000000000000000001"]);
+  });
+
+  it("includes both ends of the window, because a range that dropped one is off by a day", async () => {
+    const twoDays = await searched({ since: DAYS[0], until: DAYS[1] });
+    expect(twoDays).toEqual([
+      "rcpt_win000000000000000000000", "rcpt_win000000000000000000001",
+    ]);
+  });
+
+  it("treats an open end as up to the caller's clock", async () => {
+    const fromSecond = await searched({ since: DAYS[1] });
+    expect(fromSecond).toEqual([
+      "rcpt_win000000000000000000001", "rcpt_win000000000000000000002",
+    ]);
+  });
+
+  it("keeps the window bound to the whole term, not to one branch of an alternation", async () => {
+    /*
+     * `ftsQuery` can produce an alternation, and `a OR b AND day:(…)` binds the window to `b` alone — so a
+     * caller searching two words would get unwindowed results for the first. A silent widening, and it is
+     * why the term is parenthesised in the MATCH.
+     *
+     * A mutation removing those parentheses passed every other test in this repository.
+     */
+    const query = messagePageQuery({
+      nowIso: "2026-07-03T23:59:59.999Z",
+      orgId: WINDOW_ORG,
+      subjects: [WINDOW_READER],
+      sponsor: { sql: "", params: [] },
+      supervised: {
+        metadata: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_METADATA),
+        content: liveGrantsBySubject(WINDOW_ORG, WINDOW_READER, at0(), SCOPES_FOR_CONTENT),
+      },
+      page: {
+        after: null, mailboxId: null, from: null,
+        // Two terms, so the built MATCH carries an alternation for the window to be bound around.
+        q: "demurrage OR notice",
+        since: `${DAYS[1]}T00:00:00.000Z`,
+        until: `${DAYS[1]}T23:59:59.999Z`,
+      },
+      limit: 50,
+    });
+    const result = await testEnv.CATALOG.prepare(query.sql).bind(...query.params).all<{ id: string }>();
+    // Every message matches `notice`; only one is in the window.
+    expect(result.results.map((row) => row.id)).toEqual(["rcpt_win000000000000000000001"]);
+  });
+});
+
 async function seedRepairable(messageId: string, indexedText: string | null): Promise<void> {
   const ctx = createSystemCtx();
   const receiptId = `rcpt_${messageId.slice(4, 27)}`;

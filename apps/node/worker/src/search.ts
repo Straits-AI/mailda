@@ -112,10 +112,48 @@ export function ftsQuery(raw: string | null): string | null {
  * It also removes a second, quieter divergence: the index cannot disagree with the message about what the
  * subject *is*, because it never had its own opinion.
  */
+/**
+ * The day token, as SQL over a receipt's `accepted_at` (#153).
+ *
+ * **One spelling, used by every writer**, because there are three of them — the ingress path, the subject
+ * backfill and the migration that rebuilt the table — and a token computed three ways is a token that
+ * eventually disagrees with itself. A row whose day differs by one character is a row no window matches, and
+ * nothing would report it: the search would simply not return that message.
+ *
+ * `accepted_at` and not `sent_at`, matching the listing's window. Two features that windowed by different
+ * clocks would disagree about which mail is in a range, and `sent_at` is the sender's claim.
+ */
+export const DAY_TOKEN_SQL = "'d' || replace(substr(%s, 1, 10), '-', '')";
+
+/** The same token in TypeScript, for a query building a window rather than writing a row. */
+export function dayToken(instant: string): string {
+  return `d${instant.slice(0, 10).replaceAll("-", "")}`;
+}
+
+/**
+ * Every day a window covers, as the token set a MATCH filters on.
+ *
+ * Inclusive of both ends, and **bounded**: `messages.search_window_max_days` caps how many tokens one query
+ * may carry, because the `OR` list is the query's own size and an unbounded window would build a MATCH
+ * expression proportional to the archive's age.
+ */
+export function daysAcross(from: string, to: string): string[] {
+  const start = Date.parse(`${from.slice(0, 10)}T00:00:00.000Z`);
+  const end = Date.parse(`${to.slice(0, 10)}T00:00:00.000Z`);
+  const days: string[] = [];
+  for (let at = start; at <= end; at += 24 * 60 * 60 * 1000) {
+    days.push(dayToken(new Date(at).toISOString()));
+  }
+  return days;
+}
+
 export function indexMessage(env: Env, messageId: string): D1PreparedStatement {
   return env.CATALOG.prepare(
-    `INSERT INTO message_search (subject, from_addr, message_id, org_id)
-     SELECT subject, from_addr, id, org_id FROM messages WHERE id = ?`,
+    `INSERT INTO message_search (subject, from_addr, day, message_id, org_id)
+     SELECT m.subject, m.from_addr, ${DAY_TOKEN_SQL.replace("%s", "r.accepted_at")}, m.id, m.org_id
+       FROM messages m
+       JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
+      WHERE m.id = ?`,
   ).bind(messageId);
 }
 
@@ -163,8 +201,16 @@ export function indexBody(
   version: number,
 ): D1PreparedStatement {
   return env.CATALOG.prepare(
-    `INSERT OR REPLACE INTO message_body_search (rowid, body)
-     SELECT rowid, ? FROM messages WHERE id = ? AND body_index_attempt_version = ?`,
+    /*
+     * The day comes from the receipt (#153), so a body row can be narrowed by a window the same way a
+     * subject row can. Without it a windowed search would match subjects and silently miss bodies — which is
+     * why 0054 puts every message back in this queue rather than leaving old rows tokenless.
+     */
+    `INSERT OR REPLACE INTO message_body_search (rowid, body, day)
+     SELECT m.rowid, ?, ${DAY_TOKEN_SQL.replace("%s", "r.accepted_at")}
+       FROM messages m
+       JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
+      WHERE m.id = ? AND m.body_index_attempt_version = ?`,
   ).bind(body, messageId, version);
 }
 

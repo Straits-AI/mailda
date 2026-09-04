@@ -1921,6 +1921,8 @@ docs/butler-engine.md                  what runs a Butler: the principal, the re
                                        the pause and the loop that places it, the run ledger and the
                                        four replay modes
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
+docs/message-search.md                 the two indexes and their authorization, why a searched page has no
+                                       cursor, the date window and its four refusals, and the release step
 docs/cloudflare-grant.md               why the Node is its own OAuth client, the guided ceremony, the five
                                        connection states and which one it cannot observe, and what is
                                        still owed

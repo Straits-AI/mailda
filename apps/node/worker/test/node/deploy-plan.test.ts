@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(import.meta.dirname, "../../../../..");
 
 const {
-  COMMAND_FOR, DISPOSITION_SAYS, dispositionOf, planFor, presenceIn, renderPlan, resourcesFrom,
-  UNWIND_ORDER, unwindFor, workflowOwnerIn,
+  ABSENT_MARKERS, COMMAND_FOR, DISPOSITION_SAYS, dispositionOf, ownerFrom, planFor, presenceFrom,
+  renderPlan, resourcesFrom, UNWIND_ORDER, unwindFor,
 } = await import("../../../../../packages/cli/src/deploy-plan.mjs");
 import type {
-  Disposition, Plan, PlannedResource, Resource, ResourceKind,
+  Disposition, Plan, PlannedResource, ProbeOutcome, Resource, ResourceKind,
 } from "../../../../../packages/cli/src/deploy-plan.mjs";
 
 /**
@@ -47,22 +47,44 @@ function itemOf(plan: Plan, kind: ResourceKind): PlannedResource {
   return found as PlannedResource;
 }
 
-/** An empty account: every list read, nothing in any of them, no Worker. */
+/** What `wrangler … info` answers for a resource that is not there, per kind. Measured against 4.118.0. */
+const NOT_FOUND: Record<string, ProbeOutcome> = {
+  d1: { status: 1, text: "✘ [ERROR] Couldn't find a D1 DB with name or binding 'x' in your config or the API." },
+  r2: { status: 1, text: "✘ [ERROR] A request to the Cloudflare API failed.\n  The specified bucket does not exist. [code: 10006]" },
+  queue: { status: 1, text: '✘ [ERROR] Queue "x" does not exist. To create it, run: wrangler queues create x' },
+  workflow: { status: 1, text: "✘ [ERROR] A request to the Cloudflare API failed.\n  workflows.api.error.workflow.not_found [code: 10200]" },
+};
+
+/** An account with nothing of ours in it: every probe answered not-found, no Worker. */
 function emptyAccount() {
-  return { worker: false, lists: { d1: "", r2: "", queue: "", workflow: "" } };
+  return {
+    worker: false,
+    probes: {
+      "mailda-catalog": NOT_FOUND.d1!,
+      "mailda-evidence": NOT_FOUND.r2!,
+      "mailda-sending-events": NOT_FOUND.queue!,
+      "mailda-butler-runs": NOT_FOUND.workflow!,
+    },
+  };
 }
 
 /** A live Node: the Worker and all four resources present, the Workflow owned by this Worker. */
 function liveAccount() {
   return {
     worker: true,
-    lists: {
-      d1: "mailda-catalog",
-      r2: "mailda-evidence",
-      queue: "mailda-sending-events",
-      workflow: "│ mailda-butler-runs │ mailda │ 2026-08-27 │",
+    probes: {
+      "mailda-catalog": { status: 0, text: "name  mailda-catalog\nnum_tables  45" },
+      "mailda-evidence": { status: 0, text: "name: mailda-evidence\nobject_count: 86" },
+      "mailda-sending-events": { status: 0, text: "Queue Name: mailda-sending-events" },
+      "mailda-butler-runs": { status: 0, text: "Name: mailda-butler-runs\nScript Name:  mailda\n" },
     },
   };
+}
+
+/** The same account with one resource answering something else. */
+function accountWith(overrides: Record<string, ProbeOutcome | null>, worker = true) {
+  const base = worker ? liveAccount() : emptyAccount();
+  return { worker: base.worker, probes: { ...base.probes, ...overrides } };
 }
 
 describe("the resource set comes from the config, and the names are derived the way wrangler derives them", () => {
@@ -140,45 +162,77 @@ describe("the resource set comes from the config, and the names are derived the 
   });
 });
 
-describe("reading a wrangler list, which has no --json", () => {
-  it("finds a name that is there and not one that merely contains it", () => {
-    expect(presenceIn("mailda-catalog", "mailda-catalog")).toBe(true);
-    /*
-     * The failure a bare `includes` would produce. `mailda-catalog` is a substring of `mailda-catalog-2`, so
-     * an account holding only the second would be told the first is present — a plan reporting a resource as
-     * existing when the deploy would create it, which is the opposite of the error and equally wrong.
-     */
-    expect(presenceIn("mailda-catalog-2", "mailda-catalog")).toBe(false);
-    expect(presenceIn("premailda-catalog", "mailda-catalog")).toBe(false);
-    // And found inside a table row, which is what these commands actually print.
-    expect(presenceIn("│ mailda-catalog │ 1a2b3c │ 4 tables │", "mailda-catalog")).toBe(true);
+describe("asking about one resource, which replaced scanning a list", () => {
+  /*
+   * **This block exists because the list version was wrong on the first live account it met.**
+   *
+   * `wrangler r2 bucket list` returns exactly 20 buckets and stops — alphabetically, with no marker and no
+   * pagination flag. The account held `mailda-evidence`; the list stopped at `cardkeeper-storage`. So the
+   * plan reported the bucket absent on a Worker that exists, produced `orphaned` — the disposition this
+   * file calls the worst of the five — and told an operator their healthy Node was broken.
+   */
+
+  it("reads success as present", () => {
+    expect(presenceFrom("r2", { status: 0, text: "name: mailda-evidence\nobject_count: 86" })).toBe(true);
   });
 
-  it("answers null for a list it could not read, which is not an empty list", () => {
-    /*
-     * The distinction that matters most in this file. A missing permission or a failed call means the plan
-     * does not know; reporting "absent, will create" from an unread list is exactly how a plan promises a
-     * create that fails on a leftover.
-     */
-    expect(presenceIn(null, "mailda-catalog")).toBeNull();
-    expect(presenceIn(undefined, "mailda-catalog")).toBeNull();
-    expect(presenceIn("", "mailda-catalog")).toBe(false);
+  it("reads each kind's own not-found marker as absent", () => {
+    for (const [kind, outcome] of Object.entries(NOT_FOUND)) {
+      expect(presenceFrom(kind as ResourceKind, outcome), kind).toBe(false);
+    }
   });
 
-  it("reads the Workflow's owning script from the table row", () => {
-    const listed = [
-      "┌────────────────────┬─────────┬──────────────┐",
-      "│ Name               │ Script  │ Created      │",
-      "│ mailda-butler-runs │ mailda2 │ 2026-08-27   │",
-      "└────────────────────┴─────────┴──────────────┘",
-    ].join("\n");
-    // The drill's measurement: after the second Node deployed, the owner was `mailda2`.
-    expect(workflowOwnerIn(listed, "mailda-butler-runs")).toBe("mailda2");
+  it("reads any other failure as unknown, which is the direction the list version got wrong", () => {
+    /*
+     * The fail-safe half. A permission failure, a network error or a reworded message must **not** read as a
+     * missing resource — that is precisely how a page boundary became an `orphaned` verdict. Each of these
+     * is a real failure mode and none of them is proof of absence.
+     */
+    for (const text of [
+      "✘ [ERROR] Authentication error [code: 10000]",
+      "✘ [ERROR] fetch failed",
+      "✘ [ERROR] You do not have permission to list buckets",
+      "",
+    ]) {
+      expect(presenceFrom("r2", { status: 1, text }), text).toBeNull();
+    }
+    expect(presenceFrom("r2", null)).toBeNull();
+  });
+
+  it("does not accept another kind's marker, so a mismatched command cannot answer absent", () => {
+    /*
+     * Each marker belongs to one kind. If the caller ever asked the wrong `info` verb for a resource, the
+     * error would be about a different resource kind — and reading it as absence would be the list bug in a
+     * new costume.
+     */
+    expect(presenceFrom("r2", NOT_FOUND.d1!)).toBeNull();
+    expect(presenceFrom("d1", NOT_FOUND.workflow!)).toBeNull();
+    expect(presenceFrom("queue", NOT_FOUND.r2!)).toBeNull();
+  });
+
+  it("has a marker for every kind a plan can probe", () => {
+    /*
+     * A closed world. A kind with no marker can only ever answer `unknown`, so the plan would report a gap
+     * on every run instead of an answer — silently, because `unknown` does not block.
+     */
+    const { resources } = resourcesFrom(CONFIG);
+    for (const kind of new Set(resources.map((one) => one.kind))) {
+      expect(ABSENT_MARKERS[kind], `no absent marker declared for ${kind}`).toBeDefined();
+      expect(ABSENT_MARKERS[kind]!.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reads the owning script from describe's own field, not from a table row", () => {
+    expect(ownerFrom({
+      status: 0,
+      text: "Name:         mailda-butler-runs\nScript Name:  mailda2\nClass Name:   ButlerRun\n",
+    })).toBe("mailda2");
   });
 
   it("answers null for an owner it cannot establish, which must not read as nobody owns it", () => {
-    expect(workflowOwnerIn(null, "mailda-butler-runs")).toBeNull();
-    expect(workflowOwnerIn("some other workflow", "mailda-butler-runs")).toBeNull();
+    expect(ownerFrom(null)).toBeNull();
+    expect(ownerFrom(NOT_FOUND.workflow!)).toBeNull();
+    expect(ownerFrom({ status: 0, text: "Name: mailda-butler-runs\n" })).toBeNull();
   });
 });
 
@@ -269,7 +323,7 @@ describe("the plan's verdict", () => {
      */
     const plan = planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "mailda-catalog", r2: "", queue: "", workflow: "" } },
+      inventory: accountWith({ "mailda-catalog": { status: 0, text: "name  mailda-catalog" } }, false),
     });
     expect(plan.verdict).toBe("blocked");
     expect(itemOf(plan, "d1").disposition).toBe("cannot_adopt");
@@ -282,10 +336,7 @@ describe("the plan's verdict", () => {
       configText: CONFIG,
       inventory: {
         worker: true,
-        lists: {
-          d1: "", r2: "mailda-evidence", queue: "mailda-sending-events",
-          workflow: "│ mailda-butler-runs │ mailda │",
-        },
+        probes: { ...liveAccount().probes, "mailda-catalog": NOT_FOUND.d1! },
       },
     });
     expect(plan.verdict).toBe("blocked");
@@ -303,7 +354,12 @@ describe("the plan's verdict", () => {
       configText: CONFIG,
       inventory: {
         worker: false,
-        lists: { d1: "", r2: "", queue: "", workflow: "│ mailda-butler-runs │ somebody-else │" },
+        probes: {
+          ...emptyAccount().probes,
+          "mailda-butler-runs": {
+            status: 0, text: "Name: mailda-butler-runs\nScript Name:  somebody-else\n",
+          },
+        },
       },
     });
     expect(plan.verdict).toBe("blocked");
@@ -319,7 +375,7 @@ describe("the plan's verdict", () => {
      */
     const plan = planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "", r2: "", queue: "", workflow: null } },
+      inventory: accountWith({ "mailda-butler-runs": { status: 1, text: "fetch failed" } }, false),
     });
     expect(plan.verdict).toBe("install");
     expect(plan.unread.map((one) => one.kind)).toEqual(["workflow"]);
@@ -334,7 +390,7 @@ describe("the plan's verdict", () => {
      */
     const plan = planFor({
       configText: CONFIG,
-      inventory: { worker: null, lists: { d1: "", r2: "", queue: "", workflow: "" } },
+      inventory: { worker: null, probes: emptyAccount().probes },
     });
     expect(plan.verdict).toBe("unknown");
   });
@@ -350,10 +406,10 @@ describe("the plan's verdict", () => {
     for (const [name, inventory] of [
       ["empty", emptyAccount()],
       ["live", liveAccount()],
-      ["leftover", { worker: false, lists: { d1: "mailda-catalog", r2: "", queue: "", workflow: "" } }],
+      ["leftover", accountWith({ "mailda-catalog": { status: 0, text: "name  mailda-catalog" } }, false)],
       ["orphan", {
         worker: true,
-        lists: { d1: "", r2: "mailda-evidence", queue: "mailda-sending-events", workflow: "│ x │ mailda │" },
+        probes: { ...liveAccount().probes, "mailda-catalog": NOT_FOUND.d1! },
       }],
     ] as const) {
       const plan = planFor({ configText: CONFIG, inventory });
@@ -381,7 +437,7 @@ describe("the unwind, whose every step was found by getting it wrong", () => {
   it("prints only the steps that apply, so it never says to delete what is not there", () => {
     const plan = planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "mailda-catalog", r2: "", queue: "", workflow: "" } },
+      inventory: accountWith({ "mailda-catalog": { status: 0, text: "name  mailda-catalog" } }, false),
     });
     /*
      * A leftover database on an account with **no Worker** needs the database removed and nothing else.
@@ -456,7 +512,7 @@ describe("the words, which are what `--plan` actually delivers", () => {
   it("says a deploy will not reuse a leftover, in those words", () => {
     const text = renderPlan(planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "mailda-catalog", r2: "", queue: "", workflow: "" } },
+      inventory: accountWith({ "mailda-catalog": { status: 0, text: "name  mailda-catalog" } }, false),
     }));
     expect(text).toContain("BLOCKED");
     // The measured fact, said rather than implied by an enum name an operator has never seen.
@@ -473,10 +529,7 @@ describe("the words, which are what `--plan` actually delivers", () => {
       configText: CONFIG,
       inventory: {
         worker: true,
-        lists: {
-          d1: "", r2: "mailda-evidence", queue: "mailda-sending-events",
-          workflow: "│ mailda-butler-runs │ mailda │",
-        },
+        probes: { ...liveAccount().probes, "mailda-catalog": NOT_FOUND.d1! },
       },
     }));
     /*
@@ -498,7 +551,12 @@ describe("the words, which are what `--plan` actually delivers", () => {
       configText: CONFIG,
       inventory: {
         worker: false,
-        lists: { d1: "", r2: "", queue: "", workflow: "│ mailda-butler-runs │ somebody-else │" },
+        probes: {
+          ...emptyAccount().probes,
+          "mailda-butler-runs": {
+            status: 0, text: "Name: mailda-butler-runs\nScript Name:  somebody-else\n",
+          },
+        },
       },
     }));
     expect(text).toContain("exit 0, no warning");
@@ -550,7 +608,7 @@ describe("the words, which are what `--plan` actually delivers", () => {
   it("names an unread list rather than passing over it", () => {
     const text = renderPlan(planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "", r2: "", queue: "", workflow: null } },
+      inventory: accountWith({ "mailda-butler-runs": { status: 1, text: "fetch failed" } }, false),
     }));
     expect(text).toContain("not checked: workflow");
     expect(text).toContain("would promise a create that fails");
@@ -588,7 +646,7 @@ describe("the words, which are what `--plan` actually delivers", () => {
   it("wraps the long sentences, so the flagged lines stay readable", () => {
     const text = renderPlan(planFor({
       configText: CONFIG,
-      inventory: { worker: false, lists: { d1: "mailda-catalog", r2: "", queue: "", workflow: "" } },
+      inventory: accountWith({ "mailda-catalog": { status: 0, text: "name  mailda-catalog" } }, false),
     }));
     // Not a style preference: the reader scanning for `!` lines is the one who will not follow a runaway line.
     for (const line of text.split("\n")) expect(line.length).toBeLessThanOrEqual(100);

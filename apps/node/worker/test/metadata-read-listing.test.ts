@@ -46,6 +46,8 @@ const AT = "2026-08-20T09:00:00.000Z";
 
 async function pageFor(subject: string): Promise<string[]> {
   const query = messagePageQuery({
+    // Unwindowed here, so the clock is never read — a fixed value keeps the query byte-stable across runs.
+    nowIso: "2026-08-01T00:00:00.000Z",
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
     subjects: [subject],

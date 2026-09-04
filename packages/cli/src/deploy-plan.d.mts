@@ -44,11 +44,23 @@ export interface UnwindStep {
   consumer?: string;
 }
 
+/** What one `wrangler … info` call answered. */
+export interface ProbeOutcome {
+  status: number;
+  text: string;
+}
+
 export interface Inventory {
   /** `null` when the Worker's own existence could not be established, which blocks the plan. */
   worker: boolean | null;
-  /** Raw `wrangler … list` text per kind; `null` for a call that failed. */
-  lists: Record<ResourceKind, string | null>;
+  /**
+   * One `info` outcome per declared resource, keyed by **name**.
+   *
+   * Replaced `lists`, which held `wrangler … list` text per kind. That could not work: `r2 bucket list`
+   * paginates at 20 with no marker, so a bucket past the boundary read as absent and a healthy Node read as
+   * `orphaned`.
+   */
+  probes: Record<string, ProbeOutcome | null>;
 }
 
 export interface Plan {
@@ -64,11 +76,21 @@ export interface Plan {
 /** Every resource a deploy of this config would touch, with wrangler's own naming rule applied. */
 export function resourcesFrom(configText: string): { worker: string; resources: Resource[] };
 
-/** Whether a name appears in a list's text. `null` for an unread list. */
-export function presenceIn(listText: string | null | undefined, name: string): boolean | null;
+/** Each kind's own not-found marker, as the provider words it. Matched specifically, never loosely. */
+export const ABSENT_MARKERS: Record<string, readonly RegExp[]>;
 
-/** Which script owns a Workflow, from `wrangler workflows list`. `null` when it cannot be established. */
-export function workflowOwnerIn(listText: string | null | undefined, name: string): string | null;
+/**
+ * Whether a resource is there, from what `wrangler … info` answered.
+ *
+ * `true` on success, `false` only on that kind's own not-found marker, and `null` for any other failure —
+ * which is not proof of absence. Guessing there is what produced a false `orphaned` against a live Node.
+ */
+export function presenceFrom(
+  kind: ResourceKind, outcome: ProbeOutcome | null | undefined,
+): boolean | null;
+
+/** Which script owns a Workflow, from `wrangler workflows describe`. `null` when it cannot be established. */
+export function ownerFrom(outcome: ProbeOutcome | null | undefined): string | null;
 
 export function dispositionOf(args: {
   resource: Resource;

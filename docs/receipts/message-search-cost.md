@@ -1,7 +1,7 @@
 ---
 id: message-search-cost
 kind: measured-tripwire
-measured_on: 2026-09-02
+measured_on: 2026-09-05
 stale_when: >
   either arm of messagePageQuery's searched plan stops being driven by its virtual table; an arm's inner
   ORDER BY changes from rank; a third arm is added; **a predicate is added to or removed from the searched
@@ -9,15 +9,67 @@ stale_when: >
   search.windowed_rows_read measures**; messages.page_size moves; RELATIONS_FOR_METADATA or
   BODY_SEARCH_RELATIONS gains a relation; either index gains an indexed column, since MATCH then spans more
   text per row; ir_org_accepted or ir_org_sender changes, since the unsearched figures below are seeks against them; `envelope_from` starts being normalised at ingress, which would make the expression index redundant; or
-  authz.list.max_rows_read moves
+  authz.list.max_rows_read moves; the day token leaves either index or stops coming from accepted_at, which
+  would make a windowed search a residual filter again; or the ratio below between rows read and messages in
+  the window changes, since search.max_window_messages is derived from it
 values:
   search.max_rows_read_per_page: 771
-  search.windowed_rows_read: 4335
+  search.windowed_rows_read: 771
+  search.max_window_messages: 400
   page.rows_read_unbounded: 208
   page.rows_read_short_window: 101
   sender.rows_read_indexed: 9
   sender.rows_read_unindexed: 1207
 ---
+
+## Correction, 5 September 2026: the windowed figure was the reason for a refusal, and it is now 771 (#153)
+
+`search.windowed_rows_read` was **4,335** — a window combined with a search term, against a 1,000-row budget,
+for the same 51-row page a bare term answered in 771. That figure was this file's argument for
+`E_MESSAGE_PAGE_WINDOW_SEARCH`: the window was a residual filter *inside* each ranked arm, so the arm scanned
+further through its MATCH result to fill `LIMIT`.
+
+**It is now 771 — the unwindowed figure exactly.** Migration 0054 put the day in both FTS indexes as a token,
+so the window narrows the match before the cap rather than filtering after it. On this corpus the window
+covers everything, so the token excludes nothing and costs nothing, which is the property that had to be
+checked first: a day token that cost extra where it excluded nothing would be a tax on every windowed search.
+
+**The narrowing itself is measured elsewhere, and deliberately.** This corpus seeds 1,200 deliveries four
+minutes apart — under a day — so every row carries the same token and no window here can narrow anything. The
+figures for a window that does narrow come from `test/message-search-window.probe.test.ts`, on its own 120-day
+corpus, run before this migration existed:
+
+| window | tokenised | residual filter |
+|:--|--:|--:|
+| one day | **20** | 2,386 |
+| seven days | 140 | — |
+| sixty days | 1,188 | 2,970 |
+| none | 2,376 | 2,376 |
+
+And tripling the corpus over the same 120 days moved the unwindowed figure to 7,128 while the seven-day window
+moved to 416: **windowed cost tracks the window, unwindowed cost tracks the archive.**
+
+### `search.max_window_messages = 400`, and why this bound exists where none could before
+
+#153's sharpest objection was that *"selectivity is not knowable before the query runs, so there is no
+per-request rule that admits the cheap case and refuses the expensive one."* That was true of a residual
+filter, where cost tracks the match set and the match set is the corpus for a term the index cannot narrow.
+
+Tokenised, cost tracks the **intersection** — a rare term in a sixty-day window read 12 rows where a common
+term read 1,188 — and the probe's figures are close to linear at **about two rows read per message in the
+window**, which is the union of two arms each reading one.
+
+So the volume in the window bounds the read, and unlike selectivity it **is** knowable in advance: one seek on
+`ir_org_accepted`. `listMessages` counts it before searching and refuses with the figure.
+
+**400 against the 1,000-row budget**, which is 800 rows read at the measured ratio and leaves 200 of headroom
+for the arms' fixed overhead and for the ratio being approximate rather than exact. Sized from a measurement
+rather than measured directly, and stated as such: the ratio is what was measured, the multiplier is the
+budget, and the headroom is a judgement.
+
+`MAX_WINDOW_DAYS = 100` sits beside it in `src/authz-read.ts` and is **not** here, because it is not a
+measurement: it bounds the *query's own size* — the window is enumerated one token per day — and no receipt
+should invent a `values:` block for a number nothing measured.
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
 

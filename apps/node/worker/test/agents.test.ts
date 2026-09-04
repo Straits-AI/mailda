@@ -464,6 +464,8 @@ describe("the listing is constrained by the sponsor too, not only the single-obj
   async function pageFor(who: { orgId: string; userId: string; delegatorUserId?: string | null }, q: string | null = null) {
     const at = new Date(createSystemCtx().now()).toISOString();
     const query = messagePageQuery({
+      // Unwindowed: the clock is only read for a searched window with an open `until`.
+      nowIso: "2026-08-01T00:00:00.000Z",
       orgId: who.orgId,
       subjects: await readableSubjects(testEnv, who),
       sponsor: await sponsorTerm(testEnv, who.orgId, who.userId, "t"),

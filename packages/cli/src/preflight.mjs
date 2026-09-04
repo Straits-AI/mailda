@@ -144,3 +144,32 @@ export function atLeast(version, floor) {
 export function reportsItsVersion(report) {
   return typeof report?.version === "string" && report.version !== "";
 }
+
+/**
+ * Whether not knowing the Node's URL should stop this command (#162).
+ *
+ * ## The bug this exists because of, found on the first live run
+ *
+ * `mailda deploy --plan` ran preflight and was refused: *"the Node's URL is not known"*. That requirement's
+ * own stated reason is that **the canary is checked by overriding to the Node's own hostname**, so a deploy
+ * cannot verify what it is about to promote — and a plan promotes nothing and verifies nothing.
+ *
+ * Worse, the refusal made `--plan` useless in exactly the case it was written for. A plan for a **first
+ * install** runs before there is a Node, so there is no URL to pass; the command that exists to describe an
+ * empty account demanded the address of something that does not exist there yet. That is the same
+ * chicken-and-egg #92's drill found in the deploy sequence, reintroduced one command along.
+ *
+ * A function rather than an inline `if`, for `promotionVerdict`'s reason: the gate it replaced was asserted
+ * lexically and survived being mutated to `if (false && …)`. A decision that takes values and returns values
+ * cannot pass that way.
+ */
+export function urlRequirement({ origin, needsUrl }) {
+  if (origin !== null) return null;
+  if (!needsUrl) return null;
+  return {
+    what: "the Node's URL is not known",
+    why: "the canary is checked by overriding to it on the Node's own hostname — there is no preview URL "
+      + "for a Worker with Durable Objects — so a deploy cannot verify what it is about to promote",
+    fix: "pass `--url https://<your-node>`, or set MAILDA_URL",
+  };
+}

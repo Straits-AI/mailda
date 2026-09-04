@@ -46,6 +46,7 @@ interface Cost { rowsRead: number; rows: number }
 
 async function cost(from: string | null): Promise<Cost> {
   const query = messagePageQuery({
+    nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] },
     orgId: ORG,
     subjects: [READER],
@@ -62,6 +63,7 @@ async function cost(from: string | null): Promise<Cost> {
 
 async function planFor(from: string | null): Promise<string> {
   const query = messagePageQuery({
+    nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] },
     orgId: ORG,
     subjects: [READER],

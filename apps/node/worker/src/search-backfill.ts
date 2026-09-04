@@ -1,7 +1,9 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { getEvidence, runKeyCache } from "./evidence-store.ts";
-import { afterFailedAttempt, claimBodyIndexBatch, indexBody, settleBodyIndex } from "./search.ts";
+import {
+  afterFailedAttempt, claimBodyIndexBatch, DAY_TOKEN_SQL, indexBody, settleBodyIndex,
+} from "./search.ts";
 import { indexableText } from "./search-body.ts";
 
 /**
@@ -59,8 +61,12 @@ const BACKFILL_LIMIT = 500;
  */
 export async function backfillSearchIndex(env: Env): Promise<number> {
   const outcome = await env.CATALOG.prepare(
-    `INSERT INTO message_search (subject, from_addr, message_id, org_id)
-     SELECT subject, from_addr, id, org_id FROM messages m
+    // `day` from the receipt, spelled by `DAY_TOKEN_SQL` rather than restated — a token this pass computed
+    // differently from the ingress path would be a row no window matches, silently (#153).
+    `INSERT INTO message_search (subject, from_addr, day, message_id, org_id)
+     SELECT m.subject, m.from_addr, ${DAY_TOKEN_SQL.replace("%s", "r.accepted_at")}, m.id, m.org_id
+       FROM messages m
+       JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
       WHERE NOT EXISTS (SELECT 1 FROM message_search s WHERE s.message_id = m.id)
       LIMIT ?`,
   ).bind(BACKFILL_LIMIT).run();
