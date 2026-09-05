@@ -406,6 +406,27 @@ function refuseIfWorkflowBelongsElsewhere() {
   const workflowName = /"workflows"[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
   if (workerName === null || workflowName === null) return;
 
+  /*
+   * **The config's own consistency, checked before the account's.** `workflow-name-world.test.ts` holds this
+   * rule, and it only runs when somebody runs the suite — which an operator standing up a second Node in
+   * their own account has no reason to do. They edit `name`, deploy, and the Workflow silently moves.
+   *
+   * One comparison, here, because both values are already parsed. Refusing beats warning: the measured
+   * failure is that deploying over another Node's Workflow does not refuse, it **reassigns**.
+   */
+  if (workflowName !== `${workerName}-butler-runs`) {
+    fail(
+      `refusing to deploy: this config deploys the Worker \`${workerName}\` and names its Workflow\n`
+      + `\`${workflowName}\`.\n\n`
+      + "  why      every other resource a Node provisions derives its name from the Worker's, so a second\n"
+      + "           Node in one account collides with nothing. A Workflow's name is written in the config\n"
+      + "           because Cloudflare requires it on the binding, and a Workflow is owned by exactly one\n"
+      + "           script — so a name that does not follow the Worker's is a name some other Node may\n"
+      + "           already hold, and deploying would take it without saying so (#99).\n"
+      + `  fix      in wrangler.jsonc, set the workflows entry's \`name\` to \`${workerName}-butler-runs\`.`,
+    );
+  }
+
   const listed = capture("npx", ["wrangler", "workflows", "list"]);
   if (listed.status !== 0) {
     process.stdout.write(

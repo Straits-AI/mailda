@@ -6,12 +6,14 @@
 -- for the expensive half as well: this requeues every message for the body backfill, and an operator should
 -- start that when they mean to rather than as a side effect of a deploy.
 --
--- **What does not work between the deploy and this migration, stated rather than discovered.** The new code
--- builds a windowed search as `day:(…)`, and until this runs there is no `day` column for it to match — so a
--- windowed search fails until the migration is applied. An unwindowed search, the listing, and everything
--- else are unaffected, because they neither read nor write the new column. That window is the operator's to
--- close by applying this, and `docs/message-search.md` says so where somebody planning a release will read
--- it.
+-- **There is no gap, and the first live run is why this paragraph changed.** It used to say a windowed search
+-- fails between the deploy and this migration. It does not: `mailda deploy` applies migrations **before** it
+-- uploads the canary, so the column exists by the time any new code serves. The old code meanwhile is
+-- unaffected — it inserts an explicit column list, which stays valid when a column is added, and matches bare
+-- terms, which never names `day`.
+--
+-- What `--contract` buys is therefore deliberation rather than ordering: this requeues every message for the
+-- body backfill, and an operator should start that when they mean to.
 --
 -- ## What this buys, measured before it was built
 --

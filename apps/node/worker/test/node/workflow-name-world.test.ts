@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { readWranglerConfig, type ConfigScope } from "./wrangler-world";
@@ -113,5 +115,28 @@ describe("a second Node in one account cannot steal the first's Butler engine", 
       if (workerName === undefined) continue;
       expect(workerName.endsWith(SUFFIX), `${where}: the Worker name ends in "${SUFFIX}"`).toBe(false);
     }
+  });
+});
+
+describe("the deploy refuses a Workflow name that does not follow the Worker's (#99)", () => {
+  /*
+   * The rule above is a repository test: it runs when somebody runs the suite. An operator standing up a
+   * second Node in their own account edits `name`, deploys, and never runs it — which is the case #99 is
+   * about, and the one the rule could not reach.
+   *
+   * So the deploy checks it too. Lexical, because `refuseIfWorkflowBelongsElsewhere` shells out to wrangler
+   * and cannot be called from here — and narrow for that reason: it asserts the comparison exists and is
+   * followed by a refusal, not that the refusal is correct. The rule above is what checks correctness.
+   */
+  const cli = readFileSync(
+    join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"), "utf8",
+  );
+
+  it("compares the two names and fails, rather than warning", () => {
+    const guard = /if \(workflowName !== `\$\{workerName\}-butler-runs`\) \{[\s\S]{0,900}?\n {2}\}/.exec(cli);
+    expect(guard, "the deploy no longer compares the Workflow's name with the Worker's").not.toBeNull();
+    expect(guard![0]).toContain("fail(");
+    // The remedy names the value to type, because a refusal that only says "wrong" costs a second round trip.
+    expect(guard![0]).toContain("${workerName}-butler-runs\\`.");
   });
 });
