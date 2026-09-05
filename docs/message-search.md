@@ -101,16 +101,18 @@ volume in the window bounds the read, and unlike selectivity it *is* knowable in
 `ALTER TABLE ADD COLUMN`, so `mailda deploy` refuses it without `--contract` and the order is ADR 13's:
 deploy the code, then apply the migration deliberately.
 
-Two consequences, stated here because this is where somebody planning a release will look:
+One consequence, stated here because this is where somebody planning a release will look:
 
-1. **A windowed search fails between the deploy and the migration.** The new code builds `day:(…)` and there
-   is no `day` column until 0054 runs. An unwindowed search, the listing and everything else are unaffected —
-   they neither read nor write the column. Applying the migration closes it.
-2. **0054 requeues every message for the body backfill.** `message_body_search` is contentless, so it cannot
-   be rebuilt in SQL — the bodies are in R2 and re-indexing means re-reading and re-parsing each one. That is
-   what the existing backfill does, so the migration resets `body_index_state` rather than inventing a second
-   mechanism. On a large mailbox this is real work; `doctor`'s `search_index_backlog` and `body_index_state`
-   findings are what to watch, and it is resumable.
+**0054 requeues every message for the body backfill.** `message_body_search` is contentless, so it cannot be
+rebuilt in SQL — the bodies are in R2 and re-indexing means re-reading and re-parsing each one. That is what
+the existing backfill does, so the migration resets `body_index_state` rather than inventing a second
+mechanism. On a large mailbox this is real work; `doctor`'s `search_index_backlog` and `body_index_state`
+findings are what to watch, and it is resumable.
+
+There is **no window in which a windowed search is broken**, which an earlier draft of this section claimed.
+`mailda deploy` applies migrations before it uploads the canary, so the column exists before any new code
+serves — and the old code is unaffected either way, because it inserts an explicit column list and matches
+bare terms.
 
 **Until that backlog drains, body matches inside a window are incomplete** — a body row with no day token
 cannot match any window. Subject matches are complete as soon as the migration finishes, because that half

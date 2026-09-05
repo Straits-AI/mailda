@@ -234,6 +234,21 @@ pnpm exec wrangler workflows delete mailda-butler-runs
 
 Then `mailda deploy` takes the first-install path, provisions all three bindings, and applies the migrations.
 
+**Two things a long-deferred upgrade hits, both measured on 5 September 2026 taking a Node from schema 0034
+to 0054 — twenty migrations at once.**
+
+*D1 timed out.* `D1 DB storage operation exceeded timeout which caused object to be reset [code: 7429]`, on a
+batch ending with a full FTS rebuild. Nothing was lost — one migration had landed, the rest had not, and a
+plain re-run applied the remaining nineteen. So a timeout here is a **retry**, not a repair: `d1 migrations
+apply` is resumable by construction because it records what it applied.
+
+*The canary refused, and it was wrong to.* `The RPC receiver does not implement the method "ensureKey"` — the
+canary carries new code at 0% traffic while the Durable Object namespace still runs the **deployed** version's
+class, so a canary calling a method its own release added is calling it on the old object. A Node upgrading
+across a release that changed a DO's interface will see this, and it is an artifact of version pinning rather
+than a regression: promoting with `wrangler versions deploy <id>@100%` resolves it, because the class updates
+with the deployment. Judge it against what the incumbent says, not against the canary alone.
+
 **`mailda deploy --plan` now says which of these steps an account actually needs** (#162), and it is the
 better place to start: it reads the four lists, reports each resource as create / linked / cannot-adopt /
 orphaned / stolen, and prints only the unwind steps that apply. This section stays because it is the record of
