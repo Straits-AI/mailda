@@ -83,6 +83,32 @@ write permissions and the honest answer to *"why does a read-only layer need the
 narrower choice. `REQUIRED_SCOPES` carries `readOnlyExists` per entry so that stays legible, and a test
 asserts every `:write` entry says which read scope does not exist.
 
+## A scope can be checked against a client without anybody consenting
+
+Found while looking for the authoritative set, and it is the cheapest diagnostic in this whole flow: the
+authorization endpoint validates `scope` **before** it shows a consent screen, and refuses by redirecting to
+the registered URI. So one unauthenticated request per candidate answers *may this client request this
+scope*:
+
+```text
+GET /oauth2/auth?…&scope=account%3Aread
+302 Location: <redirect_uri>?error=invalid_scope
+    &error_description=… The OAuth 2.0 Client is not allowed to request scope 'account:read'.
+```
+
+No sign-in, no consent screen, no grant. The refusal **names the scope**, so a caller learns which one is not
+permitted rather than that something was wrong.
+
+Run against the client created on 7 September 2026, every one of the seven scopes above was refused — and so
+were `offline_access` and a deliberately invented `definitely_not_a_scope:read`. All nine refused identically
+means the client had **no scopes registered**, which is also why its consent screen read *"0 total
+permissions"*. The dashboard's creation form documents that at least one scope is required; this client has
+none, so either the form permitted it or they were not saved.
+
+That is worth knowing as a shape rather than an incident: **a client with no scopes is indistinguishable from
+a client refusing a particular scope**, from the outside, unless you probe a scope you know to be invalid as a
+control. The invented one is what made the difference legible.
+
 ## What is not established
 
 **That these are the exact scopes a third-party client may request.** They are what a **first-party** client
