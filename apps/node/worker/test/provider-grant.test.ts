@@ -277,21 +277,34 @@ describe("the authorization URL", () => {
     expect(parsed.searchParams.get("state")).toBe(state);
   });
 
-  it("adds offline_access rather than requiring the caller to remember it", async () => {
+  it("adds no scope of its own, which one real consent settled", async () => {
+    /*
+     * This test asserted the opposite until 8 September 2026: `beginAuthorization` appended
+     * `offline_access` to every request, on the argument that discovery's `scopes_supported` lists it and
+     * that a refresh token needs it.
+     *
+     * A real consent refused the whole authorization:
+     *
+     *   invalid_scope — The OAuth 2.0 Client is not allowed to request scope 'offline_access'.
+     *
+     * `scopes_supported` describes the **server**; a client may request only what it was registered with,
+     * and the dashboard's picker offers permission names rather than OIDC scopes. So the append did not add
+     * a capability — it made every request refusable, for every operator following the Node's own steps.
+     */
     await register();
     const { url } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
-    const scopes = new URL(url).searchParams.get("scope")?.split(" ") ?? [];
+    expect(new URL(url).searchParams.get("scope")).toBe("a");
+  });
+
+  it("omits the scope parameter entirely when it has none, rather than sending an empty one", async () => {
     /*
-     * Without it there is no refresh token, so the grant would expire with its access token and ADR 42's one
-     * ceremony would become a recurring one — which an operator would meet as a Node that keeps disconnecting.
+     * Not the same as `scope=`. RFC 6749 leaves a request that names no scope to the authorization server,
+     * so Cloudflare applies the client's own registered scopes — which the operator chose in the dashboard's
+     * picker, and which this Node deliberately does not know the names of.
      */
-    expect(scopes).toContain("offline_access");
-    // Once, not twice, when the caller did remember.
-    const second = await beginAuthorization(
-      testEnv, atTime(SEPTEMBER_3 + 2000), ADMIN, ["a", "offline_access"],
-    );
-    const again = new URL(second.url).searchParams.get("scope")?.split(" ") ?? [];
-    expect(again.filter((one) => one === "offline_access")).toHaveLength(1);
+    await register();
+    const { url } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["", " "]);
+    expect(new URL(url).searchParams.has("scope")).toBe(false);
   });
 
   it("refuses to build one with no client, rather than producing a URL that cannot work", async () => {
@@ -615,26 +628,48 @@ describe("the guided ceremony", () => {
      * operator following printed steps is entitled to know which parts of them the Node has verified, so the
      * ceremony says the scope names are not printed and names the call that would produce them.
      */
-    expect(printed.unmeasured).toContain("has not measured");
+    // Still says what is unverified: these come from wrangler's vocabulary, not from `GET /oauth/scopes`.
     expect(printed.unmeasured).toContain("/oauth/scopes");
+    expect(printed.unmeasured).toContain("wrangler");
     for (const step of printed.steps) {
-      // No invented scope name anywhere in the printed steps.
-      expect(step).not.toMatch(/workers-platform\.|\bd1\.(read|write)\b|\br2\.(read|write)\b/);
+      // Not the dotted form from Cloudflare's documentation example, which is not the vocabulary in use.
+      expect(step).not.toMatch(/workers-platform\.|\bd1\.(read|write)\b/);
     }
   });
 
-  it("asks for read capabilities in this layer and defers write to the one that provisions", () => {
-    const printed = ceremony(REDIRECT);
-    const l1 = printed.capabilities.filter((one) => one.layer === "L1");
-    expect(l1.length).toBeGreaterThanOrEqual(4);
+  it("prints real scope strings, and says which of them had no read-only choice", () => {
     /*
-     * An operator asked for write access to their whole Workers platform in order to display a read-only
-     * inventory would be right to refuse, and #162's L1 does exactly one thing with the grant: read.
+     * This asserted the opposite until two consents settled it: the ceremony named **capabilities** in prose
+     * and no scope strings, because `GET /oauth/scopes` needs a token this Node does not have.
+     *
+     * That could not work. A request naming no scope is granted none — the consent screen reads "0 total
+     * permissions" with `Authorize` disabled, because a client's registered scopes are a ceiling on what it
+     * may request rather than a default for what it does. So the Node must enumerate them.
      */
-    for (const one of l1) expect(one.capability).not.toMatch(/^write/);
-    expect(printed.capabilities.some((one) => one.layer !== "L1" && one.capability.startsWith("write")))
-      .toBe(true);
-    // Every capability carries its reason, which is what makes a consent screen reviewable.
-    for (const one of printed.capabilities) expect(one.why.length).toBeGreaterThan(30);
+    const printed = ceremony(REDIRECT);
+    expect(printed.scopes.length).toBeGreaterThanOrEqual(5);
+    for (const one of printed.scopes) {
+      expect(one.scope, "a scope must be <group>:<verb>").toMatch(/^[a-z0-9_]+:(read|write|admin|run)$/);
+      expect(one.why.length).toBeGreaterThan(30);
+    }
+    // The steps name the exact strings, so an operator can select them rather than interpret a description.
+    expect(printed.steps.some((step) => step.includes("account:read"))).toBe(true);
+
+    /*
+     * The old test asserted every L1 capability was read-only. Cloudflare does not allow that: there is no
+     * `d1:read`, `queues:read`, `email_routing:read` or `email_sending:read`. So the property worth holding
+     * is not that reads are read-only, it is that the ones which are **not** say so — the consent screen's
+     * cost is then legible as the provider's doing rather than this Node over-asking.
+     */
+    const write = printed.scopes.filter((one) => one.scope.endsWith(":write"));
+    expect(write.length).toBeGreaterThan(0);
+    for (const one of write) {
+      expect(one.readOnlyExists, `${one.scope} claims a read-only form exists`).toBe(false);
+      expect(one.why, `${one.scope} does not say no read scope exists`).toMatch(/No `[a-z0-9_]+:read` exists/);
+    }
+    // And every read scope is honest the other way: a narrower choice was available and taken.
+    for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {
+      expect(one.readOnlyExists).toBe(true);
+    }
   });
 });

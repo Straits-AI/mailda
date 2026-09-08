@@ -621,6 +621,21 @@ const FIGURES: Record<string, Classification> = {
       + "PKCE. Both come from one discovery document served to everybody — it is read without any account "
       + "context at all, which is the strongest possible form of not varying by plan",
     "oauth.endpoints_from_discovery", "oauth.pkce_s256_available",
+    // And whether a client may request `offline_access` — measured against a real consent, which refused it.
+    // A property of how Cloudflare registers clients, not of what an account pays for.
+    "oauth.client_may_request_offline_access",
+    // And whether omitting `scope` falls back to the client's registered scopes. It does not — the consent
+    // screen shows zero permissions and will not authorize. A registration rule, not an entitlement.
+    "oauth.omitted_scope_defaults_to_client_scopes",
+  ),
+
+  // docs/receipts/cloudflare-oauth-scopes.md
+  ...bothPlans(
+    "the shape of Cloudflare's OAuth scope vocabulary, and which products have no read-only scope. A "
+      + "property of how Cloudflare names permissions — the same names appear on every account, and an "
+      + "entitlement decides what a scope can reach rather than whether the scope exists",
+    "oauth.scope_shape_is_group_colon_verb", "oauth.read_only_scope_exists_for_d1",
+    "oauth.read_only_scope_exists_for_queues", "oauth.read_only_scope_exists_for_email",
   ),
 
   // docs/receipts/temporary-account-provisioning.md

@@ -458,6 +458,72 @@ function refuseIfWorkflowBelongsElsewhere() {
   }
 }
 
+
+/* ------------------------------------------------------------------ provider ----------------------- */
+
+/**
+ * The Node's Cloudflare grant, from the terminal (#162 L1).
+ *
+ * L1 shipped five routes and two `doctor` findings and **no way to reach them**: no screen, no verb. So the
+ * one step that needs a human — pasting a client id and secret Cloudflare shows once — had no surface but
+ * raw curl with a session cookie. That is the gap this closes, and it is the CLI half of #162's requirement
+ * that every state be distinguishable in the interface *and* in the CLI.
+ *
+ * The secret is read from **stdin**, never an argument: an argv is in the shell history and in `ps`.
+ */
+async function provider(argv) {
+  const origin = (flag(argv, "url") ?? process.env.MAILDA_URL ?? "").replace(/\/$/, "");
+  if (origin === "") fail("pass `--url https://<your-node>`, or set MAILDA_URL.");
+  const cookie = await sessionCookie(origin);
+  if (cookie === null) fail("set MAILDA_EMAIL and MAILDA_PASSWORD to sign in to this Node.");
+
+  const call = async (method, path, body) => {
+    const response = await fetch(`${origin}${path}`, {
+      method,
+      headers: { cookie, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    if (!response.ok) fail(`${method} ${path} answered ${response.status}:\n${text}`);
+    return JSON.parse(text);
+  };
+
+  const clientId = flag(argv, "client-id");
+  if (clientId !== null) {
+    // Cloudflare shows the secret once, so it arrives on stdin rather than in argv — which is in `ps` and in
+    // the shell's history file.
+    const secret = readFileSync(0, "utf8").trim();
+    if (secret === "") fail("pipe the client secret in: `echo -n <secret> | mailda provider --client-id <id>`");
+    const { provider: after } = await call("PUT", "/api/provider/client", { clientId, clientSecret: secret });
+    process.stdout.write(`\n   registered. state: ${after.state}\n`);
+    return;
+  }
+
+  const scopes = flag(argv, "scopes");
+  if (scopes !== null) {
+    const { authorize } = await call("POST", "/api/provider/authorize", { scopes: scopes.split(",") });
+    process.stdout.write(`\n   open this to consent:\n\n   ${authorize.url}\n`);
+    return;
+  }
+
+  const { provider: state, ceremony: steps } = await call("GET", "/api/provider");
+  process.stdout.write(`\n== provider: ${state.state} (${state.evidence})\n`);
+  for (const [key, value] of Object.entries(state)) {
+    if (key !== "state" && key !== "evidence" && value !== null) {
+      process.stdout.write(`   ${key}: ${JSON.stringify(value)}\n`);
+    }
+  }
+  if (state.state === "no_client") {
+    process.stdout.write(`\n   redirect URI: ${steps.redirectUri}\n\n`);
+    steps.steps.forEach((line, at) => process.stdout.write(`   ${at + 1}. ${line}\n`));
+    process.stdout.write("\n   capabilities to cover with scopes:\n");
+    for (const one of steps.capabilities) {
+      process.stdout.write(`     [${one.layer}] ${one.capability}\n`);
+    }
+    process.stdout.write(`\n   ${steps.unmeasured}\n`);
+  }
+}
+
 /* ------------------------------------------------------------------ deploy ------------------------- */
 
 /**
@@ -1916,6 +1982,9 @@ function verifyBackup(argv) {
 
 const USAGE = `mailda — operate a Mailda Node
 
+  mailda provider [--url <origin>]   this Node's Cloudflare grant: its state, or the printed ceremony
+  mailda provider --client-id <id>   register the OAuth client; the secret is read from stdin
+  mailda provider --scopes a,b       begin a consent and print the URL to open
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
@@ -1953,6 +2022,7 @@ switch (verb) {
   case "preflight": await preflight(rest); break;
   case "verify-evidence": await verifyEvidence(rest); break;
   case "search": await search(rest); break;
+  case "provider": await provider(rest); break;
   default:
     process.stdout.write(USAGE);
     process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);

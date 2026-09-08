@@ -64,15 +64,27 @@ yet. Say so and keep looking.
 
 ### 2. Every number needs a receipt
 
-A limit without a measurement is a landmine.
+Before choosing or changing a production capacity or performance tripwire, measure the
+relevant healthy workload and preserve the receipt. Reuse an existing receipt when its
+workload and assumptions still apply. If healthy use reaches that tripwire, remeasure
+before changing it.
 
-Before writing any number — a max, a byte cap, a timeout, a concurrency, a threshold, a
-retry count, an SLO — measure the real thing first, then size it as a tripwire. Capacity is
-free until touched: reserve big, commit lazily, never eagerly zero what you can allocate on
-demand. Be generous. **If a good widget hits a budget, the budget is wrong.** Remeasure and
-update the receipt.
+Provider limits, protocol constants, security or policy thresholds, and user-specified
+budgets come from their governing source. Cite that source and preserve its meaning;
+healthy traffic reaching a limit does not authorize raising it. Keep existing schema,
+capability, and approval requirements.
 
-Numbers in Mailda come from exactly three places, and each has a receipt:
+Ordinary fixture values and UI presentation constants do not require production benchmarks.
+Explain their basis when needed. Label exploratory defaults as provisional assumptions;
+fixtures and provisional values do not establish production capacity or measured results.
+
+If required measurement is unavailable, leave the affected production decision unqualified
+and continue work that does not depend on it.
+
+Reserve generously and commit lazily where the system permits it. Keep the receipt,
+adapter, generated-budget, and observed-objective contracts below.
+
+Operational budgets and reported objectives use these evidence contracts; each requires a receipt:
 
 | Kind | Source of truth | Where it may live |
 |---|---|---|
@@ -114,16 +126,18 @@ p99.9 fan-out was 61 effects, maximum observed 143 (bulk-invoice-reconcile v3).
 `values` is a map because one measurement often establishes several related numbers, and
 splitting them across files scatters a single receipt.
 
-**You cannot write the number — you can only write the receipt.** A build step emits
+**For generated budget constants, write the receipt.** A build step emits
 `packages/budgets` from `docs/receipts/*.md`; that module is generated and never
 hand-edited. CI regenerates on every commit and fails on any diff. Benchmarks re-run
 nightly and flag drift against the recorded value — not per commit, because timing
 benchmarks in CI are flaky, a flaky check gets muted, and a muted receipt check is worse
 than no check because it still reads as verified.
 
-At review, a literal number in a diff is answered with one question: **where's the receipt?**
-An acceptable answer is a receipt ID, an adapter capability field, or "it's `0`/`1` and
-means none/one".
+At review, a production tripwire, platform limit, or reported objective must have the
+receipt or adapter capability field required above. A fixed protocol value, policy threshold,
+or user-defined budget cites its governing source. Fixture and presentation values need a
+clear basis when it is not obvious; they must not be presented as operational measurements.
+These distinctions do not permit hand-editing generated budget constants or bypassing governance.
 
 ### 2b. Every assertion needs to be able to fail
 
@@ -296,8 +310,8 @@ a test name — is worth writing in a form that a check can resolve.
 
 ## Before you call it done
 
-1. Every new number has a receipt, an adapter capability field, or is `0`/`1`.
-2. Every reachable limit produces an error naming budget, limit, ask, and the way to raise it.
+1. Operational limits and reported objectives have their required evidence; fixed values cite their governing source, and fixture or presentation values do not masquerade as measured results.
+2. Every reachable limit produces an error naming budget, limit, ask, and the next permitted action. A limit is changed only through its governing contract.
 3. No `catch` swallows — each one re-raises, records, or surfaces an operational state.
 4. Names don't overclaim, and match across code, CLI, API and UI.
 5. The layer below still works.

@@ -259,10 +259,22 @@ export const providerResponse = z.object({
   ceremony: z.object({
     steps: z.array(z.string().min(1)).min(1),
     redirectUri: z.string().min(1),
-    capabilities: z.array(z.object({
-      capability: z.string().min(1),
+    /**
+     * The scopes to select, as `<group>:<verb>` strings.
+     *
+     * Was `capabilities` — prose descriptions and no scope names, because
+     * `GET /client/v4/oauth/scopes` needs a token this Node does not have. Two real consents killed that:
+     * a request naming no scope is granted none, so the Node must enumerate them
+     * (`docs/receipts/cloudflare-oauth-scopes.md`).
+     *
+     * `readOnlyExists` is in the contract rather than the prose because four of these have no `:read` form
+     * in Cloudflare's vocabulary — so a surface showing an operator four write permissions can say which of
+     * them were the provider's only option, instead of leaving the Node looking like it over-asked.
+     */
+    scopes: z.array(z.object({
+      scope: z.string().regex(/^[a-z0-9_]+:(read|write|admin|run)$/),
       why: z.string().min(1),
-      layer: z.string().min(1),
+      readOnlyExists: z.boolean(),
     }).strict()).min(1),
     /*
      * Not optional, and that is the point. The scope names are not measured, and an operator following

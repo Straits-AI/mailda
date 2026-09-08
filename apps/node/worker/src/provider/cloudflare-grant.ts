@@ -51,67 +51,103 @@ export const CLOUDFLARE_OAUTH = {
 } as const;
 
 /**
- * The one scope this Node names literally, because discovery names it.
+ * **Nothing. This Node names no scope literally, and that is measured.**
  *
- * `scopes_supported` lists `offline_access`, and without it there is no refresh token — which would make the
- * grant expire with the access token and turn ADR 42's one ceremony into a recurring one.
+ * There used to be `OFFLINE_SCOPE = "offline_access"`, appended to every authorization request on the
+ * argument that discovery's `scopes_supported` lists it and that without it there is no refresh token.
+ * Both halves were wrong, and one real consent settled it:
+ *
+ * ```text
+ * invalid_scope — The OAuth 2.0 Client is not allowed to request scope 'offline_access'.
+ * ```
+ *
+ * `scopes_supported` describes what the **authorization server** implements; a client may only request what
+ * it was registered with, and the dashboard's picker offers Cloudflare permission names rather than OIDC
+ * scopes. So appending it did not add a capability, it made every authorization request refusable — and the
+ * Node would have failed the ceremony for every operator who followed its own printed steps.
+ *
+ * The refresh token comes from the client's **grant type**, not from a scope: a client registered with
+ * `refresh_token` alongside `authorization_code` gets one. Cloudflare's own documented example lists no
+ * `offline_access` in `scopes` either, which is the reading this measurement confirms.
+ *
+ * @see docs/receipts/cloudflare-oauth-endpoints.md
  */
-export const OFFLINE_SCOPE = "offline_access";
 
 /**
- * What the Node needs the grant to be able to do, **in capabilities rather than scope strings**.
+ * The scopes this Node asks for, and what each one is for (#162).
  *
- * ## Why there is no hardcoded scope list here, which is the opposite of what #162's ceremony seems to want
+ * ## This was a list of capabilities with no scope strings, and that was my failure to read the docs
  *
- * #162 asks the Node to print the required scope list prefilled. It cannot yet, honestly. Cloudflare's scope
- * names correspond to API-token permission names and are enumerated from `GET /client/v4/oauth/scopes`, which
- * needs a token — and the only scope strings this repository has *seen* are the two in Cloudflare's own
- * documentation example (`workers-platform.read`, `workers-platform.write`). Writing a list of eight or ten
- * plausible names beside those would be a fabrication of exactly the kind a receipt exists to prevent: an
- * operator would paste them into a dashboard picker that does not offer them and conclude the Node is wrong
- * about its own requirements.
+ * It said Cloudflare's scope names *"are enumerated from `GET /client/v4/oauth/scopes`, which needs a
+ * token"*, and that printing plausible names would be a fabrication — so it named capabilities in prose and
+ * left the operator to pick in the dashboard's picker. Two consents proved that unworkable:
  *
- * So the ceremony names **capabilities**, each with the reason and the layer that needs it, and the operator
- * selects the matching scopes in the dashboard's own picker — which lists the real ones. After a grant exists
- * the Node can enumerate scopes with it and report coverage, and that first real consent is what produces
- * #162's measured matrix. The mechanism ships here; the figures do not exist yet and nothing here pretends
- * they do.
+ * 1. Appending `offline_access` was refused — a client may request only what it was registered with.
+ * 2. Omitting `scope` **granted nothing**: the consent screen read *"0 total permissions"* with `Authorize`
+ *    disabled. A client's registered scopes are a **ceiling on what it may request, not a default**.
  *
- * `layer` is not decoration. L1 needs to *read*; provisioning authority belongs to the layer that provisions,
- * and an operator asked for write access to their whole Workers platform in order to display an inventory
- * would be right to refuse.
+ * So the Node must enumerate them, and the reason it could not was that I inferred from the discovery
+ * document instead of reading the documentation and the one client on this machine that already speaks this
+ * protocol. `wrangler` is an OAuth client; its bundle carries the vocabulary, and it is `<group>:<verb>`.
+ * `docs/receipts/cloudflare-oauth-scopes.md` records where these came from and what is still unverified.
+ *
+ * ## Three of them have no read-only form, and that is Cloudflare's shape rather than a choice here
+ *
+ * The old list split `layer: "L1"` (read) from `"L2+"` (write) on the argument that *"an operator asked for
+ * write access to their whole Workers platform in order to display an inventory would be right to refuse."*
+ * That argument stands and Cloudflare does not allow it: the vocabulary has `d1:write`, `queues:write`,
+ * `email_routing:write` and `email_sending:write` with **no `:read` counterpart**. So an inventory of D1 or
+ * Queues costs write authority over them.
+ *
+ * `needed` is therefore what the Node asks for, and `readOnlyExists` records whether a narrower choice was
+ * available — so the consent screen's cost is legible as the provider's doing where it is, and this Node's
+ * where it is not.
  */
-export const REQUIRED_CAPABILITIES = [
+export const REQUIRED_SCOPES = [
   {
-    capability: "read the account's plan and membership",
-    why: "ADR 25 requires Workers Paid, and a Node that cannot read the plan cannot tell an operator why a "
-      + "deploy will fail before it fails",
-    layer: "L1",
+    scope: "account:read",
+    why: "the account's plan and membership. ADR 25 requires Workers Paid, and a Node that cannot read the "
+      + "plan cannot say why a deploy will fail before it fails",
+    readOnlyExists: true,
   },
   {
-    capability: "read zones",
-    why: "so the plan can name which zone would carry mail, and can see a name collision before creating one",
-    layer: "L1",
+    scope: "zone:read",
+    why: "which zone would carry mail, and whether a name collides before anything creates one",
+    readOnlyExists: true,
   },
   {
-    capability: "read Workers scripts, D1, R2, Queues and Workflows",
-    why: "the inventory the plan is diffed against. #92 measured that auto-provisioning creates or fails and "
-      + "never adopts, so a plan that cannot see what already exists is wrong from the second attempt onwards",
-    layer: "L1",
+    scope: "workers:read",
+    why: "the Workers inventory a deployment plan is diffed against. #92 measured that auto-provisioning "
+      + "creates or fails and never adopts, so a plan that cannot see what exists is wrong from the second "
+      + "attempt onwards",
+    readOnlyExists: true,
   },
   {
-    capability: "read Email Routing configuration",
-    why: "so the plan can report whether the account's Email Service state would accept this Node's routing "
-      + "rules, rather than discovering it during onboarding",
-    layer: "L1",
+    scope: "d1:write",
+    why: "the catalog. **No `d1:read` exists**, so reading the inventory costs write authority — "
+      + "Cloudflare's vocabulary, not this Node's ask",
+    readOnlyExists: false,
   },
   {
-    capability: "write Workers scripts, D1, R2, Queues and Workflows",
-    why: "provisioning and unwinding. Requested by the layer that provisions and not by this one, because "
-      + "write authority to display a read-only inventory is authority nobody needed to grant",
-    layer: "L2+",
+    scope: "queues:write",
+    why: "the delivery-events queue, and whether a consumer is attached. **No `queues:read` exists.**",
+    readOnlyExists: false,
+  },
+  {
+    scope: "email_routing:write",
+    why: "receiving. L2 proposes MX and routing changes as a diff and applies them on approval. **No "
+      + "`email_routing:read` exists**, so even reporting the current state costs write",
+    readOnlyExists: false,
+  },
+  {
+    scope: "email_sending:write",
+    why: "sending. **No `email_sending:read` exists.**",
+    readOnlyExists: false,
   },
 ] as const;
+
+/** Just the strings, for a caller building an authorization request. */
+export const REQUIRED_SCOPE_NAMES: readonly string[] = REQUIRED_SCOPES.map((one) => one.scope);
 
 /**
  * The states an operator can be in, as a closed union.
@@ -248,17 +284,19 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
 export function ceremony(redirectUri: string): {
   steps: string[];
   redirectUri: string;
-  capabilities: typeof REQUIRED_CAPABILITIES;
+  scopes: typeof REQUIRED_SCOPES;
   unmeasured: string;
 } {
   return {
     redirectUri,
-    capabilities: REQUIRED_CAPABILITIES,
+    scopes: REQUIRED_SCOPES,
     steps: [
       "In the Cloudflare dashboard, go to Manage Account → OAuth clients, and create a client.",
-      "Set the grant type to Authorization Code, and add exactly this redirect URI: " + redirectUri,
-      `Select scopes covering the capabilities listed below, and include ${OFFLINE_SCOPE} — without it the `
-        + "grant expires with its access token and this ceremony recurs.",
+      "Set the grant types to Authorization Code **and Refresh Token** — the second is what gets this Node a "
+        + "refresh token, so without it the grant expires with its access token and this ceremony recurs. "
+        + "Add exactly this redirect URI: " + redirectUri,
+      `Select exactly these scopes: ${REQUIRED_SCOPE_NAMES.join(", ")}. Do NOT add offline_access — `
+        + "measured: a client is not allowed to request it, and the refresh token comes from the grant type.",
       "Leave the client private. A private client can only be authorized by members of your own account, "
         + "which is what keeps this grant yours.",
       "Copy the client id and the client secret, and paste both here. Cloudflare shows the secret once.",
@@ -267,10 +305,10 @@ export function ceremony(redirectUri: string): {
      * Said in the ceremony itself rather than only in a receipt. An operator following printed steps is
      * entitled to know which parts of them this Node has verified.
      */
-    unmeasured: "The scope names are not printed because this Node has not measured them. Cloudflare's scope "
-      + "names match API-token permission names and are enumerated from GET /client/v4/oauth/scopes, which "
-      + "needs a token — so the dashboard's own picker is the accurate list. After you consent, this Node "
-      + "reports which scopes were actually granted and whether they cover what it needs.",
+    unmeasured: "These scope names come from wrangler's own OAuth vocabulary rather than from "
+      + "GET /client/v4/oauth/scopes, which needs a token this Node does not have — so they are the right "
+      + "shape and may not be the exact set a third-party client may request. Cloudflare names any it "
+      + "refuses, and after you consent this Node reports which were actually granted.",
   };
 }
 
@@ -414,9 +452,17 @@ export async function beginAuthorization(
    * grant is useless without it, and a caller that forgot it would produce a binding that expired in an hour
    * and read as a revocation.
    */
-  const scopes = requestedScopes.includes(OFFLINE_SCOPE)
-    ? [...requestedScopes]
-    : [...requestedScopes, OFFLINE_SCOPE];
+  /*
+   * Blanks dropped, and **nothing added**. A caller passing `"".split(",")` hands this `[""]`, which came out
+   * as `scope=+offline_access` — a leading empty scope in a parameter the provider splits on whitespace.
+   * Filtered here rather than in the caller because every caller can produce it the same way.
+   *
+   * An empty list still omits the `scope` parameter, and a caller should not send one: **measured, a request
+   * naming no scope is granted none.** The consent screen reads *"0 total permissions"* with `Authorize`
+   * disabled. `/api/provider/authorize` therefore substitutes `REQUIRED_SCOPE_NAMES`; this function keeps the
+   * empty case honest rather than inventing a default a caller did not ask for.
+   */
+  const scopes = requestedScopes.map((one) => one.trim()).filter((one) => one !== "");
 
   const now = ctx.now();
   await env.CATALOG.prepare(
@@ -439,6 +485,7 @@ export async function beginAuthorization(
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
+  // Omitted entirely when empty, not set to "". See the comment on `scopes` above.
   if (scopes.length > 0) url.searchParams.set("scope", scopes.join(" "));
 
   return { url: url.toString(), state };

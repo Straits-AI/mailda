@@ -2250,12 +2250,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       }
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       /*
-       * The scopes come from the caller because this repository has not measured Cloudflare's scope names —
-       * `REQUIRED_CAPABILITIES` says why at length. The operator selected them in Cloudflare's own picker
-       * when they created the client, so they are the only party who knows the strings; the Node adds
-       * `offline_access` and reports what was actually granted.
+       * `REQUIRED_SCOPE_NAMES` unless the caller names its own. The scopes cannot be left out: a request
+       * naming none is granted none — measured, the consent screen reads "0 total permissions" with
+       * `Authorize` disabled, because a client's registered scopes are a ceiling rather than a default.
+       *
+       * The override exists because these names come from wrangler's vocabulary rather than from
+       * `GET /oauth/scopes`, so an operator whose account offers a different set needs a way to say so
+       * without waiting for a release.
        */
-      const scopes = Array.isArray(body.scopes) ? body.scopes.map((one) => String(one)) : [];
+      const asked = Array.isArray(body.scopes) ? body.scopes.map((one) => String(one)) : [];
+      const { REQUIRED_SCOPE_NAMES } = await import("./provider/cloudflare-grant.ts");
+      const scopes = asked.length > 0 ? asked : [...REQUIRED_SCOPE_NAMES];
       const { beginAuthorization } = await import("./provider/cloudflare-grant.ts");
       const begun = await beginAuthorization(env, clock, who.userId, scopes);
       // The URL, not a redirect: the client decides whether to navigate or to show the operator the link.
