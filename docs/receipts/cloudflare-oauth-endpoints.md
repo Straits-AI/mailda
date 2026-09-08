@@ -1,7 +1,7 @@
 ---
 id: cloudflare-oauth-endpoints
 kind: platform-limit
-measured_on: 2026-09-03
+measured_on: 2026-09-08
 stale_when: >
   the discovery document at https://dash.cloudflare.com/.well-known/openid-configuration stops answering, or
   any of the three endpoints this Node uses moves — authorization, token or revocation; the issuer stops being
@@ -12,7 +12,109 @@ stale_when: >
 values:
   oauth.endpoints_from_discovery: 1
   oauth.pkce_s256_available: 1
+  oauth.client_may_request_offline_access: 0
+  oauth.omitted_scope_defaults_to_client_scopes: 0
 ---
+
+## Correction, 8 September 2026 (second of two): an omitted `scope` grants nothing, so the Node must name them
+
+The correction below removed `offline_access` from every authorization request and made an empty scope list
+**omit the `scope` parameter entirely**, on RFC 6749's rule that a request naming no scope leaves the scope to
+the authorization server — so Cloudflare would apply the client's own registered scopes, the ones the operator
+chose in the dashboard's picker.
+
+**Cloudflare's default is nothing.** The consent screen for a request with no `scope` reads:
+
+```text
+This will allow test to        0 total permissions
+                              (empty list)
+
+Only authorize access if you trust this application.
+Select at least one permission to authorize, or cancel.
+```
+
+`Authorize` is **disabled**. Measured against the same private client, 8 September 2026.
+
+So the premise `REQUIRED_CAPABILITIES` was written on — *the operator selects the scopes in the dashboard's
+own picker, and this Node never needs to know their names* — **is false**. A client's registered scopes are a
+ceiling on what it may request, not a default for what it does request. The Node has to enumerate them, and
+therefore has to know them.
+
+`oauth.omitted_scope_defaults_to_client_scopes: 0`.
+
+### Three readings of one document, three wrong
+
+This is the third time a capability list in the discovery document or the client registration has been read as
+something it is not:
+
+| read as | actually |
+|:--|:--|
+| `grant_types_supported` = what a third-party client may use | what the server implements |
+| `scopes_supported` = what a client may request | what the server implements; a client may request only what it was registered with |
+| a client's registered scopes = the default for a request that names none | a **ceiling**, not a default. No scope named, nothing granted |
+
+The pattern is the same each time and worth naming: **a list of what something supports is not a list of what
+you may have.** Every one of the three cost a round trip with a real consent to find out.
+
+### What the screen did answer
+
+#162 requires that the consent screen *"selects the intended account and exposes the exact requested
+scopes"*. Both hold: it named `swmengappdev@gmail.com` and `Swmengappdev@gmail.com's Account` with an **Edit**
+control to change the account, and it listed the requested scopes exactly — which in this case was none, and
+it said so rather than substituting any.
+
+It also carries `This application has not verified ownership of any domain`, which is the expected badge for a
+private client on a `workers.dev` host: #167 measured that a private client needs no domain verification, and
+this is what the absence of one looks like to the person consenting.
+
+## Correction, 8 September 2026: `scopes_supported` describes the server, and a client cannot request from it
+
+The table below records `scopes_supported` as `["offline_access", "offline", "openid"]` and notes that these
+are OIDC scopes rather than Cloudflare permission names. What it did **not** say, and what mattered, is that
+a client cannot request them at all.
+
+`cloudflare-grant.ts` appended `offline_access` to every authorization request, on the argument that discovery
+lists it and that without it there is no refresh token. The first real consent refused the whole
+authorization:
+
+```text
+error             invalid_scope
+error_description The requested scope is invalid, unknown, or malformed.
+                  The OAuth 2.0 Client is not allowed to request scope 'offline_access'.
+```
+
+Measured against a private client created in the dashboard on 7 September 2026, with grant types
+**Authorization Code and Refresh Token**, response type `code`, and scopes chosen from the dashboard's own
+picker.
+
+**So `scopes_supported` is a statement about the authorization server, not about what any client may ask
+for.** A client may request only what it was registered with, and the dashboard registers Cloudflare
+permission names — the OIDC scopes are not on offer there. Reading a discovery document's capability list as a
+client's menu is the same mistake as reading `grant_types_supported` as a third-party client's options, which
+this file already records one section down. Twice now, from the same document.
+
+**The refresh token comes from the grant type.** A client registered with `refresh_token` beside
+`authorization_code` receives one; Cloudflare's own documented example lists no `offline_access` in `scopes`
+either, which is the reading this measurement confirms. `oauth.client_may_request_offline_access: 0`.
+
+### What the Node does instead
+
+Requests **no scope of its own**, and omits the `scope` parameter entirely when the caller names none — which
+is not the same as sending an empty one. RFC 6749 leaves the scope of a request that names none to the
+authorization server, so Cloudflare applies the client's own registered scopes: the ones the operator chose in
+the picker. For a Node that deliberately does not know their names
+(`REQUIRED_CAPABILITIES` says why), that is a better answer than any guess it could print.
+
+The guided ceremony changed with it. It used to tell the operator to *include* `offline_access` — an
+instruction that would have made the authorization refusable for everybody who followed it. It now says to
+select **Refresh Token as a grant type** and not to add that scope.
+
+### The cost of getting this wrong, since it is the argument for measuring before shipping
+
+Nothing was lost: the callback validated its nonce, consumed it once, exchanged the code, and reported
+`ok: false` carrying Cloudflare's own words rather than a paraphrase — the refusal path working exactly as
+built. But every operator following the printed steps would have hit it, and the Node would have blamed a
+scope it added itself.
 
 # Where Cloudflare's OAuth endpoints are, read from the server rather than from prose
 

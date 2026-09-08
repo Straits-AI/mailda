@@ -247,13 +247,15 @@ describe("every schema-bearing route answers what the contract says it does", ()
 
     const before = await answers("GET", "/api/provider", { cookie: held }) as {
       provider: { state: string; evidence: string };
-      ceremony: { redirectUri: string; unmeasured: string };
+      ceremony: { redirectUri: string; unmeasured: string; scopes: { scope: string }[] };
     };
     expect(before.provider.state).toBe("no_client");
     // The ceremony's redirect URI is this Node's own origin, which is the one value only the request knows.
     expect(before.ceremony.redirectUri).toBe(`${ORIGIN}/oauth/cloudflare/callback`);
     // The admission is a required field, so a surface cannot render the steps and drop it.
     expect(before.ceremony.unmeasured.length).toBeGreaterThan(40);
+    // Real scope strings, because a request naming none is granted none.
+    expect(before.ceremony.scopes.map((one) => one.scope)).toContain("account:read");
 
     const registered = await answers("PUT", "/api/provider/client", {
       body: { clientId: "cf-contract-client", clientSecret: "the-contract-secret" }, cookie: held,
