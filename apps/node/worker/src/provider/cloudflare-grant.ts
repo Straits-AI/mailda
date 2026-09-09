@@ -86,22 +86,34 @@ export const CLOUDFLARE_OAUTH = {
  * 2. Omitting `scope` **granted nothing**: the consent screen read *"0 total permissions"* with `Authorize`
  *    disabled. A client's registered scopes are a **ceiling on what it may request, not a default**.
  *
- * So the Node must enumerate them, and the reason it could not was that I inferred from the discovery
- * document instead of reading the documentation and the one client on this machine that already speaks this
- * protocol. `wrangler` is an OAuth client; its bundle carries the vocabulary, and it is `<group>:<verb>`.
- * `docs/receipts/cloudflare-oauth-scopes.md` records where these came from and what is still unverified.
+ * So the Node must enumerate them. **The strings below are a placeholder and are known to be refused.**
+ * They are wrangler's vocabulary — `<group>:<verb>` — and wrangler is a *first-party* client: probed against
+ * a real self-managed client with fourteen scopes saved, every one of them was refused identically to an
+ * invented control. Cloudflare's documentation says to *"use the scope ID"*, and its permission-groups
+ * endpoint returns ids rather than names, which is the live candidate and needs a token to enumerate.
  *
- * ## Three of them have no read-only form, and that is Cloudflare's shape rather than a choice here
+ * They stay here rather than being emptied because `/api/provider/authorize` accepts an override, so an
+ * operator who has the real list can proceed today — and because a scope list that is wrong and *named as
+ * wrong* is more use than an empty one that says nothing. `doctor` reports the state; the receipt carries
+ * what is established and what is not.
  *
- * The old list split `layer: "L1"` (read) from `"L2+"` (write) on the argument that *"an operator asked for
- * write access to their whole Workers platform in order to display an inventory would be right to refuse."*
- * That argument stands and Cloudflare does not allow it: the vocabulary has `d1:write`, `queues:write`,
- * `email_routing:write` and `email_sending:write` with **no `:read` counterpart**. So an inventory of D1 or
- * Queues costs write authority over them.
+ * @see docs/receipts/cloudflare-oauth-scopes.md
  *
- * `needed` is therefore what the Node asks for, and `readOnlyExists` records whether a narrower choice was
- * available — so the consent screen's cost is legible as the provider's doing where it is, and this Node's
- * where it is not.
+ * ## The read-only scopes exist, and this comment said they did not
+ *
+ * It claimed, from wrangler's vocabulary, that there is no `d1:read`, `queues:read`, `email_routing:read` or
+ * `email_sending:read`, and accepted write authority at L1 as the provider's shape. The dashboard's own scope
+ * picker shows a **Read** for every one of them. What wrangler's bundle holds is what *wrangler* asks for,
+ * and wrangler deploys Workers — so reading its request list as the provider's vocabulary was the same
+ * mistake as reading `scopes_supported` as a client's menu, one layer further in.
+ *
+ * So L1 asks for reads. `readOnlyExists` stays on each entry because it is still the fact a consent screen
+ * needs explaining by — but it is now `true` throughout, which is the honest answer.
+ *
+ * **Email Routing is four permissions rather than one** (Account Rules, Addresses, Rules, Suppressions), and
+ * the first is read-only with no Edit at all. `email_routing:*` is therefore an aggregate or a different
+ * granularity from what a third-party client selects, and L2 will have to name which of the four it wants.
+ * `docs/receipts/cloudflare-oauth-scopes.md` carries the picker's own table.
  */
 export const REQUIRED_SCOPES = [
   {
@@ -123,26 +135,28 @@ export const REQUIRED_SCOPES = [
     readOnlyExists: true,
   },
   {
-    scope: "d1:write",
-    why: "the catalog. **No `d1:read` exists**, so reading the inventory costs write authority — "
-      + "Cloudflare's vocabulary, not this Node's ask",
-    readOnlyExists: false,
+    scope: "d1:read",
+    why: "the catalog's existence and shape, for the plan. Read, because L1 provisions nothing — the picker "
+      + "offers it, which an earlier version of this list wrongly said it did not",
+    readOnlyExists: true,
   },
   {
-    scope: "queues:write",
-    why: "the delivery-events queue, and whether a consumer is attached. **No `queues:read` exists.**",
-    readOnlyExists: false,
+    scope: "queues:read",
+    why: "the delivery-events queue and whether a consumer is attached. Read, for the same reason",
+    readOnlyExists: true,
   },
   {
-    scope: "email_routing:write",
-    why: "receiving. L2 proposes MX and routing changes as a diff and applies them on approval. **No "
-      + "`email_routing:read` exists**, so even reporting the current state costs write",
-    readOnlyExists: false,
+    scope: "email_routing:read",
+    why: "the account's routing state, so a plan can say whether it would accept this Node's rules rather "
+      + "than discovering it during onboarding. L2 proposes changes as a diff and needs write for that — and "
+      + "will have to name which of Cloudflare's four Email Routing permissions it wants",
+    readOnlyExists: true,
   },
   {
-    scope: "email_sending:write",
-    why: "sending. **No `email_sending:read` exists.**",
-    readOnlyExists: false,
+    scope: "email_sending:read",
+    why: "whether the account is entitled to send at all, which decides whether a Node can carry mail. "
+      + "Sending itself goes through the binding or a token, not this grant",
+    readOnlyExists: true,
   },
 ] as const;
 

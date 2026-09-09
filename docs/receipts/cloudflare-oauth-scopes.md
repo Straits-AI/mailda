@@ -1,19 +1,92 @@
 ---
 id: cloudflare-oauth-scopes
 kind: platform-limit
-measured_on: 2026-09-08
+measured_on: 2026-09-09
 stale_when: >
-  Cloudflare's OAuth scope vocabulary stops being <group>:<verb>; a read-only scope appears for D1, Queues,
-  Email Routing or Email Sending, which would let this Node ask for less than it does; wrangler stops being
+  Cloudflare's OAuth scope vocabulary stops being <group>:<verb>, or turns out to be permission-group ids
+  rather than names; the read-only scopes for D1, Queues, Email Routing or Email Sending stop being offered;
+  Email Routing stops being four separate permissions; wrangler stops being
   an OAuth client, since its bundle is where these strings were read; GET /client/v4/oauth/scopes becomes
   reachable without a token, which would make it the source instead; or a scope this Node requests is
   refused, since Cloudflare names any it will not grant
 values:
-  oauth.scope_shape_is_group_colon_verb: 1
-  oauth.read_only_scope_exists_for_d1: 0
-  oauth.read_only_scope_exists_for_queues: 0
-  oauth.read_only_scope_exists_for_email: 0
+  oauth.scope_shape_is_group_colon_verb: 0
+  oauth.read_only_scope_exists_for_d1: 1
+  oauth.read_only_scope_exists_for_queues: 1
+  oauth.read_only_scope_exists_for_email: 1
 ---
+
+## Correction, 9 September 2026: the read-only scopes **do** exist, and this file said they did not
+
+The section below claimed, from wrangler's vocabulary, that there is no `d1:read`, `queues:read`,
+`email_routing:read` or `email_sending:read` — and built a design note on it about a read-only layer being
+forced to ask for write.
+
+**Wrong.** The dashboard's own scope picker, screenshotted while editing a real client:
+
+| group | options offered |
+|:--|:--|
+| D1 | Edit, **Read** |
+| Queues | Edit, **Read** |
+| Workers | Edit, Bind, **Read**, edit |
+| Email Sending | Edit, **Read** |
+| Zone | Edit, **Read** |
+| Account Settings | Edit, **Read** |
+
+Every one of them has a read. What wrangler's bundle contains is **what wrangler asks for**, and wrangler
+deploys Workers — so it requests write. Reading a client's own request list as the provider's vocabulary is
+the same error this file was written about, made one layer further in: *a list of what something uses is not
+a list of what exists.* Fourth time in this flow.
+
+So L1 **can** be read-only for D1 and Queues, and the design note that accepted write authority for a
+read-only layer accepted a cost that was not there.
+
+### Email Routing is four permissions, not one
+
+The picker splits it, and one of the four is read-only with no Edit at all:
+
+| permission | options |
+|:--|:--|
+| Email Routing Account Rules | **Read only** |
+| Email Routing Addresses | Edit, Read |
+| Email Routing Rules | Edit, Read |
+| Email Routing Suppressions | Edit, Read |
+| Email Sending | Edit, Read |
+
+`email_routing:write` in wrangler's vocabulary is therefore an aggregate or a different granularity from what
+a third-party client selects. L2's MX and routing work will need to name which of the four it wants, and
+"read the current routing state" is a narrower ask than this file assumed.
+
+### `<group>:<verb>` is not the format for a third-party client
+
+`oauth.scope_shape_is_group_colon_verb: 0`, and this file asserted `1` for a day.
+
+Probed against the client **after** its fourteen scopes were saved: `d1:read`, `queues:read`,
+`workers:read`, `zone:read`, `account:read`, `email_sending:read`, `email_routing:read` — every one refused
+with *"the OAuth 2.0 Client is not allowed to request scope"*, identically to an invented
+`definitely_not_a_scope:read`. wrangler's strings are a **first-party shorthand**, not the vocabulary a
+self-managed client requests.
+
+What remains is Cloudflare's own instruction, which this flow has now failed to take literally twice:
+
+> Fetch the available scopes from the API. Use the **scope ID** when you create a client through the API.
+
+The permission-groups endpoint returns ids like `19637fbb73d242c0a92845d8db0b95b1` beside display names. A
+scope is plausibly one of those, and that cannot be probed without knowing an id the client actually holds —
+so it is **not guessed**. `GET /client/v4/oauth/scopes` is the one call that ends this, and it needs a token.
+
+### And the confounded measurement, retested
+
+`oauth.omitted_scope_defaults_to_client_scopes: 0` was first taken against a client with **no scopes at
+all** — so it could not have measured what it claimed. Retested with the fourteen saved: the consent screen
+still reads *"0 total permissions"* with `Authorize` disabled.
+
+The figure stands, and now for the right reason. A client's registered scopes are a ceiling on what it may
+request, not a default for what it does — confirmed against a client that had something to default to.
+
+**That the first reading happened to be right is not a defence of taking it.** It was a measurement of a
+different thing that agreed by luck, and the only reason anybody knows the difference is that the client
+changed underneath it and it was run again.
 
 # The scope vocabulary, and where it was finally read from
 
