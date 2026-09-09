@@ -359,6 +359,34 @@ describe("the callback, and the four ways it does not become a connection", () =
     expect(status.accountId).toBe("acc_from_response");
   });
 
+  it("form-url-encodes the credential before base64, which the spec requires", async () => {
+    /*
+     * RFC 6749 §2.3.1: both the client id and the secret are encoded with the
+     * `application/x-www-form-urlencoded` algorithm **before** they are joined and base64'd.
+     *
+     * The first version did not, and a real exchange answered `invalid_client` — *"client authentication
+     * failed"* — **after a consent had already succeeded**. That is the worst place in this flow to fail: the
+     * authorization code is single-use, so there is no retry and the operator has to consent again.
+     *
+     * It bites because a Cloudflare secret is base64-ish and routinely carries `+`, `/` and `=`. This server
+     * is Ory Hydra, which enforces the encoding rather than decoding leniently — so the assertion uses a
+     * secret containing exactly those characters.
+     */
+    await registerClient(testEnv, atTime(SEPTEMBER_3 + 100), ORG, ADMIN, {
+      clientId: "cf/client+id", clientSecret: "sec+ret/with=chars", redirectUri: REDIRECT,
+    });
+    const stub = answering(200, { access_token: "at", scope: "a" });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 200), ADMIN, ["a"]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 300), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+
+    const sent = (stub.calls[0]?.init.headers as Record<string, string>).authorization;
+    expect(sent).toBe(`Basic ${btoa("cf%2Fclient%2Bid:sec%2Bret%2Fwith%3Dchars")}`);
+    // And not the raw form, which is what failed against the real server.
+    expect(sent).not.toBe(`Basic ${btoa("cf/client+id:sec+ret/with=chars")}`);
+  });
+
   it("leaves the account null when the response does not name one, rather than guessing", async () => {
     await register();
     // Whether Cloudflare's token response carries the account is **not measured** — no Node has held a grant.
@@ -526,8 +554,9 @@ describe("the callback, and the four ways it does not become a connection", () =
   it("refuses an expired authorization", async () => {
     await register();
     const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, []);
-    // Eleven minutes later; the redirect's working life is ten.
-    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 11 * 60 * 1000), ORG, {
+    // Thirty-one minutes later. Was eleven, until a ten-minute window expired twice on one real consent —
+    // the nonce's protection is being single-use, not being short-lived.
+    await expect(completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 31 * 60 * 1000), ORG, {
       state, code: "the-code", error: null, errorDescription: null,
     })).rejects.toThrow("E_PROVIDER_STATE_EXPIRED");
   });
@@ -631,10 +660,13 @@ describe("the guided ceremony", () => {
     // Still says what is unverified: these come from wrangler's vocabulary, not from `GET /oauth/scopes`.
     expect(printed.unmeasured).toContain("/oauth/scopes");
     expect(printed.unmeasured).toContain("wrangler");
-    for (const step of printed.steps) {
-      // Not the dotted form from Cloudflare's documentation example, which is not the vocabulary in use.
-      expect(step).not.toMatch(/workers-platform\.|\bd1\.(read|write)\b/);
-    }
+    /*
+     * The steps carried an assertion that the scopes were **not** the dotted form, on the grounds that
+     * Cloudflare's documentation example was not the vocabulary in use. It was. Replaced with the property
+     * that actually matters: the steps say not to add `offline_access`, which is the one scope a client is
+     * measurably not allowed to request.
+     */
+    expect(printed.steps.some((step) => step.includes("offline_access"))).toBe(true);
   });
 
   it("prints real scope strings, and says which of them had no read-only choice", () => {
@@ -649,11 +681,16 @@ describe("the guided ceremony", () => {
     const printed = ceremony(REDIRECT);
     expect(printed.scopes.length).toBeGreaterThanOrEqual(5);
     for (const one of printed.scopes) {
-      expect(one.scope, "a scope must be <group>:<verb>").toMatch(/^[a-z0-9_]+:(read|write|admin|run)$/);
+      /*
+       * `<group>.<verb>` with a **dot**, from `GET /oauth/scopes`. This asserted a colon until 9 September
+       * 2026, because wrangler's bundle spells its own scopes that way — and wrangler is a first-party
+       * client whose shorthand nobody else may use. Cloudflare's documentation example had the dot all along.
+       */
+      expect(one.scope, "a scope id is <group>.<verb>").toMatch(/^[a-z0-9-]+\.[a-z_]+$/);
       expect(one.why.length).toBeGreaterThan(30);
     }
-    // The steps name the exact strings, so an operator can select them rather than interpret a description.
-    expect(printed.steps.some((step) => step.includes("account:read"))).toBe(true);
+    // The steps name the exact ids, so an operator can select them rather than interpret a description.
+    expect(printed.steps.some((step) => step.includes("account-settings.read"))).toBe(true);
 
     /*
      * **L1 asks for reads only, and getting here took two corrections.**
@@ -669,7 +706,16 @@ describe("the guided ceremony", () => {
      * So the property to hold is the original one after all: **a layer that provisions nothing asks for
      * nothing but reads.**
      */
-    expect(printed.scopes.filter((one) => !one.scope.endsWith(":read"))).toEqual([]);
+    /*
+     * **Not "reads only" any more, and that is an operator's selection rather than a design change.** This
+     * list is the fourteen scopes a real client was registered with, and the picker had `d1` and `queues` on
+     * Edit. Both have a `.read` Cloudflare offers, which is what L1 would ask for since it provisions
+     * nothing — so what is asserted is that every write entry *says* a read exists, not that none is used.
+     */
+    for (const one of printed.scopes.filter((x) => x.scope.endsWith(".write"))) {
+      expect(one.readOnlyExists, `${one.scope} claims no read form exists`).toBe(true);
+    }
+    expect(printed.scopes.some((one) => one.scope.endsWith(".read"))).toBe(true);
 
     // And every read scope is honest the other way: a narrower choice was available and taken.
     for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {

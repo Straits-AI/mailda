@@ -1,7 +1,7 @@
 ---
 id: cloudflare-oauth-endpoints
 kind: platform-limit
-measured_on: 2026-09-08
+measured_on: 2026-09-09
 stale_when: >
   the discovery document at https://dash.cloudflare.com/.well-known/openid-configuration stops answering, or
   any of the three endpoints this Node uses moves — authorization, token or revocation; the issuer stops being
@@ -11,10 +11,82 @@ stale_when: >
   below in the documentation's favour and close the probe named here
 values:
   oauth.endpoints_from_discovery: 1
+  oauth.token_auth_is_client_secret_basic: 1
   oauth.pkce_s256_available: 1
   oauth.client_may_request_offline_access: 0
   oauth.omitted_scope_defaults_to_client_scopes: 0
 ---
+
+## Correction, 9 September 2026 (amended the same day): the encoding was **not** the cause
+
+The section below diagnosed `invalid_client` as a missing form-url-encoding of the Basic credential and
+called it *"a spec conformance bug in Mailda"*. The encoding fix is correct and stays — RFC 6749 §2.3.1 does
+require it — but **it was not what failed.**
+
+Established without spending a consent, by sending a deliberately invalid code to the token endpoint: an
+invalid code with working client authentication answers `invalid_grant`, and a broken credential answers
+`invalid_client`. So one request per candidate settles which, and the code is never a real one.
+
+```text
+client_secret_basic, percent-encoded   -> invalid_grant   (authentication WORKED)
+client_secret_basic, raw               -> invalid_grant   (authentication WORKED)
+client_secret_post                     -> invalid_client  "The OAuth 2.0 Client supports client
+                                                            authentication method 'client_secret_basic',
+                                                            but method 'client_secret_post' was requested"
+```
+
+Three things at once:
+
+- **The client is registered `client_secret_basic`**, which Cloudflare names outright when the wrong method is
+  used. This flow's earlier guessing had no need to guess at that either.
+- **Both encodings authenticate** for a secret with no reserved characters, so the fix below was neither the
+  cause nor a regression. It matters only for a secret containing `+`, `/` or `=`, and this one does not.
+- **The stored secret was stale** — rotated in the dashboard after registration. That is the actual cause, and
+  the migration for `provider_binding` had already recorded the shape of it: Cloudflare permits two secrets
+  per client so one may be rotated before the old is deleted, and *"this Node holds one at a time and
+  re-registration replaces it."*
+
+**The diagnosis below was a guess that happened to touch real code.** It shipped a fix, a test and a receipt
+section for a bug that was not the failure, and the failure was one `curl` away from being named — which is
+the same mistake as the five readings in `cloudflare-oauth-scopes.md`, made with a debugging tool instead of a
+document.
+
+## Superseded: the Basic credential must be form-url-encoded, and Hydra enforces it
+
+The consent completed. The **token exchange** then failed:
+
+```text
+error             invalid_client
+error_description Client authentication failed (e.g., unknown client, no client authentication
+                  included, or unsupported authentication method).
+```
+
+`cloudflare-grant.ts` built its header as `btoa(clientId + ":" + secret)`. RFC 6749 §2.3.1 requires both
+values to be encoded with the `application/x-www-form-urlencoded` algorithm **before** they are joined and
+base64'd, and this authorization server is Ory Hydra — `credentials_endpoint_draft_00` in its own discovery
+document — which enforces that rather than decoding leniently.
+
+It matters because a Cloudflare client secret is base64-ish and routinely contains `+`, `/` and `=`. Raw,
+those change what the server decodes the password as.
+
+**This is the worst place in the flow to fail, which is why it is worth its own section.** The authorization
+code is single-use: by the time the exchange is attempted the operator has already signed in, reviewed
+fourteen permissions and clicked Authorize, and there is no retry. Every attempt costs a fresh consent.
+
+**Which is exactly why guessing here was the wrong move**, and why the amendment above exists: the token
+endpoint answers questions about client authentication for free, using a code that was never valid. Two
+consents were spent learning what one unauthenticated request would have said.
+
+Fixed with `encodeURIComponent` on both halves, and the test uses a secret containing exactly those three
+characters — verified by putting the bug back and watching it fail.
+
+### What this says about the flow's shape
+
+Four failures now have landed *after* the point of no return — `invalid_state`, `invalid_scope` twice, and
+this one — and every one was a property of the request that could have been checked before a person was
+asked for anything. The `state` minimum and the scope vocabulary are both recorded here and in
+`cloudflare-oauth-scopes.md`; this one is a spec conformance bug in Mailda rather than a platform fact, and
+it is recorded beside them because the cost is the same: an operator's consent, spent.
 
 ## Correction, 8 September 2026 (second of two): an omitted `scope` grants nothing, so the Node must name them
 

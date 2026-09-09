@@ -621,6 +621,9 @@ const FIGURES: Record<string, Classification> = {
       + "PKCE. Both come from one discovery document served to everybody — it is read without any account "
       + "context at all, which is the strongest possible form of not varying by plan",
     "oauth.endpoints_from_discovery", "oauth.pkce_s256_available",
+    // Which token-endpoint auth method the client is registered with, named by Cloudflare itself when the
+    // wrong one is used. A registration property, not an entitlement.
+    "oauth.token_auth_is_client_secret_basic",
     // And whether a client may request `offline_access` — measured against a real consent, which refused it.
     // A property of how Cloudflare registers clients, not of what an account pays for.
     "oauth.client_may_request_offline_access",
@@ -634,7 +637,15 @@ const FIGURES: Record<string, Classification> = {
     "the shape of Cloudflare's OAuth scope vocabulary, and which products have no read-only scope. A "
       + "property of how Cloudflare names permissions — the same names appear on every account, and an "
       + "entitlement decides what a scope can reach rather than whether the scope exists",
-    "oauth.scope_shape_is_group_colon_verb", "oauth.read_only_scope_exists_for_d1",
+    "oauth.scope_shape_is_group_colon_verb", "oauth.scope_shape_is_group_dot_verb",
+    // What a real grant contained: no account id, no refresh token, and a one-hour access token. Properties
+    // of Cloudflare's authorization server, identical on any plan.
+    "oauth.token_response_names_account", "oauth.grant_type_alone_yields_refresh_token",
+    "oauth.access_token_lifetime_seconds",
+    // And whether a self-managed client can hold a refreshable grant at all. It cannot: no `offline_access`
+    // in the picker or in `GET /oauth/scopes`. A property of Cloudflare's OAuth product, not of a plan.
+    "oauth.refresh_token_obtainable_by_self_managed_client",
+    "oauth.read_only_scope_exists_for_d1",
     "oauth.read_only_scope_exists_for_queues", "oauth.read_only_scope_exists_for_email",
   ),
 

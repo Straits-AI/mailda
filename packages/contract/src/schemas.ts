@@ -272,7 +272,9 @@ export const providerResponse = z.object({
      * them were the provider's only option, instead of leaving the Node looking like it over-asked.
      */
     scopes: z.array(z.object({
-      scope: z.string().regex(/^[a-z0-9_]+:(read|write|admin|run)$/),
+      // `<group>.<verb>` — a dot, from `GET /oauth/scopes`. This was a colon until 9 September 2026, copied
+      // from wrangler's first-party shorthand rather than read off the provider's own list.
+      scope: z.string().regex(/^[a-z0-9-]+\.[a-z_]+$/),
       why: z.string().min(1),
       readOnlyExists: z.boolean(),
     }).strict()).min(1),
