@@ -205,15 +205,49 @@ fact stay distinguishable.
 `GET /oauth/cloudflare/callback` is withheld because it is **not a read at all**: it consumes a single-use
 nonce, so a machine that fetched it would spend an operator's consent in flight.
 
+## The grant lasts one hour, and that is a blocker rather than a tuning problem
+
+Measured 9 September 2026 against a real consent: fourteen scopes requested, **fourteen granted**, none
+declined — and the token response carried an access token valid for **one hour**, no refresh token, and no
+account id.
+
+The client is registered with **Refresh Token** as a grant type. That is not enough. `offline_access` cannot
+be *requested* — a client may request only what it is registered with — and it cannot be *registered*
+either:
+
+- the dashboard's scope picker has no `offline_access` in any category, `Other` included;
+- `GET /client/v4/oauth/scopes` matches nothing for `offline`, `openid` or `refresh`.
+
+So a self-managed OAuth client cannot hold a refreshable grant. ADR 42 priced *one dashboard ceremony*; what
+this buys is one **per hour**.
+
+**And it inverts the ADR's own reasoning.** ADR 42 rejected a pasted API token partly because it is *"worse
+hygiene besides — a permanent secret where a refreshable grant with visible scopes and one revocation list is
+available"*. The availability that comparison rested on is absent, so the choice is a permanent secret against
+an hourly consent — and an hourly consent is not a product.
+
+Three ways out, none free, and the choice is the maintainer's:
+
+1. **Accept the hour.** Workable only for an act an operator is present for — a deployment plan is, mail is
+   not. It cannot carry L2's onboarding or anything scheduled.
+2. **The API token after all.** #108's destination refused it and ADR 42 called it worse hygiene; the hygiene
+   argument now runs the other way. But it reintroduces a permanent secret, so ADR 42's custody promise has to
+   be restated rather than quietly kept.
+3. **Ask Cloudflare.** A third-party OAuth product with no refresh path is more plausibly incomplete than
+   deliberate, and the discovery document advertises `offline_access` under `scopes_supported` — which is the
+   shape of a feature the client-registration surface has not caught up with.
+
+The Node meanwhile holds what it obtained and reports it honestly: `consent_granted`, one hour, no refresh.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:
 
-- **The scope matrix**, measured against a real consent. The mechanism to produce it ships — after a grant
-  exists the Node can enumerate scopes with it — but no figures exist and nothing here pretends they do.
-- **Whether Cloudflare's token response names the account.** No Node has held a grant, so it is unmeasured.
-  The code reads `account_id` if present and leaves it null otherwise, and every surface says *not yet
-  determined* rather than showing an empty account.
+- ~~**The scope matrix**~~ — measured. Fourteen scopes, listed in `cloudflare-oauth-scopes.md` with each
+  id's picker name, every one probed individually and all fourteen granted.
+- ~~**Whether the token response names the account**~~ — measured: it does not
+  (`oauth.token_response_names_account: 0`). The code left the column null rather than inventing a field,
+  which was the right call and is now a fact. Resolving it costs one `GET /client/v4/accounts`.
 - **The revocation drill.** The paragraph above is an argument from what the code touches, not a measurement.
 - **Whether a private client can use `client_credentials`.** Cloudflare's discovery document advertises it and
   its documentation says third-party clients cannot use it. If the document is right, ADR 42's browser

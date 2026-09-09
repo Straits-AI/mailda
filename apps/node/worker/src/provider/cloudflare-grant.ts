@@ -74,88 +74,124 @@ export const CLOUDFLARE_OAUTH = {
  */
 
 /**
- * The scopes this Node asks for, and what each one is for (#162).
+ * The scopes this Node asks for, as Cloudflare's own scope ids (#162).
  *
- * ## This was a list of capabilities with no scope strings, and that was my failure to read the docs
+ * ## Five readings to get here, and the last one was the documentation being right
  *
- * It said Cloudflare's scope names *"are enumerated from `GET /client/v4/oauth/scopes`, which needs a
- * token"*, and that printing plausible names would be a fabrication — so it named capabilities in prose and
- * left the operator to pick in the dashboard's picker. Two consents proved that unworkable:
+ * The shape is **`<group>.<verb>`** — a dot — confirmed against `GET /client/v4/oauth/scopes`:
+ * `aiaudit.read`, `access-app.read`, `aig.metadata_read`. Which is exactly the form Cloudflare's own
+ * documentation example uses (`workers-platform.read`), and which an earlier version of this comment
+ * dismissed as *"the dotted form from Cloudflare's documentation example, which is not the vocabulary in
+ * use"* — because `wrangler`'s bundle spells its own scopes with colons.
  *
- * 1. Appending `offline_access` was refused — a client may request only what it was registered with.
- * 2. Omitting `scope` **granted nothing**: the consent screen read *"0 total permissions"* with `Authorize`
- *    disabled. A client's registered scopes are a **ceiling on what it may request, not a default**.
+ * wrangler is a **first-party** client. Its strings are a shorthand nobody else may use: every one of them
+ * was refused by a real self-managed client, identically to an invented control. So the documentation was
+ * right and this file contradicted it, which is the fifth misreading in this flow and the only one that had
+ * the answer in front of it.
  *
- * So the Node must enumerate them. **The strings below are a placeholder and are known to be refused.**
- * They are wrangler's vocabulary — `<group>:<verb>` — and wrangler is a *first-party* client: probed against
- * a real self-managed client with fourteen scopes saved, every one of them was refused identically to an
- * invented control. Cloudflare's documentation says to *"use the scope ID"*, and its permission-groups
- * endpoint returns ids rather than names, which is the live candidate and needs a token to enumerate.
+ * The others, kept together because the pattern is the point:
  *
- * They stay here rather than being emptied because `/api/provider/authorize` accepts an override, so an
- * operator who has the real list can proceed today — and because a scope list that is wrong and *named as
- * wrong* is more use than an empty one that says nothing. `doctor` reports the state; the receipt carries
- * what is established and what is not.
+ * | read as | actually |
+ * |:--|:--|
+ * | `grant_types_supported` = what a third-party client may use | what the server implements |
+ * | `scopes_supported` = what a client may request | what the server implements |
+ * | a client's registered scopes = a default for a request naming none | a **ceiling**; name none, get none |
+ * | wrangler's scope list = the provider's vocabulary | what *wrangler* asks for |
+ * | the docs' dotted example = not the real format | the real format |
+ *
+ * **A list of what something supports or uses is not a list of what you may have.** Every one cost a live
+ * consent to find out, and each was answerable from `GET /oauth/scopes` — one call, behind a token.
+ *
+ * ## The ids are singular, and Email Routing is four of them
+ *
+ * `email-routing-address.write`, not `-addresses`. And Email Routing is not one permission: the account
+ * rules are read-only, and addresses, rules and suppressions are separate. So *"read the routing state"* and
+ * *"change a rule"* are different asks, which is what L2 will need.
+ *
+ * ## What this list is
+ *
+ * The fourteen a real client was registered with, each verified accepted by the authorization endpoint. It is
+ * therefore **an operator's selection**, not a minimum: `d1.write` and `queues.write` are here because that
+ * is what the picker had checked, where L1 would rather have had the reads Cloudflare does offer.
+ * `/api/provider/authorize` takes an override so another Node's operator can send their own set.
  *
  * @see docs/receipts/cloudflare-oauth-scopes.md
- *
- * ## The read-only scopes exist, and this comment said they did not
- *
- * It claimed, from wrangler's vocabulary, that there is no `d1:read`, `queues:read`, `email_routing:read` or
- * `email_sending:read`, and accepted write authority at L1 as the provider's shape. The dashboard's own scope
- * picker shows a **Read** for every one of them. What wrangler's bundle holds is what *wrangler* asks for,
- * and wrangler deploys Workers — so reading its request list as the provider's vocabulary was the same
- * mistake as reading `scopes_supported` as a client's menu, one layer further in.
- *
- * So L1 asks for reads. `readOnlyExists` stays on each entry because it is still the fact a consent screen
- * needs explaining by — but it is now `true` throughout, which is the honest answer.
- *
- * **Email Routing is four permissions rather than one** (Account Rules, Addresses, Rules, Suppressions), and
- * the first is read-only with no Edit at all. `email_routing:*` is therefore an aggregate or a different
- * granularity from what a third-party client selects, and L2 will have to name which of the four it wants.
- * `docs/receipts/cloudflare-oauth-scopes.md` carries the picker's own table.
  */
 export const REQUIRED_SCOPES = [
   {
-    scope: "account:read",
-    why: "the account's plan and membership. ADR 25 requires Workers Paid, and a Node that cannot read the "
-      + "plan cannot say why a deploy will fail before it fails",
+    scope: "account-settings.read",
+    why: "the account's plan. ADR 25 requires Workers Paid, and a Node that cannot read the plan cannot say "
+      + "why a deploy will fail before it fails",
     readOnlyExists: true,
   },
   {
-    scope: "zone:read",
+    scope: "user-details.read",
+    why: "who consented, so the ownership page can say whose grant this is",
+    readOnlyExists: true,
+  },
+  {
+    scope: "zone.read",
     why: "which zone would carry mail, and whether a name collides before anything creates one",
     readOnlyExists: true,
   },
   {
-    scope: "workers:read",
+    scope: "zone-settings.read",
+    why: "the zone's own configuration, which decides whether it can carry mail at all",
+    readOnlyExists: true,
+  },
+  {
+    scope: "account-dns-settings.read",
+    why: "the account's DNS state. L2 proposes MX records as a diff and needs to read what is there first",
+    readOnlyExists: true,
+  },
+  {
+    scope: "account-api-gateway.read",
+    why: "part of the account-level read the picker groups with settings",
+    readOnlyExists: true,
+  },
+  {
+    scope: "workers-scripts.read",
     why: "the Workers inventory a deployment plan is diffed against. #92 measured that auto-provisioning "
       + "creates or fails and never adopts, so a plan that cannot see what exists is wrong from the second "
       + "attempt onwards",
     readOnlyExists: true,
   },
   {
-    scope: "d1:read",
-    why: "the catalog's existence and shape, for the plan. Read, because L1 provisions nothing — the picker "
-      + "offers it, which an earlier version of this list wrongly said it did not",
+    scope: "d1.write",
+    why: "the catalog. **Write because that is what this client was registered with** — `d1.read` exists and "
+      + "is what L1 would ask for, since it provisions nothing",
     readOnlyExists: true,
   },
   {
-    scope: "queues:read",
-    why: "the delivery-events queue and whether a consumer is attached. Read, for the same reason",
+    scope: "queues.write",
+    why: "the delivery-events queue and its consumer. Write for the same reason; `queues.read` exists",
     readOnlyExists: true,
   },
   {
-    scope: "email_routing:read",
-    why: "the account's routing state, so a plan can say whether it would accept this Node's rules rather "
-      + "than discovering it during onboarding. L2 proposes changes as a diff and needs write for that — and "
-      + "will have to name which of Cloudflare's four Email Routing permissions it wants",
+    scope: "email-routing-account-rule.read",
+    why: "the account's catch-all routing. Read-only by Cloudflare's own shape — this permission has no write",
     readOnlyExists: true,
   },
   {
-    scope: "email_sending:read",
-    why: "whether the account is entitled to send at all, which decides whether a Node can carry mail. "
-      + "Sending itself goes through the binding or a token, not this grant",
+    scope: "email-routing-address.write",
+    why: "the destination addresses a routing rule can name, which must be verified before mail reaches them",
+    readOnlyExists: true,
+  },
+  {
+    scope: "email-routing-rule.write",
+    why: "the rules themselves: what L2 proposes as a diff and applies on approval",
+    readOnlyExists: true,
+  },
+  {
+    scope: "email-routing-suppression.write",
+    why: "suppressions, which decide what silently does not arrive — so a Node that could not read them "
+      + "would report a mailbox as healthy while mail was being dropped",
+    readOnlyExists: true,
+  },
+  {
+    scope: "email-sending.write",
+    why: "sending. The transport uses a binding or a token rather than this grant, so this is what lets a "
+      + "plan report whether the account is entitled to send at all",
     readOnlyExists: true,
   },
 ] as const;
@@ -397,8 +433,19 @@ export async function registerClient(
   );
 }
 
-/** How long a consent may sit in flight. Ten minutes is the redirect's own working life, not a policy. */
-const AUTHORIZATION_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long a consent may sit in flight.
+ *
+ * Was ten minutes, on the reasoning that it is *"the redirect's own working life"*. It is not — that is a
+ * guess about how fast somebody signs in to Cloudflare, reviews fourteen permissions and clicks Authorize,
+ * and it expired twice on one operator doing exactly that.
+ *
+ * **The nonce's protection is that it is single-use, not that it is short-lived.** `consumed_at` is set by an
+ * `UPDATE … WHERE consumed_at IS NULL`, so a spent state cannot be spent again however long it lived; the
+ * expiry only bounds how long an *unused* verifier sits in D1. Half an hour for a ceremony a person performs
+ * once, in a browser, possibly after signing in to a provider first.
+ */
+const AUTHORIZATION_TTL_MS = 30 * 60 * 1000;
 
 /** Cloudflare's enforced minimum, measured in `cloudflare-oauth-node-as-client.md`. */
 export const MIN_STATE_LENGTH = 8;
@@ -695,8 +742,20 @@ export async function completeAuthorization(
          * `client_secret_basic`, which discovery lists first among the supported methods. Basic rather than
          * `client_secret_post` so the secret is in a header rather than a form body — the two are equally
          * supported and headers are the half less likely to be logged by something in between.
+         *
+         * **Both values are form-url-encoded before base64, which RFC 6749 §2.3.1 requires and the first
+         * version of this did not.** A real exchange answered `invalid_client` — *"client authentication
+         * failed"* — after a consent had already succeeded, which is the worst place to fail: the code is
+         * single-use, so there is no retry and the operator has to consent again.
+         *
+         * It matters because a Cloudflare client secret is base64-ish and routinely contains `+`, `/` and
+         * `=`. Unencoded, those change what the server decodes the password as. This authorization server
+         * is Ory Hydra (`credentials_endpoint_draft_00` in its discovery document) and Hydra enforces the
+         * encoding, so an unencoded credential is rejected rather than accepted leniently.
          */
-        authorization: `Basic ${btoa(`${row.client_id}:${secret}`)}`,
+        authorization: `Basic ${btoa(
+          `${encodeURIComponent(row.client_id)}:${encodeURIComponent(secret)}`,
+        )}`,
         "content-type": "application/x-www-form-urlencoded",
       },
       body: body.toString(),

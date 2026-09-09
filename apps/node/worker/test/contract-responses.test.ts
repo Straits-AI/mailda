@@ -255,7 +255,7 @@ describe("every schema-bearing route answers what the contract says it does", ()
     // The admission is a required field, so a surface cannot render the steps and drop it.
     expect(before.ceremony.unmeasured.length).toBeGreaterThan(40);
     // Real scope strings, because a request naming none is granted none.
-    expect(before.ceremony.scopes.map((one) => one.scope)).toContain("account:read");
+    expect(before.ceremony.scopes.map((one) => one.scope)).toContain("account-settings.read");
 
     const registered = await answers("PUT", "/api/provider/client", {
       body: { clientId: "cf-contract-client", clientSecret: "the-contract-secret" }, cookie: held,
