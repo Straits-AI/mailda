@@ -656,17 +656,21 @@ describe("the guided ceremony", () => {
     expect(printed.steps.some((step) => step.includes("account:read"))).toBe(true);
 
     /*
-     * The old test asserted every L1 capability was read-only. Cloudflare does not allow that: there is no
-     * `d1:read`, `queues:read`, `email_routing:read` or `email_sending:read`. So the property worth holding
-     * is not that reads are read-only, it is that the ones which are **not** say so — the consent screen's
-     * cost is then legible as the provider's doing rather than this Node over-asking.
+     * **L1 asks for reads only, and getting here took two corrections.**
+     *
+     * The first version asserted every L1 capability was read-only, in prose with no scope strings. The
+     * second asserted the opposite — that D1, Queues and Email had no read scope, so a read-only layer had
+     * to ask for write — on the strength of wrangler's bundled vocabulary.
+     *
+     * Both wrong. The dashboard's picker offers **Read** for every one of them; wrangler's list is what
+     * *wrangler* asks for, and wrangler deploys Workers. Reading a client's request list as the provider's
+     * vocabulary is the same error as reading `scopes_supported` as a client's menu, one layer in.
+     *
+     * So the property to hold is the original one after all: **a layer that provisions nothing asks for
+     * nothing but reads.**
      */
-    const write = printed.scopes.filter((one) => one.scope.endsWith(":write"));
-    expect(write.length).toBeGreaterThan(0);
-    for (const one of write) {
-      expect(one.readOnlyExists, `${one.scope} claims a read-only form exists`).toBe(false);
-      expect(one.why, `${one.scope} does not say no read scope exists`).toMatch(/No `[a-z0-9_]+:read` exists/);
-    }
+    expect(printed.scopes.filter((one) => !one.scope.endsWith(":read"))).toEqual([]);
+
     // And every read scope is honest the other way: a narrower choice was available and taken.
     for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {
       expect(one.readOnlyExists).toBe(true);
