@@ -914,3 +914,206 @@ export async function reportUnselectable(
     ],
   );
 }
+
+/**
+ * The Cloudflare API, called as this Node (#162 L2).
+ *
+ * ## Why this is the first thing L2 needs
+ *
+ * L1 obtained a grant and deliberately spent none of it — `doctor` reported *"nothing has been read with it
+ * yet"*, which was honest and is not a place to stay. Every later layer reads or writes through here.
+ *
+ * ## The access token lives an hour, so refreshing is not an optimisation
+ *
+ * Measured: `access_expires_at` is one hour after the grant. A caller that used the stored token without
+ * checking would work for an hour after each consent and fail silently afterwards, which is the failure mode
+ * ADR 42's *one ceremony* exists to avoid — it would make the ceremony hourly in practice while claiming
+ * otherwise.
+ *
+ * Refreshed **before** expiry rather than on a 401, with a minute of margin: a token that expires between
+ * the check and the request is a request that fails for a reason the caller cannot distinguish from a
+ * revocation. The margin costs one refresh an hour.
+ *
+ * ## A rejected refresh is what makes `grant_refused` real
+ *
+ * L1 could describe that state and not reach it — the drill had to write the row by hand. This is the path
+ * that reaches it: Cloudflare answering `invalid_grant` to a refresh means the grant is gone, revoked in the
+ * dashboard or past its session, and the row records **Cloudflare's own words** rather than a paraphrase.
+ *
+ * The tokens are kept, deliberately. #162's distinction between *never granted* and *granted and then
+ * refused* is only legible while they are there.
+ */
+async function accessTokenFor(env: Env, ctx: Ctx, orgId: string): Promise<string> {
+  const row = await env.CATALOG.prepare(
+    "SELECT client_id, client_secret, access_token, refresh_token, access_expires_at, refused_at "
+    + "FROM provider_binding WHERE id = 1",
+  ).first<{
+    client_id: string; client_secret: string; access_token: string | null;
+    refresh_token: string | null; access_expires_at: string | null; refused_at: string | null;
+  }>();
+
+  if (row === null || row.access_token === null) {
+    throw conflict("E_PROVIDER_NO_GRANT", {
+      what: "this Node holds no Cloudflare grant",
+      why: "reading the account needs an authorization somebody consented to, and none has been given",
+      fix: "connect the account first: `mailda provider` prints the steps",
+    });
+  }
+  if (row.refused_at !== null) {
+    throw conflict("E_PROVIDER_GRANT_REFUSED", {
+      what: `Cloudflare rejected this Node's grant at ${row.refused_at}`,
+      why: "a refused grant is not a missing one — it was consented to and has since been revoked or has "
+        + "expired past its session, and this Node keeps it so the difference stays legible",
+      fix: "authorize again: `mailda provider --scopes …`. Nothing else on this Node is affected by the "
+        + "refusal — mail, sign-in, Butlers, backup and recovery do not use this grant",
+    });
+  }
+
+  /*
+   * A minute of margin. Cutting it finer would let a token expire between this check and the request it was
+   * fetched for, and a caller cannot tell that failure from a revocation.
+   */
+  const expiresAt = row.access_expires_at === null ? 0 : new Date(row.access_expires_at).getTime();
+  if (expiresAt - 60_000 > ctx.now()) return unwrapCredential(env, row.access_token);
+
+  if (row.refresh_token === null) {
+    throw conflict("E_PROVIDER_NO_REFRESH", {
+      what: "this Node's access token has expired and there is no refresh token to renew it",
+      why: "Cloudflare issues a refresh token only when the client's grant types include `refresh_token`, "
+        + "which adds `offline_access` to its scopes automatically — a client without it grants an hour and "
+        + "no more",
+      fix: "add Refresh Token to the client's grant types in Manage Account → OAuth clients, then authorize "
+        + "again. `docs/receipts/cloudflare-oauth-scopes.md` records the measurement",
+    });
+  }
+
+  const secret = await unwrapCredential(env, row.client_secret);
+  const refresh = await unwrapCredential(env, row.refresh_token);
+  const response = await fetch(CLOUDFLARE_OAUTH.token, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${btoa(`${encodeURIComponent(row.client_id)}:${encodeURIComponent(secret)}`)}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refresh }).toString(),
+  }).catch(() => null);
+
+  const payload = response === null
+    ? null
+    : (await response.json().catch(() => ({}))) as TokenResponse;
+
+  if (response === null || !response.ok || typeof payload?.access_token !== "string") {
+    /*
+     * A network failure is **not** recorded as a refusal. `grant_refused` means Cloudflare rejected a grant
+     * this Node holds; an unreachable token endpoint says nothing about the grant, and marking it refused
+     * would tell an operator their authorization had been revoked because a request timed out. ADR 40's
+     * distinction between a refusal and an unknown, in a third place.
+     */
+    if (response === null) {
+      throw conflict("E_PROVIDER_REFRESH_UNREACHABLE", {
+        what: "the token endpoint could not be reached to renew this Node's access token",
+        why: "an unreachable endpoint says nothing about whether the grant is still good, so it is not "
+          + "recorded as a refusal",
+        fix: "retry. If it persists, check whether Cloudflare's API is reachable from this Node",
+      });
+    }
+    const detail = typeof payload?.error_description === "string"
+      ? payload.error_description
+      : (typeof payload?.error === "string" ? payload.error : `http_${response.status}`);
+    await auditedBatch(
+      env, ctx, orgId,
+      {
+        action: "provider.grant_refused", outcome: "refused", actorUserId: null,
+        subject: row.client_id, detail: { error: detail },
+      },
+      (entry) => [
+        entry,
+        env.CATALOG.prepare(
+          "UPDATE provider_binding SET refused_at = ?, refused_detail = ? WHERE id = 1",
+        ).bind(new Date(ctx.now()).toISOString(), detail),
+      ],
+    );
+    throw conflict("E_PROVIDER_GRANT_REFUSED", {
+      what: `Cloudflare refused to renew this Node's grant: ${detail}`,
+      why: "the refresh token is the durable half of the authorization, so a refusal means the grant is "
+        + "gone — revoked in the dashboard, or past its session",
+      fix: "authorize again: `mailda provider --scopes …`. Nothing else on this Node uses this grant",
+    });
+  }
+
+  /*
+   * The new refresh token replaces the old **when one is returned**. Rotation is at the server's discretion:
+   * a response carrying only an access token means the existing refresh token stays valid, and overwriting
+   * it with null would discard the durable half on a successful renewal.
+   */
+  const expiresIn = typeof payload.expires_in === "number" ? payload.expires_in : null;
+  const rotated = typeof payload.refresh_token === "string" ? payload.refresh_token : null;
+  await env.CATALOG.prepare(
+    "UPDATE provider_binding SET access_token = ?, access_expires_at = ?"
+    + (rotated === null ? "" : ", refresh_token = ?") + " WHERE id = 1",
+  ).bind(
+    ...[
+      await wrapCredential(env, payload.access_token),
+      expiresIn === null ? null : new Date(ctx.now() + expiresIn * 1000).toISOString(),
+      ...(rotated === null ? [] : [await wrapCredential(env, rotated)]),
+    ],
+  ).run();
+
+  return payload.access_token;
+}
+
+/**
+ * One authenticated read of Cloudflare's API as this Node.
+ *
+ * `GET` only, deliberately: L1 provisions nothing, and a helper that could write would be reached for by the
+ * layer that eventually does before anybody decided what that layer may change.
+ */
+export async function cloudflareGet<T>(
+  env: Env, ctx: Ctx, orgId: string, path: string,
+): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
+  const token = await accessTokenFor(env, ctx, orgId);
+  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+  }).catch(() => null);
+  if (response === null) return { ok: false, error: "the Cloudflare API could not be reached" };
+
+  const body = (await response.json().catch(() => ({}))) as {
+    success?: boolean; result?: T; errors?: Array<{ message?: string; code?: number }>;
+  };
+  if (response.ok && body.success === true && body.result !== undefined) {
+    return { ok: true, result: body.result };
+  }
+  /*
+   * Cloudflare's own words, not a paraphrase — and its error codes are what distinguish "this scope was not
+   * granted" from "this resource does not exist", which a caller has to be able to tell apart.
+   */
+  const said = (body.errors ?? []).map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+  return { ok: false, error: said === "" ? `http_${response.status}` : said };
+}
+
+/**
+ * Which account this grant covers.
+ *
+ * **Measured as absent from the token response** (`oauth.token_response_names_account: 0`), so it costs a
+ * call. `provider_binding.account_id` is filled from here the first time anything needs it rather than at
+ * consent, which is why the column is nullable and why every surface says *not yet determined* instead of
+ * showing an empty account.
+ *
+ * More than one account is a real answer and not an error: a person may belong to several, and a grant is
+ * scoped to what they chose on the consent screen. Recorded only when there is exactly one, because writing
+ * a guess into the column a deployment plan reads is worse than leaving it null.
+ */
+export async function resolveAccount(
+  env: Env, ctx: Ctx, orgId: string,
+): Promise<{ accountId: string | null; found: number; error: string | null }> {
+  const answer = await cloudflareGet<Array<{ id: string; name: string }>>(
+    env, ctx, orgId, "/accounts?per_page=50",
+  );
+  if (!answer.ok) return { accountId: null, found: 0, error: answer.error };
+
+  const only = answer.result.length === 1 ? answer.result[0]!.id : null;
+  if (only !== null) {
+    await env.CATALOG.prepare("UPDATE provider_binding SET account_id = ? WHERE id = 1").bind(only).run();
+  }
+  return { accountId: only, found: answer.result.length, error: null };
+}

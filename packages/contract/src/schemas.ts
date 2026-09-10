@@ -294,6 +294,22 @@ export const providerResponse = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * Which account the grant covers, and how many were visible.
+ *
+ * `accountId` is null when the answer was not one — Cloudflare's token response does not name the account
+ * (measured), and a person may belong to several. `found` is in the contract so a surface can say *"three
+ * accounts, none recorded"* rather than showing an empty field, because the column a deployment plan reads
+ * names the account it would provision into.
+ */
+export const providerAccountResponse = z.object({
+  account: z.object({
+    accountId: z.string().nullable(),
+    found: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+  }).strict(),
+}).strict();
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

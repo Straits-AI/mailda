@@ -285,6 +285,14 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(consent.consent.error).toBe("access_denied");
     expect(consent.consent.scopesDeclined).toContain("a-scope");
 
+    /*
+     * The one route that *spends* the grant. There is no grant on this fixture, so it refuses — which is
+     * the case a caller meets before connecting, and the refusal is the assertion: a route that answered
+     * something cheerful with no authorization would be the state confusion #162 is about.
+     */
+    await expect(answers("POST", "/api/provider/resolve-account", { cookie: held }))
+      .rejects.toThrow(/E_PROVIDER_NO_GRANT|answered 409/);
+
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };
     };
@@ -1768,8 +1776,13 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * secret, an access token and a refresh token — and `GET /api/provider` reads it to derive a state. That
      * makes `.strict()` a security property here for the third time in this file, and an undescribed route's
      * success shape is exactly what nothing would have been checking.
+     *
+     * The 110th is `POST /api/provider/resolve-account` (#162 L2) — the first route that **spends** the
+     * grant rather than describing it. Separate from `GET /api/provider` for that reason: a status read that
+     * renewed a token and called Cloudflare as a side effect of being displayed would make every page that
+     * shows the connection a consumer of the account's authority.
      */
-    expect(coverage.total).toBe(109);
+    expect(coverage.total).toBe(110);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

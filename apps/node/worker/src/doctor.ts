@@ -3003,8 +3003,14 @@ async function checkProviderBinding(env: Env): Promise<Finding[]> {
         : {}),
       ...(status.state === "consent_granted" && status.accountId === null
         ? {
-          fix: "no fix: Cloudflare's token response did not name the account, which this repository has not "
-            + "measured either way. The account is resolved by the first call that needs it",
+          /*
+           * Measured: the token response does not name the account (`oauth.token_response_names_account:
+           * 0`), so it costs a call. Not made here — `doctor` runs on a schedule and in a deploy, and a
+           * diagnostic that renewed a token and read an account as a side effect would be spending the
+           * grant to describe it. `mailda provider --resolve-account` is the deliberate act.
+           */
+          fix: "run `mailda provider --resolve-account`. Cloudflare's token response does not name the "
+            + "account (measured), so it takes one GET /accounts through the grant",
         }
         : {}),
     });

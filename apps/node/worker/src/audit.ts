@@ -818,6 +818,23 @@ export const AUDIT_ACTIONS = {
    * It is here rather than in a log because it is the operator's account of why a connection did not happen,
    * and an audit trail read months later is exactly where a reported fact gets mistaken for a measured one.
    */
+  /**
+   * Cloudflare refusing to renew this Node's grant (#162 L2).
+   *
+   * Distinct from `provider.consent_refused`, which is a consent that never produced a grant. This is a
+   * grant that **existed and stopped working** — revoked in the dashboard, or past its session — and the
+   * question an investigator has is when this Node lost the ability to act in the account, which the two
+   * answer differently.
+   *
+   * Carries Cloudflare's own error text. A network failure is deliberately **not** recorded here: an
+   * unreachable token endpoint says nothing about the grant, and an entry saying otherwise would tell
+   * somebody their authorization had been revoked because a request timed out.
+   */
+  "provider.grant_refused": {
+    standalone: true,
+    says: "Cloudflare refused to renew this Node's grant, so it can no longer act in the account.",
+  },
+
   "provider.account_reported_unselectable": {
     says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
       + "account of it, not this Node's measurement.",

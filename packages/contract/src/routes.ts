@@ -534,6 +534,12 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/resolve-account",
+    summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
+    response: S.providerAccountResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/unselectable",
     summary: "Record that Cloudflare's consent screen did not list the operator's account — their report, "
       + "which this Node cannot observe",

@@ -2267,6 +2267,21 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ authorize: { url: begun.url } });
     }
 
+    if (url.pathname === "/api/provider/resolve-account" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * The first route that spends the grant. Separate from `GET /api/provider` because that one describes
+       * the binding and this one *uses* it — a read that renewed a token as a side effect of being displayed
+       * would make every status page a consumer of the account's authority.
+       */
+      const { resolveAccount } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({ account: await resolveAccount(env, clock, who.orgId) });
+    }
+
     if (url.pathname === "/api/provider/unselectable" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

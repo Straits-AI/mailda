@@ -234,6 +234,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     actions: [
       "provider.client_registered", "provider.consent_granted",
       "provider.account_reported_unselectable",
+      // A grant that existed and stopped working, which is a different history from one never granted.
+      "provider.grant_refused",
     ],
   },
   /*
@@ -714,8 +716,16 @@ describe("audit coverage", () => {
     //
     // The refusal after the token endpoint answers is standalone for a simpler reason: by then the code is
     // already spent and the decision is made, exactly like a lockout.
+    //
+    // `provider.grant_refused` (#162 L2) earns it the same way `provider.consent_refused` does, with one
+    // extra reason. The refusal is discovered while *renewing* a token on some other errand — a plan being
+    // read, an inventory fetched — so the act that provoked it is not an act about the grant, and there is
+    // no transaction of its own for the entry to ride in. The row update beside it is the record; failing
+    // the errand because the note could not be written would be the wrong direction, since the errand has
+    // already failed for a reason the caller is about to be told.
     expect(standalone).toEqual([
-      "auth.locked_out", "evidence.verified", "hold.blocked", "provider.consent_refused",
+      "auth.locked_out", "evidence.verified", "hold.blocked",
+      "provider.consent_refused", "provider.grant_refused",
     ]);
   });
 

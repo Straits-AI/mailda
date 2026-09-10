@@ -416,6 +416,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "GET /api/provider",
     "PUT /api/provider/client",
     "POST /api/provider/authorize",
+    // Spends the grant: renews a token and reads the account. An act of running the Node, and one a machine
+    // has no errand for — L1 provisions nothing, so nothing an agent may do needs the account's name.
+    "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",
   ),
