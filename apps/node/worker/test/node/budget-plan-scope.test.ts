@@ -351,6 +351,12 @@ const FIGURES: Record<string, Classification> = {
      */
     "sending.subdomain_api_available", "sending.subdomain_records_stay_within_subdomain",
     "sending.apex_and_subdomain_both_onboardable",
+    /*
+     * The onboard drill's four. What a verb does, whether repeating it is safe, and whether its inverse is
+     * one — all properties of the API, and none of them a quantity a plan scales.
+     */
+    "sending.onboard_creates_dns_records", "sending.onboard_post_idempotent",
+    "sending.unonboard_delete_idempotent", "sending.unonboard_removes_every_created_record",
   ),
 
   // docs/receipts/email-sending-events.md

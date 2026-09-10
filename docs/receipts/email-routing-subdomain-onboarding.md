@@ -16,7 +16,69 @@ values:
   sending.subdomain_api_available: 1
   sending.subdomain_records_stay_within_subdomain: 1
   sending.apex_and_subdomain_both_onboardable: 1
+  sending.onboard_creates_dns_records: 1
+  sending.onboard_post_idempotent: 0
+  sending.unonboard_delete_idempotent: 0
+  sending.unonboard_removes_every_created_record: 0
 ---
+
+## Addition, 10 September 2026: the onboard drill, and the record it leaves behind (#163)
+
+A create/read/delete drill against `probe.mailda-test.whymelabs.com` — a name invented for this, inside
+Mailda's own test subdomain, touching no zone apex and no domain carrying mail.
+
+### `sending.onboard_creates_dns_records: 1` — one POST, and Cloudflare writes the DNS itself
+
+```text
+POST /zones/{zone}/email/sending/subdomains  {"name": "probe.mailda-test.whymelabs.com"}
+  → 200, enabled: true, return_path_domain: cf-bounce.probe.mailda-test.whymelabs.com
+```
+
+Within a minute, live in **public DNS** — `dig` against Cloudflare's authoritative nameserver, not the API's
+own account of itself:
+
+```text
+cf-bounce.probe.…  MX  12 route3 / 25 route1 / 34 route2 .mx.cloudflare.net.
+cf-bounce.probe.…  TXT "v=spf1 include:_spf.mx.cloudflare.net ~all"
+_dmarc.probe.…     TXT "v=DMARC1; p=reject;"
+```
+
+This settles a question the guide could not: Cloudflare's documentation describes the **dashboard** flow
+adding those records, and whether the API `POST` did the same was a separate fact. It does. So a Node
+onboarding a sending domain makes **one call** and writes no DNS record itself — which is a smaller and
+safer write than proposing a record list, and it means the diff to show an operator is *"this domain is not
+onboarded"* rather than a set of records Mailda believes are needed.
+
+### `sending.onboard_post_idempotent: 0` and `sending.unonboard_delete_idempotent: 0`
+
+Neither verb is safe to repeat. A second `POST` of the same name answers `2040 Subdomain already exists`; a
+second `DELETE` answers `2033 Subdomain not found`. So an apply that retried on a timeout would report a
+failure about a state it had itself reached, and the caller has to read the existing state to tell "already
+done" from "refused".
+
+### `sending.unonboard_removes_every_created_record: 0` — the one that matters
+
+**`DELETE` is not the inverse of `POST`.** Six records were created; five were removed. The DMARC record
+was not:
+
+```text
+$ dig +short TXT _dmarc.probe.mailda-test.whymelabs.com @margaret.ns.cloudflare.com
+"v=DMARC1; p=reject;"
+```
+
+Queried three times over a minute against the **authoritative** nameserver, so it is not a cache. A
+nonexistent sibling and a random label under the same zone both answer empty, so it is not a wildcard. The
+record is real, it outlived the object that created it, and nothing in the API's response said so — the
+`DELETE` answered `success: true`.
+
+The hazard is specific and quiet. An operator who tries a sending subdomain and backs out is left holding a
+**`p=reject` DMARC policy** on a name Cloudflare no longer manages and no surface lists. Point that
+subdomain at another mail provider later and the stray policy rejects its mail, for a reason nothing
+connects to a trial that was undone weeks earlier.
+
+So L2's write side cannot treat un-onboarding as an undo. It has to either remove the leftover itself — which
+needs a DNS write scope this grant does not carry — or name the record it could not remove.
+
 
 ## Addition, 10 September 2026: Email **Sending** subdomains have a full API, and it moves where L2 can write (#163)
 
