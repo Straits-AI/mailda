@@ -1008,6 +1008,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What Cloudflare says about receiving mail for each domain this Node routes, read through the grant
+   *
+   * `GET /api/provider/email-routing`
+   */
+  async getProviderEmailRouting(): Promise<z.infer<typeof S.providerRoutingResponse>> {
+    return await this.json("GET", "/api/provider/email-routing", {}, undefined) as z.infer<typeof S.providerRoutingResponse>;
+  }
+
+  /**
    * Ask Cloudflare which account this grant covers, and record it when the answer is one
    *
    * `POST /api/provider/resolve-account`

@@ -292,6 +292,18 @@ describe("every schema-bearing route answers what the contract says it does", ()
      */
     await expect(answers("POST", "/api/provider/resolve-account", { cookie: held }))
       .rejects.toThrow(/E_PROVIDER_NO_GRANT|answered 409/);
+    /*
+     * The routing read answers `[]` here rather than refusing, and that is the right way round: this fixture
+     * routes no addresses, so there are **no domains to report on** — which is a different fact from "no
+     * domains have a problem", and an empty list is the honest rendering of it.
+     *
+     * It also means the route never touches the grant when there is nothing to ask about, so a Node that has
+     * not connected still answers instead of erroring. This test asserted a refusal until the route was run.
+     */
+    const routing = await answers("GET", "/api/provider/email-routing", { cookie: held }) as {
+      routing: unknown[];
+    };
+    expect(routing.routing).toEqual([]);
 
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };
@@ -1777,12 +1789,17 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * makes `.strict()` a security property here for the third time in this file, and an undescribed route's
      * success shape is exactly what nothing would have been checking.
      *
+     * The 111th is `GET /api/provider/email-routing` (#163 L2) — Cloudflare's own verdict on whether each
+     * domain this Node routes can receive, and the records it says are needed. The diff a proposal is built
+     * from therefore comes from Cloudflare rather than from Mailda's idea of what Email Routing requires,
+     * which would be a second copy that is right the day it is written.
+     *
      * The 110th is `POST /api/provider/resolve-account` (#162 L2) — the first route that **spends** the
      * grant rather than describing it. Separate from `GET /api/provider` for that reason: a status read that
      * renewed a token and called Cloudflare as a side effect of being displayed would make every page that
      * shows the connection a consumer of the account's authority.
      */
-    expect(coverage.total).toBe(110);
+    expect(coverage.total).toBe(111);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

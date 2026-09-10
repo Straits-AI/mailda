@@ -534,6 +534,13 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/email-routing",
+    summary: "What Cloudflare says about receiving mail for each domain this Node routes, read through the "
+      + "grant",
+    response: S.providerRoutingResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/resolve-account",
     summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
     response: S.providerAccountResponse,

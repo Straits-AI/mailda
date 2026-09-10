@@ -306,6 +306,56 @@ than *not yet determined*.
 Run against the live Node on 10 September 2026, it resolved `1e0170aa…` — the first act this Node has
 performed with its own grant.
 
+## Reading Email Routing through the grant (#163 L2)
+
+`mailda provider --email-routing`, run against the live Node on 10 September 2026:
+
+```text
+   mailda-test.whymelabs.com
+     zone      whymelabs.com
+     receiving ready
+     needs     MX  whymelabs.com -> route1.mx.cloudflare.net. (priority 25)
+     needs     MX  whymelabs.com -> route2.mx.cloudflare.net. (priority 34)
+     needs     MX  whymelabs.com -> route3.mx.cloudflare.net. (priority 12)
+     needs     TXT cf2024-1._domainkey.whymelabs.com -> "v=DKIM1; …"
+     needs     TXT whymelabs.com -> "v=spf1 include:_spf.mx.cloudflare.net ~all"
+```
+
+**The diff comes from Cloudflare, not from Mailda's idea of what Email Routing needs.** Two endpoints answer
+it: `GET /zones/{id}/email/routing` gives the verdict (`enabled`, and a `status` of `ready` /
+`unconfigured` / `misconfigured`), and `GET /zones/{id}/email/routing/dns` gives the records. A list Mailda
+maintained would be a second copy of somebody else's requirements — right the day it was written.
+
+Both need `Zone Settings Read`, which the grant already carries as `zone-settings.read`. Nothing here writes.
+
+### The zone is not the domain
+
+This Node routes `inbox@mailda-test.whymelabs.com`. There is no zone of that name — Email Routing is
+configured on `whymelabs.com`, and the address lives on a subdomain of it. So the search walks up the labels
+until a zone answers, longest first, so a subdomain that *is* its own zone is found as itself rather than as
+its parent. It stops at two labels: a single label is a public suffix, and asking Cloudflare about `com` is a
+request whose every answer is wrong.
+
+`zone` and `domain` are separate fields in the contract for the same reason — a surface showing one as the
+other sends somebody to the wrong place in the dashboard.
+
+### An unreadable answer is not an empty one
+
+A zone that needs no records and a record list nobody could read are both an empty array, so `error` is what
+tells them apart. A proposal built from the second would tell an operator their DNS was complete because a
+request failed.
+
+A Node routing **no** domains answers with an empty list and never touches the grant — *no domains to report
+on* rather than *no domains have a problem*, and a Node that has not connected still answers the route
+instead of erroring.
+
+### What the write side has to reckon with here
+
+Cloudflare reports the records for **`whymelabs.com`**, the zone — which carries live mail. So on this
+particular Node, applying a proposal would modify a production zone even though the mail being tested is on a
+test subdomain. The read side is safe and the write side is not, on this account, and that is a property of
+the setup rather than of the design.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:
