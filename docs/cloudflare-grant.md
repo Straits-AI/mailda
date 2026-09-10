@@ -362,14 +362,40 @@ the setup rather than of the design.
 
 ```text
    mailda-test.whymelabs.com
+     zone      whymelabs.com
+     sending   mailda-test.whymelabs.com — dkim cf-bounce
+     needs     MX  cf-bounce.mailda-test.whymelabs.com -> route1.mx.cloudflare.net. (priority 25)
+     needs     TXT _dmarc.mailda-test.whymelabs.com -> "v=DMARC1; p=reject;"
+     …
      events    mailda-sending-events — message.delivered, message.deferred, message.bounced, …
      queue     mailda-sending-events
      consumer  mailda
 ```
 
-Outbound delivery is reported by an account-level `email.sending` **event subscription** publishing to a
-queue, which a Worker consumes. Three objects, and any one of them missing produces the same symptom:
-silence. So each is named separately — a single verdict over them would be one nobody could act on.
+Four objects have to line up. The domain has to be **onboarded for sending** on its zone; an account-level
+`email.sending` **event subscription** has to publish its lifecycle events to a queue; and a Worker has to
+**consume** that queue. Any one missing produces the same symptom: silence. So each is named separately — a
+single verdict over them would be one nobody could act on. `sending` comes first because it decides whether
+the rest could matter: a domain that may not send produces no events, and reporting *no subscription* about
+it would point one step past the fault.
+
+### Where L2 may write, which is not where it was thought to be
+
+Email **Routing**'s required records land on the zone **apex**. Email **Sending**'s land inside the sending
+domain itself — every record above is at or under `mailda-test.whymelabs.com`. And
+`/zones/{zone_id}/email/sending/subdomains` has all five methods, `POST` included, which
+`docs/receipts/email-routing-subdomain-onboarding.md` recorded as absent in August. So the write side is
+exercisable against a test subdomain without proposing a change to a zone carrying live mail.
+
+### Longest match wins, and a live run is what said so
+
+`whymelabs.com` and `mailda-test.whymelabs.com` are both onboarded for sending, so *"which sending domain
+covers this one"* has two true answers and one right one. Taking the first match returned the apex, and the
+six records it printed were all correct — about the wrong domain. A proposal built from them would have
+written into the production zone with the test subdomain's name at the top of the output.
+
+A fixture could not have caught it: one entry has no ambiguity to resolve. The same rule now decides the
+subscription match, where the same two-entry case is equally possible.
 
 **`doctor` used to say this was unanswerable.** `sending_events_consumer` read *"not checkable from inside a
 Worker — no account API access"*, which was true when it was written and which ADR 42 made false. The grant

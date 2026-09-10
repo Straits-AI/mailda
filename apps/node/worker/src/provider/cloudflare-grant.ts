@@ -1157,6 +1157,33 @@ export interface RoutingState {
   error: string | null;
 }
 
+/**
+ * The zone carrying a domain, which is usually a **parent** of it.
+ *
+ * Longest first: a subdomain that *is* its own zone must be found as itself rather than as its parent,
+ * because both Email Routing and Email Sending are configured per zone and the two would report different
+ * states. It stops at two labels — a single label is a public suffix rather than a zone anybody owns, and
+ * asking Cloudflare for `com` is a request whose every possible answer is wrong.
+ *
+ * Shared by the receiving read and the sending one because they resolve the *same* zone, and two copies of
+ * this walk would be two places for the stopping rule to drift.
+ */
+async function zoneFor(
+  env: Env, ctx: Ctx, orgId: string, domain: string,
+): Promise<{ ok: true; zone: { id: string; name: string } | null } | { ok: false; error: string }> {
+  const labels = domain.split(".");
+  for (let at = 0; at + 2 <= labels.length; at++) {
+    const candidate = labels.slice(at).join(".");
+    const found = await cloudflareGet<Array<{ id: string; name: string }>>(
+      env, ctx, orgId, `/zones?name=${encodeURIComponent(candidate)}`,
+    );
+    if (!found.ok) return { ok: false, error: found.error };
+    const zone = found.result[0];
+    if (zone !== undefined) return { ok: true, zone };
+  }
+  return { ok: true, zone: null };
+}
+
 export async function emailRoutingFor(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<RoutingState> {
@@ -1164,20 +1191,12 @@ export async function emailRoutingFor(
     domain, zone: null, zoneId: null, enabled: null, status: null, required: [], error: null,
   };
 
-  /*
-   * Longest first: a subdomain that *is* its own zone must be found as itself rather than as its parent,
-   * because Email Routing is configured per zone and the two would report different states.
-   */
-  const labels = domain.split(".");
-  for (let at = 0; at + 2 <= labels.length; at++) {
-    const candidate = labels.slice(at).join(".");
-    const found = await cloudflareGet<Array<{ id: string; name: string }>>(
-      env, ctx, orgId, `/zones?name=${encodeURIComponent(candidate)}`,
-    );
-    if (!found.ok) return { ...blank, error: found.error };
-    const zone = found.result[0];
-    if (zone === undefined) continue;
+  const carrying = await zoneFor(env, ctx, orgId, domain);
+  if (!carrying.ok) return { ...blank, error: carrying.error };
+  if (carrying.zone === null) return { ...blank, error: `no zone in this account carries ${domain}` };
+  const zone = carrying.zone;
 
+  {
     const settings = await cloudflareGet<{ enabled?: boolean; status?: string }>(
       env, ctx, orgId, `/zones/${zone.id}/email/routing`,
     );
@@ -1211,8 +1230,6 @@ export async function emailRoutingFor(
       error: dns.ok ? null : dns.error,
     };
   }
-
-  return { ...blank, error: `no zone in this account carries ${domain}` };
 }
 
 /** Every domain this Node accepts mail for, and what Cloudflare says about each. */
@@ -1239,16 +1256,32 @@ export async function emailRoutingState(
  *
  * ## The question this answers, and why `doctor` could not
  *
- * Outbound delivery is reported by an account-level `email.sending` **event subscription** that publishes to
- * a queue, which a Worker then consumes. Three separate objects, any one of which missing produces the same
- * symptom: silence. `doctor`'s `sending_events_consumer` has said since it was written that this is *"not
+ * Four objects have to line up before an outbound send has an outcome anybody can see. The domain has to be
+ * **onboarded for sending** on its zone; an account-level `email.sending` **event subscription** has to
+ * publish its lifecycle events to a queue; and a Worker has to **consume** that queue. Any one of the four
+ * missing produces the same symptom: silence. `doctor`'s `sending_events_consumer` has said since it was written that this is *"not
  * checkable from inside a Worker — no account API access"*, and that sentence was true when it was written.
  *
- * ADR 42 made it false. The grant carries `queues.write`, and two plain reads settle all three:
+ * ADR 42 made it false. The grant carries `queues.write` and `email-sending.write`, and four plain reads
+ * settle all four:
  * `GET /accounts/{id}/event_subscriptions/subscriptions` lists the subscriptions, and
- * `GET /accounts/{id}/queues/{queue_id}` names the consumers of the one a subscription publishes to. So the
- * absence is now reportable **by name** — which object is missing — rather than inferable from a delivery
- * outcome that never arrived.
+ * `GET /accounts/{id}/queues/{queue_id}` names the consumers of the one a subscription publishes to;
+ * `GET /zones/{id}/email/sending/subdomains` says whether the domain may send at all, and
+ * `GET /zones/{id}/email/sending/subdomains/{id}/dns` says which records that needs. So the absence is now
+ * reportable **by name** — which object is missing — rather than inferable from a delivery outcome that
+ * never arrived.
+ *
+ * ## The sending half was recorded as having no API, and has a full one
+ *
+ * `docs/receipts/email-routing-subdomain-onboarding.md` holds `routing.subdomain_api_available: 0`, measured
+ * 3 August 2026, with a `stale_when` naming exactly the event that has since happened. Cloudflare publishes
+ * five methods on `/zones/{zone_id}/email/sending/subdomains` — list, get, create, edit, delete — plus the
+ * `/dns` sub-resource. That is `POST` to onboard and `GET` to diff, which is #163 box 1's shape.
+ *
+ * It also relocates a constraint. Email **Routing**'s required records land on the zone apex, so proposing
+ * them on this account would mean writing to a zone carrying live mail. Email **Sending**'s land on the
+ * sending domain itself — `cf-bounce.mailda-test.whymelabs.com`, `_dmarc.mailda-test.whymelabs.com` —
+ * entirely inside the subdomain.
  *
  * ## The subscription is not in the documented menu, and exists anyway
  *
@@ -1269,9 +1302,27 @@ export async function emailRoutingState(
  * absent — which is exactly how `deploy --plan` came to call a healthy Node broken, on R2's page of twenty.
  * A subscription names its `queue_id`, so there is a targeted read and no list to be wrong about.
  */
+/** What Cloudflare says about a domain's ability to send, and the records that ability rests on. */
+export interface SendingDomainState {
+  /** The onboarded sending domain, which may be the zone apex rather than this exact name. */
+  name: string;
+  enabled: boolean | null;
+  /** The bounce domain and DKIM selector, which is where the records below hang. */
+  returnPath: string | null;
+  dkimSelector: string | null;
+  /** Cloudflare's own list of records this sending domain needs. */
+  required: Array<{ type: string; name: string; content: string; priority: number | null }>;
+  /** Why the record list could not be read. Null when it could — and empty is not the same as unreadable. */
+  error: string | null;
+}
+
 export interface DeliveryEventsState {
   /** A domain this Node routes, which is what it would also send from. */
   domain: string;
+  /** The zone carrying it, usually a parent. Null when no zone in this account does. */
+  zone: string | null;
+  /** Whether it is onboarded for sending at all. Null means it is not — the first way to be silent. */
+  sending: SendingDomainState | null;
   /** The `email.sending` subscription covering it, by name. Null when there is none. */
   subscription: string | null;
   subscriptionId: string | null;
@@ -1309,6 +1360,77 @@ async function sendingSubscriptions(
   }
 }
 
+/**
+ * Which sending domain covers `domain`: the one that matches, or the **most specific** of several.
+ *
+ * A domain is covered by an entry naming it exactly or by an entry naming a parent of it — the dot is the
+ * label boundary, so `notexample.test` is not covered by `example.test`. Where more than one matches, the
+ * longest wins.
+ *
+ * **That last rule was found by running this against a real zone.** `whymelabs.com` and
+ * `mailda-test.whymelabs.com` are both onboarded for sending, and taking the first match reported the apex —
+ * so the records shown were `cf-bounce.whymelabs.com`'s, for a Node that sends from the subdomain and whose
+ * own records are `cf-bounce.mailda-test.whymelabs.com`. Every one of them was correct about a domain
+ * nobody had asked about, and a proposal built from them would have written into a zone carrying live mail.
+ *
+ * A stub could not have shown it, because a fixture with one entry has no ambiguity to resolve.
+ */
+function mostSpecific<T>(all: T[], nameOf: (one: T) => string | undefined, domain: string): T | undefined {
+  return all
+    .filter((one) => {
+      const on = nameOf(one);
+      return on !== undefined && (on === domain || domain.endsWith(`.${on}`));
+    })
+    .sort((a, b) => (nameOf(b) ?? "").length - (nameOf(a) ?? "").length)[0];
+}
+
+
+async function sendingDomainFor(
+  env: Env, ctx: Ctx, orgId: string, zoneId: string, domain: string,
+): Promise<SendingDomainState | null> {
+  const onboarded = await cloudflareGet<Array<{
+    id?: string; name?: string; enabled?: boolean;
+    return_path_domain?: string; dkim_selector?: string;
+  }>>(env, ctx, orgId, `/zones/${zoneId}/email/sending/subdomains`);
+  if (!onboarded.ok) {
+    /*
+     * Unreadable is not un-onboarded. Returning `null` here would report a domain that may send as one that
+     * may not, which is the direction that sends somebody to re-onboard a working sender.
+     */
+    return {
+      name: domain, enabled: null, returnPath: null, dkimSelector: null, required: [],
+      error: onboarded.error,
+    };
+  }
+
+  const found = mostSpecific(onboarded.result, (one) => one.name, domain);
+  if (found === undefined) return null;
+
+  const state: SendingDomainState = {
+    name: found.name ?? domain,
+    enabled: found.enabled ?? null,
+    returnPath: found.return_path_domain ?? null,
+    dkimSelector: found.dkim_selector ?? null,
+    required: [],
+    error: null,
+  };
+  if (found.id === undefined) return { ...state, error: "the sending domain carries no id" };
+
+  const dns = await cloudflareGet<Array<{
+    type?: string; name?: string; content?: string; priority?: number;
+  }>>(env, ctx, orgId, `/zones/${zoneId}/email/sending/subdomains/${found.id}/dns`);
+  if (!dns.ok) return { ...state, error: dns.error };
+  return {
+    ...state,
+    required: dns.result.map((one) => ({
+      type: one.type ?? "?",
+      name: one.name ?? "?",
+      content: one.content ?? "?",
+      priority: one.priority ?? null,
+    })),
+  };
+}
+
 interface CloudflareSubscription {
   id?: string;
   name?: string;
@@ -1329,7 +1451,7 @@ export async function deliveryEventsState(
   if (domains.length === 0) return [];
 
   const blank = (domain: string): DeliveryEventsState => ({
-    domain,
+    domain, zone: null, sending: null,
     subscription: null, subscriptionId: null, enabled: null, events: [],
     queueId: null, queueName: null, consumers: [], error: null,
   });
@@ -1358,22 +1480,37 @@ export async function deliveryEventsState(
   const seen: DeliveryEventsState[] = [];
   for (const domain of domains) {
     /*
+     * The first of the four, and the one that decides whether the other three could ever matter: a domain
+     * not onboarded for sending produces no events, so a report that started at the subscription would say
+     * *no subscription* about a domain whose real problem is one step earlier.
+     */
+    const carrying = await zoneFor(env, ctx, orgId, domain);
+    const zone = carrying.ok ? carrying.zone : null;
+    const sending = zone === null ? null : await sendingDomainFor(env, ctx, orgId, zone.id, domain);
+
+    /*
      * A subscription is scoped to one sending domain: the zone apex or a verified sending subdomain. So an
      * apex subscription covers this domain too, and matching only on equality would report a covered domain
-     * as uncovered.
+     * as uncovered — and where both exist, the specific one is the one publishing this Node's events.
      */
-    const found = subscriptions.result.find((one) => {
-      const on = one.source?.domain;
-      return one.source?.type === "email.sending" && on !== undefined
-        && (on === domain || domain.endsWith(`.${on}`));
-    });
+    const found = mostSpecific(
+      subscriptions.result.filter((one) => one.source?.type === "email.sending"),
+      (one) => one.source?.domain,
+      domain,
+    );
+    const known = {
+      ...blank(domain),
+      zone: zone?.name ?? null,
+      sending,
+      error: carrying.ok ? null : carrying.error,
+    };
     if (found === undefined) {
-      seen.push(blank(domain));
+      seen.push(known);
       continue;
     }
 
     const state: DeliveryEventsState = {
-      ...blank(domain),
+      ...known,
       subscription: found.name ?? null,
       subscriptionId: found.id ?? null,
       enabled: found.enabled ?? null,

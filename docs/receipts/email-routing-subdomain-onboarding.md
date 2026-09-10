@@ -4,14 +4,74 @@ kind: platform-limit
 measured_on: 2026-08-03
 stale_when: >
   Cloudflare ships an API or wrangler command for adding a subdomain to Email Routing, or
-  exposes Email Routing's managed MX records through the DNS records API
+  exposes Email Routing's managed MX records through the DNS records API; or
+  `/zones/{zone_id}/email/sending/subdomains` stops answering, changes shape, or starts
+  placing a sending subdomain's required records outside that subdomain
 values:
   routing.subdomain_api_available: 0
   routing.subdomain_dashboard_only: 1
   routing.mx_records_visible_in_dns_api: 0
   routing.subdomain_receives_external_mail: 1
   routing.cf_sending_reaches_own_routing_domain: 0
+  sending.subdomain_api_available: 1
+  sending.subdomain_records_stay_within_subdomain: 1
+  sending.apex_and_subdomain_both_onboardable: 1
 ---
+
+## Addition, 10 September 2026: Email **Sending** subdomains have a full API, and it moves where L2 can write (#163)
+
+This receipt's `stale_when` names *"Cloudflare ships an API … for adding a subdomain"*. It has, for the
+sending half. `routing.subdomain_api_available: 0` above is **re-measured today and unchanged** —
+`GET /zones/{zone}/email/routing/subdomains` still answers a plain-text `404 page not found`, the shape an
+unrouted path gives. But its sibling is real:
+
+| method | path |
+|:--|:--|
+| GET | `/zones/{zone_id}/email/sending/subdomains` |
+| GET | `/zones/{zone_id}/email/sending/subdomains/{subdomain_id}` |
+| **POST** | `/zones/{zone_id}/email/sending/subdomains` |
+| PATCH | `/zones/{zone_id}/email/sending/subdomains/{subdomain_id}` |
+| DELETE | `/zones/{zone_id}/email/sending/subdomains/{subdomain_id}` |
+| GET | `/zones/{zone_id}/email/sending/subdomains/{subdomain_id}/dns` |
+
+The list `GET` answers 200 on `whymelabs.com` with two entries — the apex and `mailda-test.whymelabs.com`,
+onboarded separately (`sending.apex_and_subdomain_both_onboardable: 1`). Each carries `id`, `name`,
+`enabled`, `preview_enabled`, `return_path_domain`, `dkim_selector`, `drop_suppressed_recipients`.
+
+### The path this was nearly recorded as absent under
+
+Two wrong paths were probed first — `/accounts/{acct}/email/sending/domains` and
+`/zones/{zone}/email/sending/domains` — and the first answered `404` with
+`10001 Unable to authenticate request` **in the API envelope**, which reads as *the route exists and this
+token may not*. It does not mean that: a token holding `email_sending (write)` gets the same answer, because
+the path is simply wrong. An invented path under the same prefix answers `7003 Could not route`, so the two
+error shapes do **not** reliably separate "unrouted" from "unauthorized", and a measurement that leaned on
+that distinction would have been recorded confidently and wrongly. The reference settled it.
+
+### `sending.subdomain_records_stay_within_subdomain: 1`, which is the load-bearing one
+
+`GET …/subdomains/{id}/dns` for `mailda-test.whymelabs.com` returns six records, and **every one of them is
+at or under that subdomain**:
+
+```text
+MX  cf-bounce.mailda-test.whymelabs.com            route1|2|3.mx.cloudflare.net.
+TXT cf-bounce.mailda-test.whymelabs.com            "v=spf1 include:_spf.mx.cloudflare.net ~all"
+TXT cf-bounce._domainkey.mailda-test.whymelabs.com "v=DKIM1; …"
+TXT _dmarc.mailda-test.whymelabs.com               "v=DMARC1; p=reject;"
+```
+
+Email **Routing**'s required records land on the zone **apex** — `whymelabs.com` — which carries live mail.
+Email **Sending**'s do not. So #163 L2's write side is exercisable against a test subdomain without
+proposing a single change to a production zone, which is the opposite of what was believed before this was
+measured.
+
+### The apex is onboarded too, and picking the wrong one is silent
+
+Both are in the list, so *"which sending domain covers `mailda-test.whymelabs.com`"* has two true answers
+and one right one. Taking the first match returned the apex, and the six records it printed were all
+correct — about `whymelabs.com`. A proposal built from them would have written into the production zone
+while reporting the test subdomain's name at the top. The rule is longest match wins, and it was found by
+running the read against a real zone rather than by a fixture, which had one entry and so no ambiguity.
 
 **Measured:** against `whymelabs.com` on a Workers Paid account, 3 August 2026. A probe
 Worker was deployed and deleted; no DNS record was created, and the zone's 15 routing rules

@@ -341,17 +341,35 @@ export const providerRoutingResponse = z.object({
 /**
  * Whether a delivery outcome would ever be seen, per domain this Node sends from.
  *
- * Three objects have to line up — an `email.sending` subscription, the queue it publishes to, and a consumer
- * on that queue — and any one missing produces the same symptom: silence. So each is a separate field, and
- * absence is reported by which one is null or empty rather than as one boolean nobody could act on.
+ * Four objects have to line up — the domain onboarded for **sending** on its zone, an `email.sending`
+ * subscription, the queue it publishes to, and a consumer on that queue — and any one missing produces the
+ * same symptom: silence. So each is a separate field, and absence is reported by which one is null or empty
+ * rather than as one boolean nobody could act on.
  *
- * `enabled` is not the same as present: a subscription that exists and is switched off publishes nothing.
- * And `consumers` empty means the same thing as `required` empty next door — either nobody consumes the
- * queue, or nobody could read the answer, which is what `error` is for.
+ * `sending` is first because it decides whether the rest could matter: a domain that may not send produces
+ * no events, and reporting *no subscription* about it would point one step past the actual problem.
+ *
+ * `enabled` is not the same as present, in both places: a sending domain or a subscription that exists and
+ * is switched off publishes nothing. And `consumers` empty means what `required` empty means — either
+ * nothing is there, or nobody could read the answer, which is what `error` is for.
  */
 export const providerDeliveryEventsResponse = z.object({
   delivery: z.array(z.object({
     domain: z.string().min(1),
+    zone: z.string().nullable(),
+    sending: z.object({
+      name: z.string().min(1),
+      enabled: z.boolean().nullable(),
+      returnPath: z.string().nullable(),
+      dkimSelector: z.string().nullable(),
+      required: z.array(z.object({
+        type: z.string(),
+        name: z.string(),
+        content: z.string(),
+        priority: z.number().nullable(),
+      }).strict()),
+      error: z.string().nullable(),
+    }).strict().nullable(),
     subscription: z.string().nullable(),
     subscriptionId: z.string().nullable(),
     enabled: z.boolean().nullable(),

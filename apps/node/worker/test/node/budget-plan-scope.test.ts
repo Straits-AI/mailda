@@ -345,6 +345,12 @@ const FIGURES: Record<string, Classification> = {
     "routing.subdomain_api_available", "routing.subdomain_dashboard_only",
     "routing.mx_records_visible_in_dns_api", "routing.subdomain_receives_external_mail",
     "routing.cf_sending_reaches_own_routing_domain",
+    /*
+     * #163's three, about the **sending** half of the same question. Which endpoints exist and where the
+     * records they name land are properties of the API, not of the pot an account pays from.
+     */
+    "sending.subdomain_api_available", "sending.subdomain_records_stay_within_subdomain",
+    "sending.apex_and_subdomain_both_onboardable",
   ),
 
   // docs/receipts/email-sending-events.md
