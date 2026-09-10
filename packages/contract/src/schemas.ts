@@ -272,9 +272,16 @@ export const providerResponse = z.object({
      * them were the provider's only option, instead of leaving the Node looking like it over-asked.
      */
     scopes: z.array(z.object({
-      // `<group>.<verb>` — a dot, from `GET /oauth/scopes`. This was a colon until 9 September 2026, copied
-      // from wrangler's first-party shorthand rather than read off the provider's own list.
-      scope: z.string().regex(/^[a-z0-9-]+\.[a-z_]+$/),
+      /*
+       * `<group>.<verb>` — a dot. Cloudflare's API reference states it: *"Colon-delimited scopes are not
+       * accepted. Dot-delimited scopes are validated against available OAuth API scopes; simple identity
+       * scopes are allowed."* This was a colon until 9 September 2026, copied from wrangler's first-party
+       * shorthand rather than read off the reference.
+       *
+       * The alternation is that last clause: `offline_access` and `openid` are **protocol** scopes with no
+       * group and no dot, which the same sentence calls simple identity scopes.
+       */
+      scope: z.string().regex(/^([a-z0-9-]+\.[a-z_]+|offline_access|openid)$/),
       why: z.string().min(1),
       readOnlyExists: z.boolean(),
     }).strict()).min(1),

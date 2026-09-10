@@ -194,6 +194,26 @@ export const REQUIRED_SCOPES = [
       + "plan report whether the account is entitled to send at all",
     readOnlyExists: true,
   },
+  {
+    /*
+     * **A protocol scope, so no dot** — and it was removed from this list once, wrongly.
+     *
+     * A consent refused it (`invalid_scope`), and the conclusion drawn was that a client may not request it
+     * and therefore that a self-managed client cannot hold a refreshable grant at all. Both wrong. The API
+     * reference says it plainly: *"Protocol scopes `offline_access` and `openid` are added or removed
+     * automatically based on `grant_types`"* — so the client simply had `authorization_code` alone, and
+     * `offline_access` was never in its registered set to request.
+     *
+     * With `refresh_token` added to `grant_types`, Cloudflare adds this to the client's scopes itself. So it
+     * is requested here, and a client without it gets a refusal that **names** it — which points at the
+     * grant type rather than at a mystery.
+     */
+    scope: "offline_access",
+    why: "the refresh token. Without it the grant expires with its access token — measured at one hour — and "
+      + "ADR 42's one dashboard ceremony becomes one per hour. Cloudflare adds this to a client's scopes "
+      + "automatically when its grant types include `refresh_token`",
+    readOnlyExists: true,
+  },
 ] as const;
 
 /** Just the strings, for a caller building an authorization request. */
@@ -345,8 +365,9 @@ export function ceremony(redirectUri: string): {
       "Set the grant types to Authorization Code **and Refresh Token** — the second is what gets this Node a "
         + "refresh token, so without it the grant expires with its access token and this ceremony recurs. "
         + "Add exactly this redirect URI: " + redirectUri,
-      `Select exactly these scopes: ${REQUIRED_SCOPE_NAMES.join(", ")}. Do NOT add offline_access — `
-        + "measured: a client is not allowed to request it, and the refresh token comes from the grant type.",
+      `Select exactly these scopes: ${REQUIRED_SCOPES.filter((one) => one.scope.includes("."))
+        .map((one) => one.scope).join(", ")}. Leave offline_access alone — Cloudflare adds it for you `
+        + "because the grant types include Refresh Token, and without it this grant dies in an hour.",
       "Leave the client private. A private client can only be authorized by members of your own account, "
         + "which is what keeps this grant yours.",
       "Copy the client id and the client secret, and paste both here. Cloudflare shows the secret once.",

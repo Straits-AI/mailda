@@ -205,39 +205,39 @@ fact stay distinguishable.
 `GET /oauth/cloudflare/callback` is withheld because it is **not a read at all**: it consumes a single-use
 nonce, so a machine that fetched it would spend an operator's consent in flight.
 
-## The grant lasts one hour, and that is a blocker rather than a tuning problem
+## The grant needs `refresh_token` in the client's grant types, or it dies in an hour
 
-Measured 9 September 2026 against a real consent: fourteen scopes requested, **fourteen granted**, none
-declined — and the token response carried an access token valid for **one hour**, no refresh token, and no
-account id.
+Measured 9 September 2026: fourteen scopes granted, and an access token valid for **one hour with no refresh
+token**. The cause was the client, not the platform.
 
-The client is registered with **Refresh Token** as a grant type. That is not enough. `offline_access` cannot
-be *requested* — a client may request only what it is registered with — and it cannot be *registered*
-either:
+Cloudflare's API reference for `oauth_clients`:
 
-- the dashboard's scope picker has no `offline_access` in any category, `Other` included;
-- `GET /client/v4/oauth/scopes` matches nothing for `offline`, `openid` or `refresh`.
+> Protocol scopes `offline_access` and `openid` are **added or removed automatically** based on `grant_types`
+> and `response_types`.
 
-So a self-managed OAuth client cannot hold a refreshable grant. ADR 42 priced *one dashboard ceremony*; what
-this buys is one **per hour**.
+So `offline_access` is absent from the dashboard's scope picker and from `GET /oauth/scopes` because it is
+**derived, not chosen**. A client registered `grant_types: ['authorization_code']` can never request it; one
+with `refresh_token` alongside gets it added automatically:
 
-**And it inverts the ADR's own reasoning.** ADR 42 rejected a pasted API token partly because it is *"worse
-hygiene besides — a permanent secret where a refreshable grant with visible scopes and one revocation list is
-available"*. The availability that comparison rested on is absent, so the choice is a permanent secret against
-an hourly consent — and an hourly consent is not a product.
+```text
+PATCH /accounts/{acc}/oauth_clients/{id}  {"grant_types":["authorization_code","refresh_token"]}
+  -> grant_types: ['authorization_code', 'refresh_token']
+  -> offline_access auto-added: True   (scopes 14 -> 15)
+```
 
-Three ways out, none free, and the choice is the maintainer's:
+**This is why the ceremony's second step names both grant types.** An operator who sets only Authorization
+Code gets a Node that reconnects every hour, and the failure appears an hour after everything looked fine.
+The Node requests `offline_access`, so a client missing it is refused with `invalid_scope` **naming that
+scope** — which points at the grant type instead of at a mystery.
 
-1. **Accept the hour.** Workable only for an act an operator is present for — a deployment plan is, mail is
-   not. It cannot carry L2's onboarding or anything scheduled.
-2. **The API token after all.** #108's destination refused it and ADR 42 called it worse hygiene; the hygiene
-   argument now runs the other way. But it reintroduces a permanent secret, so ADR 42's custody promise has to
-   be restated rather than quietly kept.
-3. **Ask Cloudflare.** A third-party OAuth product with no refresh path is more plausibly incomplete than
-   deliberate, and the discovery document advertises `offline_access` under `scopes_supported` — which is the
-   shape of a feature the client-registration surface has not caught up with.
+### A word on secret rotation, since it cost several consents
 
-The Node meanwhile holds what it obtained and reports it honestly: `consent_granted`, one hour, no refresh.
+Cloudflare allows **two** secrets per client so one can be rotated before the old is deleted, and
+`GET` on the client reports `has_rotated_secret`. This Node holds one at a time, so while two are live an
+exchange fails `invalid_client` if the Node holds the older. The guide is explicit: *"if the value is true,
+delete the old secret before you create another."*
+
+`DELETE /accounts/{acc}/oauth_clients/{id}/rotate_secret` clears it.
 
 ## Still owed by this layer
 
