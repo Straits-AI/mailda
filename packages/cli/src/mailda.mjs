@@ -891,10 +891,30 @@ async function deploy(argv) {
   const asked = cookie === null ? {} : { cookie };
   process.stdout.write(`   checking ${cookie === null ? "anonymously" : "signed in"}\n`);
 
-  const report = await doctorReport(origin, {
-    ...asked,
-    "Cloudflare-Workers-Version-Overrides": `mailda="${version}"`,
-  }, "the canary");
+  /*
+   * **Retried, because a fresh version is not immediately overridable.** Cloudflare's own words: *"It can
+   * take up to a couple of seconds to be available globally after a recent change."* This deploy publishes
+   * the canary at 0% and asks for it in the next breath, so the first attempt races propagation — and when
+   * the override is not applied the request is routed by traffic percentage instead, which means the
+   * **incumbent answers and nothing says so**.
+   *
+   * The gate below catches that and refuses, which is the safe direction and is what it did for three
+   * deploys running until somebody read why. Refusing on a race is still a gate that has to be overridden
+   * by hand every time, which is the failure `promotionVerdict`'s own history warns about — so the race is
+   * waited out rather than reported.
+   *
+   * Six attempts over roughly fifteen seconds. Bounded, because a version that never becomes overridable is
+   * a real condition — a Node with no `version_metadata` binding cannot report its version at all — and the
+   * refusal below is the honest answer to it.
+   */
+  const overridden = { ...asked, "Cloudflare-Workers-Version-Overrides": `mailda="${version}"` };
+  let report = await doctorReport(origin, overridden, "the canary");
+  for (let attempt = 1; attempt < 6 && servedVersionOf(report) !== version; attempt++) {
+    process.stdout.write(`   the override has not propagated yet; retrying (${attempt}/5)\n`);
+    await new Promise((resume) => setTimeout(resume, 3000));
+    report = await doctorReport(origin, overridden, "the canary");
+  }
+
   const answered = servedVersionOf(report);
   if (answered !== version) {
     fail(
@@ -902,8 +922,9 @@ async function deploy(argv) {
       + "  why      Cloudflare routes a request by traffic percentage when a version override cannot be\n"
       + `           applied, so this check just asked ${serving} how it is. Promoting on that answer would\n`
       + "           move every request onto a version nothing examined.\n"
-      + "  fix      no traffic moved. If the Node predates the `version_metadata` binding it cannot report\n"
-      + "           its version and this gate cannot run — deploy once by hand to install it:\n"
+      + "  fix      no traffic moved. This was retried for fifteen seconds, so it is not the propagation\n"
+      + "           delay Cloudflare documents. If the Node predates the `version_metadata` binding it\n"
+      + "           cannot report its version and this gate cannot run — deploy once by hand to install it:\n"
       + `           \`wrangler versions deploy ${version}@100\`.`,
     );
   }
