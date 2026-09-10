@@ -267,6 +267,45 @@ delete the old secret before you create another."*
 
 `DELETE /accounts/{acc}/oauth_clients/{id}/rotate_secret` clears it.
 
+## Spending the grant
+
+L1 obtained a grant and deliberately spent none of it — `doctor` said *"nothing has been read with it yet"*,
+which was honest and not a place to stay. `cloudflareGet` is the one door.
+
+**Renewing is not an optimisation.** The access token lives an hour, measured, so a caller using the stored
+token without checking would work for an hour after each consent and fail silently after — which would make
+ADR 42's *one ceremony* hourly in practice while claiming otherwise. Renewal happens **a minute before**
+expiry: a token that expires between the check and the request it was fetched for produces a failure the
+caller cannot tell from a revocation.
+
+**A rejected renewal is what makes `grant_refused` real.** L1 could describe that state and not reach it —
+the revocation drill had to write the row by hand. Now Cloudflare answering `invalid_grant` to a refresh
+records it, in Cloudflare's own words, with the tokens kept so *never granted* and *granted and then refused*
+stay different questions.
+
+A network failure is deliberately **not** a refusal. An unreachable token endpoint says nothing about the
+grant, and recording one would tell an operator their authorization was revoked because a request timed out —
+ADR 40's distinction, in a third place.
+
+**A renewal that returns no refresh token keeps the old one.** Rotation is at the server's discretion, and
+overwriting it with an absent field would discard the durable half of the authorization on a *successful*
+renewal: the grant would work for one more hour and then be unrecoverable.
+
+### `POST /api/provider/resolve-account`, and why it is its own route
+
+The token response does not name the account (measured), so it costs a `GET /accounts`. That is a separate
+route from `GET /api/provider` on purpose — a status read that renewed a token and called Cloudflare as a
+side effect of being *displayed* would make every page showing the connection a consumer of the account's
+authority. `doctor` names the command rather than running it, for the same reason.
+
+**More than one account is a real answer, not an error.** A person may belong to several, and the grant is
+scoped to what they chose on the consent screen. The id is recorded only when there is exactly one, because
+the column a deployment plan reads names the account it would provision into — and a guess there is worse
+than *not yet determined*.
+
+Run against the live Node on 10 September 2026, it resolved `1e0170aa…` — the first act this Node has
+performed with its own grant.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:

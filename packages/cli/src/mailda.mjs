@@ -499,6 +499,22 @@ async function provider(argv) {
     return;
   }
 
+  if (argv.includes("--resolve-account")) {
+    /*
+     * The first act that *spends* the grant rather than describing it. Deliberate rather than automatic:
+     * Cloudflare's token response does not name the account, so this costs a call and possibly a token
+     * renewal, and `doctor` should not be doing either as a side effect of reporting.
+     */
+    const { account } = await call("POST", "/api/provider/resolve-account");
+    process.stdout.write(
+      account.accountId === null
+        ? `\n   ${account.found} account(s) visible to this grant — not recorded, because a column a deploy\n`
+          + "   plan reads must name the account it would provision into rather than a guess.\n"
+        : `\n   account: ${account.accountId}\n`,
+    );
+    return;
+  }
+
   const scopes = flag(argv, "scopes");
   if (scopes !== null) {
     const { authorize } = await call("POST", "/api/provider/authorize", { scopes: scopes.split(",") });
@@ -2006,6 +2022,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider [--url <origin>]   this Node's Cloudflare grant: its state, or the printed ceremony
   mailda provider --client-id <id>   register the OAuth client; the secret is read from stdin
   mailda provider --scopes a,b       begin a consent and print the URL to open
+  mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

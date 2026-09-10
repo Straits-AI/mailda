@@ -1008,6 +1008,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Ask Cloudflare which account this grant covers, and record it when the answer is one
+   *
+   * `POST /api/provider/resolve-account`
+   */
+  async postProviderResolveAccount(body?: unknown): Promise<z.infer<typeof S.providerAccountResponse>> {
+    return await this.json("POST", "/api/provider/resolve-account", {}, body) as z.infer<typeof S.providerAccountResponse>;
+  }
+
+  /**
    * Record that Cloudflare's consent screen did not list the operator's account — their report, which this Node cannot observe
    *
    * `POST /api/provider/unselectable`

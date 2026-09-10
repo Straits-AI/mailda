@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  PROVIDER_STATES, providerStatus, registerClient, reportUnselectable, STATUS_COLUMNS,
+  cloudflareGet, PROVIDER_STATES, providerStatus, registerClient, reportUnselectable, resolveAccount,
+  STATUS_COLUMNS,
   type ProviderState,
 } from "../src/provider/cloudflare-grant.ts";
 
@@ -738,5 +739,145 @@ describe("the guided ceremony", () => {
     for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {
       expect(one.readOnlyExists).toBe(true);
     }
+  });
+});
+
+describe("spending the grant, which is what makes grant_refused reachable", () => {
+  /** A grant that expires at `expiresAt`, so the refresh path can be aimed at. */
+  async function granted(expiresAt: number, withRefresh = true) {
+    await register();
+    answering(200, {
+      access_token: "first-access", refresh_token: withRefresh ? "the-refresh" : undefined,
+      expires_in: 3600, scope: "a",
+    });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+    await testEnv.CATALOG.prepare("UPDATE provider_binding SET access_expires_at = ? WHERE id = 1")
+      .bind(new Date(expiresAt).toISOString()).run();
+  }
+
+  it("uses the stored token while it is good, without touching the token endpoint", async () => {
+    await granted(SEPTEMBER_3 + 3600_000);
+    const stub = answering(200, { success: true, result: [{ id: "acc_only", name: "One" }] });
+    const answer = await cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "/accounts");
+    expect(answer.ok).toBe(true);
+    // One call, and it is the API rather than a renewal.
+    expect(stub.calls).toHaveLength(1);
+    expect(stub.calls[0]?.url).toContain("/client/v4/accounts");
+    expect((stub.calls[0]?.init.headers as Record<string, string>).authorization)
+      .toBe("Bearer first-access");
+  });
+
+  it("renews a minute before expiry, not after, and keeps the refresh token when none is returned", async () => {
+    /*
+     * The margin is the point. A token that expires between the check and the request it was fetched for is
+     * a request that fails for a reason the caller cannot tell from a revocation — so the check is against
+     * `now + 60s`, and this grant expires in thirty.
+     */
+    await granted(SEPTEMBER_3 + 30_000);
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify(
+        String(url).includes("oauth2/token")
+          // No `refresh_token` in the renewal: rotation is at the server's discretion.
+          ? { access_token: "second-access", expires_in: 3600 }
+          : { success: true, result: [] },
+      ), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await cloudflareGet(testEnv, atTime(SEPTEMBER_3), ORG, "/accounts");
+    expect(calls[0]?.url).toBe("https://dash.cloudflare.com/oauth2/token");
+    expect(new URLSearchParams(String(calls[0]?.init.body)).get("grant_type")).toBe("refresh_token");
+    // The API call then carries the new token.
+    expect((calls[1]?.init.headers as Record<string, string>).authorization).toBe("Bearer second-access");
+
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT access_token, refresh_token FROM provider_binding WHERE id = 1",
+    ).first<{ access_token: string; refresh_token: string }>();
+    expect(await unwrapCredential(testEnv, row!.access_token)).toBe("second-access");
+    /*
+     * **The refresh token survives a renewal that did not rotate it.** Overwriting it with the response's
+     * absent field would discard the durable half of the authorization on a *successful* renewal — the
+     * grant would work for one more hour and then be unrecoverable.
+     */
+    expect(await unwrapCredential(testEnv, row!.refresh_token)).toBe("the-refresh");
+  });
+
+  it("records grant_refused in Cloudflare's own words when a renewal is rejected", async () => {
+    /*
+     * The path L1 could describe and not reach. Until this existed the state was only settable by hand, and
+     * the revocation drill had to write the row itself.
+     */
+    await granted(SEPTEMBER_3);
+    answering(400, { error: "invalid_grant", error_description: "token is inactive because it was revoked" });
+
+    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
+      .rejects.toThrow("E_PROVIDER_GRANT_REFUSED");
+
+    const status = await providerStatus(testEnv);
+    expect(status.state).toBe("grant_refused");
+    expect(status.refusedDetail).toBe("token is inactive because it was revoked");
+    // The tokens stay: *never granted* and *granted and then refused* are different questions.
+    expect(status.grantedAt).not.toBeNull();
+  });
+
+  it("does not record a refusal when the token endpoint is merely unreachable", async () => {
+    /*
+     * ADR 40's distinction, in a third place. An unreachable endpoint says nothing about the grant, and
+     * marking it refused would tell an operator their authorization was revoked because a request timed out.
+     */
+    await granted(SEPTEMBER_3);
+    vi.stubGlobal("fetch", async () => { throw new Error("socket closed"); });
+
+    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
+      .rejects.toThrow("E_PROVIDER_REFRESH_UNREACHABLE");
+    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
+  });
+
+  it("refuses to spend a grant already marked refused, rather than retrying it", async () => {
+    await granted(SEPTEMBER_3 + 3600_000);
+    await testEnv.CATALOG.prepare(
+      "UPDATE provider_binding SET refused_at = ?, refused_detail = 'revoked' WHERE id = 1",
+    ).bind(new Date(SEPTEMBER_3).toISOString()).run();
+    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
+      .rejects.toThrow("E_PROVIDER_GRANT_REFUSED");
+  });
+
+  it("says so when an expired grant has no refresh token to renew with", async () => {
+    // The one-hour dead end: a client whose grant types omit `refresh_token`.
+    await granted(SEPTEMBER_3, false);
+    await expect(cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 1), ORG, "/accounts"))
+      .rejects.toThrow("E_PROVIDER_NO_REFRESH");
+  });
+
+  it("records the account only when there is exactly one, because a guess is worse than a null", async () => {
+    await granted(SEPTEMBER_3 + 3600_000);
+    answering(200, { success: true, result: [{ id: "acc_one", name: "A" }, { id: "acc_two", name: "B" }] });
+    const many = await resolveAccount(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(many.found).toBe(2);
+    expect(many.accountId).toBeNull();
+    /*
+     * Belonging to two accounts is a real answer, not an error — and the column a deployment plan reads
+     * names the account it would provision into, so a guess there is worse than *not yet determined*.
+     */
+    expect((await providerStatus(testEnv)).accountId).toBeNull();
+
+    answering(200, { success: true, result: [{ id: "acc_only", name: "A" }] });
+    const one = await resolveAccount(testEnv, atTime(SEPTEMBER_3 + 4000), ORG);
+    expect(one.accountId).toBe("acc_only");
+    expect((await providerStatus(testEnv)).accountId).toBe("acc_only");
+  });
+
+  it("carries Cloudflare's own error rather than a status code", async () => {
+    await granted(SEPTEMBER_3 + 3600_000);
+    // The shape that matters: a missing scope and a missing resource must be tellable apart.
+    answering(403, { success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }] });
+    const answer = await cloudflareGet(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "/accounts");
+    expect(answer.ok).toBe(false);
+    expect((answer as { error: string }).error).toContain("9109");
+    expect((answer as { error: string }).error).toContain("Unauthorized");
   });
 });
