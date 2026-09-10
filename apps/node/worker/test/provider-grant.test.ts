@@ -647,6 +647,7 @@ describe("the guided ceremony", () => {
     expect(printed.redirectUri).toBe(REDIRECT);
     expect(printed.steps.some((step) => step.includes(REDIRECT))).toBe(true);
     // Without `offline_access` the ceremony recurs, so the steps name it rather than leaving it to be found.
+    // The steps still mention it — now to say Cloudflare adds it, rather than to warn against adding it.
     expect(printed.steps.some((step) => step.includes("offline_access"))).toBe(true);
     // Private, which is what keeps the grant the customer's — ADR 42's whole custody argument.
     expect(printed.steps.some((step) => step.toLowerCase().includes("private"))).toBe(true);
@@ -682,11 +683,16 @@ describe("the guided ceremony", () => {
     expect(printed.scopes.length).toBeGreaterThanOrEqual(5);
     for (const one of printed.scopes) {
       /*
-       * `<group>.<verb>` with a **dot**, from `GET /oauth/scopes`. This asserted a colon until 9 September
-       * 2026, because wrangler's bundle spells its own scopes that way — and wrangler is a first-party
-       * client whose shorthand nobody else may use. Cloudflare's documentation example had the dot all along.
+       * `<group>.<verb>` with a **dot**, or a protocol scope with neither. Cloudflare's API reference says
+       * both in one sentence: *"Colon-delimited scopes are not accepted. Dot-delimited scopes are validated
+       * against available OAuth API scopes; simple identity scopes are allowed."*
+       *
+       * This asserted a colon until 9 September 2026, because wrangler's bundle spells its own scopes that
+       * way — and wrangler is a first-party client whose shorthand nobody else may use. The reference had
+       * the answer the whole time; so did the guide's own example.
        */
-      expect(one.scope, "a scope id is <group>.<verb>").toMatch(/^[a-z0-9-]+\.[a-z_]+$/);
+      expect(one.scope, "a scope is <group>.<verb> or a protocol scope")
+        .toMatch(/^([a-z0-9-]+\.[a-z_]+|offline_access|openid)$/);
       expect(one.why.length).toBeGreaterThan(30);
     }
     // The steps name the exact ids, so an operator can select them rather than interpret a description.
@@ -716,6 +722,17 @@ describe("the guided ceremony", () => {
       expect(one.readOnlyExists, `${one.scope} claims no read form exists`).toBe(true);
     }
     expect(printed.scopes.some((one) => one.scope.endsWith(".read"))).toBe(true);
+
+    /*
+     * **`offline_access` is requested, and this test asserted its absence for a day.** A consent refused it
+     * and the conclusion drawn was that no self-managed client can hold a refreshable grant — from a picker
+     * that does not list it and a `GET /oauth/scopes` that does not either. Both true and neither the point:
+     * the API reference says protocol scopes are *"added or removed automatically based on `grant_types`"*,
+     * so a client with `refresh_token` has it and one without never could.
+     *
+     * Without it the grant expires in an hour, measured, which turns ADR 42's one ceremony into one per hour.
+     */
+    expect(printed.scopes.map((one) => one.scope)).toContain("offline_access");
 
     // And every read scope is honest the other way: a narrower choice was available and taken.
     for (const one of printed.scopes.filter((x) => x.scope.endsWith(":read"))) {

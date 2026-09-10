@@ -3,7 +3,8 @@ id: cloudflare-oauth-scopes
 kind: platform-limit
 measured_on: 2026-09-09
 stale_when: >
-  Cloudflare's OAuth scope vocabulary stops being <group>.<verb>; an id below is renamed or withdrawn;
+  Cloudflare's OAuth scope vocabulary stops being <group>.<verb> for API scopes or bare for protocol
+  scopes; offline_access stops being added automatically from grant_types; an id below is renamed or withdrawn;
   Email Routing stops being four separate permissions; the read-only scopes for D1, Queues, Email Routing or Email Sending stop being offered;
   Email Routing stops being four separate permissions; wrangler stops being
   an OAuth client, since its bundle is where these strings were read; GET /client/v4/oauth/scopes becomes
@@ -12,14 +13,94 @@ stale_when: >
 values:
   oauth.token_response_names_account: 0
   oauth.grant_type_alone_yields_refresh_token: 0
+  oauth.offline_access_yields_refresh_token: 1
   oauth.access_token_lifetime_seconds: 3600
-  oauth.refresh_token_obtainable_by_self_managed_client: 0
+  oauth.refresh_token_obtainable_by_self_managed_client: 1
   oauth.scope_shape_is_group_colon_verb: 0
   oauth.scope_shape_is_group_dot_verb: 1
   oauth.read_only_scope_exists_for_d1: 1
   oauth.read_only_scope_exists_for_queues: 1
   oauth.read_only_scope_exists_for_email: 1
 ---
+
+## Confirmed, 10 September 2026: a second consent returned a refresh token
+
+After `PATCH grant_types: ["authorization_code","refresh_token"]` added `offline_access` to the client's
+scopes automatically, a fresh consent requesting all fifteen:
+
+```text
+scopesGranted: [ …the fourteen…, "offline_access" ]   scopesDeclined: []
+refresh_token: present        access_expires_at: one hour
+```
+
+`oauth.offline_access_yields_refresh_token: 1`. **ADR 42's one dashboard ceremony holds**, and the amendment
+calling it a blocker is retracted below.
+
+The access token is still an hour. That is what a refresh token is for, and the durable half is the one this
+Node stores wrapped and a revocation kills — which is what makes `grant_refused` an observable state rather
+than a guess.
+
+## Retraction, 10 September 2026: a refreshable grant **is** obtainable, and the reference said so
+
+`oauth.refresh_token_obtainable_by_self_managed_client` goes 0 → 1. This file asserted 0, and ADR 42 was
+amended to call it a blocker on that basis. Both were wrong.
+
+The evidence for 0 was real and the inference from it was not: `offline_access` is in no category of the
+dashboard's scope picker, and `GET /client/v4/oauth/scopes` matches nothing for `offline`, `openid` or
+`refresh`. From which this file concluded there is no such scope to have.
+
+Cloudflare's **API reference** for `oauth_clients`, one sentence:
+
+> Protocol scopes `offline_access` and `openid` are **added or removed automatically** based on `grant_types`
+> and `response_types`.
+
+So it is not in the picker or the scope list because it is not something you pick — it is derived from the
+client's grant types. `GET` on the client showed the cause:
+
+```text
+grant_types: ['authorization_code']        <- no refresh_token
+scopes:      14, no offline_access
+```
+
+One `PATCH` adding `refresh_token` to `grant_types`:
+
+```text
+grant_types: ['authorization_code', 'refresh_token']
+offline_access auto-added: True
+scopes: 15
+```
+
+### The same sentence settled the format question this file spent a day on
+
+> **Colon-delimited scopes are not accepted. Dot-delimited scopes are validated** against available OAuth API
+> scopes; simple identity scopes are allowed.
+
+Colons ruled out, dots confirmed, and protocol scopes admitted as *simple identity scopes* — which is why
+`offline_access` carries no dot and needed the schema's pattern widened. Three of this file's findings are in
+that one paragraph, and it was established instead by probing a live client one scope at a time.
+
+### Sixth time, and the last four were avoidable by reading one page
+
+| inferred from | what was actually true |
+|:--|:--|
+| `grant_types_supported` in discovery | describes the server, not a client |
+| `scopes_supported` in discovery | describes the server, not a client |
+| a client's registered scopes | a ceiling, not a default |
+| wrangler's scope strings | what wrangler asks for |
+| the guide's dotted example being unused | the documented format |
+| `offline_access` absent from the picker | derived from `grant_types`, not picked |
+
+Every one is a list read as a menu. The **guide** — `create-an-oauth-client` — is silent on scope format, on
+refresh tokens and on rotation state; the **API reference** states all three. Probing is for when the
+documentation does not answer, and here it did.
+
+### And the `invalid_client` failures were a live secret rotation
+
+`has_rotated_secret: true` on the same `GET`. Cloudflare permits two secrets per client, and the guide says
+*"if the value is true, delete the old secret before you create another."* Two were live while the Node held
+one. That is what the exchange failures were, and this repository diagnosed a missing form-url-encoding
+instead, shipped a fix for it, and wrote it up as a spec bug — `cloudflare-oauth-endpoints.md` carries that
+retraction.
 
 ## The consent completed, 9 September 2026, and two of ADR 42's premises did not survive it
 

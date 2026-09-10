@@ -641,6 +641,8 @@ const FIGURES: Record<string, Classification> = {
     // What a real grant contained: no account id, no refresh token, and a one-hour access token. Properties
     // of Cloudflare's authorization server, identical on any plan.
     "oauth.token_response_names_account", "oauth.grant_type_alone_yields_refresh_token",
+    // And that `offline_access` does yield one, once the client's grant types earn it the scope.
+    "oauth.offline_access_yields_refresh_token",
     "oauth.access_token_lifetime_seconds",
     // And whether a self-managed client can hold a refreshable grant at all. It cannot: no `offline_access`
     // in the picker or in `GET /oauth/scopes`. A property of Cloudflare's OAuth product, not of a plan.
