@@ -16,6 +16,34 @@ values:
   deploy.second_node_reassigns_workflow: 1
 ---
 
+## Correction, 10 September 2026: the canary gate was refusing on a propagation race
+
+`mailda deploy` publishes the canary at 0% and immediately asks it for a report, addressed with
+`Cloudflare-Workers-Version-Overrides`. For three consecutive deploys against the live Node it refused:
+
+```text
+the override did not reach the canary: 68aac295-… answered.
+```
+
+The refusal was **correct** — when an override cannot be applied the request is routed by traffic percentage
+instead, so the incumbent answers and nothing says so, and promoting on that would move every request onto a
+version nothing examined. But the cause was not what the refusal's `fix` suggested.
+
+Cloudflare's version-overrides page states it:
+
+> A version override will only be applied if the specified version is in the current deployment. **It can take
+> up to a couple of seconds to be available globally after a recent change.**
+
+So the deploy was racing its own publish. Waited out instead — six attempts over roughly fifteen seconds —
+and the first live run took **two** retries before the override landed, after which the gate compared 33
+findings and promoted.
+
+**A gate that has to be overridden by hand every time is not a gate**, which is the lesson
+`promotionVerdict` was already written from: it replaced a check that refused a canary whose only finding the
+incumbent already had. This is the same failure arriving through timing rather than through logic. The bound
+stays because a version that never becomes overridable is a real condition — a Node with no
+`version_metadata` binding cannot report its version at all — and the refusal is the honest answer to that.
+
 **Measured:** a real first install and two deploys into a live Cloudflare account
 (`Mystraits.ai@gmail.com`, `dc8d1b7d…`), 27 August 2026, wrangler 4.118.0. A Mailda Node was deployed, all
 39 migrations applied, the delivery-events consumer attached, `doctor` run against it, a second Node
