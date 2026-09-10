@@ -176,7 +176,35 @@ an operator learns to ignore.
 `error=invalid_state` and a message about entropy, which does not read like a configuration problem. The Node
 uses 32 random bytes and asserts the minimum anyway.
 
-## Nothing about mail depends on this grant
+## Nothing about mail depends on this grant — drilled, 10 September 2026
+
+Against the live Node: its grant was put into `grant_refused` and the same four things were asked before and
+after.
+
+| | before | with the grant refused |
+|:--|:--|:--|
+| `/health` | claimed, 0 pending | unchanged |
+| sign-in (CLI session) | works | works |
+| search | answers | answers |
+| `doctor` | exit 0 | **exit 0**, the grant reported as a note |
+
+Then restored, and the state read back `consent_granted`.
+
+**A drill is a fact about one afternoon.** What keeps the claim true is that nothing outside two files can
+reach the grant at all, and `test/node/provider-blast-radius.test.ts` holds that as a closed world over the
+whole source tree — by import *and* by raw reference to `provider_binding`, since SQL would reach the same row
+without naming the module. Permitted: `index.ts`, which manages it, and `doctor.ts`, which reports it. An
+import added to `dispatch.ts` fails the test; so does raising the finding's severity to `degraded`, which
+would make `mailda deploy` fail on a revocation an operator performed deliberately.
+
+Both were mutated and both fail.
+
+**What the drill does not cover:** revoking at Cloudflare's end — *My Profile → Manage OAuth authorizations →
+Revoke* — which is one click and would make the stored refresh token stop working for real. This drilled the
+Node's behaviour in that state, which is the half #162 asks about; whether Cloudflare's revocation produces
+exactly this state is inferred from the error it returns, not observed.
+
+## Superseded: nothing about mail depends on this grant
 
 Revoking it in Cloudflare leaves mail, users, Butlers, schedules, the API and CLI, backup and recovery
 working, because none of those paths touch it. `doctor` therefore reports `grant_refused` as **`report` with
