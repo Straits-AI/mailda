@@ -518,6 +518,35 @@ async function provider(argv) {
     return;
   }
 
+  if (argv.includes("--delivery-events")) {
+    const { delivery } = await call("GET", "/api/provider/delivery-events");
+    for (const one of delivery) {
+      process.stdout.write(`\n   ${one.domain}\n`);
+      /*
+       * Each of the three objects on its own line, present or absent. A single verdict would be shorter and
+       * would leave an operator with nothing to do about it — the whole point of this surface is naming
+       * which one is missing.
+       */
+      process.stdout.write(
+        one.subscription === null
+          ? `     events    no email.sending subscription covers this domain\n`
+          : `     events    ${one.subscription}${one.enabled === false ? " (disabled)" : ""}`
+            + `${one.events.length === 0 ? "" : ` — ${one.events.join(", ")}`}\n`,
+      );
+      if (one.queueName !== null) process.stdout.write(`     queue     ${one.queueName}\n`);
+      if (one.subscription !== null) {
+        process.stdout.write(
+          one.consumers.length === 0
+            ? `     consumer  none — events are published into a queue nobody reads\n`
+            : `     consumer  ${one.consumers.join(", ")}\n`,
+        );
+      }
+      if (one.error !== null) process.stdout.write(`     unknown   ${one.error}\n`);
+    }
+    if (delivery.length === 0) process.stdout.write(`\n   this Node routes no domains\n`);
+    return;
+  }
+
   if (argv.includes("--resolve-account")) {
     /*
      * The first act that *spends* the grant rather than describing it. Deliberate rather than automatic:
@@ -2043,6 +2072,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --scopes a,b       begin a consent and print the URL to open
   mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
+  mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

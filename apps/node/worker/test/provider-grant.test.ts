@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  cloudflareGet, PROVIDER_STATES, providerStatus, registerClient, reportUnselectable, resolveAccount,
+  cloudflareGet, deliveryEventsState, PROVIDER_STATES, providerStatus, registerClient,
+  reportUnselectable, resolveAccount,
   STATUS_COLUMNS,
   type ProviderState,
 } from "../src/provider/cloudflare-grant.ts";
@@ -879,5 +880,210 @@ describe("spending the grant, which is what makes grant_refused reachable", () =
     expect(answer.ok).toBe(false);
     expect((answer as { error: string }).error).toContain("9109");
     expect((answer as { error: string }).error).toContain("Unauthorized");
+  });
+});
+
+
+/**
+ * Whether a send's outcome would ever be **seen** (#163 L2).
+ *
+ * ## Why this is worth stubbing rather than only measuring live
+ *
+ * The live account has exactly one subscription and it is correct, so every branch that matters — an apex
+ * subscription covering a subdomain, a queue nobody consumes, a subscription switched off, an unreadable
+ * answer — is a branch a live run cannot reach. Those are the states an operator would actually be in, and
+ * the failure mode of all of them is the same: the report says *fine* and the mail says nothing.
+ */
+describe("delivery events, read through the grant", () => {
+  /** A grant good for an hour, an account already resolved, and one routed address. */
+  async function ready(address: string) {
+    await register();
+    answering(200, {
+      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
+    });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+    await testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG).run();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind("addr_delivery", ORG, address, "mbx_x", new Date(SEPTEMBER_3).toISOString()).run();
+  }
+
+  /** Answers each Cloudflare path from `answers`, and records what was asked. */
+  function serving(answers: Record<string, unknown>) {
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      asked.push(path);
+      const key = Object.keys(answers).find((one) => path.startsWith(one));
+      return new Response(
+        JSON.stringify(
+          key === undefined
+            ? { success: false, errors: [{ code: 7003, message: `no route for ${path}` }] }
+            : { success: true, result: answers[key] },
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    return asked;
+  }
+
+  const SUBSCRIPTIONS = "/accounts/acc_1/event_subscriptions/subscriptions";
+
+  function subscription(domain: string, over: Record<string, unknown> = {}) {
+    return {
+      id: "sub_1", name: "mailda-sending-events", enabled: true,
+      events: ["message.delivered", "message.bounced"],
+      source: { type: "email.sending", domain },
+      destination: { queue_id: "q_1" },
+      ...over,
+    };
+  }
+
+  async function withAccount() {
+    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
+  }
+
+  it("names the subscription, its queue and the consumers reading it", async () => {
+    await ready("inbox@mailda-test.example.test");
+    await withAccount();
+    serving({
+      [SUBSCRIPTIONS]: [subscription("mailda-test.example.test")],
+      "/accounts/acc_1/queues/q_1": {
+        queue_name: "mailda-sending-events", consumers: [{ script: "mailda", type: "worker" }],
+      },
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen).toEqual({
+      domain: "mailda-test.example.test",
+      subscription: "mailda-sending-events",
+      subscriptionId: "sub_1",
+      enabled: true,
+      events: ["message.delivered", "message.bounced"],
+      queueId: "q_1",
+      queueName: "mailda-sending-events",
+      consumers: ["mailda"],
+      error: null,
+    });
+  });
+
+  it("counts an apex subscription as covering a subdomain it sends from", async () => {
+    /*
+     * Cloudflare scopes a subscription to one sending domain: the zone apex, **or** a verified sending
+     * subdomain. So a Node sending from `mailda-test.example.test` under an apex subscription is covered,
+     * and an equality match would report it as having none — sending an operator to create a second
+     * subscription for a domain that already has one.
+     */
+    await ready("inbox@mailda-test.example.test");
+    await withAccount();
+    serving({
+      [SUBSCRIPTIONS]: [subscription("example.test")],
+      "/accounts/acc_1/queues/q_1": { queue_name: "q", consumers: [{ script: "mailda" }] },
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.subscription).toBe("mailda-sending-events");
+  });
+
+  it("does not count a subscription on a different domain that merely ends the same way", async () => {
+    // `notexample.test` ends with `example.test` as a *string*. The dot is what makes it a label boundary.
+    await ready("inbox@notexample.test");
+    await withAccount();
+    serving({ [SUBSCRIPTIONS]: [subscription("example.test")] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.subscription).toBeNull();
+    expect(seen!.error).toBeNull();
+  });
+
+  it("ignores subscriptions from other sources on the same domain", async () => {
+    await ready("inbox@example.test");
+    await withAccount();
+    serving({ [SUBSCRIPTIONS]: [subscription("example.test", { source: { type: "r2", domain: "example.test" } })] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.subscription).toBeNull();
+  });
+
+  it("reports a queue nobody consumes as empty rather than as absent", async () => {
+    /*
+     * The failure this whole route exists for: the subscription is there, the queue is there, events are
+     * published — into a queue no Worker reads. Nothing errors, and nothing arrives.
+     */
+    await ready("inbox@example.test");
+    await withAccount();
+    serving({
+      [SUBSCRIPTIONS]: [subscription("example.test")],
+      "/accounts/acc_1/queues/q_1": { queue_name: "orphan", consumers: [] },
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.queueName).toBe("orphan");
+    expect(seen!.consumers).toEqual([]);
+    expect(seen!.error).toBeNull();
+  });
+
+  it("keeps an unreadable queue apart from one with no consumers", async () => {
+    // Both are `consumers: []`. Only `error` says which, and a surface that read the first as the second
+    // would report a working Node as blind.
+    await ready("inbox@example.test");
+    await withAccount();
+    serving({ [SUBSCRIPTIONS]: [subscription("example.test")] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.consumers).toEqual([]);
+    expect(seen!.error).toContain("7003");
+  });
+
+  it("follows every page rather than trusting the first", async () => {
+    /*
+     * A subscription on page two is a subscription a single read would miss — and the report would be that
+     * the domain has none, which is the way round that sends somebody to create a duplicate. `deploy --plan`
+     * called a healthy Node broken on exactly this, over R2's page of twenty.
+     */
+    await ready("inbox@example.test");
+    await withAccount();
+    const filler = Array.from({ length: 50 }, (_, at) => subscription("other.test", { id: `pad_${at}` }));
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      asked.push(path);
+      const result = path.startsWith(SUBSCRIPTIONS)
+        ? (path.includes("page=1") ? filler : [subscription("example.test")])
+        : { queue_name: "q", consumers: [{ script: "mailda" }] };
+      return new Response(JSON.stringify({ success: true, result }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.subscription).toBe("mailda-sending-events");
+    expect(asked.filter((one) => one.startsWith(SUBSCRIPTIONS))).toHaveLength(2);
+  });
+
+  it("says the account is not determined yet rather than blaming Cloudflare", async () => {
+    /*
+     * `account_id` is filled lazily by `resolveAccount`, so a Node can hold a working grant and not know
+     * which account it covers. Naming the step is the difference between one command and a re-consent.
+     */
+    await ready("inbox@example.test");
+    const asked = serving({});
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.error).toContain("/api/provider/resolve-account");
+    // And it spent nothing finding out.
+    expect(asked).toEqual([]);
+  });
+
+  it("answers nothing, and asks nothing, for a Node that routes no domains", async () => {
+    await ready("inbox@example.test");
+    await testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG).run();
+    const asked = serving({});
+
+    expect(await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG)).toEqual([]);
+    expect(asked).toEqual([]);
   });
 });

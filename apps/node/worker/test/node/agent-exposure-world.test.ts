@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are eleven", () => {
+  it("derives read for every GET but the named exceptions, and there are twelve", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -95,12 +95,19 @@ describe("every route is classified, and a new one cannot default", () => {
      * reads **through the grant** — three Cloudflare calls per domain, possibly renewing a token. An agent
      * polling it would spend the account's own authority to answer a question nothing an agent may do
      * depends on, and the cost would appear on the operator's bill rather than in this Node.
+     *
+     * `GET /api/provider/delivery-events` (#163) is the twelfth and the same kind as the eleventh, which is
+     * why it is worth having both: the third kind is not one route's quirk. It lists the account's event
+     * subscriptions and reads a queue, so it spends the grant too, and it answers an *installation* question
+     * — whether a send's outcome would ever be seen — that an operator acts on and no agent's errand turns
+     * on.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
       "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit",
       "GET /api/evidence/inventory", "GET /api/logs",
-      "GET /api/people/:userId/mailboxes", "GET /api/provider", "GET /api/provider/email-routing",
+      "GET /api/people/:userId/mailboxes", "GET /api/provider",
+      "GET /api/provider/delivery-events", "GET /api/provider/email-routing",
       "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 

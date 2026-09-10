@@ -356,6 +356,55 @@ particular Node, applying a proposal would modify a production zone even though 
 test subdomain. The read side is safe and the write side is not, on this account, and that is a property of
 the setup rather than of the design.
 
+## Whether a send's outcome would be seen (#163 L2)
+
+`mailda provider --delivery-events`, run against the live Node on 10 September 2026:
+
+```text
+   mailda-test.whymelabs.com
+     events    mailda-sending-events — message.delivered, message.deferred, message.bounced, …
+     queue     mailda-sending-events
+     consumer  mailda
+```
+
+Outbound delivery is reported by an account-level `email.sending` **event subscription** publishing to a
+queue, which a Worker consumes. Three objects, and any one of them missing produces the same symptom:
+silence. So each is named separately — a single verdict over them would be one nobody could act on.
+
+**`doctor` used to say this was unanswerable.** `sending_events_consumer` read *"not checkable from inside a
+Worker — no account API access"*, which was true when it was written and which ADR 42 made false. The grant
+carries `queues.write`, and two reads settle all three. The finding now points at this route instead, and
+`test/node/delivery-events-world.test.ts` is what makes that pointer refer to something — the old sentence
+was `report`, `ok: true`, for ever, so nothing could have failed when it stopped being true.
+
+The answer is deliberately **not** folded into `doctor`: it costs live Cloudflare calls and may renew a
+token, and a health report that reached the network would spend the account's authority every time anything
+asked how the Node was.
+
+### The subscription is in no menu, and exists
+
+`wrangler queues subscription create --source` does not offer `email.sending` (re-measured 10 September
+2026, wrangler 4.118.0), and neither does the API reference's create-subscription schema. Both enumerations
+are incomplete: the account holds one, created 7 August 2026, whose `source` carries `type: "email.sending"`
+with `zone_id` and `domain` — fields that same schema does not document either.
+
+Five times in #162 a *list of what something supports* was read as a list of what may be had. This is the
+same mistake from the other side, and the rule that survives both is **ask the account, not the menu**.
+
+### Apex or subdomain, and the dot that decides
+
+A subscription is scoped to one sending domain: the zone apex or a verified sending subdomain. So an apex
+subscription covers a subdomain sending under it, and matching on equality would tell an operator to create a
+second subscription for a domain that already has one. The match is `on === domain || domain.endsWith("." +
+on)` — the dot is a label boundary, without which `notexample.test` would count as covered by
+`example.test`.
+
+### The queue is read by id
+
+`GET /accounts/{id}/queues` pages at 100 and this account holds 66. Matching against page one would be right
+until the hundred-and-first queue. A subscription names its `queue_id`, so there is a targeted read and no
+list to be wrong about — the mistake `deploy --plan` already made once, on R2's page of twenty.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:

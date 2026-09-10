@@ -304,6 +304,16 @@ describe("every schema-bearing route answers what the contract says it does", ()
       routing: unknown[];
     };
     expect(routing.routing).toEqual([]);
+    /*
+     * And the delivery-events read, for the same reason and with the same shape: no addresses, so no
+     * domains, so nothing to report on — and no grant is spent finding that out. The empty list is what
+     * makes the `.strict()` above meaningful, since a driver that never reached the route would leave its
+     * success shape unchecked whatever the schema said.
+     */
+    const delivery = await answers("GET", "/api/provider/delivery-events", { cookie: held }) as {
+      delivery: unknown[];
+    };
+    expect(delivery.delivery).toEqual([]);
 
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };
@@ -1798,8 +1808,15 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * grant rather than describing it. Separate from `GET /api/provider` for that reason: a status read that
      * renewed a token and called Cloudflare as a side effect of being displayed would make every page that
      * shows the connection a consumer of the account's authority.
+     *
+     * The 112th is `GET /api/provider/delivery-events` (#163 L2) — whether an outbound send's outcome would
+     * ever be *seen*, per domain. Three objects have to line up for it to be, and a single boolean over them
+     * would be a verdict nobody could act on, so the response names each: the `email.sending` subscription,
+     * the queue it publishes to, and the consumers on that queue. `.strict()` matters here for the ordinary
+     * reason and one extra: the shape carries Cloudflare's own object ids, and a field this contract did not
+     * describe is a field nothing is checking the disclosure of.
      */
-    expect(coverage.total).toBe(111);
+    expect(coverage.total).toBe(112);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

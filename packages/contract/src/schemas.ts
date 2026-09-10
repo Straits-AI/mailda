@@ -338,6 +338,31 @@ export const providerRoutingResponse = z.object({
   }).strict()),
 }).strict();
 
+/**
+ * Whether a delivery outcome would ever be seen, per domain this Node sends from.
+ *
+ * Three objects have to line up — an `email.sending` subscription, the queue it publishes to, and a consumer
+ * on that queue — and any one missing produces the same symptom: silence. So each is a separate field, and
+ * absence is reported by which one is null or empty rather than as one boolean nobody could act on.
+ *
+ * `enabled` is not the same as present: a subscription that exists and is switched off publishes nothing.
+ * And `consumers` empty means the same thing as `required` empty next door — either nobody consumes the
+ * queue, or nobody could read the answer, which is what `error` is for.
+ */
+export const providerDeliveryEventsResponse = z.object({
+  delivery: z.array(z.object({
+    domain: z.string().min(1),
+    subscription: z.string().nullable(),
+    subscriptionId: z.string().nullable(),
+    enabled: z.boolean().nullable(),
+    events: z.array(z.string()),
+    queueId: z.string().nullable(),
+    queueName: z.string().nullable(),
+    consumers: z.array(z.string()),
+    error: z.string().nullable(),
+  }).strict()),
+}).strict();
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

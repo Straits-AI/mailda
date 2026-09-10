@@ -445,9 +445,23 @@ async function checkEvidenceBucket(env: Env): Promise<Finding[]> {
  *                          `queue-provisioning.md` records `queues.subscription_creatable_by_cli: 0`.
  *
  * `workers_paid_plan` is the precedent for the shape and the argument is the same one: an absent check
- * reads exactly like a passing one. A Worker holds no account credential — §5A forbids it retaining one —
- * so it cannot ask Queues who consumes its queue, and inventing a check that cannot work would be worse
- * than saying which question this report cannot answer.
+ * reads exactly like a passing one.
+ *
+ * ## What this comment used to say, and why the sentence had to change rather than stay
+ *
+ * It said a Worker holds no account credential, so it cannot ask Queues who consumes its queue, and that
+ * inventing a check that could not work would be worse than naming the question. That was true when it was
+ * written and **ADR 42 made it false**: the Node now holds its own Cloudflare grant, carrying `queues.write`,
+ * and two plain reads settle all three objects. `butler_execution` is the precedent for the rewrite as well
+ * as the shape — the hazard in a permanently-true `detail` is that it stays in the file long after it stops
+ * describing the world, and *nothing looks wrong*: the check still runs, still passes, still reads as
+ * verified.
+ *
+ * The answer is not moved into this report, though. It costs live Cloudflare calls and may renew a token,
+ * and `doctor.max_subrequests_per_run` is a budget with a receipt — a report that reached the network to
+ * produce a finding would be spending the account's authority every time anything asked how the Node was.
+ * So the check names the surface that does answer it, and `test/node/delivery-events-world.test.ts` fails the
+ * day that surface stops existing.
  *
  * `report`, `ok: true`, always. It is a fact about how a Node is installed rather than a fault, it varies
  * with nothing this Node can see, and a finding that fails on every Node forever is one somebody mutes —
@@ -465,16 +479,18 @@ function sendingEventsConsumerCheck(): Finding {
     discloses: "infrastructure",
     ok: true,
     detail:
-      "Not checkable from inside a Worker — no account API access, so this Node cannot ask Queues who " +
-      "consumes its sending-events queue. The consumer is attached out of band by " +
+      "Not answered here, and answerable: `GET /api/provider/delivery-events` reads it through this Node's " +
+      "own Cloudflare grant (ADR 42) and names which of the three objects is missing — the `email.sending` " +
+      "event subscription, the queue it publishes to, or a consumer on that queue. It is not folded into " +
+      "this report because it costs live Cloudflare calls and may renew a token, and a report that reached " +
+      "the network would spend the account's authority every time anything asked how this Node was. Two of " +
+      "the three still cannot be created from here: the consumer is attached out of band by " +
       "`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from this " +
-      "Worker's deployed binding; the queue itself is provisioned by the deploy, which Cloudflare documents " +
-      "and this repository has not measured, so that step refuses rather than assume a name. That step is " +
-      "necessary and NOT sufficient: an `email.sending` event subscription has to publish to the queue as " +
-      "well, and wrangler cannot create one (re-measured 19 August 2026 — `email.sending` is not a " +
-      "`queues subscription create --source` choice). So a button-only install has never observed a " +
-      "delivery outcome, before the per-Node queue or after it, and attaching the consumer alone does not " +
-      "change that. `delivery_visibility` reports the consequence from evidence.",
+      "Worker's deployed binding, and wrangler cannot create the subscription at all (re-measured 10 " +
+      "September 2026, wrangler 4.118.0 — `email.sending` is not a `queues subscription create --source` " +
+      "choice, though the API does hold such subscriptions). So a button-only install has still never " +
+      "observed a delivery outcome; what changed is that its absence is now reportable by name instead of " +
+      "inferable from silence. `delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
   };
 }

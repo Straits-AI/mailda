@@ -1017,6 +1017,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Whether an `email.sending` subscription, its queue and a consumer exist for each domain this Node sends from — read through the grant
+   *
+   * `GET /api/provider/delivery-events`
+   */
+  async getProviderDeliveryEvents(): Promise<z.infer<typeof S.providerDeliveryEventsResponse>> {
+    return await this.json("GET", "/api/provider/delivery-events", {}, undefined) as z.infer<typeof S.providerDeliveryEventsResponse>;
+  }
+
+  /**
    * Ask Cloudflare which account this grant covers, and record it when the answer is one
    *
    * `POST /api/provider/resolve-account`
