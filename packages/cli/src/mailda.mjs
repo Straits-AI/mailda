@@ -499,6 +499,25 @@ async function provider(argv) {
     return;
   }
 
+  if (argv.includes("--email-routing")) {
+    const { routing } = await call("GET", "/api/provider/email-routing");
+    for (const one of routing) {
+      process.stdout.write(`\n   ${one.domain}\n`);
+      if (one.zone !== null) process.stdout.write(`     zone      ${one.zone}\n`);
+      if (one.status !== null) {
+        process.stdout.write(`     receiving ${one.status}${one.enabled === false ? " (disabled)" : ""}\n`);
+      }
+      if (one.error !== null) process.stdout.write(`     unknown   ${one.error}\n`);
+      for (const record of one.required) {
+        process.stdout.write(
+          `     needs     ${record.type} ${record.name} -> ${record.content}`
+          + `${record.priority === null ? "" : ` (priority ${record.priority})`}\n`,
+        );
+      }
+    }
+    return;
+  }
+
   if (argv.includes("--resolve-account")) {
     /*
      * The first act that *spends* the grant rather than describing it. Deliberate rather than automatic:
@@ -2023,6 +2042,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --client-id <id>   register the OAuth client; the secret is read from stdin
   mailda provider --scopes a,b       begin a consent and print the URL to open
   mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
+  mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

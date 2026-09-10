@@ -418,6 +418,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/provider/authorize",
     // Spends the grant: renews a token and reads the account. An act of running the Node, and one a machine
     // has no errand for — L1 provisions nothing, so nothing an agent may do needs the account's name.
+    /*
+     * A `GET` that spends the grant — three Cloudflare calls per domain, and possibly a token renewal. The
+     * derivation rule would offer it as an ordinary read, and an agent polling it would spend the account's
+     * authority to answer a question nothing it may do depends on.
+     */
+    "GET /api/provider/email-routing",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",

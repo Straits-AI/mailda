@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are ten", () => {
+  it("derives read for every GET but the named exceptions, and there are eleven", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -90,13 +90,18 @@ describe("every route is classified, and a new one cannot default", () => {
      * consent in flight — and the operator waiting on that redirect would meet `E_PROVIDER_STATE_CONSUMED`
      * from a request they did not make. A `GET` that changes something is exactly what an exception list is
      * for, and the derivation rule cannot see the difference.
+     *
+     * `GET /api/provider/email-routing` (#163) is the eleventh and a third kind again: it reads, and it
+     * reads **through the grant** — three Cloudflare calls per domain, possibly renewing a token. An agent
+     * polling it would spend the account's own authority to answer a question nothing an agent may do
+     * depends on, and the cost would appear on the operator's bill rather than in this Node.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
       "GET /api/agent-capabilities", "GET /api/agents", "GET /api/audit",
       "GET /api/evidence/inventory", "GET /api/logs",
-      "GET /api/people/:userId/mailboxes", "GET /api/provider", "GET /api/search/failed",
-      "GET /index.html", "GET /oauth/cloudflare/callback",
+      "GET /api/people/:userId/mailboxes", "GET /api/provider", "GET /api/provider/email-routing",
+      "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 
     for (const spec of ALL.filter((one) => one.method === "GET")) {

@@ -310,6 +310,34 @@ export const providerAccountResponse = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * What Cloudflare says about receiving mail for each domain this Node routes (#163 L2).
+ *
+ * `zone` is separate from `domain` because they are usually different — a Node routing
+ * `inbox@mailda-test.whymelabs.com` is configured on the zone `whymelabs.com`, and a surface that showed one
+ * as the other would send somebody to the wrong place in the dashboard.
+ *
+ * `required` is Cloudflare's own list of records, and `error` is why a domain could not be answered for.
+ * Both are present rather than optional: an unreadable record list and a zone that genuinely needs nothing
+ * are both an empty array, and only `error` tells them apart.
+ */
+export const providerRoutingResponse = z.object({
+  routing: z.array(z.object({
+    domain: z.string().min(1),
+    zone: z.string().nullable(),
+    zoneId: z.string().nullable(),
+    enabled: z.boolean().nullable(),
+    status: z.string().nullable(),
+    required: z.array(z.object({
+      type: z.string(),
+      name: z.string(),
+      content: z.string(),
+      priority: z.number().nullable(),
+    }).strict()),
+    error: z.string().nullable(),
+  }).strict()),
+}).strict();
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

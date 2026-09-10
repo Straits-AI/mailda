@@ -19,7 +19,7 @@ would come to disagree about which acts are safe, which is the worst thing they 
 | `read` | yes | answers a question, changes nothing | 38 |
 | `act` | yes | changes something, and a person can undo it | 8 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 30 |
-| `operator` | **no** | installation, credentials, maintenance | 38 |
+| `operator` | **no** | installation, credentials, maintenance | 39 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
@@ -32,7 +32,7 @@ this route — and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |
 |:--|--:|:--|
-| the tier | 69 | `POST /api/sends` — sealing a send is the one act nobody can undo |
+| the tier | 70 | `POST /api/sends` — sealing a send is the one act nobody can undo |
 | `org.admin`, which no mint confers | 20 | `GET /api/people`, `POST /api/butlers` |
 | a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys` — 200, and an empty list, for ever |
 | requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |
@@ -42,7 +42,7 @@ empty or the credential is rejected on a door it was told it could open. They we
 long as the catalogue was filtered by tier alone, and `test/mcp.test.ts` now asserts the intersection is empty
 against the registry rather than against a list of names.
 
-**Reads are derived, with ten named exceptions.** Every `GET` is `read` by construction, because writing
+**Reads are derived, with eleven named exceptions.** Every `GET` is `read` by construction, because writing
 ninety judgements where one rule suffices is how a registry acquires an entry that disagrees with its own
 path. `GET /index.html` was the first exception: the interface shell is a page, not a question anybody would
 ask a Node, and offering it would put "fetch the HTML" in a list of capabilities.
@@ -60,6 +60,10 @@ is in `test/node/agent-exposure-world.test.ts`; they fall into three kinds:
   `GET /oauth/cloudflare/callback` (#162) is not a read at all: it consumes a single-use nonce and exchanges
   an authorization code, so fetching it spends an operator's consent in flight. The derivation rule cannot see
   that difference, which is the clearest argument for why an exception list has to exist.
+- **a `GET` that spends somebody else's authority** — `GET /api/provider/email-routing` (#163) reads, and
+  reads *through the Cloudflare grant*: three calls per domain, possibly renewing a token. An agent polling it
+  would spend the account's own authority to answer a question nothing it may do depends on, and the cost
+  would land on the operator's bill rather than in this Node.
 
 Every route that changes something is classified by hand, and `exposureOf` **throws** on one that is not.
 `agent-exposure-world.test.ts` runs it over the whole registry, so a new route fails rather than defaulting

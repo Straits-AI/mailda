@@ -2267,6 +2267,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ authorize: { url: begun.url } });
     }
 
+    if (url.pathname === "/api/provider/email-routing" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * A `GET` that **spends the grant** — it may renew a token and it calls Cloudflare three times per
+       * domain. Declared `operator` in the agent registry for that reason: the derivation rule would
+       * otherwise offer it as an ordinary read, and an agent polling it would be spending the account's
+       * authority to answer a question nothing it may do depends on.
+       */
+      const { emailRoutingState } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({ routing: await emailRoutingState(env, clock, who.orgId) });
+    }
+
     if (url.pathname === "/api/provider/resolve-account" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
