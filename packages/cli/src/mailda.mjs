@@ -523,10 +523,26 @@ async function provider(argv) {
     for (const one of delivery) {
       process.stdout.write(`\n   ${one.domain}\n`);
       /*
-       * Each of the three objects on its own line, present or absent. A single verdict would be shorter and
+       * Each of the four objects on its own line, present or absent. A single verdict would be shorter and
        * would leave an operator with nothing to do about it — the whole point of this surface is naming
        * which one is missing.
        */
+      if (one.zone !== null) process.stdout.write(`     zone      ${one.zone}\n`);
+      process.stdout.write(
+        one.sending === null
+          ? (one.zone === null
+            ? `     sending   no zone in this account carries this domain\n`
+            : `     sending   not onboarded — this domain cannot send, so no event will ever exist\n`)
+          : `     sending   ${one.sending.name}${one.sending.enabled === false ? " (disabled)" : ""}`
+            + `${one.sending.dkimSelector === null ? "" : ` — dkim ${one.sending.dkimSelector}`}\n`,
+      );
+      for (const record of one.sending?.required ?? []) {
+        process.stdout.write(
+          `     needs     ${record.type} ${record.name} -> ${record.content}`
+          + `${record.priority === null ? "" : ` (priority ${record.priority})`}\n`,
+        );
+      }
+      if (one.sending?.error != null) process.stdout.write(`     unknown   ${one.sending.error}\n`);
       process.stdout.write(
         one.subscription === null
           ? `     events    no email.sending subscription covers this domain\n`

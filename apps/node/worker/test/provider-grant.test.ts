@@ -911,16 +911,45 @@ describe("delivery events, read through the grant", () => {
     ).bind("addr_delivery", ORG, address, "mbx_x", new Date(SEPTEMBER_3).toISOString()).run();
   }
 
-  /** Answers each Cloudflare path from `answers`, and records what was asked. */
+  /** A path this stub answers with Cloudflare's own kind of refusal rather than with a result. */
+  const REFUSE = Symbol("refused");
+  const ZONE = { id: "zone_1", name: "example.test" };
+  const SENDING = "/zones/zone_1/email/sending/subdomains";
+
+  /**
+   * Answers each Cloudflare path from `answers`, and records what was asked.
+   *
+   * The zone lookup and the sending list are answered by default, because every test here is about one of
+   * the four objects and would otherwise have to restate the other three.
+   */
   function serving(answers: Record<string, unknown>) {
+    answers = {
+      "/zones?name=example.test": [ZONE],
+      "/zones?name=": [],
+      [SENDING]: [{
+        id: "snd_1", name: "example.test", enabled: true,
+        return_path_domain: "cf-bounce.example.test", dkim_selector: "cf-bounce",
+      }],
+      [`${SENDING}/snd_1/dns`]: [
+        { type: "TXT", name: "_dmarc.example.test", content: "\"v=DMARC1; p=reject;\"" },
+      ],
+      ...answers,
+    };
+    // An explicit `undefined` removes a default, which is how a test asks for a path nobody answers.
+    for (const [at, value] of Object.entries(answers)) if (value === undefined) delete answers[at];
+    /*
+     * `REFUSE` is not the same as removing the key: a path nested under one that *is* answered would
+     * otherwise fall back to its parent's answer rather than being refused.
+     */
     const asked: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
       const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
       asked.push(path);
-      const key = Object.keys(answers).find((one) => path.startsWith(one));
+      const key = Object.keys(answers).filter((one) => path.startsWith(one))
+        .sort((a, b) => b.length - a.length)[0];
       return new Response(
         JSON.stringify(
-          key === undefined
+          key === undefined || answers[key] === REFUSE
             ? { success: false, errors: [{ code: 7003, message: `no route for ${path}` }] }
             : { success: true, result: answers[key] },
         ),
@@ -959,6 +988,20 @@ describe("delivery events, read through the grant", () => {
     const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
     expect(seen).toEqual({
       domain: "mailda-test.example.test",
+      zone: "example.test",
+      /*
+       * The apex is the onboarded sending domain and this Node sends from a subdomain of it, which is the
+       * real shape on the live account — `whymelabs.com` is onboarded and `mailda-test.whymelabs.com` is
+       * onboarded separately beside it.
+       */
+      sending: {
+        name: "example.test", enabled: true,
+        returnPath: "cf-bounce.example.test", dkimSelector: "cf-bounce",
+        required: [{
+          type: "TXT", name: "_dmarc.example.test", content: "\"v=DMARC1; p=reject;\"", priority: null,
+        }],
+        error: null,
+      },
       subscription: "mailda-sending-events",
       subscriptionId: "sub_1",
       enabled: true,
@@ -968,6 +1011,142 @@ describe("delivery events, read through the grant", () => {
       consumers: ["mailda"],
       error: null,
     });
+  });
+
+  it("counts an apex sending domain as covering a subdomain sending under it", async () => {
+    /*
+     * The same dot-boundary rule as the subscription match, and it needs its own test because the two are
+     * separate lines: Cloudflare onboards `whymelabs.com` and `mailda-test.whymelabs.com` as distinct
+     * sending domains, so a Node under either has to be found under the one that is actually there.
+     */
+    await ready("inbox@deep.example.test");
+    await withAccount();
+    serving({ [SUBSCRIPTIONS]: [] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.sending?.name).toBe("example.test");
+    expect(seen!.sending?.required).toHaveLength(1);
+  });
+
+  it("prefers the most specific sending domain when an apex is onboarded too", async () => {
+    /*
+     * **Found by a live run, not by a stub.** `whymelabs.com` and `mailda-test.whymelabs.com` are both
+     * onboarded, and taking the first match reported the apex — so the records shown were the apex's, every
+     * one of them correct about a domain nobody had asked about. Proposing those would have meant writing
+     * into a zone carrying live mail.
+     */
+    await ready("inbox@deep.example.test");
+    await withAccount();
+    serving({
+      [SENDING]: [
+        { id: "snd_apex", name: "example.test", enabled: true },
+        { id: "snd_deep", name: "deep.example.test", enabled: true },
+      ],
+      [`${SENDING}/snd_deep/dns`]: [
+        { type: "TXT", name: "_dmarc.deep.example.test", content: "\"v=DMARC1; p=reject;\"" },
+      ],
+      [SUBSCRIPTIONS]: [],
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.sending?.name).toBe("deep.example.test");
+    expect(seen!.sending?.required[0]?.name).toBe("_dmarc.deep.example.test");
+  });
+
+  it("prefers the most specific subscription when an apex one covers the domain too", async () => {
+    await ready("inbox@deep.example.test");
+    await withAccount();
+    serving({
+      [SUBSCRIPTIONS]: [
+        subscription("example.test", { id: "sub_apex", name: "apex-events" }),
+        subscription("deep.example.test", { id: "sub_deep", name: "deep-events" }),
+      ],
+      "/accounts/acc_1/queues/q_1": { queue_name: "q", consumers: [{ script: "mailda" }] },
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.subscription).toBe("deep-events");
+  });
+
+  it("does not count a sending domain that merely ends the same way", async () => {
+    await ready("inbox@notexample.test");
+    await withAccount();
+    // A zone exists for it, so the walk succeeds and only the sending-list match decides.
+    serving({
+      "/zones?name=notexample.test": [{ id: "zone_1", name: "notexample.test" }],
+      [SUBSCRIPTIONS]: [],
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.zone).toBe("notexample.test");
+    expect(seen!.sending).toBeNull();
+  });
+
+  it("reports an unreadable sending list as unknown rather than as not onboarded", async () => {
+    /*
+     * The dangerous direction. `null` means *this domain may not send*, and an operator meeting that about a
+     * working sender would re-onboard a domain that was already fine — or read the three lines below it as
+     * irrelevant when they are the actual fault.
+     */
+    await ready("inbox@example.test");
+    await withAccount();
+    serving({ [SENDING]: REFUSE, [SUBSCRIPTIONS]: [] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.sending).not.toBeNull();
+    expect(seen!.sending!.enabled).toBeNull();
+    expect(seen!.sending!.error).toContain("7003");
+  });
+
+  it("keeps an unreadable record list apart from a sending domain that needs nothing", async () => {
+    /*
+     * `required: []` twice over, and only `error` says which. This is `emailRoutingFor`'s hazard on the
+     * sending side: a proposal built from an unreadable list would tell an operator their DNS was complete
+     * because a request failed.
+     */
+    await ready("inbox@example.test");
+    await withAccount();
+    serving({ [`${SENDING}/snd_1/dns`]: REFUSE, [SUBSCRIPTIONS]: [] });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.sending!.required).toEqual([]);
+    expect(seen!.sending!.error).toContain("7003");
+  });
+
+  it("never asks Cloudflare about a single label", async () => {
+    /*
+     * The walk stops at two labels. A single label is a public suffix rather than a zone anybody owns, so
+     * `GET /zones?name=test` is a request whose every possible answer is wrong — an empty one wastes a call,
+     * and a non-empty one would attach this Node's mail to somebody else's registry entry.
+     */
+    await ready("inbox@deep.example.test");
+    await withAccount();
+    const asked = serving({ "/zones?name=deep.example.test": [], [SUBSCRIPTIONS]: [] });
+
+    await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(asked).toContain("/zones?name=example.test");
+    expect(asked).not.toContain("/zones?name=test");
+  });
+
+  it("resolves the innermost zone carrying a domain, not the outermost", async () => {
+    /*
+     * A subdomain that is **its own zone** must be found as itself. Email Sending and Email Routing are both
+     * configured per zone, so resolving `deep.b.example.test` to `example.test` when `b.example.test` is a
+     * zone would report a different zone's configuration as this domain's — records for the wrong name, and
+     * a verdict about somebody else's mail.
+     */
+    await ready("inbox@deep.b.example.test");
+    await withAccount();
+    serving({
+      "/zones?name=b.example.test": [{ id: "zone_inner", name: "b.example.test" }],
+      "/zones/zone_inner/email/sending/subdomains": [{ id: "snd_2", name: "b.example.test", enabled: true }],
+      "/zones/zone_inner/email/sending/subdomains/snd_2/dns": [],
+      [SUBSCRIPTIONS]: [],
+    });
+
+    const [seen] = await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
+    expect(seen!.zone).toBe("b.example.test");
+    expect(seen!.sending?.name).toBe("b.example.test");
   });
 
   it("counts an apex subscription as covering a subdomain it sends from", async () => {
