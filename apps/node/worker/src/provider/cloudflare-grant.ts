@@ -1233,3 +1233,175 @@ export async function emailRoutingState(
   }
   return seen;
 }
+
+/**
+ * Whether a delivery outcome would ever be **seen** for one domain this Node sends from (#163 L2).
+ *
+ * ## The question this answers, and why `doctor` could not
+ *
+ * Outbound delivery is reported by an account-level `email.sending` **event subscription** that publishes to
+ * a queue, which a Worker then consumes. Three separate objects, any one of which missing produces the same
+ * symptom: silence. `doctor`'s `sending_events_consumer` has said since it was written that this is *"not
+ * checkable from inside a Worker — no account API access"*, and that sentence was true when it was written.
+ *
+ * ADR 42 made it false. The grant carries `queues.write`, and two plain reads settle all three:
+ * `GET /accounts/{id}/event_subscriptions/subscriptions` lists the subscriptions, and
+ * `GET /accounts/{id}/queues/{queue_id}` names the consumers of the one a subscription publishes to. So the
+ * absence is now reportable **by name** — which object is missing — rather than inferable from a delivery
+ * outcome that never arrived.
+ *
+ * ## The subscription is not in the documented menu, and exists anyway
+ *
+ * `wrangler queues subscription create --source` still does not offer `email.sending` (re-measured 10
+ * September 2026, wrangler 4.118.0), and the API reference's create schema does not list it among the
+ * `source.type` values either. Both are wrong: a live account holds one, created 7 August 2026, whose
+ * `source` carries `type: "email.sending"` with `zone_id` and `domain` — two fields that same schema does not
+ * document.
+ *
+ * Which is this flow's recurring mistake wearing the other face. Five times a **list of what something
+ * supports** was read as a list of what may be had; here a list omits something that can be had. The rule
+ * that survives both is the same one: ask the account, not the menu.
+ *
+ * ## Why a queue is fetched by id rather than found in the list
+ *
+ * `GET /accounts/{id}/queues` pages at 100 and this account holds 66. A Node that read page one and matched
+ * against it would be right until the sixty-seventh queue, then silently report a healthy Node's queue as
+ * absent — which is exactly how `deploy --plan` came to call a healthy Node broken, on R2's page of twenty.
+ * A subscription names its `queue_id`, so there is a targeted read and no list to be wrong about.
+ */
+export interface DeliveryEventsState {
+  /** A domain this Node routes, which is what it would also send from. */
+  domain: string;
+  /** The `email.sending` subscription covering it, by name. Null when there is none. */
+  subscription: string | null;
+  subscriptionId: string | null;
+  /** A subscription that exists and is switched off publishes nothing, so this is not the same as absent. */
+  enabled: boolean | null;
+  /** The event types it publishes, in Cloudflare's words. */
+  events: string[];
+  queueId: string | null;
+  queueName: string | null;
+  /** The Workers consuming that queue. Empty means events are published into a queue nobody reads. */
+  consumers: string[];
+  /** Why this domain could not be answered for. Null when it could. */
+  error: string | null;
+}
+
+/**
+ * Every `email.sending` subscription on the account, following `result_info` rather than trusting a page.
+ *
+ * The loop stops on a short page, so it needs no count from the response and cannot be fooled by a total
+ * that disagrees with what was returned.
+ */
+async function sendingSubscriptions(
+  env: Env, ctx: Ctx, orgId: string, accountId: string,
+): Promise<{ ok: true; result: CloudflareSubscription[] } | { ok: false; error: string }> {
+  const page_size = 50;
+  const all: CloudflareSubscription[] = [];
+  for (let page = 1; ; page++) {
+    const answer = await cloudflareGet<CloudflareSubscription[]>(
+      env, ctx, orgId,
+      `/accounts/${accountId}/event_subscriptions/subscriptions?page=${page}&per_page=${page_size}`,
+    );
+    if (!answer.ok) return answer;
+    all.push(...answer.result);
+    if (answer.result.length < page_size) return { ok: true, result: all };
+  }
+}
+
+interface CloudflareSubscription {
+  id?: string;
+  name?: string;
+  enabled?: boolean;
+  events?: string[];
+  source?: { type?: string; domain?: string };
+  destination?: { queue_id?: string };
+}
+
+export async function deliveryEventsState(
+  env: Env, ctx: Ctx, orgId: string,
+): Promise<DeliveryEventsState[]> {
+  const rows = await env.CATALOG.prepare(
+    // The same source `emailRoutingState` uses: the domains mail is actually addressed at, not a config list.
+    "SELECT DISTINCT substr(address, instr(address, '@') + 1) AS domain FROM addresses WHERE org_id = ?",
+  ).bind(orgId).all<{ domain: string }>();
+  const domains = rows.results.map((row) => row.domain);
+  if (domains.length === 0) return [];
+
+  const blank = (domain: string): DeliveryEventsState => ({
+    domain,
+    subscription: null, subscriptionId: null, enabled: null, events: [],
+    queueId: null, queueName: null, consumers: [], error: null,
+  });
+
+  const binding = await env.CATALOG.prepare(
+    "SELECT account_id FROM provider_binding WHERE id = 1",
+  ).first<{ account_id: string | null }>();
+  const accountId = binding?.account_id ?? null;
+  if (accountId === null) {
+    /*
+     * Not an error about Cloudflare — an error about this Node. The account id is filled lazily by
+     * `resolveAccount`, so naming the step is the difference between an operator running one command and an
+     * operator re-doing the consent.
+     */
+    return domains.map((domain) => ({
+      ...blank(domain),
+      error: "this Node has not determined its Cloudflare account yet — POST /api/provider/resolve-account",
+    }));
+  }
+
+  const subscriptions = await sendingSubscriptions(env, ctx, orgId, accountId);
+  if (!subscriptions.ok) {
+    return domains.map((domain) => ({ ...blank(domain), error: subscriptions.error }));
+  }
+
+  const seen: DeliveryEventsState[] = [];
+  for (const domain of domains) {
+    /*
+     * A subscription is scoped to one sending domain: the zone apex or a verified sending subdomain. So an
+     * apex subscription covers this domain too, and matching only on equality would report a covered domain
+     * as uncovered.
+     */
+    const found = subscriptions.result.find((one) => {
+      const on = one.source?.domain;
+      return one.source?.type === "email.sending" && on !== undefined
+        && (on === domain || domain.endsWith(`.${on}`));
+    });
+    if (found === undefined) {
+      seen.push(blank(domain));
+      continue;
+    }
+
+    const state: DeliveryEventsState = {
+      ...blank(domain),
+      subscription: found.name ?? null,
+      subscriptionId: found.id ?? null,
+      enabled: found.enabled ?? null,
+      events: found.events ?? [],
+      queueId: found.destination?.queue_id ?? null,
+    };
+    if (state.queueId === null) {
+      seen.push({ ...state, error: "the subscription names no destination queue" });
+      continue;
+    }
+
+    const queue = await cloudflareGet<{
+      queue_name?: string; consumers?: Array<{ script?: string; type?: string }>;
+    }>(env, ctx, orgId, `/accounts/${accountId}/queues/${state.queueId}`);
+    if (!queue.ok) {
+      seen.push({ ...state, error: queue.error });
+      continue;
+    }
+    seen.push({
+      ...state,
+      queueName: queue.result.queue_name ?? null,
+      /*
+       * An unreadable consumer list is not an empty one, for `emailRoutingFor`'s reason: both are `[]`, and
+       * only the `error` above tells them apart. A surface reading this as *nobody consumes the queue* would
+       * report a working Node as blind.
+       */
+      consumers: (queue.result.consumers ?? []).map((one) => one.script ?? one.type ?? "?"),
+    });
+  }
+  return seen;
+}

@@ -6,7 +6,8 @@ stale_when: >
   automatic resource provisioning leaves beta; wrangler starts provisioning a queue named only by a
   consumer block; a consumers block becomes valid without a `queue` field; a producer binding stops
   validating without one; wrangler gains any way to interpolate the Worker name into a config value;
-  `email.sending` appears in `wrangler queues subscription create --source`; or the
+  `email.sending` appears in `wrangler queues subscription create --source`; `email.sending` appears among
+  the `source.type` values in the API reference's create-subscription schema; or the
   Deploy button's setup page gains a field for event subscriptions
 values:
   queues.producer_binding_provisions: 1
@@ -17,7 +18,87 @@ values:
   queues.subscription_creatable_by_cli: 0
   queues.email_sending_subscription_is_dashboard_only: 0
   queues.subscription_creatable_by_api: 1
+  queues.email_sending_listed_in_api_reference: 0
+  queues.subscription_reports_zone_and_domain: 1
+  queues.subscription_list_default_page: 20
+  queues.queue_list_default_page: 100
 ---
+
+## Addition, 10 September 2026: the subscription is readable from inside the Node now, and is in no menu (#163)
+
+ADR 42 gave the Node its own Cloudflare grant, and `doctor`'s `sending_events_consumer` had said since #72
+that this question was *"not checkable from inside a Worker — no account API access"*. That sentence was
+true when written and is now false. Four values measured today against the live `Swmengappdev` account,
+wrangler 4.118.0.
+
+### `queues.subscription_creatable_by_cli: 0` — re-measured, unchanged
+
+`wrangler queues subscription create --help` offers `--source` choices `artifacts`, `artifacts.repo`,
+`images`, `kv`, `r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker`,
+`workflows.workflow`. No `email.sending`, and no flag for the sending domain a subscription would have to be
+scoped to. Unchanged from the 19 August re-measurement, on a wrangler eight weeks newer.
+
+### `queues.email_sending_listed_in_api_reference: 0` — and the subscription exists anyway
+
+The API reference's create-subscription schema
+(`POST /accounts/{account_id}/event_subscriptions/subscriptions`) lists `source.type` values `images`, `kv`,
+`r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker`, `workers.script`,
+`workflows.workflow`. No `email.sending` there either.
+
+`GET` on that same path returns one:
+
+```json
+{
+  "name": "mailda-sending-events",
+  "enabled": true,
+  "source": {
+    "name": "Email Service", "type": "email.sending",
+    "zone_id": "37713c68…", "domain": "mailda-test.whymelabs.com"
+  },
+  "destination": { "type": "queues.queue", "queue_id": "f59f810e…" },
+  "events": ["message.delivered", "message.deferred", "message.bounced",
+             "message.failed", "message.rejected", "message.complained"]
+}
+```
+
+Created 7 August 2026. So `queues.subscription_creatable_by_api: 1` above stands, and two things the
+reference does not document are load-bearing: the `email.sending` source type, and the `zone_id` and
+`domain` fields that carry the per-domain scoping (`queues.subscription_reports_zone_and_domain: 1`). The
+changelog of 15 July 2026 and `/email-service/platform/event-subscriptions/` both describe the capability;
+only the two **enumerations** omit it.
+
+Which is this flow's recurring mistake wearing its other face. Five times during #162 a *list of what
+something supports* was read as a list of what may be had. Here a list omits something that can be had, and
+would have been read as proof it cannot. The rule that survives both readings is the same: **ask the
+account, not the menu.**
+
+### `queues.subscription_list_default_page: 20` and `queues.queue_list_default_page: 100`
+
+Both endpoints paginate, and they paginate **differently** — subscriptions default to 20 per page, queues to
+100. This account holds 66 queues, so a reader that took `GET /accounts/{id}/queues` at face value would be
+right until the hundred-and-first and then report a healthy Node's queue as absent. That is how
+`deploy --plan` came to call a healthy Node broken, on R2's page of twenty
+(`docs/receipts/wrangler-list-pagination.md`).
+
+So `deliveryEventsState` pages the subscription list until a short page, and reads the queue by
+**`queue_id`** — which the subscription names — rather than finding it in a list at all.
+
+### What is now checkable, and what still is not
+
+`GET /api/provider/delivery-events`, run live through the grant on 10 September 2026:
+
+```text
+   mailda-test.whymelabs.com
+     events    mailda-sending-events — message.delivered, message.deferred, message.bounced, …
+     queue     mailda-sending-events
+     consumer  mailda
+```
+
+Three objects, named separately, because any one missing produces the same symptom — silence — and a single
+verdict over them would be one an operator could not act on. Two of the three still cannot be **created**
+from here: the consumer is attached out of band, and the subscription needs the dashboard or a direct API
+call. What changed is that their absence is reportable by name instead of inferable from a delivery outcome
+that never arrived.
 
 ## Addition, 19 August 2026: a queue name is account-scoped, and this receipt never asked whether it had to be written down (#72)
 

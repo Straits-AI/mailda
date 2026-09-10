@@ -541,6 +541,13 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/delivery-events",
+    summary: "Whether an `email.sending` subscription, its queue and a consumer exist for each domain this "
+      + "Node sends from — read through the grant",
+    response: S.providerDeliveryEventsResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/resolve-account",
     summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
     response: S.providerAccountResponse,

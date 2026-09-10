@@ -576,6 +576,13 @@ const FIGURES: Record<string, Classification> = {
     // #72's pair. Config-parser behaviour, which has no plan column at all: the file is accepted or refused
     // before anything reaches an account, and the dry-run that measured both never touched one.
     "queues.producer_queue_name_omissible", "queues.consumer_queue_name_required",
+    /*
+     * #163's four. Two are about what Cloudflare's *documentation* enumerates and what its API actually
+     * carries, which no plan changes; the other two are page sizes, which are a property of the endpoint
+     * rather than of the pot the account is paying from.
+     */
+    "queues.email_sending_listed_in_api_reference", "queues.subscription_reports_zone_and_domain",
+    "queues.subscription_list_default_page", "queues.queue_list_default_page",
   ),
 
   // docs/receipts/r2-auto-provisioning.md

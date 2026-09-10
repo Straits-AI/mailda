@@ -2283,6 +2283,21 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ routing: await emailRoutingState(env, clock, who.orgId) });
     }
 
+    if (url.pathname === "/api/provider/delivery-events" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * `operator` for `/api/provider/email-routing`'s reason: it spends the grant. This is the surface
+       * `doctor`'s `sending_events_consumer` points at, which is why that finding can now name which of the
+       * three objects is missing instead of saying the question is unanswerable from here.
+       */
+      const { deliveryEventsState } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({ delivery: await deliveryEventsState(env, clock, who.orgId) });
+    }
+
     if (url.pathname === "/api/provider/resolve-account" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

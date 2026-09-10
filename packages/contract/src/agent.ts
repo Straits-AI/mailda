@@ -424,6 +424,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * authority to answer a question nothing it may do depends on.
      */
     "GET /api/provider/email-routing",
+    /*
+     * The same kind of `GET` and the same reason: it spends the grant, listing the account's event
+     * subscriptions and reading a queue. It answers an installation question an operator acts on, and
+     * nothing an agent may do turns on it.
+     */
+    "GET /api/provider/delivery-events",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",

@@ -276,11 +276,17 @@ describe("doctor", () => {
     expect(finding.detail).toMatch(/not enforced|dashboard/);
   });
 
-  it("reports the queue consumer as un-checkable, and names the step that attaches it (#72)", async () => {
-    // Since #72 the queue is provisioned per Node with a derived name and the consumer is attached out of
-    // band, so a Node can be healthy, sending, and observing nothing. A Worker holds no account credential,
-    // so it cannot ask Queues who consumes its queue — and an absent check reads exactly like a passing one,
-    // which is the argument `workers_paid_plan` already makes.
+  it("sends the queue-consumer question to the route that answers it, and names the attach step (#72)", async () => {
+    /*
+     * Since #72 the queue is provisioned per Node with a derived name and the consumer is attached out of
+     * band, so a Node can be healthy, sending, and observing nothing — and an absent check reads exactly
+     * like a passing one, which is the argument `workers_paid_plan` already makes.
+     *
+     * This assertion used to be `toContain("Not checkable")`. ADR 42 gave the Node its own grant and made
+     * that word wrong, so what is checked is the *shape* of the answer rather than its old verdict: the
+     * finding still costs this report nothing, still names its remedy, and now names the surface that does
+     * answer it. `test/node/delivery-events-world.test.ts` is what makes that name refer to something.
+     */
     const report = await runDoctor(testEnv, createSystemCtx());
     const finding = find(report.findings, "sending_events_consumer");
 
@@ -289,7 +295,7 @@ describe("doctor", () => {
     expect(finding.severity).toBe("report");
     expect(finding.ok).toBe(true);
     expect(report.verdict).not.toBe("refuse");
-    expect(finding.detail).toContain("Not checkable");
+    expect(finding.detail).toContain("GET /api/provider/delivery-events");
     // The command, because a capability gap that does not name its remedy is a complaint (AGENTS.md §3).
     expect(finding.detail).toContain("queue:attach-consumer");
     // And the accepted cost, where the reader meets the gap rather than in a doc they have not opened.
