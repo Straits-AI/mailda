@@ -599,6 +599,14 @@ const FIGURES: Record<string, Classification> = {
     "queues.subscription_list_default_page", "queues.queue_list_default_page",
   ),
 
+  // docs/receipts/cloudflare-grant-reach.md
+  ...bothPlans(
+    "how far this Node's Cloudflare grant reaches and how much of it is spent; counts of endpoints and "
+      + "scopes, which are facts about an API and a consent rather than quantities a plan scales",
+    "grant.scopes_asked_for", "grant.scopes_authorizing_a_call", "grant.endpoints_reached",
+    "grant.endpoints_with_documented_permission", "grant.narrowed_grant_probed",
+  ),
+
   // docs/receipts/r2-auto-provisioning.md
   ...bothPlans(
     "what wrangler does with an R2 binding at deploy; account tooling behaviour",
