@@ -2298,6 +2298,50 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       return Response.json({ delivery: await deliveryEventsState(env, clock, who.orgId) });
     }
 
+    /*
+     * Two blocks rather than one testing `request.method` inside, which `route-registry.test.ts` would have
+     * counted as a sixth handler answering *any* verb. The five that do are all read-only; this one is not,
+     * and a `PUT` falling through a shared block to a 404 reads as a missing resource rather than a wrong
+     * request. Duller, and it keeps that closed set closed.
+     */
+    if (url.pathname === "/api/provider/sending" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const domain = url.searchParams.get("domain") ?? "";
+      if (domain === "") {
+        throw unprocessable("E_PROVIDER_SENDING_DOMAIN_MISSING", {
+          what: "this route answers about one domain and none was named",
+          why: "a proposal with no subject would be a digest over nothing, confirmable against anything",
+          fix: "pass ?domain=<the domain to onboard for sending>",
+        });
+      }
+      const { sendingProposalFor } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({ proposal: await sendingProposalFor(env, clock, who.orgId, domain) });
+    }
+
+    if (url.pathname === "/api/provider/sending" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * The one route that **changes the customer's Cloudflare account**. Its whole defence is in
+       * `onboardSending`: the proposal is recomputed there and the digest must match it, so a stale proposal
+       * or one aimed at a different domain refuses rather than applies.
+       */
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const { onboardSending } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({
+        proposal: await onboardSending(
+          env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
+        ),
+      });
+    }
+
     if (url.pathname === "/api/provider/resolve-account" && request.method === "POST") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

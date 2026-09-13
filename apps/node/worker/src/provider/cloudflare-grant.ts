@@ -1542,3 +1542,189 @@ export async function deliveryEventsState(
   }
   return seen;
 }
+
+/**
+ * Onboarding a domain for sending: the proposal, and the apply bound to it (#163 L2, write side).
+ *
+ * ## One call, and Cloudflare writes the DNS
+ *
+ * `docs/receipts/email-routing-subdomain-onboarding.md` records the drill. `POST .../email/sending/subdomains`
+ * with a name creates the sending domain **and Cloudflare places the six records itself** — verified in
+ * public DNS with `dig` against the authoritative nameserver rather than by believing the API's account of
+ * itself. So this Node writes no DNS record, and the proposal is *"this domain is not onboarded"* rather than
+ * a record list Mailda maintains, which would be a second copy of somebody else's requirements.
+ *
+ * ## Confirmed by the operator, and bound to what they were shown
+ *
+ * Not the approval machinery, and the reason is what the read side already did wrong once. It matched the
+ * apex and printed six records that were each correct — about a domain nobody had asked about. **Two
+ * administrators would both have approved that.** Dual control defends against one person acting alone; the
+ * failure available here is a plausible proposal aimed at the wrong name, and what defends against that is
+ * binding the apply to the exact proposal that was displayed.
+ *
+ * `domain_pause` is the precedent for an organization-scoped approval and its reason does not transfer:
+ * `approvals.ts` says it exists to stop *a single administrator stopping a customer's mail*. This stops
+ * nothing, is scoped to one name the operator typed, and is additive. And the approver count comes from
+ * `policy_stages.required_count`, driven by a policy object whose conditions are `SendFacts` — none of which
+ * describe a DNS act, which `governed.ts` names as a decision about what a policy may say rather than one to
+ * pre-build here.
+ *
+ * ## The digest is a staleness check, not a secret
+ *
+ * A plain SHA-256 over the canonical proposal. There is nothing to forge — the caller is already an
+ * administrator who could call the API directly — so a MAC would add key management to defend against the
+ * one party the route exists to serve. What it does defend is the gap between reading and acting: somebody
+ * else onboarding the name, the zone moving, or a second terminal holding an older proposal.
+ *
+ * ## Onboarding asks about the **exact** name, and the read side does not
+ *
+ * `deliveryEventsState` matches an apex sending domain as covering a subdomain under it, because for
+ * *sending* it does. Onboarding is per exact name, so a domain covered by its apex is still un-onboarded as
+ * itself and onboarding it is a real act. Reusing the covering match here would refuse that as already done.
+ */
+export interface SendingProposal {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  /** Already onboarded under this exact name, so there is nothing to do. */
+  onboarded: boolean;
+  /** An apex entry that already covers it for sending, which is not the same as being onboarded. */
+  coveredBy: string | null;
+  /** What applying would cause, in Cloudflare's terms rather than this Node's. */
+  creates: string[];
+  /**
+   * What applying cannot be undone into. Measured: un-onboarding removes five of the six records and leaves
+   * the DMARC one, on a name Cloudflare then stops managing.
+   */
+  leavesBehind: string[];
+  /** SHA-256 over the fields above, which the apply must be handed back. */
+  digest: string;
+  error: string | null;
+}
+
+/** The canonical bytes a digest is taken over: what the operator was told, and nothing derived from it. */
+async function digestOf(of: Omit<SendingProposal, "digest">): Promise<string> {
+  const canonical = JSON.stringify([
+    of.domain, of.zone, of.zoneId, of.onboarded, of.coveredBy, of.creates, of.leavesBehind, of.error,
+  ]);
+  const hashed = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(hashed)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function sendingProposalFor(
+  env: Env, ctx: Ctx, orgId: string, domain: string,
+): Promise<SendingProposal> {
+  const without = async (over: Partial<Omit<SendingProposal, "digest">>): Promise<SendingProposal> => {
+    const body = {
+      domain, zone: null, zoneId: null, onboarded: false, coveredBy: null,
+      creates: [], leavesBehind: [], error: null, ...over,
+    };
+    return { ...body, digest: await digestOf(body) };
+  };
+
+  const carrying = await zoneFor(env, ctx, orgId, domain);
+  if (!carrying.ok) return await without({ error: carrying.error });
+  if (carrying.zone === null) {
+    return await without({ error: `no zone in this account carries ${domain}` });
+  }
+  const zone = carrying.zone;
+
+  const onboarded = await cloudflareGet<Array<{ name?: string }>>(
+    env, ctx, orgId, `/zones/${zone.id}/email/sending/subdomains`,
+  );
+  if (!onboarded.ok) {
+    return await without({ zone: zone.name, zoneId: zone.id, error: onboarded.error });
+  }
+
+  const already = onboarded.result.some((one) => one.name === domain);
+  const covering = mostSpecific(onboarded.result, (one) => one.name, domain);
+  return await without({
+    zone: zone.name,
+    zoneId: zone.id,
+    onboarded: already,
+    coveredBy: already || covering?.name === undefined ? null : covering.name,
+    /*
+     * Named rather than listed as records: Cloudflare places them and their contents are its own. Saying
+     * *where* they will appear is what an operator needs to decide, and it is the part this Node can state
+     * without keeping a copy of somebody else's requirements.
+     */
+    creates: already ? [] : [`cf-bounce.${domain}`, `cf-bounce._domainkey.${domain}`, `_dmarc.${domain}`],
+    leavesBehind: already ? [] : [`_dmarc.${domain}`],
+  });
+}
+
+/**
+ * The first write this Node makes to the account it is installed in.
+ *
+ * Every refusal here is a refusal to act, never a partial one: the `POST` is the last thing that happens and
+ * nothing before it changes state. `POST` is **not idempotent** — a second one answers
+ * `2040 Subdomain already exists` — so the proposal is recomputed rather than cached, and `onboarded: true`
+ * is a refusal with a different code from a digest mismatch, because *somebody already did this* and *you
+ * are holding a stale proposal* are different things to be told.
+ */
+export async function onboardSending(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, domain: string, digest: string,
+): Promise<SendingProposal> {
+  const proposal = await sendingProposalFor(env, ctx, orgId, domain);
+  if (proposal.error !== null) {
+    throw unprocessable("E_PROVIDER_SENDING_UNREADABLE", {
+      what: `this Node could not settle what onboarding ${domain} would do`,
+      why: proposal.error,
+      fix: "read GET /api/provider/delivery-events, and check the grant still covers this zone",
+    });
+  }
+  if (proposal.onboarded) {
+    throw conflict("E_PROVIDER_SENDING_ALREADY", {
+      what: `${domain} is already onboarded for sending on ${proposal.zone}`,
+      why: "Cloudflare refuses a second onboarding of the same name, and this Node refuses before asking",
+      fix: "nothing to do — GET /api/provider/delivery-events shows what it is missing, if anything",
+    });
+  }
+  if (digest !== proposal.digest) {
+    /*
+     * The whole point of the route. The proposal displayed and the proposal about to be applied are not the
+     * same, so what the operator agreed to is not what would happen — and the read side has already been
+     * wrong about *which domain* once, which is the shape this refuses.
+     */
+    throw conflict("E_PROVIDER_SENDING_STALE", {
+      what: "the proposal confirmed is not the proposal this Node would now apply",
+      why: "something changed between reading and confirming — the zone, or what is already onboarded",
+      fix: `run the proposal again and confirm the digest it prints: ${proposal.digest}`,
+    });
+  }
+
+  const token = await accessTokenFor(env, ctx, orgId);
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${proposal.zoneId}/email/sending/subdomains`,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: domain }),
+    },
+  ).catch(() => null);
+
+  const body = (await response?.json().catch(() => ({}))) as {
+    success?: boolean; errors?: Array<{ message?: string; code?: number }>;
+  };
+  if (response === null || body.success !== true) {
+    const said = (body?.errors ?? []).map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+    throw unprocessable("E_PROVIDER_SENDING_REFUSED", {
+      what: `Cloudflare refused to onboard ${domain} for sending`,
+      // Cloudflare's own words: its codes are what separate "already exists" from "not your zone".
+      why: said === "" ? `the API answered ${response?.status ?? "nothing"}` : said,
+      fix: "check the grant still covers this zone, and that the account may add a sending domain",
+    });
+  }
+
+  await auditedBatch(env, ctx, orgId, {
+    action: "provider.sending_onboarded", outcome: "ok", actorUserId, subject: domain,
+    /*
+     * The zone and what this causes, because the entry has to answer *"who made records appear in our DNS"*
+     * months later — and `leavesBehind` because an operator reading this trail after un-onboarding needs the
+     * record that survived to be named somewhere that was written before it mattered.
+     */
+    detail: { zone: proposal.zone, creates: proposal.creates, leavesBehind: proposal.leavesBehind },
+  }, (entry) => [entry]);
+
+  return await sendingProposalFor(env, ctx, orgId, domain);
+}

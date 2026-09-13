@@ -430,6 +430,20 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * nothing an agent may do turns on it.
      */
     "GET /api/provider/delivery-events",
+    /*
+     * The proposal read, `operator` for the same reason as the two above — it spends the grant — and for one
+     * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
+     * the digest is the only thing standing between a `POST` and a change to the customer's DNS.
+     */
+    "GET /api/provider/sending",
+    /*
+     * **The one route that changes the customer's Cloudflare account**, and the sharpest thing on this list
+     * to withhold. It makes DNS records appear in a zone the customer owns, and un-onboarding is measured
+     * not to remove all of them — so an act a machine took here would leave a `_dmarc` policy behind on a
+     * name nothing lists. Its confirmation is a digest, which is a check against a *stale* proposal and not
+     * against an unattended one; only a person deciding makes it the latter.
+     */
+    "POST /api/provider/sending",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",

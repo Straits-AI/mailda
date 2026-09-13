@@ -549,6 +549,30 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/sending",
+    summary: "What onboarding a domain for sending would do, and the digest that confirming it must carry. "
+      + "Changes nothing",
+    /*
+     * The domain is a query parameter rather than a path segment because it is the *subject* of a question,
+     * not a resource this Node holds — there is nothing at `/api/provider/sending/x.example` to GET until
+     * Cloudflare has been asked about it.
+     */
+    query: [{
+      name: "domain",
+      description: "the domain to propose onboarding for sending. Required; the answer is about this name "
+        + "exactly, and an apex that already covers it is reported as `coveredBy` rather than as done",
+    }],
+    response: S.providerSendingProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/sending",
+    summary: "Onboard a domain for sending through the grant, refusing unless the digest matches the "
+      + "proposal this Node would now apply",
+    request: S.providerSendingRequest, response: S.providerSendingProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/resolve-account",
     summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
     response: S.providerAccountResponse,

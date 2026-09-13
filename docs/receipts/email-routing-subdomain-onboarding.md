@@ -20,7 +20,43 @@ values:
   sending.onboard_post_idempotent: 0
   sending.unonboard_delete_idempotent: 0
   sending.unonboard_removes_every_created_record: 0
+  sending.onboard_records_appear_atomically: 0
 ---
+
+## Addition, 13 September 2026: the onboard run through the Node's own grant (#163 L2)
+
+`drill.mailda-test.whymelabs.com`, onboarded by `mailda provider --onboard-sending … --confirm <digest>`
+against the live Node — the first act this Node has performed that **changes the Cloudflare account it is
+installed in**.
+
+### `sending.onboard_records_appear_atomically: 0`
+
+The six records do not land together. Immediately after the `POST`, the `cf-bounce` MX set and its SPF TXT
+answered from the authoritative nameserver; the DKIM and DMARC TXT records did not, and arrived within
+thirty seconds.
+
+This costs nothing here and is recorded because of the design it rules out. A proposal that diffed
+Cloudflare's required list against the zone's **actual** DNS would report a freshly-onboarded domain as
+half-configured, and an operator re-running it would meet a different answer each time for the first minute.
+The proposal this Node builds asks Cloudflare what is *onboarded* rather than what is *resolving*, so the
+lag is invisible to it — which was chosen for a different reason and turns out to matter for this one too.
+
+### The digest refusing a real wrong-target confirm
+
+Run live, and it is the failure this route exists for rather than a hypothetical: a proposal was taken for
+`other.mailda-test.whymelabs.com` and its digest offered as confirmation for
+`drill.mailda-test.whymelabs.com`.
+
+```text
+E_PROVIDER_SENDING_STALE  the proposal confirmed is not the proposal this Node would now apply
+  fix      run the proposal again and confirm the digest it prints: 04c5bcf2…
+```
+
+Nothing reached Cloudflare. The read side had already made the neighbouring mistake once — matching an apex
+and printing six correct records about a domain nobody asked about — and **two administrators would have
+approved that**, which is why the confirmation here binds to the proposal rather than collecting a second
+signature.
+
 
 ## Addition, 10 September 2026: the onboard drill, and the record it leaves behind (#163)
 
