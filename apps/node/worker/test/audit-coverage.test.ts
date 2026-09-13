@@ -236,6 +236,13 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.account_reported_unselectable",
       // A grant that existed and stopped working, which is a different history from one never granted.
       "provider.grant_refused",
+      /*
+       * The first act this grant *spends* on a change rather than a read (#163 L2). It belongs against the
+       * binding rather than a table of its own: what onboarding a sending domain produces lives in
+       * Cloudflare's account, not in this Node — and the question an investigator brings is *which grant
+       * made records appear in our DNS*, which is a question about the binding.
+       */
+      "provider.sending_onboarded",
     ],
   },
   /*

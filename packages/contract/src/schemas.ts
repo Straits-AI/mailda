@@ -381,6 +381,41 @@ export const providerDeliveryEventsResponse = z.object({
   }).strict()),
 }).strict();
 
+/**
+ * What onboarding a domain for sending would do, and the digest that binds an apply to it.
+ *
+ * `onboarded` and `coveredBy` are separate because they are different facts: a subdomain sending under an
+ * onboarded apex is covered, and is still un-onboarded as itself. A surface collapsing them would report
+ * nothing to do about an act that is real.
+ *
+ * `creates` names *where* records will appear rather than listing them. Cloudflare places them and their
+ * contents are its own — a list here would be a second copy of somebody else's requirements.
+ *
+ * `leavesBehind` is the measured consequence that un-onboarding is not an undo, and it is in the response
+ * rather than in a doc because the moment to read it is the moment of confirming.
+ */
+export const providerSendingProposal = z.object({
+  domain: z.string().min(1),
+  zone: z.string().nullable(),
+  zoneId: z.string().nullable(),
+  onboarded: z.boolean(),
+  coveredBy: z.string().nullable(),
+  creates: z.array(z.string()),
+  leavesBehind: z.array(z.string()),
+  digest: z.string().length(64),
+  error: z.string().nullable(),
+}).strict();
+
+export const providerSendingProposalResponse = z.object({
+  proposal: providerSendingProposal,
+}).strict();
+
+/** The domain to onboard, and the digest of the proposal the operator was shown for it. */
+export const providerSendingRequest = z.object({
+  domain: z.string().min(1).max(253),
+  digest: z.string().length(64),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

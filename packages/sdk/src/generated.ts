@@ -1026,6 +1026,26 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What onboarding a domain for sending would do, and the digest that confirming it must carry. Changes nothing
+   *
+   * @param query.domain the domain to propose onboarding for sending. Required; the answer is about this name exactly, and an apex that already covers it is reported as `coveredBy` rather than as done
+   *
+   * `GET /api/provider/sending`
+   */
+  async getProviderSending(query?: { domain?: string }): Promise<z.infer<typeof S.providerSendingProposalResponse>> {
+    return await this.json("GET", "/api/provider/sending", {}, undefined, query) as z.infer<typeof S.providerSendingProposalResponse>;
+  }
+
+  /**
+   * Onboard a domain for sending through the grant, refusing unless the digest matches the proposal this Node would now apply
+   *
+   * `POST /api/provider/sending`
+   */
+  async postProviderSending(body: z.infer<typeof S.providerSendingRequest>): Promise<z.infer<typeof S.providerSendingProposalResponse>> {
+    return await this.json("POST", "/api/provider/sending", {}, body) as z.infer<typeof S.providerSendingProposalResponse>;
+  }
+
+  /**
    * Ask Cloudflare which account this grant covers, and record it when the answer is one
    *
    * `POST /api/provider/resolve-account`

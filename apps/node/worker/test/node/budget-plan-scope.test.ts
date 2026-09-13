@@ -357,6 +357,8 @@ const FIGURES: Record<string, Classification> = {
      */
     "sending.onboard_creates_dns_records", "sending.onboard_post_idempotent",
     "sending.unonboard_delete_idempotent", "sending.unonboard_removes_every_created_record",
+    // DNS propagation, which no plan buys faster.
+    "sending.onboard_records_appear_atomically",
   ),
 
   // docs/receipts/email-sending-events.md

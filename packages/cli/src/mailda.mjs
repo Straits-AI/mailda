@@ -563,6 +563,57 @@ async function provider(argv) {
     return;
   }
 
+  const onboarding = flag(argv, "onboard-sending");
+  if (onboarding !== null) {
+    /*
+     * Two steps, and the second one quotes the first. `deploy --plan` then `deploy`, and
+     * `recovery-codes rotate` then `confirm`, are the same shape — but the digest here is doing more than
+     * ceremony: it is what makes *the thing applied* and *the thing shown* provably the same proposal, which
+     * is the failure this route actually has. The read side already matched the wrong domain once and
+     * printed six perfectly correct records about it.
+     */
+    const confirming = flag(argv, "confirm");
+    if (confirming === null) {
+      const { proposal } = await call("GET", `/api/provider/sending?domain=${encodeURIComponent(onboarding)}`);
+      process.stdout.write(`\n   ${proposal.domain}\n`);
+      if (proposal.zone !== null) process.stdout.write(`     zone      ${proposal.zone}\n`);
+      if (proposal.error !== null) {
+        process.stdout.write(`     unknown   ${proposal.error}\n\n`);
+        return;
+      }
+      if (proposal.onboarded) {
+        process.stdout.write(`     onboarded already — nothing to do\n\n`);
+        return;
+      }
+      // Said before the act, because it is the reason somebody might not want it.
+      if (proposal.coveredBy !== null) {
+        process.stdout.write(
+          `     covered   ${proposal.coveredBy} already sends for this domain — onboarding it as itself\n`
+          + `               gives it its own DKIM key and bounce domain, and is a separate thing\n`,
+        );
+      }
+      for (const name of proposal.creates) process.stdout.write(`     creates   ${name}\n`);
+      for (const name of proposal.leavesBehind) {
+        process.stdout.write(
+          `     keeps     ${name} — un-onboarding removes the rest and leaves this one, on a name\n`
+          + `               Cloudflare stops managing. Measured, not documented\n`,
+        );
+      }
+      process.stdout.write(
+        `\n   confirm: mailda provider --onboard-sending ${proposal.domain}`
+        + ` --confirm ${proposal.digest}\n\n`,
+      );
+      return;
+    }
+
+    const { proposal } = await call("POST", "/api/provider/sending", {
+      domain: onboarding, digest: confirming,
+    });
+    process.stdout.write(`\n   ${proposal.domain} is onboarded for sending on ${proposal.zone}\n`);
+    process.stdout.write(`   next: mailda provider --delivery-events\n\n`);
+    return;
+  }
+
   if (argv.includes("--resolve-account")) {
     /*
      * The first act that *spends* the grant rather than describing it. Deliberate rather than automatic:
@@ -2089,6 +2140,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
+  mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

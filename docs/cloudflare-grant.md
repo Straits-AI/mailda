@@ -431,6 +431,62 @@ on)` — the dot is a label boundary, without which `notexample.test` would coun
 until the hundred-and-first queue. A subscription names its `queue_id`, so there is a targeted read and no
 list to be wrong about — the mistake `deploy --plan` already made once, on R2's page of twenty.
 
+## Onboarding a domain for sending (#163 L2, write side)
+
+The first act this Node performs that **changes the Cloudflare account it is installed in**. Two steps:
+
+```text
+$ mailda provider --onboard-sending drill.mailda-test.whymelabs.com
+
+   drill.mailda-test.whymelabs.com
+     zone      whymelabs.com
+     covered   mailda-test.whymelabs.com already sends for this domain — onboarding it as itself
+               gives it its own DKIM key and bounce domain, and is a separate thing
+     creates   cf-bounce.drill.mailda-test.whymelabs.com
+     creates   cf-bounce._domainkey.drill.mailda-test.whymelabs.com
+     creates   _dmarc.drill.mailda-test.whymelabs.com
+     keeps     _dmarc.drill.mailda-test.whymelabs.com — un-onboarding removes the rest and leaves this one,
+               on a name Cloudflare stops managing. Measured, not documented
+
+   confirm: mailda provider --onboard-sending drill.mailda-test.whymelabs.com --confirm 04c5bcf2…
+```
+
+One `POST` applies it, and **Cloudflare places the records itself** — this Node writes no DNS record. All six
+were live in public DNS within thirty seconds, checked with `dig` against the authoritative nameserver.
+
+### A binding, not a second signature
+
+The confirmation is a digest over the proposal. That is a deliberate choice against dual control, and the
+argument is what already went wrong: the read side matched an apex and printed six records that were each
+perfectly correct — about a domain nobody had asked about. **Two administrators would have approved that.**
+Dual control defends against one person acting alone; the failure available here is a plausible proposal
+aimed at the wrong name, and what defends against that is binding the apply to what was displayed.
+
+Run live, offering one domain's digest for another:
+
+```text
+E_PROVIDER_SENDING_STALE  the proposal confirmed is not the proposal this Node would now apply
+```
+
+Nothing reached Cloudflare. `domain_pause` is the precedent for an organization-scoped approval and its
+reason does not transfer — `approvals.ts` says it exists to stop *a single administrator stopping a
+customer's mail*. This stops nothing and is scoped to one name the operator typed.
+
+### Three refusals, three codes
+
+`E_PROVIDER_SENDING_ALREADY`, `E_PROVIDER_SENDING_STALE` and `E_PROVIDER_SENDING_UNREADABLE` are separate
+because *somebody already did this*, *you are holding an old proposal* and *this Node could not find out* are
+different things to be told. Cloudflare's own `2040 Subdomain already exists` would say the first — after a
+write had been attempted.
+
+### Covered is not onboarded
+
+`mailda-test.whymelabs.com` already sends for everything beneath it, and `drill.` under it was still
+un-onboarded *as itself*. Onboarding it is a real act that gives it its own DKIM key and bounce domain. The
+read side matches an apex as covering a subdomain, because for sending it does; the proposal asks about the
+exact name, because onboarding does. Reusing either match for the other would be wrong in a different
+direction each way.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:

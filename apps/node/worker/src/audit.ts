@@ -835,6 +835,18 @@ export const AUDIT_ACTIONS = {
     says: "Cloudflare refused to renew this Node's grant, so it can no longer act in the account.",
   },
 
+  /**
+   * The first write this Node makes to the Cloudflare account it is installed in (#163 L2).
+   *
+   * **The entry names the zone and what the act causes**, because the question it has to answer months later
+   * is *"who made these records appear in our DNS"* — and `leavesBehind` is in it for a sharper reason: the
+   * `_dmarc` record survives un-onboarding, so the trail has to name it while somebody is still connecting
+   * it to an act, rather than leaving it to be found on a name Cloudflare no longer manages.
+   */
+  "provider.sending_onboarded": {
+    says: "An administrator onboarded a domain for sending, and Cloudflare placed records under it.",
+  },
+
   "provider.account_reported_unselectable": {
     says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
       + "account of it, not this Node's measurement.",

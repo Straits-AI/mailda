@@ -315,6 +315,24 @@ describe("every schema-bearing route answers what the contract says it does", ()
     };
     expect(delivery.delivery).toEqual([]);
 
+    /*
+     * The proposal read and the apply (#163 L2's write side). **Both refuse here, and that is the right way
+     * round**, which is why this asserts a refusal rather than a shape.
+     *
+     * It is the opposite of the routing and delivery reads above, and the difference is real: those answer
+     * about the domains this Node *has*, so a Node with none has an honest empty answer and never touches
+     * the grant. This one is asked about a domain the caller named, so there is no answer that does not come
+     * from Cloudflare — and a proposal returned anyway would carry a **digest**, which is the one thing on
+     * this surface that is meant to be handed back to a write. Confirmable output about an unreadable world
+     * is worse than a refusal saying the account is not connected.
+     */
+    for (const attempt of [
+      answers("GET", "/api/provider/sending", { cookie: held }, "?domain=onboard.example.test"),
+      answers("POST", "/api/provider/sending", {
+        cookie: held, body: { domain: "onboard.example.test", digest: "0".repeat(64) },
+      }),
+    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_GRANT|answered 409/);
+
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };
     };
@@ -1815,8 +1833,16 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * the queue it publishes to, and the consumers on that queue. `.strict()` matters here for the ordinary
      * reason and one extra: the shape carries Cloudflare's own object ids, and a field this contract did not
      * describe is a field nothing is checking the disclosure of.
+     *
+     * The 113th and 114th are `GET` and `POST /api/provider/sending` (#163 L2's write side) — the proposal
+     * and the apply. They share a schema because the apply answers with the proposal *after* the act, so a
+     * caller sees the same shape describing the new state rather than an acknowledgement it has to trust.
+     *
+     * `.strict()` on the request is what the digest rests on: a `POST` carrying an unknown field would be a
+     * `POST` whose meaning this contract had not agreed to, on the one route that changes the customer's
+     * Cloudflare account.
      */
-    expect(coverage.total).toBe(112);
+    expect(coverage.total).toBe(114);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

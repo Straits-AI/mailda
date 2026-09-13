@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  cloudflareGet, deliveryEventsState, PROVIDER_STATES, providerStatus, registerClient,
-  reportUnselectable, resolveAccount,
+  cloudflareGet, deliveryEventsState, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
+  reportUnselectable, resolveAccount, sendingProposalFor,
   STATUS_COLUMNS,
   type ProviderState,
 } from "../src/provider/cloudflare-grant.ts";
@@ -1264,5 +1264,202 @@ describe("delivery events, read through the grant", () => {
 
     expect(await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG)).toEqual([]);
     expect(asked).toEqual([]);
+  });
+});
+
+
+/**
+ * Onboarding a domain for sending: the proposal, and the apply bound to it (#163 L2 write side).
+ *
+ * ## What these are actually defending
+ *
+ * Not "does the POST work" — one live drill settles that better than any stub. The property here is that
+ * **the thing applied is the thing that was shown**, which is the failure this route really has: the read
+ * side matched an apex and printed six perfectly correct records about a domain nobody had asked about. Two
+ * administrators would have approved that, so the defence is a binding rather than a signature.
+ *
+ * The second property is that every refusal is a refusal to *act*. Nothing may reach Cloudflare after this
+ * Node has decided not to.
+ */
+describe("onboarding a domain for sending", () => {
+  const ZONE = { id: "zone_1", name: "example.test" };
+
+  async function granted() {
+    await register();
+    answering(200, {
+      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
+    });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
+  }
+
+  /** Records every request, and answers the two reads a proposal makes. */
+  function serving(onboarded: Array<{ name: string }>, postAnswers?: unknown) {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      calls.push({ url: path, method: init?.method ?? "GET" });
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify(postAnswers ?? { success: true, result: { id: "new" } }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      const result = path.startsWith("/zones?name=example.test") ? [ZONE]
+        : path.startsWith("/zones?name=") ? []
+        : path.endsWith("/email/sending/subdomains") ? onboarded
+        : null;
+      return new Response(
+        JSON.stringify(
+          result === null
+            ? { success: false, errors: [{ code: 7003, message: `no route for ${path}` }] }
+            : { success: true, result },
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    return calls;
+  }
+
+  it("proposes what onboarding would create, and what backing out would leave", async () => {
+    await granted();
+    serving([]);
+
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.zone).toBe("example.test");
+    expect(proposal.onboarded).toBe(false);
+    expect(proposal.creates).toEqual([
+      "cf-bounce.mail.example.test", "cf-bounce._domainkey.mail.example.test", "_dmarc.mail.example.test",
+    ]);
+    /*
+     * The measured half. `DELETE` removes five of six records and keeps this one, so an operator has to be
+     * told before confirming rather than after finding it on a name Cloudflare no longer manages.
+     */
+    expect(proposal.leavesBehind).toEqual(["_dmarc.mail.example.test"]);
+    expect(proposal.digest).toHaveLength(64);
+  });
+
+  it("treats a domain covered by its apex as still un-onboarded", async () => {
+    /*
+     * The read side matches an apex as *covering* a subdomain, because for sending it does. Onboarding is
+     * per exact name, so reusing that match here would refuse a real act as already done — and the operator
+     * would never get the subdomain's own DKIM key or bounce domain.
+     */
+    await granted();
+    serving([{ name: "example.test" }]);
+
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.onboarded).toBe(false);
+    expect(proposal.coveredBy).toBe("example.test");
+    expect(proposal.creates).not.toEqual([]);
+  });
+
+  it("says already onboarded, without a covering domain, for the exact name", async () => {
+    await granted();
+    serving([{ name: "example.test" }, { name: "mail.example.test" }]);
+
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.onboarded).toBe(true);
+    expect(proposal.coveredBy).toBeNull();
+    expect(proposal.creates).toEqual([]);
+  });
+
+  it("applies when the digest matches what it would now do", async () => {
+    await granted();
+    const calls = serving([]);
+
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    await onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    );
+
+    const posted = calls.filter((one) => one.method === "POST");
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.url).toBe("/zones/zone_1/email/sending/subdomains");
+  });
+
+  it("refuses a digest from a different domain, and reaches Cloudflare with no write", async () => {
+    /*
+     * **The one this route exists for.** A proposal computed for one name, confirmed against another, is
+     * exactly the shape the read side produced when it matched an apex — and it is the shape a second
+     * approver would have signed off too.
+     */
+    await granted();
+    const calls = serving([]);
+    const other = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "other.example.test");
+
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", other.digest,
+    )).rejects.toThrow(/E_PROVIDER_SENDING_STALE/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("refuses a proposal that has gone stale under it", async () => {
+    await granted();
+    serving([]);
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+
+    // Somebody else onboards the apex in between, so what applying would do is no longer what was shown.
+    const calls = serving([{ name: "example.test" }]);
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/E_PROVIDER_SENDING_STALE/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("refuses a second onboarding by name rather than by digest", async () => {
+    /*
+     * A different code from staleness on purpose. *Somebody already did this* and *you are holding an old
+     * proposal* are different things to be told, and Cloudflare's own `2040` would arrive too late to say
+     * either — after a write had been attempted.
+     */
+    await granted();
+    const calls = serving([{ name: "mail.example.test" }]);
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/E_PROVIDER_SENDING_ALREADY/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("refuses rather than guesses when the proposal could not be read", async () => {
+    await granted();
+    const calls = serving([]);
+
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "nowhere.example.invalid", "0".repeat(64),
+    )).rejects.toThrow(/E_PROVIDER_SENDING_UNREADABLE/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("carries Cloudflare's own refusal out rather than a paraphrase", async () => {
+    await granted();
+    serving([], { success: false, errors: [{ code: 2040, message: "Subdomain already exists" }] });
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+
+    await expect(onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/2040 Subdomain already exists/);
+  });
+
+  it("records the act, the zone, and the record that will outlive it", async () => {
+    await granted();
+    serving([]);
+    const proposal = await sendingProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    await onboardSending(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    );
+
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT action, subject, detail FROM audit_entries WHERE org_id = ? AND action = ?",
+    ).bind(ORG, "provider.sending_onboarded").first<{ subject: string; detail: string }>();
+    expect(entry?.subject).toBe("mail.example.test");
+    const detail = JSON.parse(entry!.detail) as { zone: string; leavesBehind: string[] };
+    expect(detail.zone).toBe("example.test");
+    // Written while somebody can still connect it to an act, rather than found later on an unlisted name.
+    expect(detail.leavesBehind).toEqual(["_dmarc.mail.example.test"]);
   });
 });

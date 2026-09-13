@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are twelve", () => {
+  it("derives read for every GET but the named exceptions, and there are thirteen", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -101,6 +101,11 @@ describe("every route is classified, and a new one cannot default", () => {
      * subscriptions and reads a queue, so it spends the grant too, and it answers an *installation* question
      * — whether a send's outcome would ever be seen — that an operator acts on and no agent's errand turns
      * on.
+     *
+     * `GET /api/provider/sending` (#163) is the thirteenth, and it is the first here that is withheld for
+     * what it *enables* rather than what it costs. It is the read half of a write: the proposal it returns
+     * carries the digest, and that digest is the only thing between a `POST` and records appearing in the
+     * customer's DNS. A machine that could read it could confirm it.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
@@ -108,6 +113,7 @@ describe("every route is classified, and a new one cannot default", () => {
       "GET /api/evidence/inventory", "GET /api/logs",
       "GET /api/people/:userId/mailboxes", "GET /api/provider",
       "GET /api/provider/delivery-events", "GET /api/provider/email-routing",
+      "GET /api/provider/sending",
       "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 

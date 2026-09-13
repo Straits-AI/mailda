@@ -96,6 +96,13 @@ describe("every closed set the contract declares is a closed set the boundary en
        */
       "POST /api/search/repair",
       /*
+       * Onboarding a sending domain (#163 L2). Strict for a reason none of the others have: this is the one
+       * route that **changes the customer's Cloudflare account**, and its whole defence is that the digest
+       * covers the proposal being applied. A dropped or misspelled field is a `POST` whose meaning this
+       * contract never agreed to, arriving at a write that makes DNS records appear in somebody's zone.
+       */
+      "POST /api/provider/sending",
+      /*
        * Registering the Node's OAuth client, and beginning a consent (#162 L1, ADR 42). Strict, and the
        * argument is the sharpest of the four: a misspelled `clientSecret` silently dropped would be refused
        * by `E_PROVIDER_NEEDS_BOTH` — a refusal telling an operator they forgot the secret when they had
@@ -302,7 +309,7 @@ describe("strictness is decided per route, not turned on globally", () => {
     }
     expect(strict.sort()).toEqual([
       "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
-      "POST /api/search/repair",
+      "POST /api/provider/sending", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([
