@@ -1130,7 +1130,42 @@ export interface RoutingState {
 }
 
 /**
- * The zone carrying a domain, which is usually a **parent** of it.
+ * The Cloudflare account this Node is bound to, which is the boundary every other read is kept inside.
+ *
+ * Null is **not** "search everywhere" — it is a refusal, and the only caller that treats it otherwise would
+ * be a bug. `resolveAccount` fills it, and deliberately leaves it null when a grant covers more than one
+ * account, which its own comment calls *"a real answer and not an error"*.
+ */
+async function boundAccount(env: Env): Promise<string | null> {
+  const row = await env.CATALOG.prepare(
+    "SELECT account_id FROM provider_binding WHERE id = 1",
+  ).first<{ account_id: string | null }>();
+  return row?.account_id ?? null;
+}
+
+/** What every surface says when the boundary is not known, so the sentence cannot drift between them. */
+const NO_BOUND_ACCOUNT =
+  "this Node has not determined its Cloudflare account yet — POST /api/provider/resolve-account";
+
+/**
+ * The zone carrying a domain, which is usually a **parent** of it — **within this Node's own account**.
+ *
+ * ## The account filter is the isolation boundary, and it was missing (#165)
+ *
+ * `GET /zones?name=x` returns zones from **every account the grant can see**, not from one. Measured: a
+ * token on this machine sees fifteen zones across four accounts, one of them a client's. So a Node whose
+ * grant spans two accounts would resolve a name in either, and the walk would happily hand back somebody
+ * else's zone — after which `emailRoutingFor` reports their routing, `sendingProposalFor` proposes against
+ * their DNS, and `onboardSending` **writes records into a zone this Node is not bound to**.
+ *
+ * The grant on the live Node covers one account, so nothing was ever wrong there. That is an accident of one
+ * consent rather than a property of this code, which is exactly the kind of safety #165 asks to be proven
+ * rather than observed: `test/provider-isolation.test.ts` removes this filter and watches a test fail.
+ *
+ * A null `account_id` **refuses**. It is the multi-account case — `resolveAccount` records nothing when a
+ * grant covers several — and searching all of them is the hole itself rather than a fallback.
+ *
+ * ## The walk
  *
  * Longest first: a subdomain that *is* its own zone must be found as itself rather than as its parent,
  * because both Email Routing and Email Sending are configured per zone and the two would report different
@@ -1138,16 +1173,20 @@ export interface RoutingState {
  * asking Cloudflare for `com` is a request whose every possible answer is wrong.
  *
  * Shared by the receiving read and the sending one because they resolve the *same* zone, and two copies of
- * this walk would be two places for the stopping rule to drift.
+ * this walk would be two places for the stopping rule — or the account filter — to drift.
  */
 async function zoneFor(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<{ ok: true; zone: { id: string; name: string } | null } | { ok: false; error: string }> {
+  const accountId = await boundAccount(env);
+  if (accountId === null) return { ok: false, error: NO_BOUND_ACCOUNT };
+
   const labels = domain.split(".");
   for (let at = 0; at + 2 <= labels.length; at++) {
     const candidate = labels.slice(at).join(".");
     const found = await cloudflareGet<Array<{ id: string; name: string }>>(
-      env, ctx, orgId, `/zones?name=${encodeURIComponent(candidate)}`,
+      env, ctx, orgId,
+      `/zones?name=${encodeURIComponent(candidate)}&account.id=${encodeURIComponent(accountId)}`,
     );
     if (!found.ok) return { ok: false, error: found.error };
     const zone = found.result[0];
@@ -1428,20 +1467,14 @@ export async function deliveryEventsState(
     queueId: null, queueName: null, consumers: [], error: null,
   });
 
-  const binding = await env.CATALOG.prepare(
-    "SELECT account_id FROM provider_binding WHERE id = 1",
-  ).first<{ account_id: string | null }>();
-  const accountId = binding?.account_id ?? null;
+  const accountId = await boundAccount(env);
   if (accountId === null) {
     /*
      * Not an error about Cloudflare — an error about this Node. The account id is filled lazily by
      * `resolveAccount`, so naming the step is the difference between an operator running one command and an
      * operator re-doing the consent.
      */
-    return domains.map((domain) => ({
-      ...blank(domain),
-      error: "this Node has not determined its Cloudflare account yet — POST /api/provider/resolve-account",
-    }));
+    return domains.map((domain) => ({ ...blank(domain), error: NO_BOUND_ACCOUNT }));
   }
 
   const subscriptions = await sendingSubscriptions(env, ctx, orgId, accountId);
