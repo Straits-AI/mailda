@@ -5,13 +5,13 @@ measured_on: 2026-09-14
 stale_when: >
   the Node calls a Cloudflare endpoint not in the table below; `REQUIRED_SCOPES` changes;
   Cloudflare publishes an Accepted Permissions block for the Email Sending subdomain endpoints;
-  or a grant narrowed to the five scopes named here is observed failing on any of them
+  or any path in the table is observed failing on the six scopes named here
 values:
-  grant.scopes_asked_for: 15
+  grant.scopes_asked_for: 6
   grant.scopes_authorizing_a_call: 5
   grant.endpoints_reached: 8
   grant.endpoints_with_documented_permission: 5
-  grant.narrowed_grant_probed: 0
+  grant.narrowed_grant_probed: 1
 ---
 
 **Measured:** against the live Node `mailda.swmengappdev.workers.dev` and its real grant on the
@@ -64,7 +64,42 @@ observed is narrower than it looks: a grant holding `email-sending.write` reache
 That matters because it is load-bearing for the narrowing below: `email-sending.write` cannot be dropped on
 the strength of the documentation, because the documentation does not speak.
 
-## Nine granted scopes authorize nothing this Node calls
+## Addition, same day: the narrowing was registered, consented to, and exercised
+
+Everything below was written while the grant held **fifteen** scopes. It now holds **six**, and this section
+is why `grant.scopes_asked_for` reads 6 and `grant.narrowed_grant_probed` reads 1.
+
+The client's scope list was edited in the dashboard to the five pickable names — `Account Settings Read`,
+`Zone Read`, `Zone Settings Read`, `Queues Read`, `Email Sending Write` — and a consent run through
+`/api/provider/authorize`'s scope override rather than by changing `REQUIRED_SCOPES` first, so a failure
+would have left the constant untouched:
+
+```json
+{"consent":{"ok":true,"scopesGranted":["account-settings.read","zone.read","zone-settings.read",
+ "queues.read","email-sending.write","offline_access"],"scopesDeclined":[]}}
+```
+
+Then **all eight paths against that grant**, on the live Node: the account resolved, Email Routing's verdict
+and records read, the sending subdomains listed with their DNS, the event subscription and its queue's
+consumer read, a proposal produced — and `POST /zones/{}/email/sending/subdomains` onboarded
+`probe2.mailda-test.whymelabs.com`, whose six records were confirmed in public DNS.
+
+So both open questions are answered. **`queues.read` covers the event-subscriptions list and the queue
+read**, which the reference suggested and nothing had shown. And the five-scope read set is sufficient for
+every read.
+
+### The `POST` had to be re-run rather than argued about
+
+The tempting shortcut was that `email-sending.write` is unchanged between the old grant and the new, so the
+write path could not have been affected. **That argument rests on a table Cloudflare does not publish.**
+Because these endpoints carry no *Accepted Permissions* block, which scope authorized that `POST` was never
+known — it could as easily have been one of the nine being dropped. Onboarding would then have broken for
+the next operator with nothing recorded to say why.
+
+Still unmeasured, and the next probe: whether `email-sending.read` suffices for the three read paths, which
+would let a Node that never onboards hold no write scope at all. It needs its own re-consent.
+
+## Nine granted scopes authorized nothing this Node called
 
 ```text
 account-api-gateway.read         email-routing-address.write      user-details.read
@@ -81,10 +116,10 @@ Cloudflare account that no code path in this repository uses.
 Two of the five that *are* used are **write** scopes where a read exists and would do: `queues.write` backs
 two `GET`s, and nothing writes to a queue through this grant.
 
-### What a narrowed grant would be
+### What the narrowed grant is
 
-**Six**, if the write-for-read pair is corrected and `email-sending.write` is kept because nothing documents
-an alternative:
+**Six** — the write-for-read pair corrected, and `email-sending.write` kept because nothing documents an
+alternative:
 
 ```text
 account-settings.read   zone.read   zone-settings.read   queues.read
@@ -96,9 +131,6 @@ actual records — it does not today, and the reason is recorded in
 `email-routing-subdomain-onboarding.md`: onboarding asks Cloudflare what is *onboarded*, not what is
 *resolving*.
 
-**This is a proposal, not a measurement.** `grant.narrowed_grant_probed: 0` is the honest value: no grant
-has been registered with this set and observed to work. Two things could be wrong with it — `queues.read`
-might not cover the event-subscriptions list (the reference names Queues Read, so probably), and
-`email-sending.write` might be unnecessary (undocumented, so unknowable without trying). Both are settled by
-one re-consent with the narrower set, and both would otherwise be *assumed*, which is the shape this
-repository keeps finding defects in.
+This was written as *"a proposal, not a measurement"*, with two things that could be wrong: whether
+`queues.read` covers the event-subscriptions list, and whether `email-sending.write` is necessary. The first
+is now measured and holds. The second is unchanged and still undocumented — see the addition above.

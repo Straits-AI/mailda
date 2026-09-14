@@ -18,14 +18,16 @@ const grant = readFileSync(
  * `docs/machine-surfaces.md`'s count table is the precedent, and its lesson is the reason for the shape — a
  * table of coverage in a document about coverage reads as evidence of coverage, and nothing was watching it.
  *
- * ## The gap this exists to keep visible
+ * ## The gap this was written to keep visible, and then closed
  *
- * The live grant holds **fifteen** scopes and the paths below need **five**. The rest were what the
- * dashboard's picker had checked when a real client was registered, which `REQUIRED_SCOPES` says in its own
- * comment about `d1.write` and `queues.write`. An over-broad grant on a customer's Cloudflare account is
- * close to the thing this whole layer exists to be careful about, so the arithmetic is asserted rather than
- * described: narrowing the list changes a number here, and widening it changes the same number the other
- * way.
+ * It first found the grant holding **fifteen** scopes for paths needing **five** — the rest being what the
+ * dashboard's picker had checked when a real client was registered. That surplus is gone: the list is six,
+ * consented to on a live account, every path exercised against the result.
+ *
+ * So the assertion changed shape with it. It no longer counts idle scopes; it asserts there are **none** —
+ * every scope asked for authorizes something this Node calls, and every path has a scope behind it. Adding
+ * a permission "just in case" fails here, which is the direction the surplus arrived from in the first
+ * place.
  */
 
 /**
@@ -68,11 +70,11 @@ function pathsIn(source: string): string[] {
 const REACHES: Record<string, { scope: string; reference: string | null }> = {
   "/accounts": { scope: "account-settings.read", reference: null },
   "/accounts/{}/event_subscriptions/subscriptions": {
-    scope: "queues.write",
+    scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/accounts/{}/queues/{}": {
-    scope: "queues.write",
+    scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
@@ -96,29 +98,22 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn(grant)).toEqual(Object.keys(REACHES).sort());
   });
 
-  it("needs five of the fifteen scopes the grant asks for", () => {
+  it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope));
-    /*
-     * `offline_access` is the sixth and is not in the table, because it authorizes no endpoint — it is what
-     * makes the token renewable, and a grant without it would reach every path above exactly once.
-     */
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "email-sending.write", "queues.write", "zone-settings.read", "zone.read",
+      "account-settings.read", "email-sending.write", "queues.read", "zone-settings.read", "zone.read",
     ]);
 
     const asked = scopesAskedFor(grant);
-    expect(asked).toHaveLength(15);
     /*
-     * **Nine scopes authorize nothing this Node calls**, and naming them is the point rather than the count:
-     * each is a permission on somebody's Cloudflare account that no code path uses. `REQUIRED_SCOPES` says
-     * why in its own comment — they are what the dashboard's picker had checked.
+     * `offline_access` authorizes no endpoint and belongs in neither direction of this check: it is what
+     * makes the token renewable, and a grant without it would reach every path above exactly once.
      */
     const idle = asked.filter((one) => !spent.has(one) && one !== "offline_access");
-    expect(idle.sort()).toEqual([
-      "account-api-gateway.read", "account-dns-settings.read", "d1.write",
-      "email-routing-account-rule.read", "email-routing-address.write", "email-routing-rule.write",
-      "email-routing-suppression.write", "user-details.read", "workers-scripts.read",
-    ]);
+    expect(idle).toEqual([]);
+    // And the other direction: a path whose scope nobody asks for would fail at runtime, not here.
+    expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
+    expect(asked).toHaveLength(6);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -126,7 +121,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn(grant).length).toBeGreaterThan(5);
     expect(pathsIn("nothing here")).toEqual([]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(15);
+    expect(scopesAskedFor(grant).length).toBe(6);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);
