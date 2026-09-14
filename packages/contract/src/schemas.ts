@@ -416,6 +416,27 @@ export const providerSendingRequest = z.object({
   digest: z.string().length(64),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
+/**
+ * Who owns this installation, one question at a time, each saying where its answer came from.
+ *
+ * #108 requires the page to report *what the provider says, not what Mailda recorded at setup*. `source` is
+ * how that is enforced rather than promised: `provider` was read from Cloudflare on this request, `node` is
+ * this Node's own record of something it did, `structural` is true by construction, and `unreadable` is a
+ * question this grant cannot answer — **named rather than left out**, because a page that omits what it
+ * cannot see is a page whose completeness is a claim.
+ *
+ * `because` is present exactly when the source is not `provider`, so the reason a fact is second-hand
+ * travels with it instead of living in a document the reader has not opened.
+ */
+export const providerOwnershipResponse = z.object({
+  ownership: z.array(z.object({
+    question: z.string().min(1),
+    answer: z.string().nullable(),
+    source: z.enum(["provider", "node", "structural", "unreadable"]),
+    because: z.string().nullable(),
+  }).strict()),
+}).strict();
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

@@ -73,7 +73,7 @@ export const BUDGETS = {
   "email.max_subject_chars": 998,
   "email.outbound.max_bytes": 5242880,
   "email.outbound.max_bytes_verified_destination": 26214400,
-  "grant.endpoints_reached": 8,
+  "grant.endpoints_reached": 9,
   "grant.endpoints_with_documented_permission": 5,
   "grant.narrowed_grant_probed": 1,
   "grant.scopes_asked_for": 6,

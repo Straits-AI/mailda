@@ -2304,6 +2304,17 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * and a `PUT` falling through a shared block to a 404 reads as a missing resource rather than a wrong
      * request. Duller, and it keeps that closed set closed.
      */
+    if (url.pathname === "/api/provider/ownership" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      // Asked for rather than rendered: two Cloudflare calls and possibly a renewal, per request.
+      const { ownershipFacts } = await import("./provider/cloudflare-grant.ts");
+      return Response.json({ ownership: await ownershipFacts(env, clock, who.orgId) });
+    }
+
     if (url.pathname === "/api/provider/sending" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

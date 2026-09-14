@@ -435,6 +435,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * more: it is the read half of a write. A machine that could see the proposal could see the digest, and
      * the digest is the only thing standing between a `POST` and a change to the customer's DNS.
      */
+    /*
+     * The ownership read. `operator` for the cost — it spends the grant — and because what it enumerates is
+     * the account, its settings, and what this Node was permitted to do there: the same map of the
+     * infrastructure the mail sits on that `GET /api/provider` is withheld for.
+     */
+    "GET /api/provider/ownership",
     "GET /api/provider/sending",
     /*
      * **The one route that changes the customer's Cloudflare account**, and the sharpest thing on this list
