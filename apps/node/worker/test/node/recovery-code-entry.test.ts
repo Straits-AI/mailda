@@ -92,8 +92,21 @@ describe("a recovery code is typed, never passed", () => {
   });
 
   it("refuses the flag by name, with the reason rather than a usage line", () => {
+    /*
+     * **This test used to assert the defect.** Its first line was
+     * `expect(source).toMatch(/flag\(argv,\s*"code"\)\s*!==\s*undefined/)` — and `flag` answers **null**
+     * for an absent flag, never `undefined`, so the guard fired on every invocation and `confirm` refused
+     * unconditionally. The comparison was not merely unnoticed: it was pinned here by regex, so correcting
+     * it would have failed this test.
+     *
+     * That is the hazard in asserting a guard's **text** instead of its behaviour. The text was the bug, and
+     * a lexical test cannot tell an implementation from a mistake — it only knows they match. What is left
+     * here is the part that is genuinely lexical: that the flag is refused *by name* and the reason travels
+     * with the refusal. Whether the guard fires on the right input is behaviour, and
+     * `recovery-confirm-runs.test.ts` runs the command both ways to settle it.
+     */
     const source = body();
-    expect(source).toMatch(/flag\(argv,\s*"code"\)\s*!==\s*undefined/);
+    expect(source).toContain('flag(argv, "code")');
     expect(source).toContain("--code is not accepted");
     // Why it is worse than the one `redeem` already refuses, which is the part a reader will not guess.
     expect(source).toContain("does not spend the code");

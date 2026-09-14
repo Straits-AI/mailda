@@ -1308,6 +1308,52 @@ async function recoveryCodes(argv) {
   }
 
   /*
+   * **Typed at a prompt, not passed as a flag** (#136), for two reasons and the second is the load-bearing one.
+   *
+   * This command required `--code` while `redeem`, forty lines up, refuses one — and confirm's leak is the
+   * worse of the two. A redeemed code in a shell history is a *spent* code; a confirmed one is live, because
+   * confirming deliberately does not spend it. So the command with the gentler verb was the one putting a
+   * working key to the escrow into `~/.zsh_history`, a CI log and a `ps` snapshot.
+   *
+   * And a code a script reads from a file cannot make this assertion at all. Confirmation asserts exactly one
+   * thing — that a **person** holds the sheet — and `doctor`'s warning is worded as that: *"nobody has
+   * confirmed holding one"*. Automating it clears the warning without the fact becoming true, which is 2b: an
+   * assertion that cannot fail. The agent that found this had just rotated a Node's codes and could have
+   * cleared its warning from the file it had written, making the Node claim a human held codes no human had
+   * read.
+   *
+   * `--code` is refused **by name** rather than ignored, because somebody has it in a script and a silent
+   * behaviour change would leave them with a Node that stays degraded for no stated reason.
+   *
+   * **Checked here, before anything reaches the network.** It sat inside the `confirm` branch, below a
+   * sign-in — so passing `--code` to an unreachable Node reported *sign-in failed* and never mentioned the
+   * argument that was actually wrong. A usage error answered after a round trip is a usage error the
+   * operator debugs in the wrong place. Above the branch it also covers every verb, which is what
+   * `recovery-code-entry.test.ts` says this rule is: not `confirm`'s rule, the function's.
+   */
+  /*
+   * `!== null`, and it read `!== undefined` from the day it was written. `flag` answers **null** for a flag
+   * that is absent and never `undefined`, so this fired on every invocation and `confirm` refused
+   * unconditionally — including the exact command its own `fix` line told the operator to run.
+   *
+   * Nothing caught it because every test here is about the *presence* of `--code`, and this guard is what
+   * they assert. A refusal that cannot not-happen is AGENTS.md 2b wearing its other face: not an assertion
+   * that cannot fail, but a **guard that cannot pass**. `test/node/recovery-confirm-runs.test.ts` runs the
+   * command both ways, because the only way to catch this was to take the branch nobody was testing.
+   *
+   * The consequence was not cosmetic: `recovery_escrow` is ADR 28's shipping precondition, its only remedy
+   * is this command, and the command could not be run. A Node could mint an escrow and never confirm it.
+   */
+  if (flag(argv, "code") !== null) {
+    fail("--code is not accepted; the code is typed at a prompt.\n\n"
+      + "  why      confirming does not spend the code, so one on a command line is a live key to this\n"
+      + "           organization's escrow sitting in shell history — worse than the spent one `redeem`\n"
+      + "           already refuses to take that way. And a code a script reads from a file proves nothing\n"
+      + "           about a person holding the sheet, which is the only thing confirmation asserts\n"
+      + `  fix      mailda recovery-codes ${action} --url <your node>`);
+  }
+
+  /*
    * **Redeem is handled before anything else, because it is the one that must work when nothing does** (#134).
    *
    * `POST /api/recovery/redeem` is deliberately unauthenticated: the state it exists for is one where the
@@ -1468,32 +1514,6 @@ async function recoveryCodes(argv) {
     return;
   }
 
-  /*
-   * **Typed at a prompt, not passed as a flag** (#136), for two reasons and the second is the load-bearing one.
-   *
-   * This command required `--code` while `redeem`, forty lines up, refuses one — and confirm's leak is the
-   * worse of the two. A redeemed code in a shell history is a *spent* code; a confirmed one is live, because
-   * confirming deliberately does not spend it. So the command with the gentler verb was the one putting a
-   * working key to the escrow into `~/.zsh_history`, a CI log and a `ps` snapshot.
-   *
-   * And a code a script reads from a file cannot make this assertion at all. Confirmation asserts exactly one
-   * thing — that a **person** holds the sheet — and `doctor`'s warning is worded as that: *"nobody has
-   * confirmed holding one"*. Automating it clears the warning without the fact becoming true, which is 2b: an
-   * assertion that cannot fail. The agent that found this had just rotated a Node's codes and could have
-   * cleared its warning from the file it had written, making the Node claim a human held codes no human had
-   * read.
-   *
-   * `--code` is refused **by name** rather than ignored, because somebody has it in a script and a silent
-   * behaviour change would leave them with a Node that stays degraded for no stated reason.
-   */
-  if (flag(argv, "code") !== undefined) {
-    fail("--code is not accepted; the code is typed at a prompt.\n\n"
-      + "  why      confirming does not spend the code, so one on a command line is a live key to this\n"
-      + "           organization's escrow sitting in shell history — worse than the spent one `redeem`\n"
-      + "           already refuses to take that way. And a code a script reads from a file proves nothing\n"
-      + "           about a person holding the sheet, which is the only thing confirmation asserts\n"
-      + "  fix      mailda recovery-codes confirm --url " + origin);
-  }
   const typed = (await readSecret("Recovery code: ")).trim();
   if (typed === "") fail("no code entered; nothing was confirmed.");
   const { message } = await post("/api/recovery-codes/confirm", { code: typed });
