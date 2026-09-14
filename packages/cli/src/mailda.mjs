@@ -84,6 +84,19 @@ function run(command, args, { cwd = workerDir } = {}) {
   return outcome.status ?? 1;
 }
 
+/** Greedy wrap, so a reason prints as prose rather than as one line the terminal breaks arbitrarily. */
+function wrapAt(text, width) {
+  const lines = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    if (line === "") line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else { lines.push(line); line = word; }
+  }
+  if (line !== "") lines.push(line);
+  return lines;
+}
+
 function flag(argv, name) {
   const index = argv.indexOf(`--${name}`);
   return index === -1 ? null : argv[index + 1] ?? null;
@@ -560,6 +573,25 @@ async function provider(argv) {
       if (one.error !== null) process.stdout.write(`     unknown   ${one.error}\n`);
     }
     if (delivery.length === 0) process.stdout.write(`\n   this Node routes no domains\n`);
+    return;
+  }
+
+  if (argv.includes("--ownership")) {
+    const { ownership } = await call("GET", "/api/provider/ownership");
+    const MARK = { provider: "cloudflare", node: "this node", structural: "by design", unreadable: "unknown" };
+    for (const fact of ownership) {
+      process.stdout.write(`\n   ${fact.question}\n`);
+      process.stdout.write(`     ${MARK[fact.source].padEnd(10)} ${fact.answer ?? "—"}\n`);
+      /*
+       * The reason is printed, not footnoted. A field marked `this node` with its reason elsewhere is the
+       * cache pretending to be a fact that #108 is about — the reader has to meet the caveat where they
+       * meet the answer.
+       */
+      if (fact.because !== null) {
+        for (const line of wrapAt(fact.because, 74)) process.stdout.write(`                ${line}\n`);
+      }
+    }
+    process.stdout.write("\n");
     return;
   }
 
@@ -2141,6 +2173,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
+  mailda provider --ownership       who owns this installation, and where each answer came from
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

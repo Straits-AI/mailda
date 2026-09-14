@@ -328,6 +328,17 @@ describe("every schema-bearing route answers what the contract says it does", ()
      * confirm line. So the honest answer is *here is what I could not find out*, which an operator can act
      * on, rather than a 409 that says only that something is wrong.
      */
+    /*
+     * The ownership read. With no account determined it answers **one** fact, sourced `node`, saying so —
+     * rather than a page of fields asserted from a setup record, which is the failure #108 names.
+     */
+    const owned = await answers("GET", "/api/provider/ownership", { cookie: held }) as {
+      ownership: Array<{ source: string; because: string | null }>;
+    };
+    expect(owned.ownership).toHaveLength(1);
+    expect(owned.ownership[0]!.source).toBe("node");
+    expect(owned.ownership[0]!.because).not.toBeNull();
+
     const proposed = await answers(
       "GET", "/api/provider/sending", { cookie: held }, "?domain=onboard.example.test",
     ) as { proposal: { domain: string; zone: string | null; error: string | null; digest: string } };
@@ -1848,8 +1859,14 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * `.strict()` on the request is what the digest rests on: a `POST` carrying an unknown field would be a
      * `POST` whose meaning this contract had not agreed to, on the one route that changes the customer's
      * Cloudflare account.
+     *
+     * The 115th is `GET /api/provider/ownership` (#165 L4) — who owns this installation. Its response is a
+     * list of `{question, answer, source, because}` rather than an object of named fields, and that is the
+     * contract doing the work #108 asks for: `source` is `provider` only when Cloudflare was asked on this
+     * request, so a field cannot quietly become this Node's setup record wearing the provider's label. The
+     * fourth source, `unreadable`, is what stops the list being complete by omission.
      */
-    expect(coverage.total).toBe(114);
+    expect(coverage.total).toBe(115);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

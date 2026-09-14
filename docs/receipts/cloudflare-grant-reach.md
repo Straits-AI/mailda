@@ -9,7 +9,7 @@ stale_when: >
 values:
   grant.scopes_asked_for: 6
   grant.scopes_authorizing_a_call: 5
-  grant.endpoints_reached: 8
+  grant.endpoints_reached: 9
   grant.endpoints_with_documented_permission: 5
   grant.narrowed_grant_probed: 1
 ---
@@ -30,12 +30,13 @@ granted.** The two are not the same number, which is the finding.
 
 ## The eight paths, and the five scopes behind them
 
-Nine rows, eight paths: `GET` and `POST` on the sending subdomains share one. The closed-world test counts
+Ten rows, nine paths: `GET` and `POST` on the sending subdomains share one. The closed-world test counts
 paths, because a scope authorizes a path and the methods on it are not separately reachable.
 
 | endpoint | scope | permission the reference names |
 |:--|:--|:--|
 | `GET /accounts` | `account-settings.read` | — |
+| `GET /accounts/{}` | `account-settings.read` | — |
 | `GET /zones?name=` | `zone.read` | `Zone Zone Read` |
 | `GET /zones/{}/email/routing` | `zone-settings.read` | `Zone Settings Write \| Read` |
 | `GET /zones/{}/email/routing/dns` | `zone-settings.read` | `Zone Settings Write \| Read` |
@@ -49,9 +50,13 @@ Plus `offline_access`, which authorizes no endpoint — it is what makes the tok
 without it would reach every row above exactly once.
 
 `test/node/cloudflare-reach-world.test.ts` asserts this set against the module's source, so a ninth endpoint
-is a decision somebody makes rather than a line that appears. It strips comments first, after the doc comment
-quoting `/zones/{zone_id}/email/sending/subdomains` was counted as a ninth: **prose about an endpoint is not
-a call to it.**
+is a decision somebody makes rather than a line that appears. It has been wrong three times, always the same way — **naming an
+endpoint is not calling one**. A doc comment quoting Cloudflare's own path was counted as an endpoint; so
+was a refusal message telling an operator that `/accounts/{id}/subscriptions` answers 403, which no amount
+of comment-stripping reaches. And the onboarding `POST` builds a full `https://api.cloudflare.com/…` URL and
+was matched by nothing at all — the dangerous direction, since an endpoint the scan cannot see is one the
+closed world does not close. It now strips the base URL, requires a literal to be *entirely* a path, and
+requires it to sit in argument position.
 
 ### Three endpoints have no documented permission at all
 

@@ -45,15 +45,29 @@ function scopesAskedFor(source: string): string[] {
 /**
  * Every path the grant module **calls**, with `${…}` collapsed so a template reads as its shape.
  *
- * Comments are stripped first, and the reason is a real near-miss: the doc comment above `onboardSending`
- * quotes `/zones/{zone_id}/email/sending/subdomains` from Cloudflare's reference, and the scan counted it as
- * a ninth reachable endpoint. Prose about an endpoint is not a call to it, and a closed world that cannot
- * tell them apart would fail whenever somebody documented something.
+ * ## Three ways this scan has been wrong, all of them the same mistake
+ *
+ * Naming an endpoint is not calling one, and the scanner kept counting the first as the second:
+ *
+ *  1. A **doc comment** quoting `/zones/{zone_id}/email/sending/subdomains` from Cloudflare's reference.
+ *     Comments are stripped.
+ *  2. A **refusal message** — `ownershipFacts` tells an operator that `/accounts/{id}/subscriptions` answers
+ *     403 — which is prose in a runtime string, so stripping comments does not reach it.
+ *  3. The onboarding **`POST`**, which builds a full `https://api.cloudflare.com/…` URL and so was never
+ *     matched at all. That one is the dangerous direction: an endpoint the scan cannot see is an endpoint
+ *     the closed world does not close.
+ *
+ * So the base URL is stripped first, and a literal counts only when it is **entirely** a path — no
+ * whitespace anywhere in it — **and** sits in argument position. Prose mentioning a path has spaces around
+ * it and follows a quote; an argument follows a comma or an open bracket.
  */
 function pathsIn(source: string): string[] {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replaceAll("https://api.cloudflare.com/client/v4", "");
   const found = new Set<string>();
-  for (const match of code.matchAll(/["`](\/(?:accounts|zones)[^"`]*)["`]/g)) {
+  for (const match of code.matchAll(/[,(]\s*["`](\/(?:accounts|zones)[^"`\s]*)["`]/g)) {
     found.add(match[1]!.replace(/\$\{[^}]*\}/g, "{}").replace(/\?.*$/, ""));
   }
   return [...found].sort();
@@ -69,6 +83,8 @@ function pathsIn(source: string): string[] {
  */
 const REACHES: Record<string, { scope: string; reference: string | null }> = {
   "/accounts": { scope: "account-settings.read", reference: null },
+  // The account's own record: its name, `type` — which decides the ownership claim — and its settings.
+  "/accounts/{}": { scope: "account-settings.read", reference: null },
   "/accounts/{}/event_subscriptions/subscriptions": {
     scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
@@ -120,6 +136,10 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     // The regex is the weak part: a change to how paths are written would empty it and pass both tests.
     expect(pathsIn(grant).length).toBeGreaterThan(5);
     expect(pathsIn("nothing here")).toEqual([]);
+    // The three near-misses, as cases rather than as a paragraph.
+    expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
+    expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
+    expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
     expect(scopesAskedFor(grant).length).toBe(6);
     // And a documented path is not a called one, which is what stripping comments is for.

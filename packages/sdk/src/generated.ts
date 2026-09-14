@@ -1026,6 +1026,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Who owns this installation, read from Cloudflare where Cloudflare can answer and labelled with its source where it cannot
+   *
+   * `GET /api/provider/ownership`
+   */
+  async getProviderOwnership(): Promise<z.infer<typeof S.providerOwnershipResponse>> {
+    return await this.json("GET", "/api/provider/ownership", {}, undefined) as z.infer<typeof S.providerOwnershipResponse>;
+  }
+
+  /**
    * What onboarding a domain for sending would do, and the digest that confirming it must carry. Changes nothing
    *
    * @param query.domain the domain to propose onboarding for sending. Required; the answer is about this name exactly, and an apex that already covers it is reported as `coveredBy` rather than as done

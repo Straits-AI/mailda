@@ -549,6 +549,13 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/ownership",
+    summary: "Who owns this installation, read from Cloudflare where Cloudflare can answer and labelled "
+      + "with its source where it cannot",
+    response: S.providerOwnershipResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/sending",
     summary: "What onboarding a domain for sending would do, and the digest that confirming it must carry. "
       + "Changes nothing",
