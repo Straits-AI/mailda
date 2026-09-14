@@ -316,22 +316,29 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(delivery.delivery).toEqual([]);
 
     /*
-     * The proposal read and the apply (#163 L2's write side). **Both refuse here, and that is the right way
-     * round**, which is why this asserts a refusal rather than a shape.
+     * The proposal read and the apply (#163 L2's write side).
      *
-     * It is the opposite of the routing and delivery reads above, and the difference is real: those answer
-     * about the domains this Node *has*, so a Node with none has an honest empty answer and never touches
-     * the grant. This one is asked about a domain the caller named, so there is no answer that does not come
-     * from Cloudflare — and a proposal returned anyway would carry a **digest**, which is the one thing on
-     * this surface that is meant to be handed back to a write. Confirmable output about an unreadable world
-     * is worse than a refusal saying the account is not connected.
+     * This asserted a refusal from both until #165 put the account boundary in front of the grant. The read
+     * now answers **a proposal carrying its own error** — the account is not determined, so no zone lookup
+     * is even attempted — and the apply refuses on that same error before reaching Cloudflare.
+     *
+     * The earlier worry was that a proposal returned here would hand out a confirmable **digest** for a
+     * world nobody could read. It does hand out a digest, and it is inert: `onboardSending` refuses on
+     * `proposal.error` before the digest is ever compared, and the CLI prints the error and offers no
+     * confirm line. So the honest answer is *here is what I could not find out*, which an operator can act
+     * on, rather than a 409 that says only that something is wrong.
      */
-    for (const attempt of [
-      answers("GET", "/api/provider/sending", { cookie: held }, "?domain=onboard.example.test"),
-      answers("POST", "/api/provider/sending", {
-        cookie: held, body: { domain: "onboard.example.test", digest: "0".repeat(64) },
-      }),
-    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_GRANT|answered 409/);
+    const proposed = await answers(
+      "GET", "/api/provider/sending", { cookie: held }, "?domain=onboard.example.test",
+    ) as { proposal: { domain: string; zone: string | null; error: string | null; digest: string } };
+    expect(proposed.proposal.domain).toBe("onboard.example.test");
+    expect(proposed.proposal.zone).toBeNull();
+    expect(proposed.proposal.error).toContain("/api/provider/resolve-account");
+    expect(proposed.proposal.digest).toHaveLength(64);
+
+    await expect(answers("POST", "/api/provider/sending", {
+      cookie: held, body: { domain: "onboard.example.test", digest: proposed.proposal.digest },
+    })).rejects.toThrow(/E_PROVIDER_SENDING_UNREADABLE/);
 
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };

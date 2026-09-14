@@ -1124,8 +1124,13 @@ describe("delivery events, read through the grant", () => {
     const asked = serving({ "/zones?name=deep.example.test": [], [SUBSCRIPTIONS]: [] });
 
     await deliveryEventsState(testEnv, atTime(SEPTEMBER_3 + 3000), ORG);
-    expect(asked).toContain("/zones?name=example.test");
-    expect(asked).not.toContain("/zones?name=test");
+    /*
+     * `startsWith` rather than equality, because every lookup now carries `&account.id=` — the isolation
+     * boundary #165 added. A test pinned to the exact URL would fail on a change that made it safer.
+     */
+    const lookups = asked.filter((one) => one.startsWith("/zones?name="));
+    expect(lookups.some((one) => one.startsWith("/zones?name=example.test&"))).toBe(true);
+    expect(lookups.some((one) => one.startsWith("/zones?name=test&"))).toBe(false);
   });
 
   it("resolves the innermost zone carrying a domain, not the outermost", async () => {
