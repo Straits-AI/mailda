@@ -61,13 +61,21 @@ async function anUnobservedHandOver(ctx: Ctx): Promise<string> {
 }
 
 /** An event whose `messageId` matched nothing, stored with `manifest_id` NULL as the ingest does. */
-async function anUnattributableEvent(ctx: Ctx): Promise<void> {
+/**
+ * `at` decides which of two different facts this is, and the default is the old one.
+ *
+ * An unattributable event **still arriving** is a live misconfiguration — something is publishing here that
+ * this Node did not send. One that **stopped** is history, and nothing resolves it: the rows are correctly
+ * recorded and 0010 keeps them on purpose. Both must stop the Node claiming sight; only the first is a
+ * degradation.
+ */
+async function anUnattributableEvent(ctx: Ctx, at: string = LONG_AGO): Promise<void> {
   await testEnv.CATALOG.prepare(
     `INSERT INTO send_recipient_events
        (event_id, org_id, manifest_id, recipient, event_type, transport_message_id, terminal, payload,
         received_at)
      VALUES (?,?, NULL, ?, 'message.delivered', ?, 1, '{}', ?)`,
-  ).bind(ctx.id("sre"), ORG, "someone@example.net", "cf-unknown", LONG_AGO).run();
+  ).bind(ctx.id("sre"), ORG, "someone@example.net", "cf-unknown", at).run();
 }
 
 beforeEach(async () => {
@@ -128,12 +136,12 @@ describe("delivery visibility distinguishes blind from attributing-badly", () =>
     expect(finding.detail).not.toMatch(/1 of 1 handed-over/);
   });
 
-  it("raises its own finding for unattributable events, because that is a third state", async () => {
+  it("degrades on unattributable events that are still arriving, because that is a third state", async () => {
     // Neither blind nor healthy. §5C: distinct states must not collapse, and a diagnostic is the last place
     // to blur. `migrations/0010` built a partial index for these rows that nothing read.
     const ctx = atTime(NOW);
     await anUnobservedHandOver(ctx);
-    await anUnattributableEvent(ctx);
+    await anUnattributableEvent(ctx, new Date(NOW - 1000).toISOString());
 
     const report = await runDoctor(testEnv, ctx);
     const unattributed = report.findings.find((finding) => finding.check === "delivery_attribution");
@@ -141,6 +149,42 @@ describe("delivery visibility distinguishes blind from attributing-badly", () =>
     expect(unattributed!.ok).toBe(false);
     expect(unattributed!.severity).toBe("degraded");
     expect(unattributed!.fix, "a finding a person cannot act on is a complaint").toBeTruthy();
+  });
+
+  it("reports, and does not degrade, on unattributable events that stopped", async () => {
+    /*
+     * **The live Node's actual state, and the reason this split exists.** Three events from five weeks ago,
+     * from a message sent on its sending domain by something that was not this Node. The rows are correct,
+     * nothing resolves them, and the check degraded for ever on them — so `doctor` exited 1 on a Node in
+     * good health. A finding that fails on every Node for ever is one somebody mutes, which is the failure
+     * mode `DELIVERY_SILENCE_MS` names in this same file.
+     */
+    const ctx = atTime(NOW);
+    await anUnobservedHandOver(ctx);
+    await anUnattributableEvent(ctx);
+
+    const report = await runDoctor(testEnv, ctx);
+    const unattributed = report.findings.find((finding) => finding.check === "delivery_attribution")!;
+    expect(unattributed, "the evidence must not vanish just because it stopped").toBeDefined();
+    expect(unattributed.ok).toBe(true);
+    expect(unattributed.severity).toBe("report");
+    // Still said, and said as a count, so an operator investigating a lost bounce finds a trace of it.
+    expect(unattributed.detail).toContain("1 delivery event");
+  });
+
+  it("counts a recent unattributable event and mentions the older ones beside it", async () => {
+    const ctx = atTime(NOW);
+    await anUnobservedHandOver(ctx);
+    await anUnattributableEvent(ctx, new Date(NOW - 1000).toISOString());
+    await anUnattributableEvent(ctx);
+    await anUnattributableEvent(ctx);
+
+    const report = await runDoctor(testEnv, ctx);
+    const unattributed = report.findings.find((finding) => finding.check === "delivery_attribution")!;
+    expect(unattributed.severity).toBe("degraded");
+    // One is the fault; the two behind it are context, and conflating them is what made this fail for ever.
+    expect(unattributed.detail).toContain("1 delivery event");
+    expect(unattributed.detail).toContain("2 older one(s)");
   });
 
   it("says nothing about attribution when every event was attributed", async () => {

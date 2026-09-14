@@ -614,11 +614,26 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
        -- That hazard has now bitten four times in this codebase (ui.ts, response-clock.ts, and here).
        (SELECT COUNT(*) FROM send_recipient_events
          WHERE org_id = ? AND manifest_id IS NOT NULL) AS attributed,
+       --
+       -- Two counts, and the window between them is what tells a fault from a fact. Unattributable events
+       -- STILL ARRIVING mean something is publishing here that this Node did not send: a live
+       -- misconfiguration, and the thing this check exists to catch. Unattributable events that stopped
+       -- are history — a message sent from this domain by something else, once — and no action resolves
+       -- them, because the rows are correctly recorded and migration 0010 keeps them deliberately.
+       --
+       -- Counting them together made this degrade for ever on three events from five weeks ago. A finding
+       -- that fails on every Node for ever is one somebody mutes, which is the failure mode
+       -- DELIVERY_SILENCE_MS names in this same file and sendingEventsConsumer avoids by construction.
        (SELECT COUNT(*) FROM send_recipient_events
-         WHERE org_id = ? AND manifest_id IS NULL) AS unattributed`,
+         WHERE org_id = ? AND manifest_id IS NULL AND received_at >= ?) AS unattributed,
+       (SELECT COUNT(*) FROM send_recipient_events
+         WHERE org_id = ? AND manifest_id IS NULL) AS unattributed_ever`,
   )
-    .bind(orgId, window, orgId, window, orgId, orgId)
-    .first<{ awaiting: number; unobserved: number; attributed: number; unattributed: number }>()
+    .bind(orgId, window, orgId, window, orgId, orgId, window, orgId)
+    .first<{
+      awaiting: number; unobserved: number; attributed: number;
+      unattributed: number; unattributed_ever: number;
+    }>()
     .catch(() => null);
 
   if (counted === null) {
@@ -646,22 +661,14 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
    * whole value of `doctor` is that it does not blur. It is `degraded` rather than `refuse` because mail is
    * still leaving correctly; what is broken is this Node's ability to say what happened to it.
    */
-  const attribution: Finding[] = counted.unattributed === 0 ? [] : [{
-    check: "delivery_attribution",
-    severity: "degraded",
-    discloses: "data",
-    ok: false,
-    detail: `${counted.unattributed} delivery event(s) could not be matched to anything this Node sent. ` +
-      `Their outcome is recorded against no recipient, so those sends stay unobserved however many ` +
-      `events arrive. This is not the same as receiving no events, and not the same as being healthy.`,
-    fix: "check that the event subscription is scoped to this Node's sending domain and no other — the " +
-      "usual cause is a subscription covering a domain sent from elsewhere, whose events arrive here " +
-      "with no matching manifest. transport_message_id is written only on hand-over, so a send whose " +
-      "outcome was never determined has no join key and its events land here too",
-    receipt: "docs/receipts/email-sending-events.md",
-  }];
-
-  return [...attribution, {
+  /**
+   * The visibility finding, as a closure because there are now two ways out of this function.
+   *
+   * It was written inline at the single return, and the second return added for the historical-events
+   * report would otherwise have been a second copy — which is how two findings with one name come to
+   * disagree about the same numbers.
+   */
+  const visibility = (): Finding[] => [{
     check: "delivery_visibility",
     severity: "degraded",
     discloses: "data",
@@ -685,6 +692,52 @@ async function checkDeliveryVisibility(env: Env, ctx: Ctx, orgId: string | null)
         "unobserved forever",
     } : {}),
   }];
+
+  const stale = counted.unattributed_ever - counted.unattributed;
+  const recorded = stale === 0 ? "" :
+    ` ${stale} older one(s) are also unattributed and are not counted here: they stopped arriving, ` +
+    `nothing resolves them, and they are kept because an unattributable bounce that was discarded would ` +
+    `be silence.`;
+
+  /*
+   * When nothing recent is unattributable but old rows exist, they are still **said** — as a report that
+   * fails on nothing. Dropping the finding entirely would make the evidence disappear from the one surface
+   * whose job is to show it, and an operator investigating a bounce nobody could attribute would find no
+   * trace of it here. `sending_events_consumer` is the precedent for the shape: a fact about how a Node came
+   * to be, stated once, carrying no severity.
+   */
+  if (counted.unattributed === 0 && stale > 0) {
+    return [{
+      check: "delivery_attribution",
+      severity: "report",
+      discloses: "data",
+      ok: true,
+      detail: `${stale} delivery event(s) were never matched to anything this Node sent, the most recent ` +
+        `outside the window this check looks at. They are kept rather than discarded — an unattributable ` +
+        `bounce that was thrown away is silence — and nothing resolves them: the usual cause is a message ` +
+        `sent from this Node's sending domain by something that is not this Node. Ongoing ones would be ` +
+        `reported as a degradation instead.`,
+      receipt: "docs/receipts/email-sending-events.md",
+    }, ...visibility()];
+  }
+
+  const attribution: Finding[] = counted.unattributed === 0 ? [] : [{
+    check: "delivery_attribution",
+    severity: "degraded",
+    discloses: "data",
+    ok: false,
+    detail: `${counted.unattributed} delivery event(s) in the last ${Math.round(DELIVERY_SILENCE_MS / 60000)} ` +
+      `minute(s) could not be matched to anything this Node sent. Their outcome is recorded against no ` +
+      `recipient, so those sends stay unobserved however many events arrive. This is not the same as ` +
+      `receiving no events, and not the same as being healthy.${recorded}`,
+    fix: "check that the event subscription is scoped to this Node's sending domain and no other — the " +
+      "usual cause is a subscription covering a domain sent from elsewhere, whose events arrive here " +
+      "with no matching manifest. transport_message_id is written only on hand-over, so a send whose " +
+      "outcome was never determined has no join key and its events land here too",
+    receipt: "docs/receipts/email-sending-events.md",
+  }];
+
+  return [...attribution, ...visibility()];
 }
 
 /**
