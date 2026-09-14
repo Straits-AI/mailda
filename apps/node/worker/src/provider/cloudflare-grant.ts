@@ -108,12 +108,31 @@ export const CLOUDFLARE_OAUTH = {
  * rules are read-only, and addresses, rules and suppressions are separate. So *"read the routing state"* and
  * *"change a rule"* are different asks, which is what L2 will need.
  *
- * ## What this list is
+ * ## What this list is: six, and it was fifteen
  *
- * The fourteen a real client was registered with, each verified accepted by the authorization endpoint. It is
- * therefore **an operator's selection**, not a minimum: `d1.write` and `queues.write` are here because that
- * is what the picker had checked, where L1 would rather have had the reads Cloudflare does offer.
- * `/api/provider/authorize` takes an override so another Node's operator can send their own set.
+ * It used to be the fourteen a real client happened to be registered with — *"an operator's selection, not a
+ * minimum"*, with `d1.write` and `queues.write` here *"because that is what the picker had checked"*. #163
+ * counted the consequence: **nine of the fifteen authorized no endpoint this Node calls**, and two of the
+ * five that did were write scopes where a read exists. That is a set of permissions on a customer's
+ * Cloudflare account that nothing in this repository uses, which is close to the thing ADR 42 exists to be
+ * careful about.
+ *
+ * These six were then **registered and consented to on a live account**, and every one of the eight paths
+ * this module can reach was exercised against the resulting grant — the five reads, and the `POST` that
+ * onboards a sending domain, whose records were confirmed in public DNS. So this is a measurement rather
+ * than a tidier list.
+ *
+ * The `POST` had to be re-run rather than argued about, and the reason is worth keeping: Cloudflare
+ * publishes **no permission at all** for the Email Sending subdomain endpoints, so *which* scope authorized
+ * it was unknown. "The scope behind it did not change" would have been an argument from a table that does
+ * not exist — it could as easily have been one of the nine being dropped, and onboarding would have broken
+ * for the next operator with nothing here to say why.
+ *
+ * `test/node/cloudflare-reach-world.test.ts` holds the arithmetic: a scope that authorizes nothing, or an
+ * endpoint no scope covers, fails there.
+ *
+ * `/api/provider/authorize` takes an override so another Node's operator can send their own set — which is
+ * how this narrowing was probed before it was committed.
  *
  * @see docs/receipts/cloudflare-oauth-scopes.md
  */
@@ -122,11 +141,6 @@ export const REQUIRED_SCOPES = [
     scope: "account-settings.read",
     why: "the account's plan. ADR 25 requires Workers Paid, and a Node that cannot read the plan cannot say "
       + "why a deploy will fail before it fails",
-    readOnlyExists: true,
-  },
-  {
-    scope: "user-details.read",
-    why: "who consented, so the ownership page can say whose grant this is",
     readOnlyExists: true,
   },
   {
@@ -140,52 +154,10 @@ export const REQUIRED_SCOPES = [
     readOnlyExists: true,
   },
   {
-    scope: "account-dns-settings.read",
-    why: "the account's DNS state. L2 proposes MX records as a diff and needs to read what is there first",
-    readOnlyExists: true,
-  },
-  {
-    scope: "account-api-gateway.read",
-    why: "part of the account-level read the picker groups with settings",
-    readOnlyExists: true,
-  },
-  {
-    scope: "workers-scripts.read",
-    why: "the Workers inventory a deployment plan is diffed against. #92 measured that auto-provisioning "
-      + "creates or fails and never adopts, so a plan that cannot see what exists is wrong from the second "
-      + "attempt onwards",
-    readOnlyExists: true,
-  },
-  {
-    scope: "d1.write",
-    why: "the catalog. **Write because that is what this client was registered with** — `d1.read` exists and "
-      + "is what L1 would ask for, since it provisions nothing",
-    readOnlyExists: true,
-  },
-  {
-    scope: "queues.write",
-    why: "the delivery-events queue and its consumer. Write for the same reason; `queues.read` exists",
-    readOnlyExists: true,
-  },
-  {
-    scope: "email-routing-account-rule.read",
-    why: "the account's catch-all routing. Read-only by Cloudflare's own shape — this permission has no write",
-    readOnlyExists: true,
-  },
-  {
-    scope: "email-routing-address.write",
-    why: "the destination addresses a routing rule can name, which must be verified before mail reaches them",
-    readOnlyExists: true,
-  },
-  {
-    scope: "email-routing-rule.write",
-    why: "the rules themselves: what L2 proposes as a diff and applies on approval",
-    readOnlyExists: true,
-  },
-  {
-    scope: "email-routing-suppression.write",
-    why: "suppressions, which decide what silently does not arrive — so a Node that could not read them "
-      + "would report a mailbox as healthy while mail was being dropped",
+    scope: "queues.read",
+    why: "the `email.sending` event subscription and the consumers on the queue it publishes to, which is "
+      + "how a Node says whether a send's outcome would ever be seen. Read, and measured sufficient: this "
+      + "Node writes nothing through Queues",
     readOnlyExists: true,
   },
   {
@@ -458,7 +430,7 @@ export async function registerClient(
  * How long a consent may sit in flight.
  *
  * Was ten minutes, on the reasoning that it is *"the redirect's own working life"*. It is not — that is a
- * guess about how fast somebody signs in to Cloudflare, reviews fourteen permissions and clicks Authorize,
+ * guess about how fast somebody signs in to Cloudflare, reviews the permissions and clicks Authorize,
  * and it expired twice on one operator doing exactly that.
  *
  * **The nonce's protection is that it is single-use, not that it is short-lived.** `consumed_at` is set by an
