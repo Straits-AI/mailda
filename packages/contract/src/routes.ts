@@ -549,6 +549,13 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/handover",
+    summary: "A signed handover manifest: what the client owns, what revocation stops, and which provider "
+      + "ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda",
+    response: S.providerHandoverResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/ownership",
     summary: "Who owns this installation, read from Cloudflare where Cloudflare can answer and labelled "
       + "with its source where it cannot",

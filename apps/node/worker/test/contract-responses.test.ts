@@ -9,6 +9,7 @@ import { utf8 } from "@mailda/evidence";
 import { putEvidence } from "../src/evidence-store.ts";
 import { createButlerDraft } from "../src/butlers.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
+import { publicJwks } from "../src/auth/keys.ts";
 import { SoftwareAuthenticator } from "./authenticator.ts";
 import { seedDelivery } from "./fixtures/delivery.ts";
 import { dispatchDue } from "../src/outbound/dispatch.ts";
@@ -338,6 +339,24 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(owned.ownership).toHaveLength(1);
     expect(owned.ownership[0]!.source).toBe("node");
     expect(owned.ownership[0]!.because).not.toBeNull();
+
+    /*
+     * The handover manifest. Verified here the way a client would — the key comes from this Node's own
+     * JWKS, chosen by the `kid` in the header — because a driver that only checked the shape would pass on
+     * a manifest signed by nothing.
+     */
+    const { jws } = await answers("GET", "/api/provider/handover", { cookie: held }) as { jws: string };
+    const [head, body, sig] = jws.split(".");
+    const kid = (JSON.parse(Buffer.from(head!, "base64url").toString("utf8")) as { kid: string }).kid;
+    const jwk = (await publicJwks(testEnv, Date.now())).keys
+      .find((one) => (one as { kid?: string }).kid === kid)!;
+    expect(jwk).toBeDefined();
+    expect(await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]),
+      Buffer.from(sig!, "base64url"),
+      new TextEncoder().encode(`${head}.${body}`),
+    )).toBe(true);
 
     const proposed = await answers(
       "GET", "/api/provider/sending", { cookie: held }, "?domain=onboard.example.test",
@@ -1865,8 +1884,13 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * contract doing the work #108 asks for: `source` is `provider` only when Cloudflare was asked on this
      * request, so a field cannot quietly become this Node's setup record wearing the provider's label. The
      * fourth source, `unreadable`, is what stops the list being complete by omission.
+     *
+     * The 116th is `GET /api/provider/handover` (#165 L4), and its schema is **one field**: a compact JWS.
+     * Returning the manifest beside its signature was the obvious shape and is the wrong one — a reader
+     * takes the convenient copy and verifies nothing, and the day the two disagree is the day nobody
+     * notices. The payload inside the JWS is the only copy, and the CLI verifies before it prints.
      */
-    expect(coverage.total).toBe(115);
+    expect(coverage.total).toBe(116);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

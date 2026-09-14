@@ -2304,6 +2304,20 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * and a `PUT` falling through a shared block to a 404 reads as a missing resource rather than a wrong
      * request. Duller, and it keeps that closed set closed.
      */
+    if (url.pathname === "/api/provider/handover" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * `url.origin` rather than a configured hostname: the manifest tells a client where to fetch the
+       * verification key, and the only origin this Node knows to be reachable is the one it was reached on.
+       */
+      const { handoverManifest } = await import("./provider/handover.ts");
+      return Response.json(await handoverManifest(env, clock, who.orgId, url.origin));
+    }
+
     if (url.pathname === "/api/provider/ownership" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();
