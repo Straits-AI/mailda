@@ -437,6 +437,18 @@ export const providerOwnershipResponse = z.object({
   }).strict()),
 }).strict();
 
+/**
+ * The handover manifest, as a compact JWS and nothing else.
+ *
+ * **Deliberately not the manifest beside its signature.** That shape invites a reader to take the convenient
+ * copy and verify nothing, and the day the two disagree is the day nobody notices. The payload inside the
+ * JWS is the only copy there is; `mailda provider --handover` verifies before it prints, so what is read is
+ * what verified.
+ */
+export const providerHandoverResponse = z.object({
+  jws: z.string().regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+}).strict();
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

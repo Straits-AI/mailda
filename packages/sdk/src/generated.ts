@@ -1026,6 +1026,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * A signed handover manifest: what the client owns, what revocation stops, and which provider ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda
+   *
+   * `GET /api/provider/handover`
+   */
+  async getProviderHandover(): Promise<z.infer<typeof S.providerHandoverResponse>> {
+    return await this.json("GET", "/api/provider/handover", {}, undefined) as z.infer<typeof S.providerHandoverResponse>;
+  }
+
+  /**
    * Who owns this installation, read from Cloudflare where Cloudflare can answer and labelled with its source where it cannot
    *
    * `GET /api/provider/ownership`

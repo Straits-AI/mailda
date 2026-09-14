@@ -576,6 +576,75 @@ async function provider(argv) {
     return;
   }
 
+  if (argv.includes("--handover")) {
+    const { jws } = await call("GET", "/api/provider/handover");
+    const [header, payload, signature] = jws.split(".");
+    const head = JSON.parse(Buffer.from(header, "base64url").toString("utf8"));
+    const manifest = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+
+    /*
+     * **Verified before it is printed, against the JWKS the manifest names** — fetched over the network like
+     * any other client would, not read from the response that carried the manifest. A CLI that decoded and
+     * displayed would be the convenient copy this whole shape exists to avoid, and it would be the one tool
+     * most likely to be trusted.
+     */
+    const jwks = await fetch(manifest.verification.jwks)
+      .then((r) => r.json())
+      .catch((error) => fail(`could not fetch ${manifest.verification.jwks}: ${error.message}`));
+    const jwk = (jwks.keys ?? []).find((one) => one.kid === head.kid);
+    if (jwk === undefined) {
+      fail(
+        `the manifest is signed with kid ${head.kid}, which ${manifest.verification.jwks} does not offer.\n\n`
+        + "  why      a signature nobody can check is not a signature. The key may have been rotated out,\n"
+        + "           or this manifest may not come from that Node\n"
+        + "  fix      re-export the manifest, or verify against a copy of the JWKS taken before rotation",
+      );
+    }
+
+    const key = await crypto.subtle.importKey(
+      "jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"],
+    );
+    const ok = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" }, key,
+      Buffer.from(signature, "base64url"),
+      Buffer.from(`${header}.${payload}`, "utf8"),
+    );
+    if (!ok) fail("the manifest's signature does not verify. Nothing below it can be trusted, so nothing is printed.");
+
+    const out = flag(argv, "out");
+    if (out !== null) {
+      writeFileSync(out, `${jws}\n`, "utf8");
+      process.stdout.write(`\n   wrote ${out} — the signed manifest, which is the artifact to keep\n`);
+    }
+
+    process.stdout.write(`\n== handover manifest, signature verified against ${manifest.verification.jwks}\n`);
+    process.stdout.write(`   issued ${manifest.issuedAt} by ${manifest.node}\n`);
+
+    process.stdout.write(`\n-- what the client owns\n`);
+    const MARK = { provider: "cloudflare", node: "this node", structural: "by design", unreadable: "unknown" };
+    for (const fact of manifest.ownership) {
+      process.stdout.write(`   ${MARK[fact.source].padEnd(10)} ${fact.question}: ${fact.answer ?? "—"}\n`);
+    }
+
+    process.stdout.write(`\n-- what a person must still do at the provider\n`);
+    for (const one of manifest.ceremonies) {
+      process.stdout.write(`\n   ${one.what}\n`);
+      for (const line of wrapAt(one.why, 74)) process.stdout.write(`     ${line}\n`);
+      // The measurement, so a client can check the claim rather than take it.
+      process.stdout.write(
+        `     evidence: ${one.evidence.value} = ${one.evidence.is}`
+        + ` (${one.evidence.receipt}, measured ${one.evidence.measuredOn})\n`,
+      );
+    }
+
+    process.stdout.write(`\n-- what this signature proves\n`);
+    for (const line of wrapAt(manifest.verification.proves, 74)) process.stdout.write(`   ${line}\n`);
+    process.stdout.write(`\n-- and what it does not\n`);
+    for (const line of wrapAt(manifest.verification.doesNotProve, 74)) process.stdout.write(`   ${line}\n`);
+    process.stdout.write("\n");
+    return;
+  }
+
   if (argv.includes("--ownership")) {
     const { ownership } = await call("GET", "/api/provider/ownership");
     const MARK = { provider: "cloudflare", node: "this node", structural: "by design", unreadable: "unknown" };
@@ -2174,6 +2243,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
   mailda provider --ownership       who owns this installation, and where each answer came from
+  mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse

@@ -41,7 +41,7 @@ describe("every route is classified, and a new one cannot default", () => {
     expect(ALL.length).toBeGreaterThan(90);
   });
 
-  it("derives read for every GET but the named exceptions, and there are fourteen", () => {
+  it("derives read for every GET but the named exceptions, and there are fifteen", () => {
     /*
      * Reads are derived rather than listed, so ninety judgements cannot disagree with ninety paths. The
      * exception set is asserted **exactly**, because an exception list that can grow quietly is the
@@ -110,6 +110,11 @@ describe("every route is classified, and a new one cannot default", () => {
      * `GET /api/provider/ownership` (#165) is the fourteenth, and it is `GET /api/provider`'s reason at
      * greater length: it enumerates the account, its security settings, and what this Node was permitted to
      * do there. That is the map of the infrastructure the mail sits on, and it spends the grant to draw it.
+     *
+     * `GET /api/provider/handover` (#165) is the fifteenth. It contains the ownership read, so it inherits
+     * that reason — and adds one: it is a **signed, portable** statement about the customer's
+     * infrastructure, which keeps its authority after it leaves this Node. An agent that could fetch one
+     * could hand it on.
      */
     const exceptions = Object.keys(DECLARED_ROUTES).filter((key) => key.startsWith("GET "));
     expect(exceptions.sort()).toEqual([
@@ -117,7 +122,7 @@ describe("every route is classified, and a new one cannot default", () => {
       "GET /api/evidence/inventory", "GET /api/logs",
       "GET /api/people/:userId/mailboxes", "GET /api/provider",
       "GET /api/provider/delivery-events", "GET /api/provider/email-routing",
-      "GET /api/provider/ownership", "GET /api/provider/sending",
+      "GET /api/provider/handover", "GET /api/provider/ownership", "GET /api/provider/sending",
       "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 

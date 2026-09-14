@@ -440,6 +440,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * the account, its settings, and what this Node was permitted to do there: the same map of the
      * infrastructure the mail sits on that `GET /api/provider` is withheld for.
      */
+    /*
+     * The handover manifest. It contains the ownership read, so it is withheld for that reason and one
+     * more: it is a signed, portable statement about the customer's infrastructure, and an agent that could
+     * fetch one could hand it on.
+     */
+    "GET /api/provider/handover",
     "GET /api/provider/ownership",
     "GET /api/provider/sending",
     /*
