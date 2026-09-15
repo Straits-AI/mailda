@@ -132,7 +132,7 @@ describe("every route is classified, and a new one cannot default", () => {
       "GET /api/provider/delivery-events", "GET /api/provider/domains",
       "GET /api/provider/domains/purchase", "GET /api/provider/domains/purchase/status",
       "GET /api/provider/email-routing", "GET /api/provider/handover", "GET /api/provider/ownership",
-      "GET /api/provider/sending",
+      "GET /api/provider/receiving", "GET /api/provider/sending",
       "GET /api/search/failed", "GET /index.html", "GET /oauth/cloudflare/callback",
     ]);
 

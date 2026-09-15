@@ -2389,6 +2389,42 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
       });
     }
 
+    if (url.pathname === "/api/provider/receiving" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { receivingProposalFor } = await import("./provider/receiving.ts");
+      return Response.json({
+        proposal: await receivingProposalFor(
+          env, clock, who.orgId, url.searchParams.get("domain") ?? "",
+        ),
+      });
+    }
+
+    if (url.pathname === "/api/provider/receiving" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * **The route that writes DNS on the customer's zone**, which is the largest authority this Node
+       * holds. Every refusal is in `onboardReceiving` and happens before the first record, and the routing
+       * rule is written only after the records are read back — because a rule without them is accepted by
+       * Cloudflare and never matches.
+       */
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const { onboardReceiving } = await import("./provider/receiving.ts");
+      return Response.json({
+        outcome: await onboardReceiving(
+          env, clock, who.orgId, who.userId,
+          String(body.domain ?? ""), String(body.digest ?? ""), String(body.address ?? ""),
+        ),
+      });
+    }
+
     if (url.pathname === "/api/provider/handover" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

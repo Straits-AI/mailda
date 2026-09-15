@@ -71,6 +71,19 @@ type ReadEntries = (block: unknown) => unknown[] | null;
 
 const arrayOfEntries: ReadEntries = (block) => (Array.isArray(block) ? block : null);
 
+/**
+ * `vars` — the one binding block that is a plain object rather than a list of entries.
+ *
+ * Its keys *are* the binding names, so each is turned into an entry of the shape everything else here
+ * reads. Recognising it as a binding block matters: `vars` genuinely puts properties on `env`, and
+ * classifying it as a non-binding field would have let a value reach the runtime without appearing in any
+ * of the checks that ask what this Worker can see.
+ */
+const varsAsEntries: ReadEntries = (block) =>
+  (typeof block === "object" && block !== null && !Array.isArray(block)
+    ? Object.keys(block).map((binding) => ({ binding }))
+    : null);
+
 /** `durable_objects.bindings`, `queues.producers` — an object wrapping the list that names bindings. */
 const entriesUnder = (key: string): ReadEntries => (block) => {
   if (block === null || typeof block !== "object" || Array.isArray(block)) return null;
@@ -113,6 +126,13 @@ interface BindingBlock {
  * claim here is checked instead of assumed.
  */
 export const BINDING_BLOCKS: Record<string, BindingBlock> = {
+  vars: {
+    entries: varsAsEntries,
+    nameKey: "binding",
+    note: "declared: WORKER_NAME — a Worker is not told its own name, and `onboardReceiving` must name "
+      + "itself as an Email Routing rule's destination. Held equal to the Worker's `name` by "
+      + "deployability.test.ts, because a rule naming the wrong Node hands it somebody else's mail",
+  },
   d1_databases: { entries: arrayOfEntries, nameKey: "binding", note: "declared: CATALOG (ADR 18)" },
   r2_buckets: { entries: arrayOfEntries, nameKey: "binding", note: "declared: EVIDENCE (ADR 18)" },
   send_email: {

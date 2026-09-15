@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { readWranglerConfig } from "./wrangler-world.ts";
+
 /**
  * ADR 22's surviving rule, enforced (#1's implementation audit).
  *
@@ -133,14 +135,55 @@ describe("no credential is a plain property of env (ADR 22)", () => {
     expect(wouldReject("R2Bucket")).toBe(false);
   });
 
-  it("has no vars in wrangler.jsonc, which is what makes a primitive here a new decision", () => {
-    /*
-     * Stated as an assertion rather than left in prose. If a `vars` block appears, the sentence above about
-     * "no `vars` at all" stops being true and the reasoning in this file needs revisiting — which is exactly
-     * the moment somebody should be made to read it.
-     */
-    const config = readFileSync(join(import.meta.dirname, "../../wrangler.jsonc"), "utf8");
-    const declared = config.split("\n").filter((line) => /^\s*"vars"\s*:/.test(line));
-    expect(declared).toEqual([]);
+  /**
+   * Every `vars` entry this config may declare, and why each is not a credential.
+   *
+   * **This used to assert there were none at all**, on the argument that zero `vars` is what makes adding a
+   * primitive a deliberate decision. A `vars` block appeared (#163 L2) and the check did precisely what its
+   * own comment promised: it made somebody read the reasoning before the value shipped.
+   *
+   * Revisited, and the conclusion is narrower rather than weaker. ADR 22 is about **credentials** — a plain
+   * value leaks the first time anything stringifies `env`. That argument has no force against a value that
+   * is already public, and it has full force against anything else. So the rule is now an allowlist with an
+   * argument per entry, and an unlisted var fails exactly as a secret would have.
+   */
+  const ALLOWED_VARS: Record<string, string> = {
+    WORKER_NAME:
+      "the Worker's own name, which is public by construction — it is in the hostname every request "
+      + "arrives on. A Worker is not told its name, and `onboardReceiving` must name itself as an Email "
+      + "Routing rule's destination; a rule naming the wrong Node hands it somebody else's mail. Nothing "
+      + "is disclosed by serializing it that the URL does not already say.",
+  };
+
+  it("declares no var that is not on the allowlist, with its argument", () => {
+    const config = readWranglerConfig();
+    const scopes: Array<[string, unknown]> = [
+      ["top level", config.vars],
+      ...Object.entries((config.env ?? {}) as Record<string, { vars?: unknown }>)
+        .map(([name, scope]) => [`env.${name}`, scope?.vars] as [string, unknown]),
+    ];
+
+    const offenders: string[] = [];
+    for (const [where, block] of scopes) {
+      if (block === undefined) continue;
+      for (const name of Object.keys(block as Record<string, unknown>)) {
+        if (!(name in ALLOWED_VARS)) offenders.push(`${where}: ${name}`);
+      }
+    }
+
+    expect(
+      offenders.length === 0 ? null
+        : `${offenders.join(", ")} — a \`vars\` entry is a plain property of \`env\` and leaks the first `
+          + "time anything stringifies it. ADR 22 requires a credential to be reached with "
+          + "`await env.NAME.get()`. If this value really is public, add it to ALLOWED_VARS with the "
+          + "argument for why — the list is the decision, not a formality.",
+    ).toBeNull();
+  });
+
+  it("rejects a var that is not on the list, so the allowlist is not decoration", () => {
+    // Anti-vacuity against the rule itself: the check is only worth having if an unlisted name fails.
+    expect("WORKER_NAME" in ALLOWED_VARS).toBe(true);
+    expect("MAILDA_API_TOKEN" in ALLOWED_VARS).toBe(false);
+    expect("CLOUDFLARE_API_KEY" in ALLOWED_VARS).toBe(false);
   });
 });

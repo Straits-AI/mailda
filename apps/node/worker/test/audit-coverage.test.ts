@@ -249,6 +249,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
        * investigator brings is *which grant agreed to spend our money*.
        */
       "provider.domain_purchase_attempted",
+      // DNS written on a customer's zone, against the binding whose grant authorized it.
+      "provider.receiving_onboarded",
     ],
   },
   /*

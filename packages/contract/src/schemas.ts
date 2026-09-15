@@ -533,6 +533,50 @@ export const providerPurchaseRequest = z.object({
   autoRenew: z.boolean(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
+/**
+ * What pointing a subdomain at this Node to **receive** would do.
+ *
+ * `rule` is separate from `present` because the dangerous state is a rule with no MX: Cloudflare accepts it,
+ * marks it enabled, and it never matches — mail to that name never reaches Cloudflare at all. A surface that
+ * showed only "a rule exists" would report that as configured.
+ */
+export const providerReceivingProposalResponse = z.object({
+  proposal: z.object({
+    domain: z.string().min(1),
+    zone: z.string().nullable(),
+    zoneId: z.string().nullable(),
+    zoneRouting: z.string().nullable(),
+    creates: z.array(z.object({
+      type: z.string(),
+      name: z.string(),
+      content: z.string(),
+      priority: z.number().nullable(),
+    }).strict()),
+    present: z.array(z.string()),
+    rule: z.string().nullable(),
+    digest: z.string().length(64),
+    refusal: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/** `confirmed` is read back from Cloudflare — a write that answered 200 is not a record in DNS. */
+export const providerReceivingOutcomeResponse = z.object({
+  outcome: z.object({
+    domain: z.string().min(1),
+    written: z.array(z.string()),
+    confirmed: z.array(z.string()),
+    rule: z.string().nullable(),
+    note: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/** The subdomain, the digest of what was shown, and the address mail should arrive at. */
+export const providerReceivingRequest = z.object({
+  domain: z.string().min(3).max(253),
+  digest: z.string().length(64),
+  address: z.string().min(3).max(320),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

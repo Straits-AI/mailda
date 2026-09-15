@@ -612,6 +612,71 @@ async function provider(argv) {
     return;
   }
 
+  const receiving = flag(argv, "onboard-receiving");
+  if (receiving !== null) {
+    const confirming = flag(argv, "confirm");
+    const address = flag(argv, "address");
+    if (confirming === null) {
+      const { proposal } = await call(
+        "GET", `/api/provider/receiving?domain=${encodeURIComponent(receiving)}`,
+      );
+      process.stdout.write(`\n   ${proposal.domain}\n`);
+      if (proposal.zone !== null) {
+        process.stdout.write(`     zone      ${proposal.zone} (routing ${proposal.zoneRouting ?? "?"})\n`);
+      }
+      for (const one of proposal.present) process.stdout.write(`     has       MX ${one}\n`);
+      /*
+       * An existing rule is printed **with what it is worth**, not as a tick. A rule whose subdomain has no
+       * MX is accepted by Cloudflare, enabled, and never matches — the defect this command exists for.
+       */
+      if (proposal.rule !== null) {
+        const inert = proposal.present.length === 0;
+        process.stdout.write(`     rule      ${proposal.rule}${inert ? "  — INERT" : ""}\n`);
+        if (inert) {
+          for (const line of wrapAt(
+            "that rule names an address here and the subdomain has no MX, so mail to it never reaches "
+            + "Cloudflare at all. It reads as configured everywhere and receives nothing.", 68,
+          )) process.stdout.write(`               ${line}\n`);
+        }
+      }
+      if (proposal.refusal !== null) {
+        process.stdout.write(`\n   will not onboard it:\n`);
+        for (const line of wrapAt(proposal.refusal, 72)) process.stdout.write(`     ${line}\n`);
+        process.stdout.write("\n");
+        return;
+      }
+      for (const one of proposal.creates) {
+        process.stdout.write(
+          `     writes    MX ${one.name} -> ${one.content} (priority ${one.priority})\n`,
+        );
+      }
+      process.stdout.write(
+        `\n   these are the records Cloudflare says ${proposal.zone} needs — copied onto the subdomain,\n`
+        + `   not invented here\n`
+        + `\n   confirm: mailda provider --onboard-receiving ${proposal.domain} \\\n`
+        + `              --address <you>@${proposal.domain} --confirm ${proposal.digest}\n\n`,
+      );
+      return;
+    }
+    if (address === null) fail("pass --address <the address mail should arrive at>");
+
+    const { outcome } = await call("POST", "/api/provider/receiving", {
+      domain: receiving, digest: confirming, address,
+    });
+    process.stdout.write(`\n   ${outcome.domain}\n`);
+    for (const one of outcome.written) process.stdout.write(`     wrote     MX ${one}\n`);
+    // Read back, because a write that answered 200 is not a record in DNS.
+    for (const one of outcome.confirmed) process.stdout.write(`     confirmed MX ${one}\n`);
+    if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
+    if (outcome.note !== null) {
+      process.stdout.write("\n");
+      for (const line of wrapAt(outcome.note, 72)) process.stdout.write(`   ${line}\n`);
+    }
+    process.stdout.write("\n   DNS takes a little while to propagate. Send a message from OUTSIDE this\n"
+      + "   Cloudflare account — a same-account send is accepted and never delivered.\n\n");
+    return;
+  }
+
   const buying = flag(argv, "buy");
   if (buying !== null) {
     const confirming = flag(argv, "confirm");
@@ -2369,6 +2434,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
+  mailda provider --onboard-receiving <domain> point a subdomain at this Node to receive; --address and --confirm to do it
   mailda provider --ownership       who owns this installation, and where each answer came from
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
   mailda provider --domains <keyword>          cached domain suggestions with indicative prices

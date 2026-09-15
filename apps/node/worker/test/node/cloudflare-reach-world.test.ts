@@ -113,6 +113,13 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
   "/accounts/{}/registrar/registrations/{}/registration-status": {
     scope: "registrar-domains.read", reference: null,
   },
+  /*
+   * Receiving on a subdomain (#163 L2). The rules endpoint is reachable with Email Routing's own
+   * permission; `dns_records` is what needs `dns.write`, and it is the only path in this table that changes
+   * where a domain's mail goes.
+   */
+  "/zones/{}/email/routing/rules": { scope: "zone-settings.read", reference: null },
+  "/zones/{}/dns_records": { scope: "dns.write", reference: "DNS Write" },
   "/accounts/{}/event_subscriptions/subscriptions": {
     scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
@@ -145,8 +152,8 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope));
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "email-sending.write", "queues.read", "registrar-domains.read",
-      "zone-settings.read", "zone.read",
+      "account-settings.read", "dns.write", "email-sending.write", "queues.read",
+      "registrar-domains.read", "zone-settings.read", "zone.read",
     ]);
 
     const asked = scopesAskedFor(grant);
@@ -158,7 +165,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(idle).toEqual([]);
     // And the other direction: a path whose scope nobody asks for would fail at runtime, not here.
     expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
-    expect(asked).toHaveLength(7);
+    expect(asked).toHaveLength(8);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -170,7 +177,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
     expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(7);
+    expect(scopesAskedFor(grant).length).toBe(8);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);

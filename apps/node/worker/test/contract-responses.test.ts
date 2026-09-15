@@ -364,6 +364,30 @@ describe("every schema-bearing route answers what the contract says it does", ()
     ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
 
     /*
+     * Receiving. Both refuse here — no account is determined — and the `POST` being refused is the one that
+     * matters most: the route that writes DNS on a customer's zone must not reach Cloudflare when this Node
+     * cannot first establish whose zone it would be writing to.
+     */
+    const proposedReceiving = await answers(
+      "GET", "/api/provider/receiving", { cookie: held }, "?domain=mail.example.test",
+    ) as { proposal: { domain: string; creates: unknown[]; refusal: string | null; digest: string } };
+    /*
+     * The read **answers** rather than throwing, carrying its refusal — the same shape as the sending
+     * proposal, and the right one: *here is why I will not do this* is something an operator can act on,
+     * where a 409 says only that something is wrong. It writes nothing either way.
+     */
+    expect(proposedReceiving.proposal.domain).toBe("mail.example.test");
+    expect(proposedReceiving.proposal.refusal).not.toBeNull();
+    expect(proposedReceiving.proposal.creates).toEqual([]);
+    expect(proposedReceiving.proposal.digest).toHaveLength(64);
+
+    // The write refuses outright, because it is the one that would change a customer's DNS.
+    await expect(answers("POST", "/api/provider/receiving", {
+      cookie: held,
+      body: { domain: "mail.example.test", digest: "0".repeat(64), address: "a@mail.example.test" },
+    })).rejects.toThrow(/E_RECEIVING_WILL_NOT_ONBOARD|E_PROVIDER_NO_ACCOUNT|answered 4/);
+
+    /*
      * The purchase's three routes. All refuse on this fixture — no account is determined — and the `POST`
      * being among them is the assertion that matters most: the one route that spends money must not reach
      * Cloudflare when this Node cannot first establish whose account it would spend from.
@@ -1945,8 +1969,17 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * The status response carries `mayPoll` separately from `completed` for the same family of reason:
      * `action_required` is unfinished and *not this Node's to continue*, and one boolean over both would
      * poll forever at the state that means somebody has to act.
+     *
+     * The 122nd and 123rd are `GET` and `POST /api/provider/receiving` (#163 L2), and the `POST` is the
+     * route that **writes DNS on the customer's zone** — the largest authority this Node holds, since MX
+     * records decide where a domain's mail goes.
+     *
+     * Its response carries `written` and `confirmed` separately, and that separation is the whole design: a
+     * `POST` that answered 200 is not a record in DNS, and Cloudflare will accept a routing rule whose
+     * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
+     * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
      */
-    expect(coverage.total).toBe(121);
+    expect(coverage.total).toBe(123);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

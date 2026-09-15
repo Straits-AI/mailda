@@ -303,8 +303,13 @@ export function metering(env: Env): { env: Env; cost: Cost } {
    * memory — no subrequest, no round trip, nothing that could grow with mailbox size. It is metered as free
    * because it is free, not because it was overlooked, and it is listed rather than excluded from the world
    * so the distinction survives somebody adding a binding that only *looks* similar.
+   *
+   * `WORKER_NAME` is the third, and the plainest: a `vars` entry is a string written into the upload, so
+   * reading it is a property access on an object the isolate already holds. It exists because a Worker is
+   * not told its own name and `onboardReceiving` must name itself as an Email Routing rule's destination —
+   * a rule naming the wrong Node hands it somebody else's mail.
    */
-  const FREE = new Set(["TEST_MIGRATIONS", "CF_VERSION"]);
+  const FREE = new Set(["TEST_MIGRATIONS", "CF_VERSION", "WORKER_NAME"]);
 
   const wrapped = new Proxy(env as unknown as Record<string, unknown>, {
     get(target, property) {

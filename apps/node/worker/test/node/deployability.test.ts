@@ -84,6 +84,21 @@ const BINDING_KINDS = {
       "(#47) and through the Deploy button's own Workers Builds token (#55), which is the harder case " +
       "§11A's one-click equivalence claim actually rests on.",
   },
+  vars: {
+    /*
+     * Nothing to provision. `vars` are plain values written into the upload, so every install path has them
+     * the moment it has the config — the button included, with no probe needed and none possible.
+     *
+     * It is in this table anyway, because the table's rule is that a block is listed rather than skipped:
+     * the question "how does a customer come to have this" has an answer here, and "it needs nothing"
+     * is an answer rather than a reason to omit it.
+     */
+    provisionedByButton: true,
+    how:
+      "Nothing provisions it. `vars` travel in the upload itself, so any path that deploys the Worker has " +
+      "them — the only failure mode is the value being wrong, which deployability holds to the Worker's " +
+      "own name because a routing rule naming the wrong Node hands it somebody else's mail.",
+  },
   d1_databases: {
     provisionedByButton: Boolean(BUDGETS["builds.provisions_d1"]),
     how: "The button provisions D1 before the build, independently of the build token (measured).",
@@ -343,6 +358,29 @@ describe("what a customer's deploy can provision", () => {
     const strangers = [{ binding: "X", name: "butler-runs", class_name: "X" }]
       .filter((entry) => !entry.name.startsWith(`${String(worker)}-`));
     expect(strangers, "the derivation rule accepted a name unrelated to the Worker's").toHaveLength(1);
+  });
+
+  it("carries the Worker's own name as a var, because a routing rule must name it", () => {
+    /*
+     * A Worker is not told its own name, and `onboardReceiving` writes an Email Routing rule whose action
+     * names the destination Worker. A rule naming the wrong one sends somebody's mail to another Node — so
+     * the name is carried in `vars` and held equal to `name` here.
+     *
+     * Same treatment as the Workflow name directly above, for the same reason: a second name that must
+     * agree with the first is a correspondence, and this repository checks those rather than remembering
+     * them. Renaming the Worker for a second Node in one account is already two edits; this makes it three,
+     * and all three fail loudly rather than quietly.
+     */
+    const config = readWranglerConfig();
+    const worker = config.name;
+    const carried = (config.vars as Record<string, unknown> | undefined)?.WORKER_NAME;
+
+    expect(carried, "wrangler.jsonc declares no WORKER_NAME var").toBeDefined();
+    expect(
+      carried,
+      `WORKER_NAME is ${String(carried)} while the Worker is ${String(worker)} — a routing rule would name `
+      + "the wrong Node, and mail addressed to this one would be handed to that one",
+    ).toBe(worker);
   });
 
   it("declares a workflow whose block the shared world can read, and no schedules on it", () => {
