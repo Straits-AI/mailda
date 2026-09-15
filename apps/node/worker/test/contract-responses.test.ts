@@ -346,12 +346,22 @@ describe("every schema-bearing route answers what the contract says it does", ()
      * answered a **price** without a bound account would be quoting a figure from no account in particular,
      * and a purchase approval is built on exactly that figure.
      */
+    /*
+     * **Thunks, not promises.** An array literal of `answers(...)` calls starts every request at once, and
+     * each one rejects immediately — so the second and third sit *rejected and unhandled* for as long as it
+     * takes to await the first. Whether Node's microtask checkpoint elapses in that window decides whether
+     * it reports an unhandled rejection, which made the suite fail roughly one run in ten with no `FAIL`
+     * line and no named test: a run-level error, not an assertion.
+     *
+     * It cost three clean re-runs and a green CI to become believable as a real defect rather than a flake.
+     * A thunk is created and awaited in the same breath, so there is no unobserved rejection to report.
+     */
     for (const attempt of [
-      answers("GET", "/api/provider/domains", { cookie: held }, "?q=mailda"),
-      answers("POST", "/api/provider/domains/check", {
+      () => answers("GET", "/api/provider/domains", { cookie: held }, "?q=mailda"),
+      () => answers("POST", "/api/provider/domains/check", {
         cookie: held, body: { domains: ["mailda.example"] },
       }),
-    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
 
     /*
      * The purchase's three routes. All refuse on this fixture — no account is determined — and the `POST`
@@ -359,12 +369,12 @@ describe("every schema-bearing route answers what the contract says it does", ()
      * Cloudflare when this Node cannot first establish whose account it would spend from.
      */
     for (const attempt of [
-      answers("GET", "/api/provider/domains/purchase", { cookie: held }, "?domain=mailda.example"),
-      answers("GET", "/api/provider/domains/purchase/status", { cookie: held }, "?domain=mailda.example"),
-      answers("POST", "/api/provider/domains/purchase", {
+      () => answers("GET", "/api/provider/domains/purchase", { cookie: held }, "?domain=mailda.example"),
+      () => answers("GET", "/api/provider/domains/purchase/status", { cookie: held }, "?domain=mailda.example"),
+      () => answers("POST", "/api/provider/domains/purchase", {
         cookie: held, body: { domain: "mailda.example", digest: "0".repeat(64), autoRenew: false },
       }),
-    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+    ]) await expect(attempt()).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
 
     /*
      * The handover manifest. Verified here the way a client would — the key comes from this Node's own
