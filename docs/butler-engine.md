@@ -730,7 +730,7 @@ which by construction moots any approval bound to the old one.
 
 **Reusing the key is right on every state; claiming success is not.** `replay_identical_content`'s justification
 is *"this message exists and is on its way"*, and that is false of an incumbent the world has decided **against**
-— a `withheld` manifest is never going anywhere and a `cancelled` one was stopped by a person. Before this was
+— a `withheld` manifest is never going anywhere and a `cancelled` one was stopped by whoever the audit entry names — which is not necessarily a person, since the cancel route is tier `act`. Before this was
 fixed, "a policy wrongly denied a Butler's send; fix the policy and re-run" — the single most obvious use of
 `re-run` — was a no-op reporting `ok`. `incumbentStands` is the total `Record<SendState, boolean>` that decides
 it: `cancelled` and `withheld` do not stand, an unrecognised state does (standing performs nothing, so it cannot
