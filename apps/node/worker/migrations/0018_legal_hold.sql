@@ -41,7 +41,13 @@
 -- whether `lifted_at IS NULL` means "not lifted" or "lifting was never built", and the second is the truth.
 -- Adding a column is additive, so the lift migration can add both when it can also write them. Until then
 -- **every row in this table is an active hold**, which is what `src/holds.ts` relies on and says, and
--- `doctor`'s `legal_hold_lift_path` finding names the absent path rather than leaving it silent.
+-- the lift path is no longer absent: `POST /api/holds/:id/lift` exists, and `doctor`'s
+-- `legal_hold_lift_pending` and `legal_hold_unliftable` findings report on it.
+--
+-- This line used to send an operator to a check called `legal_hold_lift_path`, which no check has ever
+-- emitted — the same shape of defect as the `credential_kek` reference that
+-- `test/node/doctor-check-names.test.ts` was written for. It survived because that test scanned `doctor.ts`
+-- alone. It scans the repository's prose now, which is how this line was found.
 CREATE TABLE holds (
   id         TEXT PRIMARY KEY,   -- hld_<ulid>
   org_id     TEXT NOT NULL,

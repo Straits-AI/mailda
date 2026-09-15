@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -28,6 +29,20 @@ import { describe, expect, it } from "vitest";
  *   emitted     — every `check: "..."` in a Finding this file builds.
  *   referenced  — every equality test against `.check`, and every "the X finding" / "the X and Y findings"
  *                 phrase, which is the one idiom this file uses to send a reader to another check.
+ *
+ * ## And repository-wide since #107, because the defect recurred outside this file
+ *
+ * It scanned `src/doctor.ts` alone, and the same mistake was sitting in three other places: migration 0054
+ * and `docs/message-search.md` both sent an operator to a `body_index_state` finding — that is a **column**,
+ * added by 0044 — and migration 0018 named a `legal_hold_lift_path` finding that no check has ever emitted.
+ *
+ * Its own reasoning said why that matters: *"a wrong identifier is worse than a wrong comment, because
+ * prose does not look like it is being checked and an identifier does."* A migration comment is exactly
+ * where somebody looks when a deploy is going wrong, and nothing was reading those.
+ *
+ * So `referencedNames` now runs over every tracked `.md`, `.sql`, `.ts` and `.tsx` as well. The idiom is the
+ * same one — a snake_case token before the word "finding" — and it is clean at this scale: 36 such
+ * references outside this file, all but the two defects above naming a real check.
  *
  * The scan is file-wide rather than per-function, so it covers `authenticationIsImpossible`,
  * `withoutDataFindings`, and any function added after this test was written — naming the three would be
@@ -66,14 +81,9 @@ function emittedNames(text: string): string[] {
 
 interface Reference { name: string; where: string }
 
-/** Every name this file points at: an equality test against `.check`, or "the X finding" in prose. */
-function referencedNames(text: string): Reference[] {
+/** Every name prose points at: "the X finding", the one idiom used to send a reader to another check. */
+function proseReferences(text: string): Reference[] {
   const references: Reference[] = [];
-
-  for (const match of text.matchAll(/\.check\s*===\s*"([^"]+)"/g)) {
-    const [whole, name] = match;
-    if (name !== undefined) references.push({ name, where: `comparison ${whole}` });
-  }
 
   // Backticks become spaces first, so "`key_vault` finding" is found as well as "key_vault finding".
   // Harmless here: the only thing read out of this pass is a snake_case token sitting before the word
@@ -89,6 +99,73 @@ function referencedNames(text: string): Reference[] {
 
   return references;
 }
+
+/** Every name `doctor.ts` points at: a comparison as well as prose, since that file does not test itself. */
+function referencedNames(text: string): Reference[] {
+  const references: Reference[] = [];
+  for (const match of text.matchAll(/\.check\s*===\s*"([^"]+)"/g)) {
+    const [whole, name] = match;
+    if (name !== undefined) references.push({ name, where: `comparison ${whole}` });
+  }
+  return [...references, ...proseReferences(text)];
+}
+
+/**
+ * Every tracked file that could carry the idiom, excluding this one.
+ *
+ * **This file is excluded deliberately**, and it is the only exclusion: its own documentation quotes
+ * `credential_kek` — the dead reference it was written for — and a scan that read its explanation as a
+ * claim would fail on the evidence for its own existence.
+ */
+function proseFiles(): string[] {
+  const tracked = execFileSync("git", ["ls-files", "*.md", "*.sql", "*.ts", "*.tsx"], {
+    cwd: join(import.meta.dirname, "../../../../.."), encoding: "utf8",
+  }).split("\n").filter((one) => one !== "");
+  return tracked.filter((one) =>
+    !one.endsWith("doctor-check-names.test.ts") && !one.endsWith("src/doctor.ts"));
+}
+
+describe("every check name the repository's prose refers to is one a check emits", () => {
+  const root = join(import.meta.dirname, "../../../../..");
+  const elsewhere = proseFiles().flatMap((relative) => {
+    let text = "";
+    try {
+      text = readFileSync(join(root, relative), "utf8");
+    } catch {
+      // A tracked path that cannot be read is not this test's business; the anti-vacuity count below is.
+      return [];
+    }
+    /*
+     * **Prose only, outside `doctor.ts`.** A `.check === "x"` comparison elsewhere can legitimately assert a
+     * name's *absence* — `test/legal-hold.test.ts` does exactly that, so nobody reinstates a check that was
+     * deliberately removed — and this scan cannot tell that apart from pointing a reader at it.
+     *
+     * Prose carries no such ambiguity. "the X finding" always sends somebody looking, so it always has to
+     * resolve. Inside `doctor.ts` both idioms are checked, because that file does not test itself.
+     */
+    return proseReferences(text).map((one) => ({ ...one, where: `${relative}: ${one.where}` }));
+  });
+
+  it("finds references outside doctor.ts, so this cannot pass by reading nothing", () => {
+    /*
+     * Counted on 15 September 2026: 36 check-name-shaped references across migrations, docs, source and
+     * tests. A floor rather than the figure, because prose is added freely — but far enough above zero that
+     * a scan reading nothing fails here rather than passing quietly, which is the failure this whole file
+     * exists to prevent.
+     */
+    expect(elsewhere.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it("names no check that does not exist", () => {
+    const emittedElsewhere = emittedNames(source);
+    const wrong = elsewhere.filter((one) => !emittedElsewhere.includes(one.name));
+    expect(
+      wrong.map((one) => `${one.where} → ${one.name}`),
+      "prose points an operator at a doctor finding that no check emits. A migration comment is exactly "
+      + "where somebody looks when a deploy is going wrong.",
+    ).toEqual([]);
+  });
+});
 
 describe("every check name doctor.ts refers to is one a check emits", () => {
   const emitted = emittedNames(source);

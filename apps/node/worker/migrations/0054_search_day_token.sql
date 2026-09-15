@@ -59,11 +59,18 @@
 -- what the existing backfill does, so this migration resets `body_index_state` to put every message back in
 -- its queue rather than inventing a second mechanism.
 --
--- **A windowed search is therefore refused while that backlog is non-zero**, and that is not caution, it is
--- the same correctness argument as above. A body row with no day token cannot match any window, so a windowed
--- search run mid-rebuild would silently omit real matches — the quiet wrongness #153 refused when it rejected
--- filtering outside the arms. `doctor`'s `search_index_backlog` and `body_index_state` findings are what an
--- operator watches; the feature turns itself on when the index can answer honestly.
+-- **A windowed search is NOT refused while that backlog is non-zero**, and this comment claimed it was.
+-- Nothing in `authz-read.ts` reads the backlog; there is no such refusal and there never was. What is true is
+-- narrower and is what `docs/message-search.md` says: a body row not yet re-indexed cannot match any window,
+-- so **body** matches inside a window are incomplete until the backlog drains, while **subject** matches are
+-- complete as soon as this migration finishes — the subject table is rebuilt in SQL right here.
+--
+-- A claim that the system refuses something it answers is the worse direction of the two: an operator reading
+-- it would trust a window they should have waited on.
+--
+-- `doctor`'s `search_index_backlog` and `body_index_backlog` findings are what an operator watches.
+-- (`body_index_state` is a *column*, added by 0044 — it is not a check, and naming it here sent a reader
+-- looking for a finding that does not exist.)
 --
 -- ## The granularity this fixes at, which is a product decision and not a limit anybody worked around
 --
