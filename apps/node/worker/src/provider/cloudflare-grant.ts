@@ -3,6 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "../audit.ts";
 import { unwrapCredential, wrapCredential } from "../auth/kek.ts";
 import { conflict, unprocessable } from "../errors.ts";
+import { sha256Hex } from "../evidence-store.ts";
 
 /**
  * The Node's own Cloudflare grant (#162 L1, ADR 42).
@@ -1687,8 +1688,9 @@ async function digestOf(of: Omit<SendingProposal, "digest">): Promise<string> {
   const canonical = JSON.stringify([
     of.domain, of.zone, of.zoneId, of.onboarded, of.coveredBy, of.creates, of.leavesBehind, of.error,
   ]);
-  const hashed = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  return [...new Uint8Array(hashed)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  // `sha256Hex` rather than a sixth private copy of the same four lines — it is exported, and this file
+  // adding its own was the duplication #160 is about, one level below governance.
+  return await sha256Hex(new TextEncoder().encode(canonical));
 }
 
 export async function sendingProposalFor(
