@@ -167,7 +167,20 @@ function outcomeOf(domain: string, status: {
      * reading of an unfamiliar lifecycle state is to stop and show a person rather than to keep asking.
      */
     mayPoll: known && KEEP_POLLING[state as PurchaseState],
-    error: status.error === undefined
+    /*
+     * **`== null`, not `=== undefined`**, and this cost a real charge. Cloudflare returns `"error": null`
+     * on a successful workflow rather than omitting the key, so `status.error === undefined` was false and
+     * `status.error.code` threw — **after** the registration had already been created and billed.
+     *
+     * The Node answered 500, the operator was told the purchase failed, and `mailda.site` was registered.
+     * The status route carried the same fault, so the obvious next move — ask how it went — failed too.
+     *
+     * This is the second null-versus-undefined defect in this repository in one day. The other was
+     * `flag(argv, "code") !== undefined` in the CLI, where a helper answering `null` made a guard fire on
+     * every invocation. Both were written by somebody who knew which value the source produced and typed
+     * the other one.
+     */
+    error: status.error == null
       ? null
       : `${status.error.code ?? "?"} ${status.error.message ?? ""}`.trim(),
     /*

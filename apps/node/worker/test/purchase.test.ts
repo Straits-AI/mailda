@@ -162,6 +162,19 @@ describe("the charge", () => {
     return (await purchaseProposalFor(testEnv, atTime(AT + 3000), ORG, domain)).digest;
   }
 
+  it("returns the outcome when Cloudflare answers with a null error", async () => {
+    // The buy path threw here too, so the charge landed and the caller saw a 500.
+    serving();
+    const digest = await digestFor();
+    serving({ status: { state: "in_progress", completed: false, error: null } });
+
+    const outcome = await buyDomain(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mailda-probe.site", digest, false,
+    );
+    expect(outcome.state).toBe("in_progress");
+    expect(outcome.error).toBeNull();
+  });
+
   it("posts exactly once, with auto-renew stated rather than omitted", async () => {
     serving();
     const digest = await digestFor();
@@ -241,6 +254,21 @@ describe("polling a purchase", () => {
       expect(outcome.mayPoll).toBe(mayPoll);
     });
   }
+
+  it("survives an explicit null error, which is what a successful workflow returns", async () => {
+    /*
+     * **The defect that cost a real $4.99.** Cloudflare returns `"error": null` rather than omitting the
+     * key, and the check was `status.error === undefined`. It threw *after* the registration was created
+     * and billed: the Node answered 500, the operator was told the purchase had failed, and the domain was
+     * registered. The status route carried the same fault, so asking how it went failed too.
+     *
+     * Every fixture here omitted `error`, which is the one shape the provider never sends.
+     */
+    serving({ status: { state: "succeeded", completed: true, error: null } });
+    const outcome = await purchaseStatus(testEnv, atTime(AT + 5000), ORG, "mailda-probe.site");
+    expect(outcome.state).toBe("succeeded");
+    expect(outcome.error).toBeNull();
+  });
 
   it("stops on a lifecycle state it has never seen", async () => {
     /*
