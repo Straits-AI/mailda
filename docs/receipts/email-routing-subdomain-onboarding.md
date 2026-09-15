@@ -21,7 +21,57 @@ values:
   sending.unonboard_delete_idempotent: 0
   sending.unonboard_removes_every_created_record: 0
   sending.onboard_records_appear_atomically: 0
+  routing.rule_accepted_for_unonboarded_subdomain: 1
+  routing.rule_creates_subdomain_records: 0
 ---
+
+## Addition, 16 September 2026: the rules API accepts a rule that can never match (#92's drill)
+
+`routing.subdomain_dashboard_only: 1` above is true and **too coarse**. It says the onboarding flow has no
+API, which is right. It does not say what happens if you skip the flow and create a rule anyway — and that
+turns out to be the dangerous part.
+
+`POST /zones/{id}/email/routing/rules`, with a `to` matcher on `restore@drill.arbuilder.app`, where
+`drill.arbuilder.app` had never been added to Email Routing:
+
+```json
+{ "result": { "id": "ee48fc2f…", "enabled": true, "source": "api",
+              "matchers": [{ "type": "literal", "field": "to",
+                             "value": "restore@drill.arbuilder.app" }] } }
+```
+
+**Accepted. 200. Enabled.** And inert: no MX record was created on the subdomain — checked against
+Cloudflare's own authoritative nameserver, not a resolver — and `GET /email/routing/dns` still lists only
+the five apex records. Mail to that address never reaches Cloudflare at all, because the name it is sent to
+has no MX.
+
+So the rule exists, reads as configured in every listing, and receives nothing for ever. That is the failure
+shape this repository keeps meeting: **a success that does nothing**, and it is worse than the refusal the
+coarse finding implied.
+
+### Why the dashboard feels different, which is the whole explanation
+
+An operator adding a subdomain through **Settings → Subdomains** never touches MX by hand, because that
+flow onboards the subdomain *and* writes its records. The rules API does only the matcher. Both are true at
+once, and reading the first as "subdomains are automatic" is how a Node could offer a routing rule that
+silently never fires.
+
+### What receiving on a subdomain actually needs
+
+Two things, and only one of them lacks an API:
+
+| | API? |
+|:--|:--|
+| a routing rule for the address | **yes** — measured above |
+| MX records on the subdomain | **yes** — `POST /zones/{id}/dns_records` |
+
+Neither is the dashboard-only onboarding wizard. So a Node holding `dns.write` could onboard a receiving
+subdomain end to end, which is what #163 L2 was reaching for. This Node holds six scopes and DNS write is
+not among them — deliberately: DNS write on a customer's zone is the authority to redirect their mail, and
+it is a larger grant than anything Mailda holds today.
+
+Recorded as a capability decision rather than a limit, because the earlier finding read as the latter.
+
 
 ## Addition, 13 September 2026: the onboard run through the Node's own grant (#163 L2)
 

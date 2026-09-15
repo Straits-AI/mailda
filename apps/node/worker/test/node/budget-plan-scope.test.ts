@@ -359,6 +359,8 @@ const FIGURES: Record<string, Classification> = {
     "sending.unonboard_delete_idempotent", "sending.unonboard_removes_every_created_record",
     // DNS propagation, which no plan buys faster.
     "sending.onboard_records_appear_atomically",
+    // Whether the rules API accepts a rule for a subdomain it will never route. Provider behaviour.
+    "routing.rule_accepted_for_unonboarded_subdomain", "routing.rule_creates_subdomain_records",
   ),
 
   // docs/receipts/email-sending-events.md
