@@ -4,6 +4,7 @@ import { auditedBatch } from "../audit.ts";
 import { conflict } from "../errors.ts";
 import { boundAccountFor, cloudflareGet, cloudflarePost } from "./cloudflare-grant.ts";
 import { checkDomains, type DomainPrice } from "./registrar.ts";
+import { sha256Hex } from "../evidence-store.ts";
 
 /**
  * Buying a domain (#164 L3, write side).
@@ -82,8 +83,9 @@ async function digestOf(domain: string, price: DomainPrice, existing: string | n
   const canonical = JSON.stringify([
     domain, price.currency, price.registrationCost, price.renewalCost, price.tier, price.buyable, existing,
   ]);
-  const hashed = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  return [...new Uint8Array(hashed)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  // `sha256Hex` rather than a sixth private copy of the same four lines — it is exported, and this file
+  // adding its own was the duplication #160 is about, one level below governance.
+  return await sha256Hex(new TextEncoder().encode(canonical));
 }
 
 /** Whether a registration already exists, read rather than assumed. Null when there is none. */
