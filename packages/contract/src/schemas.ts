@@ -546,6 +546,15 @@ export const providerReceivingProposalResponse = z.object({
     zone: z.string().nullable(),
     zoneId: z.string().nullable(),
     zoneRouting: z.string().nullable(),
+    /**
+     * The zone this act would also turn into a mail zone, or null when it already is one.
+     *
+     * Its own field because it is the larger half: enabling Email Routing writes MX and SPF at the **apex**,
+     * so it decides where the whole domain's mail goes rather than one subdomain's. When it is non-null,
+     * `creates` is empty and that is honest rather than incomplete — a zone that is not routing lists no MX,
+     * so the records are read after enabling.
+     */
+    enablesZone: z.string().nullable(),
     creates: z.array(z.object({
       type: z.string(),
       name: z.string(),

@@ -77,12 +77,15 @@ const APEX_MX = [
  */
 function serving(opts: {
   routingEnabled?: boolean;
+  /** Whether the zone starts listing MX once it has been enabled, which is what the real one does. */
+  enableRevealsMx?: boolean;
   existingMx?: Array<{ content: string }>;
   writtenMx?: Array<{ content: string }> | null;
   rules?: unknown[];
 } = {}) {
   const calls: Array<{ url: string; method: string; body: string | null }> = [];
   let wrote = 0;
+  let enabled = opts.routingEnabled !== false;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
     const method = init?.method ?? "GET";
@@ -94,9 +97,14 @@ function serving(opts: {
     if (path.startsWith("/zones?name=example.test")) return ok([{ id: "zone_1", name: "example.test" }]);
     if (path.startsWith("/zones?name=")) return ok([]);
     if (path.endsWith("/email/routing")) {
-      return ok({ enabled: opts.routingEnabled !== false, status: "ready" });
+      if (method === "PATCH") { enabled = true; return ok({ enabled: true, status: "ready" }); }
+      return ok({ enabled: enabled && opts.routingEnabled !== false, status: "ready" });
     }
-    if (path.endsWith("/email/routing/dns")) return ok(APEX_MX);
+    if (path.endsWith("/email/routing/dns")) {
+      // An un-routed zone lists nothing; enabling is what makes the records appear.
+      const listing = opts.enableRevealsMx === true && !enabled ? [] : APEX_MX;
+      return ok(opts.routingEnabled === false && !enabled ? [] : listing);
+    }
     if (path.includes("/email/routing/rules")) {
       if (method === "POST") return ok({ name: "mailda mail.example.test" });
       return ok(opts.rules ?? []);
@@ -139,12 +147,34 @@ describe("proposing to receive on a subdomain", () => {
       .toEqual([12, 25, 34]);
   });
 
-  it("refuses when the zone itself is not routing, before writing anything", async () => {
-    // A subdomain of a zone that does not route cannot receive however many records are written — and
-    // finding that out afterwards would leave records behind for a capability that never worked.
+  it("offers to turn the zone into a mail zone rather than sending somebody to the dashboard", async () => {
+    /*
+     * **This used to refuse**, on the argument that enabling Email Routing writes MX at the apex and so
+     * decides where a whole domain's mail goes. The argument is right and the conclusion was wrong: refusing
+     * sent the operator to the Cloudflare dashboard to do the same thing with less information, which is
+     * what #108 exists to remove. ADR 42's line is *remove routine dashboard work, and do not disguise
+     * legal or security decisions as automation* — this is routine dashboard work.
+     *
+     * So it is offered, named as its own field, and bound by the digest like everything else here.
+     */
     serving({ routingEnabled: false });
     const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
-    expect(proposal.refusal).toContain("not enabled");
+
+    expect(proposal.refusal).toBeNull();
+    expect(proposal.enablesZone).toBe("example.test");
+    /*
+     * And `creates` is empty, which is honest rather than incomplete: a zone that is not routing lists no
+     * MX, so the records are read after it is on. A proposal that enumerated them here would be inventing
+     * them.
+     */
+    expect(proposal.creates).toEqual([]);
+  });
+
+  it("does not offer to enable a zone that is already routing", async () => {
+    serving();
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    expect(proposal.enablesZone).toBeNull();
+    expect(proposal.creates).toHaveLength(3);
   });
 
   it("refuses a subdomain that already points somewhere", async () => {
@@ -245,8 +275,28 @@ describe("onboarding it", () => {
     expect(posted(calls, "/dns_records")).toEqual([]);
   });
 
+  it("enables the zone, then reads the records it produces, then writes them", async () => {
+    /*
+     * The order the un-routed case forces: nothing can be copied onto the subdomain until the zone lists
+     * something to copy. A version that wrote first would have had nothing to write.
+     */
+    serving({ routingEnabled: false });
+    const digest = await digestFor();
+    const calls = serving({ routingEnabled: false, enableRevealsMx: true });
+
+    const outcome = await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
+    );
+
+    const patched = calls.findIndex((one) => one.method === "PATCH" && one.url.endsWith("/email/routing"));
+    const wrote = calls.findIndex((one) => one.method === "POST" && one.url.includes("/dns_records"));
+    expect(patched, "the zone was never enabled").toBeGreaterThanOrEqual(0);
+    expect(wrote, "records were written before the zone could list any").toBeGreaterThan(patched);
+    expect(outcome.written).toHaveLength(3);
+  });
+
   it("writes nothing when the proposal refuses", async () => {
-    const calls = serving({ routingEnabled: false });
+    const calls = serving({ existingMx: [{ content: "mx.somebody-else.net." }] });
     await expect(onboardReceiving(
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", "0".repeat(64),
       "restore@mail.example.test",

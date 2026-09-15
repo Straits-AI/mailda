@@ -3,7 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
-import { cloudflareGet, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
+import { cloudflareGet, cloudflarePatch, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
 
 /**
  * Onboarding a subdomain to **receive** mail (#163 L2, and the half #92's drill ran aground on).
@@ -43,6 +43,14 @@ export interface ReceivingProposal {
   zoneId: string | null;
   /** Whether the zone itself has Email Routing on. A subdomain cannot receive if its zone does not. */
   zoneRouting: string | null;
+  /**
+   * The zone this act would also **turn into a mail zone**, or null when it already is one.
+   *
+   * Its own field rather than folded into `creates`, because it is a different size of change: enabling
+   * Email Routing writes MX and SPF at the **apex**, so it decides where the whole domain's mail goes — not
+   * one subdomain's. An operator confirming this should see that as its own line, not infer it.
+   */
+  enablesZone: string | null;
   /** The MX this Node would write onto the subdomain, in Cloudflare's own words. */
   creates: Array<{ type: string; name: string; content: string; priority: number | null }>;
   /** MX already present on the subdomain. Non-empty means somebody has been here. */
@@ -60,7 +68,7 @@ export interface ReceivingProposal {
 
 async function digestOf(of: Omit<ReceivingProposal, "digest">): Promise<string> {
   return await sha256Hex(new TextEncoder().encode(JSON.stringify([
-    of.domain, of.zone, of.zoneId, of.zoneRouting,
+    of.domain, of.zone, of.zoneId, of.zoneRouting, of.enablesZone,
     of.creates.map((one) => `${one.type} ${one.name} ${one.content} ${one.priority}`),
     of.present, of.rule, of.refusal,
   ])));
@@ -83,8 +91,8 @@ export async function receivingProposalFor(
 ): Promise<ReceivingProposal> {
   const blank = async (over: Partial<Omit<ReceivingProposal, "digest">>): Promise<ReceivingProposal> => {
     const body = {
-      domain, zone: null, zoneId: null, zoneRouting: null, creates: [], present: [], rule: null,
-      refusal: null, ...over,
+      domain, zone: null, zoneId: null, zoneRouting: null, enablesZone: null, creates: [], present: [],
+      rule: null, refusal: null, ...over,
     };
     return { ...body, digest: await digestOf(body) };
   };
@@ -108,19 +116,14 @@ export async function receivingProposalFor(
     return await blank({ zone: zone.name, zoneId: zone.id, refusal: routing.error });
   }
   const zoneRouting = routing.result.status ?? null;
-  if (routing.result.enabled !== true) {
-    return await blank({
-      zone: zone.name, zoneId: zone.id, zoneRouting,
-      refusal: `Email Routing is not enabled on ${zone.name} (status ${zoneRouting ?? "unknown"}), so no `
-        + "subdomain of it can receive. Enable it on the zone first",
-    });
-  }
-
+  const enablesZone = routing.result.enabled === true ? null : zone.name;
   const required = await cloudflareGet<Array<{
     type?: string; name?: string; content?: string; priority?: number;
   }>>(env, ctx, orgId, `/zones/${zone.id}/email/routing/dns`);
   if (!required.ok) {
-    return await blank({ zone: zone.name, zoneId: zone.id, zoneRouting, refusal: required.error });
+    return await blank({
+      zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone, refusal: required.error,
+    });
   }
 
   /*
@@ -134,8 +137,16 @@ export async function receivingProposalFor(
     }));
   if (creates.length === 0) {
     return await blank({
-      zone: zone.name, zoneId: zone.id, zoneRouting,
-      refusal: `Cloudflare lists no MX for ${zone.name}, so there is nothing to copy onto ${domain}`,
+      zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
+      /*
+       * A zone that is not yet routing lists no MX, which is not an error — it is the state enabling fixes.
+       * So this only refuses when the zone **is** routing and still offers nothing, which would mean
+       * Cloudflare and its own routing state disagree.
+       */
+      refusal: enablesZone !== null
+        ? null
+        : `Cloudflare lists no MX for ${zone.name} although Email Routing is on there, so there is nothing `
+          + `to copy onto ${domain}`,
     });
   }
 
@@ -149,7 +160,7 @@ export async function receivingProposalFor(
 
   const present = existing.ok ? existing.result.map((one) => one.content ?? "?") : [];
   const proposal = await blank({
-    zone: zone.name, zoneId: zone.id, zoneRouting,
+    zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
     creates: present.length > 0 ? [] : creates,
     present,
     rule: found?.name ?? null,
@@ -203,13 +214,46 @@ export async function onboardReceiving(
     action: "provider.receiving_onboarded", outcome: "ok", actorUserId, subject: domain,
     detail: {
       zone: proposal.zone,
+      // Named because it is the larger half: this decides where the whole domain's mail goes.
+      enablesZone: proposal.enablesZone,
       creates: proposal.creates.map((one) => `${one.content} (priority ${one.priority})`),
       address: mailboxAddress,
     },
   }, (entry) => [entry]);
 
+  /*
+   * **Enable the zone first, then re-read.** A zone that is not yet routing lists no MX at all, so the
+   * records a subdomain needs are not knowable until it is on — which is why the proposal shows an empty
+   * `creates` beside a non-null `enablesZone` rather than pretending to enumerate them.
+   *
+   * `PATCH /email/routing` rather than `POST /email/routing/enable`: the latter is the endpoint Cloudflare
+   * marks deprecated.
+   */
+  let records = proposal.creates;
+  if (proposal.enablesZone !== null) {
+    await cloudflarePatch<{ enabled?: boolean }>(
+      env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing`, { enabled: true },
+    );
+    const now = await cloudflareGet<Array<{
+      type?: string; content?: string; priority?: number;
+    }>>(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/dns`);
+    if (!now.ok) {
+      return {
+        domain, written: [], confirmed: [], rule: null,
+        note: `Email Routing was enabled on ${proposal.enablesZone}, and the records it requires could not `
+          + `then be read: ${now.error}. Nothing was written on ${domain} and no rule was created — run the `
+          + "proposal again, which will now see a routing zone.",
+      };
+    }
+    records = now.result
+      .filter((one) => one.type === "MX")
+      .map((one) => ({
+        type: "MX", name: domain, content: one.content ?? "?", priority: one.priority ?? null,
+      }));
+  }
+
   const written: string[] = [];
-  for (const record of proposal.creates) {
+  for (const record of records) {
     await cloudflarePost<{ id?: string }>(
       env, ctx, orgId, `/zones/${proposal.zoneId}/dns_records`,
       { type: "MX", name: record.name, content: record.content, priority: record.priority, ttl: 1 },

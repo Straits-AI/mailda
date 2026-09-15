@@ -150,8 +150,25 @@ export const REQUIRED_SCOPES = [
     readOnlyExists: true,
   },
   {
-    scope: "zone-settings.read",
-    why: "the zone's own configuration, which decides whether it can carry mail at all",
+    /*
+     * **Write, not read, since #163 L2's receiving half.** It was `zone-settings.read` and the reads still
+     * dominate — the routing verdict, the required records. What needs write is one act:
+     * `PATCH /zones/{id}/email/routing` with `enabled: true`, which is how a zone becomes a mail zone.
+     *
+     * That act was refused for a while, on the argument that it writes MX at the **apex** and so changes
+     * where a whole domain's mail goes. The argument was real and the conclusion was wrong: refusing sent
+     * the operator to the Cloudflare dashboard, which is the thing #108 exists to remove. ADR 42 states the
+     * line — *remove routine dashboard work, and do not disguise legal or security decisions as
+     * automation.* Enabling Email Routing is routine dashboard work. It is not a legal or security
+     * decision; it is a configuration change, and the honest handling is to **name what it changes and ask**
+     * rather than to send somebody elsewhere to do the same thing with less information.
+     *
+     * So it is proposed with its consequence written out, bound by a digest like every other act here, and
+     * applied on confirmation.
+     */
+    scope: "zone-settings.write",
+    why: "the zone's own configuration: whether it can carry mail at all, and turning that on when an "
+      + "operator asks. Read would answer the first and leave the second in a dashboard",
     readOnlyExists: true,
   },
   {
@@ -1117,6 +1134,40 @@ export async function cloudflarePost<T>(
   const token = await accessTokenFor(env, ctx, orgId);
   const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
     method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  }).catch(() => null);
+
+  const payload = (await response?.json().catch(() => ({}))) as {
+    success?: boolean; result?: T; errors?: Array<{ message?: string; code?: number }>;
+  };
+  if (response !== null && response.ok && payload.success === true && payload.result !== undefined) {
+    return payload.result;
+  }
+  const said = (payload?.errors ?? [])
+    .map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+  throw unprocessable("E_CLOUDFLARE_REFUSED", {
+    what: `Cloudflare refused ${path}`,
+    why: said === "" ? `the API answered ${response?.status ?? "nothing"}` : said,
+    fix: "check the grant still carries the scope this call needs, and that the account may perform it",
+  });
+}
+
+/**
+ * One authenticated `PATCH`, for the single settings change this Node makes.
+ *
+ * Separate from `cloudflarePost` and named for what it does, so the one act that turns a zone into a mail
+ * zone is greppable. `POST /email/routing/enable` would be the obvious call and Cloudflare marks it
+ * deprecated; `PATCH /email/routing` is the live one.
+ */
+export async function cloudflarePatch<T>(
+  env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
+): Promise<T> {
+  const token = await accessTokenFor(env, ctx, orgId);
+  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    method: "PATCH",
     headers: {
       authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
     },
