@@ -236,18 +236,40 @@ async function hashesFor(
   const referents = REFERENTS.filter((one) => one.segment === segment);
   if (keys.length === 0 || referents.length === 0) return found;
 
-  const holes = keys.map(() => "?").join(",");
-  const arms = referents.map((one) =>
-    `SELECT ${one.key} AS k, ${one.hash} AS h FROM ${one.table}
-       WHERE org_id = ? AND ${one.key} IN (${holes})`);
-  const binds = referents.flatMap(() => [orgId, ...keys]);
+  /*
+   * **Chunked, because a full page does not fit and this used to throw.**
+   *
+   * One arm per referent, each binding `org_id` plus every key — so the statement carries
+   * `referents.length × (1 + keys.length)` parameters against `d1.max_bound_parameters`, which is 100. The
+   * page size is `reconcile.list_limit`, 150. `raw` has one referent and broke above 99 keys; `sent` has
+   * **three** — one per manifest hash — and broke above 32, which is about eleven sends.
+   *
+   *     D1_ERROR: too many SQL variables at offset 300: SQLITE_ERROR
+   *
+   * So `mailda backup` failed on any Node with real mail in it. #92's restore drill ran over **three**
+   * objects and could not see it, which is what "no figure above three" was actually costing.
+   *
+   * The chunk is derived from the budget rather than written as a number. A literal here would be a second
+   * copy of a measured platform limit — and `d1.max_bound_parameters` has a receipt precisely so that the
+   * day D1 raises it, one regeneration moves every site that respects it.
+   */
+  const perChunk = Math.max(1, Math.floor(BUDGETS["d1.max_bound_parameters"] / referents.length) - 1);
 
-  const rows = await env.CATALOG.prepare(arms.join("\n UNION ALL "))
-    .bind(...binds)
-    .all<{ k: string | null; h: string | null }>();
+  for (let at = 0; at < keys.length; at += perChunk) {
+    const chunk = keys.slice(at, at + perChunk);
+    const holes = chunk.map(() => "?").join(",");
+    const arms = referents.map((one) =>
+      `SELECT ${one.key} AS k, ${one.hash} AS h FROM ${one.table}
+         WHERE org_id = ? AND ${one.key} IN (${holes})`);
+    const binds = referents.flatMap(() => [orgId, ...chunk]);
 
-  for (const row of rows.results) {
-    if (typeof row.k === "string" && typeof row.h === "string") found.set(row.k, row.h);
+    const rows = await env.CATALOG.prepare(arms.join("\n UNION ALL "))
+      .bind(...binds)
+      .all<{ k: string | null; h: string | null }>();
+
+    for (const row of rows.results) {
+      if (typeof row.k === "string" && typeof row.h === "string") found.set(row.k, row.h);
+    }
   }
   return found;
 }

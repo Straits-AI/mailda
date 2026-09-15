@@ -157,6 +157,93 @@ describe("the inventory covers every prefix this Worker writes", () => {
     expect(new Set(inSmallPages.objects.map((one) => one.key)).size).toBe(keys.length);
   });
 
+  it("survives a page with more objects than D1 will bind parameters for", async () => {
+    /*
+     * **`mailda backup` was broken on any Node with real mail in it, and the drill could not see it.**
+     *
+     * `hashesFor` builds one statement per segment with an arm per referent, and binds
+     * `referents.length × (1 + keys.length)` parameters against `d1.max_bound_parameters` — **100**. The
+     * page size is `reconcile.list_limit`, 150. So `raw` (one referent) exceeds the limit above 99 keys,
+     * and `sent` (three referents, one per manifest hash) above **32** — roughly eleven sends.
+     *
+     * #92's restore drill passed over **three** objects. That is why "no figure above three" was not just
+     * an unmeasured gap: it was the reason nobody met this.
+     *
+     * Staged past the `raw` boundary rather than driven through the page seam, because the seam is exactly
+     * what the bug hides behind — a smaller page would pass.
+     */
+    const ctx = createSystemCtx();
+    const hashes = new Map<string, string>();
+    for (let i = 0; i < 105; i += 1) {
+      const key = `${ORG}/raw/bulk-${String(i).padStart(3, "0")}.eml`;
+      const stored = await putEvidence(testEnv, key, utf8(`message ${i}`));
+      /*
+       * A referent row for each, so the chunked lookup has something to find. Without one every object is
+       * legitimately `unaccounted` and the test would pass on a chunking loop that returned nothing at all.
+       */
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO ingress_receipts
+           (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes, blob_key, blob_sha256,
+            accepted_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).bind(ctx.id("rcp"), ORG, `evt-${i}`, "a@b.test", "c@d.test", 10, key, stored.plaintextSha256,
+        new Date(ctx.now()).toISOString()).run();
+      hashes.set(key, stored.plaintextSha256);
+    }
+
+    const inventory = await everything(200);
+    expect(inventory.objects.length).toBe(105);
+    /*
+     * **Every one accounted for, including the ones past the first chunk.** A backup reporting a hundred
+     * objects as unverifiable is the same failure as the crash arriving quietly — and asserting only that
+     * nothing threw would pass on a loop that silently dropped every chunk after the first.
+     */
+    expect(inventory.unaccounted).toBe(0);
+    for (const one of inventory.objects) {
+      expect(one.recordedSha256, one.key).toBe(hashes.get(one.key));
+    }
+  });
+
+  it("survives a page of sends, where three referents share one limit", async () => {
+    /*
+     * **The sharper half, and the one a `raw`-only test cannot reach.**
+     *
+     * `sent` has three referents — typed, normalized and submitted — so one statement carries
+     * `3 × (1 + keys)` parameters and the ceiling is **32 keys**, about eleven sends. A chunk size computed
+     * without dividing by `referents.length` passes every `raw` case and still breaks here, which is
+     * exactly what a mutation showed: removing that division killed nothing until this test existed.
+     *
+     * Forty sends, so the chunk boundary is crossed whichever way it is computed.
+     */
+    const hashes = new Map<string, string>();
+    for (let i = 0; i < 40; i += 1) {
+      const send = `snd_bulk_${String(i).padStart(3, "0")}`;
+      const stored = await putEvidence(
+        testEnv, `${ORG}/sent/${send}/submitted.eml`, utf8(`submitted ${i}`),
+      );
+      const at = new Date(ctx.now()).toISOString();
+      await testEnv.CATALOG.prepare(
+        `INSERT INTO send_manifests (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to,
+           subject, rfc_message_id, fidelity, body_typed_key, body_typed_sha256,
+           body_normalized_key, body_normalized_sha256, submitted_key, submitted_sha256,
+           sealed_at, release_at, state, state_at, attempts)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(send, ORG, "mbx_x", "usr_x", "a@b.test", '["c@d.test"]', "s", `<${send}@b.test>`,
+        "authored", `${ORG}/sent/${send}/typed`, "0".repeat(64),
+        `${ORG}/sent/${send}/normalized`, "0".repeat(64),
+        `${ORG}/sent/${send}/submitted.eml`, stored.plaintextSha256,
+        at, at, "sealed", at, 0).run();
+      hashes.set(`${ORG}/sent/${send}/submitted.eml`, stored.plaintextSha256);
+    }
+
+    const inventory = await everything(200);
+    expect(inventory.objects.length).toBe(40);
+    expect(inventory.unaccounted).toBe(0);
+    for (const one of inventory.objects) {
+      expect(one.recordedSha256, one.key).toBe(hashes.get(one.key));
+    }
+  });
+
   it("names another organization's objects nowhere", async () => {
     await putEvidence(testEnv, "org_somebody_else/raw/theirs.eml", utf8("not ours"));
     await putEvidence(testEnv, `${ORG}/raw/ours.eml`, utf8("ours"));
