@@ -3,6 +3,9 @@ id: deploy-drill-live-account
 kind: platform-limit
 measured_on: 2026-08-27
 stale_when: >
+  a `[[workflows]]` entry becomes valid without a `name`, or wrangler gains any way to interpolate the
+  Worker's name into a config value — either would make the Workflow derive like every other resource and
+  retire the second edit below; or
   wrangler changes whether `versions upload` shifts traffic, whether it can create a Worker that does not
   exist, or whether auto-provisioned D1/R2 bindings are created before a deploy; Cloudflare makes Workflow
   bindings scriptable rather than account-level, or makes a second script claiming one an error; or the
@@ -14,6 +17,9 @@ values:
   deploy.migrations_before_first_deploy: 0
   deploy.workflow_name_is_account_level: 1
   deploy.second_node_reassigns_workflow: 1
+  deploy.second_node_per_account_supported: 1
+  deploy.workflow_name_derives_from_worker: 0
+  deploy.workflow_collision_refused_by_plan: 1
 ---
 
 ## Correction, 10 September 2026: the canary gate was refusing on a propagation race
@@ -316,3 +322,54 @@ and D1 does not wrap a migration file in a transaction, so it is representable r
 Recorded as unknown rather than guessed at, for the reason the preview-URL section above gives: the next
 person to touch this needs to know the difference between *"we measured this and it is broken"* and
 *"we measured this and do not know why"*.
+
+
+## Addition, 15 September 2026: a second Node in one account, which `wrangler.jsonc` recorded as unmeasured
+
+`wrangler.jsonc` said of its Workflow block: *"a second install into one account gets a different Worker
+name and the same workflow name. What happens then is **unmeasured** — the queue case collided silently, and
+this one is not known to. It is the one thing about this block a second Node in one account should be checked
+against."*
+
+Checked, with `mailda deploy --plan` against the live `Swmengappdev` account — a plan reads and changes
+nothing, so this cost a lookup rather than a deploy.
+
+### `deploy.second_node_per_account_supported: 1`
+
+Renaming the Worker **and** the Workflow together produces a clean first install, with every other resource
+derived:
+
+```text
+== plan for the Worker `mailda-drill`
+   A first install. Nothing here yet, so the deploy runs directly.
+       d1       mailda-drill-catalog          absent — the deploy provisions it
+       r2       mailda-drill-evidence         absent — the deploy provisions it
+       queue    mailda-drill-sending-events   absent — the deploy provisions it
+       workflow mailda-drill-butler-runs      absent — the deploy provisions it
+   unwind: nothing to remove.
+```
+
+So a second Node in one account is supported. What it costs is **two edits rather than one**, because the
+Workflow is the single name that does not derive from the Worker's.
+
+### `deploy.workflow_collision_refused_by_plan: 1` — and it does **not** collide silently
+
+Renaming only the Worker is the mistake somebody actually makes, since three of the four names derive
+themselves. It is refused, and the refusal names the owner:
+
+```text
+   BLOCKED. What a deploy would do here is not what it looks like it would do.
+     ! workflow `mailda-butler-runs`
+         PRESENT and owned by another Worker. Deploying takes it — exit 0, no warning — and the
+         other Node keeps a binding pointing at a Workflow now running this Node's code
+         owner: mailda
+```
+
+This is the half that was genuinely unknown. The queue case (#72) collided **silently** — a second Node's
+producer binding attached to the first Node's queue and nothing looked wrong on either. The Workflow case
+does not: #99's guard reads the owner and blocks, and the plan carries the unwind (`wrangler workflows
+delete`) because a Workflow survives its script's deletion.
+
+So the residual `wrangler.jsonc` stated is smaller than it feared. It is not *"a second Node may silently
+steal the Workflow"*; it is *"the Workflow name is the one that must be edited by hand, and forgetting is
+caught."*

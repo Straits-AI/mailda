@@ -87,8 +87,15 @@
   // to that by `test/node/deployability.test.ts`, so renaming the Worker renames the workflow in the same
   // edit. The residual is stated rather than hidden: Workers Builds pins its own Worker name and overrides
   // this file, so a second install into one account gets a different *Worker* name and the same *workflow*
-  // name. What happens then is **unmeasured** — the queue case collided silently, and this one is not known
-  // to. It is the one thing about this block a second Node in one account should be checked against.
+  // name.
+  //
+  // **Measured 15 September 2026** (`docs/receipts/deploy-drill-live-account.md`), and the answer is the
+  // good one: it does **not** collide silently the way the queue did. `mailda deploy --plan` blocks, reads
+  // the owner off the platform and says so — `PRESENT and owned by another Worker … owner: mailda` — and
+  // carries the unwind, because a Workflow survives its script's deletion. #99's guard is what catches it.
+  //
+  // So a second Node in one account **is** supported, and the cost is two edits rather than one: rename the
+  // Worker here and this name with it. Forgetting the second is refused rather than destructive.
   //
   // No `schedules`, and that is #48's decision rather than an omission: schedules are deploy-time config
   // while Butlers are published at runtime, so scheduling multiplexes through `triggers.crons` above. A
