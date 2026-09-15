@@ -456,6 +456,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * quote, so a machine that could read it could supply the confirmation; the second is the read a person
      * is meant to perform when automation has stopped, which is the moment automation must not resume.
      */
+    "GET /api/provider/receiving",
     "GET /api/provider/domains/purchase",
     "GET /api/provider/domains/purchase/status",
     "GET /api/provider/handover",
@@ -479,6 +480,13 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * errand: it is irreversible, it is billed, and #164 requires the decision be a person's bound to an
      * exact price.
      */
+    /*
+     * **The route that writes DNS on the customer's zone.** Withheld for the sharpest version of the reason
+     * the purchase is: MX records decide where a domain's mail goes, so a machine that could take this
+     * could redirect somebody's mail. It is the largest authority this Node holds and the one act that
+     * changes who receives.
+     */
+    "POST /api/provider/receiving",
     "POST /api/provider/domains/purchase",
     "POST /api/provider/sending",
     "POST /api/provider/resolve-account",

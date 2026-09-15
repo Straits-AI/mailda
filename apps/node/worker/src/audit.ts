@@ -870,6 +870,22 @@ export const AUDIT_ACTIONS = {
       + "register it.",
   },
 
+  /**
+   * A subdomain pointed at this Node for **receiving** (#163 L2).
+   *
+   * Written before the records, for `domain_purchase_attempted`'s reason: a write that changes a customer's
+   * DNS and then loses its answer has still changed their DNS, and an entry written only on success would
+   * leave that change with no record.
+   *
+   * **The entry names the MX it was about to write and the address it routes**, because the question it
+   * answers later is *who pointed our mail at this Node* — and DNS write on a customer's zone is the largest
+   * authority this Node holds.
+   */
+  "provider.receiving_onboarded": {
+    says: "An administrator pointed a subdomain at this Node to receive mail, and this Node wrote the MX "
+      + "records Cloudflare's Email Routing requires.",
+  },
+
   "provider.account_reported_unselectable": {
     says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
       + "account of it, not this Node's measurement.",

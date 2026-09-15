@@ -1077,6 +1077,26 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What pointing a subdomain at this Node to receive mail would do — the MX Cloudflare requires, what is already there, and the digest a confirmation must carry. Changes nothing
+   *
+   * @param query.domain the subdomain to point at this Node
+   *
+   * `GET /api/provider/receiving`
+   */
+  async getProviderReceiving(query?: { domain?: string }): Promise<z.infer<typeof S.providerReceivingProposalResponse>> {
+    return await this.json("GET", "/api/provider/receiving", {}, undefined, query) as z.infer<typeof S.providerReceivingProposalResponse>;
+  }
+
+  /**
+   * Write the MX records a subdomain needs and route an address at this Node, refusing unless the digest matches and confirming the records landed before writing the rule
+   *
+   * `POST /api/provider/receiving`
+   */
+  async postProviderReceiving(body: z.infer<typeof S.providerReceivingRequest>): Promise<z.infer<typeof S.providerReceivingOutcomeResponse>> {
+    return await this.json("POST", "/api/provider/receiving", {}, body) as z.infer<typeof S.providerReceivingOutcomeResponse>;
+  }
+
+  /**
    * A signed handover manifest: what the client owns, what revocation stops, and which provider ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda
    *
    * `GET /api/provider/handover`

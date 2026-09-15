@@ -590,6 +590,21 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/receiving",
+    summary: "What pointing a subdomain at this Node to receive mail would do — the MX Cloudflare requires, "
+      + "what is already there, and the digest a confirmation must carry. Changes nothing",
+    query: [{ name: "domain", description: "the subdomain to point at this Node" }],
+    response: S.providerReceivingProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/receiving",
+    summary: "Write the MX records a subdomain needs and route an address at this Node, refusing unless the "
+      + "digest matches and confirming the records landed before writing the rule",
+    request: S.providerReceivingRequest, response: S.providerReceivingOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/handover",
     summary: "A signed handover manifest: what the client owns, what revocation stops, and which provider "
       + "ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda",

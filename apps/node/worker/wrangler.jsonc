@@ -150,6 +150,17 @@
   // **Accepted cost, stated rather than hidden:** a button-only install observes **no delivery outcomes**
   // until that step runs. doctor's `sending_events_consumer` reports the gap and `delivery_visibility`
   // reports the silence it causes, so neither reads as "nothing bounced".
+  /*
+   * The Worker's own name, as a value the runtime can read.
+   *
+   * A Worker is not told its own name, and `onboardReceiving` must name itself as a routing rule's
+   * destination — a rule pointing at the wrong Worker sends somebody's mail to another Node. So it is
+   * carried here and held equal to `name` above by `test/node/deployability.test.ts`, which is the same
+   * treatment the Workflow name gets and for the same reason: a second name that must agree with the first
+   * is a correspondence, and the way this repository handles those is to check them rather than remember.
+   */
+  "vars": { "WORKER_NAME": "mailda" },
+
   "queues": {
     "producers": [{ "binding": "SENDING_EVENTS" }]
   },
@@ -242,6 +253,9 @@
    */
   "version_metadata": { "binding": "CF_VERSION" },
 
+  // Named environments do not inherit, so the Worker's own name is carried here too. The test
+  // environment deploys as `mailda-test`, and this is what that Node would name in a routing rule.
+  "vars": { "WORKER_NAME": "mailda-test" },
   "d1_databases": [{ "binding": "CATALOG", "migrations_dir": "migrations" }],
       "r2_buckets": [{ "binding": "EVIDENCE" }],
 

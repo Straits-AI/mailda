@@ -163,6 +163,25 @@ export const REQUIRED_SCOPES = [
   },
   {
     /*
+     * #163 L2's receiving half, and the largest authority this Node asks for. **DNS write on a customer's
+     * zone is the authority to redirect their mail**, so it is requested deliberately and spent by exactly
+     * one path: `onboardReceiving`, which writes the MX records Cloudflare's own Email Routing requires on a
+     * subdomain, read from Cloudflare rather than invented, and nothing else.
+     *
+     * It is here because the alternative was measured and is worse. `POST /email/routing/rules` accepts a
+     * rule for a subdomain that was never onboarded — 200, enabled, `source: "api"` — and the rule is
+     * **inert**, because the name has no MX and mail never reaches Cloudflare at all
+     * (`routing.rule_accepted_for_unonboarded_subdomain: 1`). A Node without this scope can only offer an
+     * operator a routing rule that silently never fires, and shipping that is worse than holding a scope
+     * with a reason written beside it.
+     */
+    scope: "dns.write",
+    why: "the MX records a subdomain needs before it can receive. Cloudflare's rules API accepts a rule "
+      + "without them and that rule never matches, so a Node that cannot write them can only offer silence",
+    readOnlyExists: true,
+  },
+  {
+    /*
      * #164 L3's read half. `domain-search` suggests and `domain-check` prices, and the second is what an
      * approval binds to — Cloudflare's own instruction is to check *immediately before* registering, so a
      * Node that could not call it could not offer a purchase honestly.
@@ -1251,7 +1270,7 @@ const NO_BOUND_ACCOUNT =
  * Shared by the receiving read and the sending one because they resolve the *same* zone, and two copies of
  * this walk would be two places for the stopping rule — or the account filter — to drift.
  */
-async function zoneFor(
+export async function zoneFor(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<{ ok: true; zone: { id: string; name: string } | null } | { ok: false; error: string }> {
   const accountId = await boundAccount(env);
