@@ -633,6 +633,12 @@ const FIGURES: Record<string, Classification> = {
       + "script may claim an account-level Workflow. Plan-independent — these are the deploy API's own "
       + "semantics, and the drill that measured them ran on one account without changing plan",
     "deploy.versions_upload_shifts_traffic", "deploy.versions_upload_creates_worker",
+    /*
+     * Whether a second Node fits in one account, and whether getting its names wrong is caught. Facts about
+     * wrangler's naming and #99's guard — no plan changes either.
+     */
+    "deploy.second_node_per_account_supported", "deploy.workflow_name_derives_from_worker",
+    "deploy.workflow_collision_refused_by_plan",
     "deploy.migrations_before_first_deploy", "deploy.workflow_name_is_account_level",
     "deploy.second_node_reassigns_workflow",
   ),
