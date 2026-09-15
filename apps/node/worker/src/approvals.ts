@@ -1400,9 +1400,16 @@ const SETTLED_WHY: Record<Exclude<ApprovalState, "pending">, string> = {
   unsatisfiable:
     "a withdrawal left fewer eligible approvers than the stages need, so there is no decision left that could "
     + "complete this request",
+  /*
+   * **Not "the author", and not "their own message".** `send.cancel` is bounded by `send.propose` on the
+   * *mailbox*, so on a shared mailbox anyone holding it can stop somebody else's send — which
+   * `capability.ts` states plainly: *"it stops somebody else's message leaving."* And the route is tier
+   * `act`, so a delegated agent may take it. The entry now names who did, so this sentence points at that
+   * rather than assuming.
+   */
   cancelled:
-    "the author cancelled the send while this request was open, so there is nothing left to decide — cancelling "
-    + "is their own authority over their own message (`cancelSend`)",
+    "the send was cancelled while this request was open, so there is nothing left to decide — anyone holding "
+    + "`send.propose` on the mailbox may stop it, and the audit entry names who did (`cancelSend`)",
 };
 
 const SETTLED_FIX: Record<Exclude<ApprovalState, "pending">, string> = {

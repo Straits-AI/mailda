@@ -797,8 +797,17 @@ describe("cancelling the send settles the request it was waiting on", () => {
 
     await expect(decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id, "approve"))
       .rejects.toThrow(/E_APPROVAL_SETTLED/);
+    /*
+     * The sentence used to read "the author cancelled the send … their own authority over their own
+     * message". Both halves were wrong on a shared mailbox: `send.cancel` is bounded by `send.propose` on
+     * the **mailbox**, which `capability.ts` states as *"it stops somebody else's message leaving"*, and the
+     * route is tier `act`, so a delegated agent may take it. What is asserted now is that the reason points
+     * at the audit entry, which names who actually did it.
+     */
     await expect(decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id, "approve"))
-      .rejects.toThrow(/the author cancelled the send/);
+      .rejects.toThrow(/the send was cancelled/);
+    await expect(decideApproval(testEnv, atTime(AUGUST_10 + 2000), ORG, ANN, approval.id, "approve"))
+      .rejects.toThrow(/audit entry names who did/);
     const row = await manifestRow(sealed.id);
     expect(row?.state).toBe("cancelled");
     const recipients = await testEnv.CATALOG.prepare(

@@ -177,6 +177,22 @@ export async function cancelSend(
   ctx: Ctx,
   orgId: string,
   manifestId: string,
+  /**
+   * Who stopped it, when anybody did.
+   *
+   * **This was missing, and `send.cancelled` therefore recorded no actor at all** — while `audit.ts` said
+   * of it *"a held send was stopped **by a person** before dispatch."* The route is
+   * `POST /api/sends/:sendId/cancel`, tier **`act`**, which the agent registry explicitly offers to
+   * machines: *"an over-eager machine cancelling produces a message that was not sent, which a person can
+   * write again."* So an agent could stop somebody's send and the trail would say a person did — a machine
+   * act recorded as a human one, in the table designed to be read widely and kept for ever.
+   *
+   * Optional and trailing, following `mintRecoveryCodes` in `recovery.ts`, which is omitted by `claim.ts`
+   * for the same kind of reason: not every caller has a session to attribute to. `auditedBatch` derives the
+   * sponsor for an `agt_` actor itself, so passing the actor is all that is needed for a delegated
+   * cancellation to name both the agent and the person who granted it.
+   */
+  actor?: { actorUserId: string; delegatorUserId?: string | null },
 ): Promise<{ cancelled: boolean; reason?: string }> {
   // Conditional, so the record is conditional on the same predicate and in the same transaction.
   // The entry is placed *first* deliberately: the update clears the stoppable state, so an entry gated on
@@ -188,6 +204,7 @@ export async function cancelSend(
     {
       action: "send.cancelled", outcome: "ok", subject: manifestId,
       detail: { stoppedBeforeDispatch: true },
+      ...(actor ?? {}),
     },
     (entry) => [
       entry,

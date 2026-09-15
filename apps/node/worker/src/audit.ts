@@ -196,7 +196,13 @@ export const AUDIT_ACTIONS = {
       + "unsatisfiable.",
   },
   "send.sealed": { says: "A composition became immutable bytes and entered the hold window." },
-  "send.cancelled": { says: "A held send was stopped by a person before dispatch." },
+  /*
+   * **"by a person" was false**, twice over. The entry carried no actor at all until the actor was threaded
+   * through `cancelSend`; and the route is tier `act`, which the agent registry offers to machines by
+   * design. So this sentence asserted a human where the row named nobody, on a route a delegated agent may
+   * take. It now says who, because the entry does.
+   */
+  "send.cancelled": { says: "A held send was stopped before dispatch by whoever the entry names." },
   "send.withheld": {
     says: "A held send was stopped by the Node because the author's send authority was withdrawn.",
   },

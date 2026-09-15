@@ -1835,7 +1835,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         return Response.json({ cancelled: false, reason: "no such send" }, { status: 409 });
       }
 
-      const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!);
+      const outcome = await cancelSend(env, clock, who.orgId, cancel[1]!, { actorUserId: who.userId });
       return Response.json(outcome, { status: outcome.cancelled ? 200 : 409 });
     }
 

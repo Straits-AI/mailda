@@ -6,6 +6,7 @@ import { createSystemCtx } from "@mailda/runtime";
 import { assertAdmin, isAdmin } from "../src/access.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 import { auditedBatch, verifyChain } from "../src/audit.ts";
+import { cancelSend } from "../src/outbound/dispatch.ts";
 import { mailboxQueues } from "../src/cases.ts";
 import { notificationsFor } from "../src/notifications.ts";
 import { agentGrantableActions } from "@mailda/contract/agent";
@@ -924,6 +925,60 @@ describe("an agent's act names its sponsor without the call site remembering to 
       row?.delegator_user_id,
       "an agent's act named the machine and not the person accountable for it",
     ).toBe(SPONSOR);
+  });
+
+  it("names the agent and its sponsor when an agent cancels somebody's send", async () => {
+    /*
+     * **`send.cancelled` recorded no actor at all**, while `audit.ts` said of it *"a held send was stopped
+     * **by a person** before dispatch"* — and `POST /api/sends/:sendId/cancel` is tier `act`, which the
+     * agent registry offers to machines by design: *"an over-eager machine cancelling produces a message
+     * that was not sent."* So a machine could stop somebody's send and the trail would name a person.
+     *
+     * There was already a test appending `send.cancelled` with a hand-supplied `usr_1`
+     * (`test/audit.test.ts:111`). It passed throughout, against a path that supplied nothing — coverage in
+     * appearance only, which is why this one goes through `cancelSend` itself.
+     */
+    const minted = await mintAgent(testEnv, createSystemCtx(), ORG, ADMIN, {
+      name: "canceller", sponsorUserId: SPONSOR, capabilities: [AGENT_READS],
+    });
+
+    /*
+     * A real manifest in a stoppable state. `cancelSend` gates the entry on the same predicate as the
+     * update — deliberately, so a cancellation that did not happen is not recorded as one — so a made-up id
+     * writes nothing at all and this test would have asserted against an empty table.
+     */
+    const send = "snd_cancelled_by_an_agent";
+    const at = new Date(createSystemCtx().now()).toISOString();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO send_manifests (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to,
+         subject, rfc_message_id, fidelity, body_typed_key, body_typed_sha256,
+         body_normalized_key, body_normalized_sha256, submitted_key, submitted_sha256,
+         sealed_at, release_at, state, state_at, attempts)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(send, ORG, "mbx_x", SPONSOR, "a@b.test", '["c@d.test"]', "s", `<${send}@b.test>`,
+      "authored", `${ORG}/sent/${send}/typed`, "0".repeat(64),
+      `${ORG}/sent/${send}/normalized`, "0".repeat(64),
+      `${ORG}/sent/${send}/submitted.eml`, "0".repeat(64),
+      at, at, "held", at, 0).run();
+
+    const outcome = await cancelSend(testEnv, createSystemCtx(), ORG, send, {
+      actorUserId: minted.agent.id,
+    });
+    expect(outcome.cancelled, "the fixture must actually be stoppable").toBe(true);
+
+    const row = await testEnv.CATALOG.prepare(
+      `SELECT actor_user_id, actor_kind, delegator_user_id FROM audit_entries
+        WHERE org_id = ? AND action = 'send.cancelled' ORDER BY seq DESC LIMIT 1`,
+    ).bind(ORG).first<{ actor_user_id: string; actor_kind: string; delegator_user_id: string | null }>();
+
+    expect(row?.actor_user_id, "the cancellation named nobody").toBe(minted.agent.id);
+    expect(row?.actor_kind).toBe("agent");
+    /*
+     * The sponsor, derived rather than passed. Without it the trail names the machine and not the person
+     * accountable for it — which is the gap `delegator_user_id` exists to close, and it was open on the one
+     * act that stops somebody else's message leaving.
+     */
+    expect(row?.delegator_user_id).toBe(SPONSOR);
   });
 
   it("prefers a delegator the call site did pass, so the four existing ones do not change meaning", async () => {
