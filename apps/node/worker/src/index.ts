@@ -2304,6 +2304,44 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * and a `PUT` falling through a shared block to a 404 reads as a missing resource rather than a wrong
      * request. Duller, and it keeps that closed set closed.
      */
+    if (url.pathname === "/api/provider/domains" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { searchDomains } = await import("./provider/registrar.ts");
+      /*
+       * `cached: true` is a constant in the response rather than a note in the summary, because this is the
+       * list a caller is most likely to build a purchase on and Cloudflare is explicit that it must not be.
+       * A field that travels with the data is harder to skip than a sentence in a document.
+       */
+      return Response.json({
+        suggestions: await searchDomains(env, clock, who.orgId, url.searchParams.get("q") ?? ""),
+        cached: true,
+      });
+    }
+
+    if (url.pathname === "/api/provider/domains/check" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const asked = Array.isArray(body.domains) ? body.domains.map((one) => String(one)) : [];
+      const { checkDomains } = await import("./provider/registrar.ts");
+      /*
+       * `checkedAt` is this Node's clock at the moment of the read, and it is in the response because the
+       * whole point of this route is that its answer expires. An approval built on it has to be able to say
+       * how old the quote was.
+       */
+      return Response.json({
+        domains: await checkDomains(env, clock, who.orgId, asked),
+        checkedAt: new Date(clock.now()).toISOString(),
+      });
+    }
+
     if (url.pathname === "/api/provider/handover" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

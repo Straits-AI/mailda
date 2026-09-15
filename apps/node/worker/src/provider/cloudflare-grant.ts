@@ -161,6 +161,21 @@ export const REQUIRED_SCOPES = [
     readOnlyExists: true,
   },
   {
+    /*
+     * #164 L3's read half. `domain-search` suggests and `domain-check` prices, and the second is what an
+     * approval binds to — Cloudflare's own instruction is to check *immediately before* registering, so a
+     * Node that could not call it could not offer a purchase honestly.
+     *
+     * **Read, not `registrar-domains.admin`.** The admin scope authorizes *buying domains on the operator's
+     * account*, which is authority to spend their money — a thing to grant once, visibly, when the purchase
+     * flow itself ships and is gated, rather than as a side effect of wanting to see a price.
+     */
+    scope: "registrar-domains.read",
+    why: "what a domain costs and whether it can be registered, read at the moment somebody is deciding "
+      + "rather than from a cached search",
+    readOnlyExists: true,
+  },
+  {
     scope: "email-sending.write",
     why: "sending. The transport uses a binding or a token rather than this grant, so this is what lets a "
       + "plan report whether the account is entitled to send at all",
@@ -1064,6 +1079,46 @@ export async function cloudflareGet<T>(
 }
 
 /**
+ * One authenticated **read** of Cloudflare's API that happens to be a `POST`.
+ *
+ * `cloudflareGet` is `GET`-only and says why: a helper that could write would be reached for by the layer
+ * that eventually does, before anybody decided what that layer may change. That argument still holds, and
+ * this does not weaken it — `domain-check` is a `POST` because it takes a list of names in a body, and
+ * Cloudflare documents it as *"read-only — it does not create, modify, or reserve any domains"*.
+ *
+ * So this is deliberately **not** a general `cloudflarePost`. It throws rather than returning a result
+ * union, because its callers have nothing useful to say about a refusal, and it is named for the one thing
+ * it is for. The route that actually registers a domain will write its own call, in the open, where it can
+ * be read.
+ */
+export async function cloudflarePost<T>(
+  env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
+): Promise<T> {
+  const token = await accessTokenFor(env, ctx, orgId);
+  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  }).catch(() => null);
+
+  const payload = (await response?.json().catch(() => ({}))) as {
+    success?: boolean; result?: T; errors?: Array<{ message?: string; code?: number }>;
+  };
+  if (response !== null && response.ok && payload.success === true && payload.result !== undefined) {
+    return payload.result;
+  }
+  const said = (payload?.errors ?? [])
+    .map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+  throw unprocessable("E_CLOUDFLARE_REFUSED", {
+    what: `Cloudflare refused ${path}`,
+    why: said === "" ? `the API answered ${response?.status ?? "nothing"}` : said,
+    fix: "check the grant still carries the scope this call needs, and that the account may perform it",
+  });
+}
+
+/**
  * Which account this grant covers.
  *
  * **Measured as absent from the token response** (`oauth.token_response_names_account: 0`), so it costs a
@@ -1141,6 +1196,26 @@ async function boundAccount(env: Env): Promise<string | null> {
     "SELECT account_id FROM provider_binding WHERE id = 1",
   ).first<{ account_id: string | null }>();
   return row?.account_id ?? null;
+}
+
+/**
+ * The bound account, or a refusal — for callers that have no honest answer without one.
+ *
+ * `boundAccount` answers null and lets the caller decide; this is the other half, for the registrar reads
+ * where a null would mean *ask Cloudflare about no account in particular*. Separate rather than a flag,
+ * because the two behaviours are different enough that a boolean would hide which one a call site meant.
+ */
+export async function boundAccountFor(env: Env): Promise<string> {
+  const accountId = await boundAccount(env);
+  if (accountId === null) {
+    throw unprocessable("E_PROVIDER_NO_ACCOUNT", {
+      what: "this Node has not determined which Cloudflare account it is bound to",
+      why: "a grant covering more than one account records none, and asking the registry on behalf of an "
+        + "unspecified account is a question with no answer",
+      fix: "POST /api/provider/resolve-account",
+    });
+  }
+  return accountId;
 }
 
 /** What every surface says when the boundary is not known, so the sentence cannot drift between them. */

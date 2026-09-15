@@ -341,6 +341,19 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(owned.ownership[0]!.because).not.toBeNull();
 
     /*
+     * The two registrar reads (#164). Both refuse on this fixture — no account is determined, so there is
+     * no registry question to ask on anybody's behalf — and the refusal is the assertion. A route that
+     * answered a **price** without a bound account would be quoting a figure from no account in particular,
+     * and a purchase approval is built on exactly that figure.
+     */
+    for (const attempt of [
+      answers("GET", "/api/provider/domains", { cookie: held }, "?q=mailda"),
+      answers("POST", "/api/provider/domains/check", {
+        cookie: held, body: { domains: ["mailda.example"] },
+      }),
+    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+
+    /*
      * The handover manifest. Verified here the way a client would — the key comes from this Node's own
      * JWKS, chosen by the `kid` in the header — because a driver that only checked the shape would pass on
      * a manifest signed by nothing.
@@ -1889,8 +1902,18 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * Returning the manifest beside its signature was the obvious shape and is the wrong one — a reader
      * takes the convenient copy and verifies nothing, and the day the two disagree is the day nobody
      * notices. The payload inside the JWS is the only copy, and the CLI verifies before it prints.
+     *
+     * The 117th and 118th are `GET /api/provider/domains` and `POST /api/provider/domains/check` (#164 L3's
+     * read half), and they are a pair whose **separateness is the design**. Cloudflare documents search as
+     * cached and non-authoritative and check as real-time, and #164 requires a purchase to bind to the
+     * second. Collapsing them into one route would let the cheap answer be used where the binding one
+     * belongs, which is the stale-quote defect the ticket names.
+     *
+     * Every price in both schemas is a **string**, carrying Cloudflare's own reason — it returns them as
+     * strings to preserve decimal precision, and the value is destined for an approval digest where a
+     * representation that round-trips differently is an approval nobody can confirm.
      */
-    expect(coverage.total).toBe(116);
+    expect(coverage.total).toBe(118);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

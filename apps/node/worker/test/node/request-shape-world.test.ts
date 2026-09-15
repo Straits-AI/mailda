@@ -101,6 +101,12 @@ describe("every closed set the contract declares is a closed set the boundary en
        * covers the proposal being applied. A dropped or misspelled field is a `POST` whose meaning this
        * contract never agreed to, arriving at a write that makes DNS records appear in somebody's zone.
        */
+      /*
+       * Pricing domains (#164). Strict because the body is a list of names and nothing else, and a
+       * misspelled key would be a caller believing they priced the domain they typed while the Node priced
+       * an empty list — then a purchase approval built on the answer.
+       */
+      "POST /api/provider/domains/check",
       "POST /api/provider/sending",
       /*
        * Registering the Node's OAuth client, and beginning a consent (#162 L1, ADR 42). Strict, and the
@@ -309,7 +315,7 @@ describe("strictness is decided per route, not turned on globally", () => {
     }
     expect(strict.sort()).toEqual([
       "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
-      "POST /api/provider/sending", "POST /api/search/repair",
+      "POST /api/provider/domains/check", "POST /api/provider/sending", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([

@@ -97,6 +97,26 @@ function wrapAt(text, width) {
   return lines;
 }
 
+/**
+ * One domain's price, or the reason there is not one.
+ *
+ * The refusal prints where the price would have been rather than as a footnote: the two most confusable
+ * outcomes are *taken* and *Cloudflare sells this extension but not through the API*, and an operator
+ * skimming a column of blanks would read the second as the first.
+ */
+function printDomain(one) {
+  const price = one.registrationCost === null
+    ? "—"
+    : `${one.currency ?? ""} ${one.registrationCost}`.trim()
+      + (one.renewalCost === null ? "" : `, renews ${one.renewalCost}`);
+  const mark = one.buyable ? "buyable" : one.registrable ? "no" : "no";
+  process.stdout.write(`   ${mark.padEnd(8)} ${one.name.padEnd(28)} ${price}\n`);
+  if (one.tier === "premium") process.stdout.write(`            ${" ".repeat(28)} premium tier\n`);
+  if (one.refusal !== null) {
+    for (const line of wrapAt(one.refusal, 66)) process.stdout.write(`            ${line}\n`);
+  }
+}
+
 function flag(argv, name) {
   const index = argv.indexOf(`--${name}`);
   return index === -1 ? null : argv[index + 1] ?? null;
@@ -573,6 +593,28 @@ async function provider(argv) {
       if (one.error !== null) process.stdout.write(`     unknown   ${one.error}\n`);
     }
     if (delivery.length === 0) process.stdout.write(`\n   this Node routes no domains\n`);
+    return;
+  }
+
+  const suggesting = flag(argv, "domains");
+  if (suggesting !== null) {
+    const { suggestions } = await call("GET", `/api/provider/domains?q=${encodeURIComponent(suggesting)}`);
+    process.stdout.write(`\n   suggestions for "${suggesting}" — cached, and not a basis to buy\n\n`);
+    for (const one of suggestions) printDomain(one);
+    process.stdout.write(
+      `\n   these prices are Cloudflare's cached ones. Before buying, price the exact name:\n`
+      + `   mailda provider --price <domain>[,<domain>…]\n\n`,
+    );
+    return;
+  }
+
+  const pricing = flag(argv, "price");
+  if (pricing !== null) {
+    const names = pricing.split(",").map((one) => one.trim()).filter((one) => one !== "");
+    const { domains, checkedAt } = await call("POST", "/api/provider/domains/check", { domains: names });
+    process.stdout.write(`\n   priced against the registries at ${checkedAt}\n\n`);
+    for (const one of domains) printDomain(one);
+    process.stdout.write("\n");
     return;
   }
 
@@ -2264,6 +2306,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
   mailda provider --ownership       who owns this installation, and where each answer came from
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
+  mailda provider --domains <keyword>          cached domain suggestions with indicative prices
+  mailda provider --price a.com,b.dev          real-time registry price, which is what an approval binds to
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
