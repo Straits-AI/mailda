@@ -30,6 +30,34 @@ suggestions) and `domain-check` (real-time registry price). `registrar-domains.r
 authority to spend their money — and belongs to the change that ships a gated purchase flow, not to one that
 wants to see a price.
 
+### The probe was bought, and did not run. 15 September 2026
+
+`mailda.site` was registered through the Node's own grant at **USD 4.99**, auto-renew off. The purchase
+succeeded on the first `POST`. The probe did not run, and the reason is recorded because it is the useful
+part:
+
+The Node answered **500**. `outcomeOf` read `status.error === undefined` where Cloudflare sends
+`"error": null`, so it threw *after* the registration had been created and billed — the operator was told
+the purchase failed while Cloudflare had completed it. The status route carried the same fault, so checking
+also failed. Twenty tests covered this path and every fixture **omitted** `error`, which is the one shape
+the API never sends.
+
+By the time the crash was understood the registration had completed, and the in-flight window a retry must
+land in — seconds — had closed. **A probe measuring a retry has to retry in the same breath as the
+purchase**; checking status first spends the only window there is. That sequencing error is why the money
+bought a domain, a live proof of the flow and a real defect, but not the measurement it was spent for.
+
+**The remaining measurement is declined rather than pending.** A retry after completion would still test
+Cloudflare's claim, and its cost is its own result: nothing if the provider is idempotent, USD 4.99 if it is
+not. Asked to run it *only if it would not charge*, there is no such run — whether it charges is the
+question. So it stays unmeasured by decision, and this receipt says so rather than leaving a box that reads
+as pending work.
+
+Two things make that acceptable. `purchase.ts` retries a registration on no path whatsoever, so the answer
+changes how redundant the guard is and not whether it is safe. And the audit entry written **before** the
+charge is what produced the only record of that USD 4.99 when the response denied it — a design note that
+stopped being hypothetical the first time it was needed.
+
 ### `registrar.register_idempotency_documented: 1`, `registrar.register_idempotent: 0`
 
 Two values because they are two different facts. Cloudflare's reference now states:
