@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "pnpm run build:client && vitest run && vitest run -c vitest.node.config.ts && vitest run -c vitest.client.config.ts",
+    "test": "pnpm run types && pnpm run build:client && vitest run && vitest run -c vitest.node.config.ts && vitest run -c vitest.client.config.ts",
     "bench": "vitest run --mode bench",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/client/tsconfig.json",
     "types": "wrangler types",
