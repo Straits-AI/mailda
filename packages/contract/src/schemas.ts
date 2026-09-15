@@ -491,6 +491,48 @@ export const providerDomainCheckRequest = z.object({
   domains: z.array(z.string().min(3).max(253)).min(1).max(20),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
+/**
+ * What buying a domain would cost and whether it may be bought at all.
+ *
+ * `existing` is separate from `refusal` because *this account already holds it* is the duplicate #164 is
+ * about, and a surface showing only a refusal sentence could not tell it from a price problem.
+ */
+export const providerPurchaseProposalResponse = z.object({
+  proposal: z.object({
+    domain: z.string().min(1),
+    price: providerDomainPrice,
+    existing: z.string().nullable(),
+    digest: z.string().length(64),
+    refusal: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/**
+ * How a registration is going, and whether this Node may keep asking on its own.
+ *
+ * `mayPoll` is **not** `!completed`. Cloudflare documents `action_required` as *"stop automated polling
+ * until the user completes the required action"* — unfinished, and not this Node's to continue. Collapsing
+ * the two would poll forever at the one state that means somebody has to do something.
+ */
+export const providerPurchaseOutcomeResponse = z.object({
+  outcome: z.object({
+    domain: z.string().min(1),
+    state: z.string().min(1),
+    completed: z.boolean(),
+    mayPoll: z.boolean(),
+    error: z.string().nullable(),
+    next: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+/** The domain, the digest of the proposal shown, and an auto-renew choice nobody may infer. */
+export const providerPurchaseRequest = z.object({
+  domain: z.string().min(3).max(253),
+  digest: z.string().length(64),
+  /** Cloudflare calls `true` an explicit opt-in to charge the account. Required, so it is always a choice. */
+  autoRenew: z.boolean(),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

@@ -243,6 +243,12 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
        * made records appear in our DNS*, which is a question about the binding.
        */
       "provider.sending_onboarded",
+      /*
+       * A purchase started (#164). Against the binding for `sending_onboarded`'s reason and one more: what
+       * it produces is a registration in Cloudflare's account, not a row here, and the question an
+       * investigator brings is *which grant agreed to spend our money*.
+       */
+      "provider.domain_purchase_attempted",
     ],
   },
   /*

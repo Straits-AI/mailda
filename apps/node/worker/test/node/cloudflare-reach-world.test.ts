@@ -102,6 +102,17 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
    */
   "/accounts/{}/registrar/domain-search": { scope: "registrar-domains.read", reference: null },
   "/accounts/{}/registrar/domain-check": { scope: "registrar-domains.read", reference: null },
+  /*
+   * The purchase (#164). The `GET`s read an existing registration and its workflow; the `POST` creates one
+   * and is the only path in this table that costs money. `registrar-domains.admin` is **not** in
+   * `REQUIRED_SCOPES` yet, so the `POST` is expected to be refused by Cloudflare until it is — which is the
+   * state this Node ships in deliberately.
+   */
+  "/accounts/{}/registrar/registrations": { scope: "registrar-domains.read", reference: null },
+  "/accounts/{}/registrar/registrations/{}": { scope: "registrar-domains.read", reference: null },
+  "/accounts/{}/registrar/registrations/{}/registration-status": {
+    scope: "registrar-domains.read", reference: null,
+  },
   "/accounts/{}/event_subscriptions/subscriptions": {
     scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",

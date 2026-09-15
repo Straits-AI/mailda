@@ -605,6 +605,11 @@ const FIGURES: Record<string, Classification> = {
       + "scopes, which are facts about an API and a consent rather than quantities a plan scales",
     "grant.scopes_asked_for", "grant.scopes_authorizing_a_call", "grant.endpoints_reached",
     "grant.endpoints_with_documented_permission", "grant.narrowed_grant_probed",
+    /*
+     * #164's pair. Whether a provider's register is idempotent, and whether it *says* it is, are facts
+     * about that provider — no plan changes either, and the gap between them is the point.
+     */
+    "registrar.register_idempotent", "registrar.register_idempotency_documented",
   ),
 
   // docs/receipts/r2-auto-provisioning.md

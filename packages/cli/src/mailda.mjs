@@ -117,6 +117,22 @@ function printDomain(one) {
   }
 }
 
+/** How a registration is going, and whether anything may keep asking on its own. */
+function printOutcome(outcome) {
+  process.stdout.write(`\n   ${outcome.domain}: ${outcome.state}\n`);
+  if (outcome.error !== null) process.stdout.write(`   error: ${outcome.error}\n`);
+  process.stdout.write(
+    outcome.mayPoll
+      ? `   still running — check again with: mailda provider --buy-status ${outcome.domain}\n`
+      : `   this Node will not ask again on its own\n`,
+  );
+  if (outcome.next !== null) {
+    process.stdout.write("\n");
+    for (const line of wrapAt(outcome.next, 72)) process.stdout.write(`   ${line}\n`);
+  }
+  process.stdout.write("\n");
+}
+
 function flag(argv, name) {
   const index = argv.indexOf(`--${name}`);
   return index === -1 ? null : argv[index + 1] ?? null;
@@ -593,6 +609,55 @@ async function provider(argv) {
       if (one.error !== null) process.stdout.write(`     unknown   ${one.error}\n`);
     }
     if (delivery.length === 0) process.stdout.write(`\n   this Node routes no domains\n`);
+    return;
+  }
+
+  const buying = flag(argv, "buy");
+  if (buying !== null) {
+    const confirming = flag(argv, "confirm");
+    if (confirming === null) {
+      const { proposal } = await call(
+        "GET", `/api/provider/domains/purchase?domain=${encodeURIComponent(buying)}`,
+      );
+      process.stdout.write(`\n   ${proposal.domain}\n`);
+      printDomain(proposal.price);
+      if (proposal.existing !== null) {
+        process.stdout.write(`     already   this account holds it (${proposal.existing})\n`);
+      }
+      if (proposal.refusal !== null) {
+        process.stdout.write(`\n   will not buy it:\n`);
+        for (const line of wrapAt(proposal.refusal, 72)) process.stdout.write(`     ${line}\n`);
+        process.stdout.write("\n");
+        return;
+      }
+      /*
+       * The renewal is printed as its own line rather than trailing the price. It is the figure that
+       * surprises people a year later — `.site` is $4.99 to register and $27.70 to renew — and a number
+       * read past is a number nobody agreed to.
+       */
+      process.stdout.write(
+        `\n   registering costs ${proposal.price.currency} ${proposal.price.registrationCost}\n`
+        + `   renewing will cost ${proposal.price.currency} ${proposal.price.renewalCost} a year\n`
+        + `\n   auto-renew is OFF unless you add --auto-renew, which authorises Cloudflare to charge\n`
+        + `   this account up to 30 days before expiry\n`
+        + `\n   confirm: mailda provider --buy ${proposal.domain} --confirm ${proposal.digest}\n\n`,
+      );
+      return;
+    }
+
+    const { outcome } = await call("POST", "/api/provider/domains/purchase", {
+      domain: buying, digest: confirming, autoRenew: argv.includes("--auto-renew"),
+    });
+    printOutcome(outcome);
+    return;
+  }
+
+  const watching = flag(argv, "buy-status");
+  if (watching !== null) {
+    const { outcome } = await call(
+      "GET", `/api/provider/domains/purchase/status?domain=${encodeURIComponent(watching)}`,
+    );
+    printOutcome(outcome);
     return;
   }
 
@@ -2308,6 +2373,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
   mailda provider --domains <keyword>          cached domain suggestions with indicative prices
   mailda provider --price a.com,b.dev          real-time registry price, which is what an approval binds to
+  mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
+  mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
