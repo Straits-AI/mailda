@@ -1,3 +1,4 @@
+import { BUDGETS } from "@mailda/budgets";
 import { DurableObject } from "cloudflare:workers";
 
 import type { Ctx } from "@mailda/runtime";
@@ -44,10 +45,20 @@ export async function pendingEvents(env: Env, ctx: Ctx, limit = 25): Promise<Out
 export async function markPublished(env: Env, ctx: Ctx, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const at = new Date(ctx.now()).toISOString();
-  // D1 allows 100 bound parameters per query (receipt: d1-platform-limits), so chunk.
-  // Not an optimisation — an unchunked update simply fails.
-  for (let i = 0; i < ids.length; i += 99) {
-    const chunk = ids.slice(i, i + 99);
+  /*
+   * D1 allows a bounded number of parameters per query, so chunk. Not an optimisation — an unchunked update
+   * simply fails with `too many SQL variables`.
+   *
+   * **Read from the budget rather than written as 99**, which is what it used to say. The comment already
+   * cited `d1-platform-limits` and then declined to read it, so the receipt governed nothing here and the
+   * figure was a second copy of a measured platform limit. `evidence-inventory.ts` had the same shape
+   * without the chunking at all, and `mailda backup` failed on any Node with real mail in it.
+   *
+   * One parameter of the statement is `published_at`, so the keys get what is left.
+   */
+  const perChunk = BUDGETS["d1.max_bound_parameters"] - 1;
+  for (let i = 0; i < ids.length; i += perChunk) {
+    const chunk = ids.slice(i, i + perChunk);
     await env.CATALOG.prepare(
       `UPDATE outbox SET published_at = ? WHERE id IN (${chunk.map(() => "?").join(",")})`,
     )
