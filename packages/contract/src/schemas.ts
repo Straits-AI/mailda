@@ -449,6 +449,48 @@ export const providerHandoverResponse = z.object({
   jws: z.string().regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
 }).strict();
 
+/**
+ * What a domain costs and whether it can be bought, per name.
+ *
+ * **Every price is a string**, and that is the contract carrying Cloudflare's own reason: it returns them as
+ * strings *"to preserve decimal precision"*. A `z.number()` here would parse and re-render, which is how a
+ * price becomes `10.440000000000001` — and this value is destined for an approval digest, where a
+ * representation that round-trips differently is an approval nobody can confirm.
+ *
+ * `registrable` is Cloudflare's answer; `buyable` is this Node's, and they differ. A premium domain can come
+ * back registrable and still be one the API cannot register. `refusal` says which, in words an operator can
+ * act on, and `reason` keeps Cloudflare's own token beside it — `extension_not_supported_via_api` means the
+ * domain is for sale in the dashboard, which a surface reporting it as *unavailable* would get backwards.
+ */
+export const providerDomainPrice = z.object({
+  name: z.string().min(1),
+  registrable: z.boolean(),
+  tier: z.string().nullable(),
+  currency: z.string().nullable(),
+  registrationCost: z.string().nullable(),
+  renewalCost: z.string().nullable(),
+  reason: z.string().nullable(),
+  buyable: z.boolean(),
+  refusal: z.string().nullable(),
+}).strict();
+
+/** Suggestions. Cached and non-authoritative by Cloudflare's own description, so never a basis to buy. */
+export const providerDomainSearchResponse = z.object({
+  suggestions: z.array(providerDomainPrice),
+  cached: z.literal(true),
+}).strict();
+
+/** The authoritative read, which is what an approval binds to. */
+export const providerDomainCheckResponse = z.object({
+  domains: z.array(providerDomainPrice),
+  checkedAt: z.string().min(1),
+}).strict();
+
+/** The names to price. Cloudflare caps a check at twenty and this refuses rather than slicing. */
+export const providerDomainCheckRequest = z.object({
+  domains: z.array(z.string().min(3).max(253)).min(1).max(20),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

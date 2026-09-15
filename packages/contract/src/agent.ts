@@ -445,6 +445,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * more: it is a signed, portable statement about the customer's infrastructure, and an agent that could
      * fetch one could hand it on.
      */
+    /*
+     * The two registrar reads. `operator` for the grant's cost, and because a machine shopping for domains
+     * on somebody's account is the errand nothing here needs — the purchase they precede is a person's
+     * decision, and a suggestion list is the first half of making it.
+     */
+    "GET /api/provider/domains",
     "GET /api/provider/handover",
     "GET /api/provider/ownership",
     "GET /api/provider/sending",
@@ -455,6 +461,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * name nothing lists. Its confirmation is a digest, which is a check against a *stale* proposal and not
      * against an unattended one; only a person deciding makes it the latter.
      */
+    /*
+     * A `POST` that buys nothing — Cloudflare documents `domain-check` as read-only — but it is the read a
+     * purchase approval binds to, so an agent that could take it could supply the price a person later
+     * confirms. Withheld beside the write it serves.
+     */
+    "POST /api/provider/domains/check",
     "POST /api/provider/sending",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",

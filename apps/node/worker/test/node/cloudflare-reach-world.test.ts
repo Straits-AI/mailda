@@ -1,10 +1,21 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const grant = readFileSync(
-  join(import.meta.dirname, "../../src/provider/cloudflare-grant.ts"), "utf8",
-);
+/**
+ * **Every** file under `src/provider/`, concatenated — not just the grant.
+ *
+ * It read one file, and adding `registrar.ts` proved why that was wrong in the useful direction: the new
+ * scope came up as authorizing nothing, because the paths that spend it were in a file the scan could not
+ * see. The invariant held and the scan was the thing at fault, which is the better way round — but a second
+ * provider file whose endpoints were *already* covered by an existing scope would have slipped through in
+ * silence.
+ */
+const grant = readdirSync(join(import.meta.dirname, "../../src/provider"))
+  .filter((name) => name.endsWith(".ts"))
+  .sort()
+  .map((name) => readFileSync(join(import.meta.dirname, "../../src/provider", name), "utf8"))
+  .join("\n");
 
 /**
  * Every Cloudflare endpoint this Node can reach, and every scope it asks for (#163 box 5).
@@ -85,6 +96,12 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
   "/accounts": { scope: "account-settings.read", reference: null },
   // The account's own record: its name, `type` — which decides the ownership claim — and its settings.
   "/accounts/{}": { scope: "account-settings.read", reference: null },
+  /*
+   * The two registrar reads (#164). `domain-check` is a `POST` and is still a read — Cloudflare documents
+   * it as reserving nothing — so it sits here beside the `GET`s rather than being excluded for its verb.
+   */
+  "/accounts/{}/registrar/domain-search": { scope: "registrar-domains.read", reference: null },
+  "/accounts/{}/registrar/domain-check": { scope: "registrar-domains.read", reference: null },
   "/accounts/{}/event_subscriptions/subscriptions": {
     scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
@@ -117,7 +134,8 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope));
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "email-sending.write", "queues.read", "zone-settings.read", "zone.read",
+      "account-settings.read", "email-sending.write", "queues.read", "registrar-domains.read",
+      "zone-settings.read", "zone.read",
     ]);
 
     const asked = scopesAskedFor(grant);
@@ -129,7 +147,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(idle).toEqual([]);
     // And the other direction: a path whose scope nobody asks for would fail at runtime, not here.
     expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
-    expect(asked).toHaveLength(6);
+    expect(asked).toHaveLength(7);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -141,7 +159,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
     expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(6);
+    expect(scopesAskedFor(grant).length).toBe(7);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);

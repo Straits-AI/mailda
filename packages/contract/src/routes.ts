@@ -549,6 +549,25 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/domains",
+    summary: "Domain suggestions with indicative prices. Cloudflare describes these as cached and "
+      + "non-authoritative, so they are never a basis to buy",
+    query: [{
+      name: "q",
+      description: "a keyword or domain name to suggest from. A bare extension is not accepted by "
+        + "Cloudflare and is refused here",
+    }],
+    response: S.providerDomainSearchResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/domains/check",
+    summary: "Real-time registry availability and price for named domains. Read-only at Cloudflare — it "
+      + "reserves nothing — and this is the read an approval binds to",
+    request: S.providerDomainCheckRequest, response: S.providerDomainCheckResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/handover",
     summary: "A signed handover manifest: what the client owns, what revocation stops, and which provider "
       + "ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda",

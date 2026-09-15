@@ -1026,6 +1026,26 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Domain suggestions with indicative prices. Cloudflare describes these as cached and non-authoritative, so they are never a basis to buy
+   *
+   * @param query.q a keyword or domain name to suggest from. A bare extension is not accepted by Cloudflare and is refused here
+   *
+   * `GET /api/provider/domains`
+   */
+  async getProviderDomains(query?: { q?: string }): Promise<z.infer<typeof S.providerDomainSearchResponse>> {
+    return await this.json("GET", "/api/provider/domains", {}, undefined, query) as z.infer<typeof S.providerDomainSearchResponse>;
+  }
+
+  /**
+   * Real-time registry availability and price for named domains. Read-only at Cloudflare — it reserves nothing — and this is the read an approval binds to
+   *
+   * `POST /api/provider/domains/check`
+   */
+  async postProviderDomainsCheck(body: z.infer<typeof S.providerDomainCheckRequest>): Promise<z.infer<typeof S.providerDomainCheckResponse>> {
+    return await this.json("POST", "/api/provider/domains/check", {}, body) as z.infer<typeof S.providerDomainCheckResponse>;
+  }
+
+  /**
    * A signed handover manifest: what the client owns, what revocation stops, and which provider ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda
    *
    * `GET /api/provider/handover`
