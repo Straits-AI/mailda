@@ -1050,7 +1050,14 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
     });
   }
   /*
-   * **A date window and a search term are refused together, and the number is why** (#107, #153).
+   * **A date window and a search term *were* refused together, and the number is why** (#107, #153).
+   *
+   * **Superseded by migration 0054 — kept because it is the measurement, not the rule.** This block was
+   * written in the present tense and left there, directly above the block that says the opposite: the day is
+   * a token in the index now, the window narrows the match instead of filtering it, and a windowed search is
+   * answered. A reader who stopped here was told the reverse of what the function does.
+   *
+   * What survives is the reason the obvious design failed, which is worth more than the rule it justified.
    *
    * Both were meant to land here. The searched plan is one capped, ranked, cursor-less page, so a date range
    * looked like the *only* way to reach past the cap — which made it more valuable there than on the inbox,
@@ -1067,7 +1074,8 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
    * The alternative was to filter the union **outside** the arms, which keeps the cost exactly and changes
    * the meaning: the arms cap by rank first, so "mail about demurrage since October" would answer nothing
    * whenever October's demurrage mail ranks below the cap. A wrong answer to a reasonable question, silently.
-   * Refusing is the honest one, and #153 carries the plan a windowed search actually needs.
+   * Refusing is the honest one, and #153 carries the plan a windowed search actually needs — which is the
+   * day token, and which is what the next block describes.
    */
   /*
    * ## A windowed search, and the three ways it is refused rather than answered wrongly (#153)
@@ -1123,8 +1131,16 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
      * than on anything about the mail — a bound the caller can understand before sending, and one that does
      * not depend on how much mail happens to be in the range.
      *
-     * `search.max_window_days` is measured in `message-search-cost.md`. It is not the only bound a windowed
-     * search meets: `listMessages` also refuses when the *volume* inside the window would exceed the row
+     * **`MAX_WINDOW_DAYS` is sized, not measured, and this comment used to claim the opposite.** It cited
+     * `search.max_window_days` as *"measured in `message-search-cost.md`"*. There is no such budget key, and
+     * that receipt says the reverse in as many words: *"`MAX_WINDOW_DAYS = 100` sits beside it in
+     * `src/authz-read.ts` and is **not** here, because it is not a [measurement]"*. A citation pointing at a
+     * document that contradicts it is worse than none — the reader who checks is the one misled.
+     *
+     * `docs/message-search.md` had it right all along: *"sized, not measured, and `message-search-cost.md`
+     * says so."*
+     *
+     * It is not the only bound a windowed search meets: `listMessages` also refuses when the *volume* inside the window would exceed the row
      * budget, which is the figure that actually tracks cost. This one exists because a query with ten
      * thousand terms in it is not a query, whatever it would have read.
      */

@@ -111,8 +111,9 @@ One consequence, stated here because this is where somebody planning a release w
 **0054 requeues every message for the body backfill.** `message_body_search` is contentless, so it cannot be
 rebuilt in SQL — the bodies are in R2 and re-indexing means re-reading and re-parsing each one. That is what
 the existing backfill does, so the migration resets `body_index_state` rather than inventing a second
-mechanism. On a large mailbox this is real work; `doctor`'s `search_index_backlog` and `body_index_state`
-findings are what to watch, and it is resumable.
+mechanism. On a large mailbox this is real work; `doctor`'s `search_index_backlog` and `body_index_backlog`
+findings are what to watch, and it is resumable. (`body_index_state` is a *column* added by 0044, not a
+check — this line named it as a finding, which sent a reader looking for one that does not exist.)
 
 There is **no window in which a windowed search is broken**, which an earlier draft of this section claimed.
 `mailda deploy` applies migrations before it uploads the canary, so the column exists before any new code
