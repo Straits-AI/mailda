@@ -118,7 +118,7 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
    * permission; `dns_records` is what needs `dns.write`, and it is the only path in this table that changes
    * where a domain's mail goes.
    */
-  "/zones/{}/email/routing/rules": { scope: "zone-settings.read", reference: null },
+  "/zones/{}/email/routing/rules": { scope: "zone-settings.write", reference: null },
   "/zones/{}/dns_records": { scope: "dns.write", reference: "DNS Write" },
   "/accounts/{}/event_subscriptions/subscriptions": {
     scope: "queues.read",
@@ -129,11 +129,15 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
+  /*
+   * Read to get the verdict, `PATCH`ed to turn a zone into a mail zone — one path, two verbs, and the write
+   * is why the scope is `zone-settings.write` rather than read.
+   */
   "/zones/{}/email/routing": {
-    scope: "zone-settings.read", reference: "Zone Settings Write | Zone Settings Read",
+    scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
   },
   "/zones/{}/email/routing/dns": {
-    scope: "zone-settings.read", reference: "Zone Settings Write | Zone Settings Read",
+    scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
   },
   // No documented permission. Reached with a grant holding `email-sending.write`; nothing says it is needed.
   "/zones/{}/email/sending/subdomains": { scope: "email-sending.write", reference: null },
@@ -153,7 +157,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope));
     expect([...spent].sort()).toEqual([
       "account-settings.read", "dns.write", "email-sending.write", "queues.read",
-      "registrar-domains.read", "zone-settings.read", "zone.read",
+      "registrar-domains.read", "zone-settings.write", "zone.read",
     ]);
 
     const asked = scopesAskedFor(grant);

@@ -624,6 +624,18 @@ async function provider(argv) {
       if (proposal.zone !== null) {
         process.stdout.write(`     zone      ${proposal.zone} (routing ${proposal.zoneRouting ?? "?"})\n`);
       }
+      /*
+       * The zone-level change is printed first and in full, because it is the biggest thing on this page: it
+       * decides where the **whole domain's** mail goes, not one subdomain's.
+       */
+      if (proposal.enablesZone !== null) {
+        process.stdout.write(`     enables   Email Routing on ${proposal.enablesZone}\n`);
+        for (const line of wrapAt(
+          "that writes MX and SPF at the apex, so mail for the whole domain begins arriving at Cloudflare "
+          + "— not just this subdomain's. The records this subdomain needs are read afterwards, because a "
+          + "zone that is not routing yet lists none.", 66,
+        )) process.stdout.write(`               ${line}\n`);
+      }
       for (const one of proposal.present) process.stdout.write(`     has       MX ${one}\n`);
       /*
        * An existing rule is printed **with what it is worth**, not as a tick. A rule whose subdomain has no
@@ -651,8 +663,11 @@ async function provider(argv) {
         );
       }
       process.stdout.write(
-        `\n   these are the records Cloudflare says ${proposal.zone} needs — copied onto the subdomain,\n`
-        + `   not invented here\n`
+        proposal.enablesZone === null
+          ? `\n   these are the records Cloudflare says ${proposal.zone} needs — copied onto the subdomain,\n`
+            + `   not invented here\n`
+          : `\n   the records will be whatever Cloudflare requires once ${proposal.zone} is routing —\n`
+            + `   read from it, not invented here\n`
         + `\n   confirm: mailda provider --onboard-receiving ${proposal.domain} \\\n`
         + `              --address <you>@${proposal.domain} --confirm ${proposal.digest}\n\n`,
       );
