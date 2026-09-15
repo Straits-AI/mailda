@@ -599,6 +599,13 @@ const FIGURES: Record<string, Classification> = {
     "queues.subscription_list_default_page", "queues.queue_list_default_page",
   ),
 
+  // docs/receipts/backup-and-restore-cost.md
+  ...bothPlans(
+    "what `wrangler d1 export` puts in a backup, which the restore path depends on. A property of the "
+      + "tool, not a quantity a plan scales",
+    "backup.export_carries_schema", "backup.export_carries_migration_rows",
+  ),
+
   // docs/receipts/cloudflare-grant-reach.md
   ...bothPlans(
     "how far this Node's Cloudflare grant reaches and how much of it is spent; counts of endpoints and "

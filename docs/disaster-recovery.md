@@ -148,19 +148,33 @@ npx wrangler d1 execute CATALOG --remote --file=../../../backup-<date>/catalog.s
 Node arrives already claimed, with the source's administrators and their password hashes. That is also why the
 restore has to come before anything that needs `org.admin` there.
 
-**The search index has to be rebuilt, and `d1_migrations` will lie about it.** That table is exported like any
-other, so the restored catalog says the search migrations were applied while the virtual tables they create are
-absent — and `migrations apply` believes it and skips, leaving an index that exists in the bookkeeping and
-nowhere else. It fails the first time somebody searches. The backup's own index names the migrations to re-run, read
-from the backup rather than from whatever checkout is restoring:
+**The search index has to be rebuilt.** Only its contents are missing: the destination's own migrations
+create the virtual tables, and the backfill repopulates them from the evidence.
+
+> **Corrected 15 September 2026.** This paragraph used to open *"and `d1_migrations` will lie about it"*,
+> describing a hazard where the restored catalog claims the search migrations ran while their tables are
+> absent, `migrations apply` believes it and skips, and search fails the first time somebody uses it. That
+> hazard does not exist, and the paragraph directly below already said so — the two contradicted each other
+> across a single page of a runbook somebody reads during an incident.
+>
+> Settled from an artifact rather than by argument: a backup taken today against the live Node contains
+> **663 `INSERT` statements across 28 tables, zero `CREATE TABLE`, and no `d1_migrations` row at all.** The
+> exclusion is real, so nothing lies and no migration needs re-running by hand. The instruction to re-run
+> them would have cost an operator manual work in the middle of a disaster, for a problem they did not have.
+
+The backup is **data only** and excludes `d1_migrations`, so nothing here conflicts with the schema the
+destination's own migrations created — measured against a fresh destination whose 53 tables already existed
+and whose 51 migration rows were already correct, and re-confirmed against a real backup on 15 September 2026.
+
+**The destination's migrations must be applied first**, which follows from the same fact and is worth stating
+as a step rather than leaving as an inference: the export carries no schema, so importing it into a database
+whose migrations are behind fails on the first column the data has and the schema does not. Measured:
+importing this backup into a stale scratch database answered `table messages has no column named
+body_indexed_at: SQLITE_ERROR`.
 
 ```sh
 npx wrangler d1 execute CATALOG --remote --env "" --file=../../../backup-<date>/catalog.sql -y
 ```
-
-The backup is **data only** and excludes `d1_migrations`, so nothing here conflicts with the schema the
-destination's own migrations created — measured against a fresh destination whose 53 tables already existed
-and whose 51 migration rows were already correct.
 
 The search index's tables exist for the same reason; only their contents are missing. The backfill repopulates
 them from the evidence, and `mailda search list` reports what it could not parse.
@@ -370,6 +384,38 @@ size, and it has been run successfully exactly once.
 
 **Restore-to-receiving remains unmeasured.** It needs a domain, Email Routing bound to the zone's MX, and DNS
 propagation, and the last is not the product's to control.
+
+### A second backup, 15 September 2026 — and what it caught
+
+Run against the same Node, now holding **86 evidence objects** rather than the drill's three: 8 received
+messages, 27 send manifests with their arms, drafts and exports.
+
+| | |
+|:--|:--|
+| `mailda backup` | **29.4 s** end to end, including wrangler's D1 export round trip |
+| catalog | 366,788 bytes — 663 `INSERT`s across 28 tables |
+| inventory | 20,617 bytes, 86 objects, 2 named by no live row |
+| `mailda verify-backup` | **0.5 s** |
+
+**The same command failed an hour earlier**, against the same Node running the previous release:
+
+```text
+/api/evidence/inventory answered 500, so the backup is incomplete and was not indexed.
+11 object(s) had been listed.
+```
+
+`hashesFor` bound `referents.length × (1 + keys.length)` parameters against D1's limit of 100, at a page
+size of 150 — so `mailda backup` failed on any Node with mail in it. Fixed in #202, and this run is the
+confirmation against real data rather than a fixture.
+
+**That is what "run once, over three objects" was actually costing.** It was recorded on #92 as a gap in the
+record — something still to be measured. It was a gap in the *coverage*, and a shipped defect was sitting in
+it. Eighty-six objects is still not a mailbox, and the next wall above it is unknown; what this establishes
+is that the first one is gone.
+
+These figures are here rather than in `docs/receipts/backup-and-restore-cost.md` because they are
+observations of one run. That receipt carries the two facts that are receipt-shaped — what the export does
+and does not contain — and nothing a stopwatch produced.
 
 ### What the drill found, which is the part worth keeping
 
