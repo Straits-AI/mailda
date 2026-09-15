@@ -186,13 +186,26 @@ export async function searchDomains(
   const accountId = await boundAccountFor(env);
   const answer = await cloudflareGet<{ domains?: CloudflareDomain[] }>(
     env, ctx, orgId,
-    `/accounts/${accountId}/registrar/domain-search?query=${encodeURIComponent(query.trim())}`,
+    /*
+     * **`q`, not `query`** — and the reference does not name the parameter anywhere. It was inferred from
+     * the prose ("searching with just a domain extension is not supported. Provide a keyword or domain
+     * name") and the first live call answered `1001 Missing required parameter: q`. Cheap to find because
+     * this endpoint reserves nothing; the same inference on `domain-check` would have been a body shape.
+     */
+    `/accounts/${accountId}/registrar/domain-search?q=${encodeURIComponent(query.trim())}`,
   );
   if (!answer.ok) {
     throw unprocessable("E_REGISTRAR_SEARCH_REFUSED", {
       what: `Cloudflare refused the search for ${query}`,
       why: answer.error,
-      fix: "check the grant carries `registrar-domains.read`, and that this account may use the Registrar",
+      /*
+       * The `why` above is Cloudflare's own sentence, and it is the one that solves this — the first real
+       * failure here was a wrong parameter name and this line pointed at the grant. Named second now, after
+       * the thing the message actually says.
+       */
+      fix: "read the `why` — it is Cloudflare's own words. If it names a parameter, that is the fault; "
+        + "otherwise check the grant carries `registrar-domains.read` and that this account may use the "
+        + "Registrar",
     });
   }
   return (answer.result.domains ?? []).map((one) => priceOf(one, "?"));
