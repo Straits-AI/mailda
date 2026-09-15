@@ -568,6 +568,28 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/domains/purchase",
+    summary: "What buying a domain would cost, whether this account already holds it, and the digest a "
+      + "confirmation must carry. Changes nothing",
+    query: [{ name: "domain", description: "the fully qualified domain to price for purchase" }],
+    response: S.providerPurchaseProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/domains/purchase",
+    summary: "Buy a domain through the grant, refusing unless the digest matches the proposal this Node "
+      + "would now act on and no registration already exists",
+    request: S.providerPurchaseRequest, response: S.providerPurchaseOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/domains/purchase/status",
+    summary: "How a registration is going, and whether this Node may keep asking unattended",
+    query: [{ name: "domain", description: "the domain whose registration workflow to read" }],
+    response: S.providerPurchaseOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/handover",
     summary: "A signed handover manifest: what the client owns, what revocation stops, and which provider "
       + "ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda",

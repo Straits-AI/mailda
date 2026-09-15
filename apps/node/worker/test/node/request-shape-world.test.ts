@@ -107,6 +107,13 @@ describe("every closed set the contract declares is a closed set the boundary en
        * an empty list — then a purchase approval built on the answer.
        */
       "POST /api/provider/domains/check",
+      /*
+       * **The route that spends money.** Strict for the sharpest version of the usual reason: an unknown
+       * field here is a charge whose meaning this contract never agreed to. A misspelled `autoRenew` would
+       * be read as `false` — which is the safe direction by luck rather than by design, and luck is not a
+       * property to rely on when the alternative is a recurring bill.
+       */
+      "POST /api/provider/domains/purchase",
       "POST /api/provider/sending",
       /*
        * Registering the Node's OAuth client, and beginning a consent (#162 L1, ADR 42). Strict, and the
@@ -315,7 +322,8 @@ describe("strictness is decided per route, not turned on globally", () => {
     }
     expect(strict.sort()).toEqual([
       "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
-      "POST /api/provider/domains/check", "POST /api/provider/sending", "POST /api/search/repair",
+      "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
+      "POST /api/provider/sending", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([

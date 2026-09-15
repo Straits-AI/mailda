@@ -451,6 +451,13 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * decision, and a suggestion list is the first half of making it.
      */
     "GET /api/provider/domains",
+    /*
+     * The purchase proposal and its status. The first carries the digest that a `POST` spending money must
+     * quote, so a machine that could read it could supply the confirmation; the second is the read a person
+     * is meant to perform when automation has stopped, which is the moment automation must not resume.
+     */
+    "GET /api/provider/domains/purchase",
+    "GET /api/provider/domains/purchase/status",
     "GET /api/provider/handover",
     "GET /api/provider/ownership",
     "GET /api/provider/sending",
@@ -467,6 +474,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * confirms. Withheld beside the write it serves.
      */
     "POST /api/provider/domains/check",
+    /*
+     * **The route that spends the customer's money.** Nothing on this list is further from a machine's
+     * errand: it is irreversible, it is billed, and #164 requires the decision be a person's bound to an
+     * exact price.
+     */
+    "POST /api/provider/domains/purchase",
     "POST /api/provider/sending",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",

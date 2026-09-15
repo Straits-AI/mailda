@@ -12,11 +12,49 @@ values:
   grant.endpoints_reached: 9
   grant.endpoints_with_documented_permission: 5
   grant.narrowed_grant_probed: 1
+  registrar.register_idempotent: 0
+  registrar.register_idempotency_documented: 1
 ---
 
 **Measured:** against the live Node `mailda.swmengappdev.workers.dev` and its real grant on the
 `Swmengappdev` Cloudflare account, 14 September 2026. Every endpoint below was reached **through that
 grant** during #162 and #163 rather than with a separate token.
+
+## Addition, 15 September 2026: the registrar reads, and one measurement deliberately not taken (#164)
+
+Two endpoints added, both read-only, both exercised live through the grant: `domain-search` (cached
+suggestions) and `domain-check` (real-time registry price). `registrar-domains.read` was added to
+`REQUIRED_SCOPES`, consented to, and every path below exercised.
+
+`registrar-domains.admin` was **not** added. It authorizes buying domains on the operator's account —
+authority to spend their money — and belongs to the change that ships a gated purchase flow, not to one that
+wants to see a price.
+
+### `registrar.register_idempotency_documented: 1`, `registrar.register_idempotent: 0`
+
+Two values because they are two different facts. Cloudflare's reference now states:
+
+> Cloudflare permits only one registration per domain, making the domain name a natural idempotency key for
+> registration requests.
+
+That is a **claim about behaviour under a retry**, and #164 exists because such a claim *"cannot be designed
+from documentation"*. It may well be true. It is recorded as documented and **not** as measured, and the
+probe that would settle it — a real registration, an abandoned poll, a retry, and the billing outcome — has
+not been paid for.
+
+Nothing in `purchase.ts` depends on the answer. No path retries a registration: not on a timeout, not on an
+unreadable answer, not on a lifecycle state it does not recognise. Every uncertain outcome ends in *read the
+state and tell a person*. If the claim is true the guard is redundant; if it is false the guard is what
+stops the second charge. `test/node/purchase-never-retries.test.ts` holds that lexically, because a retry
+added later would arrive with tests describing it as correct.
+
+### A parameter the reference does not name
+
+`domain-search` takes **`q`**. The reference names no parameter for it at all; `query` was inferred from its
+prose and the first live call answered `1001 Missing required parameter: q`. Cheap to find, because that
+endpoint reserves nothing — the same inference against a `POST /registrations` body would have been a
+purchase. It is the seventh documented claim in this flow to be silent, incomplete or wrong, and the reason
+the idempotency claim above is not being taken on trust.
 
 ## What this supersedes, and what it does not
 

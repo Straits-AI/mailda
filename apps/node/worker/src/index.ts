@@ -2304,6 +2304,53 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
      * and a `PUT` falling through a shared block to a 404 reads as a missing resource rather than a wrong
      * request. Duller, and it keeps that closed set closed.
      */
+    if (url.pathname === "/api/provider/domains/purchase" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { purchaseProposalFor } = await import("./provider/purchase.ts");
+      return Response.json({
+        proposal: await purchaseProposalFor(
+          env, clock, who.orgId, url.searchParams.get("domain") ?? "",
+        ),
+      });
+    }
+
+    if (url.pathname === "/api/provider/domains/purchase/status" && request.method === "GET") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      const { purchaseStatus } = await import("./provider/purchase.ts");
+      return Response.json({
+        outcome: await purchaseStatus(env, clock, who.orgId, url.searchParams.get("domain") ?? ""),
+      });
+    }
+
+    if (url.pathname === "/api/provider/domains/purchase" && request.method === "POST") {
+      const who = await principalFor(env, clock, request);
+      if (who === null) return unauthenticated();
+      if (!(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      /*
+       * **The only route in this Node that spends money.** Every refusal is in `buyDomain` and happens
+       * before the charge; `autoRenew` is read from the body with no default, because Cloudflare documents
+       * `true` as an explicit opt-in to bill the account and an opt-in nobody made is not one.
+       */
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      const { buyDomain } = await import("./provider/purchase.ts");
+      return Response.json({
+        outcome: await buyDomain(
+          env, clock, who.orgId, who.userId,
+          String(body.domain ?? ""), String(body.digest ?? ""), body.autoRenew === true,
+        ),
+      });
+    }
+
     if (url.pathname === "/api/provider/domains" && request.method === "GET") {
       const who = await principalFor(env, clock, request);
       if (who === null) return unauthenticated();

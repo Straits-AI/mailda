@@ -847,6 +847,23 @@ export const AUDIT_ACTIONS = {
     says: "An administrator onboarded a domain for sending, and Cloudflare placed records under it.",
   },
 
+  /**
+   * A domain purchase **attempted** (#164 L3), and the verb is the whole point.
+   *
+   * It is written **before** the `POST`, not after it. A registration whose answer never arrives has still
+   * spent money, and an entry written only on success would leave that charge with no record at all — which
+   * is precisely the state an operator would be trying to reconstruct afterwards. So this asserts that a
+   * charge was *started*, and whether it completed is a separate read against Cloudflare's own workflow.
+   *
+   * **The entry names the price, both costs, and the auto-renew choice**, because the question it answers
+   * later is *what did we agree to pay, and did we sign up to pay it again*. It names no payment detail and
+   * no registrant contact: neither ever reaches this Node.
+   */
+  "provider.domain_purchase_attempted": {
+    says: "An administrator confirmed a domain purchase at a named price, and this Node asked Cloudflare to "
+      + "register it.",
+  },
+
   "provider.account_reported_unselectable": {
     says: "An operator reported that their account was not listed on Cloudflare's consent screen — their "
       + "account of it, not this Node's measurement.",

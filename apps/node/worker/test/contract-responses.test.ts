@@ -354,6 +354,19 @@ describe("every schema-bearing route answers what the contract says it does", ()
     ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
 
     /*
+     * The purchase's three routes. All refuse on this fixture — no account is determined — and the `POST`
+     * being among them is the assertion that matters most: the one route that spends money must not reach
+     * Cloudflare when this Node cannot first establish whose account it would spend from.
+     */
+    for (const attempt of [
+      answers("GET", "/api/provider/domains/purchase", { cookie: held }, "?domain=mailda.example"),
+      answers("GET", "/api/provider/domains/purchase/status", { cookie: held }, "?domain=mailda.example"),
+      answers("POST", "/api/provider/domains/purchase", {
+        cookie: held, body: { domain: "mailda.example", digest: "0".repeat(64), autoRenew: false },
+      }),
+    ]) await expect(attempt).rejects.toThrow(/E_PROVIDER_NO_ACCOUNT|E_PROVIDER_NO_GRANT|answered 4/);
+
+    /*
      * The handover manifest. Verified here the way a client would — the key comes from this Node's own
      * JWKS, chosen by the `kid` in the header — because a driver that only checked the shape would pass on
      * a manifest signed by nothing.
@@ -1912,8 +1925,18 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * Every price in both schemas is a **string**, carrying Cloudflare's own reason — it returns them as
      * strings to preserve decimal precision, and the value is destined for an approval digest where a
      * representation that round-trips differently is an approval nobody can confirm.
+     *
+     * The 119th to 121st are the purchase (#164 L3): propose, buy, and read how it is going. The `POST` is
+     * **the only route in this Node that spends money**, and two fields of its request are there because of
+     * that. `digest` binds the charge to the price an operator was shown. `autoRenew` is required rather
+     * than optional, because Cloudflare documents `true` as an explicit opt-in to bill the account — and an
+     * optional field with a convenient default is an opt-in nobody made.
+     *
+     * The status response carries `mayPoll` separately from `completed` for the same family of reason:
+     * `action_required` is unfinished and *not this Node's to continue*, and one boolean over both would
+     * poll forever at the state that means somebody has to act.
      */
-    expect(coverage.total).toBe(118);
+    expect(coverage.total).toBe(121);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

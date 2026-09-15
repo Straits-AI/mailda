@@ -1046,6 +1046,37 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What buying a domain would cost, whether this account already holds it, and the digest a confirmation must carry. Changes nothing
+   *
+   * @param query.domain the fully qualified domain to price for purchase
+   *
+   * `GET /api/provider/domains/purchase`
+   */
+  async getProviderDomainsPurchase(query?: { domain?: string }): Promise<z.infer<typeof S.providerPurchaseProposalResponse>> {
+    return await this.json("GET", "/api/provider/domains/purchase", {}, undefined, query) as z.infer<typeof S.providerPurchaseProposalResponse>;
+  }
+
+  /**
+   * Buy a domain through the grant, refusing unless the digest matches the proposal this Node would now act on and no registration already exists
+   *
+   * `POST /api/provider/domains/purchase`
+   */
+  async postProviderDomainsPurchase(body: z.infer<typeof S.providerPurchaseRequest>): Promise<z.infer<typeof S.providerPurchaseOutcomeResponse>> {
+    return await this.json("POST", "/api/provider/domains/purchase", {}, body) as z.infer<typeof S.providerPurchaseOutcomeResponse>;
+  }
+
+  /**
+   * How a registration is going, and whether this Node may keep asking unattended
+   *
+   * @param query.domain the domain whose registration workflow to read
+   *
+   * `GET /api/provider/domains/purchase/status`
+   */
+  async getProviderDomainsPurchaseStatus(query?: { domain?: string }): Promise<z.infer<typeof S.providerPurchaseOutcomeResponse>> {
+    return await this.json("GET", "/api/provider/domains/purchase/status", {}, undefined, query) as z.infer<typeof S.providerPurchaseOutcomeResponse>;
+  }
+
+  /**
    * A signed handover manifest: what the client owns, what revocation stops, and which provider ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda
    *
    * `GET /api/provider/handover`
