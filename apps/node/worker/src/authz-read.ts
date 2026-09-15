@@ -1130,6 +1130,31 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
      */
     const spanDays = daysAcross(since, until ?? nowIso).length;
     const maxDays = MAX_WINDOW_DAYS;
+    /*
+     * **A window that enumerates to no days at all, which was a 500.**
+     *
+     * `daysAcross` walks `at <= end`, so a `since` later than its end returns `[]`. With `until` given, the
+     * impossible-window refusal above catches that. With `until` **absent** the end is *now*, nothing
+     * compares `since` against it, and `0 > maxDays` is false — so the guard below let it through and
+     * `searchedMatch` emitted `day:()`, which SQLite answers with `fts5: syntax error near ")"`.
+     *
+     * An unhandled 500 on a documented pair of parameters, and reachable by accident rather than by attack:
+     * a client in UTC+13 sending its own local date is already ahead of this Node's UTC clock.
+     *
+     * It belongs here rather than as a special case in `searchedMatch`, beside the width check and for the
+     * same reason — a window matched one token per day *is* the query, and a query of no tokens is not one.
+     * The refusal above states the principle already: an impossible window is refused rather than answered
+     * empty, because an empty page reads as "no mail arrived then". It was written one case short.
+     */
+    if (spanDays === 0) {
+      throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_FUTURE", {
+        what: `\`since\` (${since}) is later than ${until === null ? "now" : `\`until\` (${until})`}, `
+          + "so the window covers no days at all",
+        why: "a searched window is matched as one token per day, and a window of no days is not a query. "
+          + "Answering an empty page instead would read exactly like a window in which nothing arrived",
+        fix: "check the date — a client sending its own local date can be ahead of this Node's UTC clock",
+      });
+    }
     if (spanDays > maxDays) {
       throw unprocessable("E_MESSAGE_PAGE_WINDOW_SEARCH_WIDE", {
         what: `that window is ${spanDays} days wide and a searched one may be at most ${maxDays}`,

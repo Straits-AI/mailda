@@ -859,6 +859,50 @@ describe("a date window on the listing", () => {
     await expect(attempt).rejects.toThrow(new RegExp(`${MAX_WINDOW_DAYS}`));
   });
 
+  it("refuses a searched window that starts after now, which used to reach SQLite as `day:()`", async () => {
+    /*
+     * **This was a 500, on a documented pair of parameters, reachable by accident.**
+     *
+     * `daysAcross` walks `at <= end`, so a `since` later than its end returns `[]`. With `until` **absent**
+     * the end is *now*, the impossible-window refusal never sees it — that one needs both bounds — and the
+     * width check reads `0 > 100`, which is false. `searchedMatch` then emitted `day:()`, and SQLite answers
+     * `fts5: syntax error near ")"`. Verified directly:
+     *
+     *     sqlite3 :memory: "… WHERE t MATCH '(\"hello\"*) AND day:()'"
+     *     Error: stepping, fts5: syntax error near ")"
+     *
+     * No attack required. A client in UTC+13 sending its own local date is already ahead of a UTC clock.
+     */
+    const token = await sessionFor(READER);
+    const attempt = listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      // Tomorrow, with no `until` — so the window's end is this Node's own clock.
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-21",
+    }));
+    await expect(attempt).rejects.toThrow(/E_MESSAGE_PAGE_WINDOW_SEARCH_FUTURE/);
+    /*
+     * And it is a refusal rather than a crash: the caller is told which date is the problem. A 500 here
+     * would say only that this Node failed, which is the one thing that was not the caller's to fix.
+     */
+    await expect(attempt).rejects.toThrow(/2026-08-21/);
+  });
+
+  it("answers a window that is exactly one day wide, which is the boundary the refusal sits on", async () => {
+    /*
+     * The other side, so the refusal cannot be satisfied by refusing everything. `since === until === today`
+     * enumerates to **one** token, not zero, and is an ordinary search.
+     */
+    const token = await sessionFor(READER);
+    const response = await listMessages(testEnv, atTime(AUGUST_20), requestFor(token, {
+      [MESSAGE_PAGE_PARAMS.q]: "invoice",
+      [MESSAGE_PAGE_PARAMS.since]: "2026-08-20",
+      [MESSAGE_PAGE_PARAMS.until]: "2026-08-20",
+    }));
+    expect(response.status).toBe(200);
+    const page = await response.json() as { messages: unknown[] };
+    expect(Array.isArray(page.messages)).toBe(true);
+  });
+
   it("still refuses a window on the listing that a search would have allowed, and vice versa", () => {
     /*
      * The two features' bounds are deliberately different, and this is what stops somebody "unifying" them.
