@@ -75,7 +75,7 @@ that ruled out filtering after the cap.
 
 An instant still works on an unsearched listing, which compares `accepted_at` directly.
 
-### Three more refusals, each naming its figure
+### Four more refusals, each naming its figure
 
 - **`E_MESSAGE_PAGE_WINDOW_SEARCH_OPEN`** — a searched window needs a `since`. `until` alone is unbounded
   backwards, and the token set is enumerated, so it would be one term per day back to the oldest mail here.
@@ -83,8 +83,13 @@ An instant still works on an unsearched listing, which compares `accepted_at` di
   size*, since the window is one token per day. Sized, not measured, and `message-search-cost.md` says so.
 - **`E_MESSAGE_PAGE_WINDOW_SEARCH_BUSY`** — at most `search.max_window_messages` (400) messages in the
   window, **counted before the search runs**.
+- **`E_MESSAGE_PAGE_WINDOW_SEARCH_FUTURE`** — a `since` later than the window's end, which covers no days
+  at all. Added after it was found to be a **500**: `daysAcross` walks `at <= end` and returns `[]`, the
+  impossible-window refusal needs *both* bounds so it never saw this one, and the width check reads
+  `0 > 100`. `day:()` reached SQLite, which answers `fts5: syntax error near ")"`. No attack needed — a
+  client in UTC+13 sending its own local date is already ahead of this Node's UTC clock.
 
-That last one is the one worth understanding, because #153 said it could not exist:
+The `BUSY` one is worth understanding, because #153 said it could not exist:
 
 > selectivity is not knowable before the query runs, so there is no per-request rule that admits the cheap
 > case and refuses the expensive one
