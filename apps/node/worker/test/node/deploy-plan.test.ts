@@ -621,6 +621,9 @@ describe("the words, which are what `--plan` actually delivers", () => {
   it("prints copyable commands in the measured order, with both names on the consumer step", () => {
     const text = renderPlan({
       worker: "mailda",
+      // Required rather than optional on `Plan`: `planFor` always sets it, to a value or to null, and a field
+      // a producer always writes should not be one a consumer has to guard.
+      account: null,
       verdict: "blocked",
       installed: true,
       items: [],
