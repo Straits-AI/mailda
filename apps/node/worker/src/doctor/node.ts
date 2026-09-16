@@ -366,7 +366,9 @@ export async function checkProviderBinding(env: Env): Promise<Finding[]> {
       detail: `${said[status.state] ?? status.state} (state=${status.state}, evidence=${status.evidence}`
         + `${status.clientId === null ? "" : `, client=${status.clientId}`}`
         + `${status.accountId === null ? "" : `, account=${status.accountId}`}`
-        + `${status.scopesGranted === null ? "" : `, scopes=${status.scopesGranted.join(" ")}`})`,
+        + `${status.scopesGranted === null ? "" : `, scopes=${status.scopesGranted.join(" ")}`})`
+        + (status.scopesMissing.length === 0 ? "" : ` This grant predates a scope this Node now asks for: `
+          + `${status.scopesMissing.join(" ")}. What needs it is refused until somebody authorizes again.`),
       ...(status.state === "grant_refused"
         ? {
           fix: "authorize again from the connection screen. If the grant was revoked deliberately, that is "

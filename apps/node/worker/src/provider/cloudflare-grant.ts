@@ -172,10 +172,18 @@ export const REQUIRED_SCOPES = [
     readOnlyExists: true,
   },
   {
-    scope: "queues.read",
-    why: "the `email.sending` event subscription and the consumers on the queue it publishes to, which is "
-      + "how a Node says whether a send's outcome would ever be seen. Read, and measured sufficient: this "
-      + "Node writes nothing through Queues",
+    /*
+     * Was `queues.read`, which was measured sufficient for as long as this Node only *read* the subscription
+     * and its queue. #222 made it write the subscription, and the first live call through a grant holding
+     * `queues.read` answered `10000 Authentication error` (16 September 2026, `email-sending-events.md`).
+     * So the write form is asked for, with the read still covered — the reference lists Queues Write beside
+     * Queues Read on every path this Node reads. Whether Write is *enough* for the subscription is the
+     * measurement the next consent makes.
+     */
+    scope: "queues.write",
+    why: "the `email.sending` event subscription that makes a send's outcome reach this Node, and the queue "
+      + "and consumers it reads to say whether one would. Read was measured refused for creating the "
+      + "subscription; this Node writes nothing else through Queues",
     readOnlyExists: true,
   },
   {
@@ -299,6 +307,12 @@ export interface ProviderStatus {
   grantedAt: string | null;
   /** As granted, which may be a subset of those requested. Null before a grant. */
   scopesGranted: string[] | null;
+  /**
+   * Scopes this Node asks for today that the grant does not carry. Non-empty on a grant consented before the
+   * ceremony's list grew (`queues.read` → `queues.write`, #222), and the reason a working grant can still
+   * need a second consent. Empty before a grant, because there is nothing to compare.
+   */
+  scopesMissing: string[];
   /** Set only in `grant_refused`, and it is Cloudflare's own words rather than a paraphrase. */
   refusedDetail: string | null;
 }
@@ -341,7 +355,7 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
   if (row === null) {
     return {
       state: "no_client", evidence: "observed", clientId: null, redirectUri: null, registeredAt: null,
-      accountId: null, grantedAt: null, scopesGranted: null, refusedDetail: null,
+      accountId: null, grantedAt: null, scopesGranted: null, scopesMissing: [], refusedDetail: null,
     };
   }
 
@@ -352,8 +366,13 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
     accountId: row.account_id,
     grantedAt: row.granted_at,
     scopesGranted: row.scopes_granted === null ? null : (JSON.parse(row.scopes_granted) as string[]),
+    scopesMissing: [] as string[],
     refusedDetail: row.refused_detail,
   };
+  if (common.scopesGranted !== null) {
+    const held = new Set(common.scopesGranted);
+    common.scopesMissing = REQUIRED_SCOPE_NAMES.filter((one) => !held.has(one));
+  }
 
   if (row.refused_at !== null) return { ...common, state: "grant_refused", evidence: "observed" };
   if (row.granted_at !== null) return { ...common, state: "consent_granted", evidence: "observed" };

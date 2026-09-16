@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  cloudflareGet, deliveryEventsState, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
+  cloudflareGet, deliveryEventsState, REQUIRED_SCOPE_NAMES, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
   reportUnselectable, resolveAccount, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor,
   STATUS_COLUMNS,
   type ProviderState,
@@ -1539,6 +1539,40 @@ describe("onboarding a domain for sending", () => {
     expect(detail.zone).toBe("example.test");
     // Written while somebody can still connect it to an act, rather than found later on an unlisted name.
     expect(detail.leavesBehind).toEqual(["_dmarc.mail.example.test"]);
+  });
+});
+
+describe("a grant made before the ceremony grew", () => {
+  it("names the scopes it is short of, and none when it holds them all", async () => {
+    /*
+     * `queues.read` became `queues.write` on 16 September 2026 (#222), and every grant consented before that
+     * still works for everything but the one write. `scopesMissing` is the fact the screen, the CLI and the
+     * doctor all say "authorize again" from — computed against what the Node asks for *today*, so the next
+     * scope the ceremony grows is reported the same way without anybody remembering to.
+     */
+    await register();
+    answering(200, {
+      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600,
+      scope: REQUIRED_SCOPE_NAMES.filter((one) => one !== "queues.write").join(" "),
+    });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, [...REQUIRED_SCOPE_NAMES]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+
+    const before = await providerStatus(testEnv);
+    expect(before.state).toBe("consent_granted");
+    expect(before.scopesMissing).toEqual(["queues.write"]);
+
+    answering(200, {
+      access_token: "an-access-2", refresh_token: "a-refresh-2", expires_in: 3600,
+      scope: REQUIRED_SCOPE_NAMES.join(" "),
+    });
+    const again = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 3000), ADMIN, [...REQUIRED_SCOPE_NAMES]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 4000), ORG, {
+      state: again.state, code: "the-code-2", error: null, errorDescription: null,
+    });
+    expect((await providerStatus(testEnv)).scopesMissing).toEqual([]);
   });
 });
 

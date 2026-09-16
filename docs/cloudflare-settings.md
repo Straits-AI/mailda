@@ -48,7 +48,8 @@ Two rules hold across the table:
 
 - The queue consumer is the one delivery-outcomes object still attached out of band, by a wrangler call
   rather than through the grant. Whether the API attaches it through the grant is unmeasured.
-- Which OAuth scope authorises creating the subscription. The Node's route makes the call with whatever the
-  grant holds and surfaces Cloudflare's refusal verbatim; the measurement in `email-sending-events.md` used
-  the operator's own token.
+- Whether `queues.write` is enough to create the subscription. `queues.read` was measured refused
+  (`10000 Authentication error`) through the Node's own grant on 16 September 2026, so the ceremony asks for
+  the write form now; a grant consented before that date has to be re-consented — `/setup` says so — and
+  that consent is the measurement.
 - A custom hostname from Mailda, so the last dashboard-only row goes.
