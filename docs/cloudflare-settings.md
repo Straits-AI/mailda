@@ -48,7 +48,10 @@ Two rules hold across the table:
 
 - The queue consumer is the one delivery-outcomes object still attached out of band, by a wrangler call
   rather than through the grant. Whether the API attaches it through the grant is unmeasured.
-- A grant consented before 16 September 2026 is short of `zone-settings.write`, `dns.write` and
-  `queues.write`; `/setup`, `mailda provider` and `doctor` all say so and name the two steps (add them to the
-  OAuth client, authorize again). Measured that day: `queues.write` creates the subscription.
+- A grant consented before 16 September 2026 is short of `zone-settings.write`, `dns.write`,
+  `queues.write` and `email-routing-rule.write`; `/setup`, `mailda provider` and `doctor` all say so and
+  name the two steps (add them to the OAuth client, authorize again). Measured that day: `queues.write`
+  creates the subscription, and the routing rule needs `email-routing-rule.write` — a grant holding only
+  `zone-settings.write` and `dns.write` wrote the MX records and was refused the rule, which is how the
+  receiving proposal learned to resume its own half-done work rather than refuse it.
 - A custom hostname from Mailda, so the last dashboard-only row goes.

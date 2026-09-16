@@ -59,9 +59,10 @@ export function sendingEventsConsumerCheck(): Finding {
       "Worker's deployed binding, and the subscription is created by the API and not by wrangler (measured " +
       "16 September 2026: `POST /accounts/{id}/event_subscriptions/subscriptions` with an `email.sending` " +
       "source creates one for an onboarded sending domain and refuses a domain that is not; wrangler " +
-      "4.118.0 still offers no such source). This Node does not make that call yet — which OAuth scope " +
-      "authorises it is unmeasured. So a button-only install has still never observed a delivery outcome; " +
-      "what changed is that its absence is reportable by name instead of inferable from silence. " +
+      "4.118.0 still offers no such source). `POST /api/provider/subscription` makes that call through the " +
+      "grant, which needs `queues.write` (measured). So a button-only install can observe its delivery " +
+      "outcomes once somebody runs the subscribe and attaches the consumer; until then their absence is " +
+      "reportable by name instead of inferable from silence. " +
       "`delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
   };

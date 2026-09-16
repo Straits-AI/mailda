@@ -194,6 +194,18 @@ export const REQUIRED_SCOPES = [
   },
   {
     /*
+     * The routing rule itself. `POST /zones/{}/email/routing/rules` was carried as covered by
+     * `zone-settings.write` — an inference, and the #92 drill measured it wrong: a grant holding
+     * `zone-settings.write` and `dns.write` wrote the MX records and was then refused the rule with
+     * `10000 Authentication error`. The picker names it Email Routing Rules Edit.
+     */
+    scope: "email-routing-rule.write",
+    why: "the routing rule that sends an address's mail to this Worker. Without it the records receiving "
+      + "needs can be written and nothing arrives — measured, on a restore drill",
+    readOnlyExists: true,
+  },
+  {
+    /*
      * #163 L2's receiving half, and the largest authority this Node asks for. **DNS write on a customer's
      * zone is the authority to redirect their mail**, so it is requested deliberately and spent by exactly
      * one path: `onboardReceiving`, which writes the MX records Cloudflare's own Email Routing requires on a
