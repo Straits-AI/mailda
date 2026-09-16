@@ -39,16 +39,16 @@ function tablesFromMigrations(): string[] {
 
 /** `doctor`'s list, parsed from source so the test cannot drift from what the Worker actually checks. */
 function tablesFromDoctor(): string[] {
-  const source = readFileSync(join(workerDir, "src/doctor.ts"), "utf8");
+  const source = readFileSync(join(workerDir, "src/doctor/node.ts"), "utf8");
   const block = /const EXPECTED_TABLES = \[([\s\S]*?)\];/.exec(source);
-  if (block === null) throw new Error("EXPECTED_TABLES not found in src/doctor.ts");
+  if (block === null) throw new Error("EXPECTED_TABLES not found in src/doctor/node.ts");
   return [...block[1]!.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]!).sort();
 }
 
 describe("doctor's expected tables", () => {
   it("matches exactly what the migrations create", () => {
     // If this fails, a migration added or removed a table and doctor did not follow. Update
-    // EXPECTED_TABLES in src/doctor.ts — do not relax this test, because the whole point of that
+    // EXPECTED_TABLES in src/doctor/node.ts — do not relax this test, because the whole point of that
     // constant is to notice a schema that is only partly applied.
     expect(tablesFromDoctor()).toEqual(tablesFromMigrations());
   });

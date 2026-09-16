@@ -60,7 +60,7 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
      * grant must not break — receiving, sealing, dispatching, indexing, a Butler run, a backup, a recovery.
      * If it does, #162's claim is no longer true and the drill has to be redone, not the list widened.
      */
-    expect(importers).toEqual(["doctor.ts", "routes/provider.ts"]);
+    expect(importers).toEqual(["doctor/node.ts", "routes/provider.ts"]);
   });
 
   it("has its table read by the migration, the module and the doctor, and nothing else", () => {
@@ -72,7 +72,7 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
       .filter((path) => readFileSync(path, "utf8").includes("provider_binding"))
       .map(relative)
       .sort();
-    expect(readers).toEqual(["doctor.ts", "migrate.ts", "provider/cloudflare-grant.ts"]);
+    expect(readers).toEqual(["doctor/node.ts", "migrate.ts", "provider/cloudflare-grant.ts"]);
   });
 
   it("keeps a refused grant out of the verdict, which is what makes a revocation harmless", () => {
@@ -85,7 +85,7 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
      * `severity: "report"` and carries `ok` false, which is the pair that means *worth acting on, nothing
      * broken*. Confirmed live on 10 September 2026 — `doctor` exited 0 with the grant refused.
      */
-    const doctor = readFileSync(join(src, "doctor.ts"), "utf8");
+    const doctor = readFileSync(join(src, "doctor/node.ts"), "utf8");
     const finding = /check: "provider_binding",[\s\S]{0,2000}?severity: "[a-z]+"/.exec(doctor)?.[0] ?? "";
     expect(finding, "the provider_binding finding could not be found").toContain("check: \"provider_binding\"");
     expect(finding).toContain('severity: "report"');

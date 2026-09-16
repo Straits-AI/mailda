@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+
+import { doctorSource } from "./support/doctor-source.ts";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -63,7 +65,7 @@ import { describe, expect, it } from "vitest";
  * of today's file, and the floors exist only to catch an extractor that has stopped finding anything.
  */
 
-const source = readFileSync(join(import.meta.dirname, "..", "..", "src", "doctor.ts"), "utf8");
+const source = doctorSource();
 
 /** What a check name looks like in this codebase. Asserted against the emitted set, not assumed. */
 const CHECK_NAME = /^[a-z0-9]+(?:_[a-z0-9]+)+$/;
@@ -122,7 +124,7 @@ function proseFiles(): string[] {
     cwd: join(import.meta.dirname, "../../../../.."), encoding: "utf8",
   }).split("\n").filter((one) => one !== "");
   return tracked.filter((one) =>
-    !one.endsWith("doctor-check-names.test.ts") && !one.endsWith("src/doctor.ts"));
+    !one.endsWith("doctor-check-names.test.ts") && !one.endsWith("src/doctor.ts") && !one.includes("src/doctor/"));
 }
 
 describe("every check name the repository's prose refers to is one a check emits", () => {

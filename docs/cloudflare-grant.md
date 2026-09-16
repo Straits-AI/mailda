@@ -220,7 +220,7 @@ Then restored, and the state read back `consent_granted`.
 **A drill is a fact about one afternoon.** What keeps the claim true is that nothing outside two files can
 reach the grant at all, and `test/node/provider-blast-radius.test.ts` holds that as a closed world over the
 whole source tree — by import *and* by raw reference to `provider_binding`, since SQL would reach the same row
-without naming the module. Permitted: `routes/provider.ts`, which manages it, and `doctor.ts`, which reports it. An
+without naming the module. Permitted: `routes/provider.ts`, which manages it, and `doctor/node.ts`, which reports it. An
 import added to `dispatch.ts` fails the test; so does raising the finding's severity to `degraded`, which
 would make `mailda deploy` fail on a revocation an operator performed deliberately.
 

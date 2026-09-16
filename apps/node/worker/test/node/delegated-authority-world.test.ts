@@ -71,7 +71,7 @@ const EXEMPT: Record<string, string> = {
   effectiveOn: "the Butler's own three-term intersection. A separate mechanism for a separate principal "
     + "kind, worked out first and reached by a different route (`DISTINCT subject_id`).",
   effectiveOnMailbox: "the Butler's own intersection, as `effectiveOn`",
-  metered: "`doctor` counting rows in a table by name. No predicate.",
+  EXPECTED_TABLES: "`doctor` naming the tables the schema must have, to count rows in each by name. No predicate.",
   sponsorReach: "the mint surface's catalogue: every mailbox with what a **named person** holds on it. It "
     + "answers about somebody else's authority for an administrator choosing, not about a principal's own — "
     + "and applying the sponsor term to it would be asking whether the sponsor's sponsor holds the relation, "
@@ -123,7 +123,7 @@ function tupleSites(): Array<{ file: string; line: number; fn: string; text: str
        * other way is a clean run over an unchecked tree.
        */
       const declaration =
-        /^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) = (?:async )?\(/.exec(raw);
+        /^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) = (?:async )?[([]/.exec(raw);
       if (declaration) fn = declaration[1] ?? declaration[2]!;
       // A route handler is a `"METHOD /path": async (…)` property of the table in `src/routes/*.ts`, and the
       // key is the name a decision here is recorded under — one route, not the whole router.

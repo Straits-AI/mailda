@@ -604,7 +604,7 @@ src/authz-read.ts                     which read paths accept a grant, holdsStan
                                       recording lives
 src/approvals.ts                      supervised_read as a subject kind; COMPLETING_EFFECT; the granting
                                       UPDATE and the notice beside it; #61's request notices
-src/doctor.ts                         self_granted_access, supervision_notices_overdue,
+src/doctor/governance.ts              self_granted_access, supervision_notices_overdue,
                                       supervision_notice_missing, supervision_notice_stranded
 src/client/app/chrome.tsx             the notice band, and the sentence it renders
 test/supervised-read.test.ts          part A's behaviour: the expiry stop and the two doors

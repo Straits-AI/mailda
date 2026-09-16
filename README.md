@@ -364,7 +364,8 @@ apps/node/worker/src/butler            the run engine: interpreter, effects, pri
                                        recipient derivation, the latched pause and its two write acts
 apps/node/worker/src/client            browser scripts, served as real .js files
 apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
-apps/node/worker/src/doctor.ts         checks the runtime claims every decision made
+apps/node/worker/src/doctor.ts         checks the runtime claims every decision made: the report, the
+                                       meter and the verdict; the checks themselves are in src/doctor/
 docs/history.md                        what each change found, in the order it was found
 ```
 
