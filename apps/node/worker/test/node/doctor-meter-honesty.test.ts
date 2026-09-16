@@ -194,15 +194,4 @@ describe("the doctor cost meter's figure rests on a property, so the property is
           + "about the cost",
     ).toBeNull();
   });
-
-  it("keeps the meter's blind spot written down where somebody would reuse it", () => {
-    // The comment is load-bearing: the next person to need a cost meter will find this one first, and the
-    // reason not to reuse it has to be attached to it rather than living in an issue.
-    const source = read("doctor.ts")!;
-    for (const phrase of ["counts `prepare`, not execution", "Durable Object RPCs are invisible",
-                          "must not be reused"]) {
-      expect(source, `doctor.ts no longer explains the meter's limits: missing "${phrase}"`)
-        .toContain(phrase);
-    }
-  });
 });

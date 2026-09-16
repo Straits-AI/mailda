@@ -89,17 +89,6 @@ const EXEMPT: Record<string, string> = {
     + "reader to bound — what bounds it is the check beside it and the intersection on every later request.",
 };
 
-/**
- * Files that name the table without querying it.
- *
- * By file rather than by function, because the site is at module level and exempting `<module>` would exempt
- * every future module-level query along with it — an exemption that grows on its own is not one.
- */
-const NOT_A_QUERY: Record<string, string> = {
-  "schema.ts": "the drizzle definition. Names the table so `test/schema-drift.test.ts` can compare it against "
-    + "the live database; there is no predicate here to bound.",
-};
-
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const path = join(dir, entry);
@@ -142,7 +131,7 @@ function tupleSites(): Array<{ file: string; line: number; fn: string; text: str
       if (isComment) return;
 
       const relative = file.slice(SRC.length);
-      if (line.includes("relationship_tuples") && !(relative in NOT_A_QUERY)) {
+      if (line.includes("relationship_tuples")) {
         out.push({ file: relative, line: index + 1, fn, text: line });
       }
     });

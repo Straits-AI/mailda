@@ -1084,7 +1084,7 @@ export const butlerPauseListResponse = z.object({
  *
  * Captured by driving every one of them against a real Node and reading the body, then written down —
  * which is the opposite order from the ledgers above and the right one here. A write's answer is not
- * declared anywhere on the consumer side: `butlerAct` and its siblings return `unknown` and the screens
+ * declared anywhere on the consumer side: `act` in `api.ts` returns `unknown` and the screens
  * destructure what they need, so there was no second view to compare against and no divergence to find.
  * What these schemas add is the first statement of the shape at all.
  */

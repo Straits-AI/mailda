@@ -11,15 +11,15 @@
   },
   "dependencies": {
     "@mailda/runtime": "workspace:*",
-    "ajv": "^8.17.1",
-    "zod": "^4.1.13",
-    "ajv-formats": "^3.0.1"
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
   },
   "exports": {
     ".": "./src/index.ts",

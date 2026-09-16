@@ -2,12 +2,13 @@
   "name": "@mailda/cli",
   "version": "0.0.0",
   "type": "module",
-  "bin": { "mailda": "./src/mailda.mjs" },
+  "bin": {
+    "mailda": "./src/mailda.mjs"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mailda/budgets": "workspace:*",
-    "@mailda/worker": "workspace:*"
+    "@mailda/budgets": "workspace:*"
   }
 }

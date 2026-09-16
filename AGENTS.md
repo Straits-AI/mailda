@@ -229,7 +229,7 @@ A reader who trusts a name and is wrong has been handed a landmine by the person
 Do not accept a stopgap that only works for now and is meant to be replaced later. There is
 no later; there is only the next person who finds it load-bearing.
 
-The 21 decisions in Blueprint §29 are locked. You may reopen one — that is a real, allowed
+The decisions in Blueprint §29 are locked. You may reopen one — that is a real, allowed
 move — but reopening means amending §29 in the same change, with the argument written down.
 It never means quietly building against it.
 
@@ -277,8 +277,8 @@ The rule that makes the ladder real: **every layer stays green.** A change that 
 from how it describes it, means editing the blueprint in the same change. Divergence
 discovered later is treated as a bug in both places.
 
-**Contracts before channels.** `packages/api-contract`, `domain-model`, `authz-model` and
-`event-schemas` generate or validate UI, API, CLI, SDK, Skill and MCP behaviour. A capability
+**Contracts before channels.** `packages/contract` — the route registry, its schemas, the relation
+and authority vocabularies — generates or validates UI, API, CLI, SDK, Skill and MCP behaviour. A capability
 that exists in one channel and not another is a parity bug, not a feature. Never hand-write
 what a contract can generate.
 
@@ -334,6 +334,7 @@ See `docs/agents/issue-tracker.md`.
 
 The five canonical roles, used verbatim as label strings. See `docs/agents/triage-labels.md`.
 
-### Domain docs
+### Decisions
 
-Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Architectural decisions are the numbered list in Blueprint §29. There is no separate ADR directory;
+reopening one amends §29 in the same change (principle 5).

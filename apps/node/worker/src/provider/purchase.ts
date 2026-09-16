@@ -283,18 +283,4 @@ export async function buyDomain(
   return outcomeOf(domain, status);
 }
 
-/** What `doctor` and the manifest report about this capability, which is not that it works. */
-export const REGISTER_IDEMPOTENCY_UNMEASURED =
-  "Whether a retried registration buys a second domain is **unmeasured** — it needs a real purchase, an "
-  + "abandoned poll and a retry. Cloudflare's reference asserts the domain name is a natural idempotency "
-  + "key; nothing here relies on that. No code path retries a registration, so the answer changes how "
-  + "redundant this Node's guard is and not whether it is safe.";
-
-/** Refuses to be imported as if it settled the question. */
-export function unmeasuredIdempotency(): string {
-  return REGISTER_IDEMPOTENCY_UNMEASURED;
-}
-
-export const _internals = { outcomeOf, KEEP_POLLING, unmeasuredIdempotency };
-
 

@@ -76,6 +76,29 @@ async function read<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * A mutation, and its refusal **verbatim**. The Node's error body is `{ error, message }` where `message`
+ * already carries the four-part what/why/fix — `E_APPROVER_IS_ACTOR` explains §18, `supervised.read` explains
+ * the whole §7 ceremony — and a paraphrase drops the half that says what to do next.
+ */
+async function act<T = Record<string, unknown>>(
+  path: string,
+  method: "POST" | "PUT" | "DELETE" = "POST",
+  body?: unknown,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  const response = await apiFetch(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, value: (parsed ?? {}) as T };
+  return {
+    ok: false,
+    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
+  };
+}
+
 /** Short, because a revocation must not be hidden by a cache. See the header. */
 const AUTHORIZATION_SENSITIVE = { staleTime: 5_000, refetchOnWindowFocus: true } as const;
 
@@ -431,7 +454,7 @@ export type ClaimResult =
   | { ok: false; kind: "held"; heldBy: string; heldSince: string; message: string }
   | { ok: false; kind: "closed" | "not_found" | "failed"; message: string };
 
-async function act(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
+async function caseAct(caseId: string, action: "claim" | "steal" | "release" | "close"): Promise<ClaimResult> {
   const response = await apiFetch(at("POST", "/api/cases/:caseId/:action", { caseId, action }), { method: "POST" });
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (response.ok) {
@@ -454,10 +477,10 @@ async function act(caseId: string, action: "claim" | "steal" | "release" | "clos
   };
 }
 
-export const claimCase = (id: string) => act(id, "claim");
-export const stealCase = (id: string) => act(id, "steal");
-export const releaseCase = (id: string) => act(id, "release");
-export const closeCase = (id: string) => act(id, "close");
+export const claimCase = (id: string) => caseAct(id, "claim");
+export const stealCase = (id: string) => caseAct(id, "steal");
+export const releaseCase = (id: string) => caseAct(id, "release");
+export const closeCase = (id: string) => caseAct(id, "close");
 
 /** Sets or clears a mailbox's first-response target. Administrator only, and audited. */
 export async function setResponseTarget(
@@ -610,33 +633,6 @@ export function useButlerRuns(): UseQueryResult<{ runs: ButlerRunRow[] }, Error>
   });
 }
 
-/**
- * The four acts, sharing one refusal shape.
- *
- * Every one of them can be refused for a reason the caller needs to read verbatim: the checker's findings,
- * `E_NOT_AN_ADMINISTRATOR`, a publish with nothing to publish. `describeFindings` writes those sentences and
- * paraphrasing them here would drop the half that says what to do — the same rule `setResponseTarget` follows.
- */
-async function butlerAct<T>(
-  path: string,
-  // DELETE joined the union for #84's passkey revocation. A cast at one call site would have been the
-  // alternative, and a cast is how a route ends up being called with a verb this Node does not answer —
-  // which is the defect #85 found.
-  method: "POST" | "PUT" | "DELETE",
-  body?: unknown,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
-  const response = await apiFetch(path, {
-    method,
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true, value: parsed as T };
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 
 /** One node's effect in a dry run (#87). See `src/butler/simulate.ts` on the three outcomes. */
@@ -674,7 +670,7 @@ export interface Simulation {
  * never real would answer a question about nothing.
  */
 export const simulateButler = (id: string, facts: Record<string, unknown>) =>
-  butlerAct<{ simulation: Simulation }>(
+  act<{ simulation: Simulation }>(
     at("POST", "/api/butlers/:butlerId/simulate", { butlerId: id }), "POST", { facts },
   );
 
@@ -711,7 +707,7 @@ export function useTransport(): UseQueryResult<{ transport: TransportReport }, E
  * this Node.
  */
 export const configureTransport = (accountId: string, apiToken: string) =>
-  butlerAct<{ configured: { accountId: string; configuredAt: string } }>(
+  act<{ configured: { accountId: string; configuredAt: string } }>(
     at("PUT", "/api/transport"), "PUT", { accountId, apiToken },
   );
 
@@ -746,7 +742,7 @@ export async function registerPasskey(
     return { ok: false, message: "This browser has no passkey support." };
   }
 
-  const challenged = await butlerAct<{ publicKey: Record<string, unknown> }>(
+  const challenged = await act<{ publicKey: Record<string, unknown> }>(
     at("POST", "/api/auth/passkeys/challenge"), "POST", { purpose: "register" },
   );
   if (!challenged.ok) return challenged;
@@ -772,7 +768,7 @@ export async function registerPasskey(
   }
   if (credential === null) return { ok: false, message: "No passkey was created." };
 
-  return await butlerAct<{ registered: { id: string } }>(
+  return await act<{ registered: { id: string } }>(
     at("POST", "/api/auth/passkeys"), "POST",
     { credential: serialiseCredential(credential), label },
   ).then((outcome) => outcome.ok
@@ -781,7 +777,7 @@ export async function registerPasskey(
 }
 
 export const forgetPasskey = (credentialId: string) =>
-  butlerAct<{ forgotten: true }>(at("DELETE", "/api/auth/passkeys"), "DELETE", { credentialId });
+  act<{ forgotten: true }>(at("DELETE", "/api/auth/passkeys"), "DELETE", { credentialId });
 
 /**
  * Base64url to bytes, for the fields WebAuthn wants as buffers.
@@ -820,23 +816,23 @@ function serialiseCredential(credential: PublicKeyCredential): Record<string, un
 }
 
 export const createButler = (name: string, source: string, sourceFormat: ButlerSourceFormat) =>
-  butlerAct<{ butler: { butlerId: string } }>(
+  act<{ butler: { butlerId: string } }>(
     at("POST", "/api/butlers"), "POST", { name, source, sourceFormat },
   );
 
 export const saveButlerDraft = (id: string, source: string, sourceFormat: ButlerSourceFormat) =>
-  butlerAct<{ butler: { versionId: string } }>(
+  act<{ butler: { versionId: string } }>(
     at("PUT", "/api/butlers/:butlerId/draft", { butlerId: id }), "PUT", { source, sourceFormat },
   );
 
 export const publishButlerVersion = (id: string) =>
-  butlerAct<{ published: { version: number } }>(
+  act<{ published: { version: number } }>(
     at("POST", "/api/butlers/:butlerId/publish", { butlerId: id }), "POST",
   );
 
 /** Takes the **pause** id, not the Butler's: one Butler can have been paused more than once over time. */
 export const resumeButler = (pauseId: string, reason: string) =>
-  butlerAct<{ resumed: unknown }>(
+  act<{ resumed: unknown }>(
     at("POST", "/api/butler-pauses/:pauseId/resume", { pauseId }), "POST", { reason },
   );
 
@@ -880,29 +876,12 @@ export function useApprovals(): UseQueryResult<{ approvals: ApprovalRow[] }, Err
   });
 }
 
-async function approvalAct(
-  path: string,
-  body?: unknown,
-): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; message: string }> {
-  const response = await apiFetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true, value: parsed ?? {} };
-  // Verbatim, as everywhere else: `E_APPROVER_IS_ACTOR` explains §18 in a sentence a paraphrase would lose.
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 export const decide = (id: string, decision: "approve" | "deny") =>
-  approvalAct(at("POST", "/api/approvals/:approvalId/decide", { approvalId: id }), { decision });
+  act(at("POST", "/api/approvals/:approvalId/decide", { approvalId: id }), "POST", { decision });
 
 export const withdrawDecision = (id: string) =>
-  approvalAct(at("POST", "/api/approvals/:approvalId/withdraw", { approvalId: id }));
+  act(at("POST", "/api/approvals/:approvalId/withdraw", { approvalId: id }));
 
 /* ------------------------------------------------------------------ Layer 4: policies (#81) -------- */
 
@@ -948,38 +927,21 @@ export function usePolicies(): UseQueryResult<{ policies: PolicyVersionRow[] }, 
   });
 }
 
-async function policyAct<T>(
-  path: string,
-  method: "POST" | "PUT",
-  body?: unknown,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
-  const response = await apiFetch(path, {
-    method,
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true, value: parsed as T };
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 export const createPolicy = (
   name: string, outcome: string, conditions: PolicyConditions, stages: number[],
-) => policyAct<{ policy: { policyId: string } }>(at("POST", "/api/policies"), "POST", {
+) => act<{ policy: { policyId: string } }>(at("POST", "/api/policies"), "POST", {
   name, outcome, conditions, stages,
 });
 
 export const savePolicyDraft = (
   id: string, outcome: string, conditions: PolicyConditions, stages: number[],
-) => policyAct<{ policy: { versionId: string } }>(
+) => act<{ policy: { versionId: string } }>(
   at("PUT", "/api/policies/:policyId/draft", { policyId: id }), "PUT", { outcome, conditions, stages },
 );
 
 export const publishPolicyVersion = (id: string) =>
-  policyAct<{ published: { version: number } }>(
+  act<{ published: { version: number } }>(
     at("POST", "/api/policies/:policyId/publish", { policyId: id }), "POST",
   );
 
@@ -1027,29 +989,12 @@ export function useTeams(): UseQueryResult<{ teams: TeamRow[] }, Error> {
   });
 }
 
-async function accessAct(
-  method: "POST" | "DELETE",
-  body: unknown,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const response = await apiFetch(at("POST", "/api/access"), {
-    method,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (response.ok) return { ok: true };
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  // Verbatim: the refusal for `supervised.read` explains the whole §7 ceremony, and a paraphrase loses it.
-  return {
-    ok: false,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 export const grant = (subjectId: string, relation: string, objectId: string) =>
-  accessAct("POST", { subjectId, relation, objectId });
+  act(at("POST", "/api/access"), "POST", { subjectId, relation, objectId });
 
 export const revokeAccess = (subjectId: string, relation: string, objectId: string) =>
-  accessAct("DELETE", { subjectId, relation, objectId });
+  act(at("POST", "/api/access"), "DELETE", { subjectId, relation, objectId });
 
 export async function createTeam(name: string): Promise<{ ok: true } | { ok: false; message: string }> {
   const response = await apiFetch(at("POST", "/api/teams"), {
@@ -1133,27 +1078,14 @@ export function useDomainPauses(): UseQueryResult<{ pauses: DomainPauseRow[] }, 
   });
 }
 
-async function pauseAct(path: string, body?: unknown) {
-  const response = await apiFetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true as const, value: parsed ?? {} };
-  return {
-    ok: false as const,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 /** Asks for a domain to be stopped. Two **other** administrators have to agree before it takes effect. */
 export const requestDomainPause = (domain: string, reason: string) =>
-  pauseAct(at("POST", "/api/domain-pauses"), { domain, reason });
+  act(at("POST", "/api/domain-pauses"), "POST", { domain, reason });
 
 /** Restarts a domain's mail. One administrator, alone — the asymmetry is deliberate (#66). */
 export const liftDomainPause = (id: string) =>
-  pauseAct(at("POST", "/api/domain-pauses/:pauseId/lift", { pauseId: id }));
+  act(at("POST", "/api/domain-pauses/:pauseId/lift", { pauseId: id }));
 
 /* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
 
@@ -1253,39 +1185,26 @@ export function useExports(): UseQueryResult<{ exports: ExportRow[] }, Error> {
   });
 }
 
-async function matterAct(path: string, body?: unknown) {
-  const response = await apiFetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true as const, value: parsed ?? {} };
-  return {
-    ok: false as const,
-    message: String(parsed?.message ?? parsed?.error ?? `This Node answered ${response.status}.`),
-  };
-}
 
 export const openMatter = (type: string, description: string) =>
-  matterAct(at("POST", "/api/matters"), { type, description });
+  act(at("POST", "/api/matters"), "POST", { type, description });
 
 /** Closing a matter is what makes §7's notice to the people who were read about fall due. */
 export const closeMatter = (id: string) =>
-  matterAct(at("POST", "/api/matters/:matterId/close", { matterId: id }));
+  act(at("POST", "/api/matters/:matterId/close", { matterId: id }));
 
 export const placeHold = (mailboxId: string, matterId: string | null) =>
-  matterAct(at("POST", "/api/holds"), { mailboxId, matterId });
+  act(at("POST", "/api/holds"), "POST", { mailboxId, matterId });
 
 /** Asks for a hold to be lifted. Two other people have to agree; a hold is not lifted by one. */
 export const askToLiftHold = (id: string, reason: string) =>
-  matterAct(at("POST", "/api/holds/:holdId/lift", { holdId: id }), { reason });
+  act(at("POST", "/api/holds/:holdId/lift", { holdId: id }), "POST", { reason });
 
 export const askToRead = (mailboxId: string, scope: string, durationSeconds: number, matterId: string | null) =>
-  matterAct(at("POST", "/api/supervised"), { mailboxId, scope, durationSeconds, matterId });
+  act(at("POST", "/api/supervised"), "POST", { mailboxId, scope, durationSeconds, matterId });
 
 export const runExport = (id: string) =>
-  matterAct(routePath(EXPORT_RUN, { exportId: id }));
+  act(routePath(EXPORT_RUN, { exportId: id }));
 
 /* ------------------------------------------------------------------ inviting somebody (#83) -------- */
 
@@ -1638,44 +1557,16 @@ export interface SendingProposal {
   error: string | null;
 }
 
-/**
- * A provider write, with the Node's refusal kept whole.
- *
- * These refusals are four-part — what, why, the fix, and often a receipt — and they are the deliverable when
- * something will not proceed. Summarising one to "failed" would throw away the only sentence that tells an
- * operator what to do next, which on this screen is the difference between finishing setup and opening the
- * Cloudflare dashboard.
- */
-async function providerAct<T>(
-  path: string,
-  method: "POST" | "PUT",
-  body?: unknown,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
-  const response = await apiFetch(path, {
-    method,
-    headers: { "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.ok) return { ok: true, value: (parsed ?? {}) as T };
-  const detail = parsed?.detail as { what?: string; why?: string; fix?: string } | undefined;
-  const words = [parsed?.message, detail?.what, detail?.why, detail?.fix]
-    .filter((one): one is string => typeof one === "string" && one !== "");
-  return {
-    ok: false,
-    message: words.length > 0 ? words.join(" ") : `This Node answered ${response.status}.`,
-  };
-}
 
 /** The client id and secret from the dashboard. The secret is never returned, and this discards any grant. */
 export const setProviderClient = (clientId: string, clientSecret: string) =>
-  providerAct<{ provider: ProviderBinding }>(at("PUT", "/api/provider/client"), "PUT", {
+  act<{ provider: ProviderBinding }>(at("PUT", "/api/provider/client"), "PUT", {
     clientId, clientSecret,
   });
 
 /** Begins a consent and answers with the URL to send a browser to. Nothing is granted by asking. */
 export const beginConsent = (scopes: string[]) =>
-  providerAct<{ authorize: { url: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
+  act<{ authorize: { url: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
 
 /**
  * Records that Cloudflare's consent screen listed no account.
@@ -1684,11 +1575,11 @@ export const beginConsent = (scopes: string[]) =>
  * into a generic failure so the state it produces stays labelled `reported` rather than `observed`.
  */
 export const reportUnselectable = () =>
-  providerAct<{ provider: ProviderBinding }>(at("POST", "/api/provider/unselectable"), "POST");
+  act<{ provider: ProviderBinding }>(at("POST", "/api/provider/unselectable"), "POST");
 
 /** Asks Cloudflare which account this grant covers. Now also done during consent; this is the retry. */
 export const resolveProviderAccount = () =>
-  providerAct<{ account: { accountId: string | null; found: number; error: string | null } }>(
+  act<{ account: { accountId: string | null; found: number; error: string | null } }>(
     at("POST", "/api/provider/resolve-account"), "POST",
   );
 
@@ -1707,7 +1598,7 @@ export const receivingProposal = (domain: string) =>
   proposalFor<{ proposal: ReceivingProposal }>(GET("/api/provider/receiving"), domain);
 
 export const onboardReceiving = (domain: string, digest: string, address: string) =>
-  providerAct<{ outcome: ReceivingOutcome }>(at("POST", "/api/provider/receiving"), "POST", {
+  act<{ outcome: ReceivingOutcome }>(at("POST", "/api/provider/receiving"), "POST", {
     domain, digest, address,
   });
 
@@ -1715,4 +1606,4 @@ export const sendingProposal = (domain: string) =>
   proposalFor<{ proposal: SendingProposal }>(GET("/api/provider/sending"), domain);
 
 export const onboardSending = (domain: string, digest: string) =>
-  providerAct<{ proposal: SendingProposal }>(at("POST", "/api/provider/sending"), "POST", { domain, digest });
+  act<{ proposal: SendingProposal }>(at("POST", "/api/provider/sending"), "POST", { domain, digest });

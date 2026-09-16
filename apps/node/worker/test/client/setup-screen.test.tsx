@@ -202,14 +202,13 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
       },
       refuse: {
         status: 409,
+        // The wire shape `CallerError` produces: the four parts are already in `message`, not in a `detail`
+        // key. An earlier version of this fixture invented one, and the screen parsed the invention.
         body: {
           error: "E_PROVIDER_STALE_PROPOSAL",
-          message: "E_PROVIDER_STALE_PROPOSAL",
-          detail: {
-            what: "the zone changed since this plan was read",
-            why: "the digest no longer matches what this Node would do",
-            fix: "read the plan again before confirming it",
-          },
+          message: "E_PROVIDER_STALE_PROPOSAL  the zone changed since this plan was read\n"
+            + "  why      the digest no longer matches what this Node would do\n"
+            + "  fix      read the plan again before confirming it",
         },
       },
     });
