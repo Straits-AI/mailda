@@ -89,6 +89,23 @@ const REFERENTS = [
  * prefix if `scannedPrefixes` ever reorders. That function's contract is *which* prefixes exist, not what
  * order they come in.
  */
+/**
+ * The hash an export stamped on a staged object, for the one segment whose objects have no row (#216).
+ *
+ * `exports.ts` writes each staged `.eml` with `customMetadata.sha256` so the manifest can be built from one
+ * listing, and `REFERENTS` names only the manifest's own row — so every finished export used to put N
+ * objects into `unaccounted`, on the report an operator reads during an incident. The stamp is the same
+ * plaintext hash a row would carry, written by the same code path that wrote the object.
+ *
+ * `exports/` only. A `raw/` or `drafts/` object is accounted for by its row and nothing else: metadata on
+ * an object nothing references is not a referent, and reporting it as one would hide exactly the orphan
+ * `reconcile.ts` exists to collect.
+ */
+function stampedHash(object: R2Object): string | null {
+  const stamped = object.customMetadata?.sha256;
+  return typeof stamped === "string" && /^[0-9a-f]{64}$/.test(stamped) ? stamped : null;
+}
+
 function segmentOf(prefix: string): string {
   return prefix.replace(/\/$/, "").split("/").at(-1) ?? "";
 }
@@ -196,12 +213,13 @@ export async function inventoryPage(
   const keys = listed.objects.map((one) => one.key);
   const recorded = await hashesFor(env, orgId, keys, segmentOf(prefixes[at] as string));
 
+  const segment = segmentOf(prefixes[at] as string);
   const objects: InventoryObject[] = listed.objects.map((one) => ({
     key: one.key,
     bytes: one.size,
     uploaded: one.uploaded.toISOString(),
     keyGeneration: generationOf(one),
-    recordedSha256: recorded.get(one.key) ?? null,
+    recordedSha256: recorded.get(one.key) ?? (segment === "exports" ? stampedHash(one) : null),
   }));
 
   /*
