@@ -503,7 +503,9 @@ export async function provider(argv) {
   if (state.scopesMissing.length > 0) {
     process.stdout.write(
       `\n   this grant predates a scope this Node now asks for: ${state.scopesMissing.join(", ")}\n`
-      + `   authorize again: mailda provider --scopes ${steps.scopes.map((one) => one.scope).join(",")}\n`,
+      + `   first add it to the OAuth client in the dashboard — a client may request only what it was\n`
+      + `   registered with, and consenting before that answers invalid_scope. Then authorize again:\n`
+      + `   mailda provider --scopes ${steps.scopes.map((one) => one.scope).join(",")}\n`,
     );
   }
   if (state.state === "no_client") {

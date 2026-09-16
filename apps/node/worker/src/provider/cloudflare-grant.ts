@@ -179,6 +179,12 @@ export const REQUIRED_SCOPES = [
      * So the write form is asked for, with the read still covered — the reference lists Queues Write beside
      * Queues Read on every path this Node reads. Whether Write is *enough* for the subscription is the
      * measurement the next consent makes.
+     *
+     * That consent showed the other half of growing this list: a client may request only what it was
+     * registered with, so a scope added here after a client exists answers `invalid_scope` until somebody
+     * adds it to the client in the dashboard. `zone-settings.write` and `dns.write` (#209, #210) were added
+     * here without that step and never consented, which `scopesMissing` now reports rather than leaving
+     * the first receiving onboarding to discover.
      */
     scope: "queues.write",
     why: "the `email.sending` event subscription that makes a send's outcome reach this Node, and the queue "

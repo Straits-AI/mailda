@@ -705,8 +705,10 @@ export function Setup() {
         <>
           <p className="notice" role="status">
             This grant was made before this Node asked for{" "}
-            <span className="mono">{binding.scopesMissing.join(", ")}</span>. What needs it is refused until
-            you authorize again — the same steps, once more.
+            <span className="mono">{binding.scopesMissing.join(", ")}</span>. Add those to the OAuth client
+            in the Cloudflare dashboard first — a client may only request what it was registered with, and
+            consenting before that is refused as <span className="mono">invalid_scope</span> — then authorize
+            again below.
           </p>
           <Consent ceremony={ceremony} refresh={refresh} />
         </>
