@@ -236,8 +236,18 @@ before the first. `events.subscription_creatable_by_wrangler` stays **0** — re
 **Measured the same afternoon, through the Node's own grant** (#222 built, deployed as version `22d44c2b`):
 the `POST` with a grant holding `queues.read` — and every other scope the ceremony asked for — answered
 `10000 Authentication error`. So the read scope that lists subscriptions does not create one, and the
-ceremony now asks for `queues.write` instead. Whether *that* is enough is the measurement the next consent
-makes; the OAuth client already carries it (`cloudflare-oauth-scopes.md`), so no dashboard visit is needed.
+ceremony now asks for `queues.write` instead.
+
+**And `queues.write` is enough** — measured 16 September 2026, 12:50 UTC, after a re-consent. The
+re-consent itself cost one more measurement: the client had never been registered with
+`zone-settings.write`, `dns.write` or `queues.write`, so the first attempt answered *"The OAuth 2.0 Client
+is not allowed to request scope 'zone-settings.write'"* — `invalid_scope`, the same refusal
+`cloudflare-oauth-endpoints.md` recorded for `offline_access`. Adding the three to the client in the
+dashboard and consenting again granted all eight, which also confirms `zone-settings.write` and `dns.write`
+are real ids. `mailda provider --subscribe mailda.site --confirm <digest>` through the Node's own grant then
+created subscription `mailda-sending-events-mailda.site`, and `--delivery-events` reads it back. The row
+in `cloudflare-settings.md` is closed: the Node creates the subscription, and a button-only install can
+observe its delivery outcomes without a dashboard.
 
 **Was not measured before that:** which OAuth scope authorises the `POST`. This run used the operator's token, which holds
 every scope. The Node's grant holds `queues.read`, which `cloudflare-grant-reach.md` established is enough

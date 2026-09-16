@@ -112,7 +112,7 @@ paths, because a scope authorizes a path and the methods on it are not separatel
 | `GET /accounts/{}/event_subscriptions/subscriptions` | `queues.write` | `Queues Write \| Read`, or `Workers Scripts Write \| Read` |
 | `GET /accounts/{}/queues/{}` | `queues.write` | `Queues Write \| Read`, or `Workers Scripts Write \| Read` |
 | `GET /accounts/{}/queues` | `queues.read` | `Queues Write \| Read`, or `Workers Scripts Write \| Read` — listed by #222 to find this Node's own queue by name |
-| `POST /accounts/{}/event_subscriptions/subscriptions` | **unmeasured** | none published for an `email.sending` source; #222 makes the call with what the grant holds |
+| `POST /accounts/{}/event_subscriptions/subscriptions` | `queues.write` | none published for an `email.sending` source. Measured 16 September 2026: refused with `queues.read`, created with `queues.write` |
 
 Plus `offline_access`, which authorizes no endpoint — it is what makes the token renewable, and a grant
 without it would reach every row above exactly once.
