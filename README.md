@@ -351,6 +351,8 @@ packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      the route registry, its schemas, and command schemas
 packages/sdk                           GENERATED from the registry — one method per route
+packages/cli                           `mailda`: the dispatcher, `support.mjs`, one module per verb under
+                                       `verbs/`, and the pure parsers beside them (deploy-plan, preflight, backup)
 skills/mailda                          GENERATED — the Agent Skill, from the curated list
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail
@@ -364,7 +366,8 @@ apps/node/worker/src/butler            the run engine: interpreter, effects, pri
                                        recipient derivation, the latched pause and its two write acts
 apps/node/worker/src/client            browser scripts, served as real .js files
 apps/node/worker/scripts               operator tools: password reset, queue consumer attach, axe
-apps/node/worker/src/doctor.ts         checks the runtime claims every decision made
+apps/node/worker/src/doctor.ts         checks the runtime claims every decision made: the report, the
+                                       meter and the verdict; the checks themselves are in src/doctor/
 docs/history.md                        what each change found, in the order it was found
 ```
 

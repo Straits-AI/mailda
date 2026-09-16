@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { cliSource } from "./support/cli-source.ts";
 import { withoutComments } from "../without-comments.ts";
 
-const cliPath = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
 
 /**
  * The CLI's **code**, with comments stripped.
@@ -13,7 +13,7 @@ const cliPath = join(import.meta.dirname, "../../../../../packages/cli/src/maild
  * why they cannot come first — so a search over the raw file found the comment before the code and reported
  * the order backwards. A test that reads source has to read only the part that runs.
  */
-const cli = readFileSync(cliPath, "utf8")
+const cli = cliSource()
   .split("\n")
   .filter((line) => {
     const t = line.trimStart();
@@ -458,7 +458,7 @@ describe("a Node whose bindings are gone is a state, not a failed listing", () =
    * Lexical, over the deploy function's body with comments stripped, which is both halves of the technique
    * this repository has been bitten by nine times.
    */
-  const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
+  const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/verbs/deploy.mjs");
 
   /** The migration-listing guard, delimited at both ends so nothing matches the branch after it. */
   function guard(): string {

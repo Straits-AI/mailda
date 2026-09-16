@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { cliSource } from "./support/cli-source.ts";
 
 import { readWranglerConfig, type ConfigScope } from "./wrangler-world";
 
@@ -128,9 +128,7 @@ describe("the deploy refuses a Workflow name that does not follow the Worker's (
    * and cannot be called from here — and narrow for that reason: it asserts the comparison exists and is
    * followed by a refusal, not that the refusal is correct. The rule above is what checks correctness.
    */
-  const cli = readFileSync(
-    join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"), "utf8",
-  );
+  const cli = cliSource();
 
   it("compares the two names and fails, rather than warning", () => {
     const guard = /if \(workflowName !== `\$\{workerName\}-butler-runs`\) \{[\s\S]{0,900}?\n {2}\}/.exec(cli);

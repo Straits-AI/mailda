@@ -1,11 +1,11 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { cliSource } from "./support/cli-source.ts";
 
 import { withoutComments } from "../without-comments.ts";
 
 /** The CLI on disk, for the lexical checks below. The module also reads it eagerly as `cli`. */
-const CLI_PATH = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
 
 const backup = await import("../../../../../packages/cli/src/backup.mjs");
 const {
@@ -35,7 +35,7 @@ const {
  * correct source. That is the seventh time a lexical assertion in this repository has been defeated by a
  * substring, and `deploy-sequence.test.ts` had already learned it; this file had not.
  */
-const cli = readFileSync(join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"), "utf8")
+const cli = cliSource()
   .split("\n")
   .filter((line) => {
     const trimmed = line.trimStart();
@@ -446,7 +446,7 @@ describe("a backup does not give up on one bad sign-in", () => {
    * a cold start, and both are visible in source.
    */
   function signIn(): string {
-    const source = withoutComments(CLI_PATH);
+    const source = withoutComments(join(import.meta.dirname, "../../../../../packages/cli/src/support.mjs"));
     const opens = source.indexOf("async function sessionCookie(");
     expect(opens, "sessionCookie could not be found").toBeGreaterThan(-1);
     const closes = source.indexOf("\nasync function ", opens + 1);
@@ -475,7 +475,7 @@ describe("a backup does not give up on one bad sign-in", () => {
      * afterwards, and one that *looks* complete is the failure this command exists to prevent — so the
      * fatal path stays fatal, and only the number of attempts before it changed.
      */
-    const source = withoutComments(CLI_PATH);
+    const source = withoutComments(join(import.meta.dirname, "../../../../../packages/cli/src/verbs/backup.mjs"));
     const opens = source.indexOf("could not sign in, so the inventory cannot be read");
     expect(opens, "the backup's refusal could not be found").toBeGreaterThan(-1);
     expect(source.slice(opens - 200, opens)).toContain("fail(");

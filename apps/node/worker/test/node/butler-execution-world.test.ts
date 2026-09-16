@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { describe, expect, it } from "vitest";
 
+import { doctorSource as doctor } from "./support/doctor-source.ts";
+
 /**
  * Keeps `doctor`'s claim about Butler execution true of the code, rather than true of the day it was written.
  *
@@ -51,7 +53,7 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-const doctorSource = readFileSync(join(workerDir, "src/doctor.ts"), "utf8");
+const doctorSource = doctor();
 const indexSource = readFileSync(join(workerDir, "src/index.ts"), "utf8");
 const wrangler = parseJsonc(readFileSync(join(workerDir, "wrangler.jsonc"), "utf8")) as {
   workflows?: { binding?: string; name?: string; class_name?: string }[];

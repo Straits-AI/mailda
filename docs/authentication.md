@@ -329,7 +329,7 @@ Three things the mechanism reports rather than hides:
 
 - **A stale escrow.** Rotation makes new objects openable only by the new key, so an escrow taken before it
   restores a vault that reads old mail and not new. `doctor`'s `recovery_escrow` compares the escrow's
-  generations against the vault's inventory and goes `degraded` — the only honesty check in `doctor.ts`
+  generations against the vault's inventory and goes `degraded` — the only honesty check in `doctor`
   allowed to be, because a Node holding unrecoverable mail is not healthy.
 - **A generation it could not install.** Reachable, and found by mutation testing rather than by reasoning:
   lose the storage, let the Node keep working, and `sealingKey` mints a *fresh* generation 1 with a different

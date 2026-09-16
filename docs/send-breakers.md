@@ -105,7 +105,7 @@ clears instead of leaving them to poll. It carries a companion field rather than
 Manual-reset-only was rejected on its second-order effect rather than its first: a bounce spike at 2am becomes
 an outage waiting for somebody to wake up, and the realistic response after that happens twice is that the
 limits get raised until the breaker never fires — the muted-check failure `DELIVERY_SILENCE_MS` already names
-in `doctor.ts`.
+in `doctor/delivery.ts`.
 
 **Two costs, accepted and named.** A windowed breaker can **flap** at the boundary: a send refused at 09:59:59
 goes at 10:00:00. That is tolerable for a gate whose whole effect is a short delay and intolerable for a

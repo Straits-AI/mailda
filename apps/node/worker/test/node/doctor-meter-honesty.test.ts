@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -53,6 +53,9 @@ const srcDir = join(workerDir, "src");
  */
 const DOCTOR_PATH = [
   "doctor.ts",
+  // The check modules, split out of `doctor.ts` on 16 September 2026. The derivation below reads every one
+  // of them for imports, so a check that starts reaching a new file is caught the same way it always was.
+  ...readdirSync(join(srcDir, "doctor")).filter((one) => one.endsWith(".ts")).map((one) => join("doctor", one)),
   "reconcile.ts",
   "reseal.ts",
   // Added deliberately with #64's `legal_holds_active` check: `holdsForReport` is one query on the doctor
@@ -140,9 +143,16 @@ describe("the doctor cost meter's figure rests on a property, so the property is
   it("matches what doctor.ts actually imports, so the list cannot quietly go stale", () => {
     // The list above is the thing most likely to rot: an import added to doctor.ts brings I/O the guard
     // below would not see. Deriving it here means widening the list is a deliberate act.
-    const source = read("doctor.ts")!;
-    const imported = [...source.matchAll(/^import .*? from "\.\/([^"]+)"/gm)]
-      .map((match) => match[1]!)
+    const imported = DOCTOR_PATH
+      .filter((relative) => relative === "doctor.ts" || relative.startsWith("doctor/"))
+      .flatMap((relative) => {
+        const source = read(relative)!;
+        // Resolved relative to `src/`: a check module reaches the rest of the Worker one directory up, and
+        // its siblings beside it.
+        return [...source.matchAll(/^import .*? from "(\.\.?\/[^"]+)"/gm)]
+          .map((match) => match[1]!)
+          .map((spec) => relative === "doctor.ts" ? spec.slice(2) : spec.startsWith("../") ? spec.slice(3) : join("doctor", spec.slice(2)));
+      })
       .filter((relative) => relative.endsWith(".ts"));
     const listed = new Set(DOCTOR_PATH.map((relative) => relative.replace(/\\/g, "/")));
     const unlisted = imported.filter((relative) => !listed.has(relative));

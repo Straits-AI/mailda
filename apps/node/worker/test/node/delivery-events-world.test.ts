@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { doctorSource } from "./support/doctor-source.ts";
 
 import { ROUTES } from "@mailda/contract";
 
-const doctor = readFileSync(join(import.meta.dirname, "../../src/doctor.ts"), "utf8");
+const doctor = doctorSource();
 
 /**
  * `sending_events_consumer` says the question is answered elsewhere. This is what makes that true (#163).

@@ -2,6 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { CLI_ENTRY } from "./support/cli-source.ts";
+
 const ROOT = join(import.meta.dirname, "../../../../..");
 
 /**
@@ -31,7 +33,7 @@ const ROOT = join(import.meta.dirname, "../../../../..");
 
 /** The verbs `mailda` dispatches on, read from the CLI rather than restated here. */
 function verbs(): string[] {
-  const cli = readFileSync(join(ROOT, "packages/cli/src/mailda.mjs"), "utf8");
+  const cli = readFileSync(CLI_ENTRY, "utf8");
   const dispatch = cli.slice(cli.indexOf("switch (verb)"));
   expect(dispatch.length, "the CLI's dispatch could not be found").toBeGreaterThan(100);
   return [...dispatch.matchAll(/^\s*case "([a-z-]+)":/gm)].map((one) => one[1] as string);
