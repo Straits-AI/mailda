@@ -56,11 +56,13 @@ export function sendingEventsConsumerCheck(): Finding {
       "the network would spend the account's authority every time anything asked how this Node was. Two of " +
       "the three still cannot be created from here: the consumer is attached out of band by " +
       "`pnpm --filter @mailda/worker run queue:attach-consumer`, which discovers the queue from this " +
-      "Worker's deployed binding, and wrangler cannot create the subscription at all (re-measured 10 " +
-      "September 2026, wrangler 4.118.0 — `email.sending` is not a `queues subscription create --source` " +
-      "choice, though the API does hold such subscriptions). So a button-only install has still never " +
-      "observed a delivery outcome; what changed is that its absence is now reportable by name instead of " +
-      "inferable from silence. `delivery_visibility` reports the consequence from evidence.",
+      "Worker's deployed binding, and the subscription is created by the API and not by wrangler (measured " +
+      "16 September 2026: `POST /accounts/{id}/event_subscriptions/subscriptions` with an `email.sending` " +
+      "source creates one for an onboarded sending domain and refuses a domain that is not; wrangler " +
+      "4.118.0 still offers no such source). This Node does not make that call yet — which OAuth scope " +
+      "authorises it is unmeasured. So a button-only install has still never observed a delivery outcome; " +
+      "what changed is that its absence is reportable by name instead of inferable from silence. " +
+      "`delivery_visibility` reports the consequence from evidence.",
     receipt: "docs/receipts/queue-provisioning.md",
   };
 }
