@@ -56,7 +56,11 @@ describe("the handler table", () => {
 
   it("names the segments the registry names", () => {
     const found = resolve("POST", "/api/cases/cas_1/claim");
-    expect(found).toEqual({ key: "POST /api/cases/:caseId/:action", params: { caseId: "cas_1", action: "claim" } });
+    expect(found).toEqual({
+      key: "POST /api/cases/:caseId/:action", params: { caseId: "cas_1", action: "claim" }, open: false,
+    });
+    expect(resolve("GET", "/health")?.open).toBe(true);
+    expect(resolve("GET", "/api/doctor")?.open).toBe(true);
     // Exact before parameterised: the literal sibling is never captured as a parameter.
     expect(resolve("GET", "/api/mailboxes/readable")?.key).toBe("GET /api/mailboxes/readable");
     expect(resolve("GET", "/api/mailboxes/mbx_1/cases")?.key).toBe("GET /api/mailboxes/:mailboxId/cases");

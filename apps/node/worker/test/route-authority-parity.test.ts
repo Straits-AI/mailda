@@ -76,6 +76,9 @@ const testEnv = env as unknown as {
 const ORG = "org_PARTY000000000000000000000";
 const ADMIN = "usr_PARTYADMN00000000000000000";
 const MEMBER = "usr_PARTYMEMBER000000000000000";
+// A third person, so that with the administrator there are two `approval.decide` holders on the mailbox who
+// are not the member — which is what a member's own supervised-read request needs to be satisfiable.
+const THIRD = "usr_PARTYTHIRD0000000000000000";
 const MAILBOX = "mbx_PARTYMBX000000000000000000";
 const PASSWORD = "fixture-password-not-a-real-secret";
 
@@ -96,7 +99,7 @@ const STARTER = JSON.stringify({
  * do with authority.
  */
 function emailFor(userId: string): string {
-  return `${userId === ADMIN ? "admin" : "member"}@parity.example`;
+  return `${userId === ADMIN ? "admin" : userId === MEMBER ? "member" : "third"}@parity.example`;
 }
 
 let adminCookie = "";
@@ -118,7 +121,7 @@ beforeEach(async () => {
       .bind(ctx.id("clm"), "x", at, ORG),
     testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
       .bind(MAILBOX, ORG, "Enquiries", at),
-    ...[ADMIN, MEMBER].map((userId) =>
+    ...[ADMIN, MEMBER, THIRD].map((userId) =>
       testEnv.CATALOG.prepare(
         `INSERT INTO users (id, org_id, email, created_at, password_hash, password_iterations,
            password_updated_at) VALUES (?,?,?,?,?,?,?)`,
@@ -135,6 +138,12 @@ beforeEach(async () => {
     `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
      VALUES (?,?,?,'org.admin','organization',?,?)`,
   ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at).run();
+  await testEnv.CATALOG.batch([ADMIN, THIRD].map((userId) =>
+    testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'approval.decide','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, userId, MAILBOX, at)
+  ));
 
   adminCookie = await sessionFor(ADMIN);
   memberCookie = await sessionFor(MEMBER);
@@ -187,6 +196,22 @@ const BODIES: Record<string, unknown> = {
   "PUT /api/butlers/:butlerId/draft": { source: STARTER, sourceFormat: "json" },
   // `facts` is refused when absent — a dry run needs the given, or it reports a walk over nothing.
   "POST /api/butlers/:butlerId/simulate": { facts: {} },
+  "POST /api/access": { subjectId: MEMBER, relation: "mailbox.content.read", objectId: MAILBOX },
+  "DELETE /api/access": { subjectId: MEMBER, relation: "mailbox.content.read", objectId: MAILBOX },
+  "POST /api/butler-runs/:runId/replay": { mode: "re-run" },
+  "POST /api/teams/:teamId/members": { userId: MEMBER },
+  "DELETE /api/teams/:teamId/members": { userId: MEMBER },
+  "POST /api/teams/:teamId/rename": { name: "Parity renamed" },
+  "POST /api/teams": { name: "Parity" },
+  "POST /api/holds": { mailboxId: MAILBOX, matterId: null },
+  "POST /api/holds/:holdId/lift": { reason: "parity" },
+  "POST /api/domain-pauses": { domain: "parity.example", reason: "parity" },
+  "POST /api/domain-pauses/:pauseId/lift": { reason: "parity" },
+  "POST /api/butler-pauses/:pauseId/resume": { reason: "parity" },
+  "POST /api/invitations": { email: "invited@parity.example" },
+  "POST /api/search/repair": { messageIds: [] },
+  "POST /api/supervised": { mailboxId: MAILBOX, scope: "metadata", durationSeconds: 3600, reason: "parity" },
+  "POST /api/approvals/:approvalId/decide": { decision: "approve" },
 };
 
 /**
@@ -210,7 +235,24 @@ const NOT_EXERCISED: readonly string[] = [
    */
   "GET /api/butler-runs/:runId",
   "GET /api/butler-runs/:runId/inspect",
+  // The same run. A member is answered 404 (§5C) and so is an administrator for a run that does not exist,
+  // and the two are indistinguishable without one.
+  "POST /api/butler-runs/:runId/replay",
 ];
+
+/**
+ * Member-reachable routes that cannot be driven to a success by a member here, each with what it would need.
+ *
+ * The same discipline as `NOT_EXERCISED`, for the other direction: a `member` declaration is proved by a
+ * member being **answered**, and these cannot be. They are still held to the half that can be checked —
+ * a stranger is refused on every one of them, below.
+ */
+const NOT_DRIVEN_AS_MEMBER: Readonly<Record<string, string>> = {
+  "POST /api/auth/passkeys": "a WebAuthn attestation from a real authenticator",
+  "DELETE /api/auth/passkeys": "a registered passkey, which needs the attestation above",
+  "POST /api/approvals/:approvalId/decide": "an approval, which needs a sealed manifest a policy gated",
+  "POST /api/approvals/:approvalId/withdraw": "a decision of the member's own on such an approval",
+};
 
 describe("a route that declares org.admin is actually gated by org.admin", () => {
   it("refuses an ordinary member on every organization-declared route", async () => {
@@ -222,7 +264,14 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
      * nothing makes the handler 404 before it reaches its authority check, which is how a route ends up
      * "passing" this file without being tested at all.
      */
-    const ids: Record<string, string> = { userId: MEMBER, teamId: "", policyId: "", butlerId: "", runId: "" };
+    // Well-formed ids that exist nowhere, for the routes whose object is looked up after the gate: an
+    // administrator gets the route's own 404 and a member its 403, which is the pair the judgement below reads.
+    const ids: Record<string, string> = {
+      userId: MEMBER, mailboxId: MAILBOX, teamId: "", policyId: "", butlerId: "", runId: "",
+      agentId: "agt_PARTYAGENT0000000000000000", pauseId: "bpa_PARTYPAUSE0000000000000000",
+      holdId: "hld_PARTYHOLD00000000000000000", matterId: "mtr_PARTYMATTER000000000000000",
+      approvalId: "apr_PARTYAPPROVAL0000000000000", restoreId: "rst_PARTYRESTORE00000000000000",
+    };
     const harvestFailed: string[] = [];
     const created = async (method: string, path: string, body: unknown, key: string) => {
       const response = await SELF.fetch(`https://node${path}`, {
@@ -361,9 +410,23 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       || spec.authority?.scope === "self-or-admin"
     );
 
+    // A matter the member opened, so closing it is the member's own act to drive.
+    const opened = await SELF.fetch("https://node/api/matters", {
+      method: "POST",
+      headers: { cookie: `${ACCESS_COOKIE}=${memberCookie}`, "content-type": "application/json" },
+      body: JSON.stringify(BODIES["POST /api/matters"]),
+    });
+    const matterId = ((await opened.json()) as { matter?: { id?: string } }).matter?.id ?? "";
+    expect(matterId, "the member could not open the matter the close route is driven with").not.toBe("");
+
+    const stale = Object.keys(NOT_DRIVEN_AS_MEMBER)
+      .filter((key) => !reachable.some((spec) => `${spec.method} ${spec.path}` === key));
+    expect(stale, "NOT_DRIVEN_AS_MEMBER names routes that no longer declare a member-reachable scope").toEqual([]);
+
     const refused: string[] = [];
     for (const spec of reachable) {
-      const { status } = await drive(spec, memberCookie, { userId: MEMBER, mailboxId: MAILBOX });
+      if (`${spec.method} ${spec.path}` in NOT_DRIVEN_AS_MEMBER) continue;
+      const { status } = await drive(spec, memberCookie, { userId: MEMBER, mailboxId: MAILBOX, matterId });
       /*
        * The member must actually be **answered**, not merely spared a 403.
        *
@@ -407,8 +470,12 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
 
     const refusedPublic: string[] = [];
     for (const spec of all.filter((one) => one.authority?.scope === "public")) {
-      const status = await anonymous(spec);
-      if (status === 401) refusedPublic.push(`${spec.method} ${spec.path} → 401`);
+      const path = spec.path.replace(/:(\w+)/g, (_, name: string) => `${name}-does-not-exist`);
+      const response = await SELF.fetch(`https://node${path}`, { method: spec.method });
+      const error = ((await response.json().catch(() => ({}))) as { error?: string }).error;
+      // `401 invalid_credentials` from `POST /api/auth/login` is the route answering a stranger who guessed
+      // wrong. `401 unauthenticated` is the router turning a stranger away, which a public route must not do.
+      if (response.status === 401 && error === "unauthenticated") refusedPublic.push(`${spec.method} ${spec.path} → 401`);
     }
     expect(
       refusedPublic,

@@ -2,7 +2,7 @@ import { ID_PREFIXES } from "@mailda/runtime";
 import { BUDGETS } from "@mailda/budgets";
 import { failedBodyIndex, repairBodyIndex } from "../search.ts";
 import { getEvidence, streamEvidence } from "../evidence-store.ts";
-import { listMessages, authorize, authorizeExport, principalFor, readableSubjects, readableMailboxes } from "../authz-read.ts";
+import { listMessages, authorize, authorizeExport, readableSubjects, readableMailboxes } from "../authz-read.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "../cases.ts";
 import { assertAdmin } from "../access.ts";
 import { notificationsFor } from "../notifications.ts";
@@ -10,7 +10,7 @@ import { mergeConversations } from "../merge.ts";
 import { setResponseTarget } from "../mailbox-policy.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
 import { safeFilename } from "../outbound/headers.ts";
-import { unauthenticated, isId, notFound } from "./support.ts";
+import { isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const mail = {
@@ -19,9 +19,7 @@ export const mail = {
    * rather than by deciding — which is why nothing about it is audited (see `0012_drafts.sql`) and why
    * the body goes to R2 encrypted rather than into a D1 column.
    */
-  "GET /api/drafts": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/drafts": async ({ env, url, who }) => {
     // `?inReplyTo=` answers the composer's real question — "is there already a draft for this reply?" —
     // in one round trip. Without it the client would list every draft and filter, which is a decision
     // about somebody's unfinished work made in a browser.
@@ -32,9 +30,7 @@ export const mail = {
     return Response.json({ drafts: await listDrafts(env, who.orgId, who.userId) });
   },
 
-  "PUT /api/drafts": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PUT /api/drafts": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // PUT with an optional id rather than POST-then-PUT: the composer does not know whether this is the
     // first save, and making it decide is how a draft ends up saved twice under two ids.
@@ -57,9 +53,7 @@ export const mail = {
     return Response.json({ draft });
   },
 
-  "GET /api/drafts/:draftId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/drafts/:draftId": async ({ env, params, who }) => {
     const record = await readDraft(env, who.orgId, who.userId, params.draftId);
     // §5C: a draft that never existed and one belonging to somebody else answer identically.
     if (record === null) {
@@ -71,9 +65,7 @@ export const mail = {
     return Response.json({ draft: record });
   },
 
-  "DELETE /api/drafts/:draftId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "DELETE /api/drafts/:draftId": async ({ env, clock, params, who }) => {
     // A legal hold refuses this with `E_LEGAL_HOLD` (409) and the central `CallerError` handler renders it.
     // Deliberately not caught here: somebody pressing "discard" is owed the reason, and the alternative —
     // answering `{ deleted: false }` — would say the draft is still there without saying why.
@@ -92,21 +84,15 @@ export const mail = {
    * used to contain that rail — so a read-only agent could open messages and got an empty mailbox list,
    * with no way to discover the ids it was allowed to read.
    */
-  "GET /api/mailboxes/readable": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/mailboxes/readable": async ({ env, who }) => {
     return Response.json({ mailboxes: await readableMailboxes(env, who) });
   },
 
-  "GET /api/mailboxes": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/mailboxes": async ({ env, who }) => {
     return Response.json({ mailboxes: await mailboxQueues(env, who.orgId, who.userId) });
   },
 
-  "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Absent and null are the same request — "promise nothing" — because a PATCH that omitted the field
     // would otherwise silently mean "leave it", and there is only one field to change.
@@ -125,20 +111,16 @@ export const mail = {
    * `routes.ts` already carried the rule: *"a parameter the route cannot answer without is a path segment
    * wearing a disguise"*. A queue belongs to one mailbox, so this route could never answer without it.
    */
-  "GET /api/mailboxes/:mailboxId/cases": async ({ request, env, clock, params }) => {
+  "GET /api/mailboxes/:mailboxId/cases": async ({ env, clock, params, who }) => {
     if (!isId(ID_PREFIXES.mailbox, params.mailboxId)) return notFound();
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
     // Empty rather than forbidden for a mailbox this caller cannot see: §5C keeps an absent thing and an
     // invisible one alike, and a queue is a list, which Blueprint:358 gates before returning counts.
     return Response.json({ cases: await queueFor(env, clock, who.orgId, who.userId, params.mailboxId) });
   },
 
-  "POST /api/cases/:caseId/:action": async ({ request, env, clock, params }) => {
+  "POST /api/cases/:caseId/:action": async ({ env, clock, params, who }) => {
     const { caseId, action } = params;
     if (!["claim", "steal", "release", "close"].includes(action)) return notFound();
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
 
     if (action === "claim" || action === "steal") {
       const outcome = action === "claim"
@@ -180,9 +162,7 @@ export const mail = {
     return Response.json(outcome, { status: ok ? 200 : 409 });
   },
 
-  "POST /api/conversations/merge": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/conversations/merge": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const outcome = await mergeConversations(
       env, clock, who.orgId, who.userId,
@@ -213,26 +193,12 @@ export const mail = {
    * messages the caller may not otherwise be able to read. The `org_id` in `repairBodyIndex`'s predicate is
    * what keeps an id from another organization inert rather than merely unlikely.
    */
-  "GET /api/search/failed": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to read the search index's failures.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "GET /api/search/failed": async ({ env, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     return Response.json({ failed: await failedBodyIndex(env, who.orgId, BUDGETS["messages.page_size"]) });
   },
 
-  "POST /api/search/repair": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to repair the search index.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "POST /api/search/repair": async ({ request, env, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const body = (await request.json().catch(() => ({}))) as { messageIds?: string[] };
     const ids = (body.messageIds ?? []).slice(0, BUDGETS["messages.page_size"]);
@@ -280,9 +246,7 @@ export const mail = {
    * investigator. The only way one leaves this list is by leaving the table, which is a row whose creation
    * rode with an audit entry — see `doctor`'s `supervision_notice_missing`.
    */
-  "GET /api/notifications": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/notifications": async ({ env, who }) => {
     // Subjects are the person plus every team they belong to, which is what every other read here does. A
     // mailbox read through a team is a mailbox whose notices reach that team's members.
     const subjects = await readableSubjects(env, who);

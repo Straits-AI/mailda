@@ -1,7 +1,5 @@
 import { unprocessable } from "../errors.ts";
-import { principalFor } from "../authz-read.ts";
 import { isAdmin } from "../access.ts";
-import { unauthenticated } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const provider = {
@@ -25,9 +23,7 @@ export const provider = {
    * already spent is refused by the row rather than by a check. That is what the parameter is *for*, and a
    * session check would be a second gate that does not answer the same question.
    */
-  "GET /api/provider": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider": async ({ env, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -45,9 +41,7 @@ export const provider = {
     });
   },
 
-  "PUT /api/provider/client": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PUT /api/provider/client": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -66,9 +60,7 @@ export const provider = {
     return Response.json({ provider: await providerStatus(env) });
   },
 
-  "POST /api/provider/authorize": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/authorize": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -91,9 +83,7 @@ export const provider = {
     return Response.json({ authorize: { url: begun.url } });
   },
 
-  "GET /api/provider/email-routing": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/email-routing": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -107,9 +97,7 @@ export const provider = {
     return Response.json({ routing: await emailRoutingState(env, clock, who.orgId) });
   },
 
-  "GET /api/provider/delivery-events": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/delivery-events": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -122,9 +110,7 @@ export const provider = {
     return Response.json({ delivery: await deliveryEventsState(env, clock, who.orgId) });
   },
 
-  "GET /api/provider/domains/purchase": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/domains/purchase": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -136,9 +122,7 @@ export const provider = {
     });
   },
 
-  "GET /api/provider/domains/purchase/status": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/domains/purchase/status": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -148,9 +132,7 @@ export const provider = {
     });
   },
 
-  "POST /api/provider/domains/purchase": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/domains/purchase": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -169,9 +151,7 @@ export const provider = {
     });
   },
 
-  "GET /api/provider/domains": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/domains": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -187,9 +167,7 @@ export const provider = {
     });
   },
 
-  "POST /api/provider/domains/check": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/domains/check": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -207,9 +185,7 @@ export const provider = {
     });
   },
 
-  "GET /api/provider/receiving": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/receiving": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -221,9 +197,7 @@ export const provider = {
     });
   },
 
-  "POST /api/provider/receiving": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/receiving": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -243,9 +217,7 @@ export const provider = {
     });
   },
 
-  "GET /api/provider/handover": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/handover": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -257,9 +229,7 @@ export const provider = {
     return Response.json(await handoverManifest(env, clock, who.orgId, url.origin));
   },
 
-  "GET /api/provider/ownership": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/ownership": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -268,9 +238,7 @@ export const provider = {
     return Response.json({ ownership: await ownershipFacts(env, clock, who.orgId) });
   },
 
-  "GET /api/provider/sending": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/provider/sending": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -286,9 +254,7 @@ export const provider = {
     return Response.json({ proposal: await sendingProposalFor(env, clock, who.orgId, domain) });
   },
 
-  "POST /api/provider/sending": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/sending": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -306,9 +272,7 @@ export const provider = {
     });
   },
 
-  "POST /api/provider/resolve-account": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/resolve-account": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -321,9 +285,7 @@ export const provider = {
     return Response.json({ account: await resolveAccount(env, clock, who.orgId) });
   },
 
-  "POST /api/provider/unselectable": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/provider/unselectable": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }

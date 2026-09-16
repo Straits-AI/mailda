@@ -1,5 +1,4 @@
 import { streamEvidence } from "../evidence-store.ts";
-import { principalFor } from "../authz-read.ts";
 import { authorizeExportObject, exportsForReport, requestExport, runExport } from "../exports.ts";
 import { isAdmin } from "../access.ts";
 import { closeMatter, listMatters, openMatter } from "../matters.ts";
@@ -8,7 +7,7 @@ import { holdsForReport, placeHold, requestHoldLift } from "../holds.ts";
 import { createPolicyDraft, editPolicyDraft, publishPolicy } from "../policy.ts";
 import { decideApproval, pendingApprovals, withdrawApproval } from "../approvals.ts";
 import { safeFilename } from "../outbound/headers.ts";
-import { unauthenticated, conditionsFrom, stagesFrom } from "./support.ts";
+import { conditionsFrom, stagesFrom } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const governance = {
@@ -52,18 +51,14 @@ export const governance = {
    * `org.admin`, answering 404: what is under hold names mailboxes and date ranges, and §7 treats the fact
    * of an investigation as disclosable only to the people running it.
    */
-  "GET /api/holds": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/holds": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     return Response.json({ holds: await holdsForReport(env, who.orgId) });
   },
 
-  "POST /api/holds": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/holds": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const optional = (value: unknown): string | null =>
       value === undefined || value === null ? null : String(value);
@@ -76,9 +71,7 @@ export const governance = {
     return Response.json({ hold });
   },
 
-  "POST /api/holds/:holdId/lift": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/holds/:holdId/lift": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // An absent reason reaches `requestHoldLift` as the empty string and is refused there with the
     // four-part message, rather than being defaulted to something like "no reason given" — which would be
@@ -122,9 +115,7 @@ export const governance = {
    * surface. What `doctor` does show is the state that matters operationally — `self_granted_access`, which
    * is the finding that makes the back door visible beside this front one.
    */
-  "POST /api/matters": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/matters": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // An absent type and an absent description both reach `openMatter` as the empty string and are refused
     // there with the four-part message, rather than defaulted — a matter this Node named for somebody would
@@ -137,9 +128,7 @@ export const governance = {
     });
   },
 
-  "GET /api/matters": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/matters": async ({ env, who }) => {
     /*
      * An administrator sees every matter; anybody else sees the ones they opened.
      *
@@ -160,17 +149,13 @@ export const governance = {
     });
   },
 
-  "POST /api/matters/:matterId/close": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/matters/:matterId/close": async ({ env, clock, params, who }) => {
     return Response.json({
       matter: await closeMatter(env, clock, who.orgId, who.userId, params.matterId),
     });
   },
 
-  "POST /api/supervised": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/supervised": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     /*
      * The subject is the caller and there is no field for it. A request on somebody else's behalf would put
@@ -193,9 +178,7 @@ export const governance = {
     });
   },
 
-  "GET /api/supervised": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/supervised": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C: the same answer an organization with no grants would give. A list that 403s tells a caller the
       // access map exists and is worth asking about, which is the oracle every other refusal here avoids.
@@ -234,9 +217,7 @@ export const governance = {
    * the shell is Layer 1-3's surface, and an export is a governance act performed by an investigator with
    * a matter open.
    */
-  "POST /api/exports": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/exports": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const optional = (value: unknown): string | null =>
       value === undefined || value === null ? null : String(value);
@@ -258,9 +239,7 @@ export const governance = {
     });
   },
 
-  "GET /api/exports": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/exports": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C, and the same answer `GET /api/supervised` gives for the same reason: this list names who is
       // taking copies of whose mailbox under which matter, which is the organization's investigation map.
@@ -273,18 +252,14 @@ export const governance = {
     return Response.json({ exports: await exportsForReport(env, who.orgId) });
   },
 
-  "POST /api/exports/:exportId/run": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/exports/:exportId/run": async ({ env, clock, params, who }) => {
     // Only the requester may run their own export — `runExport` enforces it and answers 404 otherwise, for
     // the reason its own comment gives: the approval named a person, and somebody else staging the bytes
     // would put a copy in the trail under a name that never asked for it.
     return Response.json({ run: await runExport(env, clock, who.orgId, who, params.exportId) });
   },
 
-  "GET /api/exports/:exportId/objects/:objectId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/exports/:exportId/objects/:objectId": async ({ env, params, who }) => {
     const allowed = await authorizeExportObject(
       env, who.orgId, who, params.exportId, params.objectId,
     );
@@ -337,9 +312,7 @@ export const governance = {
    * `send.propose` learns from their own outbox that a send was gated and why; they do not need the
    * organization's whole rule set to learn it.
    */
-  "POST /api/policies": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/policies": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       policy: await createPolicyDraft(env, clock, who.orgId, who.userId, {
@@ -369,9 +342,7 @@ export const governance = {
    * one layer along — is already PUT, so POST here left the Node holding two verbs for one operation; and
    * replacing a draft wholesale is what PUT means. Nothing that works today breaks, because nothing worked.
    */
-  "PUT /api/policies/:policyId/draft": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PUT /api/policies/:policyId/draft": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       policy: await editPolicyDraft(env, clock, who.orgId, who.userId, params.policyId, {
@@ -382,17 +353,13 @@ export const governance = {
     });
   },
 
-  "POST /api/policies/:policyId/publish": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/policies/:policyId/publish": async ({ env, clock, params, who }) => {
     return Response.json({
       published: await publishPolicy(env, clock, who.orgId, who.userId, params.policyId),
     });
   },
 
-  "GET /api/policies": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/policies": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C: the same answer an absent organization would give. A list that 403s tells a caller the rule
       // set exists and is worth asking about, which is the oracle the outbox's own refusals avoid.
@@ -443,15 +410,11 @@ export const governance = {
    * `approval.decide` on, so a caller with no such mailbox gets an empty list rather than a refusal — there
    * is nothing to hide about the absence of your own work.
    */
-  "GET /api/approvals": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/approvals": async ({ env, who }) => {
     return Response.json({ approvals: await pendingApprovals(env, who.orgId, who.userId) });
   },
 
-  "POST /api/approvals/:approvalId/decide": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/approvals/:approvalId/decide": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const decision = String(body.decision ?? "");
     if (decision !== "approve" && decision !== "deny") {
@@ -473,9 +436,7 @@ export const governance = {
     });
   },
 
-  "POST /api/approvals/:approvalId/withdraw": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/approvals/:approvalId/withdraw": async ({ env, clock, params, who }) => {
     return Response.json({
       withdrawn: await withdrawApproval(env, clock, who.orgId, who.userId, params.approvalId),
     });

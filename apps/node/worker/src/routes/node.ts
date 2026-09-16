@@ -191,9 +191,7 @@ export const node = {
    * reports what remains, because a Worker invocation cannot re-seal ~8.5M messages and an
    * operation that pretends otherwise fails silently at scale (receipt: evidence-lifecycle.md).
    */
-  "POST /api/maintenance/reseal": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/maintenance/reseal": async ({ env, clock, who }) => {
     /*
      * `org.admin`, and it was **signed in** — which is not the same thing and was never meant to be. This
      * re-wraps every credential in the organization under a fresh key: organization-wide cryptographic
@@ -206,9 +204,7 @@ export const node = {
     return Response.json(outcome);
   },
 
-  "POST /api/maintenance/reconcile": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/maintenance/reconcile": async ({ env, clock, url, who }) => {
     /*
      * The sharpest of the five. With `collect=1` this is the **only call in the product that destroys
      * content bytes** — `content-deletion-world.test.ts` says so on the `EVIDENCE.delete` it guards — and it
@@ -329,14 +325,7 @@ export const node = {
    * makes the escrow worth having and also the reason `confirm` exists: a lost response leaves this Node
    * looking exactly as it would if they had been written down.
    */
-  "POST /api/recovery-codes/rotate": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to mint recovery codes.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "POST /api/recovery-codes/rotate": async ({ env, clock, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const minted = await mintRecoveryCodes(env, clock, who.orgId, {
       // Audit P1-2: rotating recovery codes is an administrator's act and the trail recorded it as the
@@ -367,14 +356,7 @@ export const node = {
    * This changes what the finding *decides*, never what it says. The loss stays in the report, `ok` stays
    * false, and the severity drops to `report` once somebody has established what was lost.
    */
-  "POST /api/recovery/conflicts/:restoreId/acknowledge": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to acknowledge a key collision.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "POST /api/recovery/conflicts/:restoreId/acknowledge": async ({ request, env, clock, params, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const recorded = await acknowledgeKeyConflict(env, clock, who.orgId, who.userId, {
@@ -393,14 +375,7 @@ export const node = {
     });
   },
 
-  "POST /api/recovery-codes/confirm": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to confirm a recovery code.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "POST /api/recovery-codes/confirm": async ({ request, env, clock, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const body = (await request.json().catch(() => ({}))) as Record<string, string>;
     const outcome = await confirmRecoveryCodes(env, clock, who.orgId, body.code ?? "", {
@@ -435,9 +410,7 @@ export const node = {
    * should imply — §7 evaluates that live, and this is the seam where a narrower audit role slots in
    * when Layer 5 defines one.
    */
-  "GET /api/audit": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/audit": async ({ env, url, who }) => {
     /*
      * `org.admin`. The trail is **wider than any mailbox grant** — actors and subjects across the whole
      * organization, access-grant history, agent sponsorship, matter and supervised-access events — and this
@@ -468,9 +441,7 @@ export const node = {
   },
 
   // Verification is the point of a hash chain: a log an administrator has to trust is not evidence.
-  "POST /api/audit/verify": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/audit/verify": async ({ env, url, who }) => {
     // The same visibility as reading it: verification reports where a chain broke, which is a fact about
     // the trail somebody who may not read the trail has no business learning.
     await assertAdmin(env, who.orgId, who.userId);
@@ -496,9 +467,7 @@ export const node = {
    * faults stay in the response, because a fault names a message and the trail is read by people who are
    * not entitled to know which messages exist.
    */
-  "POST /api/evidence/verify": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/evidence/verify": async ({ env, clock, url, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const after = url.searchParams.get("after");
     const verdict = await verifyEvidence(env, who.orgId, after === null || after === "" ? null : after);
@@ -525,17 +494,13 @@ export const node = {
    * reconciler's measured figure rather than from the query string, so a caller cannot ask for a page that
    * will not fit in an invocation.
    */
-  "GET /api/evidence/inventory": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/evidence/inventory": async ({ env, url, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     const after = url.searchParams.get("after");
     return Response.json(await inventoryPage(env, who.orgId, after === "" ? null : after));
   },
 
-  "GET /api/logs": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/logs": async ({ env, url, who }) => {
     /*
      * `org.admin`. Operational logs carry error detail and request ids from across the organization — the
      * shape of what other people are doing, which is not a mailbox grant and was not gated as anything.
