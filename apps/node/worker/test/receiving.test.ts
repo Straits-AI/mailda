@@ -24,6 +24,7 @@ const testEnv = env as unknown as Env;
 const ORG = "org_receiving";
 const ADMIN = "usr_receiving_admin";
 const ACCOUNT = "acc_receiving";
+const MAILBOX = "mbx_receiving_one";
 const AT = Date.parse("2026-09-16T10:00:00.000Z");
 
 function atTime(millis: number): Ctx {
@@ -37,10 +38,16 @@ beforeEach(async () => {
     testEnv.CATALOG.prepare("DELETE FROM provider_binding"),
     testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG),
     testEnv.CATALOG.prepare("DELETE FROM users WHERE id = ?").bind(ADMIN),
+    testEnv.CATALOG.prepare("DELETE FROM addresses WHERE org_id = ?").bind(ORG),
+    testEnv.CATALOG.prepare("DELETE FROM mailboxes WHERE org_id = ?").bind(ORG),
   ]);
   await testEnv.CATALOG.prepare(
     "INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)",
   ).bind(ADMIN, ORG, "admin@example.test", new Date(AT).toISOString()).run();
+  // One mailbox, so an onboarding that names none files into it.
+  await testEnv.CATALOG.prepare(
+    "INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+  ).bind(MAILBOX, ORG, "Enquiries", new Date(AT).toISOString()).run();
 
   vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
     access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
@@ -126,7 +133,7 @@ function serving(opts: {
   return calls;
 }
 
-const posted = (calls: Array<{ url: string; method: string }>, part: string) =>
+const posted = (calls: Array<{ url: string; method: string; body?: string | null }>, part: string) =>
   calls.filter((one) => one.method === "POST" && one.url.includes(part));
 
 describe("proposing to receive on a subdomain", () => {
@@ -205,6 +212,64 @@ describe("proposing to receive on a subdomain", () => {
     expect(posted(calls, "/dns_records")).toHaveLength(0);
     expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
     expect(outcome.rule).toBe("mailda mail.example.test");
+  });
+
+  it("registers the address on this Node, so the rule it writes delivers to a known recipient", async () => {
+    /*
+     * The #92 drill's finding: a rule was written for an address ingress would have refused as
+     * `unknown_recipient`, because nothing in the product had ever inserted an `addresses` row. The row is
+     * written in the same batch as the audit entry and before Cloudflare is asked, so a refusal from
+     * Cloudflare leaves an address that files and no rule — harmless — never the reverse.
+     */
+    const calls = serving();
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "Inbox@Mail.Example.Test",
+    );
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT address, mailbox_id FROM addresses WHERE org_id = ?",
+    ).bind(ORG).first<{ address: string; mailbox_id: string }>();
+    expect(row).toEqual({ address: "inbox@mail.example.test", mailbox_id: MAILBOX });
+    // And the rule matches the same lower-cased address the Node will look up.
+    expect(posted(calls, "/email/routing/rules")[0]!.body).toContain('"value":"inbox@mail.example.test"');
+
+    // Onboarding again is the resumable case: the row is kept, not duplicated and not a conflict.
+    const again = await receivingProposalFor(testEnv, atTime(AT + 5000), ORG, "mail.example.test");
+    await onboardReceiving(
+      testEnv, atTime(AT + 6000), ORG, ADMIN, "mail.example.test", again.digest, "inbox@mail.example.test",
+    ).catch(() => undefined);
+    const count = await testEnv.CATALOG.prepare(
+      "SELECT COUNT(*) AS n FROM addresses WHERE org_id = ?",
+    ).bind(ORG).first<{ n: number }>();
+    expect(count?.n).toBe(1);
+  });
+
+  it("refuses to choose a mailbox when there are several, and an address off the subdomain", async () => {
+    serving();
+    await testEnv.CATALOG.prepare(
+      "INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)",
+    ).bind("mbx_receiving_two", ORG, "Second", new Date(AT).toISOString()).run();
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    await expect(onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+    )).rejects.toThrow(/E_RECEIVING_MAILBOX_AMBIGUOUS/);
+    await expect(onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+      "mbx_nowhere",
+    )).rejects.toThrow(/E_RECEIVING_NO_SUCH_MAILBOX/);
+    await expect(onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@elsewhere.test",
+      MAILBOX,
+    )).rejects.toThrow(/E_RECEIVING_ADDRESS_ELSEWHERE/);
+    // Naming one works.
+    await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+      "mbx_receiving_two",
+    );
+    const row = await testEnv.CATALOG.prepare(
+      "SELECT mailbox_id FROM addresses WHERE org_id = ? AND address = ?",
+    ).bind(ORG, "inbox@mail.example.test").first<{ mailbox_id: string }>();
+    expect(row?.mailbox_id).toBe("mbx_receiving_two");
   });
 
   it("names an existing rule, which is how an inert one becomes visible", async () => {

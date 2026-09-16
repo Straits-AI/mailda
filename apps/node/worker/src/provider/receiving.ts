@@ -197,9 +197,41 @@ export interface ReceivingOutcome {
  * A rule created before its records is the inert rule this module exists to prevent. So the records go
  * first, are read back rather than assumed, and the rule is only written once they are there.
  */
+/**
+ * The mailbox the address files into: the one named, or the organization's only one.
+ *
+ * Found on the #92 restore drill: this onboarding wrote the MX records and the routing rule for an address,
+ * and ingress would then have rejected the mail it routed as `unknown_recipient`, because nothing in the
+ * product ever inserted an `addresses` row — the live Node's two were put there by hand. A rule to a
+ * Worker that refuses the recipient is the inert-rule failure this module exists to prevent, one layer up.
+ */
+async function mailboxForAddress(
+  env: Env, orgId: string, mailboxId: string | null,
+): Promise<{ id: string; name: string }> {
+  const rows = await env.CATALOG.prepare(
+    "SELECT id, name FROM mailboxes WHERE org_id = ? ORDER BY created_at",
+  ).bind(orgId).all<{ id: string; name: string }>();
+  if (mailboxId !== null) {
+    const named = rows.results.find((one) => one.id === mailboxId);
+    if (named !== undefined) return named;
+    throw unprocessable("E_RECEIVING_NO_SUCH_MAILBOX", {
+      what: `${mailboxId} is not a mailbox in this organization`,
+      why: "the address has to file somewhere, and a mailbox this Node does not have is nowhere",
+      fix: "GET /api/mailboxes lists them; pass one of those ids as mailboxId, or omit it when there is one",
+    });
+  }
+  if (rows.results.length === 1) return rows.results[0]!;
+  throw unprocessable("E_RECEIVING_MAILBOX_AMBIGUOUS", {
+    what: `this organization has ${rows.results.length} mailboxes and the request named none`,
+    why: "the address has to file into one of them, and choosing for you is choosing where a customer's mail "
+      + "goes",
+    fix: "GET /api/mailboxes lists them; pass one of those ids as mailboxId",
+  });
+}
+
 export async function onboardReceiving(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string,
-  domain: string, digest: string, mailboxAddress: string,
+  domain: string, digest: string, mailboxAddress: string, mailboxId: string | null = null,
 ): Promise<ReceivingOutcome> {
   const proposal = await receivingProposalFor(env, ctx, orgId, domain);
   if (proposal.refusal !== null) {
@@ -218,6 +250,24 @@ export async function onboardReceiving(
     });
   }
 
+  const normalized = mailboxAddress.trim().toLowerCase();
+  if (!normalized.endsWith(`@${domain.toLowerCase()}`)) {
+    throw unprocessable("E_RECEIVING_ADDRESS_ELSEWHERE", {
+      what: `${normalized} is not an address on ${domain}`,
+      why: "the rule routes mail for this subdomain, so an address elsewhere would be a rule that never "
+        + "matches and an address nothing routes",
+      fix: `pass an address ending in @${domain}`,
+    });
+  }
+  const mailbox = await mailboxForAddress(env, orgId, mailboxId);
+
+  /*
+   * The address is registered on this Node **in the same batch as the audit entry, and before Cloudflare
+   * is asked for anything** — so the Node knows the recipient by the time a rule can deliver one, and a
+   * refusal from Cloudflare below leaves an address that files and no rule, which is harmless, rather than
+   * a rule and no address, which is mail rejected. `INSERT OR IGNORE`: a second onboarding of the same
+   * address is the resumable case, not a conflict.
+   */
   await auditedBatch(env, ctx, orgId, {
     action: "provider.receiving_onboarded", outcome: "ok", actorUserId, subject: domain,
     detail: {
@@ -225,9 +275,15 @@ export async function onboardReceiving(
       // Named because it is the larger half: this decides where the whole domain's mail goes.
       enablesZone: proposal.enablesZone,
       creates: proposal.creates.map((one) => `${one.content} (priority ${one.priority})`),
-      address: mailboxAddress,
+      address: normalized,
+      mailboxId: mailbox.id,
     },
-  }, (entry) => [entry]);
+  }, (entry) => [
+    env.CATALOG.prepare(
+      "INSERT OR IGNORE INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind(ctx.id("addr"), orgId, normalized, mailbox.id, new Date(ctx.now()).toISOString()),
+    entry,
+  ]);
 
   /*
    * **Enable the zone first, then re-read.** A zone that is not yet routing lists no MX at all, so the
@@ -293,7 +349,7 @@ export async function onboardReceiving(
     {
       name: `mailda ${domain}`,
       enabled: true,
-      matchers: [{ type: "literal", field: "to", value: mailboxAddress }],
+      matchers: [{ type: "literal", field: "to", value: normalized }],
       actions: [{ type: "worker", value: [workerNameFor(env)] }],
     },
   );

@@ -208,6 +208,8 @@ export async function provider(argv) {
 
     const { outcome } = await call("POST", "/api/provider/receiving", {
       domain: receiving, digest: confirming, address,
+      // The mailbox it files into. Omitted when the organization has one; refused when it has several.
+      ...(flag(argv, "mailbox") === null ? {} : { mailboxId: flag(argv, "mailbox") }),
     });
     process.stdout.write(`\n   ${outcome.domain}\n`);
     for (const one of outcome.written) process.stdout.write(`     wrote     MX ${one}\n`);

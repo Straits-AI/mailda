@@ -476,6 +476,27 @@ on)` — the dot is a label boundary, without which `notexample.test` would coun
 until the hundred-and-first queue. A subscription names its `queue_id`, so there is a targeted read and no
 list to be wrong about — the mistake `deploy --plan` already made once, on R2's page of twenty.
 
+## Onboarding a subdomain for receiving (#209, #210), and what the restore drill found in it
+
+`POST /api/provider/receiving` enables Email Routing on the zone if it is off, writes the MX records
+Cloudflare lists for the subdomain, reads them back, and only then writes the routing rule that sends one
+address's mail to this Worker — a rule with no records is accepted and never matches. Two things the #92
+restore drill on 16 September 2026 found by running it against a restored Node's grant:
+
+- **The rule needs `email-routing-rule.write`.** The reach table had carried the rules endpoint as covered
+  by `zone-settings.write`, by inference. A grant holding that and `dns.write` wrote the records and was
+  refused the rule with `10000 Authentication error`. The ceremony asks for the rule scope now.
+- **Nothing registered the address on the Node.** The rule named `inbox@mailda.site`; ingress resolves a
+  recipient against the `addresses` table before reading a byte, and no product path had ever inserted a
+  row there — the live Node's two were put in by hand. The onboarding now writes the row, in the same
+  batch as its audit entry and before Cloudflare is asked, so a refusal from Cloudflare leaves an address
+  that files and no rule (harmless) rather than a rule and no address (mail rejected). The mailbox is the
+  organization's only one, or the `mailboxId` the request names; several and none named is refused.
+
+And the half-done case is resumable: MX already on the name that is entirely Cloudflare's own routing
+hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody else's mail
+host to refuse — which is what the proposal said about its own records after the scope refusal above.
+
 ## Onboarding a domain for sending (#163 L2, write side)
 
 The first act this Node performs that **changes the Cloudflare account it is installed in**. Two steps:
