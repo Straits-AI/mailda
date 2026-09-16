@@ -1135,6 +1135,26 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * What subscribing a sending domain's delivery events to this Node's queue would do, and the digest that confirming it must carry. Changes nothing
+   *
+   * @param query.domain the domain to propose a delivery-events subscription for. Required; it must already be onboarded for sending, and an apex subscription already covering it is reported as `subscribed`
+   *
+   * `GET /api/provider/subscription`
+   */
+  async getProviderSubscription(query?: { domain?: string }): Promise<z.infer<typeof S.providerSubscriptionProposalResponse>> {
+    return await this.json("GET", "/api/provider/subscription", {}, undefined, query) as z.infer<typeof S.providerSubscriptionProposalResponse>;
+  }
+
+  /**
+   * Create the email.sending subscription for a domain through the grant, refusing unless the digest matches the proposal this Node would now apply
+   *
+   * `POST /api/provider/subscription`
+   */
+  async postProviderSubscription(body: z.infer<typeof S.providerSubscriptionRequest>): Promise<z.infer<typeof S.providerSubscriptionProposalResponse>> {
+    return await this.json("POST", "/api/provider/subscription", {}, body) as z.infer<typeof S.providerSubscriptionProposalResponse>;
+  }
+
+  /**
    * Ask Cloudflare which account this grant covers, and record it when the answer is one
    *
    * `POST /api/provider/resolve-account`

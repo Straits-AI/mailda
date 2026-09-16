@@ -462,6 +462,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "GET /api/provider/handover",
     "GET /api/provider/ownership",
     "GET /api/provider/sending",
+    "GET /api/provider/subscription",
     /*
      * **The one route that changes the customer's Cloudflare account**, and the sharpest thing on this list
      * to withhold. It makes DNS records appear in a zone the customer owns, and un-onboarding is measured
@@ -489,6 +490,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/provider/receiving",
     "POST /api/provider/domains/purchase",
     "POST /api/provider/sending",
+    "POST /api/provider/subscription",
     "POST /api/provider/resolve-account",
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",

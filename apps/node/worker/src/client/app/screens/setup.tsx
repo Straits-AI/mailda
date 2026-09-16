@@ -4,8 +4,9 @@ import { useState } from "react";
 import { Nothing } from "../chrome.tsx";
 import {
   beginConsent, onboardReceiving, onboardSending, receivingProposal, reportUnselectable,
-  resolveProviderAccount, sendingProposal, setProviderClient, useProvider, useRouting,
-  type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type SendingProposal,
+  resolveProviderAccount, sendingProposal, setProviderClient, subscribeDeliveryEvents, subscriptionProposal,
+  useProvider, useRouting,
+  type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type SendingProposal, type SubscriptionProposal,
 } from "../api.ts";
 
 /**
@@ -561,6 +562,98 @@ function Sending() {
   );
 }
 
+/**
+ * The third object delivery outcomes depend on (#222): the `email.sending` subscription that publishes a
+ * sending domain's events into this Node's queue. Without it every send sits unobserved for ever, and
+ * nothing on this screen looks wrong — which is why it has its own section rather than a line under Sending.
+ */
+function Subscription() {
+  const [domain, setDomain] = useState("");
+  const [plan, setPlan] = useState<SubscriptionProposal | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function propose() {
+    setProblem(null);
+    setOutcome(null);
+    setPlan(null);
+    setBusy(true);
+    const answer = await subscriptionProposal(domain.trim());
+    setBusy(false);
+    if (!answer.ok) { setProblem(answer.message); return; }
+    setPlan(answer.value.proposal);
+  }
+
+  async function apply() {
+    if (plan === null) return;
+    setProblem(null);
+    setBusy(true);
+    const answer = await subscribeDeliveryEvents(plan.domain, plan.digest);
+    setBusy(false);
+    if (!answer.ok) { setProblem(answer.message); return; }
+    setPlan(answer.value.proposal);
+    setOutcome(
+      answer.value.proposal.subscribed === null
+        ? `${answer.value.proposal.domain} is still not subscribed.`
+        : `${answer.value.proposal.domain}'s delivery events now reach this Node.`,
+    );
+  }
+
+  return (
+    <section className="setup-block" aria-label="Delivery outcomes">
+      <h2>Delivery outcomes</h2>
+      <p className="dim">
+        A sending domain reports what happened to each message — delivered, bounced, complained — only if
+        a subscription publishes those events into this Node's queue. Without one, every send stays
+        unobserved. The domain must be onboarded for sending first.
+      </p>
+
+      <Refusal said={problem} />
+      {outcome === null ? null : <p className="notice" role="status">{outcome}</p>}
+
+      <div className="limits-ask">
+        <label className="field-row" htmlFor="setup-subscribe-domain">
+          <span>Domain</span>
+          <input
+            id="setup-subscribe-domain" className="mono" placeholder="example.com" value={domain}
+            onChange={(event) => setDomain(event.target.value)}
+          />
+        </label>
+        <button type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
+          see what subscribing this would do
+        </button>
+      </div>
+
+      {plan === null ? null : (
+        <div className="setup-plan">
+          <h3>{plan.domain}</h3>
+          {plan.error === null ? null : <Refusal said={plan.error} />}
+          {plan.sendingDomain === null || plan.sendingDomain === plan.domain ? null : (
+            <p className="notice">
+              Carried by <span className="mono">{plan.sendingDomain}</span>, the onboarded domain that covers
+              this name; the subscription is made for that one.
+            </p>
+          )}
+          {plan.subscribed === null ? null : (
+            <p className="notice" role="status">Already subscribed, as <span className="mono">{plan.subscribed}</span>.</p>
+          )}
+          {plan.queueName === null ? null : (
+            <p>Would publish {plan.events.length} event types into <span className="mono">{plan.queueName}</span>.</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void apply()}
+            disabled={busy || plan.subscribed !== null || plan.error !== null}
+          >
+            {busy ? "working…" : "subscribe this domain"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Setup() {
   const provider = useProvider();
   const queryClient = useQueryClient();
@@ -625,6 +718,7 @@ export function Setup() {
       */}
       {connected ? <Receiving refresh={refresh} /> : null}
       {connected ? <Sending /> : null}
+      {connected ? <Subscription /> : null}
 
       {/*
         Buying a domain is not here, and that is a scope decision rather than an oversight — `mailda provider

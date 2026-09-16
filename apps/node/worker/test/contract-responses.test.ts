@@ -430,6 +430,19 @@ describe("every schema-bearing route answers what the contract says it does", ()
       cookie: held, body: { domain: "onboard.example.test", digest: proposed.proposal.digest },
     })).rejects.toThrow(/E_PROVIDER_SENDING_UNREADABLE/);
 
+    // The subscription pair (#222), the same shape one step later in the ceremony: a proposal that says
+    // why it cannot be applied yet, and a write that refuses on that same reason rather than trying.
+    const subscription = await answers(
+      "GET", "/api/provider/subscription", { cookie: held }, "?domain=onboard.example.test",
+    ) as { proposal: { domain: string; queueId: string | null; error: string | null; digest: string } };
+    expect(subscription.proposal.domain).toBe("onboard.example.test");
+    expect(subscription.proposal.queueId).toBeNull();
+    expect(subscription.proposal.error).toContain("/api/provider/resolve-account");
+    expect(subscription.proposal.digest).toHaveLength(64);
+    await expect(answers("POST", "/api/provider/subscription", {
+      cookie: held, body: { domain: "onboard.example.test", digest: subscription.proposal.digest },
+    })).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_UNREADABLE/);
+
     const reported = await answers("POST", "/api/provider/unselectable", { cookie: held }) as {
       provider: { state: string; evidence: string };
     };
@@ -1978,8 +1991,13 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * `POST` that answered 200 is not a record in DNS, and Cloudflare will accept a routing rule whose
      * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
      * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
+     *
+     * The 124th and 125th are `GET` and `POST /api/provider/subscription` (#222) — the third of the three
+     * objects `delivery-events` reports on, proposed and applied the way sending is. The proposal names the
+     * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
+     * described rather than incidental.
      */
-    expect(coverage.total).toBe(123);
+    expect(coverage.total).toBe(125);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

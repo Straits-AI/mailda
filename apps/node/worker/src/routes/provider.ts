@@ -272,6 +272,37 @@ export const provider = {
     });
   },
 
+  "GET /api/provider/subscription": async ({ env, clock, url, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const domain = url.searchParams.get("domain") ?? "";
+    if (domain === "") {
+      throw unprocessable("E_PROVIDER_SUBSCRIPTION_DOMAIN_MISSING", {
+        what: "this route answers about one domain and none was named",
+        why: "a proposal with no subject would be a digest over nothing, confirmable against anything",
+        fix: "pass ?domain=<the sending domain whose delivery events this Node should receive>",
+      });
+    }
+    const { subscriptionProposalFor } = await import("../provider/cloudflare-grant.ts");
+    return Response.json({ proposal: await subscriptionProposalFor(env, clock, who.orgId, domain) });
+  },
+
+  "POST /api/provider/subscription": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // Changes the customer's Cloudflare account, with `POST /api/provider/sending`'s defence: the proposal
+    // is recomputed in `subscribeDeliveryEvents` and the digest must match it.
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { subscribeDeliveryEvents } = await import("../provider/cloudflare-grant.ts");
+    return Response.json({
+      proposal: await subscribeDeliveryEvents(
+        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
+      ),
+    });
+  },
+
   "POST /api/provider/resolve-account": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });

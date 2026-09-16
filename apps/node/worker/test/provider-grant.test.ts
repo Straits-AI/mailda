@@ -6,7 +6,7 @@ import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
   cloudflareGet, deliveryEventsState, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
-  reportUnselectable, resolveAccount, sendingProposalFor,
+  reportUnselectable, resolveAccount, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor,
   STATUS_COLUMNS,
   type ProviderState,
 } from "../src/provider/cloudflare-grant.ts";
@@ -1541,3 +1541,180 @@ describe("onboarding a domain for sending", () => {
     expect(detail.leavesBehind).toEqual(["_dmarc.mail.example.test"]);
   });
 });
+
+describe("subscribing a sending domain's delivery events to this Node's queue (#222)", () => {
+  const ZONE = { id: "zone_1", name: "example.test" };
+  const QUEUE = { queue_id: "q_own", queue_name: "mailda-test-sending-events" };
+  const OTHER = { queue_id: "q_other", queue_name: "somebody-elses" };
+
+  async function granted() {
+    await register();
+    answering(200, {
+      access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a",
+    });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+    await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+    await testEnv.CATALOG.prepare("UPDATE provider_binding SET account_id = 'acc_1' WHERE id = 1").run();
+  }
+
+  /**
+   * Answers the reads a proposal makes — the zone, the sending domains, the subscriptions, the queue pages —
+   * and records every request. `queues` is paged at a hundred, so a second page is answered when asked.
+   */
+  function serving(options: {
+    onboarded: Array<{ name: string }>;
+    subscriptions?: Array<{ name: string; source: { type: string; domain: string }; destination: { queue_id: string } }>;
+    queues?: Array<{ queue_id: string; queue_name: string }>;
+    postAnswer?: unknown;
+  }) {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      calls.push({ url: path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify(options.postAnswer ?? { success: true, result: { id: "sub_new" } }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      const page = Number(/[?&]page=(\d+)/.exec(path)?.[1] ?? "1");
+      const queues = options.queues ?? [QUEUE];
+      const result = path.startsWith("/zones?name=example.test") ? [ZONE]
+        : path.startsWith("/zones?name=") ? []
+        // A real listing carries an id, which is what the DNS read below is keyed by.
+        : path.endsWith("/email/sending/subdomains") ? options.onboarded.map((one, i) => ({ id: `sd_${i}`, ...one }))
+        : /\/email\/sending\/subdomains\/[^/]+\/dns$/.test(path) ? []
+        : path.includes("/event_subscriptions/subscriptions") ? (page === 1 ? (options.subscriptions ?? []) : [])
+        : path.includes("/queues?") ? (page === 1 ? queues.slice(0, 100) : queues.slice(100))
+        : null;
+      return new Response(
+        JSON.stringify(
+          result === null
+            ? { success: false, errors: [{ code: 7003, message: `no route for ${path}` }] }
+            : { success: true, result },
+        ),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    return calls;
+  }
+
+  it("proposes the subscription for an onboarded domain, naming this Node's own queue", async () => {
+    await granted();
+    serving({ onboarded: [{ name: "mail.example.test" }], queues: [OTHER, QUEUE] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.error).toBeNull();
+    expect(proposal.sendingDomain).toBe("mail.example.test");
+    expect(proposal.subscribed).toBeNull();
+    // The queue is found by the name wrangler derived from this Worker's, not the first queue listed.
+    expect(proposal.queueId).toBe("q_own");
+    expect(proposal.queueName).toBe("mailda-test-sending-events");
+    expect(proposal.events).toHaveLength(6);
+    expect(proposal.digest).toHaveLength(64);
+  });
+
+  it("finds the queue on a later page, because the account this was measured on holds sixty-six", async () => {
+    await granted();
+    const filler = Array.from({ length: 100 }, (_, i) => ({ queue_id: `q_${i}`, queue_name: `other-${i}` }));
+    serving({ onboarded: [{ name: "mail.example.test" }], queues: [...filler, QUEUE] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.queueId).toBe("q_own");
+  });
+
+  it("says onboard first, because Cloudflare refuses a subscription for a domain that is not", async () => {
+    // Measured (`email-sending-events.md`): the API's own words are "domain is not an enabled sending
+    // subdomain". The proposal says so before a write is attempted, and the write refuses on the same reason.
+    await granted();
+    const calls = serving({ onboarded: [] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.error).toContain("not onboarded for sending");
+    expect(proposal.error).toContain("POST /api/provider/sending");
+    await expect(subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_UNREADABLE/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("uses the apex's sending domain when that is what covers the name", async () => {
+    await granted();
+    serving({ onboarded: [{ name: "example.test" }] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.error).toBeNull();
+    expect(proposal.sendingDomain).toBe("example.test");
+  });
+
+  it("refuses a second subscription where one already covers the domain", async () => {
+    await granted();
+    const calls = serving({
+      onboarded: [{ name: "mail.example.test" }],
+      subscriptions: [{ name: "already", source: { type: "email.sending", domain: "example.test" }, destination: { queue_id: "q_own" } }],
+    });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.subscribed).toBe("already");
+    await expect(subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_ALREADY/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("creates it with the measured shape when the digest matches, and records the act", async () => {
+    await granted();
+    const calls = serving({ onboarded: [{ name: "mail.example.test" }] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    await subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    );
+
+    const posted = calls.filter((one) => one.method === "POST");
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.url).toBe("/accounts/acc_1/event_subscriptions/subscriptions");
+    // The undocumented shape, exactly as the account's existing subscription carries it.
+    expect(posted[0]!.body).toEqual({
+      name: "mailda-test-sending-events-mail.example.test",
+      enabled: true,
+      source: { type: "email.sending", zone_id: "zone_1", domain: "mail.example.test" },
+      destination: { type: "queues.queue", queue_id: "q_own" },
+      events: [
+        "message.delivered", "message.deferred", "message.bounced",
+        "message.failed", "message.rejected", "message.complained",
+      ],
+    });
+
+    const entry = await testEnv.CATALOG.prepare(
+      "SELECT subject, detail FROM audit_entries WHERE org_id = ? AND action = ? ORDER BY seq DESC LIMIT 1",
+    ).bind(ORG, "provider.delivery_events_subscribed").first<{ subject: string; detail: string }>();
+    expect(entry?.subject).toBe("mail.example.test");
+    expect(JSON.parse(entry?.detail ?? "{}")).toMatchObject({ queue: "mailda-test-sending-events", subscriptionId: "sub_new" });
+  });
+
+  it("refuses a stale digest, and reaches Cloudflare with no write", async () => {
+    await granted();
+    const calls = serving({ onboarded: [{ name: "mail.example.test" }] });
+
+    await expect(subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", "0".repeat(64),
+    )).rejects.toThrow(/E_PROVIDER_SUBSCRIPTION_STALE/);
+    expect(calls.filter((one) => one.method === "POST")).toEqual([]);
+  });
+
+  it("surfaces Cloudflare's refusal in its own words, which is how a missing scope will read", async () => {
+    await granted();
+    serving({
+      onboarded: [{ name: "mail.example.test" }],
+      postAnswer: { success: false, errors: [{ code: 10000, message: "Authentication error" }] },
+    });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    await expect(subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    )).rejects.toThrow(/10000 Authentication error/);
+  });
+});
+

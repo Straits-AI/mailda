@@ -48,6 +48,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --email-routing    what Cloudflare says about receiving mail for this Node's domains
   mailda provider --delivery-events  whether a send's outcome would be seen: subscription, queue, consumer
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
+  mailda provider --subscribe <domain>         subscribe its delivery events to this Node's queue; add --confirm <digest> to do it
   mailda provider --onboard-receiving <domain> point a subdomain at this Node to receive; --address and --confirm to do it
   mailda provider --ownership       who owns this installation, and where each answer came from
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown

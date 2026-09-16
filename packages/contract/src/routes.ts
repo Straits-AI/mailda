@@ -644,6 +644,25 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/subscription",
+    summary: "What subscribing a sending domain's delivery events to this Node's queue would do, and the "
+      + "digest that confirming it must carry. Changes nothing",
+    query: [{
+      name: "domain",
+      description: "the domain to propose a delivery-events subscription for. Required; it must already be "
+        + "onboarded for sending, and an apex subscription already covering it is reported as `subscribed`",
+    }],
+    response: S.providerSubscriptionProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/subscription",
+    summary: "Create the email.sending subscription for a domain through the grant, refusing unless the "
+      + "digest matches the proposal this Node would now apply",
+    request: S.providerSubscriptionRequest, response: S.providerSubscriptionProposalResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/resolve-account",
     summary: "Ask Cloudflare which account this grant covers, and record it when the answer is one",
     response: S.providerAccountResponse,

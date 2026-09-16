@@ -1607,3 +1607,25 @@ export const sendingProposal = (domain: string) =>
 
 export const onboardSending = (domain: string, digest: string) =>
   act<{ proposal: SendingProposal }>(at("POST", "/api/provider/sending"), "POST", { domain, digest });
+
+/** The subscription that makes a sending domain's delivery outcomes reach this Node (#222). */
+export interface SubscriptionProposal {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  /** The onboarded sending domain that would carry it: the name itself, or the apex covering it. */
+  sendingDomain: string | null;
+  /** A subscription already covering this domain, by name. */
+  subscribed: string | null;
+  queueId: string | null;
+  queueName: string | null;
+  events: string[];
+  digest: string;
+  error: string | null;
+}
+
+export const subscriptionProposal = (domain: string) =>
+  proposalFor<{ proposal: SubscriptionProposal }>(GET("/api/provider/subscription"), domain);
+
+export const subscribeDeliveryEvents = (domain: string, digest: string) =>
+  act<{ proposal: SubscriptionProposal }>(at("POST", "/api/provider/subscription"), "POST", { domain, digest });

@@ -79,6 +79,8 @@ function mount(
   parts: {
     provider?: Record<string, unknown>;
     receiving?: unknown;
+    subscription?: unknown;
+    subscribed?: unknown;
     outcome?: unknown;
     refuse?: { status: number; body: unknown };
   } = {},
@@ -93,6 +95,12 @@ function mount(
         return Response.json(parts.refuse.body, { status: parts.refuse.status });
       }
       return Response.json(parts.outcome);
+    }
+    if (call.path.startsWith("/api/provider/subscription") && call.method === "GET") {
+      return Response.json(parts.subscription);
+    }
+    if (call.path.startsWith("/api/provider/subscription") && call.method === "POST") {
+      return Response.json(parts.subscribed);
     }
     if (call.path === "/api/provider") {
       return Response.json({ provider: binding(parts.provider), ceremony: CEREMONY });
@@ -232,5 +240,49 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
 
     expect(await screen.findByLabelText("Client ID")).toBeTruthy();
     expect(screen.queryByText("start the authorization")).toBeNull();
+  });
+
+  it("subscribes a sending domain's delivery events with the digest it was shown (#222)", async () => {
+    const proposal = {
+      domain: "mail.example.com", zone: "example.com", zoneId: "z1", sendingDomain: "mail.example.com",
+      subscribed: null, queueId: "q1", queueName: "mailda-sending-events",
+      events: ["message.delivered", "message.bounced"], digest: "b".repeat(64), error: null,
+    };
+    mount({
+      subscription: { proposal },
+      subscribed: { proposal: { ...proposal, subscribed: "mailda-sending-events-mail.example.com" } },
+    });
+
+    fireEvent.change(await screen.findByLabelText("Domain", { selector: "#setup-subscribe-domain" }), {
+      target: { value: "mail.example.com" },
+    });
+    fireEvent.click(screen.getByText("see what subscribing this would do"));
+    expect(await screen.findByText(/Would publish 2 event types/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("subscribe this domain"));
+    // Two statuses once applied: the outcome, and the plan's own "already subscribed" from the re-read.
+    expect(await screen.findByText(/delivery events now reach this Node/)).toBeTruthy();
+
+    const posted = calls.find((call) => call.path === "/api/provider/subscription" && call.method === "POST");
+    expect(posted?.body).toEqual({ domain: "mail.example.com", digest: "b".repeat(64) });
+  });
+
+  it("keeps the subscribe button off while the proposal names why it cannot be applied", async () => {
+    mount({
+      subscription: {
+        proposal: {
+          domain: "mail.example.com", zone: "example.com", zoneId: "z1", sendingDomain: null,
+          subscribed: null, queueId: null, queueName: null, events: [], digest: "c".repeat(64),
+          error: "mail.example.com is not onboarded for sending — onboard it first: POST /api/provider/sending",
+        },
+      },
+    });
+
+    fireEvent.change(await screen.findByLabelText("Domain", { selector: "#setup-subscribe-domain" }), {
+      target: { value: "mail.example.com" },
+    });
+    fireEvent.click(screen.getByText("see what subscribing this would do"));
+    expect((await screen.findByRole("alert")).textContent).toContain("onboard it first");
+    expect((screen.getByText("subscribe this domain") as HTMLButtonElement).disabled).toBe(true);
   });
 });

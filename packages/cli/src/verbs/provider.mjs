@@ -429,6 +429,43 @@ export async function provider(argv) {
       domain: onboarding, digest: confirming,
     });
     process.stdout.write(`\n   ${proposal.domain} is onboarded for sending on ${proposal.zone}\n`);
+    process.stdout.write(`   next: mailda provider --subscribe ${proposal.domain}\n\n`);
+    return;
+  }
+
+  const subscribing = flag(argv, "subscribe");
+  if (subscribing !== null) {
+    // The third object `--delivery-events` reports on (#222), proposed and confirmed like onboarding.
+    const confirming = flag(argv, "confirm");
+    if (confirming === null) {
+      const { proposal } = await call(
+        "GET", `/api/provider/subscription?domain=${encodeURIComponent(subscribing)}`,
+      );
+      process.stdout.write(`\n   ${proposal.domain}\n`);
+      if (proposal.zone !== null) process.stdout.write(`     zone      ${proposal.zone}\n`);
+      if (proposal.sendingDomain !== null) process.stdout.write(`     sending   ${proposal.sendingDomain}\n`);
+      if (proposal.error !== null) {
+        process.stdout.write(`     unknown   ${proposal.error}\n\n`);
+        return;
+      }
+      if (proposal.subscribed !== null) {
+        process.stdout.write(`     subscribed already, as ${proposal.subscribed} — nothing to do\n\n`);
+        return;
+      }
+      process.stdout.write(`     creates   a subscription publishing ${proposal.events.join(", ")}\n`);
+      process.stdout.write(`     into      queue ${proposal.queueName} (${proposal.queueId})\n`);
+      process.stdout.write(
+        `\n   confirm: mailda provider --subscribe ${proposal.domain} --confirm ${proposal.digest}\n\n`,
+      );
+      return;
+    }
+
+    const { proposal } = await call("POST", "/api/provider/subscription", {
+      domain: subscribing, digest: confirming,
+    });
+    process.stdout.write(
+      `\n   ${proposal.domain}'s delivery events now reach ${proposal.queueName} as ${proposal.subscribed}\n`,
+    );
     process.stdout.write(`   next: mailda provider --delivery-events\n\n`);
     return;
   }
