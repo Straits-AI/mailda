@@ -459,10 +459,17 @@ function wrapped(text, width) {
  * and a complete Node was provisioned in an account that had never held one. Nothing was lost, because
  * nothing was there to lose, and that is exactly why nothing objected.
  *
- * `install` gains a second sentence for the same reason. A first install is a correct, unremarkable verdict
- * on a new account and is also precisely what a wrong-account deploy looks like — the two are the same
- * observation, so the plan cannot tell them apart and must hand the distinction to the reader instead of
- * resolving it silently in the reassuring direction.
+ * `install` gains a second sentence for the same reason, and the first version of it **accused**: it said
+ * *"you are pointed at the wrong account"*. That is false in a case this repository has measured. #207
+ * deployed a second Node into one account on purpose — `env.test` is `mailda-test`, with its own
+ * `mailda-test-*` resources beside `mailda` — so an absent Worker name means a first install, and a first
+ * install has two readings that no plan can separate: a new Node where it belongs (whether or not others are
+ * already here), or a deploy into an account nobody meant. Naming one of them is a guess dressed as a
+ * finding, and it lands on the operator doing the legitimate thing.
+ *
+ * So the sentence states the fact and both readings, and points at the id above as the thing to check. A
+ * plan that cannot resolve an ambiguity hands it to the reader; it does not settle it in the reassuring
+ * direction, and it does not settle it in the alarming one either.
  */
 export function renderPlan(plan) {
   const out = [];
@@ -481,9 +488,9 @@ export function renderPlan(plan) {
       : plan.verdict === "install"
         ? "   A first install. Nothing here yet, so the deploy runs directly — no previous version to"
           + " protect.\n"
-          + "   Nothing named `" + plan.worker + "` exists in this account. If you meant to redeploy an"
-          + " existing Node,\n   you are pointed at the wrong account — this would build a second one"
-          + " beside it.\n"
+          + "   Nothing named `" + plan.worker + "` exists in this account. That is a new Node — which may"
+          + " be\n   the first here or one more beside others, both of which are ordinary. It is also what a"
+          + "\n   deploy into an account nobody meant looks like. Check the id above.\n"
         : plan.verdict === "redeploy"
           ? "   A redeploy. Everything is in place, so the deploy uploads a canary and checks it before"
             + " moving traffic.\n"
