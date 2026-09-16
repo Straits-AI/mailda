@@ -46,6 +46,16 @@ with regular expressions to check the two lists agreed — which is now a type r
 cannot see, `test/node/route-table.test.ts` does: two domain files naming one key (a spread keeps the later
 one silently) and two parameterised templates that could match one path (declaration order would decide).
 
+**`authority` is required, and the router reads it.** The last fifty-one routes with no declaration were
+classified on 16 September 2026 — thirty as `organization`, the sign-in and claim surface as `public`, and
+the rest as `member`, `self-or-admin` or `filtered` by what their handler's gate actually was. For every
+scope but `public` and `recovery` the router establishes the principal once and answers `401` if there is
+none, so a handler receives `who` — typed `Principal` on a route that requires one and `Principal | null`
+on an open one — instead of beginning with the two lines a hundred and seven handlers used to begin with.
+What the principal may *do* is still decided in the handler and its domain function; the parity suite drives
+each declared scope with a member, an administrator and a stranger, and lists by name the routes it cannot
+drive to a success and why.
+
 Both directions matter and they catch different mistakes. A path the Worker serves and the registry omits is
 a route no generated surface will ever expose. A path in the registry the Worker does not serve is worse: a
 generated client would call it and get a 404 that reads as a missing resource rather than a wrong request.

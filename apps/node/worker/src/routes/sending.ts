@@ -1,7 +1,7 @@
 import { CallerError, unprocessable } from "../errors.ts";
 import { auditedBatch } from "../audit.ts";
 import { streamEvidence } from "../evidence-store.ts";
-import { authorizeSendExport, mailboxesWithRelation, maySend, principalFor, readableSubjects } from "../authz-read.ts";
+import { authorizeSendExport, mailboxesWithRelation, maySend, readableSubjects } from "../authz-read.ts";
 import { isAdmin } from "../access.ts";
 import { liftDomainPause, requestDomainPause } from "../domain-pause.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "../breakers.ts";
@@ -13,7 +13,7 @@ import { sealManifest } from "../outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "../outbound/retry.ts";
 import { chooseTransport } from "../outbound/transport.ts";
 import { safeFilename } from "../outbound/headers.ts";
-import { unauthenticated, armSweeper } from "./support.ts";
+import { armSweeper } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const sending = {
@@ -49,9 +49,7 @@ export const sending = {
    * belongs in front of the first and nowhere near the second. #64 made the same call in the opposite
    * direction about legal holds, for the same reason.
    */
-  "GET /api/breakers": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/breakers": async ({ env, clock, who }) => {
     // No domain, so the pause question is not asked here: the pause listing below is the answer to it, and
     // it is about every domain rather than about one this endpoint would have to be told.
     const decision = await evaluateBreakers(env, clock, who.orgId, null);
@@ -71,9 +69,7 @@ export const sending = {
     });
   },
 
-  "POST /api/domain-pauses": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/domain-pauses": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Both absent values reach `requestDomainPause` as the empty string and are refused there with the
     // four-part message, rather than being defaulted — a pause with an invented reason would be this Node
@@ -84,15 +80,11 @@ export const sending = {
     return Response.json({ pause: requested });
   },
 
-  "GET /api/domain-pauses": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/domain-pauses": async ({ env, who }) => {
     return Response.json({ pauses: await pausesInForce(env, who.orgId) });
   },
 
-  "POST /api/domain-pauses/:pauseId/lift": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/domain-pauses/:pauseId/lift": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // Optional, unlike the reason for placing. Restarting mail is the direction #66 made easy, so a
     // missing reason is accepted and recorded as absent rather than as a phrase nobody said.
@@ -106,9 +98,7 @@ export const sending = {
    * Outbound (Layer 2). Sealing and dispatching are separate endpoints because they are separate
    * acts (ADR 35) — which is what makes undo-send honest rather than a claim about recall.
    */
-  "POST /api/sends": async ({ request, env, ctx, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends": async ({ request, env, ctx, clock, who }) => {
 
     // §14: whether this Node can send is answerable *before* composing, not at submit.
     const capability = await (await chooseTransport(env)).capability(env);
@@ -209,9 +199,7 @@ export const sending = {
     });
   },
 
-  "POST /api/sends/:sendId/cancel": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends/:sendId/cancel": async ({ env, clock, params, who }) => {
     // Gated on `send.propose`, not `mailbox.content.read`, and the difference is deliberate: stopping a
     // send is an outbound act on that mailbox, so it takes the outbound authority. Whoever sealed it
     // holds this by definition, because sealing requires it.
@@ -259,9 +247,7 @@ export const sending = {
    * were never proposed by a Butler at all. Hanging them off a run would have made a person's refused send
    * unretryable and a Butler's retryable, which is a distinction with nothing behind it.
    */
-  "POST /api/sends/:sendId/retry": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends/:sendId/retry": async ({ request, env, clock, params, who }) => {
     const target = await env.CATALOG.prepare(
       "SELECT mailbox_id FROM send_manifests WHERE org_id = ? AND id = ? LIMIT 1",
     ).bind(who.orgId, params.sendId).first<{ mailbox_id: string }>();
@@ -301,9 +287,7 @@ export const sending = {
    * clear two different reasons, and a single route matching on `state` alone would let one walk a message
    * past the other's gate.
    */
-  "POST /api/sends/:sendId/release-hold": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends/:sendId/release-hold": async ({ env, clock, params, who }) => {
     const outcome = await releasePolicyHold(env, clock, who.orgId, who.userId, params.sendId);
     return Response.json(outcome, { status: outcome.released ? 200 : 409 });
   },
@@ -326,9 +310,7 @@ export const sending = {
    * released — the manifest is the gate and it is kept for ever, while instance state is 3 days on Free
    * and 30 on Paid — so `false` here is a fact about the *program*, never about the mail.
    */
-  "POST /api/sends/:sendId/release": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends/:sendId/release": async ({ env, clock, params, who }) => {
     const outcome = await releaseButlerSend(env, clock, who.orgId, who.userId, params.sendId);
     return Response.json(outcome, { status: outcome.released ? 200 : 409 });
   },
@@ -347,9 +329,7 @@ export const sending = {
    * Administrator-gated, because supplying this gives the Node the ability to send as the account — the
    * same authority granting mailbox access carries, so the same gate.
    */
-  "GET /api/transport": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/transport": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -372,9 +352,7 @@ export const sending = {
     });
   },
 
-  "PUT /api/transport": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PUT /api/transport": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -420,9 +398,7 @@ export const sending = {
     return Response.json({ configured: { accountId, configuredAt: at } });
   },
 
-  "GET /api/sends": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/sends": async ({ env, clock, who }) => {
     // Subjects are the user plus every team they belong to, which is what `hasRelation` and
     // `listMessages` both do. A relation held through a team is held.
     const subjects = await readableSubjects(env, who);
@@ -515,9 +491,7 @@ export const sending = {
 
   // Releases anything whose hold window has closed. The sweeper alarm does this too; the endpoint
   // exists so an operator does not have to wait for an alarm to see the machinery work.
-  "POST /api/sends/dispatch": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/sends/dispatch": async ({ env, clock, who }) => {
     // Bounded to the mailboxes this caller may send as. Org-wide was wrong on two counts: the result
     // names every manifest it touched, and a held send past its release_at is still cancellable — so
     // forcing the sweep ended other people's chance to stop their own mail. `send.propose` rather than

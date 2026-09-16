@@ -5,7 +5,7 @@ import { agentFor } from "../agents.ts";
 import { agentReach, listAgents, mintAgent, revokeAgent, sponsorReach } from "../agents.ts";
 import { principalFor } from "../authz-read.ts";
 import { assertAdmin, type MailboxRelation } from "../access.ts";
-import { unauthenticated, isId, notFound } from "./support.ts";
+import { isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const machine = {
@@ -78,14 +78,7 @@ export const machine = {
    * and there is no route that widens an agent's ceiling afterwards — re-minting is the only way to change
    * what one may do, which is what "pinned" means here.
    */
-  "POST /api/agents": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to mint an agent.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "POST /api/agents": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as {
       name?: string; sponsorUserId?: string; capabilities?: string[]; lifetimeDays?: number;
       grants?: { mailboxId: string; relation: MailboxRelation }[];
@@ -166,14 +159,7 @@ export const machine = {
    * `operator`, like the three routes below it: a machine reading the list of what machines may be granted
    * is reading a map of how to escalate.
    */
-  "GET /api/agent-capabilities": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to read the capability list.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "GET /api/agent-capabilities": async ({ env, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     /*
      * `requires` is **computed** and sent, rather than a field on the literal. The client needs it to warn
@@ -191,22 +177,13 @@ export const machine = {
    * read-only sponsor's mailboxes were unselectable and an administrator could not provision an agent for a
    * mailbox they administer but do not work in.
    */
-  "GET /api/people/:userId/mailboxes": async ({ request, env, clock, params }) => {
+  "GET /api/people/:userId/mailboxes": async ({ env, params, who }) => {
     if (!isId(ID_PREFIXES.user, params.userId)) return notFound();
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
     await assertAdmin(env, who.orgId, who.userId);
     return Response.json({ mailboxes: await sponsorReach(env, who.orgId, params.userId) });
   },
 
-  "GET /api/agents": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to list agents.", refreshable: true },
-        { status: 401 },
-      );
-    }
+  "GET /api/agents": async ({ env, who }) => {
     await assertAdmin(env, who.orgId, who.userId);
     /*
      * The ceiling comes back as capabilities **and** as the routes actually pinned. `heldCapabilities`
@@ -235,15 +212,8 @@ export const machine = {
    * hand-written alphabet this line first carried — which is the check earning its place for the third
    * time, and the reason it exists: `case_` and `cas_` came to disagree exactly this way.
    */
-  "DELETE /api/agents/:agentId": async ({ request, env, clock, params }) => {
+  "DELETE /api/agents/:agentId": async ({ env, clock, params, who }) => {
     if (!isId(ID_PREFIXES.agent, params.agentId)) return notFound();
-    const who = await principalFor(env, clock, request);
-    if (who === null) {
-      return Response.json(
-        { error: "unauthenticated", message: "Sign in to revoke an agent.", refreshable: true },
-        { status: 401 },
-      );
-    }
     await revokeAgent(env, clock, who.orgId, who.userId, params.agentId);
     return Response.json({
       revoked: true,

@@ -20,9 +20,7 @@ export const session = {
    * refusal says nothing about why, for `claimNode`'s reason — distinguishing "no such invitation" from
    * "expired" is an oracle for guessing, and the second would confirm who was invited.
    */
-  "POST /api/invitations": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/invitations": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       invitation: await inviteToOrganization(
@@ -31,9 +29,7 @@ export const session = {
     });
   },
 
-  "GET /api/invitations": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/invitations": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C, as with `/api/people`: who has been invited and not yet arrived is the same shape of fact.
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -176,9 +172,7 @@ export const session = {
     });
   },
 
-  "POST /api/auth/passkeys": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/auth/passkeys": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return await finishPasskeyRegistration(env, clock, request, who, body);
   },
@@ -188,9 +182,7 @@ export const session = {
     return await finishPasskeyAuthentication(env, clock, request, body);
   },
 
-  "GET /api/auth/passkeys": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/auth/passkeys": async ({ env, who }) => {
     const held = await credentialsOf(env, who.orgId, who.userId);
     return Response.json({
       // Public keys are not returned. They disclose nothing, and a list screen has no use for them —
@@ -205,9 +197,7 @@ export const session = {
     });
   },
 
-  "DELETE /api/auth/passkeys": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "DELETE /api/auth/passkeys": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const credentialId = String(body.credentialId ?? "");
     // The entry rides in the delete's own transaction — see `forgetCredential`. A revocation that
@@ -254,9 +244,7 @@ export const session = {
     return signedOutResponse("signed_out", "Signed out.");
   },
 
-  "POST /api/auth/logout-everywhere": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/auth/logout-everywhere": async ({ env, clock, who }) => {
     const revoked = await revokeAllSessions(env, clock, who.orgId, who.userId);
     return signedOutResponse("signed_out", `Signed out of ${revoked} session(s).`);
   },
@@ -271,9 +259,7 @@ export const session = {
 
   // Rotation. Owner-authenticated, because it is an ordinary operation that should be easy to
   // perform — a rotation procedure nobody can run is a key that never rotates.
-  "POST /api/auth/rotate-signing-key": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/auth/rotate-signing-key": async ({ env, clock, who }) => {
     /*
      * The comment here called this owner-authenticated and the code enforced *signed in*. Repeated rotation
      * walks the verification window forward until sessions signed by retired keys stop verifying, which is
@@ -294,9 +280,7 @@ export const session = {
     });
   },
 
-  "GET /api/me": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/me": async ({ env, who }) => {
     /*
      * A **principal**, not a user. An agent holding `identity.read` reaches this route, and answering with
      * `userId: "agt_…"` violated the route's own contract in the one place a caller asks who it is.

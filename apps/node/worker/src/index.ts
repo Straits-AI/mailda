@@ -18,7 +18,8 @@ import { withSecurityHeaders } from "./security-headers.ts";
 import { clientAsset } from "./ui.ts";
 import { resolve, type Call, type Handler } from "./router.ts";
 import { HANDLERS } from "./routes/index.ts";
-import { armSweeper, hashHex } from "./routes/support.ts";
+import { armSweeper, hashHex, unauthenticated } from "./routes/support.ts";
+import { principalFor } from "./authz-read.ts";
 
 export { OutboxSweeper } from "./outbox.ts";
 export { KeyVault } from "./keyvault.ts";
@@ -388,10 +389,16 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   const reenter = (inner: Request) => handler.fetch(inner, env, ctx);
   const found = resolve(request.method, url.pathname);
   if (found !== null) {
+    // The principal, once, for every route the registry says needs one. An open route is handed `null` and
+    // looks for itself if it wants to — `/mcp` admits a stranger and `/api/doctor` reduces its report.
+    const who = found.open ? null : await principalFor(env, clock, request);
+    if (!found.open && who === null) return unauthenticated();
     // `found.params` is what the template captured, and the template is what typed the handler's `params`;
     // the cast is the one place the two meet, and `resolve` is the function that keeps them in step.
     const handler = HANDLERS[found.key] as Handler;
-    return handler({ request, env, ctx, clock, url, params: found.params as Call["params"], reenter });
+    return handler({
+      request, env, ctx, clock, url, params: found.params as Call["params"], who: who as Call["who"], reenter,
+    });
   }
 
   const asset = clientAsset(url.pathname);
@@ -401,7 +408,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   // bookmarked `/outbox` must not 404. The list is shared with `main.tsx` rather than duplicated
   // (`app-routes.ts`), and it is a list rather than a catch-all so a mistyped URL still gets a real 404.
   if (isAppRoute(url.pathname)) {
-    return HANDLERS["GET /index.html"]({ request, env, ctx, clock, url, params: {}, reenter });
+    return HANDLERS["GET /index.html"]({ request, env, ctx, clock, url, params: {}, who: null, reenter });
   }
 
   return Response.json({ error: "not_found" }, { status: 404 });

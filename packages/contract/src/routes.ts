@@ -58,11 +58,12 @@ export interface RouteSpec {
    * `send.observe` omitting `message.export`, and seven capabilities declaring no relation at all while their
    * routes require `org.admin` — authority no mint can confer.
    *
-   * Optional on the type and **required in practice** for anything a machine may hold:
-   * `test/node/capability-world.test.ts` fails on a grantable route with no `authority`, and
-   * `machineProvisionable` answers `false` for an undeclared one, which is the fail-closed direction.
+   * **Required since 16 September 2026**, when the last fifty-one undeclared routes were classified. The
+   * router reads it: a route whose scope is not `public` or `recovery` is answered `401` before its handler
+   * runs, so a handler is handed a principal rather than looking one up — and a route nobody classified
+   * cannot be served at all, which is the fail-closed direction `machineProvisionable` already took.
    */
-  readonly authority?: Authority;
+  readonly authority: Authority;
   /**
    * The path, with `:name` for a segment the Worker captures.
    *
@@ -143,27 +144,27 @@ export const ROUTES = [
     summary: "Whether this Node is up, and what is missing if it is not",
     response: S.healthResponse,
   },
-  { method: "GET", path: "/index.html", summary: "The interface shell" },
+  { method: "GET", path: "/index.html", authority: { scope: "public" }, summary: "The interface shell" },
   { method: "GET", path: "/.well-known/jwks.json", summary: "The public keys that verify this Node's tokens", authority: { scope: "public" }, response: S.jwksResponse },
-  { method: "POST", path: "/api/claim", summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
-  { method: "POST", path: "/api/recovery/redeem", summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
-  { method: "POST", path: "/api/agents", summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
-  { method: "GET", path: "/api/agents", summary: "Every agent in this organization", response: S.agentListResponse },
+  { method: "POST", path: "/api/claim", authority: { scope: "public" }, summary: "Claim an unclaimed Node: the first account and organization", response: S.claimedResponse },
+  { method: "POST", path: "/api/recovery/redeem", authority: { scope: "public" }, summary: "Spend an ADR 29 recovery code to restore this Node's key vault", request: S.redeemRecoveryRequest, response: S.vaultRestoredResponse },
+  { method: "POST", path: "/api/agents", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Mint a delegated agent, returning its token once", request: S.agentMintRequest, response: S.agentMintedResponse },
+  { method: "GET", path: "/api/agents", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Every agent in this organization", response: S.agentListResponse },
   { method: "GET", path: "/api/people/:userId/mailboxes", summary: "Every mailbox, with what this person holds on each — the mint surface's resource catalogue", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.sponsorMailboxListResponse },
-  { method: "GET", path: "/api/agent-capabilities", summary: "What an agent may be granted, in this Node's own vocabulary", response: S.agentCapabilityListResponse },
-  { method: "DELETE", path: "/api/agents/:agentId", summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
-  { method: "GET", path: "/api/search/failed", summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
-  { method: "POST", path: "/api/search/repair", summary: "Put named messages back in the body index's queue", request: S.searchRepairRequest, response: S.searchRepairedResponse },
+  { method: "GET", path: "/api/agent-capabilities", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "What an agent may be granted, in this Node's own vocabulary", response: S.agentCapabilityListResponse },
+  { method: "DELETE", path: "/api/agents/:agentId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Withdraw an agent's credential immediately", response: S.agentRevokedResponse },
+  { method: "GET", path: "/api/search/failed", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Messages the body index failed on, with the reason for each", response: S.searchFailedResponse },
+  { method: "POST", path: "/api/search/repair", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Put named messages back in the body index's queue", request: S.searchRepairRequest, response: S.searchRepairedResponse },
   /*
    * Acknowledging a permanent key collision (P2-2). `organization`, because it is a statement about the whole
    * Node's evidence made on the organization's behalf — and `governed` in the exposure tiers, because it is a
    * conclusion a person reaches and not an act a machine should be able to file.
    */
   { method: "POST", path: "/api/recovery/conflicts/:restoreId/acknowledge", summary: "Record that a permanent key collision has been assessed", authority: { scope: "organization", allOf: ["org.admin"] }, request: S.acknowledgeConflictRequest, response: S.conflictAcknowledgedResponse },
-  { method: "POST", path: "/api/recovery-codes/rotate", summary: "Mint a replacement set of ten recovery codes, shown once", response: S.recoveryCodesMintedResponse },
-  { method: "POST", path: "/api/recovery-codes/confirm", summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
+  { method: "POST", path: "/api/recovery-codes/rotate", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Mint a replacement set of ten recovery codes, shown once", response: S.recoveryCodesMintedResponse },
+  { method: "POST", path: "/api/recovery-codes/confirm", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
   {
-    method: "POST", path: "/api/prepare",
+    method: "POST", path: "/api/prepare", authority: { scope: "public" },
     // Named for claiming and actually the migration endpoint — see `prepareResponse`.
     summary: "Apply pending migrations",
     response: S.prepareResponse,
@@ -177,29 +178,29 @@ export const ROUTES = [
 
   // ---- authentication (#38, ADR 29) -----------------------------------------------------------------
   {
-    method: "POST", path: "/api/auth/login",
+    method: "POST", path: "/api/auth/login", authority: { scope: "public" },
     summary: "Exchange a password for a session",
     request: S.loginRequest, response: S.signedInResponse,
   },
-  { method: "POST", path: "/api/auth/refresh", summary: "Exchange a refresh token for a new access token", response: S.refreshedResponse },
-  { method: "POST", path: "/api/auth/logout", summary: "End this session", response: S.signedOutResponse },
-  { method: "POST", path: "/api/auth/logout-everywhere", summary: "End every session this person holds", response: S.signedOutResponse },
-  { method: "POST", path: "/api/auth/rotate-signing-key", summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
+  { method: "POST", path: "/api/auth/refresh", authority: { scope: "public" }, summary: "Exchange a refresh token for a new access token", response: S.refreshedResponse },
+  { method: "POST", path: "/api/auth/logout", authority: { scope: "public" }, summary: "End this session", response: S.signedOutResponse },
+  { method: "POST", path: "/api/auth/logout-everywhere", authority: { scope: "member" }, summary: "End every session this person holds", response: S.signedOutResponse },
+  { method: "POST", path: "/api/auth/rotate-signing-key", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Mint a new token signing key, keeping the old one for the verify grace", response: S.keyRotatedResponse },
   { method: "GET", path: "/api/me", summary: "Who this session is", authority: { scope: "member" }, response: S.meResponse },
 
   // ---- passkeys (#84, ADR 29) -----------------------------------------------------------------------
   {
-    method: "POST", path: "/api/auth/passkeys/challenge",
+    method: "POST", path: "/api/auth/passkeys/challenge", authority: { scope: "public" },
     summary: "A single-use challenge for either ceremony. Unauthenticated for authentication, which is what keeps it from answering whether an address has a passkey",
     request: S.passkeyChallengeRequest, response: S.passkeyChallengeResponse,
   },
   {
-    method: "POST", path: "/api/auth/passkeys",
+    method: "POST", path: "/api/auth/passkeys", authority: { scope: "member" },
     summary: "Finish registration: verify the attestation and store the public key",
     response: S.passkeyRegisteredResponse,
   },
   {
-    method: "POST", path: "/api/auth/passkeys/verify",
+    method: "POST", path: "/api/auth/passkeys/verify", authority: { scope: "public" },
     summary: "Finish authentication: verify the assertion and issue a session",
     response: S.signedInResponse,
   },
@@ -215,30 +216,30 @@ export const ROUTES = [
     response: S.passkeyListResponse,
   },
   {
-    method: "DELETE", path: "/api/auth/passkeys",
+    method: "DELETE", path: "/api/auth/passkeys", authority: { scope: "member" },
     summary: "Revoke one, bound to its owner by the statement's own predicate",
     response: S.passkeyForgottenResponse,
   },
 
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.invitationListResponse },
-  { method: "POST", path: "/api/invitations", summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
-  { method: "POST", path: "/api/invitations/redeem", summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
+  { method: "POST", path: "/api/invitations", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
+  { method: "POST", path: "/api/invitations/redeem", authority: { scope: "public" }, summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.peopleListResponse },
   { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "member" }, response: S.teamListResponse },
-  { method: "POST", path: "/api/teams", summary: "Create a team", response: S.teamCreatedResponse },
+  { method: "POST", path: "/api/teams", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Create a team", response: S.teamCreatedResponse },
   { method: "GET", path: "/api/teams/:teamId", summary: "One team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamDetailResponse },
-  { method: "POST", path: "/api/teams/:teamId/rename", summary: "Rename a team", response: S.teamCreatedResponse },
+  { method: "POST", path: "/api/teams/:teamId/rename", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Rename a team", response: S.teamCreatedResponse },
   { method: "GET", path: "/api/teams/:teamId/members", summary: "Who is in a team", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.teamMembersResponse },
-  { method: "POST", path: "/api/teams/:teamId/members", summary: "Put somebody in a team, conferring every relation it holds", response: S.teamMembershipResponse },
-  { method: "DELETE", path: "/api/teams/:teamId/members", summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
+  { method: "POST", path: "/api/teams/:teamId/members", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Put somebody in a team, conferring every relation it holds", response: S.teamMembershipResponse },
+  { method: "DELETE", path: "/api/teams/:teamId/members", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Take somebody out of a team, effective on their next request", response: S.teamMembershipResponse },
 
   // ---- authorization (#39) ---------------------------------------------------------------------------
   { method: "GET", path: "/api/access", summary: "Who holds what on which mailbox", authority: { scope: "self-or-admin" }, response: S.accessResponse },
-  { method: "POST", path: "/api/access", summary: "Grant a relation on a mailbox", response: S.grantedResponse },
-  { method: "DELETE", path: "/api/access", summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
+  { method: "POST", path: "/api/access", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Grant a relation on a mailbox", response: S.grantedResponse },
+  { method: "DELETE", path: "/api/access", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Revoke a relation on a mailbox", response: S.revokedResponse },
   { method: "GET", path: "/api/supervised", summary: "Live supervised-access grants (§7)", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.supervisedListResponse },
-  { method: "POST", path: "/api/supervised", summary: "Grant supervised access, which expires", response: S.supervisedRequestedResponse },
+  { method: "POST", path: "/api/supervised", authority: { scope: "member" }, summary: "Grant supervised access, which expires", response: S.supervisedRequestedResponse },
 
   // ---- mail: reading -------------------------------------------------------------------------------
   {
@@ -247,7 +248,7 @@ export const ROUTES = [
     summary: "The mailboxes this person may act in",
     response: S.mailboxListResponse,
   },
-  { method: "PATCH", path: "/api/mailboxes/:mailboxId", summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
+  { method: "PATCH", path: "/api/mailboxes/:mailboxId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {
     authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] },
     method: "GET", path: "/api/messages",
@@ -414,16 +415,16 @@ export const ROUTES = [
     summary: "Replace a policy's draft",
     request: S.editPolicyDraftRequest, response: S.policyDraftResponse,
   },
-  { method: "POST", path: "/api/policies/:policyId/publish", summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
+  { method: "POST", path: "/api/policies/:policyId/publish", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Publish a policy's draft, which is the versioning event", response: S.policyPublishedResponse },
   { method: "GET", path: "/api/approvals", summary: "Approvals waiting on somebody", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, response: S.approvalListResponse },
-  { method: "POST", path: "/api/approvals/:approvalId/decide", summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
-  { method: "POST", path: "/api/approvals/:approvalId/withdraw", summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
+  { method: "POST", path: "/api/approvals/:approvalId/decide", authority: { scope: "filtered", by: "relation", relations: ["approval.decide"] }, summary: "Approve or refuse a send", response: S.approvalDecidedResponse },
+  { method: "POST", path: "/api/approvals/:approvalId/withdraw", authority: { scope: "filtered", by: "self" }, summary: "Withdraw your own decision on a request", response: S.approvalWithdrawnResponse },
   { method: "GET", path: "/api/holds", summary: "Legal holds in force", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.holdListResponse },
-  { method: "POST", path: "/api/holds", summary: "Place a legal hold", response: S.holdPlacedResponse },
-  { method: "POST", path: "/api/holds/:holdId/lift", summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
+  { method: "POST", path: "/api/holds", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Place a legal hold", response: S.holdPlacedResponse },
+  { method: "POST", path: "/api/holds/:holdId/lift", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Lift a legal hold, which takes more than one person", response: S.holdLiftRequestedResponse },
   { method: "GET", path: "/api/matters", summary: "Matters a hold or an export can be scoped to", authority: { scope: "filtered", by: "ownership" }, response: S.matterListResponse },
   { method: "POST", path: "/api/matters", summary: "Open a matter", authority: { scope: "member" }, request: S.openMatterRequest, response: S.matterResponse },
-  { method: "POST", path: "/api/matters/:matterId/close", summary: "Close a matter", response: S.matterResponse },
+  { method: "POST", path: "/api/matters/:matterId/close", authority: { scope: "self-or-admin" }, summary: "Close a matter", response: S.matterResponse },
   {
     authority: { scope: "member" },
     method: "GET", path: "/api/breakers",
@@ -431,8 +432,8 @@ export const ROUTES = [
     response: S.breakerListResponse,
   },
   { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "member" }, response: S.domainPauseListResponse },
-  { method: "POST", path: "/api/domain-pauses", summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
-  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
+  { method: "POST", path: "/api/domain-pauses", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
+  { method: "POST", path: "/api/domain-pauses/:pauseId/lift", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------
   { method: "GET", path: "/api/butlers", summary: "Every Butler, with the version that is live", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerListResponse },
@@ -448,7 +449,7 @@ export const ROUTES = [
     request: S.editButlerDraftRequest, response: S.butlerDraftResponse,
   },
   {
-    method: "POST", path: "/api/butlers/:butlerId/publish",
+    method: "POST", path: "/api/butlers/:butlerId/publish", authority: { scope: "organization", allOf: ["org.admin"] },
     summary: "Publish a Butler's draft, which is the versioning event",
     response: S.butlerPublishedResponse,
   },
@@ -461,16 +462,16 @@ export const ROUTES = [
   { method: "GET", path: "/api/butler-runs", summary: "What the Butlers have done", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunListResponse },
   { method: "GET", path: "/api/butler-runs/:runId", summary: "One run", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunDetailResponse },
   { method: "GET", path: "/api/butler-runs/:runId/inspect", summary: "One run's input, program and effects, with the replay modes it offers", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerRunInspectionResponse },
-  { method: "POST", path: "/api/butler-runs/:runId/replay", summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
+  { method: "POST", path: "/api/butler-runs/:runId/replay", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Replay a run in a named mode", response: S.butlerRunReplayedResponse },
   { method: "GET", path: "/api/butler-pauses", summary: "Butlers a machine has stopped", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.butlerPauseListResponse },
-  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", summary: "Restart a stopped Butler, with a reason", response: S.butlerPauseResumedResponse },
+  { method: "POST", path: "/api/butler-pauses/:pauseId/resume", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Restart a stopped Butler, with a reason", response: S.butlerPauseResumedResponse },
 
   // ---- the record: audit, logs, export (#28, #43) ----------------------------------------------------
   {
-    method: "GET", path: "/api/audit", summary: "The audit trail",
+    method: "GET", path: "/api/audit", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "The audit trail",
     response: S.auditListResponse,
   },
-  { method: "POST", path: "/api/audit/verify", summary: "Verify the audit chain", response: S.auditVerifyResponse },
+  { method: "POST", path: "/api/audit/verify", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Verify the audit chain", response: S.auditVerifyResponse },
   /**
    * Whether the evidence still hashes to what ingress recorded (#92).
    *
@@ -491,7 +492,7 @@ export const ROUTES = [
    */
   { method: "GET", path: "/api/evidence/inventory", summary: "Every stored object with the hash its plaintext should have, for a restorable backup", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.evidenceInventoryResponse },
   {
-    method: "GET", path: "/api/logs", summary: "The operational log",
+    method: "GET", path: "/api/logs", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "The operational log",
     response: S.logListResponse,
   },
   { method: "GET", path: "/api/exports", summary: "Export jobs", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.exportListResponse },
@@ -507,7 +508,7 @@ export const ROUTES = [
     response: S.transportResponse,
   },
   {
-    method: "PUT", path: "/api/transport",
+    method: "PUT", path: "/api/transport", authority: { scope: "organization", allOf: ["org.admin"] },
     summary: "Supply the Cloudflare account id and Email Sending API token. The token is never returned",
     request: S.transportRequest, response: S.transportConfiguredResponse,
   },
@@ -665,14 +666,14 @@ export const ROUTES = [
      * carrying a state already spent is refused by the row rather than by a check in the handler. That is
      * what the parameter is *for*, and a session check would be a second gate answering a different question.
      */
-    method: "GET", path: "/oauth/cloudflare/callback",
+    method: "GET", path: "/oauth/cloudflare/callback", authority: { scope: "public" },
     summary: "Where Cloudflare sends the authorization response. Guarded by the state nonce, not a session",
     response: S.providerConsentResponse,
   },
 
   // ---- the MCP server (#89, ADR 12) ------------------------------------------------------------------
   {
-    method: "POST", path: "/mcp",
+    method: "POST", path: "/mcp", authority: { scope: "public" },
     /*
      * The one route in this registry whose **shape this project did not choose**. MCP's Streamable HTTP
      * transport is one endpoint carrying JSON-RPC 2.0, and that is a specification somebody else wrote —
@@ -686,8 +687,8 @@ export const ROUTES = [
   },
 
   // ---- maintenance ------------------------------------------------------------------------------------
-  { method: "POST", path: "/api/maintenance/reseal", summary: "Reseal evidence under the current key", response: S.resealResponse },
-  { method: "POST", path: "/api/maintenance/reconcile", summary: "Reconcile stored evidence against its metadata", response: S.reconcileResponse },
+  { method: "POST", path: "/api/maintenance/reseal", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reseal evidence under the current key", response: S.resealResponse },
+  { method: "POST", path: "/api/maintenance/reconcile", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Reconcile stored evidence against its metadata", response: S.reconcileResponse },
   /*
    * `as const satisfies` rather than a `readonly RouteSpec[]` annotation, and the difference is the whole
    * enforcement rather than a stylistic preference.

@@ -1,5 +1,4 @@
 import { unprocessable } from "../errors.ts";
-import { principalFor } from "../authz-read.ts";
 import { isAdmin } from "../access.ts";
 import { pausesInForce as butlerPausesInForce } from "../butler/pause.ts";
 import { resumeButlerPause } from "../butler/pause-acts.ts";
@@ -8,7 +7,6 @@ import { inspectRun, replayRun } from "../butler/replay.ts";
 import { createButlerDraft, editButlerDraft, publishButler, readSourceFormat } from "../butlers.ts";
 import { simulateButler } from "../butler/simulate.ts";
 import { readOnly } from "../read-only.ts";
-import { unauthenticated } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const butlers = {
@@ -27,9 +25,7 @@ export const butlers = {
    * There is deliberately no route that *creates* a run: a run comes from a delivery, and a Butler that
    * could be fired by a request would be an automation with a manual override nobody governed.
    */
-  "GET /api/butler-runs": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butler-runs": async ({ env, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -55,9 +51,7 @@ export const butlers = {
    * paying for. The reads below do gate, because they answer rather than act, and §5C makes a refused read
    * indistinguishable from an absent one.
    */
-  "POST /api/butlers": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/butlers": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       butler: await createButlerDraft(env, clock, who.orgId, who.userId, {
@@ -74,9 +68,7 @@ export const butlers = {
     });
   },
 
-  "PUT /api/butlers/:butlerId/draft": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "PUT /api/butlers/:butlerId/draft": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       butler: await editButlerDraft(env, clock, who.orgId, who.userId, params.butlerId, {
@@ -103,9 +95,7 @@ export const butlers = {
    * one thing this design must not do — or narrowing `isAdmin` for one caller. The gate stays where the
    * writable environment still exists, which is here.
    */
-  "POST /api/butlers/:butlerId/simulate": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/butlers/:butlerId/simulate": async ({ request, env, params, who }) => {
     // A Butler in another organization and one this person may not see answer identically (§5C).
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
@@ -130,9 +120,7 @@ export const butlers = {
     });
   },
 
-  "POST /api/butlers/:butlerId/publish": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/butlers/:butlerId/publish": async ({ env, clock, params, who }) => {
     return Response.json({
       published: await publishButler(env, clock, who.orgId, who.userId, params.butlerId),
     });
@@ -147,9 +135,7 @@ export const butlers = {
    * stopped. `pausesInForce` is the same function `triggerButlers` consults, so the list and the gate
    * cannot disagree.
    */
-  "GET /api/butlers": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butlers": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C, and the same answer `/api/policies` gives: a 403 would confirm that Butlers exist here.
       return Response.json(
@@ -194,9 +180,7 @@ export const butlers = {
    * number of times anybody ever edited a Butler — a list endpoint that returns every version of every
    * program is an export under another name. At most two bodies travel here, whatever the history.
    */
-  "GET /api/butlers/:butlerId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butlers/:butlerId": async ({ env, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -243,18 +227,14 @@ export const butlers = {
    * justification would be this Node writing down a decision nobody made — and this resume is the only
    * human judgement anywhere in a machine-placed pause.
    */
-  "GET /api/butler-pauses": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butler-pauses": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     return Response.json({ pauses: await butlerPausesInForce(env, who.orgId) });
   },
 
-  "POST /api/butler-pauses/:pauseId/resume": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/butler-pauses/:pauseId/resume": async ({ request, env, clock, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -299,9 +279,7 @@ export const butlers = {
    * An unknown mode is refused with the modes that exist rather than defaulted, because a default here is a
    * choice between an act that cannot duplicate and one that can.
    */
-  "GET /api/butler-runs/:runId/inspect": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butler-runs/:runId/inspect": async ({ env, clock, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -310,9 +288,7 @@ export const butlers = {
     return Response.json(inspected);
   },
 
-  "POST /api/butler-runs/:runId/replay": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/butler-runs/:runId/replay": async ({ request, env, clock, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -330,9 +306,7 @@ export const butlers = {
     return Response.json(await replayRun(env, clock, who.orgId, who.userId, params.runId));
   },
 
-  "GET /api/butler-runs/:runId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/butler-runs/:runId": async ({ env, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }

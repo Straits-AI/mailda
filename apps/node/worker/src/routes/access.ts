@@ -1,12 +1,10 @@
-import { principalFor } from "../authz-read.ts";
 import { assertAdmin, conferredBySupervision, grant, isAdmin, isGrantable, relationsOf, revoke } from "../access.ts";
 import { addTeamMember, createTeam, listTeams, membersOf, readTeam, removeTeamMember, renameTeam } from "../teams.ts";
-import { unauthenticated } from "./support.ts";
 import type { Call, Some } from "../router.ts";
 
-const teamMembership = async ({ request, env, clock, params }: Call<"POST /api/teams/:teamId/members" | "DELETE /api/teams/:teamId/members">): Promise<Response> => {
-  const who = await principalFor(env, clock, request);
-  if (who === null) return unauthenticated();
+const teamMembership = async (
+  { request, env, clock, params, who }: Call<"POST /api/teams/:teamId/members" | "DELETE /api/teams/:teamId/members">,
+): Promise<Response> => {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const act = request.method === "POST" ? addTeamMember : removeTeamMember;
   return Response.json({
@@ -17,9 +15,7 @@ const teamMembership = async ({ request, env, clock, params }: Call<"POST /api/t
 };
 
 export const access = {
-  "POST /api/access": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/access": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const relation = String(body.relation ?? "");
     if (!isGrantable(relation)) {
@@ -51,9 +47,7 @@ export const access = {
     return Response.json(outcome);
   },
 
-  "DELETE /api/access": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "DELETE /api/access": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const relation = String(body.relation ?? "");
     if (!isGrantable(relation)) {
@@ -83,9 +77,7 @@ export const access = {
    * **`org.admin` only, answering 404.** §5C, and the same answer `/api/policies` gives: who works here
    * and what they can reach is exactly the shape a 403 would confirm the existence of.
    */
-  "GET /api/people": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/people": async ({ env, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json(
         { error: "not_found", message: "No directory, or you do not have access to it." },
@@ -112,9 +104,7 @@ export const access = {
     });
   },
 
-  "GET /api/access": async ({ request, env, clock, url }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/access": async ({ env, url, who }) => {
     // Own relations need no admin — knowing what you hold is not privileged. Somebody else's does.
     const subjectId = url.searchParams.get("subject") ?? who.userId;
     if (subjectId !== who.userId && !(await isAdmin(env, who.orgId, who.userId))) {
@@ -158,18 +148,14 @@ export const access = {
    * grant. Emptying the team and revoking its tuples are the two acts that take its authority away, and both
    * are here. Migration 0032 carries it in full.
    */
-  "POST /api/teams": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/teams": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     // An absent name reaches `createTeam` as the empty string and is refused there with the four-part
     // message, rather than defaulted — a team this Node named for somebody would be a label nobody chose.
     return Response.json({ team: await createTeam(env, clock, who.orgId, who.userId, String(body.name ?? "")) });
   },
 
-  "GET /api/teams": async ({ request, env, clock }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/teams": async ({ env, who }) => {
     /*
      * Readable by any member, and that is a decision rather than an oversight.
      *
@@ -194,9 +180,7 @@ export const access = {
    * for a member, because nothing told it otherwise. A control that never reflects state is worse than no
    * control, so the roster is readable now.
    */
-  "GET /api/teams/:teamId/members": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/teams/:teamId/members": async ({ env, params, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -206,18 +190,14 @@ export const access = {
   "POST /api/teams/:teamId/members": teamMembership,
   "DELETE /api/teams/:teamId/members": teamMembership,
 
-  "POST /api/teams/:teamId/rename": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "POST /api/teams/:teamId/rename": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     return Response.json({
       team: await renameTeam(env, clock, who.orgId, who.userId, params.teamId, String(body.name ?? "")),
     });
   },
 
-  "GET /api/teams/:teamId": async ({ request, env, clock, params }) => {
-    const who = await principalFor(env, clock, request);
-    if (who === null) return unauthenticated();
+  "GET /api/teams/:teamId": async ({ env, params, who }) => {
     /*
      * `org.admin`, unlike the listing above, because this is where the roster is.
      *
