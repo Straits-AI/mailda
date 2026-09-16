@@ -32,7 +32,7 @@ import { withoutComments } from "../without-comments.ts";
  * from an environment variable, which would be a different mistake with a different argument against it.
  */
 
-const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
+const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/verbs/secrets.mjs");
 
 /** `recoveryCodes`' body, comments stripped, so nothing here matches prose about the code it checks. */
 function body(): string {

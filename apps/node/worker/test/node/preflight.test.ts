@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { cliSource } from "./support/cli-source.ts";
 
 import { BUDGETS } from "@mailda/budgets";
 
@@ -170,10 +170,7 @@ describe("whether a Node can name the version that answered", () => {
 });
 
 describe("the deploy consults it before anything can change", () => {
-  const cli = readFileSync(
-    join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs"),
-    "utf8",
-  )
+  const cli = cliSource()
     .split("\n")
     .filter((line) => {
       const trimmed = line.trimStart();

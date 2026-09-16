@@ -351,6 +351,8 @@ packages/budgets                       GENERATED — do not edit
 packages/runtime                       the clock, id and randomness seam
 packages/contract                      the route registry, its schemas, and command schemas
 packages/sdk                           GENERATED from the registry — one method per route
+packages/cli                           `mailda`: the dispatcher, `support.mjs`, one module per verb under
+                                       `verbs/`, and the pure parsers beside them (deploy-plan, preflight, backup)
 skills/mailda                          GENERATED — the Agent Skill, from the curated list
 packages/butler-ast                    the Butler AST: node set, checker, canonical serialization
 packages/evidence                      framed encryption for stored mail

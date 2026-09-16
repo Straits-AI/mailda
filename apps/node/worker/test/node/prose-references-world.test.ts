@@ -72,8 +72,8 @@ const NOT_FILES: ReadonlyArray<{ readonly file: string; readonly path: string; r
    */
   { file: "packages/cli/src/backup.mjs", path: "catalog.sql", why: "a file mailda backup writes" },
   { file: "packages/cli/src/backup.mjs", path: "index.json", why: "a file mailda backup writes" },
-  { file: "packages/cli/src/mailda.mjs", path: "catalog.sql", why: "the same, in the command that writes it" },
-  { file: "packages/cli/src/mailda.mjs", path: "index.json", why: "the same, in the command that writes it" },
+  { file: "packages/cli/src/verbs/backup.mjs", path: "catalog.sql", why: "the same, in the command that writes it" },
+  { file: "packages/cli/src/verbs/backup.mjs", path: "index.json", why: "the same, in the command that writes it" },
 
   // Written by the customer, or by a repository that consumes these instructions.
   { file: "Mailda-Full-Engineering-Blueprint.md", path: "mailda.yaml", why: "the butler source a customer authors" },

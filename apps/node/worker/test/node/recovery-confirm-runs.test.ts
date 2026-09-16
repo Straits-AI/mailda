@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const CLI = join(import.meta.dirname, "../../../../../packages/cli/src/mailda.mjs");
+import { CLI_ENTRY } from "./support/cli-source.ts";
+
+const CLI = CLI_ENTRY;
 
 /**
  * `recovery-codes confirm` can actually be run (#136 follow-up).
