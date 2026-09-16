@@ -493,9 +493,12 @@ restore drill on 16 September 2026 found by running it against a restored Node's
   that files and no rule (harmless) rather than a rule and no address (mail rejected). The mailbox is the
   organization's only one, or the `mailboxId` the request names; several and none named is refused.
 
-And the half-done case is resumable: MX already on the name that is entirely Cloudflare's own routing
-hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody else's mail
-host to refuse — which is what the proposal said about its own records after the scope refusal above.
+And the half-done case is resumable at every step: MX already on the name that is entirely Cloudflare's
+own routing hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody
+else's mail host to refuse — which is what the proposal said about its own records after the scope refusal
+above; the address row is `INSERT OR IGNORE`; and a rule already routing the exact address is kept rather
+than asked for again, which Cloudflare refuses as `2014 Duplicated Zone rule`. Each of the three was met on
+the drill, one run apart.
 
 ## Onboarding a domain for sending (#163 L2, write side)
 
