@@ -1493,3 +1493,226 @@ export function useSponsorMailboxes(userId: string | null): UseQueryResult<
     ...AUTHORIZATION_SENSITIVE,
   });
 }
+
+/* ------------------------------------------------ the Node's own Cloudflare grant (ADR 42, #162) ---- */
+
+/**
+ * Nineteen routes existed for this and no screen did.
+ *
+ * Every one of them was reachable only by `mailda provider …` — which is to say, by somebody who can open a
+ * terminal, install a CLI and hold an API token. The person these routes exist *for* is the operator who owns
+ * the Cloudflare account, and asking them to do that is asking them to be a different person.
+ *
+ * So this is the read and write layer for a screen. It adds no endpoint: `/setup` sends exactly what
+ * `mailda provider connect`, `… receiving` and `… sending` send, and gets the same refusals back in the same
+ * words. That is the parity ADR 12 asks for, and the CLI stays the surface for anyone who prefers it.
+ */
+
+export type ProviderState =
+  | "no_client" | "awaiting_consent" | "account_not_selectable" | "consent_granted" | "grant_refused";
+
+export interface ProviderBinding {
+  state: ProviderState;
+  /**
+   * Whether this Node saw the fact or was told it.
+   *
+   * `account_not_selectable` is the state a Node **cannot observe** — an administrator who has disabled
+   * public OAuth app access produces a consent screen with no account on it, and Cloudflare sends no error
+   * anywhere this Node can read. So the screen has to say which kind of fact it is showing, and a field that
+   * is always present is how that survives somebody forgetting.
+   */
+  evidence: "observed" | "reported";
+  clientId: string | null;
+  redirectUri: string | null;
+  registeredAt: string | null;
+  accountId: string | null;
+  grantedAt: string | null;
+  scopesGranted: string[] | null;
+  refusedDetail: string | null;
+}
+
+/** One permission to tick in Cloudflare's picker, and why this Node is asking for it. */
+export interface CeremonyScope {
+  scope: string;
+  why: string;
+  /**
+   * Whether Cloudflare publishes a read-only form of this permission.
+   *
+   * False for four of them, and the screen says so where it shows them. Otherwise an operator reading a list
+   * with `zone-settings.write` on it concludes this Node asked for more than it needed, when write was the
+   * only shape the permission comes in.
+   */
+  readOnlyExists: boolean;
+}
+
+export interface ProviderCeremony {
+  steps: string[];
+  redirectUri: string;
+  scopes: CeremonyScope[];
+  /** What in the printed steps this repository has not measured. Required by the contract, shown here. */
+  unmeasured: string;
+}
+
+export function useProvider(): UseQueryResult<
+  { provider: ProviderBinding; ceremony: ProviderCeremony }, Error
+> {
+  return useQuery({
+    queryKey: ["provider"],
+    queryFn: () => read<{ provider: ProviderBinding; ceremony: ProviderCeremony }>(GET("/api/provider")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+export interface RoutingRow {
+  domain: string;
+  /** Usually not the domain. A Node routing `inbox@mail.example.com` is configured on `example.com`. */
+  zone: string | null;
+  zoneId: string | null;
+  enabled: boolean | null;
+  status: string | null;
+  required: Array<{ type: string; name: string; content: string; priority: number | null }>;
+  /**
+   * Why this domain could not be answered for.
+   *
+   * A zone needing no records and a record list that could not be read are both an empty `required`, and
+   * this is the only thing that tells them apart — so the screen renders it rather than an empty row.
+   */
+  error: string | null;
+}
+
+export function useRouting(): UseQueryResult<{ routing: RoutingRow[] }, Error> {
+  return useQuery({
+    queryKey: ["provider-routing"],
+    queryFn: () => read<{ routing: RoutingRow[] }>(GET("/api/provider/email-routing")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/**
+ * What this Node would do to make a subdomain receive mail, before it does any of it.
+ *
+ * `digest` is the whole point: confirming carries it back, and the Node refuses unless the proposal it would
+ * act on *now* hashes to the same thing. A screen that showed a plan and then posted a bare "yes" would let
+ * an hour-old plan apply to a zone somebody has since changed.
+ */
+export interface ReceivingProposal {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  zoneRouting: string | null;
+  /**
+   * The zone this would also turn into a mail zone, or null when it already is one.
+   *
+   * The larger half, and separate for that reason: enabling Email Routing writes MX and SPF at the **apex**,
+   * which decides where the whole domain's mail goes rather than one subdomain's. When it is set, `creates`
+   * is empty — a zone that is not routing lists no MX yet — and the screen must not read that as "nothing
+   * will change".
+   */
+  enablesZone: string | null;
+  creates: Array<{ type: string; name: string; content: string; priority: number | null }>;
+  present: string[];
+  rule: string | null;
+  digest: string;
+  refusal: string | null;
+}
+
+export interface ReceivingOutcome {
+  domain: string;
+  written: string[];
+  /** Read back from Cloudflare. A write that answered 200 is not yet a record in DNS. */
+  confirmed: string[];
+  rule: string | null;
+  note: string | null;
+}
+
+export interface SendingProposal {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  onboarded: boolean;
+  /** An apex already onboarded that covers this name. Not the same as this name being done. */
+  coveredBy: string | null;
+  creates: string[];
+  leavesBehind: string[];
+  digest: string;
+  error: string | null;
+}
+
+/**
+ * A provider write, with the Node's refusal kept whole.
+ *
+ * These refusals are four-part — what, why, the fix, and often a receipt — and they are the deliverable when
+ * something will not proceed. Summarising one to "failed" would throw away the only sentence that tells an
+ * operator what to do next, which on this screen is the difference between finishing setup and opening the
+ * Cloudflare dashboard.
+ */
+async function providerAct<T>(
+  path: string,
+  method: "POST" | "PUT",
+  body?: unknown,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  const response = await apiFetch(path, {
+    method,
+    headers: { "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, value: (parsed ?? {}) as T };
+  const detail = parsed?.detail as { what?: string; why?: string; fix?: string } | undefined;
+  const words = [parsed?.message, detail?.what, detail?.why, detail?.fix]
+    .filter((one): one is string => typeof one === "string" && one !== "");
+  return {
+    ok: false,
+    message: words.length > 0 ? words.join(" ") : `This Node answered ${response.status}.`,
+  };
+}
+
+/** The client id and secret from the dashboard. The secret is never returned, and this discards any grant. */
+export const setProviderClient = (clientId: string, clientSecret: string) =>
+  providerAct<{ provider: ProviderBinding }>(at("PUT", "/api/provider/client"), "PUT", {
+    clientId, clientSecret,
+  });
+
+/** Begins a consent and answers with the URL to send a browser to. Nothing is granted by asking. */
+export const beginConsent = (scopes: string[]) =>
+  providerAct<{ authorize: { url: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
+
+/**
+ * Records that Cloudflare's consent screen listed no account.
+ *
+ * The operator's report, because this Node has no way to see it. Kept as a distinct act rather than folded
+ * into a generic failure so the state it produces stays labelled `reported` rather than `observed`.
+ */
+export const reportUnselectable = () =>
+  providerAct<{ provider: ProviderBinding }>(at("POST", "/api/provider/unselectable"), "POST");
+
+/** Asks Cloudflare which account this grant covers. Now also done during consent; this is the retry. */
+export const resolveProviderAccount = () =>
+  providerAct<{ account: { accountId: string | null; found: number; error: string | null } }>(
+    at("POST", "/api/provider/resolve-account"), "POST",
+  );
+
+async function proposalFor<T>(
+  path: string,
+  domain: string,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  try {
+    return { ok: true, value: await read<T>(`${path}?domain=${encodeURIComponent(domain)}`) };
+  } catch (failure) {
+    return { ok: false, message: failure instanceof Error ? failure.message : String(failure) };
+  }
+}
+
+export const receivingProposal = (domain: string) =>
+  proposalFor<{ proposal: ReceivingProposal }>(GET("/api/provider/receiving"), domain);
+
+export const onboardReceiving = (domain: string, digest: string, address: string) =>
+  providerAct<{ outcome: ReceivingOutcome }>(at("POST", "/api/provider/receiving"), "POST", {
+    domain, digest, address,
+  });
+
+export const sendingProposal = (domain: string) =>
+  proposalFor<{ proposal: SendingProposal }>(GET("/api/provider/sending"), domain);
+
+export const onboardSending = (domain: string, digest: string) =>
+  providerAct<{ proposal: SendingProposal }>(at("POST", "/api/provider/sending"), "POST", { domain, digest });
