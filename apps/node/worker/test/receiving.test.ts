@@ -89,6 +89,8 @@ function serving(opts: {
   existingMx?: Array<{ content: string }>;
   writtenMx?: Array<{ content: string }> | null;
   rules?: unknown[];
+  /** The enable answers success and leaves the zone off — the measured PATCH behaviour, for the refusal test. */
+  enableIsInert?: boolean;
 } = {}) {
   const calls: Array<{ url: string; method: string; body: string | null }> = [];
   let wrote = 0;
@@ -103,9 +105,13 @@ function serving(opts: {
 
     if (path.startsWith("/zones?name=example.test")) return ok([{ id: "zone_1", name: "example.test" }]);
     if (path.startsWith("/zones?name=")) return ok([]);
+    if (path.endsWith("/email/routing/enable") && method === "POST") {
+      if (opts.enableIsInert !== true) enabled = true;
+      return ok({ enabled, status: enabled ? "ready" : "unconfigured" });
+    }
     if (path.endsWith("/email/routing")) {
-      if (method === "PATCH") { enabled = true; return ok({ enabled: true, status: "ready" }); }
-      return ok({ enabled: enabled && opts.routingEnabled !== false, status: "ready" });
+      // Measured: a PATCH { enabled: true } answers success and changes nothing. Answered the same here.
+      return ok({ enabled, status: enabled ? "ready" : "unconfigured" });
     }
     if (path.endsWith("/email/routing/dns")) {
       // An un-routed zone lists nothing; enabling is what makes the records appear.
@@ -390,11 +396,26 @@ describe("onboarding it", () => {
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
     );
 
-    const patched = calls.findIndex((one) => one.method === "PATCH" && one.url.endsWith("/email/routing"));
+    const enabled = calls.findIndex((one) => one.method === "POST" && one.url.endsWith("/email/routing/enable"));
     const wrote = calls.findIndex((one) => one.method === "POST" && one.url.includes("/dns_records"));
-    expect(patched, "the zone was never enabled").toBeGreaterThanOrEqual(0);
-    expect(wrote, "records were written before the zone could list any").toBeGreaterThan(patched);
+    expect(enabled, "the zone was never enabled").toBeGreaterThanOrEqual(0);
+    expect(wrote, "records were written before the zone could list any").toBeGreaterThan(enabled);
     expect(outcome.written).toHaveLength(3);
+    // And the answer is read back: a PATCH is never sent, because it was measured to change nothing.
+    expect(calls.some((one) => one.method === "PATCH")).toBe(false);
+  });
+
+  it("refuses when the zone is still off after the enable, rather than writing records it will not route", async () => {
+    // A success that does nothing is the shape this refuses: the stub's enable is inert here, as the PATCH
+    // was measured to be on the drill, and the outcome has to be a refusal with nothing written.
+    serving({ routingEnabled: false });
+    const digest = await digestFor();
+    const calls = serving({ routingEnabled: false, enableRevealsMx: true, enableIsInert: true });
+    await expect(onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
+    )).rejects.toThrow(/E_RECEIVING_ZONE_STILL_OFF/);
+    expect(posted(calls, "/dns_records")).toEqual([]);
+    expect(posted(calls, "/email/routing/rules")).toEqual([]);
   });
 
   it("writes nothing when the proposal refuses", async () => {

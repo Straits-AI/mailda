@@ -113,7 +113,7 @@ paths, because a scope authorizes a path and the methods on it are not separatel
 | `GET /accounts/{}/queues/{}` | `queues.write` | `Queues Write \| Read`, or `Workers Scripts Write \| Read` |
 | `GET /accounts/{}/queues` | `queues.read` | `Queues Write \| Read`, or `Workers Scripts Write \| Read` — listed by #222 to find this Node's own queue by name |
 | `POST /accounts/{}/event_subscriptions/subscriptions` | `queues.write` | none published for an `email.sending` source. Measured 16 September 2026: refused with `queues.read`, created with `queues.write` |
-| `PATCH /zones/{}/email/routing` | `zone-settings.write` | `Zone Settings Write` — enables routing on the zone (#210) |
+| `POST /zones/{}/email/routing/enable` | `zone-settings.write` | `Zone Settings Write` — enables routing on the zone. **`PATCH /email/routing { enabled: true }`, which #210 shipped, answers `success: true` and leaves the zone `enabled: false, status: unconfigured`** — measured 16 September 2026 on `mailda.site`; the `POST` answered `enabled: true, status: ready`. Measured with the operator's token; through the grant unmeasured |
 | `POST /zones/{}/dns_records` | `dns.write` | `DNS Write` — the MX records receiving needs (#209); measured written on the #92 drill, 16 September 2026 |
 | `POST /zones/{}/email/routing/rules` | `email-routing-rule.write` | `Email Routing Rules Write`. Was carried as `zone-settings.write` by inference; measured refused under it (`10000 Authentication error`) on the #92 drill, 16 September 2026 |
 

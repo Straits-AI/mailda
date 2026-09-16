@@ -138,12 +138,15 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
   },
   "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
   /*
-   * Read to get the verdict, `PATCH`ed to turn a zone into a mail zone — one path, two verbs, and the write
-   * is why the scope is `zone-settings.write` rather than read.
+   * Read to get the verdict; `POST /enable` is what turns a zone into a mail zone. The `PATCH` this Node
+   * used to send answered success and changed nothing (measured, #92 drill), so the path is read-only now
+   * and the write is the `/enable` row below.
    */
   "/zones/{}/email/routing": {
     scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
   },
+  // Measured with the operator's token to enable (`enabled: true, status: ready`); through the grant unmeasured.
+  "/zones/{}/email/routing/enable": { scope: "zone-settings.write", reference: null },
   "/zones/{}/email/routing/dns": {
     scope: "zone-settings.write", reference: "Zone Settings Write | Zone Settings Read",
   },

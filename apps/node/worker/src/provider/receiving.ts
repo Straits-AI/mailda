@@ -3,7 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
-import { cloudflareGet, cloudflarePatch, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
+import { cloudflareGet, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
 
 /**
  * Onboarding a subdomain to **receive** mail (#163 L2, and the half #92's drill ran aground on).
@@ -290,14 +290,34 @@ export async function onboardReceiving(
    * records a subdomain needs are not knowable until it is on — which is why the proposal shows an empty
    * `creates` beside a non-null `enablesZone` rather than pretending to enumerate them.
    *
-   * `PATCH /email/routing` rather than `POST /email/routing/enable`: the latter is the endpoint Cloudflare
-   * marks deprecated.
+   * `POST /email/routing/enable`, and not `PATCH /email/routing { enabled: true }`, which this used to send
+   * on the argument that Cloudflare marks the former deprecated. Measured on the #92 drill, 16 September
+   * 2026, against `mailda.site`: the `PATCH` answers `success: true` and leaves the zone `enabled: false,
+   * status: unconfigured`; the `POST` answers `enabled: true, status: ready`. A success that does nothing
+   * is the shape this repository keeps meeting, so the answer is read back rather than trusted: a zone
+   * still disabled after the call is a refusal here, not a rule written to a zone that will not route.
+   *
+   * The enable runs whenever the zone is off, whether or not MX is already on the subdomain — the two are
+   * separate facts, and a resumed onboarding (records present, zone still off) was the case that showed it.
    */
   let records = proposal.creates;
-  if (proposal.enablesZone !== null && proposal.present.length === 0) {
-    await cloudflarePatch<{ enabled?: boolean }>(
-      env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing`, { enabled: true },
+  if (proposal.enablesZone !== null) {
+    await cloudflarePost<{ enabled?: boolean }>(
+      env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/enable`, {},
     );
+    const zoneNow = await cloudflareGet<{ enabled?: boolean; status?: string }>(
+      env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing`,
+    );
+    if (!zoneNow.ok || zoneNow.result.enabled !== true) {
+      throw unprocessable("E_RECEIVING_ZONE_STILL_OFF", {
+        what: `Email Routing on ${proposal.enablesZone} is still off after asking Cloudflare to enable it`,
+        why: zoneNow.ok
+          ? `the zone reports enabled=${String(zoneNow.result.enabled)}, status=${zoneNow.result.status ?? "?"}`
+          : zoneNow.error,
+        fix: "nothing was written on the subdomain and no rule was created. Enable Email Routing on the zone "
+          + "in the Cloudflare dashboard, then run the proposal again",
+      });
+    }
     const now = await cloudflareGet<Array<{
       type?: string; content?: string; priority?: number;
     }>>(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/dns`);
@@ -309,7 +329,7 @@ export async function onboardReceiving(
           + "proposal again, which will now see a routing zone.",
       };
     }
-    records = now.result
+    records = proposal.present.length > 0 ? [] : now.result
       .filter((one) => one.type === "MX")
       .map((one) => ({
         type: "MX", name: domain, content: one.content ?? "?", priority: one.priority ?? null,
