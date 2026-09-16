@@ -559,10 +559,19 @@ precisely why nothing objected: every resource was genuinely absent, so every di
 
 So the header carries the account **id and name** — an operator cannot tell `dc8d1b7d…` from `1e0170aa…` by
 eye, and telling them apart is the whole job at that moment — and `install` carries a second sentence saying
-that nothing of this name exists here, so a reader who meant to redeploy can recognise that they are pointed
-somewhere else. The verdict is not changed to a refusal: a first install on a new account is correct and
-unremarkable, and it is *the same observation* as a wrong-account deploy. A plan that cannot resolve an
-ambiguity should hand it to the reader rather than settle it in the reassuring direction.
+that nothing of this name exists here.
+
+**That sentence accused, in its first version**, and was wrong for a day: it said *"you are pointed at the
+wrong account"*. One account holds more than one Node, which [#207][207] measured on purpose — `env.test`
+deploys as `mailda-test` with its own `mailda-test-*` resources beside `mailda` — so an absent Worker name
+means a first install, and a first install reads two ways no plan can separate: a new Node where it belongs,
+whether or not others are already here, or a deploy into an account nobody meant. Naming one of them is a
+guess dressed as a finding, and it lands on the operator doing the ordinary thing.
+
+The verdict is not changed to a refusal either. A plan that cannot resolve an ambiguity hands it to the
+reader; it does not settle it in the reassuring direction, and it does not settle it in the alarming one.
+
+[207]: https://github.com/Straits-AI/mailda/issues/207
 
 `null` prints nothing, which is the single-account case where wrangler picks and there is nothing to confuse.
 An "account: unknown" line there would manufacture a doubt the situation does not contain.

@@ -327,16 +327,27 @@ describe("which account the plan is about", () => {
     expect(rendered).toContain("Mystraits.ai@gmail.com's Account");
   });
 
-  it("says nothing exists here, on the verdict that looks identical to a wrong account", () => {
+  it("states both readings of a first install, and accuses of neither", () => {
+    /*
+     * The first version of this sentence said *"you are pointed at the wrong account"*, and that is false in
+     * a case #207 measured on purpose: a second Node in one account, `env.test` deploying as `mailda-test`
+     * with its own `mailda-test-*` resources beside `mailda`. An absent Worker name means a first install,
+     * and a first install reads two ways that no plan can separate — a new Node where it belongs, or a
+     * deploy nobody meant. Picking one is a guess dressed as a finding, and it lands on the operator doing
+     * the ordinary thing.
+     */
     const rendered = renderPlan(planFor({
       configText: CONFIG, inventory: emptyAccount(),
-      account: { id: "acc_wrong", name: "Somebody Else" },
+      account: { id: "acc_somewhere", name: "Some Account" },
     }));
 
-    // A first install is a correct verdict on a new account and is exactly what a wrong-account deploy looks
-    // like. The plan cannot resolve that, so it hands the distinction over rather than reassuring.
-    expect(rendered).toContain("wrong account");
-    expect(rendered).toContain("second one");
+    // Both readings present, so the reader is given the ambiguity rather than somebody's guess at it.
+    expect(rendered).toContain("one more beside others");
+    expect(rendered).toContain("account nobody meant");
+    // And the check that actually resolves it.
+    expect(rendered).toContain("Check the id above");
+    // Never the accusation: a second Node in the right account is ordinary, and #207 measured it.
+    expect(rendered).not.toContain("wrong account");
   });
 
   it("says nothing about an account when there was only one to pick", () => {
