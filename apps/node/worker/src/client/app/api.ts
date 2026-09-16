@@ -1447,6 +1447,8 @@ export interface ProviderBinding {
   accountId: string | null;
   grantedAt: string | null;
   scopesGranted: string[] | null;
+  /** Asked for today and not held: a grant from before the ceremony's list grew. Re-consent clears it. */
+  scopesMissing: string[];
   refusedDetail: string | null;
 }
 

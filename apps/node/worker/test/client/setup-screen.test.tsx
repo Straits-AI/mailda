@@ -61,6 +61,7 @@ function binding(overrides: Record<string, unknown> = {}) {
     accountId: "acc_one",
     grantedAt: "2026-09-02T00:00:00.000Z",
     scopesGranted: ["zone.read", "dns.write"],
+    scopesMissing: [],
     refusedDetail: null,
     ...overrides,
   };

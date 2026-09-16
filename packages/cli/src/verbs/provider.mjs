@@ -500,6 +500,12 @@ export async function provider(argv) {
       process.stdout.write(`   ${key}: ${JSON.stringify(value)}\n`);
     }
   }
+  if (state.scopesMissing.length > 0) {
+    process.stdout.write(
+      `\n   this grant predates a scope this Node now asks for: ${state.scopesMissing.join(", ")}\n`
+      + `   authorize again: mailda provider --scopes ${steps.scopes.map((one) => one.scope).join(",")}\n`,
+    );
+  }
   if (state.state === "no_client") {
     process.stdout.write(`\n   redirect URI: ${steps.redirectUri}\n\n`);
     steps.steps.forEach((line, at) => process.stdout.write(`   ${at + 1}. ${line}\n`));

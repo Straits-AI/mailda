@@ -233,7 +233,13 @@ refusal is the shape a Node can act on: onboard first, subscribe second, and the
 before the first. `events.subscription_creatable_by_wrangler` stays **0** — re-measured the same day, wrangler
 4.118.0 still lists no such source — which is why the settings table names the API path and not a command.
 
-**Not measured:** which OAuth scope authorises the `POST`. This run used the operator's token, which holds
+**Measured the same afternoon, through the Node's own grant** (#222 built, deployed as version `22d44c2b`):
+the `POST` with a grant holding `queues.read` — and every other scope the ceremony asked for — answered
+`10000 Authentication error`. So the read scope that lists subscriptions does not create one, and the
+ceremony now asks for `queues.write` instead. Whether *that* is enough is the measurement the next consent
+makes; the OAuth client already carries it (`cloudflare-oauth-scopes.md`), so no dashboard visit is needed.
+
+**Was not measured before that:** which OAuth scope authorises the `POST`. This run used the operator's token, which holds
 every scope. The Node's grant holds `queues.read`, which `cloudflare-grant-reach.md` established is enough
 to *list*; whether `queues.write` is enough to create — or whether it needs something Email Service owns, as
 the sending endpoints turned out to — is one probe with a re-consent in front of it, and it is what building

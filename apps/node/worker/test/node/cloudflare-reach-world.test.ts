@@ -120,17 +120,19 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
    */
   "/zones/{}/email/routing/rules": { scope: "zone-settings.write", reference: null },
   "/zones/{}/dns_records": { scope: "dns.write", reference: "DNS Write" },
+  // Read to know whether a send's outcome would be seen; `POST`ed to make it so (#222). `queues.read` was
+  // measured refused for the write, so the scope is the write form and the read rides on it.
   "/accounts/{}/event_subscriptions/subscriptions": {
-    scope: "queues.read",
+    scope: "queues.write",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/accounts/{}/queues/{}": {
-    scope: "queues.read",
+    scope: "queues.write",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   // Listed to find this Node's own events queue by name, for the subscription it creates (#222).
   "/accounts/{}/queues": {
-    scope: "queues.read",
+    scope: "queues.write",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
@@ -161,7 +163,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope));
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "dns.write", "email-sending.write", "queues.read",
+      "account-settings.read", "dns.write", "email-sending.write", "queues.write",
       "registrar-domains.read", "zone-settings.write", "zone.read",
     ]);
 

@@ -243,6 +243,7 @@ export const providerStateResponse = z.object({
     accountId: z.string().nullable(),
     grantedAt: isoDate.nullable(),
     scopesGranted: z.array(z.string()).nullable(),
+    scopesMissing: z.array(z.string()),
     refusedDetail: z.string().nullable(),
   }).strict(),
 }).strict();

@@ -696,6 +696,21 @@ export function Setup() {
         </p>
       ) : null}
 
+      {connected && binding.scopesMissing.length > 0 ? (
+        /*
+          A grant that works and is short a scope this Node asks for now. The consent block below the
+          connection is the same one a first authorization uses; the sentence is what makes an operator
+          who was told "connected" understand why one thing on this screen still refuses.
+        */
+        <>
+          <p className="notice" role="status">
+            This grant was made before this Node asked for{" "}
+            <span className="mono">{binding.scopesMissing.join(", ")}</span>. What needs it is refused until
+            you authorize again — the same steps, once more.
+          </p>
+          <Consent ceremony={ceremony} refresh={refresh} />
+        </>
+      ) : null}
       {connected
         ? <Connected provider={binding} refresh={refresh} />
         : (
