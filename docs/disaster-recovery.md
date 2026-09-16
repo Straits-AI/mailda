@@ -316,8 +316,9 @@ receipt names, and anything that never reached ingress.
 - **restore-to-readable**: how long until the mail can be decrypted and verified in the new account. Measured
   below, with the caveat that makes the figure worth less than it looks.
 - **restore-to-receiving**: how long until the Node accepts new mail again. Needs a domain, Email Routing bound
-  to the zone's MX, and DNS propagation — the last of which is not the product's to control. **Unmeasured**,
-  and it should stay unmeasured rather than be estimated.
+  to the zone's MX, and DNS propagation — the last of which is not the product's to control. **Measured on
+  the third drill**, 16 September 2026, below: the restored Node accepted a message from outside the account
+  through a rule its own restored grant wrote.
 
 ## What this runbook has established, and what it has not
 
@@ -386,8 +387,7 @@ than ours. A three-minute figure would describe a run nobody has had; a several-
 bugs that are fixed. The honest statement is: the sequence is about three minutes of work on a Node this
 size, and it has been run successfully exactly once.
 
-**Restore-to-receiving remains unmeasured.** It needs a domain, Email Routing bound to the zone's MX, and DNS
-propagation, and the last is not the product's to control.
+**Restore-to-receiving was unmeasured here**, and is measured on the third drill below.
 
 ### A second backup, 15 September 2026 — and what it caught
 
@@ -455,3 +455,75 @@ reached ingress. Neither is visible to a row-driven verifier, and the inventory 
 This drill also says nothing about scale. Three objects and 395 rows exercise every step in the sequence and
 none of the limits — a mailbox-sized restore has a D1 import size to respect and a bucket copy that must not
 be one request per object.
+
+## The third drill, 16 September 2026 — same account, a real domain, and mail arriving at the restored Node
+
+The two things the second drill could not establish were **restore-to-receiving** and **anything about
+scale**. This drill took the first and measured the shape of the second. It ran inside one Cloudflare account
+(`Swmengappdev`), which Email Routing forces: a rule can only name a Worker in the zone's own account, so a
+cross-account restore cannot receive on a zone it does not own. Cross-account was drilled on 2 September;
+this one is the same sequence with a second Node beside the live one, and `mailda.site` — registered into
+this account the day before, carrying no mail — as the domain.
+
+### The sequence, timed
+
+| step | measured | notes |
+| --- | --- | --- |
+| backup with `--verify`: 756 rows (411 KB), 86 objects | **65 s** | 84 verified, 0 faults; 2 stranded draft bodies reported as unaccounted, correctly |
+| first install of the destination (`mailda-drill`: deploy, 54 migrations, consumer) | **95 s** | the config edited in two places, as `deploy-drill-live-account.md` says a second Node costs |
+| catalog restore, `d1 execute --file`, 4,207 rows written | **5 s** | the second drill's 40 s for 395 rows was wrangler start-up, not rows |
+| evidence copy, 86 objects / 376 KB, `wrangler r2 object get \| put` | **461 s — 5.4 s per object** | start-up-bound, not byte-bound: two wrangler invocations per object. A 10,000-message mailbox this way is about fifteen hours |
+| redeeming one recovery code (typed by a person) | seconds | `2 key generation(s) installed, 2 of them replacing a generation this Node had reserved and never sealed under` |
+| `verify-evidence`, 84 objects in 3 batches | **64 s** | 0 faults; the restored Node signed the source's administrator in |
+| receiving onboarding through the restored grant | four runs, see below | |
+| a message from outside the account to `inbox@mailda.site` | **accepted** | 7,032 bytes, `accepted_at 16:54:08Z`, the ninth receipt on a Node restored with eight |
+
+**RPO** is the backup's age, as before. **Restore-to-readable RTO**, for a Node this size and with no defects
+in the way, is the sum of the rows above: about **twelve minutes**, of which eight are the per-object copy.
+**Restore-to-receiving RTO** adds the receiving onboarding and DNS — the rule was live within a minute of the
+onboarding completing, and the message arrived within the hour it was sent. Neither figure is a promise: the
+copy scales with objects at a rate the tool decides, and the onboarding on this drill took four runs because
+of the defects it found.
+
+### What it found — four defects in the receiving step, none visible from reading
+
+The receiving onboarding (#209, #210) had never been run through a grant. Each run found one thing:
+
+1. **The routing rule needs `email-routing-rule.write`.** The reach table carried the rules endpoint under
+   `zone-settings.write` by inference; a grant holding that and `dns.write` wrote the MX records and was
+   refused the rule with `10000 Authentication error`. The scope was not on the OAuth client either, and the
+   re-consent answered `invalid_scope` until it was added in the dashboard. The ceremony asks for it now.
+2. **A half-done onboarding refused to resume.** The next proposal read the MX this Node had just written and
+   said *"already has MX, so it is already pointed at a mail host"*. Cloudflare's own routing hosts now read
+   as this Node's earlier attempt: kept, not rewritten. The same for the address row and the rule, each met
+   one run later.
+3. **Nothing registered the address on the Node.** The rule named `inbox@mailda.site`; ingress resolves a
+   recipient against `addresses` before reading a byte, and no product path had ever inserted a row — the
+   live Node's two were put there by hand. The message would have been rejected as `unknown_recipient` by
+   the very rule that delivered it. The onboarding writes the row now, before Cloudflare is asked.
+4. **The enable did nothing.** `PATCH /email/routing { enabled: true }` answers `success: true` and leaves
+   the zone `enabled: false, status: unconfigured`; only `POST /email/routing/enable` enables it. The Node
+   sends the `POST` and reads the zone back, refusing if it is still off.
+
+Two more, outside receiving: the deploy gate's version override did not reach a freshly created Worker
+within its fifteen-second retry (the canary was promoted by hand, as the gate's own `fix` says to), and the
+consent state a URL carries expires faster than a URL handed across a chat gets clicked.
+
+### Torn down
+
+In the runbook's unwind order, with the drill's names: the routing rule on `mailda.site` first, because a rule
+to a deleted Worker is the inert rule this whole layer exists to avoid; then consumer, Worker, the 86 copied
+objects plus the one the restored Node had received, the bucket, the database, the queue, the Workflow. The
+live Node's plan reads *redeploy, nothing to do* afterwards and its `doctor` is `ok`. `mailda.site` keeps
+Email Routing enabled with its MX at the apex and no rule — mail to it is refused by Cloudflare rather than
+routed anywhere — and keeps the sending subscription the live Node created for it.
+
+### What this drill still does not establish
+
+- **The copy at scale.** 5.4 s per object is the cost of the tool, not of R2; an S3-API copy (`rclone`, or an
+  R2 bucket-to-bucket job) was not measured, and is the number a mailbox-sized restore actually needs.
+- **The catalog import's wall.** 411 KB imported in 5 s. `wrangler d1 execute --file` has a size it refuses
+  at, and this drill did not reach it.
+- **Cross-account receiving.** Structurally impossible for a zone the destination does not own; a customer
+  moving accounts moves the zone first, and that move was not drilled.
+
