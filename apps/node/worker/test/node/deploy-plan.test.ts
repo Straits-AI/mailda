@@ -299,6 +299,59 @@ describe("the five dispositions, and what each one costs when the plan says the 
   });
 });
 
+describe("which account the plan is about", () => {
+  /*
+   * ## The deploy this exists because of
+   *
+   * On 16 September 2026 a Node was deployed into the wrong Cloudflare account. `wrangler deploy` refused
+   * non-interactively — *"More than one account available"* — listed four, and the wrong id was supplied
+   * back to it. A complete Node was provisioned in an account that had never held one: Worker, D1, R2,
+   * queue, Workflow, and a cron firing every minute.
+   *
+   * **Nothing objected, because nothing was wrong.** Every resource was genuinely absent, so every
+   * disposition was genuinely `create` and the verdict was genuinely `install`. The plan was correct and
+   * useless: four accounts produce four plans whose text is identical, and the header named only the Worker.
+   *
+   * So these two assertions are about the difference between a plan being right and a plan being *readable
+   * as right by somebody who could be wrong* — which is the only kind of correctness a pre-flight has.
+   */
+  it("names the account in the header, because four of them render the same plan", () => {
+    const rendered = renderPlan(planFor({
+      configText: CONFIG,
+      inventory: emptyAccount(),
+      account: { id: "dc8d1b7da0b7adc9a295faad8e519458", name: "Mystraits.ai@gmail.com's Account" },
+    }));
+
+    expect(rendered).toContain("dc8d1b7da0b7adc9a295faad8e519458");
+    // The name too: an operator scanning a plan cannot tell two hex ids apart, and that is the whole failure.
+    expect(rendered).toContain("Mystraits.ai@gmail.com's Account");
+  });
+
+  it("says nothing exists here, on the verdict that looks identical to a wrong account", () => {
+    const rendered = renderPlan(planFor({
+      configText: CONFIG, inventory: emptyAccount(),
+      account: { id: "acc_wrong", name: "Somebody Else" },
+    }));
+
+    // A first install is a correct verdict on a new account and is exactly what a wrong-account deploy looks
+    // like. The plan cannot resolve that, so it hands the distinction over rather than reassuring.
+    expect(rendered).toContain("wrong account");
+    expect(rendered).toContain("second one");
+  });
+
+  it("says nothing about an account when there was only one to pick", () => {
+    /*
+     * Null is the single-account case, where wrangler chooses and there is nothing to confuse. Printing
+     * "account: unknown" there would manufacture a doubt the situation does not contain — the same mistake
+     * as an empty ledger rendered as an unreadable one.
+     */
+    const rendered = renderPlan(planFor({ configText: CONFIG, inventory: liveAccount() }));
+
+    expect(rendered).not.toContain("account ");
+    expect(rendered).toContain("A redeploy.");
+  });
+});
+
 describe("the plan's verdict", () => {
   it("says install on an empty account, with four creates", () => {
     const plan = planFor({ configText: CONFIG, inventory: emptyAccount() });
@@ -568,6 +621,9 @@ describe("the words, which are what `--plan` actually delivers", () => {
   it("prints copyable commands in the measured order, with both names on the consumer step", () => {
     const text = renderPlan({
       worker: "mailda",
+      // Required rather than optional on `Plan`: `planFor` always sets it, to a value or to null, and a field
+      // a producer always writes should not be one a consumer has to guard.
+      account: null,
       verdict: "blocked",
       installed: true,
       items: [],

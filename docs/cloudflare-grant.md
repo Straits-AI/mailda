@@ -545,6 +545,32 @@ Stated here rather than left to be discovered:
 install runs before there is a Node to hold a grant, so the chicken-and-egg is resolved by using the
 credentials the operator already has. The grant is for a Node that exists.
 
+### The plan names the account, because for a while it did not
+
+The header said *"plan for the Worker `mailda`"* and stopped. A token that can see four accounts produces
+four plans whose text is **identical**, and the one fact distinguishing them was the one fact missing.
+
+Measured on 16 September 2026, by doing it: `wrangler deploy` was run directly rather than `mailda deploy`,
+refused non-interactively with *"More than one account available"*, listed four, and the wrong id was given
+back to it. A complete Node was provisioned into an account that had never held one — Worker, D1, R2, queue,
+Workflow, and a cron firing every minute. Nothing was lost, because nothing was there to lose, and that is
+precisely why nothing objected: every resource was genuinely absent, so every disposition was genuinely
+`create` and the verdict was genuinely `install`. The plan would have been correct and useless.
+
+So the header carries the account **id and name** — an operator cannot tell `dc8d1b7d…` from `1e0170aa…` by
+eye, and telling them apart is the whole job at that moment — and `install` carries a second sentence saying
+that nothing of this name exists here, so a reader who meant to redeploy can recognise that they are pointed
+somewhere else. The verdict is not changed to a refusal: a first install on a new account is correct and
+unremarkable, and it is *the same observation* as a wrong-account deploy. A plan that cannot resolve an
+ambiguity should hand it to the reader rather than settle it in the reassuring direction.
+
+`null` prints nothing, which is the single-account case where wrangler picks and there is nothing to confuse.
+An "account: unknown" line there would manufacture a doubt the situation does not contain.
+
+**`mailda deploy --plan` already refused an ambiguous account** and names the four ids to choose from
+(`preflight.mjs`). It was not what failed here — it was not run. That is worth stating rather than
+implying the guard was missing: the gap was that the correct command's output could not be checked afterwards.
+
 ### Three verbs, because a create-only plan is wrong in the expensive direction
 
 `packages/cli/src/deploy-plan.mjs` is pure — values in, values out — for `promotionVerdict`'s reason: the gate
