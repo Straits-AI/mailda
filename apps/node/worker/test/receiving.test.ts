@@ -185,6 +185,28 @@ describe("proposing to receive on a subdomain", () => {
     expect(proposal.creates).toEqual([]);
   });
 
+  it("resumes when the MX present are Cloudflare's own, rather than refusing its own half-done work", async () => {
+    /*
+     * The #92 drill: records written, rule refused for a missing scope, and the next proposal said
+     * "already has MX" about records this Node had put there. Cloudflare's routing hosts are not a mail host
+     * somebody else chose, so the proposal keeps them, creates nothing, and the confirm writes the rule.
+     */
+    const calls = serving({
+      existingMx: [{ content: "route1.mx.cloudflare.net." }, { content: "route2.mx.cloudflare.net." }],
+    });
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    expect(proposal.refusal).toBeNull();
+    expect(proposal.creates).toEqual([]);
+    expect(proposal.present).toHaveLength(2);
+
+    const outcome = await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+    );
+    expect(posted(calls, "/dns_records")).toHaveLength(0);
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
+    expect(outcome.rule).toBe("mailda mail.example.test");
+  });
+
   it("names an existing rule, which is how an inert one becomes visible", async () => {
     /*
      * **The defect, seen from the proposal side.** A rule exists, the subdomain has no MX, and every

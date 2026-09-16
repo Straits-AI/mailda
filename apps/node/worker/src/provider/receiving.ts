@@ -159,6 +159,14 @@ export async function receivingProposalFor(
   const found = rules.ok ? ruleFor(rules.result, domain) : undefined;
 
   const present = existing.ok ? existing.result.map((one) => one.content ?? "?") : [];
+  /*
+   * MX already there, and all of it Cloudflare's own routing hosts, is this onboarding **half done** — not a
+   * mail host to refuse. Measured on the #92 drill: the records were written, the rule's `POST` was refused
+   * for a scope the grant lacked, and the next proposal refused itself with *"already has MX"*, so the one
+   * operation that had failed could not be run again. The records are kept, nothing is written twice, and
+   * the rule is what the confirm then creates. MX pointing anywhere else is still somebody's mail host.
+   */
+  const ours = present.length > 0 && present.every((one) => /\.mx\.cloudflare\.net\.?$/.test(one));
   const proposal = await blank({
     zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
     creates: present.length > 0 ? [] : creates,
@@ -167,7 +175,7 @@ export async function receivingProposalFor(
     refusal: !existing.ok
       ? `this Node could not read the MX already on ${domain}: ${existing.error}. It will not write records `
         + "it cannot first rule out having written"
-      : present.length > 0
+      : present.length > 0 && !ours
         ? `${domain} already has MX (${present.join(", ")}), so it is already pointed at a mail host`
         : null,
   });
@@ -230,7 +238,7 @@ export async function onboardReceiving(
    * marks deprecated.
    */
   let records = proposal.creates;
-  if (proposal.enablesZone !== null) {
+  if (proposal.enablesZone !== null && proposal.present.length === 0) {
     await cloudflarePatch<{ enabled?: boolean }>(
       env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing`, { enabled: true },
     );
