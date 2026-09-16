@@ -486,6 +486,11 @@ restore drill on 16 September 2026 found by running it against a restored Node's
 - **The rule needs `email-routing-rule.write`.** The reach table had carried the rules endpoint as covered
   by `zone-settings.write`, by inference. A grant holding that and `dns.write` wrote the records and was
   refused the rule with `10000 Authentication error`. The ceremony asks for the rule scope now.
+- **The enable did nothing.** `PATCH /email/routing { enabled: true }` — chosen because Cloudflare marks
+  `POST /email/routing/enable` deprecated — answers `success: true` and leaves the zone
+  `enabled: false, status: unconfigured`. The `POST` enables it. The Node sends the `POST` now and reads
+  the zone back, refusing with `E_RECEIVING_ZONE_STILL_OFF` if it is still off, rather than writing
+  records and a rule onto a zone that will not route.
 - **Nothing registered the address on the Node.** The rule named `inbox@mailda.site`; ingress resolves a
   recipient against the `addresses` table before reading a byte, and no product path had ever inserted a
   row there — the live Node's two were put in by hand. The onboarding now writes the row, in the same
