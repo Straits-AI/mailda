@@ -48,8 +48,7 @@ Two rules hold across the table:
 
 - The queue consumer is the one delivery-outcomes object still attached out of band, by a wrangler call
   rather than through the grant. Whether the API attaches it through the grant is unmeasured.
-- Whether `queues.write` is enough to create the subscription. `queues.read` was measured refused
-  (`10000 Authentication error`) through the Node's own grant on 16 September 2026, so the ceremony asks for
-  the write form now; a grant consented before that date has to be re-consented — `/setup` says so — and
-  that consent is the measurement.
+- A grant consented before 16 September 2026 is short of `zone-settings.write`, `dns.write` and
+  `queues.write`; `/setup`, `mailda provider` and `doctor` all say so and name the two steps (add them to the
+  OAuth client, authorize again). Measured that day: `queues.write` creates the subscription.
 - A custom hostname from Mailda, so the last dashboard-only row goes.
