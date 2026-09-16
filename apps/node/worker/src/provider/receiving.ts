@@ -344,7 +344,20 @@ export async function onboardReceiving(
     };
   }
 
-  const rule = await cloudflarePost<{ name?: string }>(
+  /*
+   * A rule already routing this exact address is kept, not duplicated: Cloudflare refuses the duplicate
+   * (`2014 Duplicated Zone rule`), and the #92 drill met that refusal on the third run of an onboarding
+   * whose first had written the rule and whose second had registered the address. The check is on the
+   * address, so a rule for a different address on the same domain still gets its own.
+   */
+  const rules = await cloudflareGet<CloudflareRule[]>(
+    env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules?per_page=50`,
+  );
+  const existing = rules.ok
+    ? rules.result.find((one) => (one.matchers ?? []).some((m) =>
+      m.field === "to" && typeof m.value === "string" && m.value.toLowerCase() === normalized))
+    : undefined;
+  const rule = existing ?? await cloudflarePost<{ name?: string }>(
     env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules`,
     {
       name: `mailda ${domain}`,
@@ -356,10 +369,12 @@ export async function onboardReceiving(
 
   return {
     domain, written, confirmed, rule: rule.name ?? null,
-    note: proposal.rule === null
-      ? null
-      : `a routing rule named ${proposal.rule} already existed for this domain. It was inert until now — `
-        + "the records it needed did not exist — and both rules will match from here.",
+    note: existing !== undefined
+      ? `a rule named ${existing.name ?? "?"} already routed ${normalized}, and was kept rather than duplicated.`
+      : proposal.rule === null
+        ? null
+        : `a routing rule named ${proposal.rule} already existed for this domain. It was inert until now — `
+          + "the records it needed did not exist — and both rules will match from here.",
   };
 }
 

@@ -244,6 +244,21 @@ describe("proposing to receive on a subdomain", () => {
     expect(count?.n).toBe(1);
   });
 
+  it("keeps a rule that already routes the address rather than asking Cloudflare for a duplicate", async () => {
+    // The #92 drill's third run: Cloudflare answers `2014 Duplicated Zone rule` to a second identical rule.
+    const calls = serving({
+      rules: [{ name: "mailda mail.example.test", matchers: [{ field: "to", value: "Inbox@mail.example.test" }] }],
+      existingMx: [{ content: "route1.mx.cloudflare.net." }],
+    });
+    const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    const outcome = await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
+    );
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(0);
+    expect(outcome.rule).toBe("mailda mail.example.test");
+    expect(outcome.note).toContain("kept rather than duplicated");
+  });
+
   it("refuses to choose a mailbox when there are several, and an address off the subdomain", async () => {
     serving();
     await testEnv.CATALOG.prepare(
