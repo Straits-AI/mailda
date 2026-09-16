@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSystemCtx } from "@mailda/runtime";
 import { utf8 } from "@mailda/evidence";
 
-import { putEvidence } from "../src/evidence-store.ts";
+import { putEvidence, sha256Hex } from "../src/evidence-store.ts";
 import { INVENTORY_REFERENTS, inventoryPage } from "../src/evidence-inventory.ts";
 import { scannedPrefixes } from "../src/reconcile.ts";
 
@@ -131,6 +131,39 @@ describe("the inventory covers every prefix this Worker writes", () => {
     const inventory = await everything();
 
     expect(inventory.objects.map((one) => one.key)).toEqual([`${ORG}/raw/orphan.eml`]);
+    expect(inventory.objects[0]?.recordedSha256).toBeNull();
+    expect(inventory.unaccounted).toBe(1);
+  });
+
+  it("accounts for an export's staged objects by the hash the export stamped on them (#216)", async () => {
+    /*
+     * A staged `.eml` has no row: `exports.manifest_key` names the manifest and nothing names the copies.
+     * The export stamps each one's plaintext hash into `customMetadata`, and that is what the inventory reads
+     * — so a finished export no longer reports every staged object as unaccounted on the incident path.
+     */
+    const exportId = ctx.id("exp");
+    const bytes = utf8("a staged copy");
+    const stored = await putEvidence(testEnv, `${ORG}/exports/${exportId}/msg_1.eml`, bytes, {
+      metadata: { sha256: await sha256Hex(bytes), receiptId: "msg_1" },
+    });
+
+    const inventory = await everything();
+
+    expect(inventory.objects.map((one) => one.key)).toEqual([`${ORG}/exports/${exportId}/msg_1.eml`]);
+    expect(inventory.objects[0]?.recordedSha256).toBe(stored.plaintextSha256);
+    expect(inventory.unaccounted).toBe(0);
+  });
+
+  it("does not let a stamp stand in for a row outside exports/", async () => {
+    // The mutation this refuses: reading the stamp for every segment, which would turn a `raw/` orphan
+    // carrying a plausible hash into an accounted object and hide it from the report.
+    const bytes = utf8("nobody's, but stamped");
+    await putEvidence(testEnv, `${ORG}/raw/stamped-orphan.eml`, bytes, {
+      metadata: { sha256: await sha256Hex(bytes) },
+    });
+
+    const inventory = await everything();
+
     expect(inventory.objects[0]?.recordedSha256).toBeNull();
     expect(inventory.unaccounted).toBe(1);
   });
