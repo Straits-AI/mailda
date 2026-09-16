@@ -29,6 +29,9 @@ disconnect.
 
 ## The ceremony, reduced rather than eliminated
 
+The full list of what a Node needs from the account — what this grant can do, what a person still must, and
+how `doctor` checks each — is [`cloudflare-settings.md`](./cloudflare-settings.md).
+
 The cost ADR 42 accepts, stated plainly: the operator creates an OAuth client in the Cloudflare dashboard and
 gives the Node two values. It is reduced by being *guided* — the Node prints the steps with its own redirect
 URI filled in and verifies the result, which is the difference between learning the dashboard and following

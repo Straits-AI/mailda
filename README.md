@@ -161,6 +161,12 @@ turned out to be theatre — is kept in [`docs/history.md`](./docs/history.md), 
 
 ## What it will need from you
 
+Every Cloudflare setting a Node depends on is listed once, with both ways to put it there, in
+[`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md). The intended experience is that an operator
+never opens the Cloudflare dashboard — the Node does the account work through its own grant, from `/setup`
+— and the dashboard path is kept for builders who would rather arrange the account by hand, with `doctor`
+verifying either the same way.
+
 | | |
 |---|---|
 | A Cloudflare account | Free to create |
@@ -334,6 +340,8 @@ docs/butler-engine.md                  what runs a Butler: the principal, the re
 docs/evidence-lifecycle.md             keys, re-sealing, reconciliation, the pipeline
 docs/message-search.md                 the two indexes and their authorization, why a searched page has no
                                        cursor, the date window and its four refusals, and the release step
+docs/cloudflare-settings.md            every Cloudflare setting a Node needs, from Mailda or by hand, and
+                                       the doctor check that verifies each
 docs/cloudflare-grant.md               why the Node is its own OAuth client, the guided ceremony, the five
                                        connection states and which one it cannot observe, and what is
                                        still owed
