@@ -883,7 +883,34 @@ export async function completeAuthorization(
     ],
   );
 
-  return { ok: true, error: null, detail: null, accountId, scopesGranted: granted, scopesDeclined: declined };
+  /*
+   * **Resolve the account here, rather than leaving it for the next command to discover.**
+   *
+   * `accountId` above comes from the token response, and that response is measured never to carry one
+   * (`oauth.token_response_names_account: 0`) — so it is null on every consent, including a re-consent that
+   * replaces a binding which already knew its account. Every surface then answers `E_PROVIDER_NO_ACCOUNT`
+   * until somebody runs `POST /api/provider/resolve-account`, which is a step an operator can only take if
+   * they already know it exists.
+   *
+   * It costs one `GET /accounts`, and the consent has just proven the grant works. Doing it at the one
+   * moment a person is definitely present removes a hidden step from every flow that follows.
+   *
+   * **Failure here is not failure of the consent.** The grant is stored and usable; only the account is
+   * unknown. Most ways of failing arrive here as a null `accountId` rather than a throw — an unreachable API
+   * (`cloudflareGet` catches that itself), a declined `account-settings.read`, or a grant spanning more than
+   * one account. One way does throw, and it is the one this Node has actually met: a client whose grant types
+   * omit Refresh Token yields a token response with no `refresh_token`, and if that response also carries no
+   * usable `expires_in`, `accessTokenFor` raises `E_PROVIDER_NO_REFRESH` on the very next read. That is a
+   * true statement about the grant and a useless one about the consent, which succeeded. So it is caught: a
+   * person who just authorized must not be told to authorize again.
+   */
+  const resolved = await resolveAccount(env, ctx, orgId).catch(() => null);
+
+  return {
+    ok: true, error: null, detail: null,
+    accountId: resolved?.accountId ?? accountId,
+    scopesGranted: granted, scopesDeclined: declined,
+  };
 }
 
 /**

@@ -530,8 +530,81 @@ describe("the callback, and the four ways it does not become a connection", () =
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
     expect(String((rejected[0] as PromiseRejectedResult).reason)).toContain("E_PROVIDER_STATE_CONSUMED");
-    // One authorization, one exchange. Two would mean the code was spent twice at Cloudflare's end.
-    expect(stub.calls).toHaveLength(1);
+    /*
+     * One authorization, one **exchange** — two would mean the code was spent twice at Cloudflare's end.
+     *
+     * Counted against the token endpoint rather than against every fetch. It was `stub.calls` flat, which
+     * said the same thing only while the exchange was the single call this function made; a successful
+     * consent now resolves the account too, and that read is not a code being spent. An assertion that
+     * counts *everything* to mean *one specific thing* breaks on the first honest addition, and would have
+     * read as a regression in the property it guards.
+     */
+    const exchanges = stub.calls.filter((one) => one.url === CLOUDFLARE_OAUTH.token);
+    expect(exchanges).toHaveLength(1);
+    expect((await providerStatus(testEnv)).state).toBe("consent_granted");
+  });
+
+  it("resolves the account during the consent, so no later command has to know to ask", async () => {
+    /*
+     * **The hidden step this removes.** `account_id` comes from the token response, which is measured never
+     * to carry one — so it was null after every consent, including a re-consent replacing a binding that
+     * already knew its account. Every surface then answered `E_PROVIDER_NO_ACCOUNT` until somebody ran
+     * `resolve-account`, which is a step an operator can only take if they already know it exists.
+     *
+     * Measured the hard way: five consents in one session, each followed by a command that failed for this
+     * reason.
+     */
+    await register();
+    answering(200, { access_token: "an-access", expires_in: 3600, scope: "a" });
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+
+    // The token exchange, then one account read that finds exactly one.
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify(
+        String(url).includes("oauth2/token")
+          ? { access_token: "an-access", refresh_token: "a-refresh", expires_in: 3600, scope: "a" }
+          : { success: true, result: [{ id: "acc_only", name: "Only" }] },
+      ), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const consent = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+
+    expect(consent.ok).toBe(true);
+    expect(consent.accountId, "the consent did not resolve the account").toBe("acc_only");
+    expect((await providerStatus(testEnv)).accountId).toBe("acc_only");
+    expect(calls.some((one) => one.url.includes("/accounts"))).toBe(true);
+  });
+
+  it("still reports a granted consent when the account read is refused", async () => {
+    /*
+     * The reachable failure, not an invented one: a person can decline `account-settings.read` on the consent
+     * screen and grant the rest, and then `GET /accounts` answers 403. The grant is stored and usable; only
+     * the account is unknown. That must not turn a successful authorization into an error an operator would
+     * answer by consenting again — which spends a second code at Cloudflare for nothing.
+     */
+    await register();
+    const { state } = await beginAuthorization(testEnv, atTime(SEPTEMBER_3 + 1000), ADMIN, ["a"]);
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).includes("oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "an-access", expires_in: 3600, scope: "a" }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        success: false, errors: [{ code: 9109, message: "Unauthorized to access requested resource" }],
+      }), { status: 403, headers: { "content-type": "application/json" } });
+    });
+
+    const consent = await completeAuthorization(testEnv, atTime(SEPTEMBER_3 + 2000), ORG, {
+      state, code: "the-code", error: null, errorDescription: null,
+    });
+
+    expect(consent.ok, "a failed account read must not fail the consent").toBe(true);
+    expect(consent.accountId).toBeNull();
     expect((await providerStatus(testEnv)).state).toBe("consent_granted");
   });
 
