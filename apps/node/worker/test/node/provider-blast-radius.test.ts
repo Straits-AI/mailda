@@ -60,7 +60,7 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
      * grant must not break — receiving, sealing, dispatching, indexing, a Butler run, a backup, a recovery.
      * If it does, #162's claim is no longer true and the drill has to be redone, not the list widened.
      */
-    expect(importers).toEqual(["doctor.ts", "index.ts"]);
+    expect(importers).toEqual(["doctor.ts", "routes/provider.ts"]);
   });
 
   it("has its table read by the migration, the module and the doctor, and nothing else", () => {

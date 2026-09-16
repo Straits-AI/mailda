@@ -348,6 +348,9 @@ packages/butler-ast                    the Butler AST: node set, checker, canoni
 packages/evidence                      framed encryption for stored mail
 apps/node/worker                       the single Worker (ADR 18): inbound mail, evidence store,
                                        authorization, auth, outbox sweeper, interface
+apps/node/worker/src/router.ts         the registry as router: one typed handler per registered route
+apps/node/worker/src/routes            the handlers, by part of the product: mail, sending, access,
+                                       governance, butlers, session, machine, provider, node
 apps/node/worker/src/auth              passwords, ES256 tokens, key rotation, sessions
 apps/node/worker/src/butler            the run engine: interpreter, effects, principal, release gate,
                                        recipient derivation, the latched pause and its two write acts

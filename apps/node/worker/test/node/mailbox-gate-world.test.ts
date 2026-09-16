@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { ROUTES, type RouteSpec } from "@mailda/contract/routes";
 
+import { handlerSites } from "./support/handlers.ts";
 import { reachableRelations } from "./support/mailbox-gates.ts";
 
 /**
@@ -42,13 +41,13 @@ import { reachableRelations } from "./support/mailbox-gates.ts";
  * ## What counts as consulting a mailbox relation
  *
  * The named gates, all of which answer *"may this principal do that with this mailbox"* and all of which read
- * `relationship_tuples`. Read from the handler file the way `route-registry.test.ts` reads it — this
- * repository's established idiom for holding `index.ts` to something — and bounded to the block between one
- * route match and the next.
+ * `relationship_tuples`. Read from the handler table (`support/handlers.ts`): each `"METHOD /path"` property
+ * in `src/routes/*.ts` is one handler, parsed rather than pattern-matched, so a block is exactly the code
+ * that answers the route and not whatever happened to sit between two regular expressions.
  *
  * ## The limits, stated because the first version stated one and had three
  *
- * - **One level deep.** A gate reached through a helper `index.ts` calls is invisible, which is why
+ * - **One level deep.** A gate reached through a helper the handler calls is invisible, which is why
  *   `POST /api/sends/:sendId/release` is in `GATED_INDIRECTLY` rather than found by the scan. That map is
  *   hand-written and nothing asserts it is complete; four families were missing when it was first written.
  * - **Gates called by their own names.** `import { maySend as mayGate }` defeats a substring scan, and no
@@ -60,14 +59,6 @@ import { reachableRelations } from "./support/mailbox-gates.ts";
  * routes skipped entirely, together hiding half the handler — are fixed rather than documented.
  */
 
-const INDEX = new URL("../../src/index.ts", import.meta.url).pathname;
-
-/**
- * Functions that decide something using a mailbox relation.
- *
- * `assertMaySend` and `maySend` are the send gate; `mayRead` and `authorize` the read gate;
- * `mailboxesWithRelation` and `readableMailboxes` bound a listing; `hasAnyRelation` is what they all reach.
- */
 const MAILBOX_GATES = [
   "maySend",
   "assertMaySend",
@@ -79,73 +70,10 @@ const MAILBOX_GATES = [
   "hasAnyRelation",
 ] as const;
 
-
-/**
- * Every handler block, as a **list** rather than a map, with the path it serves where that is derivable.
- *
- * ## Three ways the first version saw less than it claimed
- *
- * It examined 53 of 104 blocks and said it examined all of them:
- *
- * - **A `Map` keyed by path overwrote duplicates.** Fifteen paths carry more than one method — `/api/access`
- *   three times, `/api/teams`, `/api/sends`, `/api/matters` — so all but the last block of each was
- *   discarded. Adding a gate to `POST /api/teams` passed, because the `GET` block came later and replaced it.
- * - **Regex-matched routes were skipped entirely**, which is 34 blocks and most of the send, message, team
- *   and Butler surface. Adding a gate straight to `POST /api/cases/:caseId/:action` passed.
- * - **An aliased import defeats the substring test.** `import { maySend as mayGate }` and a `mayGate(…)` call
- *   passes, because the import line is outside every block.
- *
- * The first two are fixed here: blocks are a list, and a regex block resolves to its registry path by the
- * same `anonymise` route `route-registry.test.ts` uses. The third is **not** fixed and is stated instead —
- * a substring scan over text cannot follow a rename, and the honest answer is that this check assumes gates
- * are called by their own names. `MAILBOX_GATES` is asserted non-empty against the source, so a wholesale
- * rename fails loudly rather than quietly.
- */
-function handlerBlocks(): { path: string | null; source: string }[] {
-  const source = readFileSync(INDEX, "utf8");
-  const lines = source.split("\n");
-  const starts: { line: number; path: string | null }[] = [];
-
-  for (const [index, line] of lines.entries()) {
-    const literal = /url\.pathname === "([^"]+)"/.exec(line);
-    if (literal !== null) starts.push({ line: index, path: literal[1]! });
-
-    /*
-     * A regex route, resolved to the path template the registry declares. Bounded `.{0,300}?` for the reason
-     * `route-registry.test.ts` gives: a greedy match across this file backtracks catastrophically, which is
-     * how its first extractor hung rather than failed.
-     */
-    const literalRegex = /= (\/\^.{0,300}?\$\/)\.exec\(url\.pathname\)/.exec(line);
-    if (literalRegex !== null) {
-      starts.push({ line: index, path: anonymise(literalRegex[1]!.slice(2, -2).replace(/\\\//g, "/")) });
-      continue;
-    }
-    const composed = /new RegExp\(`(\^.{0,300}?\$)`\)/.exec(line);
-    if (composed !== null) {
-      starts.push({ line: index, path: anonymise(composed[1]!.replace(/\\\//g, "/")) });
-    }
-  }
-
-  return starts.map((start, index) => ({
-    path: start.path,
-    source: lines.slice(start.line, starts[index + 1]?.line ?? lines.length).join("\n"),
-  }));
+function handlerBlocks(): { path: string; file: string; source: string }[] {
+  return handlerSites().map((site) => ({ path: site.path, file: site.file, source: site.text }));
 }
 
-/**
- * A regex route's pattern reduced to the path template the registry uses.
- *
- * `^/api/sends/([^/]+)/cancel$` becomes `/api/sends/:x/cancel`, and an interpolated `${…}` segment reduces
- * the same way — what the pattern *matches* is one path segment, and which alphabet it accepts is
- * `id-prefix-world.test.ts`'s question rather than this file's.
- */
-function anonymise(pattern: string): string {
-  return pattern
-    .replace(/^\^/, "").replace(/\$$/, "")
-    .replace(/\((?:\$\{[^}]*\}|[^)]*)\)/g, ":x");
-}
-
-/** The registry's paths in the same shape, so a resolved regex route can be matched to its declaration. */
 function registryTemplate(path: string): string {
   return path.replace(/:\w+/g, ":x");
 }
@@ -158,11 +86,7 @@ describe("a mailbox-gated route says so in the registry", () => {
      * routes; the floor is far below that and far above zero.
      */
     const blocks = handlerBlocks();
-    expect(blocks.length, "no handler blocks found — has the router's shape changed?").toBeGreaterThan(90);
-    expect(
-      blocks.filter((one) => one.path !== null).length,
-      "no block resolved to a path, so nothing below can be matched to a declaration",
-    ).toBeGreaterThan(90);
+    expect(blocks.length, "no handler blocks found — has the table's shape changed?").toBe(ROUTES.length);
     expect(
       blocks.filter((one) => MAILBOX_GATES.some((gate) => one.source.includes(gate))).length,
       "no block calls any mailbox gate, so the gate list no longer matches the code — a rename would show "
@@ -188,7 +112,6 @@ describe("a mailbox-gated route says so in the registry", () => {
 
     const undeclared: string[] = [];
     for (const { path, source } of handlerBlocks()) {
-      if (path === null) continue;
       if (!MAILBOX_GATES.some((gate) => source.includes(gate))) continue;
       /*
        * `export` counts as declared alongside `mailbox`. `GET /api/exports/:exportId/objects/:objectId` calls
@@ -235,9 +158,8 @@ describe("a mailbox-gated route says so in the registry", () => {
 
     const undeclared: string[] = [];
     let gated = 0;
-    for (const { path, source } of handlerBlocks()) {
-      if (path === null) continue;
-      const relations = reach(source);
+    for (const { path, file, source } of handlerBlocks()) {
+      const relations = reach(file, source);
       if (relations.size === 0) continue;
       gated += 1;
       /*

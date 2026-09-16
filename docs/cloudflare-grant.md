@@ -4,7 +4,7 @@ How a Node comes to hold authority in its operator's Cloudflare account, what st
 in, and which of those states the Node **cannot observe**.
 
 Implemented by `apps/node/worker/src/provider/cloudflare-grant.ts` with `migrations/0053_provider_binding.sql`,
-surfaced by five routes in `src/index.ts` and two `doctor` findings. Decision record: **ADR 42**, with
+surfaced by five routes in `src/routes/provider.ts` and two `doctor` findings. Decision record: **ADR 42**, with
 [#108][108] for the chart it belongs to and [#162][162] for this layer. Measured facts:
 [`cloudflare-oauth-node-as-client.md`][r167] (#167) and [`cloudflare-oauth-endpoints.md`][r168].
 
@@ -217,7 +217,7 @@ Then restored, and the state read back `consent_granted`.
 **A drill is a fact about one afternoon.** What keeps the claim true is that nothing outside two files can
 reach the grant at all, and `test/node/provider-blast-radius.test.ts` holds that as a closed world over the
 whole source tree — by import *and* by raw reference to `provider_binding`, since SQL would reach the same row
-without naming the module. Permitted: `index.ts`, which manages it, and `doctor.ts`, which reports it. An
+without naming the module. Permitted: `routes/provider.ts`, which manages it, and `doctor.ts`, which reports it. An
 import added to `dispatch.ts` fails the test; so does raising the finding's severity to `degraded`, which
 would make `mailda deploy` fail on a revocation an operator performed deliberately.
 
