@@ -574,8 +574,48 @@ catch-all**, so a mistyped URL still gets a real 404 instead of an interface cla
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
 compile error rather than a path that serves HTML and renders nothing.
 
-Twelve routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/limits`,
-`/outbox`, `/audit`, `/log`, `/doctor`. With `/matters`, every API this Node exposes is reachable by a person.
+Fourteen routes now: `/`, `/queue`, `/approvals`, `/rules`, `/people`, `/matters`, `/butlers`, `/agents`,
+`/limits`, `/outbox`, `/audit`, `/log`, `/doctor`, `/setup`.
+
+This list said *twelve* and left out `/agents`, under a sentence claiming *"every API this Node exposes is
+reachable by a person"*. Neither was true, and the second was the expensive one: nineteen provider routes
+shipped with no screen at all, reachable only through `mailda provider …`. A count nobody can check drifts;
+the claim it supports drifts with it.
+
+What is still not reachable from a screen, stated so the next reader does not have to discover it: buying a
+domain, searching the registrar, the handover manifest, the ownership page, and the delivery-events read.
+`/setup` covers connecting, receiving and sending.
+
+### `/setup` (#210)
+
+Connecting the Node to the Cloudflare account it runs in, without opening the Cloudflare dashboard.
+
+The standard this screen is held to is not *"an administrator can do it"*. It is that an operator who has
+never opened a terminal can finish setup — which is what the nineteen routes with no screen made impossible,
+because the surface for all of them was a CLI. The two dashboard steps that remain are the two that cannot
+leave it: an OAuth client this Node is not allowed to create for itself, and a consent only a human may give.
+Everything after — the account read, the MX writes, the routing rule, the sending onboard — happens here.
+
+Propose then confirm, with the digest carrying between them. `GET /api/provider/receiving` returns a plan and
+a digest over it; confirming sends the digest back and the Node refuses unless the plan it would apply *now*
+hashes the same. A button that posted a bare "yes" would mean *apply whatever this has become*, which on a
+zone somebody has edited since is a different act from the one that was read.
+
+Three things the screen must not round off, each with a test:
+
+- **`enablesZone` with an empty `creates` is the largest act on the page, not the smallest.** Enabling Email
+  Routing writes MX and SPF at the **apex**, deciding where the whole domain's mail goes — and the record
+  list is empty in exactly that case, because a zone that is not routing yet lists none.
+- **An empty `confirmed` means no routing rule was made.** The Node re-reads DNS after writing and leaves no
+  rule when the read-back is empty, because a rule over absent records claims a domain receives mail that
+  never reaches Cloudflare.
+- **Refusals arrive whole.** They are four-part and the last part is what to do next, which here is the
+  difference between finishing setup and going back to the dashboard to guess.
+
+`/oauth/cloudflare/callback` now negotiates: HTML for a browser, JSON for everything else. It is where
+Cloudflare sends the operator after they agree — by construction a human is looking at it — and it answered
+with raw JSON, so the last step of a flow written in English ended in a parse. `error_description` is a query
+parameter reflected onto that page, on the one route with no session check, so it is escaped.
 
 ### `/matters` (#63, #64, #65, #81)
 

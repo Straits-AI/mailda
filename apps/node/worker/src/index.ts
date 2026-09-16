@@ -2547,6 +2547,22 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
         error: url.searchParams.get("error"),
         errorDescription: url.searchParams.get("error_description"),
       });
+      /*
+       * HTML for a browser, JSON for everything else.
+       *
+       * This route is reached by the operator's browser — that is what a redirect URI is — and it answered
+       * with `{"consent":{"ok":true,…}}`. The last step of connecting a Node showed raw JSON to somebody who
+       * had been reading English up to that point, and offered no way back.
+       *
+       * `Accept` rather than a second path, so `mailda provider` and this suite still parse what they parse.
+       */
+      if ((request.headers.get("accept") ?? "").includes("text/html")) {
+        const { consentPage } = await import("./ui.ts");
+        return new Response(consentPage(outcome), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
       return Response.json({ consent: outcome });
     }
 
