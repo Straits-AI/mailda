@@ -614,6 +614,20 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 .limits-ask { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; margin: 1rem 0; }
 .limits-ask .field-row { margin: 0; }
 
+/* Setup: connecting the Node to its Cloudflare account, as a sequence rather than a dashboard. The blocks
+   are numbered steps a person works down, so they carry the same separator the other stacked screens use. */
+.setup-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
+.setup-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
+.setup-block h3 { margin: .8rem 0 .4rem; font-size: .95rem; }
+.setup-steps { margin: .6rem 0 1rem; padding-left: 1.4rem; display: flex; flex-direction: column; gap: .35rem; }
+.setup-copy { display: inline-flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+/* Label above value, because both are long enough to wrap and a two-column grid would break the account id
+   mid-string on a narrow window. */
+.setup-facts { margin: .6rem 0; display: flex; flex-direction: column; gap: .5rem; }
+.setup-facts dt { font-size: .78rem; color: var(--dim); letter-spacing: .04em; text-transform: uppercase; }
+.setup-facts dd { margin: .15rem 0 0; word-break: break-word; }
+.setup-plan { margin: 1rem 0; border-left: 2px solid var(--accent); padding-left: .9rem; }
+
 /* Matters (#81): four coupled things down one page, each a block with its own heading. */
 .matter-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
 .matter-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
@@ -1362,6 +1376,73 @@ export function page(): string {
 </noscript>
 
 <script type="module" src="/app/app.js"></script>
+</body>
+</html>`;
+}
+
+/**
+ * The five characters, because this page reflects text this Node did not write.
+ *
+ * `errorDescription` on the callback is a **query parameter** — whatever is in the URL the browser arrived
+ * with, which anybody can set by sending somebody a link. It reaches the page below as prose. Interpolating
+ * it raw would be a stored-nothing, reflected-everything XSS on the one route that has no session check,
+ * which is a combination worth stating rather than leaving to a reader to notice.
+ *
+ * `'` as `&#39;` rather than `&apos;`: the named form is XML, and older HTML parsers do not know it.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * What Cloudflare's redirect lands a person on.
+ *
+ * The callback is reached by a **browser**, always — it is where Cloudflare sends the operator after they
+ * agree — and it answered with raw JSON. So the last step of connecting a Node showed
+ * `{"consent":{"ok":true,…}}` to somebody who had been following a screen in plain English up to that point,
+ * with no way back other than the browser's own back button.
+ *
+ * Content negotiation rather than a second route: `mailda provider` and the tests read this with a `fetch`
+ * whose `Accept` is not HTML and still get the JSON they parse. A person gets a sentence.
+ *
+ * No inline script and no inline style, like every other document this Node serves — `security-headers.ts`
+ * permits neither, and a page that needed an exception would cost the CSP its meaning for one screen.
+ */
+export function consentPage(
+  outcome: { ok: boolean; error: string | null; detail: string | null; accountId: string | null },
+): string {
+  const said = outcome.ok
+    ? "This Node is connected to your Cloudflare account."
+    : "Cloudflare did not grant this Node access.";
+  // Cloudflare's own words when there are any. The `detail` on a refusal names what to change, and a page
+  // that replaced it with an apology would be the one screen in this flow that tells an operator nothing.
+  const because = outcome.ok
+    ? (outcome.accountId === null
+      ? "The account could not be determined — open Setup and ask again."
+      : `Account ${escapeHtml(outcome.accountId)}.`)
+    : escapeHtml(outcome.detail ?? outcome.error ?? "No reason was given.");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="${faviconDataUri()}">
+<title>Mailda</title>
+<link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+<div class="rack">
+  <div class="rack-inner">
+    <p class="wordmark">${MARK_IS_AUTHORED ? markSvg({ size: 26 }) : ""}<span>Mailda</span></p>
+    <p><strong>${escapeHtml(said)}</strong></p>
+    <p>${because}</p>
+    <p><a href="/setup">Back to setup</a></p>
+    <p class="dim">This tab can be closed. If setup was open in another one, it will need a refresh.</p>
+  </div>
+</div>
 </body>
 </html>`;
 }

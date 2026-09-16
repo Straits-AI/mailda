@@ -319,8 +319,20 @@ export function Rail() {
       </ul>
 
       {/* The rail is also where an operator finds the diagnostic, because it is the screen they need when
-          something else has stopped working. */}
+          something else has stopped working — and, beside it, the screen that connects this Node to the
+          Cloudflare account it runs in. Both belong at the foot: they are where somebody goes when the
+          Node is not yet working or has stopped, rather than part of a day's mail. */}
       <ul className="rail-list rail-foot">
+        <li>
+          <Link
+            to="/setup"
+            className="rail-row"
+            activeProps={{ className: "rail-row current" }}
+            aria-current={path === "/setup" ? "page" : undefined}
+          >
+            <span className="rail-name dim">Setup</span>
+          </Link>
+        </li>
         <li>
           <Link
             to="/doctor"

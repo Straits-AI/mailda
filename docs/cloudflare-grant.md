@@ -38,22 +38,46 @@ five printed steps.
 operator already connected can check that the redirect URI Cloudflare holds is still the hostname this Node is
 reachable on.
 
-### The scope list is not printed, and that is deliberate
+### The scope list is printed now, and for four months it was not
 
-#162 asks for the required scope list prefilled. The Node cannot do that honestly yet. Cloudflare's scope
-names correspond to API-token permission names and are enumerated from `GET /client/v4/oauth/scopes`, which
-needs a token — and the only scope strings this repository has *seen* are the two in Cloudflare's own
-documentation example. Printing eight or ten plausible names beside those would be a fabrication an operator
-would discover by pasting them into a picker that does not offer them.
+This section used to say the scope list *"is not printed, and that is deliberate"*, arguing that Cloudflare's
+scope names are enumerated from an endpoint needing a token and that printing plausible ones would be a
+fabrication. That argument was sound and it has been settled: fourteen scopes were probed individually and
+all fourteen granted, recorded in [`cloudflare-oauth-scopes.md`][r-scopes]. `ceremony.scopes` carries the
+strings, and two real consents proved it had to — **a request naming no scope is granted none.**
 
-So the ceremony names **capabilities**, each with its reason and the layer that needs it, and the operator
-selects the matching scopes in the dashboard's own picker. `unmeasured` is a **required** field on the
-response for that reason: an operator following printed steps is entitled to know which parts of them this
-Node has verified, and a required field is how that survives a surface being rewritten.
+`readOnlyExists` rides beside each one because four have no `:read` form in Cloudflare's vocabulary. Without
+it an operator reading `zone-settings.write` on the list concludes this Node asked for more than it needed,
+when write was the only shape the permission comes in.
+
+`unmeasured` remains a **required** field: an operator following printed steps is entitled to know which
+parts of them this Node has verified, and a required field is how that survives a surface being rewritten.
+The `/setup` screen renders it under the scope table rather than in a document nobody opened.
 
 Read capabilities belong to this layer. Write authority belongs to the layer that provisions — an operator
 asked for write access to their whole Workers platform in order to display a read-only inventory would be
 right to refuse.
+
+[r-scopes]: receipts/cloudflare-oauth-scopes.md
+
+### The screen, and the nineteen routes that did not have one
+
+Every route in this document was, until #210, reachable only through `mailda provider …`. The person these
+routes exist for is whoever owns the Cloudflare account, and requiring them to install a CLI and hold an API
+token is requiring them to be somebody else — so the honest answer to *"can a non-technical operator run
+this?"* was no, regardless of how carefully each refusal was worded.
+
+`/setup` is the screen. It adds no endpoint: it sends what the CLI sends and renders the same refusals in the
+same words. Two steps stay in the dashboard because they cannot leave it — an OAuth client this Node is not
+allowed to create for itself, and a consent only a human may give.
+
+`GET /oauth/cloudflare/callback` negotiates on `Accept`: a page for a browser, JSON for everything else. That
+route is *always* reached by a browser — it is the redirect URI — and it answered with
+`{"consent":{"ok":true,…}}`, ending a flow written in English at a parse error a person has no way to read.
+Content negotiation rather than a second path, because Cloudflare holds exactly one redirect URI and a second
+would be one more thing to register wrongly. `error_description` is a query parameter reflected onto that
+page, on the one route here with no session check, so it is escaped — that is this route's one untrusted
+input, not a hygiene measure.
 
 ## Five states, and one of them is not a measurement
 

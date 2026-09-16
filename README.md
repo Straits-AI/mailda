@@ -2968,6 +2968,19 @@ The cost is one dashboard ceremony, stated rather than hidden: the operator crea
 the Node two values. It is reduced rather than eliminated — the Node prints the exact steps with the required
 scopes and verifies the result.
 
+**And there is a screen for it now** (#210). Nineteen provider routes shipped before one existed, reachable
+only through `mailda provider …` — so the honest answer to *"can a non-technical operator run this?"* was no,
+however carefully each refusal was worded. The person these routes exist for owns the Cloudflare account;
+requiring them to install a CLI and hold an API token is requiring them to be somebody else. `/setup` sends
+what the CLI sends and renders the same refusals in the same words. The two steps still in the dashboard are
+the two that cannot leave it: a client this Node is not allowed to create for itself, and a consent only a
+human may give.
+
+The callback negotiates on `Accept` for the same reason. It is the redirect URI, so a browser is *always*
+what reaches it, and it answered with `{"consent":{"ok":true,…}}` — a flow written in English ending at a
+parse error. `error_description` is a query parameter reflected onto that page, on the one route here with no
+session check, so it is escaped.
+
 And the destination is restated, because as written it was unreachable. It promised a journey without
 learning the dashboard for *every* customer, and account creation cannot be orchestrated for this product —
 so a customer without a Cloudflare account performs one named ceremony first. #108's own rule is to remove
