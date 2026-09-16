@@ -947,44 +947,13 @@ export async function escrowState(env: Env, orgId: string): Promise<{
 }
 
 /**
- * The two statements that make one sheet the active one: retire every other set, then confirm this one.
- *
- * ## Why both are conditional, and why the order is the way round it is
- *
- * The first version gated only the **audit entry** — `auditedBatch`'s gate wraps the entry's `INSERT`, and
- * nothing else. The `UPDATE` and the `DELETE` ran unconditionally, and that made the batch's atomicity beside
- * the point: all three statements *succeed*, because a zero-row `INSERT … SELECT` and a zero-row `UPDATE` are
- * not failures. So this interleaving destroyed an organization's entire escrow:
- *
- * ```
- *   before        X active, A pending
- *   confirm       reads a code from A
- *   rotation      deletes pending A, inserts pending B, keeps X
- *   confirm       audit insert gated off, UPDATE A → 0 rows,
- *                 DELETE everything that is not A → deletes B *and* X
- *   after         no recovery codes at all
- * ```
- *
- * The `EXISTS` puts the same predicate on the destructive statement that the gate puts on the entry, so a
- * confirmation whose set has vanished deletes nothing.
- *
- * **The delete runs first**, which is not a stylistic choice. Confirming the selected set first would make its
- * rows non-`NULL`, the `EXISTS` false, and the retirement a no-op — leaving both sheets live and the vault
- * openable by the sheet the operator was just told was retired. The two statements are in one transaction, so
- * "first" here means textual order within the batch, which is the order D1 applies them.
- *
- * Exported so `test/recovery-escrow.test.ts` can run them against a hand-built vanished-set state. That
- * interleaving cannot be produced by calling the public function in sequence, and the previous round of this
- * defect survived precisely because the test constructed a state one step short of it.
- */
-/**
  * Is any code in a set being restored from right now?
  *
  * Retirement deletes a set's rows, and a row deleted mid-restore takes the escrow the attempt needs to resume
  * with it — the attempt cannot settle and cannot be run again, which is the one state a resumable operation
  * must not be able to reach. Refusing for the few minutes a lease lasts is the cheaper failure.
  */
-export async function setHasLiveRestore(
+async function setHasLiveRestore(
   env: Env,
   orgId: string,
   keepSetId: string | null,
@@ -1018,6 +987,37 @@ const NO_LIVE_RESTORE_PENDING = `NOT EXISTS (
     SELECT 1 FROM recovery_restores r JOIN recovery_codes c ON c.id = r.code_id
      WHERE r.org_id = ? AND c.confirmed_at IS NULL AND r.state = 'started' AND r.started_at > ?)`;
 
+/**
+ * The two statements that make one sheet the active one: retire every other set, then confirm this one.
+ *
+ * ## Why both are conditional, and why the order is the way round it is
+ *
+ * The first version gated only the **audit entry** — `auditedBatch`'s gate wraps the entry's `INSERT`, and
+ * nothing else. The `UPDATE` and the `DELETE` ran unconditionally, and that made the batch's atomicity beside
+ * the point: all three statements *succeed*, because a zero-row `INSERT … SELECT` and a zero-row `UPDATE` are
+ * not failures. So this interleaving destroyed an organization's entire escrow:
+ *
+ * ```
+ *   before        X active, A pending
+ *   confirm       reads a code from A
+ *   rotation      deletes pending A, inserts pending B, keeps X
+ *   confirm       audit insert gated off, UPDATE A → 0 rows,
+ *                 DELETE everything that is not A → deletes B *and* X
+ *   after         no recovery codes at all
+ * ```
+ *
+ * The `EXISTS` puts the same predicate on the destructive statement that the gate puts on the entry, so a
+ * confirmation whose set has vanished deletes nothing.
+ *
+ * **The delete runs first**, which is not a stylistic choice. Confirming the selected set first would make its
+ * rows non-`NULL`, the `EXISTS` false, and the retirement a no-op — leaving both sheets live and the vault
+ * openable by the sheet the operator was just told was retired. The two statements are in one transaction, so
+ * "first" here means textual order within the batch, which is the order D1 applies them.
+ *
+ * Exported so `test/recovery-escrow.test.ts` can run them against a hand-built vanished-set state. That
+ * interleaving cannot be produced by calling the public function in sequence, and the previous round of this
+ * defect survived precisely because the test constructed a state one step short of it.
+ */
 export function confirmationStatements(
   env: Env,
   orgId: string,

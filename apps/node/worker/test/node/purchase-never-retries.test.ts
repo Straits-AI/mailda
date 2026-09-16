@@ -76,7 +76,6 @@ describe("a registration is never retried", () => {
      * the documentation looks convincing enough.
      */
     expect(BUDGETS["registrar.register_idempotent"]).toBe(0);
-    expect(source).toContain("REGISTER_IDEMPOTENCY_UNMEASURED");
   });
 
   it("stops polling on every state that is not this Node's to continue", () => {

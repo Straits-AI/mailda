@@ -1494,7 +1494,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     /*
      * **PUT, and it was POST until #85's route registry made the mismatch visible.**
      *
-     * `src/client/app/api.ts` has always sent PUT here — `policyAct(…, "PUT", …)` — and this guard answered
+     * `src/client/app/api.ts` has always sent PUT here — `act(…, "PUT", …)` — and this guard answered
      * only POST, so every attempt to edit a policy draft from the interface fell through to the 404 at the
      * foot of this handler and told the operator `not_found`. On a governance surface. Since the route
      * shipped.

@@ -77,9 +77,6 @@ const NOT_FILES: ReadonlyArray<{ readonly file: string; readonly path: string; r
 
   // Written by the customer, or by a repository that consumes these instructions.
   { file: "Mailda-Full-Engineering-Blueprint.md", path: "mailda.yaml", why: "the butler source a customer authors" },
-  { file: "AGENTS.md", path: "CONTEXT.md", why: "a layout this file tells a consuming repo to adopt" },
-  { file: "docs/agents/domain.md", path: "CONTEXT.md", why: "the same instruction, in the agent doc that defines it" },
-  { file: "docs/agents/domain.md", path: "CONTEXT-MAP.md", why: "the multi-context variant, explicitly conditional" },
 
   // Absent on purpose: the prose is about a file that was removed, or never existed.
   { file: "docs/receipts/deploy-button-install.md", path: "apps/node/worker/src/butler-probe.ts", why: "a deleted probe branch the receipt reports on" },

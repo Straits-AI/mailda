@@ -438,11 +438,6 @@ export async function caseMailboxHeldBy(
     : { mailboxId: row.mailbox_id, state: row.state, assignee: row.assignee };
 }
 
-/** What `steps.<as>` carries after a lookup, for the engine's documentation and for a refusal. */
-export function projectionOf(entity: (typeof LOOKUP_ENTITIES)[number]): readonly string[] {
-  return PROJECTION[entity];
-}
-
 /** A `lookup` whose `entityId` expression produced something that is not an id. */
 export function notAnId(node: string, entity: string, value: unknown): ButlerFault {
   return new ButlerFault("E_BUTLER_LOOKUP_NOT_AN_ID", {

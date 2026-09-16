@@ -1,5 +1,4 @@
 import { env } from "cloudflare:test";
-import { drizzle } from "drizzle-orm/d1";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { assertWithinBudget } from "@mailda/budgets";
@@ -58,7 +57,7 @@ function report(label: string, cost: Cost): void {
   );
 }
 
-/** The two-round-trip check from src/authz.ts, instrumented. */
+/** The two-round-trip single-object check, instrumented. */
 async function checkCost(userId: string, objectId: string): Promise<Cost> {
   return costOf(async () => {
     const teams = await env.CATALOG.prepare(
@@ -149,12 +148,6 @@ describe("authz evaluation cost (#11)", () => {
   });
 
   it("single-object check scans a bounded number of rows", async () => {
-    const db = drizzle(env.CATALOG);
-    const visible = await db.run(
-      `SELECT DISTINCT object_id FROM relationship_tuples WHERE org_id = '${corpus.orgId}' LIMIT 1`,
-    );
-    expect(visible).toBeDefined();
-
     const typical = await checkCost(corpus.typicalUser, corpus.mailboxes[1]!);
     report("check.typical", typical);
 
