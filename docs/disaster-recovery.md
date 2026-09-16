@@ -87,7 +87,11 @@ Three files come out:
 ```text
 catalog.sql       the D1 dump. The thing you restore — and it carries the composition manifests, the
                   audit chain and the wrapped vault escrow, because all three are rows.
-inventory.jsonl   every R2 object with the hash its plaintext should have.
+inventory.jsonl   every R2 object with the hash its plaintext should have. For raw mail, drafts and
+                  sends that hash is the row that references the object; for an export's staged
+                  copies, which no row names, it is the hash the export stamped on each object
+                  (#216). An object with neither is `unaccounted` — an orphan, and one the
+                  reconciler collects.
 index.json        what the other two should contain, with a SHA-256 of each.
 ```
 
