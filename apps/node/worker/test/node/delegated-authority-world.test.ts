@@ -47,7 +47,7 @@ const INTERSECTED: Record<string, string> = {
   mailboxQueues: "GET /api/cases: which mailboxes an agent is offered work to claim in",
   notificationsFor: "GET /api/notifications: mailbox-wide notices name the mailbox and what is due on it",
   sealManifest: "the seal-time parent check, which has no Principal in reach and decided the derivation",
-  route: "GET /api/sends: a manifest carries the subject line and every envelope recipient",
+  "GET /api/sends": "a manifest carries the subject line and every envelope recipient",
 };
 
 /**
@@ -82,6 +82,9 @@ const EXEMPT: Record<string, string> = {
     + "agents, which is `GET /api/agents` and withheld from every machine. Applying the term here would hide "
     + "exactly the rows the finding exists to show, since a grant the sponsor has lost is the one an operator "
     + "needs to see.",
+  "GET /api/people": "the people directory: every person with everything they hold, for an administrator. "
+    + "`isAdmin` above it is the authorization and is intersected; the read itself is about other people's "
+    + "authority, and bounding it by the caller's sponsor would hide the rows the directory exists to show.",
   mintAgent: "two sites, and neither evaluates a principal's own authority. One **is** the sponsor term, "
     + "asked up front: it reads the sponsor's tuples to refuse a grant the sponsor does not hold, so an "
     + "administrator finds out at mint rather than through an automation that quietly does nothing. "
@@ -122,6 +125,10 @@ function tupleSites(): Array<{ file: string; line: number; fn: string; text: str
       const declaration =
         /^(?:export )?(?:async )?function (\w+)|^(?:export )?const (\w+) = (?:async )?\(/.exec(raw);
       if (declaration) fn = declaration[1] ?? declaration[2]!;
+      // A route handler is a `"METHOD /path": async (…)` property of the table in `src/routes/*.ts`, and the
+      // key is the name a decision here is recorded under — one route, not the whole router.
+      const handler = /^ {2}"((?:GET|POST|PUT|PATCH|DELETE) \/\S*)": async \(/.exec(raw);
+      if (handler) fn = handler[1]!;
 
       const wasInComment = inBlockComment;
       if (/\/\*/.test(line) && !/\*\//.test(line)) inBlockComment = true;
@@ -174,12 +181,15 @@ describe("every tuple predicate has decided about the sponsor term", () => {
     for (const file of sources(SRC)) {
       const text = readFileSync(file, "utf8");
       for (const name of Object.keys(INTERSECTED)) {
-        const start = new RegExp(`(?:function ${name}\\b|const ${name} = )`).exec(text);
+        const start = name.includes(" /")
+          ? new RegExp(`^  "${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}": async \\(`, "m").exec(text)
+          : new RegExp(`(?:function ${name}\\b|const ${name} = )`).exec(text);
         if (start === null) continue;
         // To the next top-level declaration, which is a coarse but sufficient bound: the term appears inside
         // the query, and the query is inside the function.
         const rest = text.slice(start.index + 1);
-        const nextDeclaration = /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = /.exec(rest);
+        const nextDeclaration =
+          /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = |\n {2}"(?:GET|POST|PUT|PATCH|DELETE) \//.exec(rest);
         bodies.set(name, rest.slice(0, nextDeclaration?.index ?? rest.length));
       }
     }
@@ -216,12 +226,10 @@ describe("every tuple predicate has decided about the sponsor term", () => {
     /*
      * The other direction, and the one that keeps this file honest as the code moves. A stale entry is a
      * decision recorded about code that no longer exists, and it reads exactly like a decision that still
-     * holds. `route` is excluded: it is `index.ts`'s single enormous handler, so its name says nothing about
-     * which of its queries is meant, and its registration is checked by the reference assertion instead.
+     * holds.
      */
     const live = new Set(tupleSites().map((site) => site.fn));
-    const stale = [...Object.keys(INTERSECTED), ...Object.keys(EXEMPT)]
-      .filter((name) => name !== "route" && !live.has(name));
+    const stale = [...Object.keys(INTERSECTED), ...Object.keys(EXEMPT)].filter((name) => !live.has(name));
     expect(stale, "these entries name functions that no longer read relationship_tuples").toEqual([]);
   });
 });

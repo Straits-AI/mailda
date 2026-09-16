@@ -27,8 +27,8 @@ satisfy the letter of the decision while defeating it.
 | link | held by | failure if it breaks |
 |:--|:--|:--|
 | client → registry | `PathFor<M>` — the template is typed per method | **compile error** |
-| registry → handler, paths | `test/node/route-registry.test.ts` | test failure, both directions |
-| registry → handler, methods | the same file | test failure, both directions |
+| registry → handler, paths and verbs | `Handlers` in `src/router.ts` — a mapped type over the registry | **compile error**, both directions |
+| one handler per route, no ambiguous template | `test/node/route-table.test.ts` | test failure |
 
 `ROUTES` is `as const satisfies readonly RouteSpec[]`, and that is the enforcement rather than a style
 choice: a `readonly RouteSpec[]` annotation widens every `path` to `string`, which makes a wrong route a
@@ -36,11 +36,15 @@ runtime throw found when a test happens to exercise that call. Keeping the liter
 only templates that appear in the array, so a client naming a route this Node does not serve — or the right
 path under the wrong verb — stops the build.
 
-The registry is checked against `src/index.ts` **lexically**, because that file is a Worker module and cannot
-be imported under Node. The extraction reads the only two shapes this Worker uses to decide a route: a string
-compared to `url.pathname`, and a regex literal handed `.exec(url.pathname)`. A route dispatched some third
-way would be invisible — stated rather than hidden, and survivable because it fails as *absence*, which the
-anti-vacuity floor catches.
+**The registry is the router.** `src/router.ts` compiles every `ROUTES` entry to a matcher and `resolve()`
+answers a request with its `"METHOD /path"` key and named parameters; `src/routes/index.ts` is the table
+from that key to a handler, typed `Handlers = { [K in RouteKey]: Handler<K> }`. A registered route with no
+handler and a handler for no route are both compile errors, and a handler reading `params.draftid` on a
+route whose template says `:draftId` is one too. Until 16 September 2026 the Worker decided every route in
+one function of a hundred and twenty-four sequential `if`s, and `route-registry.test.ts` read that function
+with regular expressions to check the two lists agreed — which is now a type rather than a scan. What a type
+cannot see, `test/node/route-table.test.ts` does: two domain files naming one key (a spread keeps the later
+one silently) and two parameterised templates that could match one path (declaration order would decide).
 
 Both directions matter and they catch different mistakes. A path the Worker serves and the registry omits is
 a route no generated surface will ever expose. A path in the registry the Worker does not serve is worse: a
@@ -241,7 +245,7 @@ file that can drift from its generator is a landmine; one a gate re-derives is n
 |:--|:--|:--|
 | SDK → contract | the generator, and `test/generated.test.ts` | a hand edit fails the test |
 | client → contract | `PathFor<M>` | compile error |
-| contract → handler, paths and verbs | `route-registry.test.ts` | test failure, both directions |
+| contract → handler, paths and verbs | `Handlers` in `src/router.ts` | compile error, both directions |
 | contract → handler, bodies | `contract-responses.test.ts` | test failure, against a real Node |
 
 ### Names are derived, never written down

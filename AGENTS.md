@@ -173,6 +173,26 @@ the thing that checks it.** The SDK generator's `writeFileSync` regenerated the 
 read a hand edit; `mailda.mjs` dispatches on `argv`, so its parsers had to move to a file of their own. The
 seam is the pure part in one module and the effect in another.
 
+### 2c. A closed world is held by a type or a registry, not by a scan of the source
+
+A test that reads `src/` as text to establish an invariant is coupled to the wording of the code, and it
+fails when the code is rewritten rather than when the invariant breaks. Fifty such files existed on 16
+September 2026; the largest read the router with regular expressions to check that every path it decided on
+was registered, and became a mapped type (`Handlers` in `src/router.ts`) the day the router became a table.
+
+The ladder, top rung first:
+
+1. **A type.** `Record<RouteKey, Handler>`, `Record<AppRoute, Screen>`: a missing entry is a compile error.
+2. **A registry.** `ROUTES`, `BUDGETS`, `APP_ROUTES`: the test reads the list, not the code that consumes it.
+3. **A parse.** When the source itself is the only witness — a gate reached from a handler, a table named in
+   a query — read it with the TypeScript parser (`test/node/support/handlers.ts`) so a declaration split
+   across lines or mentioned in a comment cannot fool the check.
+4. **Never a phrase.** A test that asserts a comment contains three sentences guards nothing a reader
+   cannot delete along with the test.
+
+A scan that survives at rung 3 keeps its anti-vacuity control — it must first find the sites, so a parser
+that stopped matching fails loudly rather than passing over an empty set.
+
 ### 3. A limit developers can hit is a limit they must see
 
 Developers will not read our code. Their agents read our errors. An agent can fix

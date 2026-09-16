@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { handlerSites } from "./support/handlers.ts";
+
 const workerDir = join(import.meta.dirname, "../..");
-const index = readFileSync(join(workerDir, "src/index.ts"), "utf8");
 const authzRead = readFileSync(join(workerDir, "src/authz-read.ts"), "utf8");
 
 /**
@@ -34,7 +35,8 @@ const authzRead = readFileSync(join(workerDir, "src/authz-read.ts"), "utf8");
  */
 
 /** How original bytes reach a caller: `streamEvidence` is the only function that serves an evidence blob. */
-const STREAM = /streamEvidence\(/g;
+// No `g` flag: a global regex keeps `lastIndex` between `.test` calls and alternates its answer on repeated lines.
+const STREAM = /streamEvidence\(/;
 
 /** The two functions permitted to decide whether a caller may have them. */
 const DECIDERS = ["authorizeExport", "authorizeSendExport"];
@@ -48,25 +50,35 @@ function codeOnly(source: string): string[] {
 }
 
 describe("every route that streams an original message shares one authorization", () => {
-  it("finds the streaming call sites, so nothing below passes by scanning nothing", () => {
+  it("finds the streaming handlers, so nothing below passes by scanning nothing", () => {
     // Anti-vacuity: if `streamEvidence` were renamed, every assertion here would agree with everything.
-    const sites = codeOnly(index).filter((line) => STREAM.test(line));
-    expect(sites.length, "no streamEvidence call sites in index.ts — has it been renamed?")
-      .toBeGreaterThanOrEqual(2);
+    const streaming = handlerSites().filter((site) => codeOnly(site.text).some((line) => STREAM.test(line)));
+    expect(streaming.map((site) => site.key).sort()).toEqual([
+      "GET /api/exports/:exportId/objects/:objectId",
+      "GET /api/messages/:receiptId/raw",
+      "GET /api/sends/:sendId/submitted",
+    ]);
   });
 
-  it("routes both original-bytes endpoints through a decider, and neither authorizes itself", () => {
+  it("routes every handler that streams original bytes through a decider, and none authorizes itself", () => {
     /*
-     * The check that would have caught #95 on the day. Each route that streams evidence must have one of the
-     * two deciders named within it; a route calling `mayRead` directly and then streaming is the exact shape
-     * the outbound one had.
+     * The check that would have caught #95 on the day. Each handler that streams evidence must name one of
+     * the two deciders; a handler calling `mayRead` directly and then streaming is the exact shape the
+     * outbound one had. Read from the handler table, so a third streaming route is checked the day it is
+     * written rather than the day somebody adds it to a list here.
      */
-     const routes = [
-      { what: "inbound .eml", marker: "authorizeExport(env, clock, request" },
-      { what: "outbound submitted bytes", marker: "authorizeSendExport(env, clock, request" },
-    ];
-    for (const route of routes) {
-      expect(index.includes(route.marker), `${route.what} does not go through a shared decider`).toBe(true);
+    for (const site of handlerSites()) {
+      if (!codeOnly(site.text).some((line) => STREAM.test(line))) continue;
+      /*
+       * The export download is the third streaming route, and it was invisible to the previous version of
+       * this test, which looked for two hand-written markers rather than asking the table. Its decider is
+       * `authorizeExportObject` in `exports.ts`: the export's own grant, re-checked per object, which the
+       * registry declares as `scope: "export"` rather than a mailbox relation.
+       */
+      const decided = DECIDERS.some((decider) => site.text.includes(`${decider}(env, clock, request`))
+        || site.text.includes("authorizeExportObject(");
+      expect(decided, `${site.key} streams original bytes without going through a shared decider`).toBe(true);
+      expect(site.text.includes("mayRead("), `${site.key} decides for itself beside the decider`).toBe(false);
     }
   });
 

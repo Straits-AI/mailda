@@ -32,7 +32,7 @@ import { PROBE_FIELD, closedSets, probeBody, routesWithRequestSchema } from "../
  * nobody called, and that one cannot enumerate.
  */
 
-const INDEX = join(import.meta.dirname, "../../src/index.ts");
+const SUPPORT = join(import.meta.dirname, "../../src/routes/support.ts");
 
 /** A probe request for one closed set: the route's own method and a filled-in path. */
 function probeFor(set: { spec: { method: string; path: string }; path: readonly PropertyKey[] }): {
@@ -388,13 +388,12 @@ describe("the contract's five conditions are the five the Node stores", () => {
    * but not to `policyConditions` would be refused at the boundary as unknown — a field the Node supports,
    * rejected by its own contract, with a message listing five.
    *
-   * Read lexically for the reason `route-registry.test.ts` reads lexically: `src/index.ts` is a Worker module
-   * and cannot be imported under Node. The narrowness is stated rather than hidden — this sees `source.x`
+   * Read lexically because `src/routes/support.ts` reaches Worker modules and cannot be imported under Node. The narrowness is stated rather than hidden — this sees `source.x`
    * inside `conditionsFrom` and nothing else — and it fails in the safe direction, because a read the
    * extractor cannot see is a name missing from the left-hand set.
    */
   it("agrees with `conditionsFrom` about which keys are read", () => {
-    const source = readFileSync(INDEX, "utf8");
+    const source = readFileSync(SUPPORT, "utf8");
     const body = /function conditionsFrom\(raw: unknown\): PolicyConditions \{([\s\S]{0,2000}?)\n\}/.exec(source);
     expect(body, "conditionsFrom is no longer where this test expects it").not.toBeNull();
     const read = [...body![1]!.matchAll(/source\.(\w+)/g)].map((match) => match[1]!);

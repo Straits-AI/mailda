@@ -11,7 +11,7 @@ import { AGENT_GRANTABLE_RELATIONS } from "@mailda/contract/relations";
  * ## What this replaces, and why a hand-written map was not good enough
  *
  * `mailbox-gate-world.test.ts` scanned each handler block for a gate call and could only see **one level**:
- * a gate reached through a function `index.ts` calls was invisible. The gap was covered by
+ * a gate reached through a function a handler calls was invisible. The gap was covered by
  * `GATED_INDIRECTLY`, a six-entry object mapping route to gating function, written by hand.
  *
  * That object was a second source of truth with nothing guaranteeing completeness, and it was incomplete the
@@ -243,13 +243,13 @@ function relationsInArray(text: string, vocabulary: readonly string[]): Set<stri
 }
 
 /**
- * Every route handler in `index.ts` with the fixed mailbox relations it can reach.
+ * Every route handler in `src/routes/` with the fixed mailbox relations it can reach.
  *
  * The key is the block's own text; matching a block to a registered path is the caller's business, because
  * `mailbox-gate-world.test.ts` already resolves both literal and regex routes and there should not be two
  * answers to that question.
  */
-export function reachableRelations(): (block: string) => Set<string> {
+export function reachableRelations(): (file: string, block: string) => Set<string> {
   /*
    * The vocabulary is every mailbox relation, so the walk *sees* a gate on `approval.decide`; the reported set
    * is narrowed to the grantable ones, so the caller only demands a declaration it can act on.
@@ -317,11 +317,10 @@ export function reachableRelations(): (block: string) => Set<string> {
     return found;
   };
 
-  const index = join(SRC, "index.ts");
-  return (block: string) => {
+  return (file: string, block: string) => {
     const found = named(block);
     for (const callee of calleesOf(block)) {
-      const target = resolveCall(index, callee);
+      const target = resolveCall(file, callee);
       if (target === null) continue;
       for (const relation of walk(target, 3)) found.add(relation);
     }

@@ -379,7 +379,8 @@ describe("the export state enum is a constraint rather than a convention", () =>
     for (const file of SOURCES) {
       if (file === "src/exports.ts") continue;
       codeOf(file).split("\n").forEach((line, index) => {
-        if (/\/exports\//.test(line)) offenders.push(`${file}:${index + 1}`);
+        // The route keys `/api/exports/…` in the handler table are URLs, not the R2 prefix this guards.
+        if (/(?<!\/api)\/exports\//.test(line)) offenders.push(`${file}:${index + 1}`);
       });
     }
     expect(
