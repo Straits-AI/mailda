@@ -1092,6 +1092,10 @@ async function deploy(argv) {
     const plan = planFor({
       configText: readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"),
       inventory: accountInventory(),
+      // Settled above. Null in the single-account case, where there is nothing to disambiguate.
+      account: settled.accountId === null
+        ? null
+        : { id: settled.accountId, name: settled.accountName },
     });
     process.stdout.write(renderPlan(plan));
     process.exit(plan.verdict === "blocked" || plan.verdict === "unknown" ? 1 : 0);
@@ -2073,7 +2077,18 @@ async function runPreflight(argv, { announce = true, needsUrl = true } = {}) {
   }
 
   if (announce) process.stdout.write("\n   ready\n");
-  return { ok: true, accountId: account.ok ? account.id : null, origin, report: null };
+  /*
+   * The name travels with the id because the id is not readable. `dc8d1b7d…` and `1e0170aa…` are
+   * distinguishable by a machine and not by a person scanning a plan, and the plan's whole job at that
+   * moment is to let somebody catch a wrong account before it is built into.
+   */
+  return {
+    ok: true,
+    accountId: account.ok ? account.id : null,
+    accountName: account.ok ? (account.name ?? null) : null,
+    origin,
+    report: null,
+  };
 }
 
 /** `mailda preflight` — the same checks, on their own, so they can be run before committing to a deploy. */

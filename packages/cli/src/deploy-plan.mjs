@@ -285,7 +285,7 @@ export const UNWIND_ORDER = [
  * the list it summarises — the failure `budget-plan-scope.test.ts` and the tier table in
  * `machine-surfaces.md` both exist to catch, which is a count in a document that stopped matching its code.
  */
-export function planFor({ configText, inventory }) {
+export function planFor({ configText, inventory, account = null }) {
   const { worker, resources } = resourcesFrom(configText);
   const installed = inventory.worker;
 
@@ -320,6 +320,14 @@ export function planFor({ configText, inventory }) {
 
   return {
     worker,
+    /*
+     * **Which account this plan is about**, carried so the renderer can say it.
+     *
+     * `null` when the caller did not settle one, which is the single-account case where wrangler picks and
+     * there is nothing to disambiguate. Everywhere else it is the fact that distinguishes four otherwise
+     * identical plans — see `renderPlan`, where it is printed and where the cost of omitting it is recorded.
+     */
+    account,
     /*
      * `installed === null` means the Worker's own existence could not be established, and that **does** block
      * — unlike the resource lists. `mailda deploy` branches on it: a first install deploys directly and every
@@ -441,9 +449,31 @@ function wrapped(text, width) {
   return lines;
 }
 
+/**
+ * The plan as text, and the one line it used to leave out.
+ *
+ * **The account is named now.** This header said *"plan for the Worker `mailda`"* and stopped, which reads
+ * as complete and is not: a token that can see four accounts produces four plans with identical text, and
+ * the one thing that distinguishes them is the one thing that was missing. Measured on 16 September 2026, by
+ * deploying a Node into the wrong account — `wrangler deploy` offered the four, the wrong id was supplied,
+ * and a complete Node was provisioned in an account that had never held one. Nothing was lost, because
+ * nothing was there to lose, and that is exactly why nothing objected.
+ *
+ * `install` gains a second sentence for the same reason. A first install is a correct, unremarkable verdict
+ * on a new account and is also precisely what a wrong-account deploy looks like — the two are the same
+ * observation, so the plan cannot tell them apart and must hand the distinction to the reader instead of
+ * resolving it silently in the reassuring direction.
+ */
 export function renderPlan(plan) {
   const out = [];
   out.push(`\n== plan for the Worker \`${plan.worker}\`\n`);
+  /*
+   * Null in the single-account case, where wrangler picks and there is nothing to confuse. Printing
+   * "account: unknown" there would manufacture a doubt the situation does not contain.
+   */
+  if (plan.account !== null && plan.account !== undefined) {
+    out.push(`   account  ${plan.account.id}${plan.account.name ? `  ${plan.account.name}` : ""}\n`);
+  }
   out.push(
     plan.verdict === "unknown"
       ? "   Cannot say. This account's Worker state could not be established, and the two deploy paths"
@@ -451,6 +481,9 @@ export function renderPlan(plan) {
       : plan.verdict === "install"
         ? "   A first install. Nothing here yet, so the deploy runs directly — no previous version to"
           + " protect.\n"
+          + "   Nothing named `" + plan.worker + "` exists in this account. If you meant to redeploy an"
+          + " existing Node,\n   you are pointed at the wrong account — this would build a second one"
+          + " beside it.\n"
         : plan.verdict === "redeploy"
           ? "   A redeploy. Everything is in place, so the deploy uploads a canary and checks it before"
             + " moving traffic.\n"

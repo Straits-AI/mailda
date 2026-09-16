@@ -63,8 +63,16 @@ export interface Inventory {
   probes: Record<string, ProbeOutcome | null>;
 }
 
+/** The account a plan is about. Named as well as identified: an id alone is not readable by a person. */
+export interface PlanAccount {
+  id: string;
+  name: string | null;
+}
+
 export interface Plan {
   worker: string;
+  /** `null` in the single-account case, where wrangler picks and there is nothing to disambiguate. */
+  account: PlanAccount | null;
   verdict: "install" | "redeploy" | "blocked" | "unknown";
   installed: boolean | null;
   items: PlannedResource[];
@@ -103,7 +111,9 @@ export function dispositionOf(args: {
 /** The teardown order, declared as data so a plan can filter it to the steps that apply. */
 export const UNWIND_ORDER: readonly { step: string; why: string }[];
 
-export function planFor(args: { configText: string; inventory: Inventory }): Plan;
+export function planFor(
+  args: { configText: string; inventory: Inventory; account?: PlanAccount | null },
+): Plan;
 
 export function unwindFor(args: {
   items: Array<{ kind: string; name: string; disposition: string }>;
