@@ -424,7 +424,11 @@ input:focus {
   background: color-mix(in oklab, var(--accent) 5%, transparent);
 }
 
-button.primary {
+/* a.primary too: a page whose one next step is a link is owed the same control as one whose step is a form. */
+button.primary,
+a.primary {
+  display: inline-block;
+  text-decoration: none;
   font: 400 .72rem/1 var(--mono);
   letter-spacing: .14em;
   text-transform: uppercase;
@@ -668,6 +672,15 @@ tbody td {
   word-break: break-word;
 }
 .mono { font-family: var(--mono); }
+/*
+  The two tone classes the screens have used all along and the sheet never defined: .dim on every
+  explanatory paragraph in /setup and the consent page, .bad on a failed cell in the routing table. Both
+  rendered at full Ink until 16 September 2026 (found by the design audit), so explanation and instruction
+  carried the same weight. Both colours are receipted: contrast-tokens.md measures --dim at 5.44:1 on the
+  worst ground and --alarm at 6.10:1.
+*/
+.dim { color: var(--dim); }
+.bad { color: var(--alarm); }
 
 /* The ten recovery codes (#134). Spaced and numbered, because they are read off a screen and typed
    somewhere else, and a dense block is where a transcription error hides. Each item selects whole, so one
@@ -1065,7 +1078,9 @@ tbody a { font-size: .8rem; }
 
 .ledger { min-width: 0; }
 .ledger-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: .6rem; }
-.ledger-head h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); margin: 0; font-weight: 400; }
+/* No font-weight 400 here: this block used to re-declare it and win over the rule above that says 700, so
+   every ledger's h1 rendered as the outline the theme's own comment warns against. */
+.ledger-head h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); margin: 0; }
 .ledger-head p { margin: 0; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
 /* Tables scroll inside their own container. A ledger of send outcomes is the last thing that should
    make the whole page scroll sideways. */
@@ -1413,16 +1428,24 @@ function escapeHtml(text: string): string {
 export function consentPage(
   outcome: { ok: boolean; error: string | null; detail: string | null; accountId: string | null },
 ): string {
-  const said = outcome.ok
-    ? "This Node is connected to your Cloudflare account."
-    : "Cloudflare did not grant this Node access.";
+  /*
+   * The same skeleton as sign-in and the claim page — a wordmark rack, then `main > .split` with a lede and a
+   * panel — rather than the copy stacked inside the rack, which is what this page did until the design audit
+   * of 16 September 2026 put every sentence in a header bar with an empty page beneath. The state is the h1,
+   * in the display face, because it is the one fact an operator came back from Cloudflare to learn.
+   */
+  const heading = outcome.ok ? "Connected." : "Cloudflare refused.";
+  const lede = outcome.ok
+    ? "This Node holds a grant to your Cloudflare account, and can do the account work setup describes "
+      + "without the dashboard."
+    : "Cloudflare did not grant this Node access. Its own words are below; they name what to change.";
   // Cloudflare's own words when there are any. The `detail` on a refusal names what to change, and a page
   // that replaced it with an apology would be the one screen in this flow that tells an operator nothing.
-  const because = outcome.ok
+  const body = outcome.ok
     ? (outcome.accountId === null
-      ? "The account could not be determined — open Setup and ask again."
-      : `Account ${escapeHtml(outcome.accountId)}.`)
-    : escapeHtml(outcome.detail ?? outcome.error ?? "No reason was given.");
+      ? `<p class="notice" role="status">The account could not be determined — open setup and ask again.</p>`
+      : `<dl class="setup-facts"><dt>Cloudflare account</dt><dd class="mono">${escapeHtml(outcome.accountId)}</dd></dl>`)
+    : `<p class="notice bad" role="alert">${escapeHtml(outcome.detail ?? outcome.error ?? "No reason was given.")}</p>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1437,12 +1460,22 @@ export function consentPage(
 <div class="rack">
   <div class="rack-inner">
     <p class="wordmark">${MARK_IS_AUTHORED ? markSvg({ size: 26 }) : ""}<span>Mailda</span></p>
-    <p><strong>${escapeHtml(said)}</strong></p>
-    <p>${because}</p>
-    <p><a href="/setup">Back to setup</a></p>
-    <p class="dim">This tab can be closed. If setup was open in another one, it will need a refresh.</p>
   </div>
 </div>
+<main>
+  <div class="split">
+    <div class="split-lede" data-reveal>
+      <h1>${escapeHtml(heading)}</h1>
+      <p>${escapeHtml(lede)}</p>
+    </div>
+    <section class="panel" data-reveal>
+      <h2>Cloudflare</h2>
+      ${body}
+      <a class="primary" href="/setup">${outcome.ok ? "Continue setup" : "Back to setup"}</a>
+      <p class="dim">You can close this tab. If setup is open in another, press <em>check again</em> there.</p>
+    </section>
+  </div>
+</main>
 </body>
 </html>`;
 }
