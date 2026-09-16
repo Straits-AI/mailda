@@ -6,7 +6,8 @@ stale_when: >
   Queues event subscriptions leave beta; the email.sending event schema version moves past 1; the six
   event types change; payload.messageId's relationship to the value send() returns changes; or the
   cf-bounce subdomain becomes unlockable, which would make inbound DSNs a second and conflicting source
-  of the same truth
+  of the same truth; or the create-subscription endpoint stops accepting an email.sending source, or
+  wrangler starts offering one
 values:
   events.schema_version: 1
   events.types_published: 6
@@ -18,6 +19,8 @@ values:
   events.submit_id_matches_event_id: 1
   events.bounce_event_seconds_observed: 60
   events.delivery_silence_minutes: 15
+  events.subscription_creatable_by_api: 1
+  events.subscription_creatable_by_wrangler: 0
 ---
 
 **Read from Cloudflare's documentation on 7 August 2026, and the load-bearing part then measured against
@@ -196,3 +199,46 @@ ambiguity Layer 2 exists to remove.
 
 **Email Routing events are not published on this source.** Inbound forwards, replies and Worker-emitted
 routing events produce nothing here; this channel is outbound only.
+
+## The subscription can be created through the API, and the API says when it cannot
+
+**Measured 16 September 2026**, against `Swmengappdev@gmail.com`'s account, with the operator's own
+`wrangler` OAuth token. Until this measurement the doctor's `sending_events_consumer` finding said the
+subscription could not be created at all, and `cloudflare-settings.md` carried it as one of the two rows a
+person must do by hand — both resting on `wrangler queues subscription create --source` not offering
+`email.sending` and the create-subscription schema not documenting the `source` shape the account's existing
+subscription carries (`cloudflare-grant.md`, *The subscription is in no menu, and exists*).
+
+`POST /accounts/{id}/event_subscriptions/subscriptions` with that undocumented shape — copied from the
+listing rather than guessed:
+
+```
+{ "name": "…", "enabled": true,
+  "source": { "type": "email.sending", "zone_id": "<zone>", "domain": "<sending domain>" },
+  "destination": { "type": "queues.queue", "queue_id": "<queue>" },
+  "events": ["message.delivered", "message.deferred", "message.bounced",
+             "message.failed", "message.rejected", "message.complained"] }
+```
+
+Two calls, in this order:
+
+| domain | state at the time | answer |
+|:--|:--|:--|
+| `mailda.site` | zone in the account, **not** onboarded for sending | `400` — `"domain is not an enabled sending subdomain"` |
+| `mailda.site` | onboarded through the Node (`mailda provider --onboard-sending`) one minute later | `200` — subscription `336c8b5e…`, listed back with `source.name: "Email Service"` filled in |
+
+So the endpoint understands the source, validates the domain against Email Sending's own state, and refuses
+with a sentence rather than an unknown-type error. **`events.subscription_creatable_by_api = 1`**, and the
+refusal is the shape a Node can act on: onboard first, subscribe second, and the second cannot succeed
+before the first. `events.subscription_creatable_by_wrangler` stays **0** — re-measured the same day, wrangler
+4.118.0 still lists no such source — which is why the settings table names the API path and not a command.
+
+**Not measured:** which OAuth scope authorises the `POST`. This run used the operator's token, which holds
+every scope. The Node's grant holds `queues.read`, which `cloudflare-grant-reach.md` established is enough
+to *list*; whether `queues.write` is enough to create — or whether it needs something Email Service owns, as
+the sending endpoints turned out to — is one probe with a re-consent in front of it, and it is what building
+`POST /api/provider/delivery-events` waits on.
+
+The subscription created for the second row was kept: `mailda.site` is onboarded for sending now, and a
+sending domain with no subscription is exactly the blind state `delivery_visibility` exists to name.
+

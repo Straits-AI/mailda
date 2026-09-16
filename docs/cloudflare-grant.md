@@ -434,12 +434,17 @@ The answer is deliberately **not** folded into `doctor`: it costs live Cloudflar
 token, and a health report that reached the network would spend the account's authority every time anything
 asked how the Node was.
 
-### The subscription is in no menu, and exists
+### The subscription is in no menu, and exists — and the API creates it
 
 `wrangler queues subscription create --source` does not offer `email.sending` (re-measured 10 September
 2026, wrangler 4.118.0), and neither does the API reference's create-subscription schema. Both enumerations
 are incomplete: the account holds one, created 7 August 2026, whose `source` carries `type: "email.sending"`
 with `zone_id` and `domain` — fields that same schema does not document either.
+
+**And the endpoint accepts that shape** (measured 16 September 2026, `email-sending-events.md`): a `POST`
+with it refuses a domain not onboarded for sending with *"domain is not an enabled sending subdomain"*, and
+creates the subscription for one that is. The refusal orders the ceremony — onboard, then subscribe — and
+the Node's write side does not make the call yet, because which scope authorises it is unmeasured.
 
 Five times in #162 a *list of what something supports* was read as a list of what may be had. This is the
 same mistake from the other side, and the rule that survives both is **ask the account, not the menu**.

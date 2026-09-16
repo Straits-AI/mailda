@@ -370,6 +370,7 @@ const FIGURES: Record<string, Classification> = {
     "events.carries_terminal_flag", "events.carries_bounce_type", "events.subscription_scope_is_one_domain",
     "events.routing_events_published", "events.submit_id_matches_event_id",
     "events.bounce_event_seconds_observed", "events.delivery_silence_minutes",
+    "events.subscription_creatable_by_api", "events.subscription_creatable_by_wrangler",
   ),
 
   // docs/receipts/evidence-frame-size.md

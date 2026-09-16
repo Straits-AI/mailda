@@ -26,7 +26,7 @@ Two rules hold across the table:
 | **Email Routing on the zone**, MX and SPF records, and a rule routing your address to this Worker | Inbound mail reaches the Node only through a routing rule to its `email` handler | `POST /api/provider/receiving` (`/setup` → *receiving*; `mailda provider --onboard-receiving`) — proposes the records and the rule, confirmed by digest, enables routing on the zone if it is off (#209, #210) | Email → Email Routing → enable; DNS → add the MX and SPF records it shows; Routing rules → *Send to a Worker* → this Node's Worker | `inbound_routing` — from evidence: addresses that have received, and silence since |
 | **A sending domain** onboarded for Email Sending — DKIM, SPF and DMARC records | Arbitrary recipients require a verified sending domain; paying for Workers is not enough | `POST /api/provider/sending` (`/setup` → *sending*; `mailda provider --onboard-sending`) — records proposed, confirmed by digest, verified by reading them back | Email → Email Sending → add domain; DNS → add the records it shows | `transport_adapters` (which adapter can carry mail), and the send ladder itself: `handed_over` → `accepted` / `bounced` |
 | **The `send_email` binding**, or REST credentials | The transport | The binding ships in `wrangler.jsonc`; REST credentials are the fallback for a Node that cannot be redeployed: `PUT /api/transport` | Workers → Settings → Bindings, or an Email Sending API token pasted into `PUT /api/transport` | `transport_adapters` |
-| **Delivery outcomes**: the `email.sending` event subscription publishing to `SENDING_EVENTS`, and a consumer on that queue | Without both, every send sits *unobserved* forever and nothing looks wrong | Reported, not created: `GET /api/provider/delivery-events` names which of the three is missing. The consumer: `pnpm --filter @mailda/worker run queue:attach-consumer`. The subscription **cannot be created by wrangler or from the Node** (re-measured 10 September 2026) | Queues → the `SENDING_EVENTS` queue → Settings → consumer: this Worker. The subscription: Email → Email Sending → the domain → events → this queue | `sending_events_consumer`, `delivery_visibility`, `delivery_attribution` |
+| **Delivery outcomes**: the `email.sending` event subscription publishing to `SENDING_EVENTS`, and a consumer on that queue | Without both, every send sits *unobserved* forever and nothing looks wrong | Reported, not yet created: `GET /api/provider/delivery-events` names which of the three is missing. The consumer: `pnpm --filter @mailda/worker run queue:attach-consumer`. The subscription **can be created through the API** for an onboarded sending domain (measured 16 September 2026, [receipt](./receipts/email-sending-events.md)); the Node does not make that call yet because the scope it needs is unmeasured. wrangler cannot create it | Queues → the `SENDING_EVENTS` queue → Settings → consumer: this Worker. The subscription: Email → Email Sending → the domain → events → this queue, or `POST /accounts/{id}/event_subscriptions/subscriptions` with the shape the receipt records | `sending_events_consumer`, `delivery_visibility`, `delivery_attribution` |
 | **A domain**, if you do not have one | Optional | `GET /api/provider/domains` to price, `POST /api/provider/domains/purchase` confirmed by digest (`mailda provider --buy`) | Domain Registration | — |
 | **A hostname for the Node** | The Node answers on `<worker>.<account>.workers.dev` by default | Not built: a custom domain is a dashboard setting today | Workers → Settings → Domains & Routes | The redirect URI check in `provider_binding`: the grant's callback must be the hostname the Node is reached on |
 
@@ -37,17 +37,17 @@ Two rules hold across the table:
   for sending*). It never acts on a stale plan.
 - **By hand** is the same end state. The Node does not know or care which path produced it; `doctor` reads
   the account, or the evidence, either way.
-- **Two rows cannot be done from Mailda**, and the reasons are measured rather than assumed: the OAuth
-  client (no API exists for a private client) and the `email.sending` subscription (`wrangler queues
-  subscription create` does not offer the source, and the create-subscription schema does not document it,
-  though the account holds one). Both are named in the handover manifest `mailda provider --handover`
-  prints as *what a person must still do at the provider*, each with the receipt that established it.
+- **One row cannot be done from Mailda**, and the reason is measured rather than assumed: the OAuth client
+  — no API exists for a private client. It is named in the handover manifest `mailda provider --handover`
+  prints as *what a person must still do at the provider*, with the receipt that established it. The
+  `email.sending` subscription was on this list until 16 September 2026, when the API turned out to create
+  one; it is now a row the Node *could* do and does not yet.
 - **One row cannot be verified at all**: the plan. `doctor` says so rather than reporting `ok`.
 
 ## What is still owed
 
 - The subscription row is the gap that matters most: a button-only install has never observed a delivery
-  outcome. The measurement that closes it is whether the API will create one when asked with the
-  undocumented `source` shape the existing subscription carries — `cloudflare-grant.md`, *Still owed by this
-  layer*.
+  outcome. The API creates one (measured); what is owed is `POST /api/provider/delivery-events` in the Node
+  ([#222](https://github.com/Straits-AI/mailda/issues/222)), and the one probe in front of it — which OAuth
+  scope the create needs, since the grant holds `queues.read` and that is known to be enough only to list.
 - A custom hostname from Mailda, so the last dashboard-only row goes.
