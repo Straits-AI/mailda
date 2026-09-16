@@ -164,6 +164,7 @@ function Client({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Pr
         </label>
         <button
           type="button"
+          className="primary"
           onClick={() => void save()}
           disabled={saving || clientId.trim() === "" || secret.trim() === ""}
         >
@@ -204,7 +205,7 @@ function Consent(
       <Refusal said={problem} />
       {url === null ? (
         <p>
-          <button type="button" onClick={() => void begin()}>start the authorization</button>{" "}
+          <button type="button" className="primary" onClick={() => void begin()}>start the authorization</button>{" "}
           <span className="dim">Nothing is granted by asking. This only produces the address to visit.</span>
         </p>
       ) : (
@@ -338,7 +339,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
 
   return (
     <section className="setup-block" aria-label="Receiving mail">
-      <h2>Receiving</h2>
+      <h2>3. Receiving</h2>
       <p className="dim">
         A subdomain of a zone in this Cloudflare account. Pointing it here writes the MX records Cloudflare
         asks for, reads them back, and only then routes an address at this Node.
@@ -451,6 +452,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
           )}
           <button
             type="button"
+            className="primary"
             onClick={() => void apply()}
             disabled={busy || plan.refusal !== null || address.trim() === ""}
           >
@@ -500,7 +502,7 @@ function Sending() {
 
   return (
     <section className="setup-block" aria-label="Sending mail">
-      <h2>Sending</h2>
+      <h2>4. Sending</h2>
       <p className="dim">
         Onboarding a domain for sending tells Cloudflare this account may send as it. It is separate from
         receiving, and a domain can have one without the other.
@@ -551,6 +553,7 @@ function Sending() {
           )}
           <button
             type="button"
+            className="primary"
             onClick={() => void apply()}
             disabled={busy || plan.onboarded || plan.error !== null}
           >
@@ -602,7 +605,7 @@ function Subscription() {
 
   return (
     <section className="setup-block" aria-label="Delivery outcomes">
-      <h2>Delivery outcomes</h2>
+      <h2>5. Delivery outcomes</h2>
       <p className="dim">
         A sending domain reports what happened to each message — delivered, bounced, complained — only if
         a subscription publishes those events into this Node's queue. Without one, every send stays
@@ -643,6 +646,7 @@ function Subscription() {
           )}
           <button
             type="button"
+            className="primary"
             onClick={() => void apply()}
             disabled={busy || plan.subscribed !== null || plan.error !== null}
           >

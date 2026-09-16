@@ -82,6 +82,15 @@ would be one more thing to register wrongly. `error_description` is a query para
 page, on the one route here with no session check, so it is escaped — that is this route's one untrusted
 input, not a hygiene measure.
 
+The page wears the theme (16 September 2026). Its first version stacked every sentence inside the wordmark's
+header band with an empty page beneath, which is what an operator described as *"does not match our
+theme"*. It is the pre-authentication skeleton now — wordmark rack, lede with the state as the heading,
+a panel with Cloudflare's own words as a refusal or the account as a fact, and a primary control to
+continue. The same audit found two tone classes the screens used and the sheet never defined (`.dim`,
+`.bad`) and a duplicate `.ledger-head` rule that rendered every ledger heading at weight 400; all three are
+fixed in the sheet. The logo is absent by decision, not omission: `MARK_IS_AUTHORED` is false until the
+traced mark reads as an M at 26px (`docs/history.md`, *the mark is not shipped, because it does not work*).
+
 ## Five states, and one of them is not a measurement
 
 | state | evidence | what it is |
