@@ -854,6 +854,15 @@ export const AUDIT_ACTIONS = {
   },
 
   /**
+   * The subscription that makes a sending domain's delivery outcomes reach this Node (#222). Against the
+   * binding for `sending_onboarded`'s reason: what it produces is an account-level object in Cloudflare,
+   * and the question later is *which grant pointed those events at this queue*.
+   */
+  "provider.delivery_events_subscribed": {
+    says: "An administrator subscribed a sending domain's delivery events to this Node's queue.",
+  },
+
+  /**
    * A domain purchase **attempted** (#164 L3), and the verb is the whole point.
    *
    * It is written **before** the `POST`, not after it. A registration whose answer never arrives has still

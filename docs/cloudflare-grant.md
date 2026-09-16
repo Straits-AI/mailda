@@ -444,7 +444,11 @@ with `zone_id` and `domain` — fields that same schema does not document either
 **And the endpoint accepts that shape** (measured 16 September 2026, `email-sending-events.md`): a `POST`
 with it refuses a domain not onboarded for sending with *"domain is not an enabled sending subdomain"*, and
 creates the subscription for one that is. The refusal orders the ceremony — onboard, then subscribe — and
-the Node's write side does not make the call yet, because which scope authorises it is unmeasured.
+`POST /api/provider/subscription` (#222) makes the call the way `POST /api/provider/sending` does: a
+proposal that names the sending domain, this Node's own queue (found by the name wrangler derived from
+`WORKER_NAME`, paging the account's queues) and the six event types; a digest over it; a write that
+recomputes the proposal and refuses unless the digest still matches. The proposal says *onboard first*
+before a write is attempted, so the API's refusal is never the first an operator hears of the order.
 
 Five times in #162 a *list of what something supports* was read as a list of what may be had. This is the
 same mistake from the other side, and the rule that survives both is **ask the account, not the menu**.

@@ -128,6 +128,11 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
     scope: "queues.read",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
+  // Listed to find this Node's own events queue by name, for the subscription it creates (#222).
+  "/accounts/{}/queues": {
+    scope: "queues.read",
+    reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
+  },
   "/zones": { scope: "zone.read", reference: "Zone Zone Read" },
   /*
    * Read to get the verdict, `PATCH`ed to turn a zone into a mail zone — one path, two verbs, and the write

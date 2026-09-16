@@ -410,6 +410,32 @@ export const providerSendingProposalResponse = z.object({
   proposal: providerSendingProposal,
 }).strict();
 
+/**
+ * Subscribing a sending domain's delivery events to this Node's queue (#222): the third of the three
+ * objects `delivery-events` reports on, proposed and confirmed the way sending onboarding is.
+ */
+export const providerSubscriptionProposal = z.object({
+  domain: z.string().min(1),
+  zone: z.string().nullable(),
+  zoneId: z.string().nullable(),
+  sendingDomain: z.string().nullable(),
+  subscribed: z.string().nullable(),
+  queueId: z.string().nullable(),
+  queueName: z.string().nullable(),
+  events: z.array(z.string()),
+  digest: z.string().length(64),
+  error: z.string().nullable(),
+}).strict();
+
+export const providerSubscriptionProposalResponse = z.object({
+  proposal: providerSubscriptionProposal,
+}).strict();
+
+export const providerSubscriptionRequest = z.object({
+  domain: z.string().min(1).max(253),
+  digest: z.string().length(64),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The domain to onboard, and the digest of the proposal the operator was shown for it. */
 export const providerSendingRequest = z.object({
   domain: z.string().min(1).max(253),

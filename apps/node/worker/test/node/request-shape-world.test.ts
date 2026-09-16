@@ -121,6 +121,7 @@ describe("every closed set the contract declares is a closed set the boundary en
       "POST /api/provider/receiving",
       "POST /api/provider/domains/purchase",
       "POST /api/provider/sending",
+      "POST /api/provider/subscription",
       /*
        * Registering the Node's OAuth client, and beginning a consent (#162 L1, ADR 42). Strict, and the
        * argument is the sharpest of the four: a misspelled `clientSecret` silently dropped would be refused
@@ -330,7 +331,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
       "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
-      "POST /api/provider/sending", "POST /api/search/repair",
+      "POST /api/provider/sending", "POST /api/provider/subscription", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([

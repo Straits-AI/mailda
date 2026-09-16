@@ -1936,6 +1936,182 @@ export async function onboardSending(
  * authority every time anybody glanced at it. So this is asked for, not displayed by default, and `doctor`
  * does not call it.
  */
+/**
+ * Subscribing a sending domain's delivery events to this Node's queue (#222).
+ *
+ * The third of the three objects `deliveryEventsState` reports on, and the one a button-only install has
+ * never had: without an `email.sending` subscription publishing into `SENDING_EVENTS`, every send sits
+ * unobserved for ever and nothing looks wrong. Measured 16 September 2026 (`email-sending-events.md`):
+ * `POST /accounts/{id}/event_subscriptions/subscriptions` accepts the `source` shape the account's existing
+ * subscription carries — undocumented, so copied from a listing rather than guessed — refuses a domain not
+ * onboarded for sending in so many words, and creates one for a domain that is. So the ceremony orders
+ * itself: `onboardSending` first, this second, and the proposal says which step is missing.
+ *
+ * The same shape as receiving and sending: a proposal that changes nothing, a digest over it, and a write
+ * that recomputes the proposal and refuses unless the digest still matches.
+ */
+export interface SubscriptionProposal {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  /** The onboarded sending domain that would carry the subscription: the name itself, or the apex covering it. */
+  sendingDomain: string | null;
+  /** The subscription already covering this domain, by name. Null when there is none. */
+  subscribed: string | null;
+  /** This Node's own events queue — the destination — found by the name wrangler derived for it. */
+  queueId: string | null;
+  queueName: string | null;
+  /** The event types the subscription would publish, in Cloudflare's words. */
+  events: string[];
+  digest: string;
+  error: string | null;
+}
+
+/** Every event type Cloudflare publishes for a sending domain (receipt: `email-sending-events.md`). */
+const SENDING_EVENTS = [
+  "message.delivered", "message.deferred", "message.bounced",
+  "message.failed", "message.rejected", "message.complained",
+] as const;
+
+async function subscriptionDigestOf(of: Omit<SubscriptionProposal, "digest">): Promise<string> {
+  const canonical = JSON.stringify([
+    of.domain, of.zone, of.zoneId, of.sendingDomain, of.subscribed, of.queueId, of.queueName, of.events,
+    of.error,
+  ]);
+  return await sha256Hex(new TextEncoder().encode(canonical));
+}
+
+/**
+ * This Node's events queue, by the name wrangler derived for it: `<worker>-sending-events`.
+ *
+ * `GET /accounts/{id}/queues` pages, and the account this was measured on holds sixty-six queues, so the
+ * walk follows the pages rather than trusting the first — the mistake `deploy --plan` made once on R2's
+ * page of twenty. The name comes from `WORKER_NAME`, the same var the receiving rule names itself with.
+ */
+async function ownQueue(
+  env: Env, ctx: Ctx, orgId: string, accountId: string,
+): Promise<{ ok: true; id: string; name: string } | { ok: false; error: string }> {
+  const worker = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME;
+  if (typeof worker !== "string" || worker === "") {
+    return { ok: false, error: "this Node does not know its own Worker name (WORKER_NAME), so it cannot name its queue" };
+  }
+  const wanted = `${worker}-sending-events`;
+  const page_size = 100;
+  for (let page = 1; ; page++) {
+    const answer = await cloudflareGet<Array<{ queue_id?: string; queue_name?: string }>>(
+      env, ctx, orgId, `/accounts/${accountId}/queues?page=${page}&per_page=${page_size}`,
+    );
+    if (!answer.ok) return answer;
+    const found = answer.result.find((one) => one.queue_name === wanted);
+    if (found?.queue_id !== undefined) return { ok: true, id: found.queue_id, name: wanted };
+    if (answer.result.length < page_size) {
+      return { ok: false, error: `no queue named ${wanted} in this account — has this Node been deployed here?` };
+    }
+  }
+}
+
+export async function subscriptionProposalFor(
+  env: Env, ctx: Ctx, orgId: string, domain: string,
+): Promise<SubscriptionProposal> {
+  const without = async (over: Partial<Omit<SubscriptionProposal, "digest">>): Promise<SubscriptionProposal> => {
+    const body = {
+      domain, zone: null, zoneId: null, sendingDomain: null, subscribed: null,
+      queueId: null, queueName: null, events: [...SENDING_EVENTS], error: null, ...over,
+    };
+    return { ...body, digest: await subscriptionDigestOf(body) };
+  };
+
+  const accountId = await boundAccount(env);
+  if (accountId === null) return await without({ error: NO_BOUND_ACCOUNT });
+
+  const carrying = await zoneFor(env, ctx, orgId, domain);
+  if (!carrying.ok) return await without({ error: carrying.error });
+  if (carrying.zone === null) return await without({ error: `no zone in this account carries ${domain}` });
+  const zone = carrying.zone;
+
+  const sending = await sendingDomainFor(env, ctx, orgId, zone.id, domain);
+  if (sending === null) {
+    return await without({
+      zone: zone.name, zoneId: zone.id,
+      error: `${domain} is not onboarded for sending, and Cloudflare refuses a subscription for a domain that `
+        + "is not — onboard it first: POST /api/provider/sending",
+    });
+  }
+  if (sending.error !== null) return await without({ zone: zone.name, zoneId: zone.id, error: sending.error });
+
+  const subscriptions = await sendingSubscriptions(env, ctx, orgId, accountId);
+  if (!subscriptions.ok) {
+    return await without({ zone: zone.name, zoneId: zone.id, sendingDomain: sending.name, error: subscriptions.error });
+  }
+  const covering = mostSpecific(
+    subscriptions.result.filter((one) => one.source?.type === "email.sending"),
+    (one) => one.source?.domain,
+    domain,
+  );
+
+  const queue = await ownQueue(env, ctx, orgId, accountId);
+  if (!queue.ok) {
+    return await without({
+      zone: zone.name, zoneId: zone.id, sendingDomain: sending.name,
+      subscribed: covering?.name ?? null, error: queue.error,
+    });
+  }
+
+  return await without({
+    zone: zone.name, zoneId: zone.id, sendingDomain: sending.name,
+    subscribed: covering?.name ?? null, queueId: queue.id, queueName: queue.name,
+  });
+}
+
+export async function subscribeDeliveryEvents(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, domain: string, digest: string,
+): Promise<SubscriptionProposal> {
+  const proposal = await subscriptionProposalFor(env, ctx, orgId, domain);
+  if (proposal.error !== null) {
+    throw unprocessable("E_PROVIDER_SUBSCRIPTION_UNREADABLE", {
+      what: `this Node could not settle what subscribing ${domain} would do`,
+      why: proposal.error,
+      fix: "read GET /api/provider/delivery-events, and check the grant still covers this zone and the queue",
+    });
+  }
+  if (proposal.subscribed !== null) {
+    throw conflict("E_PROVIDER_SUBSCRIPTION_ALREADY", {
+      what: `${domain} is already covered by the subscription ${proposal.subscribed}`,
+      why: "a second subscription for the same domain would publish every event twice into the same queue",
+      fix: "nothing to do — GET /api/provider/delivery-events shows what it is missing, if anything",
+    });
+  }
+  if (digest !== proposal.digest) {
+    throw conflict("E_PROVIDER_SUBSCRIPTION_STALE", {
+      what: "the proposal confirmed is not the proposal this Node would now apply",
+      why: "something changed between reading and confirming — the zone, the sending domain, or the queue",
+      fix: `run the proposal again and confirm the digest it prints: ${proposal.digest}`,
+    });
+  }
+
+  const accountId = await boundAccountFor(env);
+  const created = await cloudflarePost<{ id?: string; name?: string }>(
+    env, ctx, orgId, `/accounts/${accountId}/event_subscriptions/subscriptions`,
+    {
+      name: `${proposal.queueName}-${proposal.sendingDomain}`,
+      enabled: true,
+      source: { type: "email.sending", zone_id: proposal.zoneId, domain: proposal.sendingDomain },
+      destination: { type: "queues.queue", queue_id: proposal.queueId },
+      events: proposal.events,
+    },
+  );
+
+  await auditedBatch(env, ctx, orgId, {
+    action: "provider.delivery_events_subscribed", outcome: "ok", actorUserId, subject: domain,
+    detail: {
+      zone: proposal.zone, sendingDomain: proposal.sendingDomain, queue: proposal.queueName,
+      subscriptionId: created.id ?? null, events: proposal.events,
+    },
+  }, (entry) => [entry]);
+
+  return await subscriptionProposalFor(env, ctx, orgId, domain);
+}
+
 export type OwnershipSource = "provider" | "node" | "structural" | "unreadable";
 
 export interface OwnershipFact {
