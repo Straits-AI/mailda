@@ -611,6 +611,8 @@ export const providerReceivingRequest = z.object({
   domain: z.string().min(3).max(253),
   digest: z.string().length(64),
   address: z.string().min(3).max(320),
+  /** The mailbox the address files into. Optional when the organization has exactly one. */
+  mailboxId: z.string().min(1).max(64).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */

@@ -1599,9 +1599,9 @@ async function proposalFor<T>(
 export const receivingProposal = (domain: string) =>
   proposalFor<{ proposal: ReceivingProposal }>(GET("/api/provider/receiving"), domain);
 
-export const onboardReceiving = (domain: string, digest: string, address: string) =>
+export const onboardReceiving = (domain: string, digest: string, address: string, mailboxId?: string) =>
   act<{ outcome: ReceivingOutcome }>(at("POST", "/api/provider/receiving"), "POST", {
-    domain, digest, address,
+    domain, digest, address, ...(mailboxId === undefined ? {} : { mailboxId }),
   });
 
 export const sendingProposal = (domain: string) =>

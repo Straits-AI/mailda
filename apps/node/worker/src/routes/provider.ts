@@ -213,6 +213,7 @@ export const provider = {
       outcome: await onboardReceiving(
         env, clock, who.orgId, who.userId,
         String(body.domain ?? ""), String(body.digest ?? ""), String(body.address ?? ""),
+        typeof body.mailboxId === "string" ? body.mailboxId : null,
       ),
     });
   },
