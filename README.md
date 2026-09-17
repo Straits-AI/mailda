@@ -12,9 +12,8 @@ It runs entirely in **your own Cloudflare account**. You own the domains, the me
 the encryption keys, the model keys and the bill. There is no Mailda service to depend on,
 no licence server, and no telemetry. Disconnect us and nothing stops working.
 
-The site at [mailda.site](https://mailda.site) is this README, `AGENTS.md`, `docs/` and the receipts, rendered:
-its landing page is the status table above in the shape of a `mailda doctor` report, and nothing on it is written
-anywhere but here.
+[mailda.site](https://mailda.site) is this README, `AGENTS.md`, `docs/` and the receipts, rendered. Its landing
+page is the status table below in the shape of a `mailda doctor` report. Nothing on the site is written anywhere but here.
 
 ---
 
