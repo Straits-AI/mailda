@@ -1,4 +1,4 @@
-import { BRAND, MARK_DOT, MARK_PATH, MARK_VIEWBOX } from "../../brand.ts";
+import { BRAND, MARK_DOT, MARK_HEIGHT, MARK_PATH, MARK_VIEWBOX, MARK_WIDTH } from "../../brand.ts";
 
 /**
  * The Mailda symbol, for the React chrome (#128).
@@ -22,28 +22,24 @@ import { BRAND, MARK_DOT, MARK_PATH, MARK_VIEWBOX } from "../../brand.ts";
  * caller using the symbol *alone* passes a `title`, and gets an `img` role with that name.
  */
 export function Mark({ size = 26, title = null }: { size?: number; title?: string | null }) {
-  const height = Math.round((size * 52) / 60);
+  const height = Math.round((size * MARK_HEIGHT) / MARK_WIDTH);
   return (
     <svg
       width={size}
       height={height}
       viewBox={MARK_VIEWBOX}
-      fill="none"
       /*
        * `currentColor`, so the rail's `--rail-text` reaches it and one variant serves both schemes. The dot
        * keeps Flow Blue: the brand sheet publishes a monochrome lockup *and* a full-colour one, and picking
        * between them is a decision rather than a default — see `MarkOptions.dot` in `brand.ts`.
        */
-      stroke="currentColor"
-      strokeWidth={4.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
       role={title === null ? undefined : "img"}
       aria-hidden={title === null ? true : undefined}
       aria-label={title ?? undefined}
     >
       <path d={MARK_PATH} />
-      <circle cx={MARK_DOT.cx} cy={MARK_DOT.cy} r={MARK_DOT.r} fill={BRAND.blue} stroke="none" />
+      <circle cx={MARK_DOT.cx} cy={MARK_DOT.cy} r={MARK_DOT.r} fill={BRAND.blue} />
     </svg>
   );
 }

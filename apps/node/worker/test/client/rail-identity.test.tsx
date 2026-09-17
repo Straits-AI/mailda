@@ -39,13 +39,15 @@ describe("the Mailda mark in the React chrome", () => {
     expect(Number(dot?.getAttribute("r"))).toBe(MARK_DOT.r);
   });
 
-  it("inherits its stroke, so one variant serves a dark rail and a light page", () => {
+  it("inherits its ink, so one variant serves a dark rail and a light page", () => {
     /*
-     * `currentColor` is what lets the rail's own text token reach the mark. A hardcoded Ink stroke would
-     * vanish on the Ink rail — which is exactly the surface #128 puts it on.
+     * `currentColor` is what lets the rail's own text token reach the mark. A hardcoded Ink fill would
+     * vanish on the Ink rail — which is exactly the surface #128 puts it on. A fill since 18 September: the
+     * geometry is a traced outline, so the ink's weight is the raster's rather than a stroke width.
      */
     const { container } = render(<Mark size={26} />);
-    expect(container.querySelector("svg")?.getAttribute("stroke")).toBe("currentColor");
+    expect(container.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+    expect(container.querySelector("path")?.getAttribute("fill")).toBeNull();
   });
 
   it("is silent beside a word, and named when it stands alone", () => {
@@ -63,13 +65,16 @@ describe("the Mailda mark in the React chrome", () => {
     expect(screen.getByRole("img", { name: "Mailda" })).toBeTruthy();
   });
 
-  it("keeps the stroke width in user units, so it does not go spindly when small", () => {
-    // A line-drawn logo's usual failure in a product: scaled by CSS, the stroke thins with the box. Fixed
-    // in the viewBox's units, it scales with the art instead.
+  it("keeps the box's proportion at every size, so the outline scales with the art and never thins", () => {
+    // A line-drawn logo's usual failure in a product: scaled by CSS, a stroke thins with the box. A filled
+    // outline in a fixed viewBox has no stroke to thin; what must hold is the proportion.
     const small = render(<Mark size={16} />);
-    const large = render(<Mark size={40} />);
-    const widthOf = (r: ReturnType<typeof render>) =>
-      r.container.querySelector("svg")?.getAttribute("stroke-width");
-    expect(widthOf(small)).toBe(widthOf(large));
+    const large = render(<Mark size={70} />);
+    const ratio = (r: ReturnType<typeof render>) => {
+      const svg = r.container.querySelector("svg")!;
+      return Number(svg.getAttribute("height")) / Number(svg.getAttribute("width"));
+    };
+    expect(Math.abs(ratio(small) - ratio(large))).toBeLessThan(0.05);
+    expect(small.container.querySelector("svg")?.getAttribute("viewBox")).toBe(large.container.querySelector("svg")?.getAttribute("viewBox"));
   });
 });
