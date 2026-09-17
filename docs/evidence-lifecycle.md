@@ -487,3 +487,10 @@ References: <CAHdC3ON6OaSRTDaWz=fetrA_gwdOx_Dxy3bS8iS0fY4u3inq7Q@mail.gmail.com>
 thing rather than a re-rendering of it. Threading anchors point at **Gmail's** Message-ID, taken from
 the original's stored evidence — which is why a reply threads correctly even though Cloudflare rewrites
 *our* Message-ID on the way out.
+
+A **forward** (0059) is the same evidence going out whole. `renderRfc822` emits `multipart/mixed` with the
+typed text and a `message/rfc822` part whose bytes are the original as this Node received it — not quoted,
+not re-encoded, not re-signed — so a recipient has the message with its own headers, and the manifest's
+`forward_of_message_id` says which. The author must be able to read it (the same door as a reply's parent),
+and a message this Node judged to carry a dangerous attachment (0057) is not forwarded under its name; the
+`.eml` download exists for the person who needs to hand it on regardless.

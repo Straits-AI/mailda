@@ -46,7 +46,7 @@ const INTERSECTED: Record<string, string> = {
   isAdmin: "organization-admin, via sponsorOf — thirty callers pass a bare identifier into it",
   mailboxQueues: "GET /api/cases: which mailboxes an agent is offered work to claim in",
   notificationsFor: "GET /api/notifications: mailbox-wide notices name the mailbox and what is due on it",
-  sealManifest: "the seal-time parent check, which has no Principal in reach and decided the derivation",
+  readableParent: "the seal-time parent check for a reply and a forward, which has no Principal in reach and decided the derivation",
   "GET /api/sends": "a manifest carries the subject line and every envelope recipient",
 };
 
