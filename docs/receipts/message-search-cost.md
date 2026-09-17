@@ -337,7 +337,7 @@ header. The header stays searchable through `q` and the FTS index: two questions
 parameter's description says which is which.
 
 Measured on 1,200 deliveries, the index dropped and re-created inside the measurement so the two figures are
-genuinely a before and an after:
+a real before and after:
 
 | query | rows read | page |
 | --- | --- | --- |

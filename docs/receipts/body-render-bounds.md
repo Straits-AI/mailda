@@ -62,7 +62,7 @@ their message. `head` is structural, not a payload: everything dangerous inside 
 `link`, `base`, `style`, `script`) is dropped on its own, so unwrapping the container loses nothing.
 Paired with a structural guard: **the renderer now refuses to report `html` when the input had content
 and nothing survived**, because an empty panel claiming to be a rendered body is indistinguishable from
-a genuinely empty message, and §5C requires a reader can tell.
+an empty message, and §5C requires a reader can tell.
 
 **The 1 MiB bound was applied to raw MIME before parsing**, so a message whose first part was a large
 attachment reported `no-body`, asserting the sender had written nothing when they had written

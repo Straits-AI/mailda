@@ -67,7 +67,7 @@ more.
 **Conclusion: no provisioning step needs building.** The bucket is created by the deploy itself on both
 install paths, and the gap was an artifact of a shape the architecture no longer has.
 
-## What is still genuinely unmeasured
+## What is still unmeasured
 
 - **A real button click against the current single-Worker repository.** Everything above tests
   `wrangler deploy`, which is what the build *runs*, but not the button's own control-plane

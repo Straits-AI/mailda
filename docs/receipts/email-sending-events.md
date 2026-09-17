@@ -104,7 +104,7 @@ saw the message, and the UI wording has to keep that line: *the receiving server
 *they got it*.
 
 `terminal` is the field that makes `outcome_unknown` honest rather than a shrug: a `deferred` event says
-Cloudflare is still trying, so the outcome genuinely is not known yet, and the Node can say so with a
+Cloudflare is still trying, so the outcome is not known yet, and the Node can say so with a
 reason instead of silence.
 
 ## The join key is real, and it is byte-identical

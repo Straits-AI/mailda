@@ -175,7 +175,7 @@ single-handedly.
 
 **Twenty-four hours and fifty observations**, both larger than the bounce breaker's, for one reason:
 complaints are rare, so a short window or a low floor would compute a percentage out of two or three
-events. Fifty observed outcomes in a day is a Node that is genuinely sending; below that, `armed: false`.
+events. Fifty observed outcomes in a day is a Node that is really sending; below that, `armed: false`.
 
 **Why this one still gates rather than refuses**, even though a complaint is the most reputational of the
 three: the individual message in front of the breaker is not the one anybody complained about, and

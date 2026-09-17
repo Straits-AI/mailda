@@ -85,7 +85,7 @@ Cloudflare, not paying $5.
 
 ## What this was going to mean for #19
 
-The free plan is a **genuinely functional receive-only Node**, not a crippled one:
+The free plan is a **working receive-only Node**, not a crippled one:
 
 - receives real mail from the public internet, unlimited and free
 - stores, parses and indexes it

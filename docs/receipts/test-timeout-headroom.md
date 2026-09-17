@@ -78,7 +78,7 @@ have been the same non-measurement that produced the bug.
 ## The chosen number
 
 **30,000 ms**, which is 5.2x the measured worst case under load. Deliberately generous: the cost of
-being wrong upward is that a genuinely hung test takes 30 s to report, and the cost of being wrong
+being wrong upward is that a hung test takes 30 s to report, and the cost of being wrong
 downward is a cascading failure that reads as flakiness and gets muted. Those are not symmetric.
 
 `test.hook_timeout_ms` is set to the same value for one fewer number, not because hooks need it.
