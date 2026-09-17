@@ -17,13 +17,13 @@ values:
 ---
 
 **Measured:** `test/butler-step-cost.measure.test.ts`, in the real `workerd` runtime against a real D1 and R2,
-using `src/cost-meter.ts`. Not counted by reading — the counts were read first, and one of them was wrong.
+using `src/cost-meter.ts`. Not counted by reading. The counts were read first, and one of them was wrong.
 
 ## Why a new instrument was needed before a number
 
 `doctor.ts` already had a cost meter and it could not do this job. It counts **`prepare`** rather than
 execution, prices a `batch()` at its statement count rather than as one round trip, and cannot see Durable
-Object RPCs at all. For `mail.send.propose` it would have reported **6** against a measured **10** — a 40%
+Object RPCs at all. For `mail.send.propose` it would have reported **6** against a measured **10**, a 40%
 undercount, and a `maxItems` derived from it would have been 40% too permissive, which is the direction that
 fails under load.
 
@@ -39,11 +39,11 @@ must not be reused. `src/cost-meter.ts` is what to use instead.
 | `draft` | **5** | 3 | 0 | 1 | 1 |
 | `mail.send.propose`, new thread | **10** | 6 | 1 | 2 | 2 |
 | `mail.send.propose`, reply | **14** | 8 | 1 | 3 | 3 |
-| `guard`, `switch`, `join`, `wait`, `stop`, `transform`, `validate` | **0** | — | — | — | — |
+| `guard`, `switch`, `join`, `wait`, `stop`, `transform`, `validate` | **0** | 0 | 0 | 0 | 0 |
 
 Three results worth more than the totals.
 
-**Fifty recipients cost exactly what one costs — 10 either way, measured.** The per-recipient inserts ride
+**Fifty recipients cost exactly what one costs: 10 either way, measured.** The per-recipient inserts ride
 inside a single `batch()`, so recipients are free. The old meter would have counted fifty, and a loop sized
 against that would have been wrong by a factor of fifty in the *conservative* direction, which is its own
 problem: an unusably small bound gets raised by whoever hits it, without re-measuring.
@@ -53,14 +53,14 @@ the lesson is not: a figure read off the source is a hypothesis, and this is the
 counting-by-reading has been off by one in a way only execution revealed.
 
 **Both vault key fetches are uncached, and they are visible now.** `openingKey` on every evidence read,
-`sealingKey` on every write, each a fresh Durable Object RPC — 2 of the 10 for a new-thread send and 3 of the
+`sealingKey` on every write, each a fresh Durable Object RPC: 2 of the 10 for a new-thread send and 3 of the
 14 for a reply. This is the single most promising thing to change if a Butler ever needs a cheaper send, and
 it was invisible to the previous instrument.
 
 ## The arithmetic a checker has to do
 
-`butler-step-budget.md` establishes **one subrequest pot per Workflow *instance*** — for the whole run, not
-per step — and the size of that pot **depends on the customer's Cloudflare plan**. At the reply-send bound of
+`butler-step-budget.md` establishes **one subrequest pot per Workflow *instance***, for the whole run and not
+per step, and the size of that pot **depends on the customer's Cloudflare plan**. At the reply-send bound of
 20, there are two rows and a checker needs both:
 
 ```
@@ -69,24 +69,24 @@ Workers Free    1,000 / 20  =     50 sends exhausts an entire run
 ```
 
 **A Node cannot tell which row it is on.** `doctor`'s plan check is `severity: "report"`, `ok: true`, detail
-*"Not checkable from inside a Worker"* — there is no account API from inside a Worker, so the plan is not
+*"Not checkable from inside a Worker"*. There is no account API from inside a Worker, so the plan is not
 observable at runtime and a bound cannot be selected by looking. ADR 25 refuses Workers Free at install and
 `mailda deploy` enforces it with an account token, but `deploy-button-install.md` measured the one-click path
 and it verifies no plan at all, so a Free Node is unsupported rather than impossible.
 
-**Which row a publication-time refusal should use is deferred, not chosen here.** *(No longer true — chosen
+**Which row a publication-time refusal should use is deferred, not chosen here.** *(No longer true. Chosen
 on 20 August 2026, and it is **Workers Paid**. See the #54 correction at the foot of this file for the
 argument and for what the rejected row would have bought. The paragraph is kept because the trade-off it
 states is the one that was decided, and a reader who only meets the answer cannot dispute it.)* The Paid row admits a
-Butler that dies mid-run on Free — permissive, the direction that fails under load. The Free row imposes a
+Butler that dies mid-run on Free, which is permissive, the direction that fails under load. The Free row imposes a
 bound a tenth the size on the supported configuration, which is the failure named below: an unusably small
-bound *"gets raised by whoever hits it, without re-measuring"*. No code holds either bound today — the AST
-checker does not exist — so the honest state is both rows recorded, plan-named, and the choice made in the
+bound *"gets raised by whoever hits it, without re-measuring"*. No code holds either bound today (the AST
+checker does not exist), so the honest state is both rows recorded, plan-named, and the choice made in the
 open by whoever writes it. The Paid figure is measured; the Free figure is documented and not measured, and
 `butler-step-budget.md` labels it as such.
 
-So on Paid **a `foreach` of 500 sending items consumes the whole budget**, and a loop of 200 — the number this
-repository reaches for elsewhere — spends 4,000, which is 40% of the run in one step. On Free that same loop
+So on Paid **a `foreach` of 500 sending items consumes the whole budget**, and a loop of 200, the number this
+repository reaches for elsewhere, spends 4,000, which is 40% of the run in one step. On Free that same loop
 of 200 is **four times the entire run**: the pot is empty at item 50 and the instance dies mid-loop, having
 already sent 50 messages it cannot finish accounting for.
 
@@ -101,18 +101,18 @@ The four values are **bounds with headroom, not the measured figures**, and deli
 assertion on an I/O count fails on every harmless refactor and gets deleted; these exist to catch a node
 becoming an order of magnitude more expensive, which is what makes a derived `maxItems` unsafe.
 
-- `butler.step_cost_max_case_assign = 8` — measured 5.
-- `butler.step_cost_max_case_close = 3` — measured 1.
-- `butler.step_cost_max_draft = 10` — measured 5.
-- `butler.step_cost_max_send_propose = 20` — measured 10 new-thread, 14 reply. The bound covers the reply
+- `butler.step_cost_max_case_assign = 8`: measured 5.
+- `butler.step_cost_max_case_close = 3`: measured 1.
+- `butler.step_cost_max_draft = 10`: measured 5.
+- `butler.step_cost_max_send_propose = 20`: measured 10 new-thread, 14 reply. The bound covers the reply
   with room, and is the figure the loop arithmetic above uses.
 
 ## What is deliberately not here
 
 **CPU.** It cannot be metered from inside a Worker: `authz-check-rows-read.md` records that
 `performance.now()` is Spectre-clamped and reported `p50 = 1.000ms` for every scenario including the
-pathological one. The one measured CPU cliff in this repository is in the render path —
-`body-render-bounds.md` measured 34,952 ms for 50,000 attributes, past the limit, request killed — and no node
+pathological one. The one measured CPU cliff in this repository is in the render path
+(`body-render-bounds.md` measured 34,952 ms for 50,000 attributes, past the limit, request killed), and no node
 in the shipped set reaches it, because `template.render` was moved to reserved-and-rejected on finding that
 no template subsystem exists. **Which limit binds first, CPU or subrequests, is therefore unestablished**, and
 the two CPU figures in circulation for a Workers invocation (5 minutes, 30 seconds) have not been reconciled
@@ -126,7 +126,7 @@ The meter originally proxied `CATALOG`, `EVIDENCE` and `KEY_VAULT` and **said so
 `env.EMAIL.send` and the queue producer were uncovered, that nothing priced reached them, and that widening
 would be needed first. Every part of that was true and it was still the wrong shape. **A gap named in a
 comment is a gap nothing enforces**, and pricing a node that reached the transport would have under-reported
-in the **permissive** direction — the direction that fails under load rather than in review.
+in the **permissive** direction, the direction that fails under load rather than in review.
 
 So the world is closed. Every binding `wrangler.jsonc` declares is classified in `src/cost-meter.ts` as
 metered or free; reading an unclassified one **throws**, naming what to do; and
@@ -145,12 +145,12 @@ kinds of object, and this project keeps finding that out.
 
 ### Correction, 18 August 2026: "reads the binding list from the config" was half of it
 
-**No value in this receipt moves and no `stale_when` clause fired** — the correction is to the sentence above,
+**No value in this receipt moves and no `stale_when` clause fired**. The correction is to the sentence above,
 which overstated what the guard did. `test/node/cost-meter-coverage.test.ts` read the binding *names* from the
 config, but the *block types* it looked in were a list of five inside the test itself (`d1_databases`,
 `r2_buckets`, `send_email`, `kv_namespaces`, `secrets_store_secrets`), directly under a comment claiming the
 names were read from the config precisely so no hand-maintained list could stop matching it. A `[[workflows]]`
-block — Layer 4's Butler engine, and so the next block this config is likely to gain — was invisible to it, and
+block, Layer 4's Butler engine and so the next block this config is likely to gain, was invisible to it, and
 its binding would have been priced as **free** with nothing firing (#71).
 
 Fixed by closing the world one level up, in the shape `src/cost-meter.ts` already used for binding names:
@@ -159,20 +159,20 @@ that binds nothing, and an unrecognised key fails. `test/node/deployability.test
 than keeping its own second, differently incomplete rule. Counted on the day: 15 top-level keys, 5 binding
 blocks and 10 non-binding fields. Proved by declaring a key nothing classifies and watching both guards fire,
 then by declaring a real `workflows` block and watching the meter's guard name its unclassified `BUTLER`
-binding — which is the failure this correction exists to have caused.
+binding, which is the failure this correction exists to have caused.
 
 ### Correction, 19 August 2026: the closed world stopped at the top level, and `env` was the hole
 
 **No value moves and no `stale_when` clause fired here either.** Verifying the correction above re-counted its
 figures by parsing `wrangler.jsonc` with `jsonc-parser` and grouping the keys: **15** top-level keys, **5**
 binding blocks (`d1_databases`, `r2_buckets`, `send_email`, `durable_objects`, `queues`) and **10** non-binding
-fields — unchanged, so that sentence stands. Both proofs reproduced: an unrecognised top-level key failed both
+fields, unchanged, so that sentence stands. Both proofs reproduced: an unrecognised top-level key failed both
 tripwires, and a declared `[[workflows]]` block made the meter's guard report *"BUTLER declared in
 wrangler.jsonc but absent from src/cost-meter.ts"*.
 
 What did not stand was the reach of "every top-level key". `env` was admitted as a non-binding field on the
 stated grounds that each environment under it is "a scope classified in its own right", while both tripwires
-only ever reached for `env.test` **by name** — so a second named environment declaring a binding block was
+only ever reached for `env.test` **by name**, so a second named environment declaring a binding block was
 classified by neither. That is the same hole one level down, in the same permissive direction, and it was a
 reason given in a comment that nothing enforced. `unclassifiedKeys` now descends into every value under `env`
 by iteration, and a stranger key planted in an `env.staging` fails it. `env.test` today declares 5 keys, all 5
@@ -180,12 +180,12 @@ of them binding blocks, matching the top level exactly.
 
 ### Correction, 19 August 2026: the loop arithmetic had one row and needed two (#68)
 
-**No value in this receipt moves and no `stale_when` clause fired** — the four bounds are properties of
+**No value in this receipt moves and no `stale_when` clause fired**. The four bounds are properties of
 Mailda's own nodes and no plan changes what the code does. What changed is the division above it. *"The
 arithmetic a checker has to do"* divided **10,000** by the reply-send bound and stopped, and 10,000 is the
 **Workers Paid** figure: `workflow.subrequest_budget_per_instance` carried no plan in its name, so the
 arithmetic inherited a plan it never mentioned. On Workers Free the pot is 1,000 and the answer is **50, not
-500** — a tenth, in the permissive direction, in the sentence that also states the rule a publication-time
+500**, a tenth, in the permissive direction, in the sentence that also states the rule a publication-time
 checker is meant to apply.
 
 Both rows are now shown, each says which plan it assumes, and the section says plainly that a Node cannot tell
@@ -201,8 +201,8 @@ the budgets it divides, and `test/node/budget-plan-scope.test.ts` fails if eithe
 
 The section above names *"#62's dispatch-time recheck landing on the same path"* as one of three things that
 would force `butler.step_cost_max_send_propose` up. It shipped, and it did not: the recheck is in `dispatchOne`,
-which runs from the `OutboxSweeper` alarm or from `POST /api/sends/dispatch` — a **separate Worker invocation
-with its own subrequest budget** — while `mail.send.propose` is `sealManifest`. So no figure here moves, no bound
+which runs from the `OutboxSweeper` alarm or from `POST /api/sends/dispatch`, a **separate Worker invocation
+with its own subrequest budget**, while `mail.send.propose` is `sealManifest`. So no figure here moves, no bound
 moves, and the conditional is resolved rather than left open for the next reader to re-check.
 
 Measured where it does land: `dispatch-recheck-cost.md`, which records **8** extra subrequests on the approved
@@ -210,12 +210,12 @@ dispatch path and 9 on a Node running the shipped adapter. That receipt also rec
 of *"~6, taking `mail.send.propose` from 10 to 16"* was wrong in both magnitude and location, which is worth
 knowing here because this is the receipt that arithmetic was borrowed from.
 
-### Correction, 20 August 2026: the `stale_when` fired — `mail.send.propose` now evaluates policy (#60)
+### Correction, 20 August 2026: the `stale_when` fired; `mail.send.propose` now evaluates policy (#60)
 
 **No value in this receipt moves.** The four bounds are unchanged and all four still hold. What moved is the
 measured figure behind one of them, and the `stale_when` clause that fired is its first: *"a node's
 implementation gains or loses an I/O operation."* Layer 5's policy object puts the policy decision inside
-`sealManifest`, which is `mail.send.propose`, so the node gained one query — and up to three.
+`sealManifest`, which is `mail.send.propose`, so the node gained one query, and up to three.
 
 Re-measured on the day by `test/butler-step-cost.measure.test.ts` and
 `test/policy-cost.measure.test.ts`, both in `workerd` against real D1 and R2 through `src/cost-meter.ts`:
@@ -224,12 +224,12 @@ Re-measured on the day by `test/butler-step-cost.measure.test.ts` and
 |:--|--:|--:|--:|--:|--:|--:|
 | new thread, no policies published | 10 | **11** | 7 | 1 | 2 | 2 |
 | reply, no policies published | 14 | **15** | 9 | 1 | 3 | 3 |
-| new thread, both derived conditions in play | — | **13** | 9 | 1 | 2 | 2 |
-| reply, both derived conditions in play | — | **17** | 11 | 1 | 3 | 3 |
+| new thread, both derived conditions in play | not measured | **13** | 9 | 1 | 2 | 2 |
+| reply, both derived conditions in play | not measured | **17** | 11 | 1 | 3 | 3 |
 
 **Why the increase is one and not three.** Evaluation reads the published policy set (one query) and then
-fetches the two *derived* inputs — the organization's domain set for `recipient_external`, today's counter for
-`org_daily_volume` — **only when some published policy constrains them**. A Node with no policies, or with
+fetches the two *derived* inputs (the organization's domain set for `recipient_external`, today's counter for
+`org_daily_volume`) **only when some published policy constrains them**. A Node with no policies, or with
 policies on mailbox, actor and reply only, pays one. Three is the ceiling.
 `docs/receipts/policy-evaluation-cost.md` carries the full table and the argument for evaluating the predicate
 in TypeScript rather than pushing it into SQL, which is what buys that.
@@ -238,21 +238,21 @@ in TypeScript rather than pushing it into SQL, which is what buys that.
 comfortable has narrowed from 6 to 3 on the reply path. Stated rather than glossed, because it is the figure a
 reader would want and because raising the bound is not free: `butler.step_cost_max_send_propose` is what the
 loop arithmetic above divides, so 25 would take the Paid row from 500 sends to 400 and the Free row from 50 to
-40. The bound is left at 20 — it still holds against the measurement, and moving it would change a published
+40. The bound is left at 20. It still holds against the measurement, and moving it would change a published
 figure to buy comfort rather than correctness. **What would force it up** is a sixth condition, a derived
 condition needing more than one query, or #62's dispatch-time recheck landing on the same path.
 
 **The other three nodes are unchanged and were re-measured rather than assumed**: `case.assign` 5,
-`case.close` 1, `draft` 5. The fifty-recipient result also stands — 11 for one recipient and 11 for fifty,
+`case.close` 1, `draft` 5. The fifty-recipient result also stands: 11 for one recipient and 11 for fifty,
 because the per-recipient inserts still ride inside one `batch()` and policy evaluation is per envelope rather
 than per recipient.
 
 **The loop arithmetic above is unaffected**, both rows, because it divides the bound rather than the measured
 figure and the bound did not move. `test/butler-step-cost.measure.test.ts` still asserts 500 and 50.
 
-## Correction — 20 August 2026 (#61)
+## Correction, 20 August 2026 (#61)
 
-The `stale_when` fired on its first clause — *"a node's implementation gains or loses an I/O operation"* — for
+The `stale_when` fired on its first clause, *"a node's implementation gains or loses an I/O operation"*, for
 `mail.send.propose`, and only on the path where a policy requires approval. Re-measured with the same
 instrument in the same runtime (`test/policy-cost.measure.test.ts`, `test/approval-cost.measure.test.ts`):
 
@@ -264,7 +264,7 @@ instrument in the same runtime (`test/policy-cost.measure.test.ts`, `test/approv
 | `mail.send.propose`, reply, worst realistic policy set | 17 | **19** |
 
 The two extra operations are #61's: the stage set of the matching `require_approval` versions, and the eligible
-approvers on the mailbox. They are lazy — a seal that no policy gated, or that a hold gated, pays nothing.
+approvers on the mailbox. They are lazy. A seal that no policy gated, or that a hold gated, pays nothing.
 
 **`butler.step_cost_max_send_propose` stays at 20, and the headroom is now 1.** Said plainly rather than
 smoothed over: the worst realistic seal measures 19 against a bound of 20, so this bound has stopped being a
@@ -278,14 +278,14 @@ when the assertion fails:
 - The alternative to raising it is making a send cheaper, and the largest single item is still the **two
   uncached vault key fetches** this receipt already names as the most promising thing to change.
 
-Choosing between those needs the AST checker that divides this bound, and it does not exist — so the honest
+Choosing between those needs the AST checker that divides this bound, and it does not exist, so the honest
 state is the measurement recorded, the headroom named, and the decision left in the open for whoever trips it.
 That is the same shape this receipt already uses for the Free-versus-Paid row.
 
-## Correction — 20 August 2026 (#54): the checker exists, the four bounds were re-measured against it, and the headroom on the send path is now zero
+## Correction, 20 August 2026 (#54): the checker exists, the four bounds were re-measured against it, and the headroom on the send path is now zero
 
-The `stale_when` fired on its first clause again — *"a node's implementation gains or loses an I/O
-operation"* — this time for **#66**, whose breaker evaluation runs inside `sealManifest` unconditionally.
+The `stale_when` fired on its first clause again, *"a node's implementation gains or loses an I/O
+operation"*, this time for **#66**, whose breaker evaluation runs inside `sealManifest` unconditionally.
 Every figure below was re-measured on the day with `test/butler-step-cost.measure.test.ts` in `workerd`
 against real D1 and R2 through `src/cost-meter.ts`. **No value in this receipt moves. One is added.**
 
@@ -300,17 +300,17 @@ against real D1 and R2 through `src/cost-meter.ts`. **No value in this receipt m
 | `mail.send.propose`, reply, no policies | 14 | **16** | 20 | yes, 4 spare |
 | `mail.send.propose`, **worst realistic seal** | 14 | **20** | 20 | yes, **0 spare** |
 | `lookup` | never measured | **1** | 4 | new value |
-| `map`, `foreach` | never measured | **0** | — | argued, not measured; see below |
+| `map`, `foreach` | never measured | **0** | none | argued, not measured; see below |
 
 The worst realistic seal is a reply, both derived policy conditions in play, an approval gate open and the
-breaker query — measured by `test/policy-cost.measure.test.ts` as `seal/reply-both-derived-conditions`. It
+breaker query, measured by `test/policy-cost.measure.test.ts` as `seal/reply-both-derived-conditions`. It
 was 17 on 18 August, 19 after #61, and **20 now**. The two additions since are #60's and #61's, already
 corrected above, plus #66's one breaker statement, which `send-breakers.md` records as taking the bare seal
 from 11 to 12.
 
 **The three Layer 5 changes since 14 August, and where each landed.** #60 put policy evaluation in
 `sealManifest`: +1, up to +3. #66 put breaker evaluation there: +1, unconditional. #62 put the recheck in
-`dispatchOne`, which is the `OutboxSweeper` alarm — **a separate Worker invocation with its own pot** — so it
+`dispatchOne`, which is the `OutboxSweeper` alarm, **a separate Worker invocation with its own pot**, so it
 spends nothing from a Butler step and its 8 subrequests are `dispatch-recheck-cost.md`'s, not this file's.
 That was already noted here on 20 August and it is re-verified rather than inherited: nothing on the seal path
 changed because of it.
@@ -318,31 +318,31 @@ changed because of it.
 ### `butler.step_cost_max_send_propose` stays at 20, and this is the decision the note above deferred
 
 The note above said the choice *"needs the AST checker that divides this bound, and it does not exist"*. It
-exists now — `packages/butler-ast/src/cost.ts` — so the decision is made here rather than left open again.
+exists now, `packages/butler-ast/src/cost.ts`, so the decision is made here rather than left open again.
 
 **It stays at 20.** Not to make a test pass: 20 is the *measured* worst realistic seal, so the checker that
 prices a `mail.send.propose` at 20 is exactly right about the worst path and over-prices the ordinary one
 (12). Raising it to 24 for comfort would make the checker pessimistic about every Butler and would move a
-published figure — the Paid row goes from 500 sends to 416 — to buy nothing that a measurement asked for.
+published figure (the Paid row goes from 500 sends to 416) to buy nothing that a measurement asked for.
 
 **What it costs, said plainly rather than smoothed over: the headroom is 0 and this is no longer a tripwire.**
 AGENTS.md defines a tripwire as a limit placed past where any good widget goes, and this one is now exactly
 where the widget is. The next operation added to the seal path breaks
 `test/butler-step-cost.measure.test.ts`, and that is the intended behaviour, not a nuisance. Whoever trips it
 should: re-measure first; then either raise the bound *and* redo the loop arithmetic below (at 24, Paid buys
-416 items and Free 41), or make a send cheaper — the **two uncached vault key fetches** this receipt has named
+416 items and Free 41), or make a send cheaper. The **two uncached vault key fetches** this receipt has named
 as the most promising target since 14 August are still uncached, and removing them would return 2 to 3
 operations on every seal.
 
-### `butler.step_cost_max_lookup = 4` — measured 1, and it closes a clause nothing was enforcing
+### `butler.step_cost_max_lookup = 4`: measured 1, and it closes a clause nothing was enforcing
 
 `lookup` shipped in #49 with its cost declared **unmeasured in its own node declaration**, which named this
 ticket as what would close it. `map` and `foreach` were in the same state. That is precisely this receipt's
-`stale_when` clause *"a node type is added to the shipped set without a measurement here"* — fired, and
+`stale_when` clause *"a node type is added to the shipped set without a measurement here"*, fired and
 unenforced, for three nodes at once, because nothing read the clause.
 
-Measured: **1 subrequest, for all five of `LOOKUP_ENTITIES`** — `message`, `conversation`, `case`, `mailbox`,
-`draft` — each one indexed row read by id and org, no R2 and no vault RPC. Per entity rather than once,
+Measured: **1 subrequest, for all five of `LOOKUP_ENTITIES`** (`message`, `conversation`, `case`, `mailbox`,
+`draft`), each one indexed row read by id and org, no R2 and no vault RPC. Per entity rather than once,
 because five tables could have had five answers and the maximum is the figure a checker has to price.
 
 Sized at **4** against a measured 1. The headroom is not decoration: `authz.check.max_queries = 2` is what
@@ -350,7 +350,7 @@ re-checking the caller's authority over the looked-up object costs, and a `looku
 3. 4 is one past that. Asserted in the measurement test as `worst + authz.check.max_queries <= 4`, so the
 headroom is the receipted figure rather than a round number.
 
-**`map` and `foreach` are 0, and that is an argument rather than a measurement — labelled as such.** No engine
+**`map` and `foreach` are 0, and that is an argument rather than a measurement, labelled as such.** No engine
 exists to meter a loop, so nothing was run. Two things support the 0 and both are written down elsewhere: a
 loop evaluates an expression already in the run's state and enters an edge, which is the same "no I/O" that
 put `guard` and `switch` in the zero column on 14 August; and `butler-step-budget.md`'s probe measured 30
@@ -358,8 +358,8 @@ steps of 100 queries closing at **exactly 3,000**, so a `step.do` costs no subre
 costs is its body, priced per item.
 
 **The consequence of that 0, stated because it is the honest boundary of the checker.** A loop of a million
-iterations over a body that performs no I/O is **affordable** and publishes. In subrequests — the only
-currency with a measurement behind it — that is true. CPU is the limit that would bind such a Butler and this
+iterations over a body that performs no I/O is **affordable** and publishes. In subrequests, the only
+currency with a measurement behind it, that is true. CPU is the limit that would bind such a Butler and this
 receipt already records that CPU cannot be metered from inside a Worker and that *"which limit binds first,
 CPU or subrequests, is unestablished"*. `packages/butler-ast/test/check.test.ts` asserts the million-transform
 case publishes, on purpose, so the boundary is a pinned property rather than a surprise.
@@ -370,8 +370,8 @@ Both this receipt and `butler-step-budget.md` recorded the choice of row as defe
 checker. Chosen: `workflow.paid.subrequest_budget_per_instance = 10000`. The argument is in
 `packages/butler-ast/src/cost.ts`, where the number is used, and it is three points long:
 
-1. On the Free row a **good widget touches the tripwire**. A `foreach` of 200 sending items — the fan-out this
-   repository reaches for elsewhere — costs 4,038 with the graph around it, which 1,000 refuses four times
+1. On the Free row a **good widget touches the tripwire**. A `foreach` of 200 sending items, the fan-out this
+   repository reaches for elsewhere, costs 4,038 with the graph around it, which 1,000 refuses four times
    over. AGENTS.md: if a good widget hits a budget, the budget is wrong.
 2. The permissive direction lands only on a configuration ADR 25 already refuses, and `mailda deploy`
    enforces with an account token. Refusing against Free would impose a bound a tenth the size on every
@@ -379,7 +379,7 @@ checker. Chosen: `workflow.paid.subrequest_budget_per_instance = 10000`. The arg
 3. An unusably small bound has a named failure mode in this very file: it *"gets raised by whoever hits it,
    without re-measuring"*.
 
-**What the rejected option would have bought.** A Free Node is unsupported but not impossible —
+**What the rejected option would have bought.** A Free Node is unsupported but not impossible.
 `deploy-button-install.md` measured the one-click path and it verifies no plan at all. On such a Node a
 Butler this checker admits can die at item 50 of a 200-send loop, having already sealed 50 manifests. The
 Free row would have prevented exactly that. So the refusal **prints both rows**: it names the Paid pot it
@@ -395,8 +395,8 @@ Workers Paid   (10,000 - 38) / 20  =  498 items, and the 499th is over by 18
 Workers Free    (1,000 - 38) / 20  =   48 items
 ```
 
-Both numbers are asserted in `packages/butler-ast/test/check.test.ts` — 498 publishes, 499 is refused with
-the arithmetic named — so the two rows above cannot drift from the code that applies them. The `500` and `50`
+Both numbers are asserted in `packages/butler-ast/test/check.test.ts` (498 publishes, 499 is refused with
+the arithmetic named), so the two rows above cannot drift from the code that applies them. The `500` and `50`
 rows earlier in this receipt are still correct as *what a loop costs alone*, and are the wrong number to hand
 an author, which is why the refusal computes the subtraction instead of quoting them.
 
@@ -410,7 +410,7 @@ an author, which is why the refusal computes the subtraction instead of quoting 
 ## Cross-reference, 21 August 2026 (#50): these figures price the **functions**, and a node costs more
 
 **No value here moves and no `stale_when` clause has fired.** What has changed is that an engine now exists
-to call these functions, so the difference between a function and a *node* is measurable — and it was
+to call these functions, so the difference between a function and a *node* is measurable, and it was
 measured, in `docs/receipts/butler-run-cost.md`.
 
 | node | this receipt (the function) | measured as a node |
@@ -423,7 +423,7 @@ measured, in `docs/receipts/butler-run-cost.md`.
 
 Four of the five fit inside the headroom the bounds above already carry. The fifth does not, and this receipt
 predicted exactly that: *"One figure has no headroom left and that is worth saying twice… It is one operation
-away from being permissive."* It was three operations away, and **the operations are not in the seal** —
+away from being permissive."* It was three operations away, and **the operations are not in the seal**.
 `sealManifest` is unchanged. They are the engine's, around it: the node reads the draft back through
 `readDraft` before sealing it, and records what it did.
 
@@ -435,5 +435,5 @@ refusing an effect it cannot afford; what is *not* done is a quiet edit of the f
 measure what they say they measure and the sizing argument attached to each is still the right one.
 
 Whoever re-measures this receipt should read that one first, and should decide deliberately whether these
-figures stay per-function or become per-node — because if they become per-node, `cost.ts` gains an exact
+figures stay per-function or become per-node, because if they become per-node, `cost.ts` gains an exact
 publication-time refusal and this cross-reference and its counterpart both get deleted.
