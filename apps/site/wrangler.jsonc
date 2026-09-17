@@ -1,0 +1,8 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mailda-site",
+  "compatibility_date": "2026-08-01",
+  // Static assets only: no script, no bindings, nothing at runtime. A landing page and the rendered docs.
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" },
+  "routes": [{ "pattern": "mailda.site", "custom_domain": true }, { "pattern": "www.mailda.site", "custom_domain": true }]
+}

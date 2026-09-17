@@ -1,0 +1,9 @@
+---
+import { resolve } from "node:path";
+import Landing from "../components/Landing.astro";
+import { readGaps } from "../gaps.ts";
+
+// The landing page reads its facts from the repository at build time, as the docs do (see gaps.ts).
+const gaps = readGaps(resolve(import.meta.dirname, "../../../.."));
+---
+<Landing gaps={gaps} />

@@ -61,6 +61,10 @@ export default tseslint.config(
       // esbuild's output for the React application (ADR 30). Machine-generated, minified, and vendored
       // React besides — linting it would report on somebody else's code and never on ours.
       "apps/node/worker/generated/**",
+      // Astro's own type generation for the site's content collection, and the docs pages rendered from the
+      // repository's Markdown at build time; neither is written by hand.
+      "apps/site/.astro/**",
+      "apps/site/src/content/docs/docs/**",
     ],
   },
 

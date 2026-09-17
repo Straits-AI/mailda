@@ -15,7 +15,12 @@ import { join, dirname, normalize, relative } from "node:path";
  * whose failures are all false is a check that gets muted.
  */
 
-const SKIP = new Set(["node_modules", ".git", "dist", ".turbo", ".wrangler", "coverage", "generated"]);
+const SKIP = new Set(["node_modules", ".git", "dist", ".turbo", ".wrangler", "coverage", "generated", ".astro"]);
+/**
+ * The site's docs pages are the repository's Markdown rendered with links rewritten to site paths, so every
+ * reference in them is already checked at its source and would only fail again here, relative to the wrong root.
+ */
+const SKIP_PATHS = new Set(["apps/site/src/content/docs/docs"]);
 
 /** Extensions worth resolving. A path-shaped token ending in anything else is prose about a file type. */
 const EXT = "(?:ts|tsx|mjs|js|sql|md|json|yml|yaml|toml)";
@@ -36,6 +41,7 @@ export type Reference = { readonly file: string; readonly line: number; readonly
 function walk(root: string, at: string, into: string[]): void {
   for (const name of readdirSync(at)) {
     if (SKIP.has(name)) continue;
+    if (SKIP_PATHS.has(relative(root, join(at, name)))) continue;
     const full = join(at, name);
     if (statSync(full).isDirectory()) walk(root, full, into);
     else into.push(relative(root, full));
