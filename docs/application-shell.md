@@ -8,7 +8,7 @@ ADR 30 splits the interface at authentication:
 
 | | Framework | Loaded |
 |:--|:--|:--|
-| Sign-in, first-run claim, a locked-out `doctor` | none — DOM constructed node by node | always |
+| Sign-in, first-run claim, a locked-out `doctor` | none; DOM constructed node by node | always |
 | The authenticated application | React + TanStack Router/Query (§25) | on sign-in only |
 
 The split is not a staging decision that will be tidied away. The pre-authentication screens are the ones
@@ -16,7 +16,7 @@ an operator sees **when the Node is broken**, and #23 was that case literally: a
 sign-in return 500 and left the diagnostic the only reachable surface. A screen that needs a bundle to
 render cannot be the screen you debug a broken bundle from.
 
-So `app.client.js` — now about 360 lines, down from 938 — owns claim, sign-in and the session machinery,
+So `app.client.js`, now about 360 lines down from 938, owns claim, sign-in and the session machinery,
 and reaches the application through a dynamic `import("/app/shell.js")` at the moment somebody is signed
 in. `shell.pre_auth_bundle_bytes: 0` in `react-shell-bundle.md` is that property as a number, and
 `test/shell-split.test.ts` is what keeps it true: it fails if the served page ever references the bundle,
@@ -27,19 +27,19 @@ keeps issuing requests that now 401 and eventually renders itself back on top of
 
 ## What the shell looks like: variant B
 
-Chosen in #32 over two alternatives, on Layer 3 rather than on taste. The next layer is *share* — shared
-mailboxes, assignment, reply-collision, cases — and that needs a persistent list of mailboxes with
+Chosen in #32 over two alternatives, on Layer 3 rather than on taste. The next layer is *share* (shared
+mailboxes, assignment, reply-collision, cases), and that needs a persistent list of mailboxes with
 per-item counts and claim state. That is what a rail is. Route tabs are not, so choosing them would have
 meant bolting a rail on at Layer 3 and rewriting the chrome. **The rail therefore exists now with one row
 in it, and Layer 3 adds rows rather than a shape.**
 
-- **Rail** — mailboxes, then the ledgers, with `doctor` at the foot because it is what you want when
+- **Rail**: mailboxes, then the ledgers, with `doctor` at the foot because it is what you want when
   something else has stopped working.
 - **Split list and reading pane** for mail. The composer is **docked**, not a route: replying must not move
   the original off screen, because for invoice and shipment mail a reply exists to quote a reference from
   it.
 - **Full-width tables** for the outbox, audit trail and log. For a ledger a table genuinely is the right
-  form — the one thing variant A got right, and it is kept.
+  form, the one thing variant A got right, and it is kept.
 - **A bottom instrument bar** carrying the session countdown, the `doctor` verdict and the outbound counts.
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
   a reader's eye rests, and the counts belong beside the mailboxes they describe.
@@ -48,7 +48,7 @@ in it, and Layer 3 adds rows rather than a shape.**
 
 The Mailda identity landed as a brand sheet: **Ink `#0F1720`**, **Flow Blue `#4C77B8`**, Sky, Mist, White;
 Satoshi for headings and Inter for body; a continuous-line M with a blue dot. The interface before it was a
-dark "instrument panel" — cream on near-black, an editorial serif, one amber signal colour. Applying the
+dark "instrument panel": cream on near-black, an editorial serif, one amber signal colour. Applying the
 brand was therefore a repaint rather than a token swap, and four things could not simply be mapped across.
 
 ### Flow Blue is not a text colour on two of the brand's own three grounds
@@ -58,14 +58,14 @@ Measured before anything was designed with it: **4.53:1 on white**, which clears
 text on the brand's own page ground.
 
 So the accent is **two tokens split by use**, not one token compromised in value. `--accent` is the brand hex
-for fills, borders, focus rings, icons and the mark's dot — non-text contrast, 3:1, worst case 3.87.
-`--accent-text` is `#436BA8`, the same hue and saturation five percent darker, for anything a person reads —
+for fills, borders, focus rings, icons and the mark's dot, for non-text contrast at 3:1, worst case 3.87.
+`--accent-text` is `#436BA8`, the same hue and saturation five percent darker, for anything a person reads,
 worst case 4.59. The dark theme lifts both to `#6E93CC`, because Flow Blue is 3.99:1 on Ink.
 ([receipt](./receipts/contrast-tokens.md))
 
 ### `--signal` was doing two jobs, and the brand is what made that visible
 
-One amber token carried the wordmark, focus rings, hover, selected rows **and** every warning state — a held
+One amber token carried the wordmark, focus rings, hover, selected rows **and** every warning state: a held
 send, a throttled domain, a degraded check. The brand supplies an accent and **no** warning colour, so the
 two meanings had to come apart: `--accent` took the identity and interaction half, `--warn` kept the amber for
 attention. Forty-four uses, split by what each one meant rather than by find-and-replace.
@@ -77,8 +77,8 @@ extension of the brand, and it is named as one.
 ### Satoshi is in the type stack and is not in the repository
 
 Its licence permits self-hosting and forbids modifying and redistributing. Read against Mailda that second
-clause is the operative one: **this repository is the distribution channel** — ADR 24 has customers clone and
-merge from it — so a font committed here is redistributed from a public URL to every customer, and subsetting
+clause is the operative one: **this repository is the distribution channel** (ADR 24 has customers clone and
+merge from it), so a font committed here is redistributed from a public URL to every customer, and subsetting
 it for size is precisely the modification the licence names.
 
 So `--display` is `Satoshi, "Plus Jakarta Sans", …`: a designer with Satoshi installed sees the brand exactly,
@@ -88,7 +88,7 @@ served the same way. Four faces, 72 KB, `font-display: swap`, cached for a year.
 **The no-webfont rule was about third parties, not about webfonts.** `ui.ts` said for months that the
 interface loads none, because "a page that fetches a font from a third party hands that third party every
 viewer's IP address on every load". These are same-origin under `font-src 'self'`, which
-`test/security-headers.test.ts` asserts is exactly that and nothing more — an added CDN host fails, and a
+`test/security-headers.test.ts` asserts is exactly that and nothing more. An added CDN host fails, and a
 policy listing `'self'` *and* a CDN is not narrower than one listing the CDN alone. The mechanism changed and
 the rule did not. ([provenance](../apps/node/worker/fonts/README.md))
 
@@ -96,7 +96,7 @@ the rule did not. ([provenance](../apps/node/worker/fonts/README.md))
 
 `src/brand.ts` holds the symbol as a filled outline traced with `potrace` from the largest raster of the
 symbol the brand sheet has (18 September 2026), because there is no designer's vector. It was checked by
-rendering at 300, 26 and 16 px beside the source before it shipped — the earlier by-eye path had been
+rendering at 300, 26 and 16 px beside the source before it shipped. The earlier by-eye path had been
 described as reading correctly and did not (#128). At 300 px it is the source; at 26 px it reads as the
 sheet's own 24 px row; at 16 px it is a shape, as the sheet's own favicon is. The file's header says so.
 
@@ -104,7 +104,7 @@ It is one edit to replace: `MARK_PATH` and `MARK_VIEWBOX` are the only values de
 the shell, the favicon and the app icon all derive from `markSvg()`. Until the real vector lands, the mark
 should not be used for print, an app-store icon, or anything a customer reads as the identity.
 
-The **wordmark is real text**, not a path — selectable, translatable and readable by a screen reader, where a
+The **wordmark is real text**, not a path: selectable, translatable and readable by a screen reader, where a
 traced word is a picture of a word. The cost is that it renders in Plus Jakarta Sans wherever Satoshi is
 absent, which is the right trade inside the product and the wrong one for a logo file handed to a printer.
 
@@ -116,8 +116,8 @@ that fixes that and deliberately not a redesign.
 **A cursor stack, one page at a time**, rather than an infinite list that appends. Three reasons, in the order
 they decided it:
 
-1. Every page re-runs the whole authorization server-side — that is what the cursor carrying position only is
-   for — so an appending list of ten pages refetches ten pages on every window focus. Ten authorizations, and
+1. Every page re-runs the whole authorization server-side (that is what the cursor carrying position only is
+   for), so an appending list of ten pages refetches ten pages on every window focus. Ten authorizations, and
    for a supervised reader ten more `supervised.query` entries about mail they are not currently looking at.
 2. Going back needs no reverse query. The stack holds cursors already used, so *newer* is a `pop`, and the only
    cursors ever sent are ones the Node produced.
@@ -129,14 +129,14 @@ reload landing on the newest page is right rather than lost.
 
 Three things the screen has to get right, and each is an honesty rule rather than a layout one:
 
-- ***older* exists exactly when `next_cursor` is non-null** — the Node saying there is at least one more row
+- ***older* exists exactly when `next_cursor` is non-null**, the Node saying there is at least one more row
   this reader may see at this instant. The end of the list is an absent control, never a disabled one, for the
   same reason `StartMessage` renders nothing when somebody holds no sendable mailbox.
 - **The heading says `50 shown`, not `50 messages`.** The old wording was true while the listing returned
   everything there was; against a page it states a count of the archive and prints the size of a page. Nothing
   counted a total, and there are no page numbers to click for the same reason.
 - **An empty later page does not say "nothing has arrived yet".** That sentence is a claim about the whole Node
-  and is false on page four — #101's defect in a new place. It says *"nothing older on this page"* and offers
+  and is false on page four, #101's defect in a new place. It says *"nothing older on this page"* and offers
   the way back, because the reader got there by pressing a control this screen rendered. It is reachable
   without a race, too: the Node said there was more, and by the time the reader asked for it the rows it
   counted could have been revoked.
@@ -146,13 +146,13 @@ Three things the screen has to get right, and each is an honesty rule rather tha
 
 ### Narrowing to one mailbox
 
-`?mailbox=` reaches the API, the SDK and the MCP tool, and for a while it reached no control — so the one
+`?mailbox=` reaches the API, the SDK and the MCP tool, and for a while it reached no control, so the one
 surface a person uses could not do what the ticket asked for. There is a selector in the inbox heading now.
 
 Three decisions worth having written down:
 
 - **It is a control on this screen, not a rail row.** The rail lists mailboxes, so a filter here looks like a
-  duplicate. It is not: the rail's per-mailbox rows sit **under Queue** and carry *unclaimed* counts — work
+  duplicate. It is not: the rail's per-mailbox rows sit **under Queue** and carry *unclaimed* counts, work
   nobody has taken, which is Layer 3's subject. Repointing them at a filtered inbox would change what they
   mean rather than give them a meaning, and whether a rail row navigates is a real question that belongs with
   the queue.
@@ -163,11 +163,11 @@ Three decisions worth having written down:
   differ in exactly that, which is why the reasoning is written in both.
 - **Changing the filter resets the cursor**, and that is correctness rather than courtesy. A cursor is a
   position in one ordering; narrow the listing and the row it names may not be in the new one at all, so the
-  page it produces is arbitrary or empty. Nothing server-side can catch it — the cursor is well-formed and
+  page it produces is arbitrary or empty. Nothing server-side can catch it. The cursor is well-formed and
   the authorization re-runs, so the Node correctly answers a question nobody asked.
 
 One honest limitation, named because the fix is a new authority surface rather than a tidy-up: the options
-come from `useMailboxes`, which returns the mailboxes this reader holds `send.propose` on — **not** what they
+come from `useMailboxes`, which returns the mailboxes this reader holds `send.propose` on, **not** what they
 may read. A supervised reader can therefore see mail from a mailbox the filter cannot name, and the
 unfiltered view is the one that shows it. Filtering to fewer rows than exist is safe; the reverse would not
 be. A `mailbox.content.read` listing is the real answer and inventing one for a filter would be a permission
@@ -182,20 +182,20 @@ part-typed word narrows rather than finding nothing.
 **Bodies are a second index with a stronger authorization, and the query is a union of two arms.** The subject
 and sender index answers to `mailbox.metadata.read` or `mailbox.content.read`; the body index answers to
 `content.read` alone, because telling somebody *"the word demurrage occurs in message X"* discloses the
-message itself one word at a time, even though the row returned carries only metadata. That is per **mailbox**
-— a reader with `content.read` on Enquiries and `metadata.read` on Accounts gets body matches from the first
+message itself one word at a time, even though the row returned carries only metadata. That is per **mailbox**.
+A reader with `content.read` on Enquiries and `metadata.read` on Accounts gets body matches from the first
 and subject matches from the second, in one page, from one statement. A request-level check could not express
 that without either over-granting or refusing the whole search.
 
 **The union is ordered by arrival and each arm by relevance, and that is forced.** bm25 rank is computed from
 term frequency within one index, so a subject hit's rank and a body hit's rank are on different scales and
 ordering the union by rank would be arithmetic on unrelated quantities. Each arm takes its own best matches;
-the union — at most twice the page size — is sorted by arrival, which costs nothing over a hundred rows.
+the union, at most twice the page size, is sorted by arrival, which costs nothing over a hundred rows.
 
 **A query whose words are split across the two indexes matches nothing.** FTS5 requires every term to appear
 in the same document, and a subject and a body are two documents in two tables. Searching `hapag cabotage`
 fails even when `hapag` is the subject and `cabotage` is the text. Fixing it means one index holding both,
-which is exactly what the authorization split forbids — so the limitation is the price of the boundary, and it
+which is exactly what the authorization split forbids. So the limitation is the price of the boundary, and it
 is asserted in the suite so it stays deliberate.
 
 **It is the same endpoint, not a new one.** `GET /api/messages` already carries authorization in the same
@@ -207,15 +207,15 @@ the authorization predicate are shared between the two plans inside one builder,
 Five decisions worth having written down:
 
 - **A searched page is a different query plan, and finding that out took three measurements.** It was built
-  first as one plan — the match added to the listing as another `WHERE` predicate, keeping the time ordering
+  first as one plan: the match added to the listing as another `WHERE` predicate, keeping the time ordering
   and the cursor. That reads correctly and is 57× too slow: ordering by time while filtering by a term costs
   **O(corpus), not O(matches)**, because filling a page with the twelve newest matching messages walks all
   1,200 receipts. A rare term read 3,640 rows against a 1,000-row budget. The shipped plan is driven by the
   index, ordered by `rank`, and capped: 64 rows for the same search, which is *less than the unsearched page's
   208*. ([receipt](./receipts/message-search-cost.md))
-- **So there is no pagination for a search, and the screen says so.** A full page reads *"best matches —
-  narrow the words to see others"*. This is also what the scoping decided for an unrelated reason — bm25 rank
-  shifts as mail arrives, so a rank-ordered cursor would skip and repeat rows silently — and the two arguments
+- **So there is no pagination for a search, and the screen says so.** A full page reads *"best matches.
+  Narrow the words to see others"*. This is also what the scoping decided for an unrelated reason (bm25 rank
+  shifts as mail arrives, so a rank-ordered cursor would skip and repeat rows silently), and the two arguments
   landing in the same place is the only reason the cost measurement did not have to reopen a decision.
 - **The field submits; it does not search as you type.** Every keystroke reaching the Node would be one
   authorization and, for a supervised reader, one `supervised.query` audit entry **per keystroke**, recording
@@ -226,40 +226,40 @@ Five decisions worth having written down:
   the sanitiser was written: `AND`, `NOT`, `a OR`, `foo(`, `NEAR(`, `*` and `sub:x` each return
   `fts5: syntax error`. A search box that 500s when somebody types the word "AND" is the feature not working.
   `ftsQuery` keeps letters and numbers, drops everything else and quotes each token, so the expression is
-  rebuilt rather than escaped — escaping means enumerating what is dangerous, and that list is the one that
+  rebuilt rather than escaped. Escaping means enumerating what is dangerous, and that list is the one that
   ends up an entry short. The consequence is that advanced syntax is unavailable, which is deliberate: a mail
   search that reads `NOT` as an operator will one day fail to find a message whose subject contains "not".
 - **An empty search result is a third empty screen.** The inbox already distinguished *nothing has arrived*
   from *nothing is older than this page*; a search that matched nothing is neither, and saying the first would
   offer a reader the inbound-routing check because they misspelled a supplier's name. It names what was
-  searched and offers a way to clear it — a search with no exit is a mailbox that looks empty for ever.
+  searched and offers a way to clear it. A search with no exit is a mailbox that looks empty for ever.
 
-**What the body index costs against ADR 28, and what it does not.** It is *contentless* — `content=''` — so
+**What the body index costs against ADR 28, and what it does not.** It is *contentless*, `content=''`, so
 it stores the inverted index and no copy of any document. A D1 dump therefore lets somebody **confirm a
 guess** (that a word appears in a message) and not read the message; bodies stay in R2, encrypted. ADR 28 was
 amended in the same change to say exactly that, because its argument turned on the claim that DO-held keys
 defend against a D1 dump, and this narrows it. Two consequences are enforced rather than described: body
-search needs `content.read`, and there are **no body excerpts** in a result list — `snippet()` returns `null`
+search needs `content.read`, and there are **no body excerpts** in a result list. `snippet()` returns `null`
 on a contentless table, so showing the matching line means fetching and decrypting the message, which is an
 authorized read.
 
 **The subject index costs nothing against ADR 28.** `subject` and `from_addr` have been plaintext
 columns of `messages` since migration 0002, so an FTS5 index over them discloses nothing a D1 dump did not
-already disclose. It is therefore an ordinary content-bearing FTS5 table, which buys working `snippet()` —
-measured: the contentless form returns `null` rather than an error, so highlights would have shipped blank
+already disclose. It is therefore an ordinary content-bearing FTS5 table, which buys working `snippet()`.
+Measured: the contentless form returns `null` rather than an error, so highlights would have shipped blank
 with nothing failing. Body search is the opposite case and needs the contentless form, because there
 duplicating the text into D1 *is* the disclosure. ([receipt](./receipts/d1-fts5-search.md))
 
 **The index row is derived, not copied.** `indexMessage` is `INSERT … SELECT subject, from_addr FROM messages
 WHERE id = ?`, in the same batch as the message. Delivery is at-least-once and the message insert is
-`INSERT OR IGNORE`, so a redelivery mints a fresh `msg_…` id and writes no row — an index write binding its
+`INSERT OR IGNORE`, so a redelivery mints a fresh `msg_…` id and writes no row. An index write binding its
 own copy of the values would index an id belonging to no message, which no deletion path could ever reach.
 Selecting from the table makes that impossible rather than merely unlikely.
 
 **A legal hold needs no code in the search subsystem.** The index row's lifetime is derived from the
 message's, and `assertNotHeld` already refuses to delete a held message, so a hold pins the index as a
 consequence of a rule enforced in one place. There is no `if (held)` here to forget. And nothing yet deletes a
-message row at all — `search-scope-world.test.ts` asserts that, so the day one appears the assertion fails and
+message row at all. `search-scope-world.test.ts` asserts that, so the day one appears the assertion fails and
 carries the rule with it, which is stronger than a delete function nobody calls.
 
 ## The honesty rules live outside React
@@ -269,7 +269,7 @@ rather than bundled**. It holds the delivery vocabulary and one rule: never supp
 the recipients agree, because they agree when everything bounced too.
 
 It is a separate module because that rule was previously inside `app.client.js`, which touches `document`
-at load and therefore cannot be imported by any test — and the rule was wrong for months. A send whose
+at load and therefore cannot be imported by any test, and the rule was wrong for months. A send whose
 every recipient bounced rendered as green `handed over`. `test/node/delivery-summary.test.ts` evaluates the
 **served bytes** of that module, so what is tested and what a browser runs cannot drift.
 
@@ -281,7 +281,7 @@ bundled copy would put two refresh timers on a page that also loads the framewor
 Every outbound path this product had ran through **somebody else having written first**. The composer was
 reachable only from a message's reply button, and `replyContext` was its one caller.
 
-The composer itself was never the obstacle — `inReplyToMessageId` has always been optional and it renders
+The composer itself was never the obstacle. `inReplyToMessageId` has always been optional and it renders
 "New message" in two places. What was missing was a caller that left it out. `newMessageContext(mailboxId)`
 is that caller, and it is three fields shorter on purpose: no `to`, no `subject`, no `body`. `replyContext`
 derives all three from the message being answered, and a composer that opens pre-addressed to a guess is
@@ -297,7 +297,7 @@ returns exactly the mailboxes the caller holds `send.propose` on, so the options
 check and cannot offer one they may not use. Nothing renders when they hold none.
 
 **That paragraph was false for as long as it existed** (#94). Nine lines under it the code read
-`const chosen = from ?? rows[0]!.id`, and the `<select>` rendered with that value — so the first mailbox
+`const chosen = from ?? rows[0]!.id`, and the `<select>` rendered with that value, so the first mailbox
 looked chosen, and pressing the button without touching the dropdown sent from whichever mailbox the query
 happened to return first, in an order that is not even stable. The comment described picking the first row
 as the thing to avoid, and the line below it did that. What now holds:
@@ -306,15 +306,15 @@ as the thing to avoid, and the line below it did that. What now holds:
   be ceremony on the commonest Node there is. The rule is narrower than "never default": a default *among
   alternatives* is never invisible, and where there are no alternatives there is no default.
 - **More than one starts at nothing**, with `new message` disabled until a choice is made. The unchosen state
-  is a real `<option value="">`, not an absent value — a `<select>` whose value matches no option displays
+  is a real `<option value="">`, not an absent value. A `<select>` whose value matches no option displays
   its first one anyway, which is the original bug wearing a different implementation.
 
-The control lives in the heading, which precedes every branch of the screen — so it is present while the
+The control lives in the heading, which precedes every branch of the screen, so it is present while the
 inbox is loading, when it is full, and, most importantly, when it is **empty**.
 
 That empty screen used to say *"This Node is claimed and routing is live"* (#101), concluded from an empty
 result set, which establishes neither half. Email Routing never enabled, MX records pointing elsewhere, a
-catch-all aimed at a different Worker, no address configured at all — every one produces that same screen,
+catch-all aimed at a different Worker, no address configured at all: every one produces that same screen,
 so a reader whose routing was broken was told it worked, and would wait, and send a test message, and watch
 that not arrive either. It is the same shape as `doctor` once shipping `workers_paid_plan: ok` over a plan
 check that did not exist.
@@ -322,10 +322,10 @@ check that did not exist.
 It now says only what an empty list means and links to `doctor`, whose new **`inbound_routing`** finding is
 what can actually answer the question. That finding is careful about the boundary between the two halves:
 
-- **provable from inside** — whether any address exists (no row in `addresses` means nothing routed here has
+- **provable from inside**: whether any address exists (no row in `addresses` means nothing routed here has
   anywhere to land, and `email()` refuses an unknown recipient), and whether anything has *ever* arrived
   (one `ingress_receipts` row proves routing reached this Worker at least once).
-- **not provable** — whether Email Routing is enabled and pointing here *now*. That lives in the account,
+- **not provable**: whether Email Routing is enabled and pointing here *now*. That lives in the account,
   behind a token this Node deliberately does not hold (ADR 22, ADR 24). So "has received" is reported as
   **history, not a live status**: a Node whose routing was repointed an hour ago would otherwise read as
   healthy forever on the strength of old mail.
@@ -334,7 +334,7 @@ It is `report` severity so a correctly-installed Node with no mail yet does not 
 `discloses: "data"` because the counts come from an organization's mail (§5C).
 
 The shared `Nothing` component changed in the same pass, for the same reason. It appended *"An empty ledger.
-Not a filtered one: nothing has been hidden from you"* to **every** empty state — and authorization on this
+Not a filtered one: nothing has been hidden from you"* to **every** empty state, and authorization on this
 Node happens inside the SQL (ADR 11, §5), so an empty list routinely means "nothing you may see". The
 screens already knew: `matters.tsx` writes *"No matters, or you do not hold org.admin"* and this sentence
 contradicted it two words later on the same line. The reassurance is now opt-in via `unfiltered`, and a
@@ -342,15 +342,15 @@ caller may only assert it where the query genuinely is not narrowed by a relatio
 
 ## The composer's From selector, and why the words live outside React
 
-A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1` — the
-oldest — so adding `billing@` to a support mailbox sent billing replies as `support@` with nothing saying so.
+A mailbox may have several addresses, and From used to be chosen by `ORDER BY created_at LIMIT 1`, the
+oldest, so adding `billing@` to a support mailbox sent billing replies as `support@` with nothing saying so.
 The Node now refuses a send from a multi-address mailbox that does not name which address, listing them, and
 the composer renders a **From selector when and only when there is a choice**: a select with one option is
 furniture, and almost every mailbox has one address.
 
 Two things about it were wrong on first render and were found by opening the composer rather than by the
 suite. It sat **below the message body**, so somebody wrote the whole reply and only then met a required
-field — From is identity and belongs at the top of a letter. And it was an unstyled full-width native select
+field. From is identity and belongs at the top of a letter. And it was an unstyled full-width native select
 among bare-underline inputs, which read as belonging to another application.
 
 **The send-state words live in `delivery.client.js`, not in the React screen**, and that placement earns its
@@ -358,7 +358,7 @@ keep. They were a literal map in `ledgers.tsx` keyed on `state` alone, which mad
 do not know whether it left"* even in the one case where the Node can prove otherwise: on the authored path
 the submitted bytes are stored **before** the transport is asked, so a terminal authored send with no
 submitted key never reached it. That is a reading of three fields rather than a lookup on one, and it belongs
-where a test can import it — `ledgers.tsx` touches `document`, which is why the outbox's previous honesty
+where a test can import it. `ledgers.tsx` touches `document`, which is why the outbox's previous honesty
 defect (a unanimous all-bounced send rendering as "handed over") lived there uncovered until somebody looked
 at the page.
 
@@ -368,10 +368,10 @@ A policy decision now runs inside `sealManifest`, so a send's state is a policy 
 transport outcome. The shell's outbox therefore renders two states it did not before, and one column it did
 not have.
 
-- **`awaiting`** — a policy gated the send. Rendered with `--signal`, the same colour as `held`, because in
+- **`awaiting`**: a policy gated the send. Rendered with `--signal`, the same colour as `held`, because in
   both cases the send is waiting on a person and a fifth chip colour would need its own contrast measurement
   for no new meaning.
-- **`withheld`** — this Node declined. It already existed for withdrawn send authority; a policy denial is the
+- **`withheld`**: this Node declined. It already existed for withdrawn send authority; a policy denial is the
   second thing that produces it.
 - **`state_reason`**, a machine token beside the state, rendered as its own unpainted chip. The state says what
   happened to the send; the reason says **who can act**. `awaiting` a hold and `awaiting` an approval are the
@@ -386,24 +386,24 @@ sentence means the authoritative one is whichever file the reader opened.
 The split is **enforced in both directions**, because a placement rule nothing checks is a placement rule that
 drifts on the first token somebody adds. `test/node/delivery-summary.test.ts` evaluates the served module and
 fails if any send *state* has no words; `test/policy.test.ts` reads the same bytes and fails if any *reason*
-this Node can write has none — driven off `POLICY_REASONS`, which is derived from the outcome-to-state mapping
+this Node can write has none, driven off `POLICY_REASONS`, which is derived from the outcome-to-state mapping
 rather than written out, so a renamed or added token arrives at the check without anybody remembering to bring
 it. Without that second check the outbox would fall back to rendering `policy_approval_required` at a person,
 which is the failure the first check exists to prevent, reached through the other column.
 
 **The stop button now offers itself on `awaiting` as well as `held`**, and that is not a convenience. Nothing
-in this build clears a policy gate — releasing a hold and deciding an approval are #61's acts — so without it
+in this build clears a policy gate (releasing a hold and deciding an approval are #61's acts), so without it
 the only thing a person could do with their own gated send is watch it. `cancelSend` bounds the authority to
 `send.propose`, which whoever sealed it holds by definition, so nothing widened.
 
-**There is deliberately no screen for authoring a policy.** Four routes exist — create, edit the draft,
-publish, list — because a rule nothing can write is dead code, and `org.admin` is the only principal for all
+**There is deliberately no screen for authoring a policy.** Four routes exist (create, edit the draft,
+publish, list) because a rule nothing can write is dead code, and `org.admin` is the only principal for all
 four. A screen for writing rules is a design question this ticket does not settle. What the shell does show is
 the *consequence*, because a state a person cannot explain is worse than one they cannot set.
 
 ## Drafts
 
-A draft survives a reload, which is what earns the composer's middle phase — *saved on your node* — after
+A draft survives a reload, which is what earns the composer's middle phase, *saved on your node*, after
 shipping deliberately without it.
 
 - **The body is in R2, encrypted, not in a D1 column.** Every other piece of customer content on this Node
@@ -412,10 +412,10 @@ shipping deliberately without it.
 - **One object per draft**, under a stable key, so an autosave overwrites rather than accumulating an object
   per pause in typing.
 - **`send.propose` authorizes it, re-checked on every save and every read.** A draft is addressed from a
-  mailbox (ADR 36), so holding one is proposing a send as that mailbox — and a long-lived draft is exactly
+  mailbox (ADR 36), so holding one is proposing a send as that mailbox, and a long-lived draft is exactly
   where "withdrawn authority stops working immediately" quietly becomes "next time you sign in".
 - **Nobody reads anybody else's**, including other members of the same mailbox. Not because that is settled
-  — Layer 3 decides what sharing unfinished work means — but because a guess here is a guess about who reads
+  (Layer 3 decides what sharing unfinished work means) but because a guess here is a guess about who reads
   a half-written sentence about a customer.
 - **One draft per reply**, enforced by a partial unique index, so replying twice resumes instead of forking
   and leaving the first to rot. The index is partial because SQLite treats every NULL as distinct: as many
@@ -424,22 +424,22 @@ shipping deliberately without it.
   the message it answers.
 - **A save that changes nothing writes nothing.** `updated_at` is shown as "saved on your node · HH:MM:SS",
   so it has to mean when the draft last *changed*, not when somebody last opened it. Guarded in
-  `saveDraft` — the layer that owns the column — as well as in the composer.
+  `saveDraft`, the layer that owns the column, as well as in the composer.
 - **Deleted when the message is sealed**, by the Node rather than the browser, and *after* the seal: the
   residual is a draft for a message already sent, which is visible and takes one click, rather than losing
   somebody's writing to a seal that then failed. **The row is deleted here; the R2 object is collected by the
   reconciler** (#67), and that division is deliberate rather than a leftover. `deleteDraft` issues one
-  `DELETE FROM drafts` and touches R2 not at all, because ADR 32 makes reconciliation asymmetric — a
-  reference with no blob may only be *reported* — so an inline delete that failed after the row was gone
+  `DELETE FROM drafts` and touches R2 not at all, because ADR 32 makes reconciliation asymmetric (a
+  reference with no blob may only be *reported*), so an inline delete that failed after the row was gone
   would create an object nothing could reach. Routing it through the existing collector also means **no new
   R2 delete site**: `EVIDENCE.delete` in `reconcile.ts` is still the one call in the product that destroys
   content bytes, which is the property `test/node/content-deletion-world.test.ts` exists to protect.
   What this bullet said for two months was that the object was "left for the reconciler, because ADR 32 makes
-  an orphan blob collectable" — true of ADR 32 and false of the prefix, because the reconciler listed
+  an orphan blob collectable", which is true of ADR 32 and false of the prefix, because the reconciler listed
   `${orgId}/raw/` only and a draft body lives at `${orgId}/drafts/{draftId}.txt`. Since a draft is deleted on
   the *ordinary* send path, that made a Node's R2 usage grow with composer use, with nothing able to say so.
-  The pass now scans that prefix under its own referent rule — a `drafts` row keyed by `body_key`, past the
-  same grace window — and collects **the residue every existing Node already has** in the same run, with no
+  The pass now scans that prefix under its own referent rule (a `drafts` row keyed by `body_key`, past the
+  same grace window) and collects **the residue every existing Node already has** in the same run, with no
   migration and no separate sweep. It is gated on the org-wide legal hold (#64) and stays report-only while
   one stands, so residue in `doctor`'s `draft_bodies_stranded` finding now means the collector has not been
   run or a hold is suppressing it. `docs/evidence-lifecycle.md` has the predicate, the costs and the
@@ -449,7 +449,7 @@ shipping deliberately without it.
   covers it: `deleteDraft` reads the row first, tests the hold against the draft's `created_at`, and refuses
   with `E_LEGAL_HOLD` while recording the attempt as `hold.blocked`. Two consequences a reader should not have
   to discover: pressing **discard** on a held draft answers 409 with the reason, and **sending** from a held
-  mailbox succeeds and keeps the draft — the seal happened, so the send route reports `draftRetained: true`
+  mailbox succeeds and keeps the draft. The seal happened, so the send route reports `draftRetained: true`
   rather than failing a message that has already left. The composer's draft list then shows a draft for a sent
   message, which is the correct state under a hold and not a bug to tidy away.
 - **The composer reads that 409 rather than closing over it.** `apiFetch` *resolves* for a non-ok response,
@@ -458,11 +458,11 @@ shipping deliberately without it.
   verbatim in the same `role="alert"` region `seal` uses and leaves the dock open, because a person owed a
   reason has to still be looking at the thing it is about. A 404 still closes: that means the draft is already
   absent, which is what discard asked for, and the route answers it with no message for §5C's reason. Both the
-  route's 409 body and the handler's reading of it are asserted — `test/legal-hold-routes.test.ts` and
-  `test/node/content-deletion-world.test.ts` — the second lexically, and it says so.
+  route's 409 body and the handler's reading of it are asserted, `test/legal-hold-routes.test.ts` and
+  `test/node/content-deletion-world.test.ts`, the second lexically, and it says so.
 
 - **Closing the dock flushes what the debounce has not written** (#90). The autosave lives in a
-  `setTimeout` owned by an effect, and that effect's cleanup cancels the timer — which is right on every
+  `setTimeout` owned by an effect, and that effect's cleanup cancels the timer, which is right on every
   keystroke and was silently wrong on unmount. So for as long as drafts have existed, typing and then
   pressing **close** inside the 1.5s idle window lost everything since the last save, and on a draft that
   had never saved, all of it. The comment beside the button read *"Closing keeps the draft"*, which is
@@ -473,28 +473,28 @@ shipping deliberately without it.
   `discard` and `seal` now wait for any write already in the air, since a PUT landing after a DELETE
   resurrects the draft and one landing after a seal resurrects a sent one; and both read the draft id from
   a ref rather than their own closure, because the write they wait for may be the one that created it.
-  There is also an unmount-only effect that flushes for the paths `close` cannot cover — a rail link, a
-  route change — since cancelling the timer there is the same loss reached sideways.
+  There is also an unmount-only effect that flushes for the paths `close` cannot cover (a rail link, a
+  route change), since cancelling the timer there is the same loss reached sideways.
 
 Nothing about a draft's own lifecycle is audited. A draft is the only write path a person triggers by *typing*
-rather than by deciding, and an entry per autosave would put dozens behind one human action —
+rather than by deciding, and an entry per autosave would put dozens behind one human action:
 `audit-and-log-retention.md`'s sizing, falsified as a side effect of a convenience. The act that *is*
 audited is `send.sealed`.
 
 The one exception is not about the draft: a deletion **refused by a legal hold** records `hold.blocked`, whose
 subject is the draft id. That is an entry about an attempt to destroy held content, not about somebody's
-writing, and it is at most one per send from a held mailbox — inside the same sizing.
+writing, and it is at most one per send from a held mailbox, inside the same sizing.
 
 ## The build
 
 React needs a build step, and it hangs off `wrangler.jsonc`'s `build.command` rather than our `deploy`
-script — because a one-click install runs `npx wrangler deploy` directly (measured:
+script, because a one-click install runs `npx wrangler deploy` directly (measured:
 `deploy-button-install.md`), so anything hung off `pnpm run deploy` is absent on the install path most
 customers take. Declared in wrangler's own config, the button, the CLI and `wrangler dev` all run it.
 
 The output is `apps/node/worker/generated/` and is **not committed**; `react-shell-bundle.md` records both
 why and what it costs. It lives outside `src/` with `watch_dir` set to `src`, because an artifact inside
-the watched tree makes each build trigger the next — which looped `wrangler dev` into unresponsiveness
+the watched tree makes each build trigger the next, which looped `wrangler dev` into unresponsiveness
 before it was pinned down.
 
 Two TypeScript programs, not one: the browser half needs `lib: DOM` and JSX, and the Worker must **not**
@@ -510,7 +510,7 @@ next `{…}`, and **the rule immediately following it is silently discarded**. T
 `document.styleSheets[0].cssRules`, so four consecutive layout attempts were measured honestly against a
 stylesheet that never contained the rule under test. `test/node/stylesheet-hazards.test.ts` now fails on
 either, and names the line. Since #97 that literal is a named constant served at `/app/app.css` rather than a
-`<style>` element in the document — the next section says why — and the hazards did not move with it, so the
+`<style>` element in the document (the next section says why), and the hazards did not move with it, so the
 check matches both shapes.
 
 ## The browser policy, and what it cost the shell (#97)
@@ -527,7 +527,7 @@ Two consequences land in this document rather than in the ticket.
 **The shell contains no inline script and no inline style, and that is load-bearing.** `MAILDA_CONFIG` shipped
 as an inline `<script>` and the stylesheet as an inline `<style>`. Either one forces `'unsafe-inline'`, which
 permits exactly what `script-src` exists to refuse, or a per-response nonce that the header and the document
-must agree on forever — a correspondence whose failure mode is a nonce repeated across a cached document. So
+must agree on forever, a correspondence whose failure mode is a nonce repeated across a cached document. So
 the stylesheet is `/app/app.css` and the config is `/app/config.js`, both same-origin assets from
 `CLIENT_ASSETS` in `src/ui.ts`. `test/security-headers.test.ts` asserts the served document has neither
 shape, so re-introducing one fails a test here rather than the application in a browser.
@@ -540,14 +540,14 @@ module *is* a same-origin endpoint, and `script-src 'self'` covers it.
 
 The composer reads its hold window from that module too, and the alternative is worth recording because it was
 built first and looked better: the composer *is* bundled by esbuild here, so it can `import { BUDGETS }`
-directly. That ships the whole 218-entry table to a browser to deliver one integer — **+7,960 bytes raw,
+directly. That ships the whole 218-entry table to a browser to deliver one integer (**+7,960 bytes raw,
 +2,783 gzip** measured against `react-shell-bundle.md`, whose subject is precisely what this bundle costs
-somebody waiting for it — and gives the interface two sources for numbers that must agree with the Node.
+somebody waiting for it) and gives the interface two sources for numbers that must agree with the Node.
 
 It also failed #90's draft-flush test when it was tried, and that reason has since **expired**. The test then
 ran on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where wall-clock time also advances the fake clock,
 so a slower module graph genuinely could push it past the 1,499 ms boundary it sits on. That was the test
-being flaky rather than the import being expensive, and the flake is fixed at its root — the clock now moves
+being flaky rather than the import being expensive, and the flake is fixed at its root. The clock now moves
 only when a test moves it. The bundle cost is what keeps this alternative withdrawn; the test failure was a
 symptom of something else and should not be read as evidence.
 
@@ -557,21 +557,21 @@ So `/app/config.js` joins `/app/session.js` and
 
 **`frame-src` is `'self'`, not `'none'`, and the measurement says why that is not the reason it works.** The
 reader renders sanitised mail into a `sandbox=""` `srcdoc` frame. Driven through a real Chromium, that frame
-renders under `frame-src 'self'`, under `frame-src 'none'` and under no `frame-src` at all — a `srcdoc`
+renders under `frame-src 'self'`, under `frame-src 'none'` and under no `frame-src` at all. A `srcdoc`
 navigation inherits its parent's policy rather than being matched against a source list, so the directive is
 never asked. `'self'` stays because only one engine was measured and because `'self'` is the true description
 of what this application frames; `'none'` would say it frames nothing.
 
 The inheritance is the part that matters: `default-src 'none'` applies *inside* the reading pane. That is safe
-rather than lucky — the sanitiser already strips `<style>`, every `style` attribute and `src` on images, for
-reasons that predate the header. Both halves are asserted —
+rather than lucky. The sanitiser already strips `<style>`, every `style` attribute and `src` on images, for
+reasons that predate the header. Both halves are asserted.
 `test/client/message-frame.test.tsx` renders the reader and checks the frame against the directive list, and
 `test/security-headers.test.ts` checks the sanitiser's real output against what the policy permits.
 
 ## Routes
 
 `src/app-routes.ts` is imported by both `index.ts` and `main.tsx`, so a route is added once. The Worker
-serves the page for each of them — a bookmarked `/outbox` must not 404 — and it is a **list rather than a
+serves the page for each of them (a bookmarked `/outbox` must not 404), and it is a **list rather than a
 catch-all**, so a mistyped URL still gets a real 404 instead of an interface claiming that page exists.
 
 `main.tsx` types its screen map as `Record<AppRoute, …>`, so adding a route and forgetting the screen is a
@@ -594,10 +594,10 @@ domain, searching the registrar, the handover manifest, the ownership page, and 
 Connecting the Node to the Cloudflare account it runs in, without opening the Cloudflare dashboard.
 
 The standard this screen is held to is not *"an administrator can do it"*. It is that an operator who has
-never opened a terminal can finish setup — which is what the nineteen routes with no screen made impossible,
+never opened a terminal can finish setup, which is what the nineteen routes with no screen made impossible,
 because the surface for all of them was a CLI. The two dashboard steps that remain are the two that cannot
 leave it: an OAuth client this Node is not allowed to create for itself, and a consent only a human may give.
-Everything after — the account read, the MX writes, the routing rule, the sending onboard — happens here.
+Everything after (the account read, the MX writes, the routing rule, the sending onboard) happens here.
 
 Propose then confirm, with the digest carrying between them. `GET /api/provider/receiving` returns a plan and
 a digest over it; confirming sends the digest back and the Node refuses unless the plan it would apply *now*
@@ -607,7 +607,7 @@ zone somebody has edited since is a different act from the one that was read.
 Three things the screen must not round off, each with a test:
 
 - **`enablesZone` with an empty `creates` is the largest act on the page, not the smallest.** Enabling Email
-  Routing writes MX and SPF at the **apex**, deciding where the whole domain's mail goes — and the record
+  Routing writes MX and SPF at the **apex**, deciding where the whole domain's mail goes, and the record
   list is empty in exactly that case, because a zone that is not routing yet lists none.
 - **An empty `confirmed` means no routing rule was made.** The Node re-reads DNS after writing and leaves no
   rule when the read-back is empty, because a rule over absent records claims a domain receives mail that
@@ -616,7 +616,7 @@ Three things the screen must not round off, each with a test:
   difference between finishing setup and going back to the dashboard to guess.
 
 `/oauth/cloudflare/callback` now negotiates: HTML for a browser, JSON for everything else. It is where
-Cloudflare sends the operator after they agree — by construction a human is looking at it — and it answered
+Cloudflare sends the operator after they agree (by construction a human is looking at it), and it answered
 with raw JSON, so the last step of a flow written in English ended in a parse. `error_description` is a query
 parameter reflected onto that page, on the one route with no session check, so it is escaped.
 
@@ -637,12 +637,12 @@ two approvals neither of them the requester, an export is approved and then run.
 
 `GET /api/holds` was added for it: `holdsForReport` was written for `doctor` and had no route, so a hold
 could be placed and lifted **by id** and never listed. An administrator who placed one last month had no way
-to find its id again — and a legal hold nobody can enumerate is one nobody can answer a court about.
+to find its id again, and a legal hold nobody can enumerate is one nobody can answer a court about.
 
 ### `/limits` (#66, #81)
 
-`GET /api/breakers` exists because of AGENTS.md's third principle rather than for a dashboard — *a limit
-developers can hit is a limit they must see* — and until this screen the readings were available to a `curl`
+`GET /api/breakers` exists because of AGENTS.md's third principle rather than for a dashboard (*a limit
+developers can hit is a limit they must see*), and until this screen the readings were available to a `curl`
 and to nobody else. The refusal on a gated send names the budget and the limit, but only once it has already
 stopped something.
 
@@ -660,14 +660,14 @@ a second copy here would drift from it.
 
 Domain pauses sit below, with the asymmetry stated: stopping a domain takes three administrators, restarting
 one takes a single administrator alone, because a mistake in the cautious direction should be easy to undo.
-The request says "asked", never "stopped" — two others have to agree first, and claiming otherwise is the one
+The request says "asked", never "stopped". Two others have to agree first, and claiming otherwise is the one
 place §5C's distinction would make somebody stop watching.
 
 ### `/people` (#39, #73, #81)
 
 The most basic thing that was missing. Access is relationship tuples and there was no screen for any of it,
 so giving a colleague access to a mailbox meant writing a `POST /api/access` by hand with a user id you could
-only get from the database — and there was no list of colleagues anywhere in the product. A shared mailbox
+only get from the database, and there was no list of colleagues anywhere in the product. A shared mailbox
 that cannot be shared without a database client is Layer 3's premise sitting behind a wall.
 
 Relations are shown as **what they let somebody do**. `mailbox.metadata.read` is exact and says nothing about
@@ -677,9 +677,9 @@ the one an administrator is most likely to get wrong.
 
 Two endpoints were added because the reads did not exist:
 
-- `GET /api/people` — the directory with each person's tuples. `GET /api/access` answers for **one** subject
+- `GET /api/people`: the directory with each person's tuples. `GET /api/access` answers for **one** subject
   and defaults to the caller, which is right for "what may I do" and useless for "who may read this mailbox".
-- `GET /api/teams/:id/members` — `membersOf` was written with the sentence *"so an administrator can see who
+- `GET /api/teams/:id/members`: `membersOf` was written with the sentence *"so an administrator can see who
   a grant to it reaches"* and had no route, so the only readable fact about a team was its member **count**.
   A screen given a count can render a checkbox, and the checkbox cannot be right.
 
@@ -688,14 +688,14 @@ listing it would be offering a door that answers with a lecture.
 
 ### Inviting somebody (#83)
 
-The screen used to say it could not create a person, which was honest and not a resting state — a Node had
+The screen used to say it could not create a person, which was honest and not a resting state. A Node had
 exactly one account and nothing else wrote to `users`, so Layer 3's whole premise had one person to exercise
 it. Worse, several shipped refusals were the **only** reachable branch: a domain pause needs two other
 administrators, a supervised read two other approvers, a hold lift two distinct ones, so on a one-person Node
 they always refused and the governance they protect was never exercised.
 
 An administrator mints an invitation; the person redeems it by choosing their own password. The mechanism is
-`node_claim`'s, reused rather than reinvented — only the hash is stored, `claimSecretHash` is shared, and a
+`node_claim`'s, reused rather than reinvented. Only the hash is stored, `claimSecretHash` is shared, and a
 lost invitation is re-minted rather than recovered.
 
 **The administrator never learns the password**, which is the property the shape is chosen for. An
@@ -704,26 +704,26 @@ is worse than the gap it fills; `set-password` is already the deliberate operato
 and is loud about running outside the audit trail.
 
 The secret is **shown once, on screen, with the sentence saying so**. A copy button alone would let somebody
-navigate away believing the invitation had been sent — nothing is sent, and the administrator is the delivery
+navigate away believing the invitation had been sent. Nothing is sent, and the administrator is the delivery
 mechanism. Emailing it was considered and rejected: the Node can send, which is what makes it tempting, and
 it would mean posting a credential to an address nobody has verified from a mailbox whose sending capability
 is itself unverified (#80).
 
-An invitation carries **an address and nothing else** — no relations, no mailbox, no role. Somebody who
+An invitation carries **an address and nothing else**: no relations, no mailbox, no role. Somebody who
 redeems one holds exactly nothing until an administrator grants access above, where the consequence of each
 relation is written beside it. Pre-loading grants would mean authority arriving with an account nobody had
 looked at yet, and would put one decision in two places.
 
 Redemption lives in `app.client.js` beside sign-in and the claim, framework-free, because it is the screen a
-person meets **before they have an account** — it cannot sit behind a bundle the shell loads after sign-in.
+person meets **before they have an account**. It cannot sit behind a bundle the shell loads after sign-in.
 It is reached by a link on the sign-in panel rather than a `?invite=…` URL: an invitation is a bearer
 credential, and a link would put it in browser history, in a referrer and in whatever logs sit between,
 which is exactly why the claim secret is typed rather than clicked.
 
 ### `/rules` (#60, #81)
 
-Policies, under the word a person uses for them. Each rule renders as a **sentence** — *"Mail to anyone
-outside is held for a person to release."* — assembled from the same five columns the evaluator reads, so a
+Policies, under the word a person uses for them. Each rule renders as a **sentence**, *"Mail to anyone
+outside is held for a person to release."*, assembled from the same five columns the evaluator reads, so a
 sentence cannot describe a condition that is not there. `outcome: hold, when_recipient_external: 1` is
 accurate and tells a reader nothing about what their organization does.
 
@@ -739,7 +739,7 @@ rule stops applying. "Which of my messages would this have denied" would mean a 
 ### Letting go a message a rule held
 
 #60 gave `policy_hold` to any `send.propose` holder to release and nobody built the act, so for four layers
-the only drain was the author cancelling their own message — the queue-with-no-drain that `deny` was kept out
+the only drain was the author cancelling their own message, the queue-with-no-drain that `deny` was kept out
 of `awaiting` to avoid, and which `dispatch.ts`'s header has named as missing since it was written. Giving
 `hold` a screen made it two clicks away, so the act is built: `POST /api/sends/:id/release-hold`, and *let it
 go* beside *stop* in the outbox.
@@ -747,14 +747,14 @@ go* beside *stop* in the outbox.
 Only `policy_hold`. `awaiting` is also where an approval-gated send and a rate-broken one sit, each with its
 own drain, and one button for all three would walk a message past whichever gate it was actually on. The
 author is deliberately **not** excluded: a hold is a pause for a human to read what is about to go, and that
-is usually the person who wrote it — which is the distinction from `require_approval`, where §18 excludes
+is usually the person who wrote it, which is the distinction from `require_approval`, where §18 excludes
 them by design.
 
 ### `/approvals` (#81)
 
 The first of the governance surfaces, and it went first because without it a published `require_approval`
 policy made mail **undeliverable**. The outbox's only control for an `awaiting` send is *stop*, while its own
-comment says the send is "cleared by an approver (#61)" — an approver who had no screen. So the only
+comment says the send is "cleared by an approver (#61)", an approver who had no screen. So the only
 resolution through the product was for the author to cancel their own message: a stop with no drain, which is
 the failure #66 kept `deny` out of `awaiting` to avoid, arriving at the surface instead of in the predicate.
 
@@ -764,7 +764,7 @@ may act on. A rule about separation of duty held in the browser would be a secon
 mechanism exists to guarantee; `E_APPROVER_IS_ACTOR` is rendered verbatim if one ever arrives.
 
 **Five subject kinds, shown as what they are.** A send, a hold lift, a supervised read, an e-discovery export
-and a domain pause are not the same decision — approving a supervised read lets somebody read a colleague's
+and a domain pause are not the same decision. Approving a supervised read lets somebody read a colleague's
 mail; approving a domain pause stops a customer's. Identical rows with an id would make the gravest and the
 most routine look the same, so each says what approving it does, and carries the requester's own words where
 the subject kind has any.
@@ -774,7 +774,7 @@ is refused terminally. Somebody deciding today is the reason it will or will not
 
 ### `/butlers` (#78)
 
-The whole Layer 5 engine — interpreter, checker, run ledger, pause machinery, replay — shipped with **no
+The whole Layer 5 engine (interpreter, checker, run ledger, pause machinery, replay) shipped with **no
 interface whatsoever**; `grep -ric butler src/client/app/` returned 0. The observation API was already
 built and already careful, and nothing called it: `inspectRun` gates fact disclosure on `mayReadMetadata`
 and classifies every fact as content or operational (#53), an access decision written for a screen that did
@@ -783,15 +783,15 @@ not exist, while `doctor` reported a paused Butler and gave an operator nowhere 
 The screen carries both halves, because *"why did it do that"* is answered by the program and the run
 together and splitting them would make the common diagnosis a two-screen navigation:
 
-- **Author** — the list, the draft source, save and publish. Findings come back from the route and are
+- **Author**: the list, the draft source, save and publish. Findings come back from the route and are
   shown verbatim. The browser deliberately does **not** validate: `checkButler` runs on the Node, and a
   second copy here would be a second opinion about what publishes.
-- **Observe** — recent runs with state, the reason they ended, nodes, effects, refusals and spend; the
+- **Observe**: recent runs with state, the reason they ended, nodes, effects, refusals and spend; the
   pauses in force, each with the detector's own sentence and a resume that requires a written reason.
 
 Three things it refuses to do, each one a decision made elsewhere that a screen could quietly undo: it does
 not fetch around `redactFacts`, it does not offer resume as a bare button over a machine's judgement, and
-it does not hide the rail link from non-administrators — the screen answers 404 by §5C, and a hidden link
+it does not hide the rail link from non-administrators. The screen answers 404 by §5C, and a hidden link
 would be a second, weaker copy of that authority decision living in the navigation.
 
 ## The interface is tested now, which it was not
@@ -799,7 +799,7 @@ would be a second, weaker copy of that authority decision living in the navigati
 Until #90 this shell had **no automated test of any kind that rendered a component**. The suite was 1,135
 tests in workerd and 204 in node, and the browser half was checked by reading it, plus a manual axe run for
 structure. That is the whole explanation for a finding worth stating plainly: an external audit of this
-repository confirmed seven code-level defects and **four of them were here** — a draft lost on close (#90),
+repository confirmed seven code-level defects and **four of them were here**: a draft lost on close (#90),
 a sending mailbox inferred under a comment saying it never is (#94), a recipient parser that splits inside a
 quoted display name (#100), an empty inbox asserting routing is live (#101). The only unexercised layer held
 most of the bugs. The 1,135 tests had nothing to say about any of them.
@@ -811,7 +811,7 @@ under `happy-dom`, and `pnpm test` runs all three.
 
 That sentence used to read "carries the measured timeouts and the Cloudflare pool", and it was the tell.
 Both later configs gave that as their reason for being separate and **neither then set a timeout**, so both
-ran at vitest's 5,000 ms default — which
+ran at vitest's 5,000 ms default, which
 [test-timeout-headroom](./receipts/test-timeout-headroom.md) exists to reject. It surfaced as a flake three
 weeks later, when a `test/node/` case with a 364 ms idle cost was measured at 5,481 ms under `turbo test`.
 All three configs now take the budget, all three emit a report the CI headroom ceiling reads, and
@@ -822,25 +822,25 @@ Two rules about what goes in it, because the wrong answer to either makes it wor
 
 - **Only what needs a mount.** A plain function belongs in `test/node/`, where it needs neither a DOM nor a
   render; mounting a component to test one is slower, has more ways to be wrong, and hides that the function
-  was extractable. The line is whether the *mount* is the subject. For #90 it is — no arrangement of pure
+  was extractable. The line is whether the *mount* is the subject. For #90 it is. No arrangement of pure
   functions expresses "the unmount cancelled the timer before the click handler's save could fire". For #94
   it also is, and that one is worth spelling out because it looks extractable and is not: the defect was
   `from ?? rows[0]!.id`, but the **property** is that a person cannot start a message without having picked
   an address, which is a claim about a disabled control and about what a click handler is handed. A
-  three-line `chosenMailbox` would have tested the `??` and left the button unexercised — which is exactly
+  three-line `chosenMailbox` would have tested the `??` and left the button unexercised, which is exactly
   how the original survived under a comment stating the opposite.
 - **`/app/session.js` is stubbed, not real.** It is a browser-absolute specifier the bundler leaves
   external, so vitest needs to be told what it is; `test/client/session-stub.ts` is a seam that records
   calls and resolves them when the test says so. These tests are about *when* a request happens and
   *whether* one happens at all, and a real `apiFetch` would put a network in the middle of an assertion
   about a timer.
-- **`/app/config.js` is stubbed for the same reason and then some** — it is not a file on disk at all, the
+- **`/app/config.js` is stubbed for the same reason and then some.** It is not a file on disk at all, the
   Worker generates it per request. `test/client/config-stub.ts` reads the same budgets `ui.ts` reads, so a
   rendered screen shows the figure a real Node would send rather than a number typed into a test.
 
 The tests also type-check as part of the **client** program, not the Worker's: `src/client/tsconfig.json`
 includes `../../test/client/**/*` and the Worker's tsconfig excludes it. The Worker must not have `lib: DOM`
-— `document` resolving inside `src/index.ts` would make a whole class of mistake compile — and checking a
+(`document` resolving inside `src/index.ts` would make a whole class of mistake compile), and checking a
 test against different lib settings than the component it mounts is how a test comes to compile while the
 component does not.
 
@@ -850,7 +850,7 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
 
 - **Contrast is computed** from the design tokens in `test/node/contrast.test.ts`, which runs in CI and
   needs no browser. axe cannot do this job here: against this design language it files almost every text
-  node as `incomplete` — "background color could not be determined due to a background gradient" — and
+  node as `incomplete` ("background color could not be determined due to a background gradient") and
   returns zero violations, so "proven by axe" would once have meant one node in fourteen examined
   (`contrast-tokens.md`).
 - **Structure and ARIA are checked by axe**, manually, via `pnpm --filter @mailda/worker run axe`. It runs
@@ -858,22 +858,22 @@ ADR 30 requires WCAG 2.2 AA **proven**, and it takes two checks that neither rep
   report a run as clean when it checked nothing.
 
   It **imports `APP_ROUTES`** rather than keeping its own list, and that changed because the copy had
-  already drifted: its comment read "kept in step with `src/app-routes.ts` by hand — five paths" above an
+  already drifted: its comment read "kept in step with `src/app-routes.ts` by hand, five paths" above an
   array of six. A route missing from that list is not a wrong answer, it is a screen nobody checked, which
   reads as a clean accessibility run over an unaudited page. `pnpm axe` therefore runs under
   `--experimental-strip-types` so a `.mjs` script can import the `.ts` list.
 
   It **injects axe through the debugger, not as a `<script>` element**, since #97. `page.addScriptTag` creates
-  a real inline script, so `script-src 'self'` refuses it and every screen reported `axe is not defined` —
+  a real inline script, so `script-src 'self'` refuses it and every screen reported `axe is not defined`,
   which is the policy working, not a harness to work around. `page.evaluate` runs over CDP and is not page
   script. `context.bypassCSP` is deliberately not used: it would disable enforcement for the *application*
-  too, so a screen broken by the CSP — the one browser-level regression this harness is now placed to notice —
+  too, so a screen broken by the CSP, the one browser-level regression this harness is now placed to notice,
   would keep rendering and keep passing. The injection is checked rather than assumed, because a library
   evaluated for its side effect returns whatever its last statement happened to be.
 
 **Audited on 21 August 2026**, against a seeded local Node with content on every screen: 12 routes and 6
-opened states × 2 themes — **36 views, 0 AA violations, 0 advisories**. It found one thing on the way — `empty-table-header` over the Butler
-screen's action column — which is exactly the class of defect this check exists for and would have shipped
+opened states × 2 themes: **36 views, 0 AA violations, 0 advisories**. It found one thing on the way, `empty-table-header` over the Butler
+screen's action column, which is exactly the class of defect this check exists for and would have shipped
 otherwise. The house rule that every `<th>` carries `scope="col"` came from the same pass.
 
 **Re-audited the same day** after #87 added the Butler format selector: 30 views (the six composer and case
@@ -884,21 +884,21 @@ announces *"json, radio, 1 of 2"* without the question has read out half of it.
 
 Audited a third time after #87's dry-run panel landed in the same editor: **30 views, 0 AA violations, 0
 advisories**. The panel's own accessibility decision is that it says why it is unusable rather than showing a
-disabled control — a Butler that has never run has no delivery to test against, and *"why can I not test
+disabled control. A Butler that has never run has no delivery to test against, and *"why can I not test
 this"* is a question a `disabled` attribute cannot answer.
 
 ### Signing the harness in, when nobody knows a password
 
 Written down because it took a detour to work out and the next person will hit the same wall.
-`scripts/set-password.mjs` **refuses to read a password from a pipe** — deliberately, and it should keep
-refusing — so it cannot be driven from a script. On a local Node whose fixture accounts have no known
+`scripts/set-password.mjs` **refuses to read a password from a pipe**, deliberately, and it should keep
+refusing, so it cannot be driven from a script. On a local Node whose fixture accounts have no known
 password, the way in is #83's invitation flow, which is also the only way it has been exercised over HTTP:
 
 1. hash a fresh secret with `claimSecretHash` from `src/claim-secret.ts` (a leaf module, importable from
    Node, which is why it was split out of `claim.ts`);
 2. `INSERT` an `invitations` row for a new address with that hash, via
    `wrangler d1 execute CATALOG --local`;
-3. `POST /api/invitations/redeem` with the secret and a password the harness chose — the response signs the
+3. `POST /api/invitations/redeem` with the secret and a password the harness chose. The response signs the
    new account in, which is the property the redemption route was built for;
 4. grant it `org.admin` in `relationship_tuples`, because the Butler, policy and people routes answer 404 to
    everyone else (§5C), and a harness signed in as a non-admin audits empty screens and calls them clean.
@@ -906,13 +906,13 @@ password, the way in is #83's invitation flow, which is also the only way it has
 **Interaction states are audited too (#82).** A `STATES` list beside `APP_ROUTES` opens the reply composer,
 the new-message composer, the rule editor, the Butler editor, the resume form and a case, then runs the same
 two tag sets over each. They are where the forms are, and every defect axe has caught in this project was in
-an interactive control rendered with real content — `aria-allowed-attr` on a listitem, `nested-interactive`
+an interactive control rendered with real content: `aria-allowed-attr` on a listitem, `nested-interactive`
 on the message list, `empty-table-header` on the Butler screen.
 
 A state that fails to open reports `COULD NOT OPEN` and is counted as **unchecked**, never as passing: a Node
 with no paused Butler genuinely has no resume form, so the run reports how much of the list this Node could
 show rather than failing. That is the same distinction the route sweep draws with `SKIPPED`, and it is the
-reason these surfaces went unaudited for as long as they did — the mechanism was confirmed honest by running
+reason these surfaces went unaudited for as long as they did. The mechanism was confirmed honest by running
 it against a Node whose fixture had been wiped, where it reported ten states unopened instead of passing
 them.
 
@@ -921,13 +921,13 @@ misses things: the duplicate `main` landmark this shell shipped is `landmark-one
 `best-practice` and so invisible to an AA-only run. On the first advisory run it immediately found that the
 Inbox had no level-one heading at all, and that `/log` and `/doctor` lost theirs while loading.
 
-Current state: **12 screens, 0 AA violations, 0 advisories, 12 unproven** — the unproven being the gradient
+Current state: **12 screens, 0 AA violations, 0 advisories, 12 unproven**, the unproven being the gradient
 contrast that the computed check covers instead. The queue screen is in that count with its clock column,
 its inline response-target field and its merge selection present, which is the point of running it against
 a seeded fixture rather than an empty one.
 
 **One caveat worth keeping in view:** the harness measures whatever state the fixture happens to be in. The
 first clean run had an empty inbox, so the message list did not exist to be checked; the moment a message
-was seeded it found two serious violations in it — `nested-interactive` from a `role="option"` wrapping a
+was seeded it found two serious violations in it: `nested-interactive` from a `role="option"` wrapping a
 button, and a target-size failure on the list itself. A screen is only checked in the states somebody
 thought to put it in.
