@@ -84,6 +84,13 @@ export const CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    id: "mail.label",
+    says: "Put words on a message, or take them off, to find it again. Reads nothing a mail.read holder "
+      + "cannot; changes nothing but the words, and every change is audited with the words named.",
+    reachesContent: false,
+    routes: ["PUT /api/messages/:messageId/labels"],
+  },
+  {
     id: "mail.draft",
     says: "Write and revise drafts. Sending is not included and cannot be — sealing a send is withheld from "
       + "every machine.",

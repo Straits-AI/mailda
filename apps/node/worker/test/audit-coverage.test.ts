@@ -384,6 +384,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   domain_pauses: { actions: ["domain.pause_placed", "domain.pause_lifted"] },
   // 0058: the list is derived from `send_recipient_events` (exempt above); the lift is the only write.
   suppression_lifts: { actions: ["suppression.lifted"] },
+  // 0061: the rows and the entry share one batch; a change that adds nothing and removes nothing writes neither.
+  message_labels: { actions: ["message.labelled"] },
 
   /* ---- Layer 4: the Butler object (#49) ---- */
   butlers: {

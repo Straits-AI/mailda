@@ -108,7 +108,7 @@ let memberCookie = "";
 beforeEach(async () => {
   for (
     const table of ["relationship_tuples", "users", "node_claim", "mailboxes", "sessions", "refresh_tokens",
-      "login_attempts", "teams", "matters", "policies", "butlers"]
+      "login_attempts", "teams", "matters", "policies", "butlers", "message_labels"]
   ) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table} WHERE 1=1`).run().catch(() => undefined);
   }
@@ -213,6 +213,7 @@ const BODIES: Record<string, unknown> = {
   "POST /api/supervised": { mailboxId: MAILBOX, scope: "metadata", durationSeconds: 3600, reason: "parity" },
   "POST /api/approvals/:approvalId/decide": { decision: "approve" },
   "POST /api/suppressions/lift": { address: "nobody@parity.example", reason: "parity" },
+  "PUT /api/messages/:messageId/labels": { add: ["parity"] },
 };
 
 /**
@@ -741,6 +742,7 @@ describe("a mailbox route requires the relation it declares, not merely some rel
    * and body carry markers the detector looks for alongside the ids.
    */
   const RECEIPT = "rcpt_PARTYRCPT00000000000000000";
+  const MESSAGE = "msg_PARTYMSG000000000000000000";
   const SEND = "snd_PARTYSEND00000000000000000";
   const ADDRESS = "enquiries@parity.example";
   /*
@@ -752,7 +754,7 @@ describe("a mailbox route requires the relation it declares, not merely some rel
   const BODY_MARKER = "PARITYBODYMARKER";
 
   /** Everything only somebody entitled to this mailbox should ever see come back. */
-  const SECRETS = [MAILBOX, RECEIPT, SEND, ADDRESS, SUBJECT_MARKER, BODY_MARKER];
+  const SECRETS = [MAILBOX, RECEIPT, MESSAGE, SEND, ADDRESS, SUBJECT_MARKER, BODY_MARKER];
 
   /**
    * Every mailbox relation this Node can grant, **derived** from `access.ts` rather than listed.
@@ -799,6 +801,13 @@ describe("a mailbox route requires the relation it declares, not merely some rel
            raw_bytes, blob_key, blob_sha256, accepted_at) VALUES (?,?,?,?,?,?,?,?,?)`,
       ).bind(RECEIPT, ORG, `evt_${RECEIPT}`, "someone@parity.example", ADDRESS, raw.byteLength,
         `${ORG}/raw/${RECEIPT}`, "0".repeat(64), at),
+      // The materialised row, so the routes keyed on the `msg_` id (labels) have something to answer with.
+      testEnv.CATALOG.prepare(
+        `INSERT OR IGNORE INTO messages (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes,
+           rfc_message_id, thread_id, subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).bind(MESSAGE, ORG, "2026-08", `${ORG}/raw/${RECEIPT}`, "0".repeat(64), raw.byteLength,
+        "parity-1@parity.example", "thr_parity", SUBJECT_MARKER, "someone@parity.example", at, at, RECEIPT, at),
       testEnv.CATALOG.prepare(
         `INSERT OR IGNORE INTO send_manifests
            (id, org_id, mailbox_id, author_user_id, envelope_from, envelope_to, subject, rfc_message_id,
@@ -827,6 +836,7 @@ describe("a mailbox route requires the relation it declares, not merely some rel
   async function discloses(spec: RouteSpec): Promise<boolean> {
     const path = spec.path
       .replace(":mailboxId", MAILBOX).replace(":receiptId", RECEIPT).replace(":sendId", SEND)
+      .replace(":messageId", MESSAGE)
       .replace(":draftId", "dft_PARTYDRAFT0000000000000000");
     const body = BODIES[`${spec.method} ${spec.path}`];
     const response = await SELF.fetch(`https://node${path}`, {

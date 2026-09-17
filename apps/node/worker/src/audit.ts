@@ -567,6 +567,10 @@ export const AUDIT_ACTIONS = {
     says: "An administrator vouched for a recipient the provider had hard-bounced or that complained, with a "
       + "reason; the Node will send to it again until the provider says otherwise.",
   },
+  /** Labels (0061): one entry per change, naming what went on and what came off, beside the rows. */
+  "message.labelled": {
+    says: "Somebody changed the words on a message: which were added and which removed.",
+  },
   "message.exported": {
     says: "Somebody downloaded one message's original .eml — a complete RFC822 copy, off this Node.",
     disclosure: true,

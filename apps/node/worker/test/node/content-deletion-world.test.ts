@@ -169,6 +169,13 @@ const SITES: Site[] = [
     why: "Expired session credentials. Deleting one destroys the ability to sign in, not a record of anything.",
   },
   {
+    file: "src/labels.ts",
+    target: "message_labels",
+    content: false,
+    why: "A word taken off a message (0061). The message and its evidence are untouched; the act is audited as "
+      + "message.labelled with the word named, so a removed label is recoverable from the trail.",
+  },
+  {
     file: "src/access.ts",
     target: "relationship_tuples",
     content: false,

@@ -142,6 +142,8 @@ export interface MessageRow {
   /** Attached parts, and how many a mailbox may refuse to queue (0057); null before this Node looked. */
   attachments: number | null;
   attachments_dangerous: number | null;
+  /** The words on this message (0061), as SQLite built the JSON array: lower-cased, sorted. */
+  labels_json: string;
   /**
    * The case for this delivery's own mailbox, so replying can claim in one act.
    *
@@ -339,10 +341,11 @@ export interface MessagesPage {
  * this must not hold a page long enough to make that pointless.
  */
 export function useMessages(
-  page?: { cursor?: string | null; mailbox?: string | null; q?: string | null },
+  page?: { cursor?: string | null; mailbox?: string | null; q?: string | null; label?: string | null },
 ): UseQueryResult<MessagesPage, Error> {
   const cursor = page?.cursor ?? null;
   const mailbox = page?.mailbox ?? null;
+  const label = page?.label ?? null;
   /*
    * The search term goes to the Node **as typed** (#107).
    *
@@ -356,10 +359,11 @@ export function useMessages(
   if (cursor !== null) search.set(MESSAGE_PAGE_PARAMS.cursor, cursor);
   if (mailbox !== null) search.set(MESSAGE_PAGE_PARAMS.mailbox, mailbox);
   if (q !== null) search.set(MESSAGE_PAGE_PARAMS.q, q);
+  if (label !== null) search.set(MESSAGE_PAGE_PARAMS.label, label);
   const query = search.toString();
 
   return useQuery({
-    queryKey: ["messages", cursor, mailbox, q],
+    queryKey: ["messages", cursor, mailbox, q, label],
     queryFn: () => read<MessagesPage>(`${GET("/api/messages")}${query === "" ? "" : `?${query}`}`),
     ...AUTHORIZATION_SENSITIVE,
   });
@@ -581,6 +585,27 @@ export async function releaseQuarantined(messageId: string): Promise<{ ok: true 
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+/** Puts words on a message or takes them off (0061). Answers the whole set afterwards. */
+export async function setLabels(
+  messageId: string, change: { add?: string[]; remove?: string[] },
+): Promise<{ ok: true; labels: string[] } | { ok: false; message: string }> {
+  const response = await apiFetch(at("PUT", "/api/messages/:messageId/labels", { messageId }), {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(change),
+  });
+  const body = (await response.json().catch(() => null)) as { labels?: string[]; message?: string } | null;
+  if (response.ok) return { ok: true, labels: body?.labels ?? [] };
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+/** The labels on a listed row, parsed once. */
+export function labelsOf(row: { labels_json: string }): string[] {
+  try {
+    return JSON.parse(row.labels_json) as string[];
+  } catch {
+    return [];
+  }
 }
 
 /** Merges one conversation into another. Refuses more often than it succeeds, by design (#43). */

@@ -461,11 +461,13 @@ export class GeneratedClient extends Transport {
    *
    * @param query.until Only mail accepted at or before this point, in the same two shapes. A date means the **end** of that day UTC, so `until=2026-09-01` includes 1 September.
    *
+   * @param query.label Only mail wearing this label, compared lower-cased. Labels are words people put on a message with PUT /api/messages/:messageId/labels; every listed message carries its own in `labels`.
+   *
    * @param query.conversation Only this conversation's mail — the `conversation_id` on any listed message — which is how a thread is read. Same authorization as the listing: a message you may not see is not in the thread. Pages like any other listing.
    *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string; conversation?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string; label?: string; conversation?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 
@@ -521,6 +523,15 @@ export class GeneratedClient extends Transport {
    */
   async postCasesByCaseIdByAction(params: { caseId: string; action: string }, body?: unknown): Promise<z.infer<typeof S.caseActionResponse>> {
     return await this.json("POST", "/api/cases/:caseId/:action", params, body) as z.infer<typeof S.caseActionResponse>;
+  }
+
+  /**
+   * Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id.
+   *
+   * `PUT /api/messages/:messageId/labels`
+   */
+  async putMessagesByMessageIdLabels(params: { messageId: string }, body: z.infer<typeof S.setLabelsRequest>): Promise<z.infer<typeof S.labelsSetResponse>> {
+    return await this.json("PUT", "/api/messages/:messageId/labels", params, body) as z.infer<typeof S.labelsSetResponse>;
   }
 
   /**

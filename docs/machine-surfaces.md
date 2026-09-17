@@ -17,7 +17,7 @@ would come to disagree about which acts are safe, which is the worst thing they 
 | tier | may be offered | what it is | count |
 |:--|:--|:--|--:|
 | `read` | yes | answers a question, changes nothing | 40 |
-| `act` | yes | changes something, and a person can undo it | 8 |
+| `act` | yes | changes something, and a person can undo it | 9 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 32 |
 | `operator` | **no** | installation, credentials, maintenance | 53 |
 | `surface` | **no** | the machine surface itself | 1 |
@@ -26,8 +26,8 @@ These counts are checked against `exposureOf` by `test/node/agent-exposure-world
 after every row of this table was found to be wrong at once — 41/12/25/17 against an actual 39/9/29/25. A table
 of counts in a document about completeness reads as evidence of completeness, and nothing was watching it.
 
-**The tier is necessary and not sufficient**, and that column used to say "offered" flat. 48 routes are `read`
-or `act`; **23** are offered. The difference is the second question — can a machine ever be *provisioned* for
+**The tier is necessary and not sufficient**, and that column used to say "offered" flat. 49 routes are `read`
+or `act`; **24** are offered. The difference is the second question — can a machine ever be *provisioned* for
 this route — and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |

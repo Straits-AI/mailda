@@ -116,6 +116,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "Writes or edits something a person can change back. A draft is not a send, a Butler draft is not a "
     + "published one, and a matter is a folder rather than an act on anybody's mail.",
     "PUT /api/drafts",
+    "PUT /api/messages/:messageId/labels",
     "POST /api/butlers",
     "PUT /api/butlers/:butlerId/draft",
     "POST /api/matters",

@@ -126,7 +126,7 @@ export interface RouteSpec {
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
 export const MESSAGE_PAGE_PARAMS =
-  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from", conversation: "conversation" } as const;
+  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from", conversation: "conversation", label: "label" } as const;
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -306,6 +306,11 @@ export const ROUTES = [
           + "**end** of that day UTC, so `until=2026-09-01` includes 1 September.",
       },
       {
+        name: MESSAGE_PAGE_PARAMS.label,
+        description: "Only mail wearing this label, compared lower-cased. Labels are words people put on a "
+          + "message with PUT /api/messages/:messageId/labels; every listed message carries its own in `labels`.",
+      },
+      {
         name: MESSAGE_PAGE_PARAMS.conversation,
         description: "Only this conversation's mail — the `conversation_id` on any listed message — which "
           + "is how a thread is read. Same authorization as the listing: a message you may not see is not "
@@ -376,6 +381,13 @@ export const ROUTES = [
      */
     summary: "Claim, steal, release or close a case",
     response: S.caseActionResponse,
+  },
+  {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    method: "PUT", path: "/api/messages/:messageId/labels",
+    summary: "Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id.",
+    request: S.setLabelsRequest,
+    response: S.labelsSetResponse,
   },
   { method: "POST", path: "/api/conversations/merge", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, summary: "Merge two conversations into one", response: S.conversationMergedResponse },
 

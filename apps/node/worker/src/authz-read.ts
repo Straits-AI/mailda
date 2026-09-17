@@ -9,6 +9,7 @@ import { daysAcross, ftsQuery } from "./search.ts";
 import type { ReadOnlyEnv } from "./read-only.ts";
 import { recordDisclosure } from "./audit.ts";
 import { CallerError, unprocessable } from "./errors.ts";
+import { normaliseLabel } from "./labels.ts";
 import { verifyAccessToken } from "./auth/jwt.ts";
 import { ACCESS_COOKIE, cookieValue } from "./auth/session.ts";
 import {
@@ -887,6 +888,8 @@ export interface MessagePage {
   from: string | null;
   /** One conversation's mail, or null for every conversation. The thread view (#30's other half). */
   conversationId: string | null;
+  /** Mail wearing this label (0061), normalised as `labels.ts` normalises, or null for any. */
+  label: string | null;
   /**
    * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
    *
@@ -1184,7 +1187,9 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
     }
   }
   const conversationId = url.searchParams.get(MESSAGE_PAGE_PARAMS.conversation) || null;
-  if (raw === null) return { after: null, mailboxId, q, since, until, from, conversationId };
+  const rawLabel = url.searchParams.get(MESSAGE_PAGE_PARAMS.label);
+  const label = rawLabel === null || rawLabel.trim() === "" ? null : normaliseLabel(rawLabel);
+  if (raw === null) return { after: null, mailboxId, q, since, until, from, conversationId, label };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -1200,7 +1205,7 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId, q, since, until, from, conversationId };
+  return { after: { at: instant, id }, mailboxId, q, since, until, from, conversationId, label };
 }
 
 /**
@@ -1328,6 +1333,11 @@ export function messagePageQuery(args: {
     filters.push("AND m.conversation_id = ?");
     filterParams.push(args.page.conversationId);
   }
+  // A label (0061): `mlb_by_label` serves the lookup; the authorization predicate is unchanged.
+  if (args.page.label !== null) {
+    filters.push("AND EXISTS (SELECT 1 FROM message_labels ml WHERE ml.message_id = m.id AND ml.label = ?)");
+    filterParams.push(args.page.label);
+  }
   if (args.page.after !== null && args.page.q === null) {
     /*
      * Two predicates for one comparison, and the split is what makes the index work.
@@ -1367,6 +1377,8 @@ export function messagePageQuery(args: {
             a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
             m.conversation_id, m.auth_spf, m.auth_dkim, m.auth_dmarc, m.auth_dmarc_policy, m.auth_from_domain,
             m.attachments, m.attachments_dangerous,
+            (SELECT json_group_array(l.label) FROM (
+               SELECT label FROM message_labels WHERE message_id = m.id ORDER BY label) l) AS labels_json,
             sg.grant_id AS supervised_grant_id,
             (SELECT c.id FROM cases c
               WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
@@ -1438,7 +1450,7 @@ export function messagePageQuery(args: {
     "id", "envelope_from", "envelope_to", "raw_bytes", "accepted_at", "mailbox_id", "message_id",
     "subject", "from_addr", "parse_error", "conversation_id", "case_id",
     "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
-    "attachments", "attachments_dangerous",
+    "attachments", "attachments_dangerous", "labels_json",
   ].join(", ");
 
 

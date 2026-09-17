@@ -5,7 +5,9 @@ import { apiFetch } from "/app/session.js";
 import { BUDGETS } from "@mailda/budgets";
 
 import { Nothing } from "../chrome.tsx";
-import { type MessageRow, type SendRow, claimCase, stealCase, useMailboxes, useMessages, useThread } from "../api.ts";
+import {
+  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, stealCase, useMailboxes, useMessages, useThread,
+} from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
 /**
@@ -525,7 +527,61 @@ function Thread({ conversationId, current }: { conversationId: string | null; cu
   );
 }
 
-function ReadingPane({ message, onReply, onForward }: { message: MessageRow; onReply: () => void; onForward: () => void }) {
+/**
+ * The words on a message, and a field to add one. Removing is a click on the word. Flat labels rather than
+ * folders — the migration says why — so a message never moves; the filter above the list is how a word
+ * finds its mail. `message_id` is null for a receipt not yet materialised, and there is nothing to label then.
+ */
+function Labels({ message, onFilter }: { message: MessageRow; onFilter: (label: string) => void }) {
+  const queryClient = useQueryClient();
+  const [labels, setLabelsShown] = useState<string[]>(() => labelsOf(message));
+  const [draft, setDraft] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  async function change(delta: { add?: string[]; remove?: string[] }) {
+    if (message.message_id === null) return;
+    setProblem(null);
+    const outcome = await setLabels(message.message_id, delta);
+    if (outcome.ok) {
+      setLabelsShown(outcome.labels);
+      setDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["messages"] });
+    } else setProblem(outcome.message);
+  }
+  return (
+    <dd className="labels">
+      {labels.map((label) => (
+        <span key={label} className="state label">
+          <button type="button" className="linkish" onClick={() => onFilter(label)} title={`Show mail labelled ${label}`}>
+            {label}
+          </button>{" "}
+          <button type="button" className="linkish dim" aria-label={`Remove label ${label}`} onClick={() => void change({ remove: [label] })}>
+            ×
+          </button>
+        </span>
+      ))}
+      {message.message_id === null ? null : (
+        <input
+          className="label-add"
+          placeholder="add a label"
+          aria-label="Add a label"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && draft.trim() !== "") {
+              event.preventDefault();
+              void change({ add: [draft] });
+            }
+          }}
+        />
+      )}
+      {problem === null ? null : <span className="bad"> {problem}</span>}
+    </dd>
+  );
+}
+
+function ReadingPane({ message, onReply, onForward, onFilterLabel }: {
+  message: MessageRow; onReply: () => void; onForward: () => void; onFilterLabel: (label: string) => void;
+}) {
   return (
     <article className="reading-pane" aria-label="Message">
       {/* h2, not h1. The screen's heading is "Inbox"; a message is a section inside it, and two h1s on
@@ -540,6 +596,8 @@ function ReadingPane({ message, onReply, onForward }: { message: MessageRow; onR
         <dd className="mono">{received(message.accepted_at)}</dd>
         <dt>sender</dt>
         <dd><Authenticated message={message} /></dd>
+        <dt>labels</dt>
+        <Labels key={message.id} message={message} onFilter={onFilterLabel} />
         <dt>original</dt>
         <dd>
           {/* The bytes as they arrived. §12's whole point is that this is producible, so it is a link
@@ -603,10 +661,18 @@ function usePages() {
   const [mailbox, setMailbox] = useState<string | null>(null);
   /** What has been searched for, or null for the unsearched listing (#107). */
   const [term, setTerm] = useState<string | null>(null);
+  /** The label the listing is narrowed to (0061), or null for any. */
+  const [label, setLabel] = useState<string | null>(null);
   return {
     cursor: stack[stack.length - 1] ?? null,
     mailbox,
     term,
+    label,
+    /** Narrowing to a label resets the position, for `narrowTo`'s reason. */
+    labelled: (next: string | null) => {
+      setLabel(next);
+      setStack([]);
+    },
     /** 1-based, for the reader. Never presented as "of N": nothing here knows N and nothing counted it. */
     number: stack.length + 1,
     older: (next: string) => setStack((was) => [...was, next]),
@@ -644,7 +710,7 @@ function usePages() {
 
 export function Inbox() {
   const pages = usePages();
-  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox, q: pages.term });
+  const messages = useMessages({ cursor: pages.cursor, mailbox: pages.mailbox, q: pages.term, label: pages.label });
   const [selected, setSelected] = useState<string | null>(null);
   const [composing, setComposing] = useState<ComposerContext | null>(null);
   /** Set when a claim lost the race, so the reader is told who holds it rather than nothing happening. */
@@ -698,6 +764,12 @@ export function Inbox() {
       <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
       <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
       <SearchField term={pages.term} onSearch={pages.searchFor} />
+      {pages.label === null ? null : (
+        <p className="notice dim">
+          Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
+          <button type="button" className="linkish" onClick={() => pages.labelled(null)}>show all</button>
+        </p>
+      )}
       {/*
         `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
         `{n} messages` was true only while the listing returned everything there was; against a page it
@@ -857,6 +929,7 @@ export function Inbox() {
               <span className="message-from mono">{row.from_addr ?? row.envelope_from}</span>
               <span className="message-subject">
                 {row.subject ?? <span className="dim">(no subject)</span>}
+                {labelsOf(row).map((label) => <span key={label} className="state label"> {label}</span>)}
               </span>
               <span className="message-when dim mono">{received(row.accepted_at)}</span>
             </button>
@@ -897,6 +970,7 @@ export function Inbox() {
           // From is the mailbox (ADR 36), so composing needs to know which one. It is read off the message
           // being replied to rather than guessed: that address is routed to exactly one mailbox.
           onReply={() => void reply(current)}
+          onFilterLabel={pages.labelled}
           onForward={() => {
             setBlocked(null);
             // `message_id` is null for a receipt not yet materialised; there is nothing to forward then.
