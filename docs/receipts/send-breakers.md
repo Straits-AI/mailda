@@ -125,7 +125,7 @@ is this receipt's first `stale_when` clause.
 
 The one external figure used is in-repo and dated: `docs/receipts/cloudflare-email-sending.md` records
 `send.paid.included_per_month = 3000` and `send.counts_per_recipient = 1`, measured 4 August 2026. It is
-**documented, not measured here**, and nothing below is derived from it arithmetically — it fixes the
+**documented, not measured here**, and nothing below is derived from it arithmetically. It fixes the
 order of magnitude an ordinary Node operates at, and that is all it is asked to do.
 
 ### Volume: `3600` seconds, `500` recipients
