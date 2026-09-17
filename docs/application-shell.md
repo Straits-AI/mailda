@@ -92,12 +92,13 @@ viewer's IP address on every load". These are same-origin under `font-src 'self'
 policy listing `'self'` *and* a CDN is not narrower than one listing the CDN alone. The mechanism changed and
 the rule did not. ([provenance](../apps/node/worker/fonts/README.md))
 
-### The mark in the repository is a reconstruction
+### The mark in the repository is a trace of the brand sheet's raster
 
-`src/brand.ts` holds the symbol as an SVG path traced by eye from the brand sheet's rasters, because that is
-what was available. It reads correctly at 24–40 px and it is **not** the authored artwork — the curve
-tensions, the stroke weight and the loop's proportions are approximations, and the file's header says so
-before anything else.
+`src/brand.ts` holds the symbol as a filled outline traced with `potrace` from the largest raster of the
+symbol the brand sheet has (18 September 2026), because there is no designer's vector. It was checked by
+rendering at 300, 26 and 16 px beside the source before it shipped — the earlier by-eye path had been
+described as reading correctly and did not (#128). At 300 px it is the source; at 26 px it reads as the
+sheet's own 24 px row; at 16 px it is a shape, as the sheet's own favicon is. The file's header says so.
 
 It is one edit to replace: `MARK_PATH` and `MARK_VIEWBOX` are the only values describing the geometry, and
 the shell, the favicon and the app icon all derive from `markSvg()`. Until the real vector lands, the mark
