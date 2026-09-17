@@ -80,7 +80,7 @@ export const provider = {
     const { beginAuthorization } = await import("../provider/cloudflare-grant.ts");
     const begun = await beginAuthorization(env, clock, who.userId, scopes);
     // The URL, not a redirect: the client decides whether to navigate or to show the operator the link.
-    return Response.json({ authorize: { url: begun.url } });
+    return Response.json({ authorize: { url: begun.url, expiresAt: begun.expiresAt } });
   },
 
   "GET /api/provider/email-routing": async ({ env, clock, who }) => {

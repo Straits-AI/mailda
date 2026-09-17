@@ -423,6 +423,7 @@ export const providerSubscriptionProposal = z.object({
   subscribed: z.string().nullable(),
   queueId: z.string().nullable(),
   queueName: z.string().nullable(),
+  consumerAttached: z.boolean().nullable(),
   events: z.array(z.string()),
   digest: z.string().length(64),
   error: z.string().nullable(),
@@ -632,7 +633,8 @@ export const providerAuthorizeRequest = z.object({
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 export const providerAuthorizeResponse = z.object({
-  authorize: z.object({ url: z.string().min(1) }).strict(),
+  /** The URL to open, and when the state inside it stops being accepted — thirty minutes, single use. */
+  authorize: z.object({ url: z.string().min(1), expiresAt: isoDate }).strict(),
 }).strict();
 
 /** What the callback did. Carries no token, by the same `.strict()` argument. */

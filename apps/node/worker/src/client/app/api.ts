@@ -1568,7 +1568,7 @@ export const setProviderClient = (clientId: string, clientSecret: string) =>
 
 /** Begins a consent and answers with the URL to send a browser to. Nothing is granted by asking. */
 export const beginConsent = (scopes: string[]) =>
-  act<{ authorize: { url: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
+  act<{ authorize: { url: string; expiresAt: string } }>(at("POST", "/api/provider/authorize"), "POST", { scopes });
 
 /**
  * Records that Cloudflare's consent screen listed no account.
@@ -1621,6 +1621,8 @@ export interface SubscriptionProposal {
   subscribed: string | null;
   queueId: string | null;
   queueName: string | null;
+  /** Whether this Worker already consumes the queue; the confirm attaches it when not. */
+  consumerAttached: boolean | null;
   events: string[];
   digest: string;
   error: string | null;

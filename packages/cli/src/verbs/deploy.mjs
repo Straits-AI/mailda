@@ -29,7 +29,9 @@ import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, ENV, 
  * wrangler's own words for absence count; anything else stops the command.
  */
 function firstInstall() {
-  const probe = capture("npx", ["wrangler", "versions", "list", ...ENV]);
+  // Quiet, by `capture`'s own rule: this is a question — is there a Worker — and the answer is one word
+  // below. Echoing every version ever uploaded above the plan was fifteen entries a person scrolled past.
+  const probe = capture("npx", ["wrangler", "versions", "list", ...ENV], { quiet: true });
   if (probe.status === 0) return false;
   if (/does not yet exist|workers\.api\.error\.script_not_found|\[code: 10007\]/i.test(probe.text)) return true;
   fail(

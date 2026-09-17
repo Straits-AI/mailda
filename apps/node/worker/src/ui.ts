@@ -450,11 +450,13 @@ button.primary:disabled { opacity: .55; cursor: progress; }
   font-size: .7rem;
   line-height: 1.55;
   color: var(--dim);
-  /* Pulled up to hug the field it explains. At the uniform form gap it sat equally far from the
-     field above and the label below, which reads as belonging to neither. */
-  margin: -.6rem 0 0;
+  margin: .6rem 0 0;
   padding-left: .1rem;
 }
+/* Pulled up to hug the field it explains, inside a form only. At the uniform form gap it sat equally far
+   from the field above and the label below, which reads as belonging to neither. Outside a form the same
+   negative margin dragged the sign-in page's "I have an invitation" up over the SIGN IN button. */
+form > .hint { margin: -.6rem 0 0; }
 
 .notice {
   font-family: var(--mono);

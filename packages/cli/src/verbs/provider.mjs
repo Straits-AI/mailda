@@ -450,12 +450,17 @@ export async function provider(argv) {
         process.stdout.write(`     unknown   ${proposal.error}\n\n`);
         return;
       }
-      if (proposal.subscribed !== null) {
+      if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
         process.stdout.write(`     subscribed already, as ${proposal.subscribed} — nothing to do\n\n`);
         return;
       }
-      process.stdout.write(`     creates   a subscription publishing ${proposal.events.join(", ")}\n`);
-      process.stdout.write(`     into      queue ${proposal.queueName} (${proposal.queueId})\n`);
+      if (proposal.subscribed === null) {
+        process.stdout.write(`     creates   a subscription publishing ${proposal.events.join(", ")}\n`);
+        process.stdout.write(`     into      queue ${proposal.queueName} (${proposal.queueId})\n`);
+      }
+      if (proposal.consumerAttached === false) {
+        process.stdout.write(`     attaches  this Worker as the consumer of ${proposal.queueName} — nothing reads it today\n`);
+      }
       process.stdout.write(
         `\n   confirm: mailda provider --subscribe ${proposal.domain} --confirm ${proposal.digest}\n\n`,
       );
@@ -491,7 +496,10 @@ export async function provider(argv) {
   const scopes = flag(argv, "scopes");
   if (scopes !== null) {
     const { authorize } = await call("POST", "/api/provider/authorize", { scopes: scopes.split(",") });
-    process.stdout.write(`\n   open this to consent:\n\n   ${authorize.url}\n`);
+    process.stdout.write(
+      `\n   open this to consent — valid until ${new Date(authorize.expiresAt).toLocaleTimeString()}, once:\n\n`
+      + `   ${authorize.url}\n`,
+    );
     return;
   }
 

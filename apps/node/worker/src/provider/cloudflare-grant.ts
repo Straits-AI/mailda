@@ -556,7 +556,7 @@ function base64Url(bytes: Uint8Array): string {
  */
 export async function beginAuthorization(
   env: Env, ctx: Ctx, actorUserId: string, requestedScopes: readonly string[],
-): Promise<{ url: string; state: string }> {
+): Promise<{ url: string; state: string; expiresAt: string }> {
   const row = await env.CATALOG.prepare(
     "SELECT client_id, redirect_uri FROM provider_binding WHERE id = 1",
   ).first<{ client_id: string; redirect_uri: string }>().catch(() => null);
@@ -608,6 +608,9 @@ export async function beginAuthorization(
   const scopes = requestedScopes.map((one) => one.trim()).filter((one) => one !== "");
 
   const now = ctx.now();
+  // Handed back with the URL, because a link carried across a chat or a ticket is clicked later than it was
+  // made, and "the state is unknown" is a worse thing to learn at Cloudflare than "valid until 14:52".
+  const expiresAt = new Date(now + AUTHORIZATION_TTL_MS).toISOString();
   await env.CATALOG.prepare(
     "INSERT INTO provider_authorizations "
     + "(state, code_verifier, requested_scopes, started_at, started_by, expires_at, consumed_at) "
@@ -618,7 +621,7 @@ export async function beginAuthorization(
     JSON.stringify(scopes),
     new Date(now).toISOString(),
     actorUserId,
-    new Date(now + AUTHORIZATION_TTL_MS).toISOString(),
+    expiresAt,
   ).run();
 
   const url = new URL(CLOUDFLARE_OAUTH.authorize);
@@ -631,7 +634,7 @@ export async function beginAuthorization(
   // Omitted entirely when empty, not set to "". See the comment on `scopes` above.
   if (scopes.length > 0) url.searchParams.set("scope", scopes.join(" "));
 
-  return { url: url.toString(), state };
+  return { url: url.toString(), state, expiresAt };
 }
 
 /**
@@ -1998,6 +2001,12 @@ export interface SubscriptionProposal {
   /** This Node's own events queue — the destination — found by the name wrangler derived for it. */
   queueId: string | null;
   queueName: string | null;
+  /**
+   * Whether this Worker already consumes that queue. The third object delivery outcomes depend on; measured
+   * 16 September 2026: `POST /accounts/{id}/queues/{id}/consumers` attaches a Worker consumer, so the
+   * confirm attaches it when it is missing rather than leaving it to `queue:attach-consumer` by hand.
+   */
+  consumerAttached: boolean | null;
   /** The event types the subscription would publish, in Cloudflare's words. */
   events: string[];
   digest: string;
@@ -2012,8 +2021,8 @@ const SENDING_EVENTS = [
 
 async function subscriptionDigestOf(of: Omit<SubscriptionProposal, "digest">): Promise<string> {
   const canonical = JSON.stringify([
-    of.domain, of.zone, of.zoneId, of.sendingDomain, of.subscribed, of.queueId, of.queueName, of.events,
-    of.error,
+    of.domain, of.zone, of.zoneId, of.sendingDomain, of.subscribed, of.queueId, of.queueName,
+    of.consumerAttached, of.events, of.error,
   ]);
   return await sha256Hex(new TextEncoder().encode(canonical));
 }
@@ -2053,7 +2062,7 @@ export async function subscriptionProposalFor(
   const without = async (over: Partial<Omit<SubscriptionProposal, "digest">>): Promise<SubscriptionProposal> => {
     const body = {
       domain, zone: null, zoneId: null, sendingDomain: null, subscribed: null,
-      queueId: null, queueName: null, events: [...SENDING_EVENTS], error: null, ...over,
+      queueId: null, queueName: null, consumerAttached: null, events: [...SENDING_EVENTS], error: null, ...over,
     };
     return { ...body, digest: await subscriptionDigestOf(body) };
   };
@@ -2094,9 +2103,16 @@ export async function subscriptionProposalFor(
     });
   }
 
+  const worker = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME ?? "";
+  const consumers = await cloudflareGet<{ consumers?: Array<{ script?: string; type?: string }> }>(
+    env, ctx, orgId, `/accounts/${accountId}/queues/${queue.id}`,
+  );
   return await without({
     zone: zone.name, zoneId: zone.id, sendingDomain: sending.name,
     subscribed: covering?.name ?? null, queueId: queue.id, queueName: queue.name,
+    consumerAttached: consumers.ok
+      ? (consumers.result.consumers ?? []).some((one) => one.type === "worker" && one.script === worker)
+      : null,
   });
 }
 
@@ -2111,7 +2127,7 @@ export async function subscribeDeliveryEvents(
       fix: "read GET /api/provider/delivery-events, and check the grant still covers this zone and the queue",
     });
   }
-  if (proposal.subscribed !== null) {
+  if (proposal.subscribed !== null && proposal.consumerAttached === true) {
     throw conflict("E_PROVIDER_SUBSCRIPTION_ALREADY", {
       what: `${domain} is already covered by the subscription ${proposal.subscribed}`,
       why: "a second subscription for the same domain would publish every event twice into the same queue",
@@ -2127,7 +2143,7 @@ export async function subscribeDeliveryEvents(
   }
 
   const accountId = await boundAccountFor(env);
-  const created = await cloudflarePost<{ id?: string; name?: string }>(
+  const created = proposal.subscribed !== null ? null : await cloudflarePost<{ id?: string; name?: string }>(
     env, ctx, orgId, `/accounts/${accountId}/event_subscriptions/subscriptions`,
     {
       name: `${proposal.queueName}-${proposal.sendingDomain}`,
@@ -2138,11 +2154,26 @@ export async function subscribeDeliveryEvents(
     },
   );
 
+  /*
+   * The consumer, when this Worker is not one yet. Until 16 September 2026 this was a wrangler call an
+   * operator ran after the install (`queue:attach-consumer`), and a button-only install never had it.
+   * The API attaches it — measured on a throwaway queue with the operator's token — and the settings are
+   * the ones `wrangler.jsonc` used to declare in its consumers block (receipt: `queue-provisioning.md`).
+   */
+  const worker = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME ?? "";
+  const attached = proposal.consumerAttached === true ? null : await cloudflarePost<{ consumer_id?: string }>(
+    env, ctx, orgId, `/accounts/${accountId}/queues/${proposal.queueId}/consumers`,
+    // The same two settings `queue:attach-consumer` passes, inherited from the consumers block wrangler.jsonc
+    // used to declare and unmeasured there too.
+    { type: "worker", script_name: worker, settings: { batch_size: 25, max_wait_time_ms: 10_000 } },
+  );
+
   await auditedBatch(env, ctx, orgId, {
     action: "provider.delivery_events_subscribed", outcome: "ok", actorUserId, subject: domain,
     detail: {
       zone: proposal.zone, sendingDomain: proposal.sendingDomain, queue: proposal.queueName,
-      subscriptionId: created.id ?? null, events: proposal.events,
+      subscriptionId: created?.id ?? proposal.subscribed, events: proposal.events,
+      consumerAttached: attached === null ? "already" : attached.consumer_id ?? "attached",
     },
   }, (entry) => [entry]);
 
