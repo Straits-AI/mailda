@@ -18,7 +18,7 @@ Resources deleted afterwards.
 ## The question
 
 ADR 24 and #13 decided that conflicts in `wrangler.jsonc` resolve to **upstream,
-unconditionally** — discarding the resource ids the Deploy button writes into a customer's
+unconditionally**, discarding the resource ids the Deploy button writes into a customer's
 fork (receipt: `deploy-button-behaviour.md`). That rests on wrangler relinking the existing
 resource rather than provisioning a new one.
 
@@ -26,7 +26,7 @@ The wrangler docs say *"resources will stay linked across future deploys even wi
 the resource IDs to the config file"*, but that statement concerns wrangler's own
 provisioning flow, not a config that previously **named** a resource and then stopped. If it
 re-provisioned instead, a routine auto-update under ADR 24 would silently orphan a Node's
-catalog — the worst outcome available in that design.
+catalog, the worst outcome available in that design.
 
 ## Method
 
@@ -34,7 +34,7 @@ catalog — the worst outcome available in that design.
 2. Deployed a Worker declaring the binding with **both** `database_id` and `database_name`,
    exactly as the button writes them.
 3. Wrote a marker row into that database.
-4. Rewrote the config to upstream's form — `{ "binding": "CATALOG" }`, no id, no name —
+4. Rewrote the config to upstream's form, `{ "binding": "CATALOG" }` with no id and no name,
    which is precisely what an upstream-wins merge produces.
 5. Redeployed and inspected.
 
@@ -56,7 +56,7 @@ server-side against the Worker, not from the configuration file.
 
 **ADR 24's residual risk is closed, and the merge rule is safe.** Discarding
 button-written ids and names on merge keeps the existing catalog. The fork can be returned
-to upstream's exact content without data loss, which restores the property #18 wanted — a
+to upstream's exact content without data loss, which restores the property #18 wanted: a
 guarantee held by the platform rather than by discipline.
 
 ## Residual
@@ -83,7 +83,7 @@ env.CATALOG (inherited)                 D1 Database
 env.EVIDENCE (inherited)                R2 Bucket
 ```
 
-`CREDENTIAL_KEK` is **silently absent** — no warning, no error, exit code 0. D1 and R2 say
+`CREDENTIAL_KEK` is **silently absent**: no warning, no error, exit code 0. D1 and R2 say
 `(inherited)`; the secret binding is simply gone.
 
 ### What that cost, live
@@ -91,7 +91,7 @@ env.EVIDENCE (inherited)                R2 Bucket
 The Node kept serving. Sign-in returned HTTP 500, because every signing key was wrapped under the
 real KEK and the code fell back to the published development constant, which cannot unwrap them.
 
-And `doctor` — which requires authentication on a claimed Node — became **unreachable at exactly the
+And `doctor`, which requires authentication on a claimed Node, became **unreachable at exactly the
 moment it was needed**. A diagnostic only available while the system is healthy is not a diagnostic.
 Fixed by serving a reduced report unauthenticated when the Node cannot authenticate anyone at all:
 `infrastructure` findings only, since their contents are already published in this repository, while

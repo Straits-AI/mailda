@@ -56,7 +56,7 @@ Durable Objects. Then:
 | Requests | 10M/month | $0.30/million |
 | CPU time | 30M ms/month | $0.02/million ms |
 | Queue operations | 1M/month | $0.40/million |
-| Inbound emails | unlimited | — |
+| Inbound emails | unlimited | none |
 
 A 20-person organization sending 10,000 emails a month: **$5 + $2.45 ≈ $7.45/month**, plus
 D1 and R2 usage. §5A's onboarding checklist listed "a paid Workers plan" as a prerequisite
@@ -66,7 +66,7 @@ with cost unquantified; this is the quantity.
 
 | | Free |
 |---|---|
-| Email Sending | verified destinations only — see `free-plan-node-capability.md` |
+| Email Sending | verified destinations only; see `free-plan-node-capability.md` |
 | Email Routing (inbound) | unlimited |
 | Queue operations | 10,000/day |
 | **Queue retention** | **24 hours, non-configurable** |
@@ -79,11 +79,11 @@ Two of these need care.
 
 **Queue retention cannot be set on the free plan.** #9 established that every queue must
 declare its retention explicitly, because the 24-hour default silently deletes unread
-messages — a mail system's worst failure mode. On the free plan that is not possible: 24
+messages, a mail system's worst failure mode. On the free plan that is not possible: 24
 hours is forced. A free-plan Node therefore has a hard 24-hour window for anything stuck in
 a queue, and the product must say so rather than let it be discovered.
 
-**Durable Objects are SQLite-only on free**, which is no constraint at all — Cloudflare's
+**Durable Objects are SQLite-only on free**, which is no constraint at all. Cloudflare's
 own best practices recommend the SQLite backend, and #4's design assumes it.
 
 ## Workers Builds is not a cost consideration
@@ -100,14 +100,14 @@ both.
 
 A free-plan Node receives real mail, stores it, indexes it, and shows it in the web UI. It
 can even reply to **verified** addresses, so an evaluator can exercise a round trip to their
-own inbox. It cannot reply to a customer. That is a genuine zero-cost evaluation path —
+own inbox. It cannot reply to a customer. That is a real zero-cost evaluation path:
 *your own real mail*, no commitment, and no fixtures to discount. Confirmed live:
 `free-plan-node-capability.md`.
 
 This looked like the answer `docs/onboarding-journey.md` was searching for, and was tested
 live (`free-plan-node-capability.md`). **ADR 25 withdrew it.** The free plan's 24-hour
 non-configurable queue retention means a stuck message is silently deleted, and §22 requires
-explicit retention for exactly that reason — so a free Node can lose mail rather than merely
+explicit retention for exactly that reason, so a free Node can lose mail rather than merely
 do less. Workers Paid is mandatory. The evaluation problem is therefore still open.
 
 ## Residual
@@ -117,10 +117,10 @@ do less. Workers Paid is mandatory. The evaluation problem is therefore still op
   incomplete until they are.
 - Not verified against a real invoice. These are published figures.
 
-## Correction — 21 August 2026: nothing enforces the Paid plan, and something said it did
+## Correction, 21 August 2026: nothing enforces the Paid plan, and something said it did
 
-ADR 25 makes Workers Paid mandatory, and every document that leans on that requirement — this one,
-`butler-step-budget.md`, `butler-step-cost.md`, `cron-lateness.md`, `docs/butler-ast.md` — describes it as
+ADR 25 makes Workers Paid mandatory, and every document that leans on that requirement (this one,
+`butler-step-budget.md`, `butler-step-cost.md`, `cron-lateness.md`, `docs/butler-ast.md`) describes it as
 enforced by `mailda deploy` "with an account token". **There was no `mailda deploy`.** No CLI existed at all:
 no `bin` entry anywhere in the workspace, and five loose scripts run through `pnpm --filter` doing the work
 (#80).
@@ -135,7 +135,7 @@ detail:   "Not checkable from inside a Worker — no account API access.
            `mailda deploy` verifies the plan at install and refuses on Workers Free (ADR 25)."
 ```
 
-So a Node installed on Workers Free read `ok` and was told the check had happened somewhere else — #60's
+So a Node installed on Workers Free read `ok` and was told the check had happened somewhere else. #60's
 governing failure, *a condition backed by nothing is a policy that silently never fires*, reached through a
 doctor finding rather than a policy row. A `test/doctor.test.ts` assertion required the words "mailda deploy"
 to appear in that detail, so the suite was holding the claim in place.

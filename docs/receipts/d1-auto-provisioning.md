@@ -15,8 +15,8 @@ values:
 3 August 2026. Two throwaway Workers deployed and deleted; the account was verified back to
 baseline afterwards.
 
-Worth noting since it was not the intent: D1 auto-provisioning **works on the free plan** —
-both databases were created without a paid subscription. Whether the one-database-per-Worker
+Worth noting since it was not the intent: D1 auto-provisioning **works on the free plan**.
+Both databases were created without a paid subscription. Whether the one-database-per-Worker
 naming behaviour differs on Workers Paid is untested, though there is no reason to expect
 it would.
 
@@ -52,7 +52,7 @@ env.SHARED (241a7344-845a-473c-aa96-b1ef4cc06fb1)
 
 Two databases. The second deploy did not detect, reuse or even mention the first. Naming
 is `<worker-name>-<binding-name>`, confirming the documented behaviour that "resources
-will be created with the name of your worker as the prefix" — and that prefix is exactly
+will be created with the name of your worker as the prefix", and that prefix is exactly
 what makes sharing impossible.
 
 Both Workers deployed successfully and `probe-a` returned `{"worker":"a","ok":{"ok":1}}`,
@@ -64,13 +64,13 @@ nine disconnected databases.
 
 The docs state that on `wrangler deploy` "their IDs will be written back to your
 configuration file", with write-back failing only on the dashboard/GitHub path. Observed
-here on a **local** `wrangler deploy`, `a/wrangler.jsonc` was unchanged — still no
+here on a **local** `wrangler deploy`, `a/wrangler.jsonc` was unchanged, still with no
 `database_id`. So a redeploy has nothing pinning it to the database it created.
 
 ## What this settles
 
 **Automatic provisioning cannot build a Mailda Node.** #4's single-owner rule gives D1 to
-the `state` Worker alone, and every other Worker reaches it by service-binding RPC — but
+the `state` Worker alone, and every other Worker reaches it by service-binding RPC, but
 any Worker that *declares* a D1 binding without an id gets its own database. Resources
 must therefore be created deliberately, by name, before or during deploy, with ids pinned
 explicitly. That is a requirement on #13's install script, not an option.
@@ -83,13 +83,13 @@ Builds projects, each auto-provisioning, would produce nine catalogs.
 The button-specific half of #14 remains open, and this probe cannot reach it:
 
 - Whether the Workers Builds auto-generated token can create D1 **at all**. Its documented
-  permissions are Workers Scripts / KV / R2 edit, with **no D1** — while the provisioning
+  permissions are Workers Scripts / KV / R2 edit, with **no D1**, while the provisioning
   docs claim D1 works "from the dashboard (for example, via GitHub)". This probe used a
   local OAuth token that *does* hold `d1 (write)`, so it proves nothing about the build
   token.
 - Whether a custom `deploy` script chaining several `wrangler deploy` calls runs in
   Workers Builds.
-- Whether Durable Object namespaces and Workflows are provisioned — neither appears on the
+- Whether Durable Object namespaces and Workflows are provisioned; neither appears on the
   supported list.
 
 Those need a real Deploy button click against an account, which is a browser flow.

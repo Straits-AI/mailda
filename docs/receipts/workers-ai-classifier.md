@@ -39,18 +39,18 @@ classifier. Nothing in the catalogue is.
 | "Congratulations you have won a prize, click to claim" | 0.000 | **1.000** |
 
 A prize scam is the most positive text of the three. Sentiment is not a threat signal, and shipping it as
-one — even off by default, even as a Butler fact — would be a number with a name it does not deserve.
+one, even off by default or as a Butler fact, would be a number with a name it does not deserve.
 
 ## What would work, and what it needs
 
 The embedding model `@cf/baai/bge-small-en-v1.5` answers in **220–660 ms over REST from a laptop** (three
-calls, cold to warm: 659, 322, 221 ms), 384 dimensions. A nearest-neighbour signal — *this message is close
-to ones an administrator held, and far from ones released* — is lightweight, deterministic given the
+calls, cold to warm: 659, 322, 221 ms), 384 dimensions. A nearest-neighbour signal, *this message is close
+to ones an administrator held, and far from ones released*, is lightweight, deterministic given the
 corpus, and its authority would be this Node's own decisions rather than a vendor's training set. That is
 the design the quote in the README asks for.
 
-It needs a corpus. The Node records the decisions that would label one — `message.quarantined`,
-`message.released`, `message.labelled` — and has recorded them for a day. Nothing to evaluate on yet, so
+It needs a corpus. The Node records the decisions that would label one (`message.quarantined`,
+`message.released`, `message.labelled`) and has recorded them for a day. Nothing to evaluate on yet, so
 nothing ships; when there are hundreds of decided messages on a real Node, re-measure precision and
 recall here first.
 

@@ -34,7 +34,7 @@ values:
 the override did not reach the canary: 68aac295-… answered.
 ```
 
-The refusal was **correct** — when an override cannot be applied the request is routed by traffic percentage
+The refusal was **correct**. When an override cannot be applied the request is routed by traffic percentage
 instead, so the incumbent answers and nothing says so, and promoting on that would move every request onto a
 version nothing examined. But the cause was not what the refusal's `fix` suggested.
 
@@ -43,15 +43,15 @@ Cloudflare's version-overrides page states it:
 > A version override will only be applied if the specified version is in the current deployment. **It can take
 > up to a couple of seconds to be available globally after a recent change.**
 
-So the deploy was racing its own publish. Waited out instead — six attempts over roughly fifteen seconds —
+So the deploy was racing its own publish. Waited out instead, six attempts over roughly fifteen seconds,
 and the first live run took **two** retries before the override landed, after which the gate compared 33
 findings and promoted.
 
 **A gate that has to be overridden by hand every time is not a gate**, which is the lesson
 `promotionVerdict` was already written from: it replaced a check that refused a canary whose only finding the
 incumbent already had. This is the same failure arriving through timing rather than through logic. The bound
-stays because a version that never becomes overridable is a real condition — a Node with no
-`version_metadata` binding cannot report its version at all — and the refusal is the honest answer to that.
+stays because a version that never becomes overridable is a real condition (a Node with no
+`version_metadata` binding cannot report its version at all), and the refusal is the honest answer to that.
 
 **Measured:** a real first install and two deploys into a live Cloudflare account
 (`Mystraits.ai@gmail.com`, `dc8d1b7d…`), 27 August 2026, wrangler 4.118.0. A Mailda Node was deployed, all
@@ -60,13 +60,13 @@ deployed alongside it, and everything the second Node created removed afterwards
 running at `https://mailda.mystraits-ai.workers.dev`.
 
 The drill was run because #92, #98 and #99 all rested on assumptions nobody had tested. It found **five
-facts, three of which were bugs in code written the day before** — which is the argument for running it
+facts, three of which were bugs in code written the day before**, which is the argument for running it
 rather than reasoning about it.
 
 ## The assumption #98's whole design rests on: confirmed
 
 `deploy.versions_upload_shifts_traffic: 0`. Across three `wrangler versions upload` calls, the version
-serving 100% of traffic never changed — it stayed pinned at the previously deployed version until an
+serving 100% of traffic never changed. It stayed pinned at the previously deployed version until an
 explicit `wrangler deploy` or `versions deploy`. Checked with `wrangler deployments status` before and after
 each upload.
 
@@ -94,7 +94,7 @@ The cause is a decision this project made on purpose: `wrangler.jsonc` declares 
 resources are provisioned *by the deploy*, and neither of the first two steps of expand-canary-check-shift
 can come first on a Node that does not exist yet.
 
-`mailda deploy` now branches. A first install deploys directly — which is safe there for exactly the reason
+`mailda deploy` now branches. A first install deploys directly, which is safe there for exactly the reason
 the canary exists: no previous version to protect and no user to serve a broken one to. Every later deploy
 takes the canary path.
 
@@ -102,7 +102,7 @@ takes the canary path.
 
 `deploy.workflow_name_is_account_level: 1`, `deploy.second_node_reassigns_workflow: 1`.
 
-Every other resource derives from the Worker's name — a second Node called `mailda2` got `mailda2-catalog`,
+Every other resource derives from the Worker's name. A second Node called `mailda2` got `mailda2-catalog`,
 `mailda2-evidence` and `mailda2-sending-events`, colliding with nothing. The Workflow does not: its name is
 written in `wrangler.jsonc` as `mailda-butler-runs`, and `wrangler workflows list` shows a Workflow is owned
 by exactly **one** script.
@@ -115,7 +115,7 @@ Deploying the second Node **succeeded, exit 0, with no warning**, and the owners
 
 So the first Node kept a `BUTLER_RUNS` binding pointing at a Workflow whose class is now served by the
 second Node's code, against the second Node's bindings. That is a cross-Node execution path into another
-organization's D1 — the same shape as the queue collision that was already found and fixed, in the one
+organization's D1, the same shape as the queue collision that was already found and fixed, in the one
 resource whose name is not derived. #99 suspected this; it is now measured, and the failure mode is the
 worse of the two possibilities: it does not refuse, it reassigns.
 
@@ -134,12 +134,12 @@ mailda.mystraits-ai.workers.dev             200   (the live version, for contras
 ```
 
 The 404 body is Cloudflare's generic *"Page not found"* page, so the hostname is not routed at all rather
-than reaching a Worker that refused. Declaring `"preview_urls": true` in `wrangler.jsonc` and redeploying —
-the documented fix, and worth doing regardless because Cloudflare's default for that setting changed three
-times between September 2025 and October 2025 — did not change the result.
+than reaching a Worker that refused. Declaring `"preview_urls": true` in `wrangler.jsonc` and redeploying (the
+documented fix, and worth doing regardless because Cloudflare's default for that setting changed three
+times between September 2025 and October 2025) did not change the result.
 
 **What this means operationally:** `mailda deploy` reaches its own `could not find the canary's preview URL`
-refusal, which fails safe — it does not promote, it says the canary is uploaded and serving no traffic, and
+refusal, which fails safe. It does not promote, it says the canary is uploaded and serving no traffic, and
 it prints the exact `wrangler versions deploy` command. So the sequence degrades to "upload, then promote by
 hand after checking yourself", which is weaker than designed and not dangerous.
 
@@ -148,7 +148,7 @@ search layers to the same Node. Same result, same refusal, and the refusal did w
 `wrangler versions deploy <id>@100`, the previous version kept serving 100% of traffic throughout, and the
 schema change ahead of it was additive so nothing was serving against a schema it did not understand. The
 sequence degrading to *"upload, check by hand, promote"* is now a measured property of this account rather
-than a prediction — weaker than designed, and not dangerous.
+than a prediction: weaker than designed, and not dangerous.
 
 **Established on 31 August 2026, and it was none of the three things suspected.** The account's own API had
 the answer the whole time:
@@ -159,8 +159,8 @@ GET /accounts/{account}/workers/scripts/mailda/subdomain
 ```
 
 Preview URLs were already enabled, the alias was recorded on every version, and the version API carries no
-preview-URL field. The cause is a documented platform limitation — Cloudflare does not generate preview URLs
-for Workers that **implement a Durable Object** — and this Worker declares `KEY_VAULT` and `OUTBOX_SWEEPER`,
+preview-URL field. The cause is a documented platform limitation (Cloudflare does not generate preview URLs
+for Workers that **implement a Durable Object**), and this Worker declares `KEY_VAULT` and `OUTBOX_SWEEPER`,
 because ADR 28 put both root keys in a Durable Object. No setting on this account could ever have produced
 the hostname, and the dashboard visit this section twice asked for would have shown the toggle already on.
 
@@ -170,7 +170,7 @@ cause was checkable without the dashboard, and neither drill checked it.**
 
 The gate no longer uses a preview URL. `mailda deploy` places the canary in the deployment at 0% and reaches
 it through `Cloudflare-Workers-Version-Overrides` on the production hostname, requiring the report to name
-the uploaded version — measured and reasoned in
+the uploaded version, measured and reasoned in
 [`preview-urls-and-durable-objects`](./preview-urls-and-durable-objects.md). The degraded
 "upload, check by hand, promote" path recorded above is therefore history, not current behaviour.
 
@@ -193,17 +193,17 @@ override probe               answered version: c7e7b917  ← the identity gate p
 ```
 
 That seventh line is the result the previous three drills could not reach. The version override **does** reach
-a 0% version on the production hostname, and the canary named itself, so the identity check — the thing
-standing between this gate and an assertion that cannot fail — works against a real account. The incumbent
+a 0% version on the production hostname, and the canary named itself, so the identity check, the thing
+standing between this gate and an assertion that cannot fail, works against a real account. The incumbent
 still carries no `version` field, which makes a fall-through unmistakable rather than ambiguous.
 
 **Then the gate refused, and the refusal was the defect.** The canary reported `degraded` with one finding,
-`signing_key` — *"No current signing key. One is generated on the next sign-in, so this self-heals"*. The
+`signing_key`: *"No current signing key. One is generated on the next sign-in, so this self-heals"*. The
 incumbent reported `degraded` with **the same one finding**. So a version neither better nor worse than the
 one already taking every request was withheld, and the operator was told to promote it by hand.
 
 An unclaimed Node is in that state by construction until somebody signs in, so every deploy to one would have
-gone the same way — which is the weak *"upload, check by hand, promote"* path the earlier drills recorded,
+gone the same way, which is the weak *"upload, check by hand, promote"* path the earlier drills recorded,
 reached from a different direction and for a different reason.
 
 The gate is differential now: a finding the canary has and the incumbent does not blocks; shared findings are
@@ -211,17 +211,17 @@ reported as **carried**. `refuse` still refuses whatever the incumbent says, bec
 reason to stop rather than to proceed. Re-run against the same account, the gate answers
 `promote: true, carried: ["signing_key"]`.
 
-**Left in a deliberate state:** canary at 0%, incumbent serving 100%, schema advanced. Safe by design —
-expansion is backward-compatible ahead of the code — and the promotion is an operator's decision rather than
+**Left in a deliberate state:** canary at 0%, incumbent serving 100%, schema advanced. Safe by design,
+since expansion is backward-compatible ahead of the code, and the promotion is an operator's decision rather than
 a drill's.
 
-**Completed on the operator's word.** `c7e7b917` promoted to 100%. The Node now reports its own version —
-so every future canary gate can run — `migrations_applied` reads *"All 52 expected tables present"*, and the
+**Completed on the operator's word.** `c7e7b917` promoted to 100%. The Node now reports its own version,
+so every future canary gate can run, `migrations_applied` reads *"All 52 expected tables present"*, and the
 `mailda-sending-events` consumer was already attached from an earlier deploy, so the step the gate interrupted
 had nothing left to do. One finding remains: `signing_key`, self-healing on the next sign-in.
 
 **What the gate can actually see, measured rather than assumed.** The canary check is unauthenticated, so it
-reads the reduced report. On this Node that is **9 findings of 21** — the other 12 describe the organization's
+reads the reduced report. On this Node that is **9 findings of 21**. The other 12 describe the organization's
 mail and are withheld from an anonymous caller. The differential comparison therefore covers 9, and a
 regression confined to a data-disclosing finding would not block a promotion.
 
@@ -233,11 +233,11 @@ authenticated and compare all 21. That needs credentials in the deploy path, whi
 **A finding-count change that looked alarming and was not.** The report went from 20 findings to 9 across the
 promotion, which looks like checks disappearing. It is the opposite: the old route reduced only
 `if (orgId !== null && !signedIn)`, so an **unclaimed** Node served its *full* report to anonymous callers.
-The current route reduces that case too. Nothing was removed — four checks were added since — and the
+The current route reduces that case too. Nothing was removed (four checks were added since), and the
 tightening is an improvement. Worth recording because the first reading of a shrinking number is that coverage
 was lost.
 
-**Both findings above are closed.** `mailda deploy` no longer inherits `doctor`'s exit code — a deploy is
+**Both findings above are closed.** `mailda deploy` no longer inherits `doctor`'s exit code. A deploy is
 asked whether it happened, so a carried degradation exits 0 while a post-promotion `refuse` exits 2 and prints
 the rollback. And the canary check signs in when credentials are present, so the gate compares the whole
 report rather than the 9 findings an anonymous caller may see; both sides are asked with the same credentials,
@@ -269,13 +269,13 @@ objects           3 copied source → destination, each at the size the inventor
 /api/auth/login  500
 ```
 
-The signing key row came across in the dump — it is an ordinary row — but it is **wrapped under the source
+The signing key row came across in the dump, since it is an ordinary row, but it is **wrapped under the source
 Node's credential KEK**, which lives in the `KeyVault` Durable Object and is not in a D1 export. The
 destination generated its own KEK at first install, so the unwrap fails AES-GCM authentication.
 
 So a restore that carries every row and every object produces a Node that **knows who everybody is and cannot
-let anybody in**, and cannot read a single message. That is exactly what ADR 28 says — *"Lose it and every
-message is permanently unreadable"* — and why `keyvault.ts` said ADR 28 does not ship without ADR 29's escrow.
+let anybody in**, and cannot read a single message. That is exactly what ADR 28 says, *"Lose it and every
+message is permanently unreadable"*, and why `keyvault.ts` said ADR 28 does not ship without ADR 29's escrow.
 
 **The escrow is now measured as load-bearing rather than argued to be.** The remaining step is redeeming one
 of the ten recovery codes against the destination, which installs the source's keys; it needs a code, which is
@@ -310,7 +310,7 @@ applied and the error arrived after them.
 
 **What is not established** is which request failed or why. The candidates are the final `UPDATE` in 0044,
 some part of the deploy step that follows migration, or a transient API failure with no relationship to
-either. It did not reproduce, and it cannot now — the migrations are applied and the path is idempotent.
+either. It did not reproduce, and it cannot now. The migrations are applied and the path is idempotent.
 
 **Why this Node cannot answer it.** `messages` is empty here, so 0044's classifying `UPDATE` had nothing to
 touch: it would have succeeded trivially whether or not it ran. The one place the question matters is a Node
@@ -319,7 +319,7 @@ with mail, and this Node deliberately has none.
 **What would settle it**, and is worth doing before this migration reaches a Node with an archive: apply
 0044 to a scratch database seeded with messages in both states, and check the classification actually ran
 rather than leaving every row on the column default. A migration recorded as applied whose last statement
-silently did nothing is the shape of failure that shows up months later as "search never found old mail" —
+silently did nothing is the shape of failure that shows up months later as "search never found old mail",
 and D1 does not wrap a migration file in a transaction, so it is representable rather than theoretical.
 
 Recorded as unknown rather than guessed at, for the reason the preview-URL section above gives: the next
@@ -330,11 +330,11 @@ person to touch this needs to know the difference between *"we measured this and
 ## Addition, 15 September 2026: a second Node in one account, which `wrangler.jsonc` recorded as unmeasured
 
 `wrangler.jsonc` said of its Workflow block: *"a second install into one account gets a different Worker
-name and the same workflow name. What happens then is **unmeasured** — the queue case collided silently, and
+name and the same workflow name. What happens then is **unmeasured**. The queue case collided silently, and
 this one is not known to. It is the one thing about this block a second Node in one account should be checked
 against."*
 
-Checked, with `mailda deploy --plan` against the live `Swmengappdev` account — a plan reads and changes
+Checked, with `mailda deploy --plan` against the live `Swmengappdev` account. A plan reads and changes
 nothing, so this cost a lookup rather than a deploy.
 
 ### `deploy.second_node_per_account_supported: 1`
@@ -355,7 +355,7 @@ derived:
 So a second Node in one account is supported. What it costs is **two edits rather than one**, because the
 Workflow is the single name that does not derive from the Worker's.
 
-### `deploy.workflow_collision_refused_by_plan: 1` — and it does **not** collide silently
+### `deploy.workflow_collision_refused_by_plan: 1`, and it does **not** collide silently
 
 Renaming only the Worker is the mistake somebody actually makes, since three of the four names derive
 themselves. It is refused, and the refusal names the owner:
@@ -368,7 +368,7 @@ themselves. It is refused, and the refusal names the owner:
          owner: mailda
 ```
 
-This is the half that was genuinely unknown. The queue case (#72) collided **silently** — a second Node's
+This is the half that was unknown. The queue case (#72) collided **silently**. A second Node's
 producer binding attached to the first Node's queue and nothing looked wrong on either. The Workflow case
 does not: #99's guard reads the owner and blocks, and the plan carries the unwind (`wrangler workflows
 delete`) because a Workflow survives its script's deletion.
@@ -382,11 +382,11 @@ caught."*
 Two things the third restore drill (`disaster-recovery.md`) did by hand are done by the tool now, and both
 were measured on the live `Swmengappdev` account with a Node named `mailda-drill` beside the live `mailda`.
 
-**`mailda deploy --name mailda-drill`.** The three places the Worker's name lives — `name`, the Workflow's
-`name`, `vars.WORKER_NAME` — are rewritten into a derived file beside `wrangler.jsonc` (`wrangler.<name>.jsonc`,
+**`mailda deploy --name mailda-drill`.** The three places the Worker's name lives (`name`, the Workflow's
+`name`, `vars.WORKER_NAME`) are rewritten into a derived file beside `wrangler.jsonc` (`wrangler.<name>.jsonc`,
 git-ignored, comments kept) and every wrangler call takes `--config` to it. The checked-in config is not
-touched. `deploy.workflow_name_derives_from_worker` stays **0** — Cloudflare still requires the literal on
-the binding — but the edit is the tool's, once, and the rule `workflow-name-world.test.ts` holds is applied
+touched. `deploy.workflow_name_derives_from_worker` stays **0**, since Cloudflare still requires the literal on
+the binding, but the edit is the tool's, once, and the rule `workflow-name-world.test.ts` holds is applied
 rather than remembered. `--plan --name` reads as the 15 September plan above, unchanged.
 
 | step | measured |
@@ -397,8 +397,8 @@ rather than remembered. `--plan --name` reads as the 15 September plan above, un
 
 **The canary gate now reaches a Node that is not called `mailda`.** The override header read
 `mailda="<version>"` as a literal, whatever the config said. On the third drill's `mailda-drill` Node the
-override therefore never applied, the incumbent answered every time, and the gate refused — correctly, for
-the reason the 10 September correction gives — so the operator promoted by hand and wrote it down as a
+override therefore never applied, the incumbent answered every time, and the gate refused, correctly, for
+the reason the 10 September correction gives, so the operator promoted by hand and wrote it down as a
 propagation race. It was the name. The header takes the Worker's name from the config now
 (`test/node/deploy-sequence.test.ts` pins the literal's absence), and on this run the first attempt was
 answered by the uploaded version: no retry, `signing_key` carried from the incumbent, traffic moved without a
@@ -406,7 +406,7 @@ hand.
 
 **The consumer attach had the same defect from the other end.** `attach-queue-consumer.mjs` already took
 `--name`; the deploy never passed it, so the first install above reported *"mailda is already the consumer
-of mailda-sending-events. Nothing to do."* — the **live** Node's queue, read for a deploy of the drill Node.
+of mailda-sending-events. Nothing to do."*, the **live** Node's queue, read for a deploy of the drill Node.
 Passed now, and re-run by hand for this drill: *"Attached mailda-drill as the consumer of
 mailda-drill-sending-events."* A defect that reads as success is the kind the README's account-abstraction
 row exists to stop; it is recorded here because it shipped.

@@ -31,7 +31,7 @@ await audit(env, ctx, orgId, {...});   // the record
 ```
 
 If the isolate dies in between, the act is committed and nothing records it. The hash chain does not
-help — it proves that what *was* written is unaltered and says nothing about what was never written.
+help. It proves that what *was* written is unaltered and says nothing about what was never written.
 Sequence numbers stay contiguous, `verifyChain` still reports `intact: true`, and the missing act is
 undetectable **by construction**. That is a worse failure than a broken chain, because a broken chain
 announces itself.
@@ -48,7 +48,7 @@ Two consequences worth stating plainly:
   act that has *not* happened, so if the Node cannot record it, the Node does not do it.
 - **Appends serialise per organisation.** Two concurrent auditable changes contend for the same next
   sequence number; the loser re-reads the tip and retries the whole batch, bounded at five attempts.
-  This is inherent to hash-linking rather than a defect of the implementation — a chain is an order,
+  This is inherent to hash-linking rather than a defect of the implementation. A chain is an order,
   and an order is a serialisation. At mail volumes it is a fair trade; at high write rates it would
   not be, and that is the number to watch if this design is ever reused elsewhere.
 
@@ -63,13 +63,13 @@ old evidence to save space" is precisely the sentence an audit exists to make im
 therefore a real cost and is accounted for rather than waved away.
 
 Sized against `message-metadata-bytes.md`, which measured **1,505 bytes per message** on real remote D1
-and derived §11B's shard thresholds from it. An audit entry is far smaller — no blob keys, no hashes of
-content, a bounded `detail` — and a Node writes a handful per message at most: accepted, materialised,
+and derived §11B's shard thresholds from it. An audit entry is far smaller (no blob keys, no hashes of
+content, a bounded `detail`), and a Node writes a handful per message at most: accepted, materialised,
 and whatever a human then does with it. Audit is not what fills a shard; mail is.
 
 **Log entries are trimmed at 50,000 per Node.** Different reasoning, because logs have a different job:
 the fiftieth-thousandth most recent error is not diagnostic, it is archaeology. At roughly 400 bytes an
-entry that is ~20 MB — noise against a 10 GB ceiling, and small enough that trimming is about keeping
+entry that is ~20 MB, noise against a 10 GB ceiling, and small enough that trimming is about keeping
 queries fast rather than about space.
 
 Trimming happens **opportunistically on write, 500 at a time**, rather than on a schedule. A scheduled
@@ -82,10 +82,10 @@ drift out of step with the thing it is trimming.
 audit trail is read by whoever may audit, which is a wider set than whoever may read the mail.** An
 unbounded detail field is an invitation to put a subject line, a recipient list, or an error string
 containing a token into a table with different access rules than the content it came from. The cap is
-a reminder that this is a *record of actions*, not a copy of the thing acted on — §12 keeps content in
+a reminder that this is a *record of actions*, not a copy of the thing acted on. §12 keeps content in
 R2 and it stays there.
 
-**Counted, 18 August 2026 — every `detail` the Worker builds today.** Method: `boundedDetail` and `log`
+**Counted, 18 August 2026: every `detail` the Worker builds today.** Method: `boundedDetail` and `log`
 were temporarily made to print the UTF-8 length and the key names of each `detail` they were handed, and
 both suites were run (`pnpm vitest run`, 30 files / 419 tests, and `-c vitest.node.config.ts`, 12 files /
 80 tests). **172 details were recorded; 166 of them come from real call sites** and the other 6 are the
@@ -93,41 +93,41 @@ oversize fixtures in the cap's own tests. Of the 166:
 
 | | bytes | shape |
 |---|---|---|
-| largest | **335** | `{cause, error}` — a reconciliation failure carrying a provider error string |
+| largest | **335** | `{cause, error}`, a reconciliation failure carrying a provider error string |
 | widest routine shape | **111** | `{mailboxId, recipients, fidelity, inReplyTo}` (73 occurrences) |
 | most common others | 19–87 | `{transportMessageId, reason}` (30), `{email}` (17), `{method}` (14), `{relation, objectType, objectId}` (6) |
 
 Two things that count for more than the sizes. **No call site puts a mail Subject header or a body in a
-`detail`** — the recorded shapes are identifiers, reasons and counts, and the one key literally called
+`detail`**. The recorded shapes are identifiers, reasons and counts, and the one key literally called
 `subject` (`audit.ts`, the `audit.append_failed` log line) carries the entry's own subject *column*, which
 is an identifier like a manifest id. So the disclosure argument above is preventive rather than remedial,
 which is what a tripwire is for.
 
 **That claim is checked by a person, not by a test, and saying so is the point.** It was verified by reading
-all 18 `detail:` sites and every value handed to `audit`'s `subject` on 18 August — all identifiers — but
+all 18 `detail:` sites and every value handed to `audit`'s `subject` on 18 August, all identifiers, but
 nothing holds it. A source scan is the obvious enforcement and is not obviously safe: the honest predicate is
 *"no mail-derived string reaches a `detail`"*, and the one key spelled `subject` is a counter-example to the
 naive version, so a scan for the word would false-positive on the day it landed and be muted. Recorded as an
 audited convention with a known gap rather than as an enforced property, because the alternative here is a
-tripwire that gets switched off — the failure mode `DELIVERY_SILENCE_MS` already names. And the suite exercises the *shapes* the code builds, not a mail corpus:
+tripwire that gets switched off, the failure mode `DELIVERY_SILENCE_MS` already names. And the suite exercises the *shapes* the code builds, not a mail corpus:
 it bounds what the code can produce and says nothing about volumes.
 
-**Sized:** 2,048 **bytes** — 6.1× the largest real detail measured above and ~18× the routine one, so only
+**Sized:** 2,048 **bytes**, 6.1× the largest real detail measured above and ~18× the routine one, so only
 a new shape or a bug reaches it. It is chosen against three things pulling in different directions:
 
 - **Disclosure, which sets the ceiling.** One entry at the cap is the same order as one message-metadata
   row (**1,632 bytes**, measured on real remote D1 in `message-metadata-bytes.md`; the 1,505 quoted
   earlier in this file is that receipt's 4 August figure, superseded there on 12 August) and orders below
   a message body, which §12 keeps in R2. At 4 KiB an entry could carry twice as much mail-derived text into
-  the wider-access table; the cap does not *redact* — a single 998-character ASCII subject would still fit,
-  and refusing that would make details useless — it stops an entry becoming a transcript.
+  the wider-access table; the cap does not *redact* (a single 998-character ASCII subject would still fit,
+  and refusing that would make details useless); it stops an entry becoming a transcript.
 - **Usefulness, which sets the floor.** A truncated detail is a record that has lost the thing it was
   recording, so the cap has to clear the largest legitimate shape with room for shapes not yet written.
   The concrete one is a list of ids: a typed-prefix ULID is **31 characters** (`packages/runtime/src/ctx.ts`
   mints prefix + 10 time + 16 random, e.g. `rcpt_`), which is 34 bytes as a JSON array element with its
-  quotes and comma, so `JSON.stringify(Array(60).fill(id))` is **2,041 bytes** and 61 ids is 2,075 —
+  quotes and comma, so `JSON.stringify(Array(60).fill(id))` is **2,041 bytes** and 61 ids is 2,075:
   **60 ids bare, about 59 once sibling fields share the object** (computed, not measured). At 1 KiB that
-  halves to 29 — below the only listing page size in the budgets today, `reconcile.list_limit` = 200 — and
+  halves to 29, below the only listing page size in the budgets today, `reconcile.list_limit` = 200, and
   an entry recording *which* ids it touched would routinely truncate.
 - **Growth, which turns out not to bind.** Audit entries are never trimmed, so the worst case matters:
   even if every entry hit the cap, 10 GB / ~2.3 KiB per row (the capped `detail` plus the fixed columns,
@@ -141,7 +141,7 @@ checkable. Too high and it becomes a second copy of the mail under wider access 
 
 Both keys are named `*_bytes` and, until #69, both were compared against `String.length`, which counts
 **UTF-16 code units**. A detail of 2,048 code units of CJK is ~6 KiB of UTF-8, so the bound could be
-exceeded roughly threefold by writing in a non-Latin script — the one thing a mail system must assume its
+exceeded roughly threefold by writing in a non-Latin script, the one thing a mail system must assume its
 users do. The truncation record then reported that code-unit count under the key `bytes`, and its `head`
 was cut with `slice`, which can land between the halves of a surrogate pair.
 
@@ -153,7 +153,7 @@ ASCII fixture cannot tell the two units apart, which is how this survived.
 **`values:` is deliberately untouched, and no clause of `stale_when` fired.** The row shape did not
 change, D1's ceiling did not move, and the measured bytes per entry did not move: the change only *lowers*
 the worst case an entry can reach, from ~3× the cap to the cap. Nothing measured here was priced on the
-old unit — the counted maximum above, 335 bytes, is ASCII-dominated and identical under either reading.
+old unit. The counted maximum above, 335 bytes, is ASCII-dominated and identical under either reading.
 
 One consumer's arithmetic to check rather than assume: #63 records that a page of returned ids fits in
 this cap, at ~59 typed-prefix ULIDs per entry. Those ids are ASCII, where a byte and a code unit are the
@@ -166,19 +166,19 @@ request can verify inside the CPU limit. `verifyAuditChain` walks 1,000 at a tim
 position and reports **where** it broke rather than a bare pass/fail, because an investigation needs the
 first bad link, not the news that one exists.
 
-## Note — 20 August 2026: the id-per-entry figure, measured on the shape that shipped
+## Note, 20 August 2026: the id-per-entry figure, measured on the shape that shipped
 
 The *Usefulness* section above computes **60 ids bare, about 59 once sibling fields share the object**, and
 #63's correction quoted that figure. #63 part B shipped the entry, so the fill is now measurable rather than
-computed, and it is **57** — printed by `test/supervised-recording.test.ts` as
+computed, and it is **57**, printed by `test/supervised-recording.test.ts` as
 `MEASURE supervised.query ids_per_entry=57`.
 
 The two agree. The difference is the sibling set: the estimate assumed a query text, a matter id and a page
 number, and the entry that shipped carries `grantId`, `mailboxId`, `returned` and the continuation pair
 `part`/`of`. Nothing about the cap moved, and no `values:` changed.
 
-**What matters is that the figure is no longer load-bearing.** `buildSupervisedQuery` asks `detailFits` —
-this file's own `boundedDetail` measurement, exported for that one caller — and **splits** an oversized id
+**What matters is that the figure is no longer load-bearing.** `buildSupervisedQuery` asks `detailFits`,
+this file's own `boundedDetail` measurement exported for that one caller, and **splits** an oversized id
 list across continuation entries rather than handing it to truncation. So the record cannot understate what
 a supervised reader saw, whatever the fill turns out to be, and a sibling field added tomorrow lowers 57
 without breaking anything. The listing's page is `LIMIT 50`, comfortably under it, which is asserted; 57 is

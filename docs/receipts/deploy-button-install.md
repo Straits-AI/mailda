@@ -35,7 +35,7 @@ Success: Deploy command completed
 ✨ Success! Build completed.
 ```
 
-Then every request answered **HTTP 500**, and the catalog held exactly one table — `_cf_KV`, which is
+Then every request answered **HTTP 500**, and the catalog held exactly one table, `_cf_KV`, which is
 the platform's own. A green build and a non-functional product, with nothing anywhere announcing it.
 
 The cause is one line of the log:
@@ -44,8 +44,8 @@ The cause is one line of the log:
 Executing user deploy command: npx wrangler deploy
 ```
 
-Not `pnpm run deploy`. The repository's `deploy` script — `wrangler deploy && pnpm run
-migrations:apply` — was present in both the root and the Worker `package.json` at the commit that was
+Not `pnpm run deploy`. The repository's `deploy` script, `wrangler deploy && pnpm run
+migrations:apply`, was present in both the root and the Worker `package.json` at the commit that was
 cloned, and Cloudflare documents that it "will automatically detect and pre-populate the build and
 deploy fields". It did not. **Cause unknown** and recorded as unknown; what is measured is that the
 default ran and the schema was never applied.
@@ -66,7 +66,7 @@ Executing user deploy command: pnpm run deploy
 
 On 6 August the default `npx wrangler deploy` ran instead, the schema was never applied, and **the cause
 was recorded as unknown**. It is no longer the behaviour. The cause of the original failure is still
-unknown and now unknowable — the thing that would have explained it has changed underneath — so this is
+unknown and now unknowable, since the thing that would have explained it has changed underneath, so this is
 recorded as a behaviour change rather than as a diagnosis.
 
 The consequence is better than it looks: **the install path now runs this repository's own deploy
@@ -81,7 +81,7 @@ still holds: isolating `apps/node/worker` strands the three `workspace:*` packag
 
 **`install.applies_migrations` stays 0, and the reason changed.** On 6 August migrations never ran because
 the deploy script was never invoked. On 19 August the script *was* invoked and `wrangler deploy` exited
-non-zero before the `&&`, so `pnpm run migrations:apply` still never ran — this time because a queue
+non-zero before the `&&`, so `pnpm run migrations:apply` still never ran, this time because a queue
 consumer collided with the Node already in that account (filed separately: a hardcoded account-scoped
 queue name makes the install non-repeatable within one account). The figure is unchanged and would be
 misleading if left unexplained: it does not mean the detection is still broken.
@@ -101,7 +101,7 @@ The Workflow is `workflow-provisioning.md`'s measurement, not this one's, and it
 
 Measured 19 August 2026, and recorded because nothing here said it and #55 needed it.
 
-Cloudflare documents the URL's optional trailing path only as a *subdirectory* — the published example is
+Cloudflare documents the URL's optional trailing path only as a *subdirectory*. The published example is
 `.../?url=https://github.com/cloudflare/templates/tree/main/saas-admin-template`, where the branch happens
 to be the default. So whether `/tree/<branch>` with **no** subdirectory selects a branch or is ignored was
 unstated, and the setup page shows no branch anywhere: the only hint was the **Path** field defaulting to
@@ -109,7 +109,7 @@ unstated, and the setup page shows no branch anywhere: the only hint was the **P
 
 It selects the branch. Verified from the artifact rather than from the page: the clone created by a
 `/tree/workflow-provisioning-probe` install contained `apps/node/worker/src/butler-probe.ts` and the
-`[[workflows]]` block in both config scopes, neither of which exists on `main` — and it contained them on a
+`[[workflows]]` block in both config scopes, neither of which exists on `main`, and it contained them on a
 branch called **`main`**, its only branch, from a single `source repo import` commit.
 
 Two things follow for anyone measuring the install path again:
@@ -119,8 +119,8 @@ Two things follow for anyone measuring the install path again:
 - **The clone's history says nothing about which branch it came from.** One squashed commit named
   `source repo import`, on `main`, whatever the source. So *"did the branch I asked for actually get
   deployed"* has to be answered by looking for a file that exists only on that branch. A deploy that
-  silently used `main` would have succeeded and measured nothing, which for #55 — whose whole subject was a
-  binding that exists only on the branch — would have been a false positive rather than a visible failure.
+  silently used `main` would have succeeded and measured nothing, which for #55, whose whole subject was a
+  binding that exists only on the branch, would have been a false positive rather than a visible failure.
 
 ## ADR 24: the specific worry was wrong, the premise still fails
 
@@ -135,15 +135,15 @@ IDENTICAL
 No `database_id`, no `bucket_name`, no `account_id`. The provisioned resources stay linked by binding
 name, exactly as the configuration reference now says. **On this point ADR 24 needs no amendment.**
 
-But the premise — "the fork is byte-identical, so `git pull` is a fast-forward *by construction*" —
+But the premise, "the fork is byte-identical, so `git pull` is a fast-forward *by construction*",
 fails anyway, for two reasons neither receipt anticipated:
 
 | | |
 |:--|:--|
-| **No shared history** | The clone is a single squashed commit, `source repo import`. `git merge-base HEAD upstream/main` **exits 1** — there is no common ancestor, so a pull is an unrelated-histories merge, not a fast-forward. The button does not fork; it *imports*. |
+| **No shared history** | The clone is a single squashed commit, `source repo import`. `git merge-base HEAD upstream/main` **exits 1**. There is no common ancestor, so a pull is an unrelated-histories merge, not a fast-forward. The button does not fork; it *imports*. |
 | **Two files diverge** | `package.json` name → `mailda-btn`, and `.github/workflows/ci.yml` is **deleted entirely** (87 lines). |
 
-The workflow deletion matters beyond ADR 24: a customer's install silently loses every check — receipts
+The workflow deletion matters beyond ADR 24: a customer's install silently loses every check: receipts
 in sync, the ctx seam, types, tests. Anyone editing their own Node is doing it with no CI and no
 indication that CI ever existed. (Most likely the GitHub App pushing the clone lacks the `workflows`
 permission, but that is an inference, not a measurement.)
@@ -182,7 +182,7 @@ applies to *subdirectory button URLs*, which is why this one points at the repos
 
 ## What the install exposed in Mailda itself
 
-Three defects, all of the same family — the product could not describe its own broken state.
+Three defects, all of the same family: the product could not describe its own broken state.
 
 **`doctor` returned 500 on the most likely way for a Node to be broken.** `organizationId()` queried
 `node_claim` with no `catch`, so the endpoint whose entire job is saying what is wrong died on the
@@ -192,7 +192,7 @@ table and the command that fixes them.
 **`/health` returned an opaque 500.** Now 503 with `reason` and `fix`.
 
 **The unhandled-error handler's own logging rejected.** `trimLogs` runs inside `ctx.waitUntil` after a
-500 and queried `log_entries`, which also did not exist — so the failure of a request was accompanied by
+500 and queried `log_entries`, which also did not exist, so the failure of a request was accompanied by
 the failure of the thing reporting it. `trimLogs` is now total, matching `log`'s existing contract.
 
 **And inbound mail threw instead of being refused.** The `email()` handler read `node_claim` unguarded,
@@ -202,11 +202,11 @@ message was not accepted. §13 forbids losing accepted mail; a clean reject is t
 ## The worst of it: doctor's expected-table list was two migrations stale
 
 `EXPECTED_TABLES` held **14** entries while the migrations create **19**. Absent: `send_manifests`,
-`send_counters`, `node_capabilities`, `audit_entries`, `log_entries` — everything migrations 0007 and
+`send_counters`, `node_capabilities`, `audit_entries`, `log_entries`: everything migrations 0007 and
 0008 added. So a Node that had applied 0001–0006 and stopped would have been reported **healthy** by the
 check whose own `fix` text reads *"a Node with a partial schema accepts mail it cannot file."*
 
-The gap was visible in the install's own output — it said `Missing 14 table(s)` when 19 were missing —
+The gap was visible in the install's own output (it said `Missing 14 table(s)` when 19 were missing),
 and only because the schema was completely empty did the number look plausible.
 
 Fixed, and `test/node/schema-tables.test.ts` now parses `migrations/*.sql` and fails when the list and
@@ -219,5 +219,5 @@ honest.
 - **Whether the promised name-mismatch PR arrives**, and what it changes. It would be the first thing to
   put a resource-specific value into the customer's `wrangler.jsonc`.
 - **Whether the build token can apply migrations at all.** The deploy command never ran them, so the
-  permission question that motivated this — the documented Workers Builds token is *Workers Scripts /
-  KV / R2 edit, no D1* — is still open. It becomes answerable once the deploy command is right.
+  permission question that motivated this, that the documented Workers Builds token is *Workers Scripts /
+  KV / R2 edit, no D1*, is still open. It becomes answerable once the deploy command is right.

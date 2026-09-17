@@ -21,17 +21,17 @@ values:
 
 This file has said since it was written that *"a send gated by a hold, or not gated at all, pays nothing"* for
 the approval mechanism. The assertion backing it was
-`expect(gated.cost.subrequests - held.cost.subrequests).toBe(2)` — **a difference**, and a difference cannot
+`expect(gated.cost.subrequests - held.cost.subrequests).toBe(2)`: **a difference**, and a difference cannot
 see a cost added to both of its sides.
 
 Found by mutation while #160 lifted the staging out of `sealManifest` into `src/governed.ts`. The mutation put
-a `decidersOf` call *above* the `require_approval` branch — the exact regression the move risks, and the exact
+a `decidersOf` call *above* the `require_approval` branch, the exact regression the move risks, and the exact
 one the prose in this file forbids. Both figures went from 12 and 14 to 13 and 15, the difference stayed 2, and
 **every assertion in the file passed.** The gated seal's own bound did not catch it either: 15 still fits
 inside `butler.step_cost_max_send_propose = 20`.
 
 So the property was load-bearing in this receipt's prose, in the module docstring justifying the refactor, and
-in the review of that refactor — and unmeasured in all three. That is worse than an unmeasured figure, because
+in the review of that refactor, and unmeasured in all three. That is worse than an unmeasured figure, because
 readers had already relied on the claim.
 
 `approval.ungated_seal_max_subrequests = 12` is the missing measurement: what a seal costs when policy did not
@@ -40,34 +40,34 @@ demand approval of it.
 **It is the one value in this file with no headroom, deliberately, and that is a departure from the doctrine
 the Sized section below argues for.** A bound with slack is right when the claim is *"this does not become an
 order of magnitude worse"*. The claim here is *"this path does not touch the mechanism at all"*, and slack in
-that bound is precisely room for the mechanism to leak into the path that must not reach it — one query at a
+that bound is precisely room for the mechanism to leak into the path that must not reach it, one query at a
 time, each within the headroom, which is how the 11 in the Observed section below became 12 unnoticed. A
 legitimate new read on the seal path will fail this, and the re-measurement it forces is the review this exists
 to cause rather than a cost of it.
 
 Confirmed both directions: with the bound at 12 the mutation fails the run, and loosening the same bound to 13
-lets the identical mutation pass again — so what catches it is this figure at this value, not something else in
+lets the identical mutation pass again, so what catches it is this figure at this value, not something else in
 the file.
 
-**Measured:** same instrument, same file, same run as the figures below — `metering()` from `src/cost-meter.ts`
+**Measured:** same instrument, same file, same run as the figures below: `metering()` from `src/cost-meter.ts`
 in the real `workerd` runtime. `seal/hold-gate` reads **12** subrequests (D1 8, batches 1, R2 2, DO RPCs 2) on
 3 September 2026, unchanged by #160's lift, which is the other thing this figure now pins: the refactor moved
 no I/O.
 
 **The whole file's `measured_on` moves to 3 September 2026, because every scenario in it was re-run today, not
-just the new one** — 12, 14, 14 and 15 for the four seal shapes, matching the 21 August figures exactly. A
+just the new one**: 12, 14, 14 and 15 for the four seal shapes, matching the 21 August figures exactly. A
 receipt that dated only its newest row would leave the rest reading as measured last month when they were
 confirmed this morning, and the reason a control is measured beside its subject in the section below is that a
 comparison against a number written down weeks ago is a comparison against a stale receipt.
 
 ## Correction, 21 August 2026: the team-scoped stage arrived, and the clause that named it fired (#73)
 
-The clause **"the eligible set gains a narrowing constraint — a team-scoped stage is the one #61 named absent,
+The clause **"the eligible set gains a narrowing constraint; a team-scoped stage is the one #61 named absent,
 and it would add a query or a join to every eligibility check"** is now true. #73 built the `teams` table,
 membership administration and `policy_stages.team_id`, so a stage may require a member of a named team.
 
 **The clause's prediction was half right, which is why it had to be measured rather than reasoned about.** It
-adds a query — `rostersOf`, one statement over `teams LEFT JOIN team_members` — and it adds it **only where a
+adds a query, `rostersOf`, one statement over `teams LEFT JOIN team_members`, and it adds it **only where a
 team is actually named**. `teamsNamedBy` returns nothing for a stage set with no constraint and `rostersOf`
 short-circuits an empty request before it prepares anything, so an ordinary gated send pays zero.
 
@@ -75,14 +75,14 @@ short-circuits an empty request before it prepares anything, so an ordinary gate
 change named as the one foreseeable use of its headroom; the headroom was spent as predicted, from 1 to 2.
 `approval.decision_max_subrequests = 10` covers a team-scoped decision at 7.
 
-**Measured:** same instrument, same file, same run — `metering()` from `src/cost-meter.ts`, in the real
+**Measured:** same instrument, same file, same run: `metering()` from `src/cost-meter.ts`, in the real
 `workerd` runtime, counting executions and pricing a `batch()` as the one round trip it is. Run on
 21 August 2026.
 
 | Scenario | Subrequests | D1 executions | batches | R2 ops | DO RPCs |
 |:--|--:|--:|--:|--:|--:|
 | resolve one team's roster (`rostersOf`) | **1** | 1 | 0 | 0 | 0 |
-| resolve **no** teams — a stage set that names none | **0** | 0 | 0 | 0 | 0 |
+| resolve **no** teams, a stage set that names none | **0** | 0 | 0 | 0 | 0 |
 | `sealManifest`, gated by a team-less approval (control) | **14** | 10 | 1 | 2 | 2 |
 | `sealManifest`, gated by a **team-scoped** approval | **15** | 11 | 1 | 2 | 2 |
 | a decision on a team-scoped stage | **7** | 7 | 1 | 0 | 0 |
@@ -97,7 +97,7 @@ last week is a comparison against a stale receipt, which is the correction this 
 
 - **The seal.** `rostersOf` is called once with every team the folded stage set names, so a chain of two
   team-scoped stages still costs one query, not two.
-- **The decision.** One roster read, and only when the **open** stage names a team — a two-stage chain whose
+- **The decision.** One roster read, and only when the **open** stage names a team. A two-stage chain whose
   first stage is unconstrained pays nothing for its first decision and one for its second.
 - **The withdrawal.** Same shape, and only for the stages still outstanding: a withdrawal from a fully
   satisfied team-scoped stage asks nothing.
@@ -106,8 +106,8 @@ last week is a comparison against a stale receipt, which is the correction this 
   writing a rule, so this is the cheapest place to put the strictest check.
 
 **The team-less seal reads 14 against the 13 recorded in the section below, and that +1 is not this change.**
-The evidence is the `seal/hold-gate` control — a path #73 does not touch, with no approval stages in it at all
-— which reads **12** against the 11 recorded below, the same +1. It was re-measured on this working tree with
+The evidence is the `seal/hold-gate` control, a path #73 does not touch with no approval stages in it at all,
+which reads **12** against the 11 recorded below, the same +1. It was re-measured on this working tree with
 the #73 source changes stashed and read **12** there as well, so the drift predates #73. What was **not**
 re-measured stashed is the approval-gate figure, because the stashed tree does not compile against these
 tests; that is stated rather than glossed, and the hold-gate control is what the inference rests on.
@@ -118,7 +118,7 @@ one run, and that claim does not depend on where the shared 14 came from. Both f
 `butler.step_cost_max_send_propose`, which is what a gated seal is actually bounded by and what
 `test/approval-cost.measure.test.ts` asserts.
 
-## Correction, 20 August 2026: the same clause fired again — `expires_at` (#62)
+## Correction, 20 August 2026: the same clause fired again: `expires_at` (#62)
 
 The clause **"the approvals tables gain a column a decision has to read"** fired a second time on the same day,
 and for the same structural reason as the first: #62 added `approvals.expires_at` (migration 0022), which is in
@@ -127,20 +127,20 @@ and for the same structural reason as the first: #62 added `approvals.expires_at
 **No value moves and no measured figure moves: eligibility 1, every decision shape 6, every withdrawal 6, a
 gated seal 13, a hold-gated seal 11, a lift request 5, a lift's completing decision 7.** Re-measured the same
 way in the same file on 20 August 2026, after the column existed. A column added to a `SELECT` that was already
-being issued is free — which is exactly the distinction this clause exists to have *checked* rather than
+being issued is free, which is exactly the distinction this clause exists to have *checked* rather than
 assumed, and it is the second time checking it has been the whole content of a correction.
 
 **Where the deadline does cost something is the dispatch, not the decision.** `expires_at` is compared by #62's
 recheck in `dispatchOne`, whose figures are in `dispatch-recheck-cost.md`. Recorded here so a reader following
 the column does not conclude the cost of expiry is missing: it is 0 on this path and part of the 8 on that one.
 
-## Correction, 20 August 2026: the `stale_when` fired — the approvals table gained a column a decision reads
+## Correction, 20 August 2026: the `stale_when` fired: the approvals table gained a column a decision reads
 
 The clause **"the approvals tables gain a column a decision has to read"** is true. #64's legal-hold lift is
 this mechanism's second caller, and it does not fit a table keyed on a manifest, so `migrations/0021_hold_lift.sql`
 renamed `manifest_id` to `subject_id`, added `subject_kind`, and renamed `author_user_id` to `actor_user_id`.
-Every decision now reads `subject_kind` — it is in `APPROVAL_COLUMNS` and it decides which completion statements
-run — so the clause names exactly what happened.
+Every decision now reads `subject_kind` (it is in `APPROVAL_COLUMNS` and it decides which completion statements
+run), so the clause names exactly what happened.
 
 **No value moved, and the measured figures for a send are unchanged: 1 for eligibility, 6 for every decision
 shape.** A column in a `SELECT` that was already being issued costs nothing, which is the distinction this
@@ -149,7 +149,7 @@ the same way, in the same file, on 20 August 2026.
 
 ### What a lift costs
 
-Same instrument, same file, same run — `metering()` from `src/cost-meter.ts`, counting executions, pricing a
+Same instrument, same file, same run: `metering()` from `src/cost-meter.ts`, counting executions, pricing a
 `batch()` as the one round trip it is:
 
 | Scenario | Subrequests | D1 executions | batches | R2 ops | DO RPCs |
@@ -162,7 +162,7 @@ Same instrument, same file, same run — `metering()` from `src/cost-meter.ts`, 
 The request is five: the administrator check, the hold row, the eligible set, the audit chain's tip, and **one**
 `batch()` carrying the `approval.requested` entry, the `hold_lifts` row, the `approvals` row and its stage.
 
-The completing decision is **one more than a send's 6**, and the one is the `hold_lifts` row — read because the
+The completing decision is **one more than a send's 6**, and the one is the `hold_lifts` row, read because the
 `hold.lifted` entry has to name the reason the lift was asked for, and an investigator should not have to join
 two tables to learn why destruction was re-permitted. Everything else is free for the reason the section below
 gives about the seal: the second audit entry and the `UPDATE holds` ride in the `batch()` the decision was
@@ -174,11 +174,11 @@ request is an approval request; a separate key would be a number with no separat
 `budget-plan-scope.test.ts` would have had to classify a key that means the same thing as one that exists.
 Headroom against the measured 7 is 3.
 
-**Miniflare, not a deployed Node** — the same boundary the section at the end of this file states, for the same
+**Miniflare, not a deployed Node**, the same boundary the section at the end of this file states, for the same
 reason.
 
 **Measured:** `apps/node/worker/test/approval-cost.measure.test.ts`, in the real `workerd` runtime against a
-real D1 and R2, using `src/cost-meter.ts` — which counts **executions** rather than `prepare`, prices a
+real D1 and R2, using `src/cost-meter.ts`, which counts **executions** rather than `prepare`, prices a
 `batch()` as the one round trip it is, and sees Durable Object RPCs. Not counted by reading: this repository has
 had a read-off count be wrong three times this month in ways only execution revealed.
 
@@ -199,7 +199,7 @@ had a read-off count be wrong three times this month in ways only execution reve
 
 A decision is five reads and one write:
 
-1. the approval row — its state, its mailbox and its author;
+1. the approval row: its state, its mailbox and its author;
 2. the eligible deciders on that mailbox, teams resolved and people de-duplicated;
 3. the stage set the approval was requested with;
 4. every decision taken so far, withdrawn ones included, because a withdrawn decision still excludes its
@@ -210,14 +210,14 @@ A decision is five reads and one write:
 
 **All five decision shapes cost the same 6**, and that is the point of doing the completion in SQL rather than
 in TypeScript: closing an approval and releasing its send is two more *statements* inside a batch that was
-already going, not a second round trip. Same for the withdrawal that withholds a send — three more statements,
+already going, not a second round trip. Same for the withdrawal that withholds a send: three more statements,
 one batch, six operations.
 
 ## The seal's approval path costs two more, and only on that path
 
 A gated seal reads the stage set of every matching `require_approval` version and the eligible approvers on the
 mailbox: **2 operations**, spent only when a policy actually requires approval. A send gated by a hold, or not
-gated at all, pays nothing — the same laziness `policy-evaluation-cost.md` records for the two derived
+gated at all, pays nothing, the same laziness `policy-evaluation-cost.md` records for the two derived
 conditions, and for the same reason.
 
 The `approvals` row and its stage rows are **free**, because they ride in the `batch()` the seal was already
@@ -231,19 +231,19 @@ Both values are **bounds with headroom, not the measured figures**, for the reas
 states: an equality assertion on an I/O count fails on every harmless refactor and gets deleted, while a bound
 catches an operation becoming an order of magnitude more expensive.
 
-- `approval.eligibility_max_subrequests = 3` — measured **1**, and **2** once a stage names a team (#73). The
-  headroom was reserved for exactly one foreseeable change — *"#61 named a team-scoped stage constraint absent
+- `approval.eligibility_max_subrequests = 3`: measured **1**, and **2** once a stage names a team (#73). The
+  headroom was reserved for exactly one foreseeable change, *"#61 named a team-scoped stage constraint absent
   because `team_members` is read-only and there is no `teams` table, and adding one would put a second
-  predicate or a second read in this path"* — and that change has now landed and spent it as predicted. One of
+  predicate or a second read in this path"*, and that change has now landed and spent it as predicted. One of
   the three remains.
-- `approval.decision_max_subrequests = 10` — measured **6**. Bounded generously because a decision happens on a
+- `approval.decision_max_subrequests = 10`: measured **6**. Bounded generously because a decision happens on a
   person's request rather than in a loop, and because #62 will add a recheck to the *dispatch* of an approved
   send, not to the decision itself.
 
 ## Miniflare, not a deployed Node
 
 Measured under `vitest-pool-workers`, whose D1 is a local SQLite. So what is measured is the **number of
-operations Mailda performs**, which is exactly what the subrequest budget is spent in — not their latency, and
+operations Mailda performs**, which is exactly what the subrequest budget is spent in, not their latency, and
 not a deployed Node's behaviour. `policy-evaluation-cost.md` and `doctor-check-cost.md` draw the same line for
 the same instrument. **No deployed measurement is claimed here.**
 

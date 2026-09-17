@@ -45,7 +45,7 @@ was changed.
 
 Sends to **verified destination addresses** are free on any plan, do not count toward the monthly quota
 or the daily limit, and work even when only Email Routing is configured. That makes them the only
-zero-cost way to prove the send path works — which matters given the finding below.
+zero-cost way to prove the send path works, which matters given the finding below.
 
 ## Onboarding is per subdomain, and is not inherited (measured 5 August 2026)
 
@@ -57,26 +57,26 @@ email sending not authorized for subdomain 'mailda-test.whymelabs.com'
 ```
 
 **Onboarding applies to the exact name, not to the zone.** `wrangler email sending list` shows a
-`zone` and a `name` column, and the `name` is the unit — a subdomain of a fully onboarded apex is a
+`zone` and a `name` column, and the `name` is the unit. A subdomain of a fully onboarded apex is a
 separate thing that must be enabled separately.
 
 This is not a footnote. **§10 makes a delegated subdomain (`mail.example.com`) the *default* install
 path**, so the default path requires onboarding a subdomain for sending, and #21 already found that
-subdomain *routing* onboarding is dashboard-only with no API. Sending appears better served —
-`wrangler email sending enable <domain>` accepts "a zone or subdomain" — so the two halves of the same
+subdomain *routing* onboarding is dashboard-only with no API. Sending appears better served,
+since `wrangler email sending enable <domain>` accepts "a zone or subdomain", so the two halves of the same
 subdomain may have different automation stories, which `mailda deploy` has to handle rather than
 assume.
 
 The string also has to be classified correctly, and was not at first: it went to `outcome_unknown`
-because nothing matched it. The safe default behaved as designed — an unclassifiable failure gets the
-state that forbids automatic retry — but it is the wrong answer, since the message provably never left
+because nothing matched it. The safe default behaved as designed (an unclassifiable failure gets the
+state that forbids automatic retry), but it is the wrong answer, since the message provably never left
 and this is the most *fixable* failure in the set. It is now `refused`, with a message naming
 per-subdomain onboarding, because Cloudflare's own wording names a subdomain and no remedy.
 
 ### Enabling a subdomain: what it actually does (5 August 2026)
 
 `wrangler email sending enable mailda-test.whymelabs.com` succeeded, and **Cloudflare published the DNS
-itself** because the zone is on Cloudflare DNS — no manual record entry, unlike the dashboard flow's
+itself** because the zone is on Cloudflare DNS. No manual record entry, unlike the dashboard flow's
 wording. The records land on **new names only**, so they cannot collide with an apex that is already
 onboarded:
 
@@ -94,12 +94,12 @@ Verified after enabling: the apex's own `cf-bounce` records and its MX were unch
 subdomain is additive rather than a modification of the parent. Reversible with
 `wrangler email sending disable <subdomain>`.
 
-## Same-account delivery **works** — correcting #21 (measured 5 August 2026)
+## Same-account delivery **works**, correcting #21 (measured 5 August 2026)
 
 #21 recorded that "Cloudflare Email Sending does not deliver to same-account Email Routing", from two
 sends that reported success and never arrived. **That finding is wrong, or at least wrongly
-generalised.** Four sends from `inbox@mailda-test.whymelabs.com` to `inbox2@mailda-test.whymelabs.com`
-— same zone, same account — all arrived and were parsed:
+generalised.** Four sends from `inbox@mailda-test.whymelabs.com` to `inbox2@mailda-test.whymelabs.com`,
+same zone and same account, all arrived and were parsed:
 
 | Path | MIME form | Arrived |
 |---|---|---|
@@ -110,20 +110,20 @@ generalised.** Four sends from `inbox@mailda-test.whymelabs.com` to `inbox2@mail
 
 The most likely explanation for the original observation is the one this session stumbled into
 independently: **sending from a subdomain that is not onboarded is accepted and silently dropped.**
-Before 5 August, `mailda-test.whymelabs.com` had no SPF, DKIM or DMARC records — and this session
+Before 5 August, `mailda-test.whymelabs.com` had no SPF, DKIM or DMARC records, and this session
 separately confirmed Cloudflare *accepts* mail it cannot deliver (see below). Once the subdomain was
 onboarded, same-account delivery worked on every path.
 
 **Two wrong conclusions were reached along the way and are recorded because the method matters more
 than the result.** First, "the message did not arrive after 2.5 minutes" was treated as evidence of
-non-delivery; it is not — mail is asynchronous and one of these messages arrived later than that.
+non-delivery; it is not. Mail is asynchronous and one of these messages arrived later than that.
 Second, a single negative observation was generalised into "the Workers binding cannot deliver
 same-account while REST can", which the retest contradicted. Absence of arrival is only evidence after
 a bounce or a timeout, and neither had happened.
 
 **Consequence for §5A:** the synthetic inbound test at step 6 *can* be same-account, which is
 materially simpler than requiring an external sender. What it must not do is treat "accepted" as
-"delivered" — which is the real lesson, and a different one.
+"delivered", which is the real lesson, and a different one.
 
 ### External delivery, confirmed
 
@@ -148,7 +148,7 @@ id the recipient sees is the one `send()` returns. `send.preserves_authored_mess
 This is a concrete instance of ADR 33's claim that neither API can record what the recipient received,
 and it has a consequence ADR 33 did not draw: **a reply cannot be threaded onto the Message-ID Mailda
 authored.** A recipient's client will set `In-Reply-To` to Cloudflare's id, so threading must key on
-`send_manifests.transport_message_id` — verified above to be exactly the delivered id — and the
+`send_manifests.transport_message_id`, verified above to be exactly the delivered id, and the
 authored id is useful only as an internal trace back to its manifest.
 
 Recorded as a correction to the design rather than a footnote: it changes which column the inbound
@@ -156,8 +156,8 @@ threading path has to match against.
 
 ## `handed_over` means less than it sounds, and this is the proof
 
-Immediately after enabling, a send to **`nobody@example.invalid`** — a TLD reserved by RFC 2606 that
-provably cannot exist — was **accepted**, with a `messageId` returned:
+Immediately after enabling, a send to **`nobody@example.invalid`**, a TLD reserved by RFC 2606 that
+provably cannot exist, was **accepted**, with a `messageId` returned:
 
 ```
 state: handed_over
@@ -175,7 +175,7 @@ knowable at that moment.
 > ### Corrected 7 August 2026. This paragraph was wrong, and it was wrong in the direction that costs most.
 >
 > It read: *"A rejection for this message can only arrive later, asynchronously, as inbound mail to
-> `cf-bounce.<subdomain>` — which means outbound state is partly inbound mail, and nothing consumes that
+> `cf-bounce.<subdomain>`, which means outbound state is partly inbound mail, and nothing consumes that
 > yet."*
 >
 > **A Node cannot receive its own bounces at all.** From
@@ -186,15 +186,15 @@ knowable at that moment.
 > configuration."* The MX points at Cloudflare, and the record cannot be taken over. There is no DSN
 > arriving anywhere a Worker can read it.
 >
-> The cost of leaving this wrong was not a wasted afternoon. It named a mechanism — parse inbound
-> DSNs — that reads as the obvious implementation of Layer 2's `bounced` state, and a receipt is this
+> The cost of leaving this wrong was not a wasted afternoon. It named a mechanism, parse inbound
+> DSNs, that reads as the obvious implementation of Layer 2's `bounced` state, and a receipt is this
 > repository's trusted corpus, so the next person to build bounce handling would have written an
 > RFC 3464 parser that could never fire once. It survived three days and one whole layer of planning
 > because nobody tried to consume the thing it described.
 >
 > **The real channel is Queues event subscriptions**, and it is strictly better than a DSN parser: see
 > [`email-sending-events.md`](./email-sending-events.md). Cloudflare emits **one event per recipient**,
-> which means per-recipient outcome is observable *without* splitting submission per recipient — so the
+> which means per-recipient outcome is observable *without* splitting submission per recipient, so the
 > manifest id stays the effect key, `submitted_key` stays one evidence pair, and the Bcc
 > header/envelope asymmetry stays intact.
 
@@ -210,16 +210,16 @@ Measured 8 August 2026 on the live account. A throwaway Worker sent **one** stru
 So the unit Cloudflare bills and counts is the **recipient**, not the send. Which settles the question
 that was blocking [#36](https://github.com/Straits-AI/mailda/issues/36): submitting once per recipient
 costs nothing extra, because a multi-recipient submission is already three messages by Cloudflare's own
-accounting. The objection that per-recipient submission would triple a customer's usage was wrong — the
+accounting. The objection that per-recipient submission would triple a customer's usage was wrong. The
 usage is already tripled, and only Mailda's `send_counters` disagreed.
 
 That means `send_counters.handed_over`, which this Node shows a user as their observed daily limit, has
 been counting the *wrong unit* all along: one row per manifest, against an allowance consumed per
-recipient. On single-recipient sends — every send this Node has made until now — the two agree, which is
+recipient. On single-recipient sends, every send this Node has made until now, the two agree, which is
 why nothing noticed.
 
 Incidentally confirmed: 2 of the 3 recipients came back `deliveryFailed`, both on
-`mailda-test.whymelabs.com`. That is not a sending fault — the Email Routing rules for those addresses
+`mailda-test.whymelabs.com`. That is not a sending fault. The Email Routing rules for those addresses
 were deleted during a cleanup on 7 August, so mail to them has nowhere to land. A useful reminder that
 `deliveryFailed` in this data can mean *the recipient's own routing is gone*, not that the address is bad.
 
@@ -234,12 +234,12 @@ were deleted during a cleanup on 7 August, so mail to them has nowhere to land. 
 
 Neither API can record **what the recipient received**: Cloudflare adds `Received` and `DKIM-Signature`
 in transit either way. The honest claim a manifest can make is therefore "these are the bytes Mailda
-authored and submitted", never "this is what arrived — and §5C requires the product to say the former.
+authored and submitted", never "this is what arrived", and §5C requires the product to say the former.
 
 ## `message.reply()` is not the reply API
 
-It looks like exactly what Mailda needs — threaded, same SMTP session, preserves the `Message-ID`
-chain — and it is unusable for the product's actual case, because it only exists **inside the
+It looks like exactly what Mailda needs (threaded, same SMTP session, preserves the `Message-ID`
+chain), and it is unusable for the product's actual case, because it only exists **inside the
 `email()` handler**, during inbound delivery. A human composing a reply an hour later cannot reach it.
 
 Its constraints are recorded anyway, because they describe what Cloudflare considers a legitimate
@@ -268,16 +268,16 @@ from a bounce and from an unknown outcome.
 ## Two derived numbers
 
 `send.references_emitted_max = 20`. Cloudflare rejects a reply whose incoming message carries more
-than **100** `References` entries, and ADR 27 stores only two threading anchors — so a reply's chain is
+than **100** `References` entries, and ADR 27 stores only two threading anchors, so a reply's chain is
 *reconstructed* at composition time rather than carried. Reconstruction must therefore be **bounded**,
 not faithful: 20 entries keeps a Node an order of magnitude clear of the ceiling while preserving more
 history than any client displays. Long threads lose their middle, which is what every other client
-does too, and the root and the immediate parent — the two entries that decide threading — are always
+does too, and the root and the immediate parent, the two entries that decide threading, are always
 kept.
 
 `send.hold_window_default_seconds = 15`. **This one has no measurement behind it and that is
 deliberate.** It is the undo-send window from ADR 39: a preference about human regret, not a limit or a
-budget, and no measurement could settle it — which is exactly why it is configurable per mailbox,
+budget, and no measurement could settle it, which is exactly why it is configurable per mailbox,
 including zero. Recorded here so a reader does not conclude the receipt rule was skipped. Fifteen
 seconds is long enough to notice the most common regret (the wrong recipient) and short enough that
 operational mail does not feel broken.
@@ -288,7 +288,7 @@ operational mail does not feel broken.
 (ADR 28) it does not collide with ADR 24's byte-identical fork.
 
 That holds only for the unrestricted form. `destination_address` and `allowed_destination_addresses`
-take customer addresses, and `allowed_sender_addresses` takes customer domains — putting any of them
+take customer addresses, and `allowed_sender_addresses` takes customer domains, and putting any of them
 in committed configuration reintroduces exactly the problem ADR 28 had to solve. Restriction, where
 Mailda wants it, belongs in the adapter and in D1, not in `wrangler.jsonc`.
 
@@ -300,20 +300,20 @@ exercise this path outside a deploy.
 **No value moved.** `send.included_per_month: 3000` is now `send.paid.included_per_month` and
 `send.cost_per_thousand_cents: 35` is now `send.paid.cost_per_thousand_cents`. Nothing was remeasured; the
 names were wrong and the numbers were not. #68 flagged both as inheriting the caveat it found on
-`workflow.subrequest_budget_per_instance`, and they do — but not in the same way, so the treatment differs
+`workflow.subrequest_budget_per_instance`, and they do, but not in the same way, so the treatment differs
 and the difference is the point of this section.
 
 **They are Paid figures.** `cloudflare-plan-costs.md` read the pricing table on 3 August 2026: *"Outbound
 emails (Email Sending) — Workers Free: **Not available**. Workers Paid: 3,000 included per month, then $0.35
-per 1,000."* A quota and a unit price with no plan in their names invite a reader — or an agent pricing a
-Node — to grant a Free account 3,000 metered sends a month. That is the overclaiming name AGENTS.md §4
+per 1,000."* A quota and a unit price with no plan in their names invite a reader, or an agent pricing a
+Node, to grant a Free account 3,000 metered sends a month. That is the overclaiming name AGENTS.md §4
 forbids, and the fix is the same rename the D1 keys got.
 
 **There is no `send.free.*` sibling, deliberately, and this is where it differs from the subrequest ceiling.**
 That ceiling is *plan-conditional*: one thing, two numbers, and a receipt that records only one of them is
 incomplete. This is **plan-gated**: on Workers Free the metered product does not exist, so there is no second
 number to record. Writing `send.free.included_per_month: 0` would be worse than omitting it, because zero
-reads as an **exhausted quota** — wait for the month to turn — when the truth is an **absent product**, whose
+reads as an **exhausted quota** (wait for the month to turn) when the truth is an **absent product**, whose
 remedy is a plan upgrade. Those are different states with different fixes, and §5C forbids collapsing them.
 
 **The free state is already recorded, as measured values, in the receipt that measured it.**
@@ -338,6 +338,6 @@ reply to a customer until its sending domain is onboarded. Two gates, and the re
 **The 3,000 is recorded twice and the copies are now pinned.** `plan.paid.emails_included_per_month: 3000` in
 `cloudflare-plan-costs.md` is the same figure from the same pricing table, read a day earlier.
 `test/node/budget-plan-scope.test.ts` asserts the two are equal, so a remeasurement that moves one and not the
-other fails instead of leaving two receipts quietly disagreeing — which is exactly how the withdrawn
+other fails instead of leaving two receipts quietly disagreeing, which is exactly how the withdrawn
 1,000-subrequest cap survived six months in `doctor-check-cost.md`. `send.paid.cost_per_thousand_cents` has no
 twin to pin.

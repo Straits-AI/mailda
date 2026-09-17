@@ -12,12 +12,12 @@ values:
 ---
 
 **Measured:** `packages/contract/bench/validator.bench.ts` and `bench/bundle.ts`,
-commit in this change. Node 22, not workerd — a compromise recorded below.
+commit in this change. Node 22, not workerd, a compromise recorded below.
 
 ## The decision
 
-**Zod validates on the hot path.** The seam #3 created — catalog emits JSON Schema, so
-the runtime validator need not be Zod — stays in place because it cost nothing, but the
+**Zod validates on the hot path.** The seam #3 created (catalog emits JSON Schema, so
+the runtime validator need not be Zod) stays in place because it cost nothing, but the
 swap it was designed to enable is rejected on both performance *and* correctness.
 
 ## Why not measured in workerd
@@ -32,7 +32,7 @@ it from a deployed Worker's telemetry, not from either of these harnesses.
 
 | Payload | Zod | Ajv (2020) |
 |---|---:|---:|
-| typical — 1 recipient, short body | **1.63** | 1.85 |
+| typical: 1 recipient, short body | **1.63** | 1.85 |
 | 50 recipients (§11B's limit) | 18.28 | **17.76** |
 | 20 attachment descriptors | 13.85 | **8.29** |
 | 400 KB HTML body | **1.67** | 1014.22 |
@@ -53,8 +53,8 @@ zod  400KB .max()               23.339 µs/op
 ```
 
 `maxLength` is the entire cost. **JSON Schema defines `maxLength` in Unicode code
-points**, so Ajv walks the whole string. Zod's `.max()` uses `String.prototype.length`
-— UTF-16 code units — which is O(1).
+points**, so Ajv walks the whole string. Zod's `.max()` uses `String.prototype.length`,
+UTF-16 code units, which is O(1).
 
 Mail bodies are large by nature, and §5 makes rich HTML compose a core feature. A
 validator that is 600× slower on the payload the product exists to carry is not a
@@ -71,7 +71,7 @@ zod  .max(15)        rejects : false
 ```
 
 A compiled validator would be **more permissive than the published contract** for any
-string containing astral characters — emoji, and a good deal of what §5C's
+string containing astral characters: emoji, and a good deal of what §5C's
 internationalisation requirements exist to support. Swapping validators would silently
 change what the API accepts, in a direction that only shows up for non-Latin users.
 
@@ -79,8 +79,8 @@ change what the API accepts, in a direction that only shows up for non-Latin use
 becomes `maxLength: n`, but they are different constraints: the document publishes a
 code-point limit while the server enforces a UTF-16 limit. A client counting code points
 can construct a request the contract says is valid and the server rejects. That is an
-honest-semantics defect of the same family AGENTS.md names for overclaiming — the
-document says something the code does not do — and it needs fixing in the catalog's
+honest-semantics defect of the same family AGENTS.md names for overclaiming (the
+document says something the code does not do), and it needs fixing in the catalog's
 emitter, not here. Recorded on #3.
 
 ## Bundle
@@ -96,17 +96,17 @@ across the Node for a validator that is slower on the payloads that matter.
 
 ## Sized
 
-- `validator.typical_command_us = 2` — the common case, rounded up from 1.63.
-- `validator.worst_realistic_command_us = 46` — the worst realistic single request.
+- `validator.typical_command_us = 2`: the common case, rounded up from 1.63.
+- `validator.worst_realistic_command_us = 46`: the worst realistic single request.
   A tripwire: routine traffic never approaches it, and a regression that reintroduces
   code-point counting would exceed it by an order of magnitude.
-- `validator.bundle_bytes = 81203` — 79.3 KiB. A guard against a dependency creeping
+- `validator.bundle_bytes = 81203`: 79.3 KiB. A guard against a dependency creeping
   onto the hot path.
 
 ## Operational note
 
-Ajv's default entry point is **draft-07**. Draft 2020-12 — the dialect OpenAPI 3.1 uses
-and the catalog emits — requires `ajv/dist/2020`. Separately, `format` keywords are
+Ajv's default entry point is **draft-07**. Draft 2020-12, the dialect OpenAPI 3.1 uses
+and the catalog emits, requires `ajv/dist/2020`. Separately, `format` keywords are
 ignored entirely unless `ajv-formats` is registered, which would silently make a
 compiled validator more permissive still. Both are easy to get wrong quietly; recorded
 in case the seam is ever revisited.

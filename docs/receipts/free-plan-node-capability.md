@@ -35,13 +35,13 @@ Nothing about that path required a paid plan.
 ## Outbound: this corrects an earlier receipt
 
 `cloudflare-plan-costs.md` recorded, from the pricing table's *"Outbound emails (Email
-Sending) — Workers Free: Not available"*, that a free-plan Node **cannot send**. That is too
+Sending): Workers Free: Not available"*, that a free-plan Node **cannot send**. That is too
 blunt. Measured:
 
 | Destination | Result |
 |---|---|
-| `mystraits.ai@gmail.com` — a **verified** Email Routing destination | **sent successfully** |
-| `someone@example.com` — arbitrary | refused |
+| `mystraits.ai@gmail.com`, a **verified** Email Routing destination | **sent successfully** |
+| `someone@example.com`, arbitrary | refused |
 
 The `send_email` binding also deployed without complaint and was reported as
 `env.OUTBOUND (unrestricted)`.
@@ -49,7 +49,7 @@ The `send_email` binding also deployed without complaint and was reported as
 So *"not available"* in the pricing table means **arbitrary recipients** are unavailable, not
 that the send path is dead. A free-plan Node can send to addresses already verified in the
 account, which is consistent with the pricing note that *"sends to verified destination
-addresses are always free … on any plan"* — but a reader of the plan comparison alone would
+addresses are always free … on any plan"*, but a reader of the plan comparison alone would
 conclude sending is impossible. It is not.
 
 ## The refusal does not name the plan
@@ -61,7 +61,7 @@ destination address is not a verified address
 ```
 
 Accurate, and unhelpful. It does not mention the plan, a paid upgrade, or domain
-verification — the probe checked explicitly and `namesThePlan` was false.
+verification. The probe checked explicitly and `namesThePlan` was false.
 
 This is precisely the failure mode §5C exists to prevent and `AGENTS.md` calls a landmine: a
 refusal that names neither the cause the user can act on nor the way to fix it. Mailda must
@@ -72,8 +72,8 @@ plan* applies.
 
 ## Superseded as a recommendation, 3 August 2026
 
-**ADR 25 makes Workers Paid mandatory; there is no free tier.** The measurements below stand
-— they are facts about the platform and remain useful for understanding what the free plan
+**ADR 25 makes Workers Paid mandatory; there is no free tier.** The measurements below stand.
+They are facts about the platform and remain useful for understanding what the free plan
 does. The *conclusion* that this makes a good evaluation tier is withdrawn.
 
 The reason is not cost. Cloudflare's free plan forces **24-hour, non-configurable queue
@@ -85,11 +85,11 @@ Cloudflare, not paying $5.
 
 ## What this was going to mean for #19
 
-The free plan is a **genuinely functional receive-only Node**, not a crippled one:
+The free plan is a **working receive-only Node**, not a crippled one:
 
 - receives real mail from the public internet, unlimited and free
 - stores, parses and indexes it
-- can reply to **verified** addresses — so an evaluator can test a round trip to their own
+- can reply to **verified** addresses, so an evaluator can test a round trip to their own
   inbox without paying
 - cannot reply to a customer
 
@@ -100,8 +100,8 @@ themselves before deciding to pay.
 ## Residual
 
 - Subdomain onboarding (`mailda-test.straits-ai.com`) was **not** tested. Cloudflare
-  documents it as a dashboard-only flow — *"select the apex domain, open Settings, under
-  Subdomains enter the subdomain"* — with no API or wrangler path, so it could not be
+  documents it as a dashboard-only flow, *"select the apex domain, open Settings, under
+  Subdomains enter the subdomain"*, with no API or wrangler path, so it could not be
   automated. §10's domain topology recommends a delegated subdomain as the default install,
   so this gap matters and should be closed.
 - Free-plan queue behaviour (10,000 operations/day, 24-hour non-configurable retention) was

@@ -66,7 +66,7 @@ function emit(rel, dest) {
     // A receipt's frontmatter, rendered as a table rather than swallowed as page metadata.
     md = md.slice(fm[0].length);
     const rows = fm[1].split("\n").filter((line) => /^\S/.test(line)).map((line) => line.split(":")[0]);
-    receipt = "\n:::note[This is a receipt]\nIts frontmatter is the record: `" + rows.join("`, `") + "`. The raw file is the authority; this page renders it.\n:::\n\n```yaml\n" + fm[1] + "\n```\n\n";
+    receipt = "\n:::note[This is a receipt]\nThe frontmatter below is the record: `" + rows.join("`, `") + "`. The file in the repository is the authority. This page renders it.\n:::\n\n```yaml\n" + fm[1] + "\n```\n\n";
   }
   const idLine = fm === null ? null : /^id:\s*(.+)$/m.exec(fm[1]);
   const title = titleOf(md, idLine?.[1]?.trim() ?? basename(rel, ".md"));

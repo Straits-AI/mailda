@@ -58,7 +58,7 @@ implementer reads it as a credential problem and goes looking for a scope to add
 
 **2. It fails part way through, and the failure is not idempotent.** D1 was created first. Wrangler caches and
 reuses the temporary account while its credentials hold, and auto-provisioning
-[never adopts an existing resource](./deploy-drill-live-account.md) — so the **second** attempt fails
+[never adopts an existing resource](./deploy-drill-live-account.md), so the **second** attempt fails
 differently:
 
 ```text
@@ -67,7 +67,7 @@ differently:
 ```
 
 Attempt one blames authentication on R2. Attempt two blames a plan limit on D1 and offers an upgrade link.
-Neither names the actual cause, and the second is actively misleading — it points at billing for a problem
+Neither names the actual cause, and the second is actively misleading. It points at billing for a problem
 that is a product-support gap.
 
 **3. The account is on the Workers Free plan**, which attempt two's message states outright. ADR 25 requires
@@ -81,7 +81,7 @@ naming the first three because it refused before reaching the rest.
 
 | binding | temporary account |
 |:--|:--|
-| `d1_databases` | supported — provisioned in this run |
+| `d1_databases` | supported; provisioned in this run |
 | `durable_objects` | supported per the product list; not reached |
 | `queues` | supported per the product list; not reached |
 | `r2_buckets` | **refused, measured** |
@@ -89,7 +89,7 @@ naming the first three because it refused before reaching the rest.
 | `send_email` | absent from the product list; not reached |
 
 `EVIDENCE` is not optional: it is where every message body lives. There is no reduced Node that fits, and no
-useful preview of one either — without `send_email` and Email Routing a preview could neither receive nor
+useful preview of one either. Without `send_email` and Email Routing a preview could neither receive nor
 send mail, which is the whole product.
 
 ## The claim window collides with ADR 28, and that survives any product-list change
@@ -98,7 +98,7 @@ send mail, which is the whole product.
 
 ADR 28 puts both root keys in Durable Object storage, generated on first use, and
 [#92's drill measured](./deploy-drill-live-account.md) that Durable Object storage is not carried by a D1
-export — which is why ADR 29's escrow exists at all. ADR 29's ten recovery codes are shown when the **Node**
+export, which is why ADR 29's escrow exists at all. ADR 29's ten recovery codes are shown when the **Node**
 is claimed.
 
 So a Node claimed inside a temporary account that then expires unclaimed leaves the customer holding **ten
@@ -117,7 +117,7 @@ Two costs are invisible when wrangler does it and land on any backend that does 
 - **A proof-of-work challenge is solved before an account is created.** Wrangler does it; the documentation
   states a REST integration must submit a solution itself.
 
-And the claim URL is a **bearer credential** — anyone holding it can claim the account. This run's URL and the
+And the claim URL is a **bearer credential**. Anyone holding it can claim the account. This run's URL and the
 temporary API token were written to disk by wrangler and deleted immediately afterwards; neither belongs in a
 log, an analytics event or a support transcript.
 

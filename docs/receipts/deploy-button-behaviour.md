@@ -17,7 +17,7 @@ account, 3 August 2026, using a two-Worker probe. All resources deleted afterwar
 account verified back to baseline.
 
 > **The probe was not kept.** This file originally cited `probes/deploy-button`, which does not
-> exist in the repository — the probe was built ad hoc and removed with the resources it created.
+> exist in the repository. The probe was built ad hoc and removed with the resources it created.
 > Re-measuring therefore means rebuilding it from the description below, and that is a real cost
 > this receipt should not have hidden behind a path that looks checkable. What the probe was: two
 > minimal Workers in one repository, one service-binding the other, a root `deploy` script chaining
@@ -46,7 +46,7 @@ GET https://mailda-probe-node.<subdomain>.workers.dev
 {"worker":"effects","role":"credential broker"}
 ```
 
-The wrong code, under the wrong name. The second `wrangler deploy` then failed — its config
+The wrong code, under the wrong name. The second `wrangler deploy` then failed. Its config
 service-binds to `mailda-probe-effects`, which was never created because that name was
 overridden away, and it also references an R2 bucket that was not provisioned (below).
 
@@ -57,14 +57,14 @@ This kills the shape #13 had settled on.
 
 | Resource | Declared without id | Created |
 |---|---|---|
-| D1 database | yes | **yes** — named `mailda-probe-node` |
-| Queue | yes, with explicit `queue` name | **yes** — named `mailda-probe-inbound` |
-| R2 bucket | yes | **not by the time the deploy died** — see the correction below |
+| D1 database | yes | **yes**, named `mailda-probe-node` |
+| Queue | yes, with explicit `queue` name | **yes**, named `mailda-probe-inbound` |
+| R2 bucket | yes | **not by the time the deploy died**; see the correction below |
 | Durable Object namespace | via `new_sqlite_classes` migration | not reached (deploy failed) |
 
 **D1 provisioning works.** That answers the question this ticket existed for: the
 documented Workers Builds token permissions (Workers Scripts / KV / R2 edit, no D1) do
-**not** prevent D1 creation — the button provisions before and independently of the build
+**not** prevent D1 creation. The button provisions before and independently of the build
 token.
 
 **R2 was not created, but its name was written into the config anyway.** The cloned
@@ -73,12 +73,12 @@ The button produced a configuration that does not match reality, which is a like
 the second deploy's failure. Whether this is a bug or ordering artifact is unknown; it is
 recorded as observed.
 
-> **Corrected 6 August 2026 — it was the ordering artifact.** This section originally carried a
+> **Corrected 6 August 2026: it was the ordering artifact.** This section originally carried a
 > `builds.provisions_r2: 0` constant, and that constant has been **removed rather than corrected**,
 > because it claimed to measure something this probe could not see: the deploy that would have created
 > the bucket never finished. Direct measurement
 > ([`r2-auto-provisioning.md`](./r2-auto-provisioning.md)) shows `wrangler deploy` creates the bucket in
-> every shape tested — with an explicit `bucket_name` or without one, interactive or not — and
+> every shape tested (with an explicit `bucket_name` or without one, interactive or not), and
 > Cloudflare now documents R2 among the resources the button provisions. The chained multi-Worker
 > deploy that failed here does not exist any more; ADR 18 collapsed Mailda to one Worker. A number that
 > reads as a platform limit when it was an artifact of a broken probe is worse than no number, which is
@@ -99,7 +99,7 @@ Read from the cloned repo afterwards:
 
 **This breaks ADR 24's premise empirically.** That decision rests on the customer's fork
 being byte-identical to upstream so `git pull` is a fast-forward *by construction*. The
-button writes ids into `wrangler.jsonc` — a file upstream owns and will edit again. The
+button writes ids into `wrangler.jsonc`, a file upstream owns and will edit again. The
 guarantee is structural no longer.
 
 The ids are unnecessary: the wrangler docs state resources stay linked across deploys
@@ -110,12 +110,12 @@ without them, explicitly for shared templates. So the divergence buys nothing.
 **Workers Builds used `bun`, not npm or pnpm.** *"Detected the following tools from
 environment: bun@1.2.15, nodejs@24.18.0. Installing project dependencies: bun install."*
 The probe had no lockfile, so this is the build image's default rather than detection of an
-intent. #2 chose pnpm and noted Bun support in Workers Builds was unconfirmed — it is
+intent. #2 chose pnpm and noted Bun support in Workers Builds was unconfirmed. It is
 evidently present and preferred absent other signals. A committed `pnpm-lock.yaml` should
 change the detection, but that is untested.
 
 **Subdirectory targeting works.** The build cloned the whole of `Straits-AI/mailda.git`,
-logged `Overwriting files`, and pushed the extracted subdirectory to the destination repo —
+logged `Overwriting files`, and pushed the extracted subdirectory to the destination repo,
 so a subdirectory button URL does not require the *repository* to be self-contained, only
 the subdirectory.
 
@@ -123,7 +123,7 @@ the subdirectory.
 
 ## What this forces
 
-#13's chosen shape — one Builds project, chained deploy of `effects` then `node` — is dead.
+#13's chosen shape, one Builds project with a chained deploy of `effects` then `node`, is dead.
 The remaining options are:
 
 1. **One Workers Builds project per Worker**, which is what Cloudflare's own monorepo
@@ -132,7 +132,7 @@ The remaining options are:
    Worker, each auto-updating under ADR 24. Install needs two buttons, or one button plus a
    second step.
 2. **Abandon the button for install** and use the CLI, keeping Workers Builds only for
-   updates — where the same one-project-per-Worker constraint applies, so it is still two
+   updates, where the same one-project-per-Worker constraint applies, so it is still two
    projects.
 3. **Revisit the two-Worker split** (#17). The credential boundary is real and cannot be
    enforced inside one Worker, so this would mean accepting a weaker boundary in exchange
@@ -144,7 +144,7 @@ These findings constrained nothing for two days, which is how a measurement beco
 `apps/node/worker/test/node/deployability.test.ts` now fails when the Worker's configuration drifts
 from them:
 
-- **one deployable Worker** — a second config would resurrect the chained-deploy shape this
+- **one deployable Worker**: a second config would resurrect the chained-deploy shape this
   measurement killed
 - **every binding block classified** as button-provisioned or carrying a stated alternative route, so
   adding one is a decision about somebody's first five minutes rather than a discovery
@@ -154,8 +154,7 @@ from them:
   "drift-checked" while nothing checked it
 
 It does not test the button. Nothing automated can: the button needs a real paid account, provisions
-live resources and has to be torn down afterwards. What it removes is the *cheap* class of breakage —
-the config quietly growing a dependency the customer's install cannot satisfy — and leaves the
+live resources and has to be torn down afterwards. What it removes is the *cheap* class of breakage, the config quietly growing a dependency the customer's install cannot satisfy, and leaves the
 expensive class where it belongs, in a manual probe with this receipt's `stale_when` to say when.
 
 ## Residual

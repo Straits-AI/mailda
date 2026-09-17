@@ -27,18 +27,18 @@ values:
 ## Addition, 10 September 2026: the subscription is readable from inside the Node now, and is in no menu (#163)
 
 ADR 42 gave the Node its own Cloudflare grant, and `doctor`'s `sending_events_consumer` had said since #72
-that this question was *"not checkable from inside a Worker — no account API access"*. That sentence was
+that this question was *"not checkable from inside a Worker; no account API access"*. That sentence was
 true when written and is now false. Four values measured today against the live `Swmengappdev` account,
 wrangler 4.118.0.
 
-### `queues.subscription_creatable_by_cli: 0` — re-measured, unchanged
+### `queues.subscription_creatable_by_cli: 0`: re-measured, unchanged
 
 `wrangler queues subscription create --help` offers `--source` choices `artifacts`, `artifacts.repo`,
 `images`, `kv`, `r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker`,
 `workflows.workflow`. No `email.sending`, and no flag for the sending domain a subscription would have to be
 scoped to. Unchanged from the 19 August re-measurement, on a wrangler eight weeks newer.
 
-### `queues.email_sending_listed_in_api_reference: 0` — and the subscription exists anyway
+### `queues.email_sending_listed_in_api_reference: 0`, and the subscription exists anyway
 
 The API reference's create-subscription schema
 (`POST /accounts/{account_id}/event_subscriptions/subscriptions`) lists `source.type` values `images`, `kv`,
@@ -74,14 +74,14 @@ account, not the menu.**
 
 ### `queues.subscription_list_default_page: 20` and `queues.queue_list_default_page: 100`
 
-Both endpoints paginate, and they paginate **differently** — subscriptions default to 20 per page, queues to
+Both endpoints paginate, and they paginate **differently**: subscriptions default to 20 per page, queues to
 100. This account holds 66 queues, so a reader that took `GET /accounts/{id}/queues` at face value would be
 right until the hundred-and-first and then report a healthy Node's queue as absent. That is how
 `deploy --plan` came to call a healthy Node broken, on R2's page of twenty
 (`docs/receipts/wrangler-list-pagination.md`).
 
 So `deliveryEventsState` pages the subscription list until a short page, and reads the queue by
-**`queue_id`** — which the subscription names — rather than finding it in a list at all.
+**`queue_id`**, which the subscription names, rather than finding it in a list at all.
 
 ### What is now checkable, and what still is not
 
@@ -94,7 +94,7 @@ So `deliveryEventsState` pages the subscription list until a short page, and rea
      consumer  mailda
 ```
 
-Three objects, named separately, because any one missing produces the same symptom — silence — and a single
+Three objects, named separately, because any one missing produces the same symptom, silence, and a single
 verdict over them would be one an operator could not act on. Two of the three still cannot be **created**
 from here: the consumer is attached out of band, and the subscription needs the dashboard or a direct API
 call. What changed is that their absence is reportable by name instead of inferable from a delivery outcome
@@ -103,13 +103,13 @@ that never arrived.
 ## Addition, 19 August 2026: a queue name is account-scoped, and this receipt never asked whether it had to be written down (#72)
 
 Two new values, measured today, and a **narrowing** of one of the values above. No `stale_when` clause
-fired — the conditions it names are all still false — but the world this receipt describes changed anyway,
+fired (the conditions it names are all still false), but the world this receipt describes changed anyway,
 which is worth recording as its own kind of miss: the receipt answered *"can the install create a queue"*
 and never asked *"can two installs in one account create two"*.
 
 They cannot, or could not. `wrangler.jsonc` named the queue as a constant, and a queue name is
 **account-scoped**, so a second Node in an account that already had one failed its consumer registration
-(`Queue 'mailda-sending-events' already has a consumer. [code: 11004]`) and — the serious half — had its
+(`Queue 'mailda-sending-events' already has a consumer. [code: 11004]`) and, the serious half, had its
 **producer binding attach to the existing queue**. Observed live during the probe: that queue's producer
 count read **2**, and dropped back to 1 when the probe Worker was deleted. One Node's sending events were
 therefore drained by another Node's consumer, across two separate D1 catalogs, with nothing looking wrong
@@ -129,14 +129,14 @@ binding table* accept, and that is settled without creating anything in anybody'
 **The frontmatter `measured_on` deliberately stays 2026-08-07**, which is a limitation of the receipt
 format and not an oversight: it carries one date per file and the generator has no per-value date, so
 `BUDGET_ORIGINS["queues.producer_queue_name_omissible"].measuredOn` reads **older** than the measurement
-actually is. Nothing enforces the table above against that field — it cannot, there is nowhere to put a
-second date — and the direction of the error is the reason this is the acceptable half of the choice:
+actually is. Nothing enforces the table above against that field (it cannot; there is nowhere to put a
+second date), and the direction of the error is the reason this is the acceptable half of the choice:
 under-reporting freshness invites a re-measurement, while stamping today's date onto the 7 August values
 would claim a verification of *those* numbers that nobody performed.
 
 Also checked, and it closes the obvious third option: `--var` and `--define` substitute into the **script**,
 not into config values. **There is no way to interpolate the Worker name into a queue name in
-`wrangler.jsonc`.** So the choice was never "template the name" — it was between omitting the name and
+`wrangler.jsonc`.** So the choice was never "template the name". It was between omitting the name and
 creating the queue through the API, and omitting it keeps ADR 24's byte-identical fork intact.
 
 `wrangler queues consumer worker add <queue-name> <script-name>` exists, with `remove` and `list` beside it.
@@ -144,8 +144,8 @@ That is what makes the out-of-band attachment a CLI step rather than a second ha
 
 ### What `queues.consumer_attaches_when_producer_provisions: 1` does and does not cover
 
-It stays **1** and it is **not widened**. It was measured on 7 August with a **named** queue — a producer
-binding and a consumer block both carrying the same literal `mailda-qprov-both` — and it records that
+It stays **1** and it is **not widened**. It was measured on 7 August with a **named** queue, a producer
+binding and a consumer block both carrying the same literal `mailda-qprov-both`, and it records that
 provisioning ran before consumer registration in that configuration. It says nothing about the
 omitted-name case, and it cannot: with the name omitted there is **no consumer block to attach**, because
 the row above measures that such a block is refused outright. Reading it as "the consumer still attaches
@@ -154,8 +154,8 @@ the very thing this change had to work around.
 
 ### So the section below headed "Declaring both makes one deploy sufficient" is now history, not instruction
 
-Its measurement stands. Its conclusion — *"Mailda can ship bounce consumption in committed configuration
-and both install paths still work"* — is **false as of today**, and deliberately so: it was true only for a
+Its measurement stands. Its conclusion, *"Mailda can ship bounce consumption in committed configuration
+and both install paths still work"*, is **false as of today**, and deliberately so: it was true only for a
 single Node per account. The consumer is now attached out of band by
 `apps/node/worker/scripts/attach-queue-consumer.mjs`, which **discovers** the queue from the deployed
 Worker's `SENDING_EVENTS` binding rather than deriving its name.
@@ -171,24 +171,24 @@ Two things that follow from "documented, not measured", and both are load-bearin
 **Whether a producer binding with no queue name provisions anything at all** is also documented rather than
 measured: `queues.producer_binding_provisions: 1` above was measured with a *named* queue, so a deploy that
 creates no queue is a real outcome, which is why the script has a refusal for it rather than an assumption.
-And the script's branches — discovery, the idempotent re-run, the foreign consumer, an unreadable consumer
-list, an ambiguous gradual deployment, and a deploy that provisioned nothing — are exercised on every test
+And the script's branches (discovery, the idempotent re-run, the foreign consumer, an unreadable consumer
+list, an ambiguous gradual deployment, and a deploy that provisioned nothing) are exercised on every test
 run by `apps/node/worker/test/node/attach-queue-consumer.test.ts`, which puts a stub `npx` on `PATH`
 speaking wrangler's documented JSON shapes. That tests the script against the shape; it does not measure
 the shape, and it is not a run against an account.
 
 **The accepted cost, stated rather than hidden:** a button-only install has run no such script, so it
-observes **no delivery outcomes at all** until somebody runs it. That is not a new *class* of gap — the
-`email.sending` subscription this receipt already covers is out of band for the same reason
-(`queues.subscription_creatable_by_cli: 0`) — but it is now two steps rather than one, and doctor's
+observes **no delivery outcomes at all** until somebody runs it. That is not a new *class* of gap (the
+`email.sending` subscription this receipt already covers is out of band for the same reason,
+`queues.subscription_creatable_by_cli: 0`), but it is now two steps rather than one, and doctor's
 `sending_events_consumer` finding exists so that the first of them is visible rather than silent.
 
 **Measured:** live Cloudflare account, Workers Paid, wrangler 4.118.0 (and 4.119.0 and `latest` for the
 CLI-surface checks), 7 August 2026. Three throwaway Workers and three queues created and deleted; the
 account was verified back to baseline.
 
-This exists because Layer 2's bounce state depends on a queue, and the obvious question — *does the
-one-click install still work if Mailda needs one?* — has an answer that is not guessable and is not what
+This exists because Layer 2's bounce state depends on a queue, and the obvious question, *does the
+one-click install still work if Mailda needs one?*, has an answer that is not guessable and is not what
 the documentation implies.
 
 ## A producer binding provisions the queue. A consumer block fails the deploy.
@@ -204,8 +204,8 @@ two ways a Worker names a queue:
 
 ## Re-measured 19 August 2026: `email.sending` is still not a CLI subscription source
 
-Checked because this receipt's `stale_when` names the exact condition — *"`email.sending` appears in
-`wrangler queues subscription create --source`"* — and because #72 made the answer load-bearing: if the CLI
+Checked because this receipt's `stale_when` names the exact condition, *"`email.sending` appears in
+`wrangler queues subscription create --source`"*, and because #72 made the answer load-bearing: if the CLI
 could create the subscription, the whole out-of-band step could plausibly move into a script and the
 button's blindness would be worth attacking.
 
@@ -217,21 +217,21 @@ It cannot. `npx wrangler queues subscription create --help`, wrangler 4.118.0:
 ```
 
 **`queues.subscription_creatable_by_cli: 0` therefore stands**, unchanged. The source list *has* grown since
-7 August — `artifacts`, `artifacts.repo` and `images` are new — which is worth recording precisely because it
+7 August (`artifacts`, `artifacts.repo` and `images` are new), which is worth recording precisely because it
 is the kind of change that looks like it might have included the one we need and did not. A clause that fires
 on a list gaining entries would have fired here and been wrong.
 
 **The consequence for #72 is a correction to how its cost was described.** Delivery outcomes need two
 account-level objects: a queue consumer and an `email.sending` subscription. The subscription has never been
 creatable by the button or by `wrangler deploy`, so a button-only install has **never** observed a delivery
-outcome — the queue existed and the consumer was attached, and nothing was ever published to it. #72 did not
+outcome. The queue existed and the consumer was attached, and nothing was ever published to it. #72 did not
 introduce that; it added a second item to an out-of-band step that was already mandatory. Stating it as a new
 cost of the per-Node queue would have been the more flattering description and the false one.
 
-Which also means the attach step is **necessary and not sufficient**, and anything that implies otherwise —
-README, `doctor`, this receipt — is overclaiming. Fixed in all three.
+Which also means the attach step is **necessary and not sufficient**, and anything that implies otherwise,
+README, `doctor` or this receipt, is overclaiming. Fixed in all three.
 
-A consumer is not a binding — it is a subscription of the Worker to a queue — so provisioning never
+A consumer is not a binding. It is a subscription of the Worker to a queue, so provisioning never
 considers it. Nothing in the documentation says so, and the failure is a hard error rather than a
 warning, which means **committing a bare `queues.consumers` block would break every one-click install**
 and the first person to find out would be a customer.
@@ -255,14 +255,14 @@ ship bounce consumption in committed configuration and both install paths still 
 
 It should be recorded honestly: the producer binding is there as a *provisioning lever*, not because the
 Worker has anything to publish. That is a workaround for an asymmetry in somebody else's tool, and it
-will read as unexplained clutter to the next person unless the config says so. The alternative — leaving
-the consumer out of committed config and having `mailda deploy` add it — costs a divergence between the
+will read as unexplained clutter to the next person unless the config says so. The alternative, leaving
+the consumer out of committed config and having `mailda deploy` add it, costs a divergence between the
 CLI and button paths, which is exactly what ADR 18 collapsed to one Worker to avoid.
 
 ## The subscription: not in the CLI, but not out of reach either
 
 `email.sending` is **absent from `wrangler queues subscription create --source`** in every version
-checked — 4.118.0, 4.119.0 and `latest`. The available sources are `artifacts`, `artifacts.repo`,
+checked: 4.118.0, 4.119.0 and `latest`. The available sources are `artifacts`, `artifacts.repo`,
 `images`, `kv`, `r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker`,
 `workflows.workflow`.
 
@@ -290,13 +290,13 @@ POST /accounts/{account_id}/event_subscriptions/subscriptions
 }
 ```
 
-`source.zone_id` is snake_case — `zoneId`, the spelling the *event payload* uses, is rejected with
+`source.zone_id` is snake_case; `zoneId`, the spelling the *event payload* uses, is rejected with
 `Validation error: Required at "source.zone_id"`. Editing an existing subscription is `PATCH`; `PUT`
 returns `7001 PUT not supported for requested URI`.
 
 This was worth chasing rather than accepting, because the dashboard route is **also broken**: clicking
 *Subscribe to events* on 7 August 2026 produced `Refresh the page to try again` with
-`useModalContext must be used within a ModalContext` in the console — a React error, so the modal cannot
+`useModalContext must be used within a ModalContext` in the console, a React error, so the modal cannot
 mount at all. Had the CLI gap been taken at face value, the conclusion would have been that bounce
 visibility is unobtainable, when in fact it is fully automatable.
 
@@ -308,20 +308,20 @@ bounces. What it cannot use is wrangler's subcommand.
 One-click install is *not* broken by this, and it is worth being precise about which of three things is
 which, because they are easy to conflate:
 
-1. **Deploying the Node** — Worker, D1, R2, Durable Objects, and now a queue: one click, no manual step
+1. **Deploying the Node**: Worker, D1, R2, Durable Objects, and now a queue: one click, no manual step
    (`deploy-button-install.md`, and the measurement above).
-2. **Mail setup** — DNS and MX, Email Routing onboarding, sending-domain verification, destination
+2. **Mail setup**: DNS and MX, Email Routing onboarding, sending-domain verification, destination
    address confirmation. **Always** an operator step, and not a Mailda limitation: these change DNS and
    require somebody's consent. No installer can or should do them silently.
-3. **Bounce visibility** — the event subscription. **Automatable**, via the API above, so `mailda deploy`
+3. **Bounce visibility**: the event subscription. **Automatable**, via the API above, so `mailda deploy`
    can do it without an operator. Not via wrangler's subcommand, and not via the dashboard while that
    modal is broken.
 
-Item 3 still needs its absence to be **visible**, and that is not a hedge about provisioning — it is
+Item 3 still needs its absence to be **visible**, and that is not a hedge about provisioning. It is
 because a subscription can be deleted, disabled, or scoped to the wrong domain long after install. A Node
 receiving no events is indistinguishable from one where nothing bounced, which is precisely the ambiguity
 Layer 2 exists to remove. So the capability is recorded (§14's "can this Node send" is a capability answer
-rather than a crash — the same shape applies) and `doctor` says it is missing rather than letting a Node
+rather than a crash; the same shape applies) and `doctor` says it is missing rather than letting a Node
 look complete.
 
 ## Third documentation-versus-reality gap in two days

@@ -15,7 +15,7 @@ values:
 ---
 
 **Measured:** `apps/node/worker/test/policy-cost.measure.test.ts`, in the real `workerd` runtime against a
-real D1 and R2, using `src/cost-meter.ts`. Not counted by reading — the count was read first, in #60's own
+real D1 and R2, using `src/cost-meter.ts`. Not counted by reading. The count was read first, in #60's own
 resolution, and it was right about the ceiling and wrong about the cost.
 
 ## The receipt #60 recorded as owed
@@ -25,12 +25,12 @@ resolution, and it was right about the ceiling and wrong about the cost.
 > Evaluation adds at most **three** queries to a seal: one to read matching policies, one for the domain set
 > behind `recipient_external`, one for `send_counters`. Two of the three are cacheable within a request.
 >
-> **Counted by reading, not measured — and that is a hypothesis.** … It cannot be measured before there is an
+> **Counted by reading, not measured, and that is a hypothesis.** … It cannot be measured before there is an
 > implementation, so the figure is recorded as an expectation with a receipt owed.
 
 There is an implementation. `src/cost-meter.ts` exists precisely to settle this class of question: it counts
 **executions** rather than `prepare`, prices a `batch()` as the one round trip it is, and sees Durable Object
-RPCs — the last of which `doctor`'s meter cannot see at all.
+RPCs, the last of which `doctor`'s meter cannot see at all.
 
 ## Observed
 
@@ -49,7 +49,7 @@ RPCs — the last of which `doctor`'s meter cannot see at all.
 ## The hypothesis was right about the ceiling and wrong about the cost
 
 **Three is the ceiling and it is reached only at the worst case.** The ordinary cost is **one**, and the
-difference is not an accident of the fixture — it is the reason the matching predicate is evaluated in
+difference is not an accident of the fixture. It is the reason the matching predicate is evaluated in
 TypeScript rather than pushed into SQL.
 
 Every one of the five conditions is a column, so the whole predicate *is* expressible as
@@ -58,7 +58,7 @@ organization's domain set, `org_daily_volume` needs today's counter. A pushed-do
 bind both inputs before the query could run, spending both queries **whether or not any live policy asks for
 them**. Reading the candidate rows first lets each derived input be fetched only when some published policy
 constrains it. So a Node with no policies, or with policies on mailbox, actor and reply only, spends **one**
-query — and the rows have to be read anyway, because the decision must name *which* policy matched for the
+query, and the rows have to be read anyway, because the decision must name *which* policy matched for the
 audit trail to answer "which rule applied".
 
 **Two of the three are not cached, and the resolution's word "cacheable" is doing less work than it looks
@@ -67,7 +67,7 @@ because a cache still pays once per request while laziness pays zero. Worth stat
 are cacheable within a request"* would otherwise read as an implemented optimization.
 
 **Thirty published policies cost the same as three.** One query either way. What grows with the policy count
-is rows read inside one query, not queries — and the subrequest budget is spent in queries. That is the cost
+is rows read inside one query, not queries, and the subrequest budget is spent in queries. That is the cost
 this design accepts, and it is bounded by what a human writes. The figure to watch: if an organization ever
 carries hundreds of published policies, the predicate moves into SQL and both derived inputs become
 unconditional, trading the common case for the pathological one.
@@ -78,9 +78,9 @@ The two values are **bounds with headroom, not the measured figures**, for the r
 `butler-step-cost.md` states: an equality assertion on an I/O count fails on every harmless refactor and gets
 deleted, while a bound catches a step becoming an order of magnitude more expensive.
 
-- `policy.evaluate_max_subrequests = 5` — measured 1 typical, 3 at the worst case. The bound covers a sixth
+- `policy.evaluate_max_subrequests = 5`: measured 1 typical, 3 at the worst case. The bound covers a sixth
   derived condition arriving before this receipt is redone.
-- `policy.publish_max_subrequests = 8` — measured 5, and the five are named because a total that cannot be
+- `policy.publish_max_subrequests = 8`: measured 5, and the five are named because a total that cannot be
   broken down is a total nobody can dispute: the `org.admin` check, the draft read, the current-version read,
   the audit chain's tip read, and **one** batch carrying the entry plus both updates. Bounded generously
   because a publication happens on an administrator's request, not in a loop.
@@ -90,19 +90,19 @@ deleted, while a bound catches a step becoming an order of magnitude more expens
 **`authz.check.max_queries = 2` is not the budget this spends from**, and #60's resolution says so
 explicitly. That receipt bounds one authorization check; policy evaluation is a separate step on the same
 request. What this spends from is the per-instance subrequest pot `butler-step-budget.md` measured, which is
-plan-conditional — `workflow.paid.subrequest_budget_per_instance` is 10,000 and the Free sibling is 1,000 —
+plan-conditional (`workflow.paid.subrequest_budget_per_instance` is 10,000 and the Free sibling is 1,000),
 and it matters because a Butler seals in a loop. `butler-step-cost.md` carries that arithmetic and has been
 corrected for the seal's new figure.
 
 ## Miniflare, not a deployed Node
 
 Measured under `vitest-pool-workers`, whose D1 is a local SQLite. So what is measured is the **number of
-operations Mailda performs**, which is exactly what the subrequest budget is spent in — not their latency,
+operations Mailda performs**, which is exactly what the subrequest budget is spent in, not their latency,
 and not a deployed Node's behaviour. `doctor-check-cost.md`'s 18 August correction draws the same line for
 the same instrument, and it is the honest boundary of this measurement rather than a caveat added to be safe.
 
 **No deployed measurement is claimed here.** A remote figure would need a Node with policies published on a
-real account, and it would measure round-trip latency rather than operation count — a different question from
+real account, and it would measure round-trip latency rather than operation count, a different question from
 the one #60 asked.
 
 ## The one figure in this file that is not measured, and could not be
@@ -110,15 +110,15 @@ the one #60 asked.
 `recipient_external` is **exact**, and its exactness is a platform property rather than a measurement:
 Cloudflare Email Routing only accepts addresses on domains in the customer's own account, so every domain
 appearing in `addresses` is a domain the customer controls, and the internal set derives from those domains
-with no new storage. There is no number to measure there — which is why it is the first clause of this
+with no new storage. There is no number to measure there, which is why it is the first clause of this
 receipt's `stale_when` instead. If that platform behaviour changes, the condition silently starts
 mis-classifying internal mail as external, in the *restrictive* direction, and nothing in this Node could
 detect it.
 
-## Correction — 20 August 2026 (#61)
+## Correction, 20 August 2026 (#61)
 
 The `stale_when` above fired on its last clause: **the seal gained two I/O operations on the
-`require_approval` path.** `evaluate()` itself is unchanged — still 1 operation typically and 3 at the worst
+`require_approval` path.** `evaluate()` itself is unchanged, still 1 operation typically and 3 at the worst
 case, and every `evaluate` row in the table above was re-measured and is still exact. What changed is what a
 *seal* does after evaluation, because #61 made a `require_approval` outcome request an approval.
 
@@ -129,22 +129,22 @@ Re-measured in the same test, same instrument, same runtime:
 | `sealManifest`, new thread, no policies | 11 | **11** |
 | `sealManifest`, new thread, both derived conditions (`require_approval` + `hold`) | 13 | **15** |
 | `sealManifest`, reply, both derived conditions (`require_approval` + `hold`) | 17 | **19** |
-| `sealManifest`, gated by a `hold` only | — | **11** |
-| `sealManifest`, gated by an approval | — | **13** |
+| `sealManifest`, gated by a `hold` only | not measured | **11** |
+| `sealManifest`, gated by an approval | not measured | **13** |
 
 The two new operations are the stage set of every matching `require_approval` version and the eligible
-approvers on the mailbox, and they are spent **only on that path** — a hold-gated seal is still 11, measured,
+approvers on the mailbox, and they are spent **only on that path**. A hold-gated seal is still 11, measured,
 which is the same laziness this receipt already records for the two derived conditions. The `approvals` row, its
 stage rows and the second audit entry are free, because they ride in the `batch()` the seal was already making.
 Detail in `approval-decision-cost.md`.
 
 **No value in this file changed.** `policy.evaluate_max_subrequests` bounds `evaluate`, which did not move, and
-the seal figures were never budget values here — they are the reason `butler-step-cost.md` exists, and that
+the seal figures were never budget values here. They are the reason `butler-step-cost.md` exists, and that
 receipt has its own dated correction for the new worst case.
 
-## Correction — 20 August 2026 (#66)
+## Correction, 20 August 2026 (#66)
 
-The `stale_when` fired on its last clause again — **the seal gained one I/O operation** — and it did *not*
+The `stale_when` fired on its last clause again, **the seal gained one I/O operation**, and it did *not*
 fire on the clause that names #66 by number.
 
 `evaluate()` itself is unchanged: still 1 operation typically and 3 at the worst case, and every `evaluate`
@@ -158,8 +158,8 @@ the circuit breakers before deciding the state a manifest is sealed with.
 **The clause that did not fire is worth recording**, because it predicted the wrong mechanism. This receipt
 said it would go stale if *"`send_counters` gains a finer grain than org-and-day (#66), which would add a query
 per grain"*. #66 did not widen `send_counters` and added no query per grain. It refused that table as a
-substrate outright — a maintained cell can drift from the rows it summarises, and a calendar-day grain
-forgives a spike at 23:00 and punishes one at 01:00 — and counts append-only rows inside a sliding window
+source outright (a maintained cell can drift from the rows it summarises, and a calendar-day grain
+forgives a spike at 23:00 and punishes one at 01:00) and counts append-only rows inside a sliding window
 instead. One statement, six scalar sub-selects, one subrequest, regardless of how many rates it answers.
 
 **No value in this file changed.** `policy.evaluate_max_subrequests` bounds `evaluate`, which did not move,
