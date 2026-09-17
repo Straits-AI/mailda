@@ -18,22 +18,22 @@ invocation copies before checkpointing, and the largest export this Node will au
 ## Per message: 4 subrequests, and 2 with the run-scoped key cache
 
 Measured with `metering()` from `src/cost-meter.ts` wrapped around one `runExport` call under
-`vitest-pool-workers` (`pnpm vitest run`), against miniflare, on 20 August 2026 —
+`vitest-pool-workers` (`pnpm vitest run`), against miniflare, on 20 August 2026, in
 `test/export-cost.measure.test.ts`, which prints both figures and asserts them against these values:
 
 | | Without the cache | With it |
 |---:|---:|---:|
-| R2 `get` — fetch the sealed source object | 1 | 1 |
-| R2 `put` — write the re-sealed object under `exports/` | 1 | 1 |
-| vault RPC — opening key for the source's generation | 1 | 0 |
-| vault RPC — sealing key for the export's object | 1 | 0 |
+| R2 `get`: fetch the sealed source object | 1 | 1 |
+| R2 `put`: write the re-sealed object under `exports/` | 1 | 1 |
+| vault RPC: opening key for the source's generation | 1 | 0 |
+| vault RPC: sealing key for the export's object | 1 | 0 |
 | **per message** | **4** | **2** |
 
 Plus a fixed cost per page that does not scale with the page: 1 D1 for the export row and its live approval,
 2 D1 for the `ediscovery.export` recheck (team lookup and tuple lookup, the shape
-`authz-check-rows-read.md` measured), 1 D1 for the page itself and 1 D1 for the checkpoint — **5 per page**.
-The completing page spends a further `ceil(objects / r2.list_max_keys_with_metadata)` R2 listings — one per
-hundred staged objects, because a metadata listing pages — an R2 `put` for the manifest, and the audit
+`authz-check-rows-read.md` measured), 1 D1 for the page itself and 1 D1 for the checkpoint: **5 per page**.
+The completing page spends a further `ceil(objects / r2.list_max_keys_with_metadata)` R2 listings (one per
+hundred staged objects, because a metadata listing pages), an R2 `put` for the manifest, and the audit
 append's 2 D1 (chain tip, then the gated `batch()`).
 
 The four whole runs those figures were differenced from, printed by the test:
@@ -51,7 +51,7 @@ message. **DO RPCs are flat at 2 with the cache and 2n + 1 without it**, which i
 are. Differencing is what isolates them: `(42 − 18) / (8 − 2) = 4` and `(27 − 15) / (8 − 2) = 2`.
 
 **How "without the cache" is measured, since `runExport` always has one.** There is deliberately no
-production switch to turn it off — one would be a landmine, because somebody would eventually pass it. The
+production switch to turn it off. One would be a landmine, because somebody would eventually pass it. The
 uncached arm is measured by handing the real run a cache **double that reports every lookup as a miss**, so
 the code path under measurement is the shipped one and the only difference is whether the vault is asked
 again.
@@ -70,19 +70,19 @@ measures **4** uncached, and the two missing terms are real differences rather t
   page rather than paid per message.
 
 So the resolution's capacity arithmetic was **conservative by 50%**, not wrong: it sized the feature against a
-per-message cost higher than the one the feature has. The claim it made about the cache is exactly right —
+per-message cost higher than the one the feature has. The claim it made about the cache is exactly right:
 caching removes **2 of the per-message subrequests**, which here is a halving rather than a third off.
 
 ### Why the cache is scoped to one run
 
 `openingKey` and `sealingKey` are Durable Object RPCs, and the same two are asked for every message in a run.
 Caching them within one `runExport` call removes both. The cost of caching a content key is **staleness of
-that key against revocation**, and confining it to one run bounds that at one run — which is already the unit
+that key against revocation**, and confining it to one run bounds that at one run, which is already the unit
 the export's approval authorizes.
 
 An isolate-wide cache was rejected despite a good precedent (`auth/keys.ts:200` caches signing keys with its
 TTL reasoned explicitly as *"a staleness bound on key revocation"*). It would make content-key revocation
-eventually-consistent **product-wide** in order to speed up one feature — a heavier promise than the one being
+eventually-consistent **product-wide** in order to speed up one feature, a heavier promise than the one being
 asked for, and one that would have to be argued for on every read path rather than on this one.
 
 ## Page size: 100 messages
@@ -92,11 +92,11 @@ Derived, not measured separately: `100 × 2 + 5 = 205` subrequests for a full pa
 figure and the same argument `reseal.batch_size` records: the subrequest ceiling no longer binds this choice,
 and what does is that a failing page costs a retry of the whole page, and nothing has measured the CPU or
 wall-clock cost of a 500-message page against the 5-minute limit. **A bound that has become generous is not
-thereby wrong** — raising it is a fresh measurement rather than an arithmetic consequence.
+thereby wrong**. Raising it is a fresh measurement rather than an arithmetic consequence.
 
 Sizing it *lower* would be wrong for a reason worth stating: the fixed 5 per page is paid whichever page size
 is chosen, so a page of 10 spends a third of its budget on rechecking rather than on copying. The recheck is
-non-negotiable — §7 requires revocation to terminate an export — so the page has to be big enough that the
+non-negotiable (§7 requires revocation to terminate an export), so the page has to be big enough that the
 recheck is a rounding error, and at 100 it is 2.4%.
 
 ## Ceiling: 1,000 messages per export, and the boundary it names
@@ -113,17 +113,17 @@ that boundary rather than building an unreliable workaround"*.
 
 The first version of this section said the manifest was built from **one** listing, and derived the ceiling
 from a bare listing's cap of 1,000. Both halves were wrong together, and the second hid the first: a listing
-that asks for `include: ["customMetadata"]` returns at most `r2.list_max_keys_with_metadata` keys — a hundred,
-measured — so a single call could name a hundred objects and the ceiling authorized ten times that. An export
+that asks for `include: ["customMetadata"]` returns at most `r2.list_max_keys_with_metadata` keys, a hundred,
+measured, so a single call could name a hundred objects and the ceiling authorized ten times that. An export
 above a hundred messages staged every byte and then threw `E_EXPORT_MANIFEST_TRUNCATED` on every attempt to
 finish. See `docs/receipts/r2-list-page-size.md`, which now carries both figures and the measurement.
 
 **The build pages the listing** and the ceiling keeps its meaning and its number. Paging is not the
-"unreliable workaround" the blueprint clause warns about — the cursor is the documented way to finish a
+"unreliable workaround" the blueprint clause warns about. The cursor is the documented way to finish a
 listing, Cloudflare's own reference tells callers to read `truncated` rather than compare counts, and the
 build is idempotent: an invocation that dies mid-manifest leaves the export `running`, and the next one finds
 an empty page and rebuilds the whole thing from R2. What it costs is `ceil(objects / 100)` subrequests
-**once**, at completion — 10 at the ceiling, against a completing page that already spends about 205.
+**once**, at completion: 10 at the ceiling, against a completing page that already spends about 205.
 
 The failure this refuses is specific: a manifest that omitted messages would be **worse than no manifest**,
 because it reads as a complete account of what was disclosed. That is the same asymmetry that makes the run
@@ -131,6 +131,6 @@ abort at `max_messages` rather than truncate to it.
 
 **Both bounds are checked rather than described.** `test/ediscovery-export.test.ts` refuses a request above
 the ceiling and asserts the message names `export.max_messages_ceiling`; *"carries the cursor across pages"*
-exports 105 messages — more than one metadata listing can name — and asserts the manifest names all 105; and
-`test/export-cost.measure.test.ts` asserts the per-message figures with and without the cache — so the cache's
+exports 105 messages, more than one metadata listing can name, and asserts the manifest names all 105; and
+`test/export-cost.measure.test.ts` asserts the per-message figures with and without the cache, so the cache's
 saving is a measurement this repository re-runs, not a sentence in a resolution.
