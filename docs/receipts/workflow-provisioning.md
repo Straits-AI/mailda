@@ -22,8 +22,8 @@ values:
 stated with it, because two of these contradict the obvious way to measure them.
 
 This exists because Layer 4's engine choice is written against it, and because designing a Butler
-engine around a primitive a customer's install cannot provision is the ADR 24 failure this project
-has already hit once — `queue-provisioning.md` found that a consumer-only queue binding makes
+engine around a building block a customer's install cannot provision is the ADR 24 failure this project
+has already hit once. `queue-provisioning.md` found that a consumer-only queue binding makes
 `wrangler deploy` fail outright.
 
 ## `wrangler deploy` does provision a Workflow
@@ -33,18 +33,18 @@ two after, the new one carrying a `Created` timestamp matching the deploy to the
 behaves like D1 and R2 rather than like Secrets Store: the binding declares `name`, `binding` and
 `class_name` with **no resource id**, and the deploy creates what is missing.
 
-The deploy also names it in its output — `workflow: mailda-workflow-probe-wf` — which matters, because
+The deploy also names it in its output, `workflow: mailda-workflow-probe-wf`, which matters, because
 the schedule is the part it does *not* name. See below.
 
 That makes a workflow binding ADR-24-safe on both counts: byte-identical config across a fork, and
 provisioned by the install rather than by a step a customer has to be told about.
 
-**Measured 19 August 2026, and the answer is yes** — this paragraph used to say *"not measured, and it is the
+**Measured 19 August 2026, and the answer is yes**. This paragraph used to say *"not measured, and it is the
 remaining risk"*, and the gap is now closed by a real Deploy-button click (#55).
 
 The 13 August deploy above used an interactive OAuth token with Super Administrator privileges, which is the
 *easy* case. §11A's one-click equivalence claim rests on the token **Workers Builds mints for itself**, and
-`queue-provisioning.md` had already established that the button can behave differently from the CLI — so the
+`queue-provisioning.md` had already established that the button can behave differently from the CLI, so the
 CLI result was not evidence about the button, and the caveat was correct to exist.
 
 A branch declaring `[[workflows]]` with `name`, `binding` and `class_name` was deployed through the button
@@ -56,7 +56,7 @@ workflow: mailda-butler-probe                         ← in the deployed trigge
 ```
 
 **And the token has no Workflows scope.** Its 24 permissions were read from the dashboard before deploying,
-and contain no Workflows entry of any kind — the account-scoped ones are AI Search, Connectivity Directory
+and contain no Workflows entry of any kind. The account-scoped ones are AI Search, Connectivity Directory
 (Read and Bind), Containers, Secrets Store, Browser Run, AI Gateway (Run/Edit/Read), Workers Pipelines,
 Workers AI, Queues, Vectorize, Hyperdrive, Cloudchamber, D1, Workers R2 Storage, Workers KV Storage, Workers
 Scripts and Account Settings:Read, plus Workers Routes and SSL on all zones and two read-only user scopes.
@@ -71,7 +71,7 @@ now both measured**, separately, which is the distinction the previous version o
 keeping.
 
 **One methodological trap, recorded because it nearly voided the measurement.** The button **reused** the
-Builds token from the 6 August install rather than minting a fresh one — its `Last used` was that date, and on
+Builds token from the 6 August install rather than minting a fresh one. Its `Last used` was that date, and on
 6 August no `[[workflows]]` binding existed anywhere in the repository. A missing Workflows scope could
 therefore have been an artifact of when the token was created rather than a property of Builds tokens.
 
@@ -107,32 +107,32 @@ Total Upload: 0.65 KiB / gzip: 0.40 KiB
 `env.PROBE (ProbeWorkflow) Workflow`, and nothing anywhere says the schedule does not exist. A Butler
 with a schedule would deploy cleanly and never fire.
 
-This is the same failure *shape* as `binding-relink-on-id-removal.md`'s Secrets Store result — silently
-absent, exit code 0 — with one difference that makes it worse rather than better: there **is** a
+This is the same failure *shape* as `binding-relink-on-id-removal.md`'s Secrets Store result, silently
+absent with exit code 0, with one difference that makes it worse rather than better: there **is** a
 warning, so it looks like the tooling is doing its job, and a warning in CI output is a line nobody
 reads. Under 4.122.0 the warning is absent and the field is honoured.
 
 Consequence for the repo: `^4.68.0` is not a supported range for anything using `schedules`. Raising
 the floor is the fix; a `doctor` check cannot substitute, because the Worker has no way to see whether
-a schedule it declared was registered (there is no schedule-inspection API — `wrangler workflows` has
+a schedule it declared was registered (there is no schedule-inspection API; `wrangler workflows` has
 `trigger` and no `schedules` subcommand).
 
 ## The schedule fires, tens of seconds after the boundary
 
 Deployed at 05:44:47Z; the first instance was created at the next `*/5` boundary, 05:45:00Z. So
-registration is effectively immediate — notably *unlike* top-level `triggers.crons`, where
+registration is effectively immediate, notably *unlike* top-level `triggers.crons`, where
 `0017_first_response_clock.sql` records a 15-minute propagation delay.
 
 A scheduled instance's id is **derived, not supplied**: `<cron expression>-<scheduledTimeMs>`, e.g.
 `*/5 * * * *-1786599900000`. Two consequences:
 
 1. **A caller-supplied id is unavailable for scheduled runs.** `create({ id })` accepts one for
-   programmatic instances, but a schedule mints its own — so an ADR 9 effect key cannot *be* the
+   programmatic instances, but a schedule mints its own, so an ADR 9 effect key cannot *be* the
    instance id for a scheduled Butler, and a mapping is needed.
 2. **The id is not URL-safe.** It contains `/` and spaces, and `wrangler workflows instances describe`
    interpolates it into the API path unescaped, producing `workflows.api.error.not_found` for an
    instance that plainly exists in `instances list`. Passing a pre-percent-encoded id works. So
-   scheduled instances are listable but not addressable by the obvious command — worth knowing before
+   scheduled instances are listable but not addressable by the obvious command, which is worth knowing before
    a run ledger stores one as a foreign key.
 
 ### `event.schedule.scheduledTime` is the dispatch time, not the scheduled time
@@ -144,11 +144,11 @@ For the firing above, three clocks disagree:
 
 | Source | Value |
 |---|---|
-| Instance id suffix | `2026-08-13T05:45:00.000Z` — the cron boundary |
+| Instance id suffix | `2026-08-13T05:45:00.000Z`, the cron boundary |
 | `event.schedule.scheduledTime` **inside the run** | `2026-08-13T05:45:31.944Z` |
 | `Date.now()` in the step body | `2026-08-13T05:45:32.630Z` |
 
-Computing lateness the documented way — wall clock minus `event.schedule.scheduledTime` — gives
+Computing lateness the documented way, wall clock minus `event.schedule.scheduledTime`, gives
 **0.686 s**. Actual lateness against the boundary the cron expression names is **32.6 s**, a factor of
 47 out, and the wrong number is the plausible-looking one. `scheduledTime` is approximately when the instance was dispatched, so subtracting it from the
 wall clock measures how long the isolate took to start and nothing else.
@@ -157,7 +157,7 @@ This is the same class of instrument failure as the `performance.now()` clamping
 `authz-check-rows-read.md`: a number that is plausible, stable, and answers a different question than
 the one asked. **The usable ground truth is the instance id suffix.**
 
-Queued at 05:45:19Z, started 05:45:32Z — so the 32 s splits into roughly 19 s before the instance
+Queued at 05:45:19Z, started 05:45:32Z, so the 32 s splits into roughly 19 s before the instance
 exists and 13 s of queue-to-start.
 
 ## Observed lateness
@@ -177,7 +177,7 @@ Firings: **5**. True lateness min **23.7 s**, max **33.2 s**, mean **29.3 s**.
 
 **The sample is confounded, and saying so is the point of a receipt.** The probe Worker was
 **redeployed between the third and fourth firings** (to add the duplicate-id routes below). The first
-three firings — all on the original version — cluster at 32.6–33.2 s; the last two, on the new version,
+three firings, all on the original version, cluster at 32.6–33.2 s; the last two, on the new version,
 at 23.7–24.2 s. So the ~9 s drop coincides exactly with a version change and **cannot be attributed to
 time of day, warmth, or a trend**. Do not read a direction into these five numbers.
 
@@ -192,23 +192,23 @@ belongs, and its method now points at the right clock.
 
 ## Sized
 
-- `workflow.provisioned_by_deploy = 1` — a fact, kept as a value so a change in it trips something.
-- `workflow.schedules_min_wrangler = 4.97` — the floor below which `schedules` is discarded with exit
+- `workflow.provisioned_by_deploy = 1`: a fact, kept as a value so a change in it trips something.
+- `workflow.schedules_min_wrangler = 4.97`: the floor below which `schedules` is discarded with exit
   code 0. Recorded as a number so a dependency bump downwards is a test failure and not a silent
   regression.
-- `workflow.schedule_cron_ceiling_per_account = 100` — documented, not measured: "up to 100 cron
+- `workflow.schedule_cron_ceiling_per_account = 100`: documented, not measured: "up to 100 cron
   expressions per account". **Per account**, not per Worker, which is the distinction the cron-trigger
   docs contradict themselves on. It bounds how many independently-scheduled Butlers one Node can own,
-  and it is shared with every other Worker in the customer's account — so a Node cannot treat it as
+  and it is shared with every other Worker in the customer's account, so a Node cannot treat it as
   its own budget.
-- `workflow.instance_id_max_chars = 100` — documented. A caller-supplied id must fit, which a
+- `workflow.instance_id_max_chars = 100`: documented. A caller-supplied id must fit, which a
   `btl_<ulid>` plus a step discriminator comfortably does.
 
 ## Deleting the Worker does not delete the Workflow
 
 Found while cleaning up, and worth a line because it is the uninstall path. `wrangler delete --name
 mailda-workflow-probe` reported success and the workflow **remained**, still listing `Script name:
-mailda-workflow-probe` — a script that no longer existed. It took a separate `wrangler workflows delete`
+mailda-workflow-probe`, a script that no longer existed. It took a separate `wrangler workflows delete`
 to remove it.
 
 So a workflow is an **account-level resource whose lifecycle is not tied to the Worker that declared
@@ -224,16 +224,16 @@ another, and invisible to the Worker either way. The consequences worth carrying
 
 ## What this hands the other tickets
 
-- **What executes a Butler run** — a workflow is provisionable by `wrangler deploy`, so §16's
+- **What executes a Butler run**: a workflow is provisionable by `wrangler deploy`, so §16's
   "Workflows handle waits and retryable long-running execution" is available rather than aspirational.
   The two live caveats are the wrangler floor and the untested Deploy-button token.
-- **Cron lateness and the trigger-count ceiling, measured** — its stated method is wrong and this
+- **Cron lateness and the trigger-count ceiling, measured**: its stated method is wrong and this
   receipt says why. Measure against the instance id suffix, or against a stored intent for top-level
   `triggers.crons`, never against the platform's own `scheduledTime`.
-- **The run ledger and the four replay modes** — instance state is **retained 3 days on Free and 30
+- **The run ledger and the four replay modes**: instance state is **retained 3 days on Free and 30
   days on Paid** by default, configurable per instance. So a Workflow instance is *not* a durable
   record and the run ledger cannot be a view over it. `createBatch` is idempotent and **silently skips
-  a duplicate id, excluding it from the returned array** — a fan-out that does not compare the
+  a duplicate id, excluding it from the returned array**. A fan-out that does not compare the
   returned length against the requested length drops runs with no error, which is a landmine in the
   AGENTS.md sense. `create` by contrast **throws** on a duplicate id within its retention window,
   which is the conflict-is-the-signal behaviour this codebase already relies on.
