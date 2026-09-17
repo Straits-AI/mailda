@@ -2213,6 +2213,19 @@ export const refreshedResponse = z.object({
   accessExpiresAt: z.number().int().positive(),
 }).strict();
 
+/** One recipient this Node will not send to (0058): derived from the provider's last word, not kept. */
+export const suppressionRow = z.object({
+  address: z.string().min(1),
+  cause: z.enum(["hard_bounce", "complaint"]),
+  detail: z.string().nullable(),
+  observedAt: isoDate,
+  eventId: z.string().min(1),
+}).strict();
+export const suppressionListResponse = z.object({ suppressed: z.array(suppressionRow) }).strict();
+export const suppressionLiftedResponse = z.object({
+  lifted: z.literal(true), address: z.string().min(1), liftId: z.string().min(1),
+}).strict();
+
 export const domainPauseLiftedResponse = z.object({
   lifted: z.object({
     pauseId: z.string().min(1),

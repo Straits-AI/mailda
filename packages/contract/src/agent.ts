@@ -222,6 +222,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "evidence of its own loop.",
     "POST /api/domain-pauses",
     "POST /api/domain-pauses/:pauseId/lift",
+    "POST /api/suppressions/lift",
     "POST /api/butler-pauses/:pauseId/resume",
     "POST /api/butler-runs/:runId/replay",
   ),

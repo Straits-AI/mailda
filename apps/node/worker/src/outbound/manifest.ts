@@ -7,6 +7,7 @@ import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
 import { conflict, notFound } from "../errors.ts";
+import { recipientsSuppressed } from "../suppression.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
 import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
@@ -620,7 +621,14 @@ export async function sealManifest(
    * condition is only asked when some published policy constrains it, while a breaker has no configuration
    * to be absent — it is always in force, so there is nothing to skip.
    */
-  const breakers = await evaluateBreakers(env, ctx, orgId, domainOf(address.address));
+  const breakers = await evaluateBreakers(env, ctx, orgId, domainOf(address.address), [...to, ...cc, ...bcc]);
+  /*
+   * The suppression list (0058) rides in that same statement, and it is a refusal rather than a state: a
+   * recipient the provider said is gone does not become a held send somebody clears for nothing. Thrown
+   * before anything is persisted -- the policy staging above returned statements and wrote none -- and after
+   * the authority refusals, so a suppressed address is never a way to learn a mailbox exists.
+   */
+  if (breakers.suppressed.length > 0) throw recipientsSuppressed(breakers.suppressed);
   let breakerGate: RateReading | null = null;
   let breakerError: string | null = null;
 

@@ -94,6 +94,23 @@ export const sending = {
     });
   },
 
+  /*
+   * The suppression list (0058): derived from the provider's events, so there is nothing to place — only
+   * a list, and a lift that vouches for one address with a reason.
+   */
+  "GET /api/suppressions": async ({ env, who }) => {
+    const { listSuppressions } = await import("../suppression.ts");
+    return Response.json({ suppressed: await listSuppressions(env, who.orgId, who.userId) });
+  },
+
+  "POST /api/suppressions/lift": async ({ request, env, clock, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { liftSuppression } = await import("../suppression.ts");
+    return Response.json(
+      await liftSuppression(env, clock, who.orgId, who.userId, String(body.address ?? ""), String(body.reason ?? "")),
+    );
+  },
+
   /**
    * Outbound (Layer 2). Sealing and dispatching are separate endpoints because they are separate
    * acts (ADR 35) — which is what makes undo-send honest rather than a claim about recall.

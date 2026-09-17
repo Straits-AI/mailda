@@ -89,6 +89,22 @@ The own-domain comparison has no public-suffix list behind it — the registrabl
 labels, three under `co.uk`-shaped suffixes — and the edit distance is one, so `rn` for `m` is a link the
 reader judges. Render-time only: no count is stored, so no Butler guard or quarantine reads it yet.
 
+### Suppression, derived from the provider's own word (0058, 17 September 2026)
+
+There is no suppressions table. `send_recipient_events` already keeps every `email.sending` event verbatim,
+and `src/suppression.ts` reads the list from it: an address whose most recent word was a **hard** bounce
+(`payload.bounce.type = "hard"`) or a complaint is suppressed; a soft bounce is retries exhausted on an
+address that exists, and is not. `sealManifest` asks once per composition and refuses the whole send —
+`E_RECIPIENT_SUPPRESSED`, naming each address, the cause, the provider's words and when — before anything
+is persisted. Not a silent drop: a send with a recipient quietly removed is a different message from the
+one the author sealed.
+
+The one write is the exception. `POST /api/suppressions/lift {address, reason}` is an administrator vouching
+for an address, audited (`suppression.lifted`), and the derivation honours it only for events **before** the
+lift — a bounce after somebody vouched suppresses again. `GET /api/suppressions` lists the list; the Limits
+screen shows it beside the domain pauses. Whether Cloudflare's own `drop_suppressed_recipients` keeps the
+same list is still unmeasured, which is why this Node keeps its own and says so at the seal.
+
 ## What is not built, in the order it should be
 
 1. **A policy that acts on the verdict.** Quarantine above is the fixed case. `dmarc == "fail"` as a
@@ -99,9 +115,9 @@ reader judges. Render-time only: no count is stored, so no Butler guard or quara
    directory to judge what it holds, without extracting it.
 3. **Links, the rest of the row.** Judged at render above. Still open: a stored count a guard or a
    quarantine switch can act on, and a suffix list if a customer's own domain is misjudged.
-4. **Suppression.** The `email.sending` events already carry bounces and complaints; a list derived from
-   them, consulted at seal time, is `send-breakers.md` one step further. Whether Cloudflare's
-   `drop_suppressed_recipients` is the same list is unmeasured.
+4. **Suppression, the measurement.** Built above. Still open: whether Cloudflare's
+   `drop_suppressed_recipients` keeps the same list, which needs a bounced address and a send with the
+   option on — a receipt, not code.
 5. **A classifier.** The one row a model helps with, and the lightweight-edge case: Workers AI text
    classification in the customer's own account, milliseconds a message, no data leaving. Ships as an
    explicit policy signal, receipted for cost and false-positive rate, off by default, never authority.

@@ -212,6 +212,7 @@ const BODIES: Record<string, unknown> = {
   "POST /api/search/repair": { messageIds: [] },
   "POST /api/supervised": { mailboxId: MAILBOX, scope: "metadata", durationSeconds: 3600, reason: "parity" },
   "POST /api/approvals/:approvalId/decide": { decision: "approve" },
+  "POST /api/suppressions/lift": { address: "nobody@parity.example", reason: "parity" },
 };
 
 /**

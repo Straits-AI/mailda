@@ -74,7 +74,8 @@ beforeEach(async () => {
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
-    "mailbox_items", "messages", "cases", "conversations", "ingress_receipts",
+    "mailbox_items", "messages", "cases", "conversations", "ingress_receipts", "send_recipient_events",
+    "suppression_lifts",
     "relationship_tuples", "users", "node_claim",
   ]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
@@ -715,6 +716,34 @@ describe("the governance reads answer what the contract says they do", () => {
 
     const read = await answers("GET", "/api/domain-pauses", { cookie: held }) as { pauses: unknown[] };
     expect(read.pauses).toEqual([]);
+  });
+
+  it("the suppression list, derived from a hard bounce the provider reported, and a lift of it", async () => {
+    /*
+     * The event is seeded as the queue consumer stores it — verbatim payload, provider type — because the
+     * list is derived from that table and nothing else. A soft bounce beside it must not appear.
+     */
+    const held = await cookie();
+    const at = new Date().toISOString();
+    const event = (id: string, recipient: string, kind: "hard" | "soft") => testEnv.CATALOG.prepare(
+      `INSERT INTO send_recipient_events (event_id, org_id, manifest_id, recipient, event_type,
+         transport_message_id, terminal, payload, received_at) VALUES (?,?,NULL,?,?,NULL,1,?,?)`,
+    ).bind(id, ORG, recipient, "cf.email.sending.message.bounced",
+      JSON.stringify({ type: "cf.email.sending.message.bounced", payload: { recipient, bounce: { type: kind, reason: `550 5.1.1 ${kind}` } } }), at);
+    await testEnv.CATALOG.batch([event("evt_hard_1", "gone@example.net", "hard"), event("evt_soft_1", "full@example.net", "soft")]);
+
+    const listed = await answers("GET", "/api/suppressions", { cookie: held }) as {
+      suppressed: Array<{ address: string; cause: string; detail: string | null }>;
+    };
+    expect(listed.suppressed).toEqual([
+      { address: "gone@example.net", cause: "hard_bounce", detail: "550 5.1.1 hard", observedAt: at, eventId: "evt_hard_1" },
+    ]);
+
+    const lifted = await answers("POST", "/api/suppressions/lift", {
+      body: { address: "Gone@example.net", reason: "the mailbox was restored" }, cookie: held,
+    }) as { address: string };
+    expect(lifted.address).toBe("gone@example.net");
+    expect(await answers("GET", "/api/suppressions", { cookie: held })).toEqual({ suppressed: [] });
   });
 
   it("GET /api/policies, after writing one", async () => {
@@ -2034,7 +2063,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(127);
+    expect(coverage.total).toBe(129);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

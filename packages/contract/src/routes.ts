@@ -445,6 +445,18 @@ export const ROUTES = [
   },
   { method: "GET", path: "/api/domain-pauses", summary: "Domains this Node has stopped sending to", authority: { scope: "member" }, response: S.domainPauseListResponse },
   { method: "POST", path: "/api/domain-pauses", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Stop sending to a domain", response: S.domainPauseRequestedResponse },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/suppressions",
+    summary: "Recipients this Node will not send to: the provider's last word was a hard bounce or a complaint (0058)",
+    response: S.suppressionListResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/suppressions/lift",
+    summary: "Vouch for a suppressed recipient, with a reason, so the Node sends to it again",
+    response: S.suppressionLiftedResponse,
+  },
   { method: "POST", path: "/api/domain-pauses/:pauseId/lift", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Resume sending to a domain, which takes more than one person", response: S.domainPauseLiftedResponse },
 
   // ---- Butlers (#49, #50, #75, #77, #87) -------------------------------------------------------------

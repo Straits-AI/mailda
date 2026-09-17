@@ -558,6 +558,15 @@ export const AUDIT_ACTIONS = {
   "message.released": {
     says: "An administrator released a quarantined delivery into its mailbox's queue.",
   },
+  /**
+   * The one act on the derived suppression list (0058). Nothing records a suppression itself — it is the
+   * provider's event, kept verbatim in `send_recipient_events` — so this is the only entry the list has,
+   * and it rides beside the `INSERT INTO suppression_lifts` it vouches for.
+   */
+  "suppression.lifted": {
+    says: "An administrator vouched for a recipient the provider had hard-bounced or that complained, with a "
+      + "reason; the Node will send to it again until the provider says otherwise.",
+  },
   "message.exported": {
     says: "Somebody downloaded one message's original .eml — a complete RFC822 copy, off this Node.",
     disclosure: true,
