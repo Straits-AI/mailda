@@ -14,7 +14,7 @@ values:
 
 **How many messages `GET /api/messages` returns in one page, and what decides it.**
 
-`listMessages` returned `LIMIT 50` from Layer 1 until #91, with no cursor — so the fifty-first message was
+`listMessages` returned `LIMIT 50` from Layer 1 until #91, with no cursor, so the fifty-first message was
 not slow to reach, it was unreachable. The fifty was also unmeasured, which is why this file exists: the
 number stays 50 and now has a reason, a ceiling above it, and a condition that would move it.
 
@@ -25,8 +25,8 @@ query that ships. `authz-check-rows-read.md` records what happens when they do n
 listing *"gained a `UNION` inside its mailbox sub-select and is not separately priced here"*.
 
 **Every figure here rose by exactly 2 on 27 August 2026**, and the cause is worth a line rather than a
-silent re-measure. `messagePageQuery`'s standing-relation arm read `AND relation = 'mailbox.content.read'` —
-one relation — while its own header claimed the columns were what `mailbox.metadata.read` covers. So somebody
+silent re-measure. `messagePageQuery`'s standing-relation arm read `AND relation = 'mailbox.content.read'`,
+one relation, while its own header claimed the columns were what `mailbox.metadata.read` covers. So somebody
 holding exactly the relation the access UI sells as *"See that mail exists"* was shown an empty inbox. The
 predicate now reads `IN (?, ?)` from `RELATIONS_FOR_METADATA`, the sub-select probes one row per relation,
 and every figure below moved by the one extra probe. Nothing about the row shape changed, which is why the
@@ -52,14 +52,14 @@ pressure, and a direct test of whether the index is used.
 | 100 | 410 | 510 | 47,976 |
 | 200 | 810 | **1,010** | 95,473 |
 
-Four seeks per returned row — the receipt, its address, its message, its case — plus the page's one probe
+Four seeks per returned row (the receipt, its address, its message, its case) plus the page's one probe
 row and the tuple sub-select, which probes **two** relations. So `rows_read ≈ 4 × (size + 1) + 6`, and
 `authz.list.max_rows_read = 1000` puts the cost ceiling a little under **200**: at 200 a page bounded to one
 mailbox already reads 1,010.
 
 **These figures were not reproducible when first recorded**, and the fix was in the corpus rather than in
 the table. The keyset order is `(accepted_at, id)`, every fourth delivery in the fixture shares a timestamp
-on purpose, and the receipt ids came from `ctx.id("rcpt")` — random ULIDs. So the id decided every tie, which
+on purpose, and the receipt ids came from `ctx.id("rcpt")`, random ULIDs. So the id decided every tie, which
 decided how far the walk got before the page filled, and the one-mailbox column moved by a row or two
 between runs (506 then 508 at size 100; 134 then 132 at size 25). A receipt whose command prints a different
 number each time is not a receipt. The fixture now uses zero-padded deterministic ids, so lexical order
@@ -80,18 +80,18 @@ in mailbox A, so filling 51 rows takes about 76 receipts.
 | page 5, without `ir_org_accepted` | 5,206 |
 
 **The index is load-bearing and it did not exist.** `ingress_receipts` has been ordered by `accepted_at`
-since Layer 1 and carried no index on it — only the primary key and `ir_derived_key` on `(org_id,
+since Layer 1 and carried no index on it, only the primary key and `ir_derived_key` on `(org_id,
 provider_event_id)`. So *every inbox load already scanned the whole table and sorted it*: 6,006 rows read on
 1,200 deliveries, against a 1,000-row budget, on the first page. That was invisible because the fixtures have
 three messages in them. Migration `0038_inbox_page_order.sql` adds `(org_id, accepted_at, id)`, and the
 measurement above is with and without it in the same run.
 
 **The obvious cursor spelling does not use the index either.** `exports.ts` compares the same two columns as
-`accepted_at || ' ' || id`, which is correct — a space sorts below every character an ISO instant or a
-Crockford ULID can hold — and which SQLite cannot turn into a range constraint, because the left-hand side is
+`accepted_at || ' ' || id`, which is correct (a space sorts below every character an ISO instant or a
+Crockford ULID can hold) and which SQLite cannot turn into a range constraint, because the left-hand side is
 an expression. Measured with that form: page 1 read 207, page 11 read 717, page 20 read 1,176. That is
 `OFFSET`'s cost curve reached by a different route, inside the change made to avoid it. The shipped form is
-two predicates — `accepted_at <= ?` for the range the planner can seek on, then `(accepted_at < ? OR id < ?)`
+two predicates: `accepted_at <= ?` for the range the planner can seek on, then `(accepted_at < ? OR id < ?)`
 for the tie. `test/explain.test.ts` prints all four plans, and the difference between the first three is one clause wide:
 
 ```
@@ -106,8 +106,8 @@ inbox page two (the cursor behind a null guard — also rejected)
 ```
 
 The fourth plan is why `messagePageQuery` assembles its `WHERE` instead of parameterising a fixed one.
-`(? IS NULL OR accepted_at <= ?)` is the shape `exports.ts` uses for optional predicates and it reads better
-— and a disjunction whose first branch does not mention the column is not a constraint, so the optional form
+`(? IS NULL OR accepted_at <= ?)` is the shape `exports.ts` uses for optional predicates and it reads better,
+and a disjunction whose first branch does not mention the column is not a constraint, so the optional form
 plans as a scan even when a cursor *is* present.
 
 No `USE TEMP B-TREE FOR ORDER BY` on any of the three, which is the other half of what the index buys: the
@@ -125,27 +125,27 @@ order is read out of it rather than sorted afterwards.
   correct and costs more audit rows. Keeping the page under the fill keeps one act to one row, which is the
   property `docs/supervised-access.md` already claims and `test/supervised-recording.test.ts` asserts.
 
-50 is under both with margin, and it is what shipped — so no reader's page changes size and the change is
+50 is under both with margin, and it is what shipped, so no reader's page changes size and the change is
 purely that older mail became reachable. **Seven rows of margin under the audit fill is the thin one**, and it
 is the reason `stale_when` names a sibling field added to that entry's detail: one more field lowers the fill,
 and if it fell below 50 the page would start splitting its record. That splits correctly and records
 everything; what it stops being is one row per act.
 
 **Cost if wrong.** Too large: a listing that breaches the list budget on every inbox load, which is a D1 bill
-rather than a failure — nothing refuses, so nothing tells anybody. Too small: more round trips to reach the
+rather than a failure. Nothing refuses, so nothing tells anybody. Too small: more round trips to reach the
 same mail, which is visible and annoying rather than expensive. The asymmetry is why the number is sized
 against the ceilings rather than against how much a person likes scrolling.
 
 ## What this does not fix, with the number so nobody has to guess
 
 **A page bounded to a quiet mailbox is bounded by the archive, not by the page.** Measured: a mailbox holding
-the 3 oldest deliveries of 1,200 answers its 3 rows correctly and reads **2,412** — the whole corpus, twice,
+the 3 oldest deliveries of 1,200 answers its 3 rows correctly and reads **2,412**, the whole corpus twice,
 because the ordering is `accepted_at` and the mailbox is reached through `addresses`.
 
 This is **not** something the mailbox filter introduced. The authorization predicate has the same shape, so a
 reader who may see one mailbox out of ten has always paid this on an unfiltered listing; #91 made it possible
 to ask for it deliberately, and measured it. What would fix it is a per-mailbox ordering to drive the listing
-from — `mailbox_items` is already indexed `(org_id, mailbox_id, time_bucket, sent_at)` and is exactly that —
+from (`mailbox_items` is already indexed `(org_id, mailbox_id, time_bucket, sent_at)` and is exactly that),
 and moving the inbox onto it is a change to what the listing reads rather than to how it pages. It is not in
 #91 and it is not pretended away: the figure is printed by the measurement on every run.
 
