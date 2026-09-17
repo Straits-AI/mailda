@@ -54,13 +54,34 @@ Not a general policy engine, deliberately. The condition is fixed because it is 
 authority is the sender's own domain rather than this Node's guess; a policy that acted on `spf=softfail`
 would be guessing. The row below is still open for the conditions that are not this one.
 
+### Attachments, judged by name and by bytes (0057, 17 September 2026)
+
+A policy, not a scanner. `src/attachments.ts` reads each attached part's name and first bytes from the same
+parse the search index uses, and says one of five words: `executable` (the name says program — `.exe`,
+`.dll`, `.jar`, `.lnk`, `.msi`…), `script` (`.js`, `.vbs`, `.ps1`, `.bat`…; text has no signature, so the
+name decides), `disguised` (the bytes begin `MZ`, `\x7fELF` or a Mach-O magic and the name did not say
+program — an `.exe` renamed `invoice.pdf`), `archive` (a `.zip`/`.rar`/`.7z`/gzip by name or signature,
+Office documents excepted since they are ZIPs by construction), `plain`. The magic numbers are the formats'
+own, published, and `test/node/attachments.test.ts` pins each to the verdict it produces.
+
+`messages.attachments` and `attachments_dangerous` are counted at filing (null before this Node looked, or
+when the body could not be parsed); the body route lists every part with its verdict and none of its bytes;
+Butler guards read both counts; the doctor's `inbound_authentication` counts the week's dangerous ones.
+A mailbox's second switch, `quarantineDangerousAttachments`, holds back a delivery whose count is above
+zero — the same mechanism as the DMARC switch, reason `attachment_dangerous`, released the same way. The
+sender's domain speaks first: a disowned message carrying an executable is held for the DMARC reason.
+
+Archives are named and never opened. Whether a `.zip` holds an executable is not looked at, and the verdict
+says `archive` rather than pretending it has — the *archives-in-archives* case is the part of row 2 still open.
+
 ## What is not built, in the order it should be
 
 1. **A policy that acts on the verdict.** Quarantine above is the fixed case. `dmarc == "fail"` as a
    condition in the closed set Layer 5 has, with the outcomes §18 names, is the general one, and it is still
    open. Today a Butler guard can route on the fact; a policy cannot yet.
-2. **Attachments.** A policy, not a scanner: allowed types, size, executables and archives-in-archives —
-   by extension *and* magic bytes, since one lies.
+2. **Attachments, the rest of the row.** Executables, scripts and disguises are judged above. Still open:
+   a size bound, an allowed-type list a mailbox declares, and archives-in-archives — walking a ZIP's central
+   directory to judge what it holds, without extracting it.
 3. **Links.** Nothing is rewritten (ADR 37); the real destination is shown, lookalikes against the
    customer's own domain are flagged, `javascript:` and `data:` are refused at render.
 4. **Suppression.** The `email.sending` events already carry bounces and complaints; a list derived from

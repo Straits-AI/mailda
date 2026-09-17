@@ -771,6 +771,7 @@ export const mailboxRow = z.object({
   mine: z.number().int().nonnegative(),
   first_response_minutes: z.number().nullable(),
   quarantine_dmarc_fail: z.union([z.literal(0), z.literal(1)]),
+  quarantine_dangerous_attachments: z.union([z.literal(0), z.literal(1)]),
   quarantined: z.number().int().nonnegative(),
   breached: z.number().int().nonnegative(),
   addresses: z.string().nullable(),
@@ -806,6 +807,9 @@ export const messageRow = z.object({
   auth_dmarc: authenticationResult.nullable(),
   auth_dmarc_policy: z.string().nullable(),
   auth_from_domain: z.string().nullable(),
+  /** Attached parts, and how many a mailbox may refuse to queue (0057). `null` before this Node looked. */
+  attachments: z.number().int().nonnegative().nullable(),
+  attachments_dangerous: z.number().int().nonnegative().nullable(),
 }).strict();
 
 export const messageListResponse = z.object({
@@ -1554,10 +1558,26 @@ export const mailboxPatchedResponse = z.object({
   firstResponseMinutes: z.number().int().nullable(),
   /** Whether the mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
   quarantineDmarcFail: z.boolean(),
+  /** Whether it holds back a delivery carrying an executable, a script, or a program under a document's name (0057). */
+  quarantineDangerousAttachments: z.boolean(),
+}).strict();
+
+/**
+ * What an attached part is (0057), from its name and its first bytes (`src/attachments.ts`). `disguised` is a
+ * program under a document's name. `archive` says only that it is one: nothing opens it.
+ */
+export const attachmentVerdict = z.enum(["executable", "script", "archive", "disguised", "plain"]);
+export type AttachmentVerdict = z.infer<typeof attachmentVerdict>;
+
+export const attachmentSummary = z.object({
+  filename: z.string().nullable(),
+  declaredType: z.string(),
+  bytes: z.number().int().nonnegative(),
+  verdict: attachmentVerdict,
 }).strict();
 
 /** Why a delivery was held back (0056): the sender's domain failed DMARC and asked receivers to do this. */
-export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine"]);
+export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous"]);
 export type QuarantineReason = z.infer<typeof quarantineReason>;
 
 /** One delivery held back from every queue (0056), and why, for an administrator deciding whether to let it in. */
@@ -2341,6 +2361,8 @@ export const messageBodyResponse = z.object({
   blockedRemote: z.number().int().nonnegative(),
   truncated: z.boolean(),
   problem: z.string().nullable(),
+  /** Every attached part, named and judged; the bytes stay in the original. Empty when `state` is `unparsed`. */
+  attachments: z.array(attachmentSummary),
 }).loose();
 
 /** Releasing a send a policy put on hold (#60). One field, because there is one question. */

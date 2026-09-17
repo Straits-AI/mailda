@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { messageBodyResponse } from "@mailda/contract/schemas";
+
 import { answerWith, reset } from "./session-stub.ts";
 import { CONTENT_SECURITY_POLICY } from "../../src/security-headers.ts";
 
@@ -56,14 +58,18 @@ const MESSAGE = {
 };
 
 /** What `/api/messages/:id/body` returns for an HTML message: sanitised markup, for a sandboxed frame. */
-const BODY = {
+// Parsed against the contract, so this fixture cannot drift into a body shape the Node never sends — the
+// shape it had before 0057 lacked `attachments`, and the pane crashed on it while the test still described
+// a Node that no longer existed.
+const BODY = messageBodyResponse.parse({
   state: "html",
   html: "<p>Invoice 4417 is attached.</p>",
   text: null,
   blockedRemote: 1,
   truncated: false,
   problem: null,
-};
+  attachments: [{ filename: "invoice-4417.pdf", declaredType: "application/pdf", bytes: 20480, verdict: "plain" }],
+});
 
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

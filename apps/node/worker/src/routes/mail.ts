@@ -110,14 +110,15 @@ export const mail = {
   "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     /*
-     * Two settings since 0056, and a PATCH naming `quarantineDmarcFail` changes only that. The target keeps
+     * Three settings since 0057, and a PATCH naming a quarantine switch changes only that. The target keeps
      * its older reading — absent and null are the same request, "promise nothing" — because it was the only
      * field for a month and callers send `{}` to clear it; the switch is a boolean and has no such default.
      */
-    if (typeof body.quarantineDmarcFail === "boolean") {
+    for (const [field, which] of [["quarantineDmarcFail", "dmarc"], ["quarantineDangerousAttachments", "attachments"]] as const) {
+      if (typeof body[field] !== "boolean") continue;
       const { setQuarantineSwitch } = await import("../mailbox-policy.ts");
       return Response.json(
-        await setQuarantineSwitch(env, clock, who.orgId, who.userId, params.mailboxId, body.quarantineDmarcFail),
+        await setQuarantineSwitch(env, clock, who.orgId, who.userId, params.mailboxId, which, body[field]),
       );
     }
     const raw = body.firstResponseMinutes;

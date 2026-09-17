@@ -1075,6 +1075,9 @@ tbody a { font-size: .8rem; }
   background: var(--ground-2);
 }
 .message-text { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: .82rem; }
+/* Attached parts, listed above the body: a name, a type, a size and — only when there is one — a word. */
+.attachments { list-style: none; padding: 0; margin: 0 0 .75rem; font-size: .82rem; }
+.attachments li { padding: .2rem 0; border-bottom: 1px solid var(--rule); }
 
 /* ---- ledgers ----------------------------------------------------------------------------- */
 

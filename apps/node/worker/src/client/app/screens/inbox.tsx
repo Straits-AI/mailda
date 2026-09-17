@@ -30,6 +30,44 @@ interface RenderedBody {
   blockedRemote: number;
   truncated: boolean;
   problem: string | null;
+  attachments: Array<{
+    filename: string | null;
+    declaredType: string;
+    bytes: number;
+    verdict: "executable" | "script" | "archive" | "disguised" | "plain";
+  }>;
+}
+
+const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
+  plain: null,
+  archive: "an archive; what is inside has not been looked at",
+  executable: "a program",
+  script: "a script",
+  disguised: "a program under a document's name",
+};
+
+/**
+ * What was attached, named and judged, with no way to open it from here: the bytes stay in the original,
+ * which the raw download carries whole. A verdict is a word a person can check against the file, not a scan.
+ */
+function Attachments({ parts }: { parts: RenderedBody["attachments"] }) {
+  if (parts.length === 0) return null;
+  return (
+    <ul className="attachments" aria-label="Attachments">
+      {parts.map((part, index) => {
+        const word = VERDICT_WORDS[part.verdict];
+        return (
+          <li key={index}>
+            <span className="mono">{part.filename ?? "(unnamed)"}</span>{" "}
+            <span className="dim">{part.declaredType} · {Math.max(1, Math.round(part.bytes / 1024))} KB</span>
+            {word === null ? null : (
+              <span className={part.verdict === "archive" ? "dim" : "bad"}> — {word}</span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function received(at: string): string {
@@ -74,6 +112,7 @@ function MessageBody({ id }: { id: string }) {
         </p>
       ) : null}
       {rendered.truncated ? <p className="notice dim">Shown truncated. The original is complete.</p> : null}
+      <Attachments parts={rendered.attachments} />
       {rendered.state === "html" && rendered.html !== null ? (
         <iframe
           className="message-body"

@@ -1,5 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
+import { type AttachmentSummary, summariseAttachments } from "../attachments.ts";
+
 /**
  * Extracting a message body, and rendering it without trusting it (ADR 37, ADR 38).
  *
@@ -120,6 +122,8 @@ export interface ExtractedBody {
   text: string | null;
   /** True when the source exceeded the render bound. Stated, never silently cut (§5C). */
   truncated: boolean;
+  /** Every attached part, named and judged, and none of its bytes: the original `.eml` is where those live. */
+  attachments: AttachmentSummary[];
 }
 
 /**
@@ -147,6 +151,7 @@ export async function extractBody(raw: Uint8Array): Promise<ExtractedBody> {
     html: rawHtml === null ? null : rawHtml.slice(0, MAX_BODY_BYTES),
     text: rawText === null ? null : rawText.slice(0, MAX_BODY_BYTES),
     truncated: overBound,
+    attachments: summariseAttachments(parsed.attachments),
   };
 }
 
@@ -293,6 +298,7 @@ export interface RenderedBody {
   truncated: boolean;
   /** Set when `state` is `unparsed`: what went wrong, in the reader's terms. */
   problem: string | null;
+  attachments: AttachmentSummary[];
 }
 
 export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
@@ -308,6 +314,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
       text: null,
       blockedRemote: 0,
       truncated: false,
+      attachments: [],
       problem:
         `This message's body could not be read (${(error as Error).message.split("\n")[0]}). ` +
         `The original is unchanged and can still be downloaded.`,
@@ -329,6 +336,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
           text: extracted.text,
           blockedRemote,
           truncated: extracted.truncated,
+      attachments: extracted.attachments,
           problem:
             "Nothing in this message's HTML survived sanitising. " +
             (extracted.text === null
@@ -343,6 +351,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
         text: extracted.text,
         blockedRemote,
         truncated: extracted.truncated,
+      attachments: extracted.attachments,
         problem: null,
       };
     } catch (error) {
@@ -356,6 +365,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
         text: extracted.text,
         blockedRemote: 0,
         truncated: extracted.truncated,
+      attachments: extracted.attachments,
         problem:
           `This message's HTML could not be rendered safely ` +
           `(${(error as Error).message.split("\n")[0]}). ` +
@@ -373,6 +383,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
       text: extracted.text,
       blockedRemote: 0,
       truncated: extracted.truncated,
+      attachments: extracted.attachments,
       problem: null,
     };
   }
@@ -383,6 +394,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
     text: null,
     blockedRemote: 0,
     truncated: extracted.truncated,
+    attachments: extracted.attachments,
     problem: null,
   };
 }

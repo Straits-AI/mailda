@@ -1,5 +1,6 @@
 import { BUDGETS } from "@mailda/budgets";
 
+import type { AttachmentSummary } from "./attachments.ts";
 import { extractBody } from "./render/body.ts";
 
 /**
@@ -81,9 +82,9 @@ export function wordsFromHtml(html: string): string {
  */
 export type IndexableBody =
   /** Text to index. */
-  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "text"; readonly text: string; readonly attachments: AttachmentSummary[] }
   /** Read and parsed, and there is no body text. A headers-only message. Terminal and ordinary. */
-  | { readonly kind: "empty" }
+  | { readonly kind: "empty"; readonly attachments: AttachmentSummary[] }
   /** The parser could not read it. Terminal and worth an operator knowing, unlike `empty`. */
   | { readonly kind: "unparseable"; readonly why: string };
 
@@ -127,6 +128,6 @@ export async function indexableText(raw: Uint8Array): Promise<IndexableBody> {
   if (extracted.html !== null) parts.push(wordsFromHtml(extracted.html));
 
   const joined = parts.join(" ").trim();
-  if (joined === "") return { kind: "empty" };
-  return { kind: "text", text: joined.slice(0, MAX_INDEXED) };
+  if (joined === "") return { kind: "empty", attachments: extracted.attachments };
+  return { kind: "text", text: joined.slice(0, MAX_INDEXED), attachments: extracted.attachments };
 }

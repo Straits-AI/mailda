@@ -125,6 +125,13 @@ export type DeliveryFacts = {
   readonly dmarc: string | null;
   readonly spf: string | null;
   readonly dkim: string | null;
+  /**
+   * How many parts were attached, and how many of them are an executable, a script, or a program under a
+   * document's name (0057, `src/attachments.ts`). Null on a message from before this Node looked, or whose
+   * body could not be parsed. Operational: counts about files, not a word of the message or a name of one.
+   */
+  readonly attachments: number | null;
+  readonly attachments_dangerous: number | null;
 };
 
 /**
@@ -166,7 +173,7 @@ export type DeliveryFacts = {
  *
  * Nothing has to be remembered for that to be caught. `deliveryFacts` below is the sole producer, the map is
  * total over its type so a new field does not compile unclassified, and `test/butler-replay.test.ts` pins
- * these ten keys by name — so a body-grade fact cannot arrive without a person editing all three and being
+ * these keys by name — so a body-grade fact cannot arrive without a person editing all three and being
  * asked which authority it takes.
  */
 export const FACT_DISCLOSURE: { [K in keyof DeliveryFacts]: "content" | "operational" } = {
@@ -179,6 +186,8 @@ export const FACT_DISCLOSURE: { [K in keyof DeliveryFacts]: "content" | "operati
   dmarc: "operational",
   spf: "operational",
   dkim: "operational",
+  attachments: "operational",
+  attachments_dangerous: "operational",
   subject: "content",
   from: "content",
   return_path: "content",
@@ -289,7 +298,7 @@ export async function deliveryFacts(
 ): Promise<DeliveryFacts | null> {
   const row = await env.CATALOG.prepare(
     `SELECT m.id AS message_id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
-            m.auth_dmarc, m.auth_spf, m.auth_dkim,
+            m.auth_dmarc, m.auth_spf, m.auth_dkim, m.attachments, m.attachments_dangerous,
             r.envelope_from, a.mailbox_id, a.address AS mailbox_address, k.id AS case_id
        FROM messages m
        JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
@@ -302,6 +311,7 @@ export async function deliveryFacts(
     envelope_from: string | null; received_at: string; parse_error: string | null; mailbox_id: string;
     mailbox_address: string; case_id: string | null;
     auth_dmarc: string | null; auth_spf: string | null; auth_dkim: string | null;
+    attachments: number | null; attachments_dangerous: number | null;
   }>();
   if (row === null) return null;
   return {
@@ -324,6 +334,8 @@ export async function deliveryFacts(
     dmarc: row.auth_dmarc,
     spf: row.auth_spf,
     dkim: row.auth_dkim,
+    attachments: row.attachments,
+    attachments_dangerous: row.attachments_dangerous,
   };
 }
 
