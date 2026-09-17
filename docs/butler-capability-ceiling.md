@@ -1,8 +1,8 @@
 # The capability ceiling and the sponsor
 
 Layer 4's shape decision 4, built. [#51](https://github.com/Straits-AI/mailda/issues/51) settled the other
-two halves of its ticket — a Butler is a bare typed-prefix subject with no row behind it, and `send.propose`
-stays bound to the mailbox — and left the manifest itself:
+two halves of its ticket (a Butler is a bare typed-prefix subject with no row behind it, and `send.propose`
+stays bound to the mailbox) and left the manifest itself:
 
 ```text
 effective(step) = pinned ceiling ∩ live tuples of the Butler ∩ live tuples of the sponsor
@@ -34,30 +34,30 @@ it lives:
 ```
 
 **A ceiling grants nothing.** An administrator still has to write a tuple naming the `btl_`. What the
-ceiling does is remove: an action it does not name is an action no later grant can ever supply, which is the
+ceiling does is remove. An action it does not name is an action no later grant can ever supply, which is the
 whole of the blueprint's promise that *"new grants do not silently expand a published Butler; republish is
 required"* (blueprint:2769).
 
 ### Three actions, and only three
 
-`mailbox.metadata.read`, `mailbox.content.read`, `send.propose` — exactly the relations a **shipped node can
+`mailbox.metadata.read`, `mailbox.content.read`, `send.propose`: exactly the relations a **shipped node can
 require**. `approval.decide`, `message.export`, `ediscovery.export` and `supervised.read` are real relations
-in `access.ts` that no node checks, so a ceiling naming one would be a declaration nothing reads: the
+in `access.ts` that no node checks, so a ceiling naming one would be a declaration nothing reads. That is the
 `mailbox.metadata.read` hole pointing the other way, where a relation was checked by nothing and therefore
 conferred nothing.
 
 ### One resource grain, and §16's example is amended to it
 
 `mailbox:<address>`. §16's example wrote `sender:enquiries@example.com`, and #51 settled that **the resource
-is the mailbox**: `addresses` is unique on `(org_id, address)` and not on `mailbox_id`, `send_manifests`
+is the mailbox**. `addresses` is unique on `(org_id, address)` and not on `mailbox_id`, `send_manifests`
 carries a `mailbox_id`, and ADR 36 makes `From` the mailbox. §16 and §29 are amended in the same change as
 this file, per AGENTS.md's rule that divergence is a bug in both places.
 
-`case_type:` and `llm_profile:` — §16's other two grains — are **refused by name** at publication, because
+`case_type:` and `llm_profile:`, §16's other two grains, are **refused by name** at publication, because
 both name objects that do not exist in this schema. Admitting them would be a ceiling entry that publishes
 and bounds nothing.
 
-The value is an address rather than a `mbx_` ULID because an author writes a document: they know
+The value is an address rather than a `mbx_` ULID because an author writes a document. They know
 `enquiries@example.com` and `trigger.mailbox` is already one, so a ceiling in ids would make one document
 speak two languages about one mailbox.
 
@@ -74,17 +74,17 @@ Two refusals, and between them the ceiling's **action set is exactly the action 
 The requirement per node type is a **total map** over the shipped set (`packages/butler-ast/src/capability.ts`),
 so a node moving from reserved to shipped without an entry does not compile, and the compiler asks the one
 question that matters: *what authority does this node take?* Nine of the fourteen shipped kinds need nothing,
-and every one of them performs no I/O — the same line `cost.ts` draws, for the same reason. `lookup` depends
+and every one of them performs no I/O, the same line `cost.ts` draws, for the same reason. `lookup` depends
 on its entity, because a message's subject and sender *are* content while a case is queue metadata and a
 draft is bounded by authorship rather than by any mailbox relation.
 
 **The over-declaration refusal is the one worth arguing for.** A ceiling padded *just in case* is a ceiling
-that does not bind: declaring `mailbox.content.read` for a Butler that reads nothing is a pre-authorisation
+that does not bind. Declaring `mailbox.content.read` for a Butler that reads nothing is a pre-authorisation
 for a node the author has not written, and adding that node later is exactly the moment republication exists
 to make deliberate.
 
 It also answers the obvious objection. If the action set is derivable, is the declaration not two places
-holding one fact — the correspondence problem this AST refuses for `join`'s absent `of` list and ADR 35's
+holding one fact, the correspondence problem this AST refuses for `join`'s absent `of` list and ADR 35's
 effect key? It is, and the difference is that **publication proves the two agree**, which is the remedy
 `join` could never have because nothing there could check. What the author supplies that nothing can derive
 is *which mailbox*.
@@ -92,7 +92,7 @@ is *which mailbox*.
 ### What publication cannot check
 
 The resource. A node's mailbox is an `Expr`, and `packages/butler-ast` deliberately does not parse
-expressions — `"${event.mailbox_id}"` and `"mbx_01J…"` are both opaque non-empty strings there. So the
+expressions. `"${event.mailbox_id}"` and `"mbx_01J…"` are both opaque non-empty strings there. So the
 resource half is unverifiable at publication **by construction**, and it is enforced at runtime instead, per
 step, in the statement that already asks about tuples.
 
@@ -101,21 +101,21 @@ step, in the statement that already asks about tuples.
 The ceiling is inside `ast_json`, so `btv_frozen` (migration 0027) already refuses to move it, `ast_sha256`
 already fingerprints it, and `src/butlers.ts` already derives it from `source_text` so it cannot disagree
 with what its author wrote. A column on `butler_versions` was the alternative and is worse in all three of
-those ways — most of all the first, because a fourth content column is a fourth thing to remember in a
+those ways, most of all the first, because a fourth content column is a fourth thing to remember in a
 trigger whose first draft was found to have a two-statement bypass.
 
 ### The cost of that, paid once: every version published before #51 stops running
 
 Frozen cuts both ways, and this is the half worth saying out loud. `capabilities` is a **required** key, so a
-version published before this change does not check: `checkButler` refuses it with `E_BUTLER_MALFORMED`, and
+version published before this change does not check. `checkButler` refuses it with `E_BUTLER_MALFORMED`, and
 because `interpret` re-checks the stored AST on every run, that version refuses each run with
-`ast_does_not_check` and the checker's finding in the operational log. It cannot be repaired in place —
+`ast_does_not_check` and the checker's finding in the operational log. It cannot be repaired in place.
 `btv_frozen` is what makes the ceiling pinned, and it does not have an exception for this. The remedy is
 republication, which is what publication already means here.
 
-The direction is the safe one: a Butler with no declared ceiling stops rather than runs unbounded, loudly,
+The direction is the safe one. A Butler with no declared ceiling stops rather than runs unbounded, loudly,
 per run, with a finding naming the missing key. It is stated here and in `docs/butler-ast.md` because nothing
-enforces it and no migration records it — the change is to what a stored document must contain, and there is
+enforces it and no migration records it. The change is to what a stored document must contain, and there is
 no column to write an expand/contract note against.
 
 ---
@@ -127,14 +127,14 @@ no column to write an expand/contract note against.
 §7's own sentence separates the terms: *"the intersection of the authenticated principal, **sponsoring
 grant**, immutable Butler/version capability manifest, … live relationship"* (blueprint:702). §16's
 delegation flow says what a sponsor does: *"Sponsor selects mailbox, readable data, actions, senders,
-recipient constraints, budget, expiry and approval requirements"* (blueprint:485) — the sponsor is **whoever
+recipient constraints, budget, expiry and approval requirements"* (blueprint:485). The sponsor is **whoever
 declares the bound**. In this Node the bound is `capabilities:` in the source text and the act that makes it
 live is publication, which `butlers.ts` gates on `org.admin`. So the sponsor is the publisher.
 
 ### This does not undo #50, and the reason is one sentence
 
 #50 decided a Butler's **principal** is the Butler, and explicitly rejected the publisher on four counts. All
-four are about *identity*; none is about *capping*, and **an intersection is monotone downward** — adding the
+four are about *identity*. None is about *capping*, and **an intersection is monotone downward**: adding the
 sponsor term can only ever remove authority, never add it.
 
 | #50's objection to the publisher as principal | why capping is not that |
@@ -149,21 +149,21 @@ be done and can only subtract. That is why capping is safe exactly where identif
 
 ### Revocation, and departure
 
-**Revocation stops the Butler on the next node.** Nothing about the sponsor term is cached — it is two live
+**Revocation stops the Butler on the next node.** Nothing about the sponsor term is cached. It is two live
 queries per check, exactly like every human check in this Node (§7, §28). The stop is *visible* rather than
 silent: the effect row records `sponsor_lacks_it`, which the run listing shows and an operator can filter on.
 That matters because a ceiling that quietly empties and a Butler that quietly does nothing look identical
 from the outside, which is why the three refusal reasons stay distinguishable.
 
 **Departure is revocation, and that is a statement about this Node rather than about people.** There is no
-deactivation flag and no `DELETE FROM users` anywhere in this Worker — checked, not assumed — so the only way
+deactivation flag and no `DELETE FROM users` anywhere in this Worker (checked, not assumed), so the only way
 somebody stops holding authority is that an administrator revokes it. See the residual below for what that
 does not close.
 
 ### A published version with no publisher is refused
 
 Unreachable through `publishButler` and unwritable since 0031, so it means a hand-edited row. The run refuses
-with `sponsor_unknown` rather than defaulting, because every available default is wrong: an empty sponsor
+with `sponsor_unknown` rather than defaulting, because every available default is wrong. An empty sponsor
 would make the term match nothing and read as a revocation, and treating the absence as *"no sponsor term"*
 would silently delete a term of §7's intersection for exactly the row that could not account for itself.
 
@@ -175,10 +175,10 @@ would silently delete a term of §7's intersection for exactly the row that coul
 UPDATE butler_versions SET published_by = 'usr_someone_with_more' WHERE id = 'btv_…';
 ```
 
-One statement, no error, and a frozen program's ceiling now capped against a different person's authority —
+One statement, no error, and a frozen program's ceiling now capped against a different person's authority,
 with the AST untouched and every digest still matching. Same class as the two holes #49 found and closed in
 0027, reached through the one column that became a content column the day the sponsor term was built.
-`published_at` joins it for a smaller reason, stated so it is not read as an oversight: a publication whose
+`published_at` joins it for a smaller reason, stated so it is not read as an oversight. A publication whose
 *who* is frozen and whose *when* is not is a record that can still be made to lie about which of two versions
 went live first.
 
@@ -190,20 +190,20 @@ went live first.
 `authz.check.max_queries = 2`:
 
 1. **The ceiling is free.** It lives on the version row the run has already loaded to get its AST. What it
-   costs is a sub-select over `addresses`, which is UNIQUE on `(org_id, address)` — one index seek per
+   costs is a sub-select over `addresses`, which is UNIQUE on `(org_id, address)`: one index seek per
    declared address, inside a statement that was going to be issued anyway.
 2. **The sponsor's subjects: one query.** `readableSubjects`, shared with every human check rather than
    rewritten, because the sponsor's subjects and the sponsor's own checks must agree about who they are.
-3. **Both tuple terms in one query.** The Butler needs no team expansion: `team_members.user_id` holds users
+3. **Both tuple terms in one query.** The Butler needs no team expansion. `team_members.user_id` holds users
    and a Butler's subject is a `btl_`, so that read returns nothing by construction. #51 calls that a feature
-   rather than a limitation — a Butler inheriting a team's grants is exactly how a declared ceiling stops
+   rather than a limitation. A Butler inheriting a team's grants is exactly how a declared ceiling stops
    meaning anything, because the ceiling would float with the team's grants.
 
 ### The subtlety, in the resolution's own words
 
 An `IN` list over subjects answers *"does **any** of these hold it"*, which is an **OR**. The intersection
 needs an **AND**. Written flat, as one `subject_id IN (butler, sponsor, …sponsorTeams)` with a `LIMIT 1`, a
-Butler holds whatever its sponsor holds — the sponsor's row alone satisfies the predicate — and nothing
+Butler holds whatever its sponsor holds, because the sponsor's row alone satisfies the predicate, and nothing
 notices.
 
 There are two shapes here, one conversion:
@@ -224,15 +224,15 @@ SELECT DISTINCT subject_id AS holder
 ```
 
 **Where the step discovers its mailbox** (`lookup`, `case.assign`, `case.close`), the mailbox is the query's
-*output* — you cannot ask which subjects hold a relation on a mailbox before you know which mailbox it is —
-so the terms are folded into that same statement as a ceiling sub-select and **two `EXISTS` clauses joined by
+*output*. You cannot ask which subjects hold a relation on a mailbox before you know which mailbox it is, so
+the terms are folded into that same statement as a ceiling sub-select and **two `EXISTS` clauses joined by
 SQL's own `AND`**. The OR lives *inside* the sponsor's clause, over the sponsor's subjects, which is where an
 OR is correct.
 
 Two shapes of one rule is the thing `authz-read.ts` warns about, so the agreement is checked rather than
-argued: `test/butler-capability.test.ts` walks all eight combinations of the three terms and asserts the two
+argued. `test/butler-capability.test.ts` walks all eight combinations of the three terms and asserts the two
 shapes answer alike. **The two combinations where exactly one of the two subjects holds the relation are the
-whole defect** — a flat `IN` list passes the other six.
+whole defect.** A flat `IN` list passes the other six.
 
 ### Three refusal reasons, because §5C requires three
 
@@ -247,13 +247,13 @@ sponsor in the operational log.
 
 **They are separable only where the step names its own mailbox.** A read that discovers its mailbox cannot
 separate *"the ceiling does not name that mailbox"* from *"no tuple grants it"* without a second query, and
-asking would also answer a question §5C wants left unanswered: absent and forbidden must look alike, so a
+asking would also answer a question §5C wants left unanswered. Absent and forbidden must look alike, so a
 Butler cannot be used as an oracle for which ids exist. Those nodes record `not_readable` or
 `case_not_actionable`, exactly as they did before.
 
 One exception, stated because a reader would otherwise look for a bug: **`mail.send.propose` never records
 `butler_not_granted`.** Its mailbox is the draft's, which is unknown until `readDraft` has run, and
-`readDraft` re-checks `send.propose` itself — so a Butler holding no tuple is refused there with Layer 2's
+`readDraft` re-checks `send.propose` itself. So a Butler holding no tuple is refused there with Layer 2's
 `E_MAY_NOT_SEND_AS_MAILBOX`, before the intersection is asked.
 
 ### What it costs, measured
@@ -285,11 +285,11 @@ described honestly.
   (`E_NO_SUCH_PARENT`), and that check is bounded by the Butler's own tuples, not by this ceiling. `inReplyTo`
   is an `Expr` and the parent's mailbox is not knowable at publication, so a later grant of
   `mailbox.content.read` on some other mailbox does let a published Butler thread onto a parent there. What it
-  discloses is that a reply is in that thread; the recipients still come from the trigger (#52), and the reply
+  discloses is that a reply is in that thread. The recipients still come from the trigger (#52), and the reply
   is still addressed from a mailbox the ceiling names.
 - **The trigger's own mailbox.** A Butler that only guards on `event.subject` and stops reads mail content
-  with no capability declared. It discloses nothing — it cannot draft, send, assign or look anything up
-  without declaring an action — and the run's recorded facts are separately gated by `inspectRun`'s
+  with no capability declared. It discloses nothing, since it cannot draft, send, assign or look anything up
+  without declaring an action, and the run's recorded facts are separately gated by `inspectRun`'s
   `mayReadMetadata` (#63). Left as it is rather than requiring a declaration nothing would check.
 - **A sponsor who has left and whose tuples were not revoked.** This Node has no user lifecycle: no
   deactivation flag, no delete path. So "the sponsor left" is expressible only as "somebody revoked their
@@ -299,10 +299,10 @@ described honestly.
 - **The two-relation imprecision, in both of the places it appears.** A check that accepts
   `mailbox.metadata.read` **or** `mailbox.content.read` unions the ceiling's addresses for both, so a ceiling
   declaring only the weaker one passes on a mailbox where the Butler holds the stronger. The same looseness
-  sits between the two tuple terms: each is a `relation IN (…)`, so the Butler may hold `metadata.read` while
+  sits between the two tuple terms. Each is a `relation IN (…)`, so the Butler may hold `metadata.read` while
   the **sponsor** holds `content.read` and both terms are satisfied by different relations. Every read that
-  names the pair returns metadata-grade columns — a case's state and assignee, a conversation's grouping, a
-  mailbox's name — so both actions authorize what is disclosed either way. The one-relation checks are exact
+  names the pair returns metadata-grade columns (a case's state and assignee, a conversation's grouping, a
+  mailbox's name), so both actions authorize what is disclosed either way. The one-relation checks are exact
   and they are the ones that matter: `mailbox.content.read` for a message, `send.propose` for every effect.
   Making the pair exact would mean asking per relation, which is a second round trip for a distinction that
   changes no disclosure.
@@ -310,13 +310,13 @@ described honestly.
 ## Still not built
 
 - **`case_type:` and `llm_profile:` grains**, refused by name, because both name objects that do not exist.
-- **A per-sender grain.** `sender:enquiries@example.com` is more expressive and genuinely wanted eventually —
-  a shared mailbox whose invoicing address only two people may send as is a real arrangement — but it moves
+- **A per-sender grain.** `sender:enquiries@example.com` is more expressive and wanted eventually.
+  A shared mailbox whose invoicing address only two people may send as is a real arrangement. But it moves
   `maySend`'s signature and every call site, stops `object_id` being a `mbx_` ULID for that relation, and
   requires re-arguing ADR 36 rather than citing it (#51).
 - **The capability preview**, the surface that would show an author the three reasons *before* a run rather
-  than after one. The three reasons exist and are recorded; nothing renders them, because there is still no
+  than after one. The three reasons exist and are recorded. Nothing renders them, because there is still no
   authoring channel at all (`src/butlers.ts` header). It arrives with that channel.
 - **A sponsor who is not the publisher.** A `sponsor:` field in `metadata` would let an administrator publish
-  on somebody else's authority, which is a real arrangement and a real hazard — it lets one person cap a
+  on somebody else's authority, which is a real arrangement and a real hazard. It lets one person cap a
   program against a colleague who never agreed. It needs consent, which needs a channel.

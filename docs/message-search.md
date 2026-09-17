@@ -17,7 +17,7 @@ Implemented by `apps/node/worker/src/search.ts` (the indexes and their writers),
 | `message_body_search` | a term index of the body, **contentless** | `content.read` only |
 
 A searched page is the union of two arms, each driven by its own virtual table, each ranked and capped. They
-are separate because a grant of scope `metadata` must reach the subject index and **not** the body one — a
+are separate because a grant of scope `metadata` must reach the subject index and **not** the body one. A
 person permitted to see who wrote and what about is not thereby permitted the text.
 
 `message_body_search` is `content = ''`, so it stores no body text. That is deliberate and it has a
@@ -28,12 +28,12 @@ than failing. Showing the matching line means fetching the message from R2 and d
 ## A searched page is ranked and capped, and has no cursor
 
 Ordered by `bm25` rank, capped at one page, and `next_cursor` is always null. That is a property of the
-ordering rather than a limitation anybody settled for: rank depends on corpus-wide term frequency, so it
-shifts every time mail arrives — which in a mail system is continuously — and a cursor into a ranked list
+ordering rather than a limitation anybody settled for. Rank depends on corpus-wide term frequency, so it
+shifts every time mail arrives, which in a mail system is continuously, and a cursor into a ranked list
 would skip and repeat rows **silently**.
 
 So a search answers one page of the best matches and says so. Narrowing the words is how to see different
-mail; paging is not.
+mail. Paging is not.
 
 ## The date window (#153)
 
@@ -47,22 +47,22 @@ result to fill `LIMIT`. Measured at **4,335 rows read against a 1,000-row budget
 a bare term answered in 771.
 
 Filtering *outside* the arms was rejected for a worse reason than cost. The arms cap by rank first, so the
-window would filter an already-capped set — and *"mail about demurrage since October"* would answer
+window would filter an already-capped set, and *"mail about demurrage since October"* would answer
 **nothing** whenever October's demurrage mail ranked below the cap. A wrong answer to a reasonable question,
 silently.
 
-0054 puts the date in both indexes as a token — `d20260801`, one per row, in its own `day` column — so the
+0054 puts the date in both indexes as a token, `d20260801`, one per row, in its own `day` column, so the
 window **narrows** the match before the cap instead of filtering after it. Measured on a 120-day corpus:
 
 | window | tokenised | residual filter |
 |:--|--:|--:|
 | one day | **20** | 2,386 |
-| seven days | 140 | — |
+| seven days | 140 | not measured |
 | sixty days | 1,188 | 2,970 |
 | none | 2,376 | 2,376 |
 
-And tripling the corpus over the same 120 days moved the unwindowed figure to 7,128 while the seven-day
-window moved to 416: **windowed cost tracks the window, unwindowed cost tracks the archive.**
+Tripling the corpus over the same 120 days moved the unwindowed figure to 7,128 while the seven-day window
+moved to 416. **Windowed cost tracks the window; unwindowed cost tracks the archive.**
 
 ### Day granularity, and why an instant is refused rather than rounded
 
@@ -77,16 +77,16 @@ An instant still works on an unsearched listing, which compares `accepted_at` di
 
 ### Four more refusals, each naming its figure
 
-- **`E_MESSAGE_PAGE_WINDOW_SEARCH_OPEN`** — a searched window needs a `since`. `until` alone is unbounded
+- **`E_MESSAGE_PAGE_WINDOW_SEARCH_OPEN`.** A searched window needs a `since`. `until` alone is unbounded
   backwards, and the token set is enumerated, so it would be one term per day back to the oldest mail here.
-- **`E_MESSAGE_PAGE_WINDOW_SEARCH_WIDE`** — at most `MAX_WINDOW_DAYS` (100) days. A bound on the *query's own
+- **`E_MESSAGE_PAGE_WINDOW_SEARCH_WIDE`.** At most `MAX_WINDOW_DAYS` (100) days. A bound on the *query's own
   size*, since the window is one token per day. Sized, not measured, and `message-search-cost.md` says so.
-- **`E_MESSAGE_PAGE_WINDOW_SEARCH_BUSY`** — at most `search.max_window_messages` (400) messages in the
+- **`E_MESSAGE_PAGE_WINDOW_SEARCH_BUSY`.** At most `search.max_window_messages` (400) messages in the
   window, **counted before the search runs**.
-- **`E_MESSAGE_PAGE_WINDOW_SEARCH_FUTURE`** — a `since` later than the window's end, which covers no days
+- **`E_MESSAGE_PAGE_WINDOW_SEARCH_FUTURE`.** A `since` later than the window's end, which covers no days
   at all. Added after it was found to be a **500**: `daysAcross` walks `at <= end` and returns `[]`, the
   impossible-window refusal needs *both* bounds so it never saw this one, and the width check reads
-  `0 > 100`. `day:()` reached SQLite, which answers `fts5: syntax error near ")"`. No attack needed — a
+  `0 > 100`. `day:()` reached SQLite, which answers `fts5: syntax error near ")"`. No attack needed. A
   client in UTC+13 sending its own local date is already ahead of this Node's UTC clock.
 
 The `BUSY` one is worth understanding, because #153 said it could not exist:
@@ -95,8 +95,8 @@ The `BUSY` one is worth understanding, because #153 said it could not exist:
 > case and refuses the expensive one
 
 True of a residual filter, where cost tracks the match set and the match set is the corpus for a term the
-index cannot narrow. Tokenised, cost tracks the **intersection** — a rare term in a sixty-day window read 12
-rows where a common term read 1,188 — at roughly two rows read per message in the window, one per arm. So the
+index cannot narrow. Tokenised, cost tracks the **intersection**. A rare term in a sixty-day window read 12
+rows where a common term read 1,188, at roughly two rows read per message in the window, one per arm. So the
 volume in the window bounds the read, and unlike selectivity it *is* knowable in advance: one seek on
 `ir_org_accepted`. `listMessages` counts it and refuses with the number.
 
@@ -109,18 +109,19 @@ deploy the code, then apply the migration deliberately.
 One consequence, stated here because this is where somebody planning a release will look:
 
 **0054 requeues every message for the body backfill.** `message_body_search` is contentless, so it cannot be
-rebuilt in SQL — the bodies are in R2 and re-indexing means re-reading and re-parsing each one. That is what
+rebuilt in SQL. The bodies are in R2 and re-indexing means re-reading and re-parsing each one. That is what
 the existing backfill does, so the migration resets `body_index_state` rather than inventing a second
-mechanism. On a large mailbox this is real work; `doctor`'s `search_index_backlog` and `body_index_backlog`
+mechanism. On a large mailbox this is real work. `doctor`'s `search_index_backlog` and `body_index_backlog`
 findings are what to watch, and it is resumable. (`body_index_state` is a *column* added by 0044, not a
-check — this line named it as a finding, which sent a reader looking for one that does not exist.)
+check. An earlier draft of this line named it as a finding, which sent a reader looking for one that does
+not exist.)
 
 There is **no window in which a windowed search is broken**, which an earlier draft of this section claimed.
 `mailda deploy` applies migrations before it uploads the canary, so the column exists before any new code
-serves — and the old code is unaffected either way, because it inserts an explicit column list and matches
-bare terms.
+serves. The old code is unaffected either way, because it inserts an explicit column list and matches bare
+terms.
 
-**Until that backlog drains, body matches inside a window are incomplete** — a body row with no day token
+**Until that backlog drains, body matches inside a window are incomplete.** A body row with no day token
 cannot match any window. Subject matches are complete as soon as the migration finishes, because that half
 rebuilds in SQL.
 
@@ -128,7 +129,7 @@ rebuilds in SQL.
 
 `DAY_TOKEN_SQL` in `src/search.ts`, used by all three writers: the ingress path, the subject backfill, and
 0054's own rebuild. A token computed three ways is a token that eventually disagrees with itself, and the
-failure is invisible — a row whose day differs by one character is a row no window matches, and nothing
+failure is invisible. A row whose day differs by one character is a row no window matches, and nothing
 reports it. The search simply does not return that message.
 
 It comes from the receipt's **`accepted_at`**, never the sender's `Date` header. The listing's window is
@@ -136,7 +137,7 @@ It comes from the receipt's **`accepted_at`**, never the sender's `Date` header.
 range. The header is also the sender's claim rather than this Node's observation.
 
 `day` is its own column and never appended to the subject text. `message_search` *stores* its `subject`, so a
-synthetic token would be shown to somebody by any excerpt or debug read — and a subject legitimately
+synthetic token would be shown to somebody by any excerpt or debug read, and a subject legitimately
 containing `d20260801` could otherwise match a window it is not in. Queries filter it as `day:(…)`, which
 subject text cannot satisfy.
 
@@ -152,7 +153,7 @@ Measured, not counted: [`message-search-cost.md`](./receipts/message-search-cost
 | a selective term inside a window | 188 |
 
 Against `authz.list.max_rows_read` of 1,000. The window costs nothing where it excludes nothing, which had to
-be checked first: a day token that charged for exclusion it did not perform would be a tax on every windowed
+be checked first. A day token that charged for exclusion it did not perform would be a tax on every windowed
 search, and the arms' union is where it would have hidden.
 
 [107]: https://github.com/Straits-AI/mailda/issues/107

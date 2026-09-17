@@ -7,7 +7,7 @@ How the routes this Node serves are described once, and what holds the descripti
 > **UI, CLI, SDK, Skill and MCP parity is generated from shared contracts.**
 
 Two of the five surfaces existed and neither was generated from anything. `packages/contract` held one
-command's schemas — `send-mail.ts` — while the Node served seventy-one distinct paths. It also declared
+command's schemas, `send-mail.ts`, while the Node served seventy-one distinct paths. It also declared
 `"main": "./src/index.ts"` and had **no `index.ts`**, and no file in the repository imported the package at
 all. A package with no importers has no way to be wrong, which is the whole problem with the shape.
 
@@ -17,7 +17,7 @@ all. A package with no importers has no way to be wrong, which is the whole prob
 words a generated client would carry as a doc comment.
 
 It is deliberately **not** request and response schemas yet. Those are worth having only once the set of
-routes is pinned — a schema for a route that has quietly moved is a schema for nothing. And the property ADR
+routes is pinned. A schema for a route that has quietly moved is a schema for nothing. And the property ADR
 12 is actually about is not the count of surfaces; it is *generated from shared contracts*, the thing that
 stops clients drifting from one Node. Writing an SDK by hand would add a sixth thing to keep in step and
 satisfy the letter of the decision while defeating it.
@@ -26,15 +26,15 @@ satisfy the letter of the decision while defeating it.
 
 | link | held by | failure if it breaks |
 |:--|:--|:--|
-| client → registry | `PathFor<M>` — the template is typed per method | **compile error** |
-| registry → handler, paths and verbs | `Handlers` in `src/router.ts` — a mapped type over the registry | **compile error**, both directions |
+| client → registry | `PathFor<M>`: the template is typed per method | **compile error** |
+| registry → handler, paths and verbs | `Handlers` in `src/router.ts`, a mapped type over the registry | **compile error**, both directions |
 | one handler per route, no ambiguous template | `test/node/route-table.test.ts` | test failure |
 
 `ROUTES` is `as const satisfies readonly RouteSpec[]`, and that is the enforcement rather than a style
-choice: a `readonly RouteSpec[]` annotation widens every `path` to `string`, which makes a wrong route a
+choice. A `readonly RouteSpec[]` annotation widens every `path` to `string`, which makes a wrong route a
 runtime throw found when a test happens to exercise that call. Keeping the literals lets `route()` accept
-only templates that appear in the array, so a client naming a route this Node does not serve — or the right
-path under the wrong verb — stops the build.
+only templates that appear in the array, so a client naming a route this Node does not serve, or the right
+path under the wrong verb, stops the build.
 
 **The registry is the router.** `src/router.ts` compiles every `ROUTES` entry to a matcher and `resolve()`
 answers a request with its `"METHOD /path"` key and named parameters; `src/routes/index.ts` is the table
@@ -42,16 +42,16 @@ from that key to a handler, typed `Handlers = { [K in RouteKey]: Handler<K> }`. 
 handler and a handler for no route are both compile errors, and a handler reading `params.draftid` on a
 route whose template says `:draftId` is one too. Until 16 September 2026 the Worker decided every route in
 one function of a hundred and twenty-four sequential `if`s, and `route-registry.test.ts` read that function
-with regular expressions to check the two lists agreed — which is now a type rather than a scan. What a type
+with regular expressions to check the two lists agreed. That is now a type rather than a scan. What a type
 cannot see, `test/node/route-table.test.ts` does: two domain files naming one key (a spread keeps the later
 one silently) and two parameterised templates that could match one path (declaration order would decide).
 
 **`authority` is required, and the router reads it.** The last fifty-one routes with no declaration were
-classified on 16 September 2026 — thirty as `organization`, the sign-in and claim surface as `public`, and
+classified on 16 September 2026: thirty as `organization`, the sign-in and claim surface as `public`, and
 the rest as `member`, `self-or-admin` or `filtered` by what their handler's gate actually was. For every
 scope but `public` and `recovery` the router establishes the principal once and answers `401` if there is
-none, so a handler receives `who` — typed `Principal` on a route that requires one and `Principal | null`
-on an open one — instead of beginning with the two lines a hundred and seven handlers used to begin with.
+none, so a handler receives `who`, typed `Principal` on a route that requires one and `Principal | null`
+on an open one, instead of beginning with the two lines a hundred and seven handlers used to begin with.
 What the principal may *do* is still decided in the handler and its domain function; the parity suite drives
 each declared scope with a member, an administrator and a stranger, and lists by name the routes it cannot
 drive to a success and why.
@@ -63,7 +63,7 @@ generated client would call it and get a 404 that reads as a missing resource ra
 ## What the exercise found
 
 **A live defect, and it had shipped.** `src/client/app/api.ts` sent `PUT /api/policies/:id/draft`; the
-handler answered only `POST`. So **editing a policy draft from the interface returned 404 `not_found`** — on
+handler answered only `POST`. So **editing a policy draft from the interface returned 404 `not_found`**, on
 a governance surface, for as long as the route existed. Confirmed against a running Node before it was
 fixed: PUT 404, POST 200; and after: PUT 200, POST 404.
 
@@ -71,13 +71,13 @@ Nothing caught it because `test/policy-routes.test.ts` built every request with 
 `method: "POST"`. **A helper that fixes the method cannot detect a method divergence**, and fourteen green
 tests sat over the defect. The helper now takes the verb.
 
-Fixed as **PUT** rather than by teaching the client POST, on two grounds: `/api/butlers/:id/draft` — the same
-act one layer along — is already PUT, so POST here left the Node holding two verbs for one operation; and
+Fixed as **PUT** rather than by teaching the client POST, on two grounds. `/api/butlers/:id/draft`, the same
+act one layer along, is already PUT, so POST here left the Node holding two verbs for one operation; and
 replacing a draft wholesale is what PUT means. Nothing that worked broke, because nothing worked.
 
 **Five routes have no method guard.** `/health`, `/api/doctor`, `/api/me`, `/index.html` and
 `/.well-known/jwks.json` test only `url.pathname`, so `DELETE /health` is served exactly as `GET /health` is.
-All five are read-only, so nothing is destroyed — but a generated client would state a method this Node does
+All five are read-only, so nothing is destroyed. But a generated client would state a method this Node does
 not check. Rather than change five handlers as a side effect of writing a registry, the set is **named** in
 `METHOD_UNCHECKED` and asserted exactly, so a sixth is a decision somebody makes on purpose.
 
@@ -85,7 +85,7 @@ not check. Rather than change five handlers as a side effect of writing a regist
 
 Every caller writes its template inline: the string *is* the lookup key, and naming eighty-odd routes would
 be a second vocabulary to keep in step. `EXPORTS_LIST` and `EXPORT_RUN` are named because
-`matter-and-scope-world.test.ts` scans the Worker's source for the literal `/exports/` — guarding the R2 key
+`matter-and-scope-world.test.ts` scans the Worker's source for the literal `/exports/`, guarding the R2 key
 `${orgId}/exports/${exportId}/`, which three spellings would let the reconciler scan a prefix nothing writes
 and report clean. An HTTP path is a different thing and a lexical guard cannot tell them apart. The client
 already carried the right answer in a comment: *stop needing the exception, not widen the guard.* So the one
@@ -94,7 +94,7 @@ spelling moved into the registry, which is the file whose job is to hold each ro
 ## Step 2: schemas, and why they are partial on purpose
 
 `packages/contract/src/schemas.ts` describes what travels over the routes, and `RouteSpec` gained optional
-`request` and `response` fields to carry them. **Every describable route is described — 90 of 90** — and the
+`request` and `response` fields to carry them. **Every describable route is described, 90 of 90**, and the
 test asserts equality rather than a floor, so a route added without a schema fails. That number is
 exported by `schemaCoverage()` and asserted, so it is something a reader watches move rather than an
 impression.
@@ -105,12 +105,12 @@ named in `NOT_JSON`: `/index.html` is the interface shell, `/api/messages/:recei
 exported. A target that counts routes no schema can describe is one nobody can reach.
 
 The fourth joined late and only by being driven: `submitted` was assumed to answer JSON and answers the
-submitted message itself. Which is the only answer that could be right — the point of storing the bytes is
+submitted message itself. Which is the only answer that could be right. The point of storing the bytes is
 that they *are* the bytes, and a JSON envelope would make the record a description of the message rather
 than the message.
 
 The partialness is the honest part. A file of ninety-four hand-written shapes that nothing compares against a
-real response would be ninety-four guesses wearing the clothes of a contract — and **worse than none**,
+real response would be ninety-four guesses wearing the clothes of a contract, and **worse than none**,
 because a generated client would trust it. So schemas arrive with their validation, one tranche at a time:
 `apps/node/worker/test/contract-responses.test.ts` drives every schema-bearing route against a real Node and
 parses the answer, so a schema that does not describe reality fails rather than misleads.
@@ -135,21 +135,21 @@ Step 2 wrote request schemas and step 3 generated a client from them, and throug
 this Node ever checked a body against one**. The one place that read `spec.request` was `src/mcp.ts`, which
 turned it into an MCP tool's input schema and then forwarded the body to the route unexamined. The schemas
 described; nothing enforced. A route that had a schema read exactly like a route that was validated, which is
-why the gap survived two tickets that were looking straight at it — and it is the general lesson worth
+why the gap survived two tickets that were looking straight at it. It is the general lesson worth
 keeping: a contract package can be complete, imported and tested and still not be load-bearing.
 
-What it cost: `POST /api/policies` with `{"conditions":{"mailbox_id":"mbx_…"}}` — snake case instead of camel
-— reached `conditionsFrom`, which reads five named fields, dropped the key, and stored five NULLs. Five NULLs
+What it cost: `POST /api/policies` with `{"conditions":{"mailbox_id":"mbx_…"}}`, snake case instead of camel,
+reached `conditionsFrom`, which reads five named fields, dropped the key, and stored five NULLs. Five NULLs
 is a policy version matching **every send in the organization**. The `allow` written to narrow a gate widened
 it; a `deny` would have stopped all outbound mail; a `require_approval` would have gated the whole Node. And
-the caller was told the policy was created, because it was — publishing is immutable and versioned, so the
+the caller was told the policy was created, because it was. Publishing is immutable and versioned, so the
 wrong rule became a numbered version doing exactly what it was written to do.
 
 `apps/node/worker/src/request-shape.ts` is the boundary that closes it. Three decisions are worth reading
 before changing it:
 
 - **Unknown fields only, and the name says so.** `refuseUnknownFields`, not `validateRequest`. The handlers
-  already refuse bad *values* with four-part messages a schema cannot produce — `E_BAD_POLICY_OUTCOME` names
+  already refuse bad *values* with four-part messages a schema cannot produce. `E_BAD_POLICY_OUTCOME` names
   the four outcomes and why there cannot be a fifth, `E_BAD_POLICY_VOLUME` explains why a floor of 0 is an
   unconditional rule in disguise. Parsing the whole body at the boundary would replace every one of them with
   "expected string". What no handler can refuse is a field it never reads.
@@ -160,7 +160,7 @@ before changing it:
   strict and six are tolerant, and `test/node/request-shape-world.test.ts` asserts **both sets exactly**, so
   neither a route acquiring strictness without the argument nor one losing it is quiet.
 
-The `E_` code travels in the schema's `.meta({ refusal })`, beside the closed set it describes — the same
+The `E_` code travels in the schema's `.meta({ refusal })`, beside the closed set it describes, the same
 reason `errors.ts` puts the HTTP status on the throw rather than in a lookup table.
 
 #### Why the policy body is where the default breaks
@@ -169,7 +169,7 @@ The forward-compatibility argument is that an ignored field means *one thing les
 means *the opposite rule*, because the fields are what make the rule narrow. That applies at both levels, and
 missing the outer one would have left the hole open: `{"conditons":{…}}` reaches `conditionsFrom(undefined)`,
 which is `{}`, which is the unconditional rule again. So the body and the bag are both closed, and so is an
-approval stage — a dropped `team` is §18's separation of *duty* replaced by any single approver.
+approval stage: a dropped `team` is §18's separation of *duty* replaced by any single approver.
 
 #### The tripwire is two halves, and neither is sufficient
 
@@ -186,13 +186,13 @@ seventh closed set arrives.
 
 `POST /api/auth/login` and `POST /api/auth/passkeys/verify` both carry `signedInResponse`. ADR 29 makes
 passkeys primary and passwords the fallback, and #84's rule is that nothing downstream learns which one
-signed you in — so giving the two routes different shapes would be the first place that broke. The schema is
+signed you in, so giving the two routes different shapes would be the first place that broke. The schema is
 where it is stated; `contract-responses.test.ts` parses a real passkey assertion's answer with it.
 
 ### What it found
 
 **`usr` was not in `ID_PREFIXES`.** `claim.ts` and `invitations.ts` have minted `ctx.id("usr")` since the
-first layer, and nothing had ever needed to *validate* a user id — so the prefix lived only as a literal.
+first layer, and nothing had ever needed to *validate* a user id, so the prefix lived only as a literal.
 Writing the pattern by hand was not an option: `id-prefix-world.test.ts` forbids it outright, because that is
 exactly how `case_` and `cas_` came to disagree. Registering it then made that tripwire fire on the two mint
 sites, which now go through the registry. The gap and its closure were both the mechanism working.
@@ -203,7 +203,7 @@ Every one turned something up, which is the argument for doing this at all rathe
 
 | found | where |
 |:--|:--|
-| `PUT /api/policies/:id/draft` returned 404 — **the UI could never save a policy** | step 1 |
+| `PUT /api/policies/:id/draft` returned 404: **the UI could never save a policy** | step 1 |
 | the route tests hard-coded `method: "POST"`, so no test *could* catch a verb divergence | step 1 |
 | `packages/contract` had no `index.ts` and nothing imported it | step 1 |
 | five routes have no method guard at all | step 1 |
@@ -212,7 +212,7 @@ Every one turned something up, which is the argument for doing this at all rathe
 | `TeamRow` omits `createdBy` | tranche 3 |
 | `usr` was not in `ID_PREFIXES`, and registering it made the id-prefix tripwire fire on both mint sites | step 2 |
 | `POST /api/prepare` is the migration endpoint, not what its name says | tranche 9 |
-| `butlerRunRow` was missing `state_at` — a **third** client omission, hidden because an earlier tranche asserted the list was empty | tranche 11 |
+| `butlerRunRow` was missing `state_at`, a **third** client omission, hidden because an earlier tranche asserted the list was empty | tranche 11 |
 | `GET /api/messages/:id/body` takes an **`ir_` receipt id**, not a `msg_` message id | tranche 12 |
 | `GET /api/sends/:id/submitted` does not answer JSON at all | tranche 13 |
 
@@ -229,16 +229,16 @@ fixture was built to satisfy it rather than around it:
 - **Dual control.** Four routes refuse on a one-admin Node, so the contract tests grew a second and third
   administrator. That is what made `approvalRow` checkable at all.
 - **The three-term ceiling.** A Butler run needed the Butler's own tuple, the sponsor's, a declared
-  capability, *and* a lowercase address — a ULID is uppercase and a ceiling lowercases what it declares, so
+  capability, *and* a lowercase address. A ULID is uppercase and a ceiling lowercases what it declares, so
   it refused `capability_not_declared` until that was fixed.
 - **A stub transport.** `submitted` and `retry` need a send that was actually attempted. `dispatchDue` takes
-  the adapter as a parameter precisely so a test can decide what the world answers, and the stub **refuses**
-  — because `retry-effect` is offered only where non-acceptance is recorded, so a stub that accepted would
+  the adapter as a parameter precisely so a test can decide what the world answers, and the stub **refuses**,
+  because `retry-effect` is offered only where non-acceptance is recorded, so a stub that accepted would
   produce a send with nothing to retry.
 
 ## Step 3: the SDK, generated
 
-`packages/sdk` emits one method per route from `ROUTES`. Nothing about a route is written twice — its path,
+`packages/sdk` emits one method per route from `ROUTES`. Nothing about a route is written twice. Its path,
 verb, parameters and the shape of what it answers all come from the registry.
 
 ```
@@ -264,13 +264,13 @@ file that can drift from its generator is a landmine; one a gate re-derives is n
 `getButlersByButlerId`, `postButlersByButlerIdPublish`.
 
 **Verbose, and the trade is taken deliberately.** `postButlersByButlerIdPublish` is uglier than
-`butlers.publish` and it is *derived* rather than chosen — so it cannot drift, cannot collide silently, and
+`butlers.publish` and it is *derived* rather than chosen, so it cannot drift, cannot collide silently, and
 needs no review. The alternative was a `name` field per route: readable, and ninety more hand-kept values
 that can disagree with the path beside them. The generator **fails** on a collision rather than emitting one,
 because two routes under one name would make one of them silently unreachable.
 
 Response types come from the schemas **by identity**: a `RouteSpec` carries the schema object, not its name,
-so the generator finds the export whose value *is* that object. No new field, no second registry — and a
+so the generator finds the export whose value *is* that object. No new field, no second registry, and a
 schema that is inlined rather than exported fails generation, which is the right pressure.
 
 ### Query parameters are part of a route, and #91 is why
@@ -283,14 +283,14 @@ that can only send strings is honest about what a query string carries.
 They arrived with #91, which is the argument for having them at all. `GET /api/messages` returned the newest
 fifty and nothing else, so the fifty-first message was unreachable. Teaching the interface to page while
 leaving `getMessages()` with no way to send a cursor would have left that same defect standing in the SDK, the
-Skill and MCP — three of the four surfaces ADR 12 exists to keep in step. Declared on the route, all four
+Skill and MCP, three of the four surfaces ADR 12 exists to keep in step. Declared on the route, all four
 learn it from one edit: the SDK grows an optional `query` argument, MCP grows optional string properties on the
 tool's input schema, and the Skill's summary says what the parameters are for.
 
 An `undefined` value is **dropped** rather than sent, in the transport, and the distinction is the whole
 meaning of a paging parameter: absent is *"the newest page"* and present is *"resume here"*.
 `URLSearchParams` stringifies whatever it is handed, so a caller spreading a partly-filled object would
-otherwise have asked the Node to resume from the letters `undefined` — which it refuses, correctly and
+otherwise have asked the Node to resume from the letters `undefined`, which it refuses, correctly and
 confusingly.
 
 **One route reads a query parameter and does not declare one.** `GET /api/cases` requires `?mailbox=`, so the
@@ -302,31 +302,31 @@ sender addresses, and the four surfaces learned it from the one declaration exac
 a client has to know, both of them in the parameter's description because a generated client is all some
 callers will read:
 
-- **It is not a query language.** Operators are read as words — `AND` finds mail containing "AND" — because
+- **It is not a query language.** Operators are read as words (`AND` finds mail containing "AND") because
   passing a search box's contents to FTS5's `MATCH` unaltered makes ordinary typing a syntax error rather than
   a search. The Node rebuilds the expression from letters and numbers; a caller cannot reach the operators
   even deliberately.
 - **`next_cursor` is always `null` for a searched request**, and the two parameters therefore do not compose:
   `?q=` with `?cursor=` ignores the cursor. A search answers one capped page ordered by relevance, and bm25
   rank shifts as mail arrives, so a cursor into it would skip and repeat rows silently. A caller wanting the
-  next fifty has to narrow the words — there is no paging to offer, which is why the field is null rather than
+  next fifty has to narrow the words. There is no paging to offer, which is why the field is null rather than
   a position that would half-work.
 
 ### Responses are validated by default
 
 That is the difference between the SDK and a wrapper around `fetch`. A Node that has drifted is caught at the
-boundary, in the caller's process, with the offending field named — as a `ContractViolation`, which is
-deliberately a different error from `MaildaError`: a refusal means *you* asked for something disallowed, and
+boundary, in the caller's process, with the offending field named, as a `ContractViolation`, which is
+deliberately a different error from `MaildaError`. A refusal means *you* asked for something disallowed, and
 a violation means the **Node** is wrong.
 
 `validate: false` exists for one case, named so nobody reaches for `catch {}` instead: a client talking to a
-**newer** Node. Response schemas are `.strict()`, so an added field is a parse error — the right default for
+**newer** Node. Response schemas are `.strict()`, so an added field is a parse error, the right default for
 catching drift and the wrong one for surviving a rolling upgrade.
 
 ### What the build of it found
 
 **A top-level `writeFileSync` made the drift test vacuous.** The generator wrote on import, so importing it
-to reach `methodNameFor` regenerated the file before the test could read a hand edit — the comparison could
+to reach `methodNameFor` regenerated the file before the test could read a hand edit, so the comparison could
 never fail. Emitting is pure now and `src/write.ts` is the only thing that touches the disk. A module with a
 top-level side effect is a module that cannot be imported by the thing that checks it.
 
