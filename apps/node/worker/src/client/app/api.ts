@@ -540,6 +540,16 @@ export async function setResponseTarget(
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
 }
 
+/** Creates a mailbox, named. Administrator only, audited; the creator may read and send from it. */
+export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | { ok: false; message: string }> {
+  const response = await apiFetch(at("POST", "/api/mailboxes"), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }),
+  });
+  const body = (await response.json().catch(() => null)) as { mailboxId?: string; message?: string } | null;
+  if (response.ok) return { ok: true, mailboxId: body?.mailboxId ?? "" };
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
 /** Turns one of a mailbox's quarantine switches on or off. Administrator only, and audited. */
 export async function setQuarantineSwitch(
   mailboxId: string,

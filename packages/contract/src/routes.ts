@@ -165,8 +165,10 @@ export const ROUTES = [
   { method: "POST", path: "/api/recovery-codes/confirm", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Prove an operator holds one of the current recovery codes, without spending it", request: S.redeemRecoveryRequest, response: S.recoveryCodesConfirmedResponse },
   {
     method: "POST", path: "/api/prepare", authority: { scope: "public" },
-    // Named for claiming and actually the migration endpoint — see `prepareResponse`.
-    summary: "Apply pending migrations",
+    // Named for claiming and actually the migration endpoint — see `prepareResponse`. Public because an
+    // unclaimed Node has nobody to ask; once claimed the handler answers only an administrator (404 to
+    // everyone else, §5C), so the declaration is the install-time truth and the gate is in the handler.
+    summary: "Apply pending migrations. Open until the Node is claimed; an administrator's act after",
     response: S.prepareResponse,
   },
   {
@@ -259,6 +261,13 @@ export const ROUTES = [
     method: "POST", path: "/api/quarantine/:messageId/release",
     summary: "Let a quarantined delivery into its mailbox's queue, opening the case it would have had",
     response: S.quarantineReleasedResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/mailboxes",
+    summary: "Create a mailbox, named. The creator may read and send from it; addresses are routed at it through POST /api/provider/receiving",
+    request: S.createMailboxRequest,
+    response: S.mailboxCreatedResponse,
   },
   { method: "PATCH", path: "/api/mailboxes/:mailboxId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {

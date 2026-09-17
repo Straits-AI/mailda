@@ -63,7 +63,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `putMessagesByMessageIdLabels` | Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id. |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 111 withheld
+## What you cannot do, and why — 112 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
@@ -130,7 +130,7 @@ so you are that one person and can never be the second. These are not permission
 
   It also contradicted a promise made three files away. The MCP handshake tells every client that these tools 'read and draft; they do not send' — and this one sent. A guarantee stated in a handshake and broken by a capability list is worse than no guarantee, because a client has been told it can stop checking.
 
-### Operator — running the Node rather than using it (53)
+### Operator — running the Node rather than using it (54)
 
 - **`deleteAgentsByAgentId`, `getAgentCapabilities`, `getAgents`, `getPeopleByUserIdMailboxes`, `postAgents`**
 
@@ -156,7 +156,7 @@ so you are that one person and can never be the second. These are not permission
 
   Maintenance of the body index rather than work on anybody's mail, and its listing names message ids across the whole organization. A machine could safely call it; the reason it is withheld is that deciding WHICH failures are worth retrying is the whole job, and some are deterministically unparseable — repairing those spends the backfill's budget on work that cannot succeed.
 
-- **`patchMailboxesByMailboxId`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
+- **`patchMailboxesByMailboxId`, `postMailboxes`, `postMaintenanceReconcile`, `postMaintenanceReseal`**
 
   Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.
 

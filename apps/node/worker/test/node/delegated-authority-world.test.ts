@@ -65,6 +65,8 @@ const EXEMPT: Record<string, string> = {
     + "somebody else. Intersecting it would misreport an agent's own grants as absent, and the UI that "
     + "shows them would then disagree with the trail that recorded them.",
   claimNode: "install. Writes the first administrator's tuples before any principal exists.",
+  createMailbox: "administration, as `grant`: writes the creator's two tuples on the mailbox it just made, "
+    + "after `assertAdmin` — which is intersected, and which no agent passes since org.admin is ungrantable.",
   decidersByMailbox: "enumerates **other people** who may approve, for routing. Not the caller's authority; "
     + "an agent asking who must approve its send is not asking to be one of them.",
   adminsOf: "enumerates other people, as `decidersByMailbox`",

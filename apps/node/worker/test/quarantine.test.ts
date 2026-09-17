@@ -131,6 +131,12 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
     ).bind(ORG, held.id).all<{ action: string }>();
     expect(audited.results.map((one) => one.action)).toEqual(["message.quarantined"]);
 
+    // Hidden by id as well as from the listing: the body route answers as it does for an absent message.
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: ADMIN });
+    const direct = await SELF.fetch(`https://node/api/messages/${id}/body`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}` },
+    });
+    expect(direct.status).toBe(404);
     const listed = await listQuarantined(testEnv, ORG, ADMIN);
     expect(listed.map((one) => one.messageId)).toContain(held.id);
     expect(listed.find((one) => one.messageId === held.id)).toMatchObject({
@@ -144,6 +150,9 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
     expect(released.quarantine_reason).toBe("dmarc_fail_reject");
     expect(released.cases).toBe(1);
     expect(await listedReceipts()).toContain(id);
+    expect((await SELF.fetch(`https://node/api/messages/${id}/body`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}` },
+    })).status).toBe(200);
     expect((await listQuarantined(testEnv, ORG, ADMIN)).map((one) => one.messageId)).not.toContain(held.id);
     // A second release is a 404, not a second case.
     await expect(releaseQuarantine(testEnv, ctx, ORG, ADMIN, held.id)).rejects.toThrow(/E_NOT_QUARANTINED/);

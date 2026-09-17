@@ -5,7 +5,7 @@ import { Nothing } from "../chrome.tsx";
 import {
   beginConsent, onboardReceiving, onboardSending, receivingProposal, reportUnselectable,
   resolveProviderAccount, sendingProposal, setProviderClient, subscribeDeliveryEvents, subscriptionProposal,
-  useProvider, useRouting,
+  useMailboxes, useProvider, useRouting,
   type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type SendingProposal, type SubscriptionProposal,
 } from "../api.ts";
 
@@ -258,7 +258,7 @@ function Connected({ provider, refresh }: { provider: ProviderBinding; refresh: 
 
   return (
     <section className="setup-block" aria-label="The connection">
-      <h2>Connected</h2>
+      <h2>1–2. Connected</h2>
       <dl className="setup-facts">
         <dt>Cloudflare account</dt>
         <dd className="mono">
@@ -302,6 +302,11 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
   const routing = useRouting();
   const [domain, setDomain] = useState("");
   const [address, setAddress] = useState("");
+  // Which mailbox the address reaches. Absent means "the one mailbox", which the Node refuses when there are
+  // several — so the choice is offered only once there is one to make, the composer's From rule.
+  const mailboxes = useMailboxes();
+  const boxes = mailboxes.data?.mailboxes ?? [];
+  const [mailboxId, setMailboxId] = useState("");
   const [plan, setPlan] = useState<ReceivingProposal | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
@@ -322,7 +327,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
     if (plan === null) return;
     setProblem(null);
     setBusy(true);
-    const answer = await onboardReceiving(plan.domain, plan.digest, address.trim());
+    const answer = await onboardReceiving(plan.domain, plan.digest, address.trim(), mailboxId === "" ? undefined : mailboxId);
     setBusy(false);
     if (!answer.ok) { setProblem(answer.message); return; }
     const done = answer.value.outcome;
@@ -355,7 +360,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
       {routing.isSuccess && routing.data.routing.length > 0 ? (
         <div className="scroller">
           <table>
-            <caption className="dim">What Cloudflare says about the domains this Node already routes.</caption>
+            <caption className="dim table-caption">What Cloudflare says about the domains this Node already routes.</caption>
             <thead>
               <tr>
                 <th scope="col">Domain</th><th scope="col">Zone</th>
@@ -400,12 +405,21 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
             onChange={(event) => setAddress(event.target.value)}
           />
         </label>
+        {boxes.length > 1 ? (
+          <label className="field-row" htmlFor="setup-receive-mailbox">
+            <span>Into mailbox</span>
+            <select id="setup-receive-mailbox" className="mono" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
+              <option value="">choose a mailbox…</option>
+              {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+            </select>
+          </label>
+        ) : null}
         {/*
           Not "see what this would do", which is what the sending form's button also said. One page, two
           buttons, identical text: unambiguous beside their own fields and indistinguishable to anybody
           moving through the page by control rather than by eye.
         */}
-        <button type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
+        <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
           see what pointing this here would do
         </button>
       </div>
@@ -524,7 +538,7 @@ function Sending() {
             onChange={(event) => setDomain(event.target.value)}
           />
         </label>
-        <button type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
+        <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
           see what onboarding this would do
         </button>
       </div>
@@ -628,7 +642,7 @@ function Subscription() {
             onChange={(event) => setDomain(event.target.value)}
           />
         </label>
-        <button type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
+        <button className="quiet" type="button" onClick={() => void propose()} disabled={busy || domain.trim() === ""}>
           see what subscribing this would do
         </button>
       </div>
@@ -678,8 +692,10 @@ export function Setup() {
     await queryClient.invalidateQueries({ queryKey: ["provider-routing"] });
   }
 
-  if (provider.isPending) return <Nothing kind="loading" />;
-  if (provider.isError) return <Nothing kind="failed" detail={provider.error.message} />;
+  // The heading is rendered before the branches, as the inbox does: a screen's name must not depend on
+  // whether its data arrived (axe: no level-one heading on /setup while loading).
+  if (provider.isPending) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="loading" /></>;
+  if (provider.isError) return <><header className="ledger-head"><h1>Setup</h1></header><Nothing kind="failed" detail={provider.error.message} /></>;
 
   const { provider: binding, ceremony } = provider.data;
   const connected = binding.state === "consent_granted";

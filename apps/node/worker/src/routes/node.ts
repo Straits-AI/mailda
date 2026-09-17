@@ -23,7 +23,20 @@ export const node = {
    * Node's own bundled migrations, which is idempotent and grants a caller nothing: an attacker who
    * migrates somebody's Node has done them a favour. Once the schema is current it is a no-op.
    */
-  "POST /api/prepare": async ({ env }) => {
+  "POST /api/prepare": async ({ request, env, clock }) => {
+    /*
+     * Open while the Node is unclaimed — it is how a fresh install gets its schema — and an administrator's
+     * act once it is claimed: a public route that runs the migrator and lists applied migrations is a
+     * schema-version oracle and a free D1 round trip for any stranger (the 17 September audit).
+     */
+    const claimed = await env.CATALOG.prepare("SELECT org_id FROM node_claim WHERE claimed_at IS NOT NULL LIMIT 1")
+      .first<{ org_id: string }>().catch(() => null);
+    if (claimed !== null) {
+      const who = await principalFor(env, clock, request);
+      if (who === null || !(await isAdmin(env, who.orgId, who.userId))) {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+    }
     const outcome = await migrate(env);
     return Response.json({
       ...outcome,

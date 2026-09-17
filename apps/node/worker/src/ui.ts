@@ -98,6 +98,9 @@ const SHELL_CSS = `
      reason it borrows the rest: the surface is dark, so the tokens that work on a dark surface are the
      right ones. Found by measuring the rail's descendants rather than only its own rules. */
   --rail-live: #86C9A4;
+  /* The rail's alarm. --alarm is tuned for Mist and reads 2.68 on Ink (the axe run of 17 September);
+     this is the same hue lifted until it clears AA on the rail — 8.72 on Ink. */
+  --rail-alarm: #E8A39B;
 
   /* Flow Blue, and it is **not a small-text colour on anything but pure white**: 4.53:1 on white — which
      passes AA by 0.03 — then 4.11 on Mist and 3.87 on Sky, both failing. So --accent is for the things
@@ -155,6 +158,7 @@ const SHELL_CSS = `
     --rail-accent: #6E93CC;
     --rail-rule: rgba(232, 237, 243, .12);
     --rail-live: #86C9A4;
+    --rail-alarm: #E8A39B;
 
     /* Flow Blue reads 3.99:1 on Ink — fine for a border or a focus ring, short of AA for text. So the dark
        theme lifts the accent rather than keeping the brand hex and failing quietly: #6E93CC is 5.76 on Ink
@@ -417,6 +421,15 @@ input {
   width: 100%;
   transition: border-color .18s, background-color .18s;
 }
+/* The rule above is for text fields. A checkbox given width: 100% and a bottom rule became a box floating
+   in the middle of its own label (the queue's quarantine switches, 17 September). Its own size, its own edge,
+   the theme's accent when checked. */
+input[type="checkbox"] {
+  width: 1rem; height: 1rem; flex: none; margin: .15rem 0 0;
+  border: 1px solid var(--control-edge); border-radius: 2px; padding: 0;
+  accent-color: var(--accent-text); background: var(--ground-2);
+}
+input[type="checkbox"]:focus { background: var(--ground-2); }
 input::placeholder { color: color-mix(in oklab, var(--dim) 60%, transparent); }
 input:focus {
   outline: 0;
@@ -433,8 +446,10 @@ a.primary {
   letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--ground);
-  background: var(--accent);
-  border: 1px solid var(--accent);
+  /* --accent-text, not --accent: a button's label is read, and Mist on the brand blue is 4.10 — under AA.
+     The five-percent-darker text blue gives 4.88. Dark mode defines the two as one value. */
+  background: var(--accent-text);
+  border: 1px solid var(--accent-text);
   padding: .8rem 1.3rem;
   cursor: pointer;
   justify-self: start;
@@ -444,6 +459,21 @@ a.primary {
 button.primary:hover:not(:disabled) { filter: brightness(1.12); }
 button.primary:active:not(:disabled) { transform: translateY(1px); }
 button.primary:disabled { opacity: .55; cursor: progress; }
+
+/* A plain button — "see what this would do", "ask to stop this domain" — was the browser's own grey box beside
+   .primary and .linkish. One quiet control for the reversible act: outlined, mono, the theme's edge. */
+button.quiet {
+  font: 400 .72rem/1 var(--mono);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--ground-2);
+  border: 1px solid var(--control-edge);
+  padding: .5rem .8rem;
+  cursor: pointer;
+}
+button.quiet:hover:not(:disabled) { background: var(--sky); }
+button.quiet:disabled { opacity: .5; cursor: not-allowed; }
 
 .hint {
   font-family: var(--mono);
@@ -503,8 +533,9 @@ form > .hint { margin: -.6rem 0 0; }
   it in the middle. margin-left:auto takes up the slack so the heading stays left and the control sits with
   the count on the right, where the other per-screen actions are.
 */
-.new-message { margin: 0 0 0 auto; display: flex; align-items: baseline; gap: .4rem; }
-.new-message select { font: inherit; font-family: var(--mono); font-size: .8rem; }
+.new-message { margin: 0 0 0 auto; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
+.new-message select { font: inherit; font-family: var(--mono); font-size: .8rem; max-width: min(100%, 20rem); min-width: 0; }
+.new-message { min-width: 0; max-width: 100%; }
 
 /* The Butler screen (#78). */
 .butler-detail { margin-top: 1.5rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
@@ -904,6 +935,13 @@ tbody a { font-size: .8rem; }
 /* The count inside a selected row sits on Sky, so it takes the light theme's dim rather than the rail's. */
 .rail-row.current .num { color: var(--dim); }
 .rail-name { font-size: .95rem; }
+/* .dim is Ink at .66 and disappears on the Ink rail: every mailbox name under Queue, and Setup and Doctor
+   in the foot, rendered invisible from the day the rail went dark until the 17 September audit read the
+   screenshot. Inside the rail, dim is the rail's own dim; inside a selected row (Sky fill) it is the light
+   theme's. Same for the one chip the rail carries. */
+.rail .dim { color: var(--rail-dim); }
+.rail-row.current .dim { color: var(--dim); }
+.rail .state-outcome_unknown { color: var(--rail-alarm); border-color: var(--rail-alarm); }
 .rail-note { padding: .2rem 1rem .4rem 1rem; }
 
 .app-main { grid-area: stage; min-width: 0; padding: clamp(1rem, 2.5vw, 2rem); }
@@ -951,7 +989,20 @@ tbody a { font-size: .8rem; }
   /* The reading pane goes under the list rather than beside it. The rail collapses to a row of its own
      at the top, which keeps the mailbox counts visible — they are the thing Layer 3 adds to. */
   .app-shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "rail" "stage" "bar"; }
-  .rail { border-right: 0; border-bottom: 1px solid var(--rule); flex-direction: row; flex-wrap: wrap; align-items: baseline; }
+  /* One scrolling strip of rows, not the column wrapped into a grid: flex-wrap on the column laid
+     the two lists and their headings side by side in overlapping columns (the 17 September screenshots).
+     Headings, per-mailbox depths and the unparsed note are dropped here; the counts stay on the rows. */
+  .rail {
+    border-right: 0; border-bottom: 1px solid var(--rail-rule);
+    flex-direction: row; flex-wrap: nowrap; align-items: center; gap: .15rem;
+    padding: .45rem .5rem; overflow-x: auto; scrollbar-width: none;
+  }
+  .rail::-webkit-scrollbar { display: none; }
+  .rail .wordmark { padding: 0 .6rem 0 .4rem; }
+  .rail-heading, .rail-sublist, .rail-note { display: none; }
+  .rail-list { display: flex; gap: .15rem; }
+  .rail-row { white-space: nowrap; padding: .3rem .55rem; border-left: 0; border-bottom: 2px solid transparent; }
+  .rail-row.current { border-bottom-color: var(--accent); }
   .rail-foot { margin-top: 0; }
   .split { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1031,7 +1082,7 @@ tbody a { font-size: .8rem; }
 /* The hint sits with the field rather than under the whole toolbar, so it reads as a description of the
    box beside it. Flex order keeps it after the pill and before Clear on one line, and it wraps below on a
    narrow screen rather than squeezing the pill. */
-.search-hint { flex: 1 1 14rem; margin: 0; font-size: .72rem; }
+.search-hint { flex: 1 1 100%; margin: 0; font-size: .72rem; }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
 .message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1092,7 +1143,14 @@ tbody a { font-size: .8rem; }
 /* ---- ledgers ----------------------------------------------------------------------------- */
 
 .ledger { min-width: 0; }
-.ledger-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: .6rem; }
+.ledger-head { display: flex; align-items: baseline; gap: .6rem 1rem; margin-bottom: .6rem; flex-wrap: wrap; min-width: 0; }
+/* The inbox's second line: the mailbox filter and the search, under the title rather than beside it, so the
+   title row holds a name, a count and one action and nothing has to squeeze. */
+/* A table's caption reads with its rows: left, over the header, not centred above the whole table. */
+.table-caption { text-align: left; caption-side: top; padding: 0 0 .4rem; font-size: .8rem; }
+.inbox-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin: 0 0 .9rem; min-width: 0; }
+.inbox-tools .inbox-search { flex: 1 1 16rem; min-width: 0; }
+.inbox-tools .search-pill { flex: 1 1 12rem; min-width: 0; }
 /* No font-weight 400 here: this block used to re-declare it and win over the rule above that says 700, so
    every ledger's h1 rendered as the outline the theme's own comment warns against. */
 .ledger-head h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); margin: 0; }
@@ -1286,7 +1344,10 @@ body.shell main#app {
 .clock-due      { border-color: var(--warn); color: var(--warn); }
 .clock-breached { border-color: var(--alarm);  color: var(--alarm); }
 
-.queue-target { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.queue-target { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; white-space: normal; }
+/* The two quarantine switches: a row each, box then sentence, under the target. */
+.queue-switches { display: grid; gap: .35rem; margin: 0 0 .8rem; white-space: normal; }
+.queue-switches .case-pick { align-items: start; }
 .queue-breached { margin-left: auto; }
 
 .target-edit { display: inline-flex; align-items: baseline; gap: .4rem; }

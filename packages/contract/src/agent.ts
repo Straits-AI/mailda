@@ -509,6 +509,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/maintenance/reseal",
     "POST /api/maintenance/reconcile",
     "PATCH /api/mailboxes/:mailboxId",
+    "POST /api/mailboxes",
   ),
 };
 

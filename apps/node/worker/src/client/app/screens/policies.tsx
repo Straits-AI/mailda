@@ -196,7 +196,7 @@ function Editing({
           save draft
         </button>
         {" "}
-        <button type="button" onClick={() => void onDone()} disabled={busy}>cancel</button>
+        <button className="quiet" type="button" onClick={() => void onDone()} disabled={busy}>cancel</button>
         {/*
           Publishing is refused unless somebody holds `approval.decide` on a mailbox the rule applies to
           (#61) — a `require_approval` rule nobody can satisfy is a rule that stops mail for ever. The

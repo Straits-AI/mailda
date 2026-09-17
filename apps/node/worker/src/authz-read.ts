@@ -614,7 +614,12 @@ export async function authorize(
     `SELECT r.blob_key, a.mailbox_id
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-      WHERE r.org_id = ? AND r.id = ? LIMIT 1`,
+      WHERE r.org_id = ? AND r.id = ?
+        -- A quarantined delivery (0056) is hidden from the listing, and it is hidden here too: "not seen
+        -- until somebody looks" must not rest on an id being unguessable (the 17 September audit). A receipt
+        -- with no row yet is NULL here, and NULL IS NULL, so an unmaterialised message still answers.
+        AND (SELECT m.quarantined_at FROM messages m WHERE m.ingress_receipt_id = r.id) IS NULL
+      LIMIT 1`,
   )
     .bind(who.orgId, receiptId)
     .first<{ blob_key: string; mailbox_id: string }>();
@@ -702,7 +707,12 @@ export async function authorizeExport(
     `SELECT r.blob_key, a.mailbox_id
        FROM ingress_receipts r
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-      WHERE r.org_id = ? AND r.id = ? LIMIT 1`,
+      WHERE r.org_id = ? AND r.id = ?
+        -- A quarantined delivery (0056) is hidden from the listing, and it is hidden here too: "not seen
+        -- until somebody looks" must not rest on an id being unguessable (the 17 September audit). A receipt
+        -- with no row yet is NULL here, and NULL IS NULL, so an unmaterialised message still answers.
+        AND (SELECT m.quarantined_at FROM messages m WHERE m.ingress_receipt_id = r.id) IS NULL
+      LIMIT 1`,
   )
     .bind(who.orgId, receiptId)
     .first<{ blob_key: string; mailbox_id: string }>();

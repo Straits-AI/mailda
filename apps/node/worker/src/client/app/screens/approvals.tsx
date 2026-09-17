@@ -138,7 +138,7 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
               inviting a refusal.
             */}
             <span className="dim">You have decided this. </span>
-            <button type="button" onClick={() => void act(() => withdrawDecision(row.id))} disabled={busy}>
+            <button className="quiet" type="button" onClick={() => void act(() => withdrawDecision(row.id))} disabled={busy}>
               take my decision back
             </button>
           </>
@@ -153,7 +153,7 @@ function Waiting({ row, onDone }: { row: ApprovalRow; onDone: () => Promise<void
               approve
             </button>
             {" "}
-            <button type="button" onClick={() => void act(() => decide(row.id, "deny"))} disabled={busy}>
+            <button className="quiet" type="button" onClick={() => void act(() => decide(row.id, "deny"))} disabled={busy}>
               deny
             </button>
           </>

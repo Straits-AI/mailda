@@ -1062,6 +1062,17 @@ describe("the operator and key surfaces", () => {
     });
   });
 
+  it("POST /api/mailboxes: a second mailbox, which the creator may read and send from", async () => {
+    const held = await cookie();
+    const made = await answers("POST", "/api/mailboxes", { body: { name: "  Invoices  " }, cookie: held }) as { mailboxId: string; name: string };
+    expect(made.name).toBe("Invoices");
+    const listed = await answers("GET", "/api/mailboxes", { cookie: held }) as { mailboxes: Array<{ id: string; name: string }> };
+    expect(listed.mailboxes.map((one) => one.id)).toContain(made.mailboxId);
+    // A second of the same name is refused, case-insensitively, and names the first.
+    await expect(answers("POST", "/api/mailboxes", { body: { name: "invoices" }, cookie: held }))
+      .rejects.toThrow(/E_MAILBOX_NAME_TAKEN|answered 422/);
+  });
+
   it("PATCH a mailbox's response target, and its quarantine switch", async () => {
     const held = await cookie();
     const mailboxId = await mailboxWithSend();
@@ -1709,8 +1720,20 @@ describe("the account lifecycle, on a Node that has not been claimed", () => {
      * the name reads as — the first attempt at this schema guessed the same way, and a generated client
      * whose author did would call it at the wrong moment.
      */
+    // This block's fixture is unclaimed, which is the state the route is public for: a stranger is answered.
     const prepared = await answers("POST", "/api/prepare", { body: {} }) as { alreadyCurrent: boolean };
     expect(prepared.alreadyCurrent).toBe(true);
+    // Claimed, a stranger is answered 404 (§5C) and an administrator is answered.
+    const at = new Date().toISOString();
+    await testEnv.CATALOG.prepare("INSERT INTO node_claim (id, secret_hash, claimed_at, org_id) VALUES ('c2','x',?,?)").bind(at, ORG).run();
+    await testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)").bind(USER, ORG, "p@local.invalid", at).run();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES ('rt_prepare',?,?,'org.admin','organization',?,?)`,
+    ).bind(ORG, USER, ORG, at).run();
+    const stranger = await SELF.fetch(`${ORIGIN}/api/prepare`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(stranger.status).toBe(404);
+    expect((await answers("POST", "/api/prepare", { body: {}, cookie: await cookie() }) as { alreadyCurrent: boolean }).alreadyCurrent).toBe(true);
   });
 
   it("claiming, then inviting somebody who redeems", async () => {
@@ -2092,7 +2115,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(130);
+    expect(coverage.total).toBe(131);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

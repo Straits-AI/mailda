@@ -214,6 +214,7 @@ const BODIES: Record<string, unknown> = {
   "POST /api/approvals/:approvalId/decide": { decision: "approve" },
   "POST /api/suppressions/lift": { address: "nobody@parity.example", reason: "parity" },
   "PUT /api/messages/:messageId/labels": { add: ["parity"] },
+  "POST /api/mailboxes": { name: "Parity Invoices" },
 };
 
 /**

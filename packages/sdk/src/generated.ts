@@ -150,7 +150,7 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Apply pending migrations
+   * Apply pending migrations. Open until the Node is claimed; an administrator's act after
    *
    * `POST /api/prepare`
    */
@@ -435,6 +435,15 @@ export class GeneratedClient extends Transport {
    */
   async postQuarantineByMessageIdRelease(params: { messageId: string }, body?: unknown): Promise<z.infer<typeof S.quarantineReleasedResponse>> {
     return await this.json("POST", "/api/quarantine/:messageId/release", params, body) as z.infer<typeof S.quarantineReleasedResponse>;
+  }
+
+  /**
+   * Create a mailbox, named. The creator may read and send from it; addresses are routed at it through POST /api/provider/receiving
+   *
+   * `POST /api/mailboxes`
+   */
+  async postMailboxes(body: z.infer<typeof S.createMailboxRequest>): Promise<z.infer<typeof S.mailboxCreatedResponse>> {
+    return await this.json("POST", "/api/mailboxes", {}, body) as z.infer<typeof S.mailboxCreatedResponse>;
   }
 
   /**

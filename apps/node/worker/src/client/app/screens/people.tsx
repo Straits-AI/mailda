@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  GRANTABLE_RELATIONS, createTeam, grant, invite, revokeAccess, setTeamMember,
+  GRANTABLE_RELATIONS, createMailbox, createTeam, grant, invite, revokeAccess, setTeamMember,
   forgetPasskey, registerPasskey,
   useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
   type PersonRow, type TeamRow,
@@ -64,6 +64,51 @@ function relationsFor(person: PersonRow, objectId: string): Set<string> {
  * It does not grant anything. Somebody who redeems an invitation holds exactly nothing until an
  * administrator grants access below, where the consequence of each relation is written next to it.
  */
+/**
+ * A second mailbox. Here rather than on Setup because a mailbox is a thing people are given access to, and
+ * this is the screen that gives it; the address that reaches it is Setup's business (Receiving names a
+ * mailbox). The creator is granted read and send on it, so it appears in the rail and below at once.
+ */
+function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [made, setMade] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function create() {
+    setBusy(true);
+    setProblem(null);
+    setMade(null);
+    const outcome = await createMailbox(name);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setMade(name.trim());
+    setName("");
+    await onCreated();
+  }
+
+  return (
+    <section className="people-teams" aria-label="A new mailbox">
+      <h2>Mailboxes</h2>
+      <p className="dim">
+        A shared inbox with its own queue. You may read and send from it as soon as it exists; grant others
+        below. An address reaches it from Setup → Receiving, which asks which mailbox to route at.
+      </p>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {made === null ? null : <p className="notice" role="status">{made} exists. Route an address at it from Setup.</p>}
+      <p className="field-row">
+        <label htmlFor="new-mailbox-name">Name</label>
+        {" "}
+        <input id="new-mailbox-name" value={name} placeholder="Invoices" onChange={(event) => setName(event.target.value)} />
+        {" "}
+        <button className="quiet" type="button" onClick={() => void create()} disabled={busy || name.trim() === ""}>
+          create a mailbox
+        </button>
+      </p>
+    </section>
+  );
+}
+
 function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
   const invitations = useInvitations();
   const [email, setEmail] = useState("");
@@ -103,7 +148,7 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
           onChange={(event) => setEmail(event.target.value)}
         />
         {" "}
-        <button type="button" onClick={() => void send()} disabled={busy || email.trim() === ""}>
+        <button className="quiet" type="button" onClick={() => void send()} disabled={busy || email.trim() === ""}>
           mint an invitation
         </button>
       </p>
@@ -309,7 +354,7 @@ function Teams({ people }: { people: PersonRow[] }) {
         {" "}
         <input id="new-team-name" value={name} onChange={(event) => setName(event.target.value)} />
         {" "}
-        <button type="button" onClick={() => void add()} disabled={name.trim() === ""}>create</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={name.trim() === ""}>create</button>
       </p>
 
       {teams.isSuccess && teams.data.teams.length > 0 ? (
@@ -433,7 +478,7 @@ function Passkeys() {
         />
       </label>
       <p>
-        <button type="button" onClick={() => void add()} disabled={busy}>add a passkey</button>
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy}>add a passkey</button>
       </p>
     </section>
   );
@@ -545,6 +590,7 @@ export function People() {
       </section>
 
       <Invite onInvited={refresh} />
+      <NewMailbox onCreated={refresh} />
 
       <Teams people={rows} />
     </>

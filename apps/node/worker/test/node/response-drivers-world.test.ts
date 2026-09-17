@@ -9,7 +9,7 @@ import { EXTERNALLY_SPECIFIED, NOT_JSON, ROUTES, type RouteSpec } from "@mailda/
  *
  * ## The gap this exists to make visible
  *
- * `schemaCoverage()` reports 99 of 103 routes described, and `test/contract-responses.test.ts` opens by saying
+ * `schemaCoverage()` reported 99 of 103 routes described when this was written (the registry has grown since; the check below reads it live), and `test/contract-responses.test.ts` opens by saying
  * every schema-bearing route is driven and parsed. Both are true sentences about different things:
  * `schemaCoverage()` proves a route *has* a schema. It cannot say whether any test executes one.
  *

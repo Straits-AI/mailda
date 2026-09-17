@@ -38,6 +38,15 @@ export function signedOutResponse(error: string, message: string): Response {
  * the registry routed, their regular expression carried the id alphabet and a malformed id simply never
  * matched. The registry's `:name` accepts any segment, so the same refusal now lives one line inside.
  */
+/**
+ * An address list from a JSON body: every element as a string, so `to: [1]` reaches `normalizeAddress` and
+ * is refused as an address rather than crashing on `.trim` (a 500 the 17 September audit found). Absent or
+ * not an array is the empty list; the handler decides whether empty is allowed.
+ */
+export function addressList(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.map((one) => (typeof one === "string" ? one : String(one ?? ""))) : undefined;
+}
+
 export function isId(prefix: IdPrefix, value: string): boolean {
   return idPattern(prefix).test(value);
 }
