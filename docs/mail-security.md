@@ -120,6 +120,10 @@ same list is still unmeasured, which is why this Node keeps its own and says so 
 4. **Suppression, the measurement.** Built above. Still open: whether Cloudflare's
    `drop_suppressed_recipients` keeps the same list, which needs a bounced address and a send with the
    option on — a receipt, not code.
-5. **A classifier.** The one row a model helps with, and the lightweight-edge case: Workers AI text
-   classification in the customer's own account, milliseconds a message, no data leaving. Ships as an
-   explicit policy signal, receipted for cost and false-positive rate, off by default, never authority.
+5. **A classifier — measured, and not shipped.** `docs/receipts/workers-ai-classifier.md`, 17 September:
+   Workers AI lists two text-classification models, a sentiment model and a reranker, and the sentiment
+   model scores "you have won a prize" as the most positive text tried. There is no lightweight edge
+   classifier for this job on the platform today. What would work is nearest-neighbour over embeddings
+   (`bge-small`, 384 dims, ~220 ms over REST) against **this Node's own decisions** — held, released,
+   labelled — which is a signal whose authority is the Node's and which needs a corpus the Node has only
+   begun to record. Re-measure when there is one; nothing ships before precision and recall are numbers.
