@@ -6,7 +6,7 @@ import { type AuditEvent, auditedBatchMany } from "../audit.ts";
 import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
-import { conflict, notFound } from "../errors.ts";
+import { conflict, notFound, unprocessable } from "../errors.ts";
 import { recipientsSuppressed } from "../suppression.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
 import { evaluateBreakers, describeTrip, RATE_BREAKERS, type RateReading } from "../breakers.ts";
@@ -106,6 +106,12 @@ export interface Composition {
   senderAddress?: string;
   /** Our own `msg_` id when this is a reply. The threading chain is read from its evidence. */
   inReplyToMessageId?: string;
+  /**
+   * Our own `msg_` id when this send forwards a message: its evidence goes out verbatim as a `message/rfc822`
+   * part (0059). The same authority as a reply's parent — read on the mailbox it landed in — and refused
+   * when the original carries an attachment this Node judges dangerous.
+   */
+  forwardOfMessageId?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -376,6 +382,40 @@ export async function rebuildReferences(
   return kept.map((id) => `<${id}>`).join(" ");
 }
 
+/**
+ * A message the author may read, or null — the one lookup a reply's parent and a forward's original share.
+ *
+ * Bounded by **read authority on the message's mailbox**, not merely by organization. This used to be
+ * `WHERE org_id = ? AND id = ?` for the reply case, and `test/reply-parent-authority.test.ts` reproduces why
+ * that was wrong: a principal holding `send.propose` on one mailbox could name a message delivered only into
+ * another and receive its `References` chain and Message-ID on the wire. The authority is the one
+ * `listMessages` uses — `mailbox.content.read` on the mailbox the message landed in, reached through
+ * `ingress_receipts.envelope_to` → `addresses`, same subjects, same sponsor term (#109) — so nothing can be
+ * replied to or forwarded that the inbox would not have shown.
+ */
+async function readableParent(
+  env: Env, orgId: string, authorUserId: string, messageId: string,
+): Promise<{ rfc_message_id: string; blob_key: string; attachments_dangerous: number | null } | null> {
+  const subjects = await readableSubjects(env, { orgId, userId: authorUserId });
+  const placeholders = subjects.map(() => "?").join(", ");
+  const sponsor = await sponsorTerm(env, orgId, authorUserId, "t");
+  return await env.CATALOG.prepare(
+    `SELECT m.rfc_message_id, m.blob_key, m.attachments_dangerous
+       FROM messages m
+       JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
+       JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
+      WHERE m.org_id = ? AND m.id = ?
+        AND a.mailbox_id IN (
+          SELECT t.object_id FROM relationship_tuples t
+           WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
+             AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
+             ${sponsor.sql}
+        )
+      LIMIT 1`,
+  ).bind(orgId, messageId, orgId, ...subjects, ...sponsor.params)
+    .first<{ rfc_message_id: string; blob_key: string; attachments_dangerous: number | null }>();
+}
+
 export async function sealManifest(
   env: Env,
   ctx: Ctx,
@@ -506,34 +546,7 @@ export async function sealManifest(
     // parent was delivered into, reached through `ingress_receipts.envelope_to` → `addresses`. Same subjects
     // (the user plus every team they belong to), same tuple shape, so a reply cannot thread onto something
     // the inbox would not have shown them.
-    const subjects = await readableSubjects(env, { orgId, userId: composition.authorUserId });
-    const placeholders = subjects.map(() => "?").join(", ");
-    /*
-     * The sponsor term (#109), and this is the site that decided how it is resolved. There is no `Principal`
-     * here and there was never going to be one: sealing happens after the composition is stored, and the
-     * author is a column. A term threaded through the request as `who.delegatorUserId` could not reach this
-     * query, and an agent's reply would have threaded onto a parent its sponsor cannot read — putting a
-     * `Message-ID` the sponsor never had access to into an outgoing header, where it leaves the building.
-     *
-     * `delegation.ts` derives the sponsor from the subject instead, so a bare `authorUserId` is enough.
-     */
-    const sponsor = await sponsorTerm(env, orgId, composition.authorUserId, "t");
-    const parent = await env.CATALOG.prepare(
-      `SELECT m.rfc_message_id, m.blob_key
-         FROM messages m
-         JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
-         JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
-        WHERE m.org_id = ? AND m.id = ?
-          AND a.mailbox_id IN (
-            SELECT t.object_id FROM relationship_tuples t
-             WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
-               AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
-               ${sponsor.sql}
-          )
-        LIMIT 1`,
-    )
-      .bind(orgId, composition.inReplyToMessageId, orgId, ...subjects, ...sponsor.params)
-      .first<{ rfc_message_id: string; blob_key: string }>();
+    const parent = await readableParent(env, orgId, composition.authorUserId, composition.inReplyToMessageId);
     // Refused rather than silently ignored, and **not-found rather than forbidden**: §5C requires an
     // invisible thing and an absent one to answer alike, which is what stops this being the oracle described
     // above. Persisting an unverified id would leave `renderRfc822` to resolve it later and put a Message-ID
@@ -551,6 +564,30 @@ export async function sealManifest(
     // The In-Reply-To header itself is derived in renderRfc822 from the stored parent id, so it is
     // not duplicated here — one place decides what reaches the wire.
     referencesHeader = await rebuildReferences(env, parent.blob_key, parent.rfc_message_id);
+  }
+
+  /*
+   * A forward (0059): the same door as a reply's parent, and one more refusal. The original's bytes leave
+   * this Node whole, so the author must be able to read them — and a message this Node judged to carry a
+   * dangerous attachment (0057) is not sent onward under this Node's name; the `.eml` is downloadable for
+   * whoever needs to hand it to somebody, and that act is theirs.
+   */
+  if (composition.forwardOfMessageId !== undefined) {
+    const original = await readableParent(env, orgId, composition.authorUserId, composition.forwardOfMessageId);
+    if (original === null) {
+      throw notFound("E_NO_SUCH_ORIGINAL", {
+        what: `${composition.forwardOfMessageId} is not a message you can forward`,
+        why: "a forward carries the original's bytes to the recipient, so the author must be able to read it",
+        fix: "forward a message in a mailbox you may read",
+      });
+    }
+    if ((original.attachments_dangerous ?? 0) > 0) {
+      throw unprocessable("E_FORWARD_CARRIES_DANGEROUS", {
+        what: `${composition.forwardOfMessageId} carries ${original.attachments_dangerous} attachment(s) this Node judged dangerous`,
+        why: "a forward sends the original whole, and a program this Node flagged would leave under this Node's name",
+        fix: "download the original .eml and hand it over some other way, or forward with the text alone",
+      });
+    }
   }
 
   /**
@@ -689,8 +726,8 @@ export async function sealManifest(
         body_typed_key, body_typed_sha256, body_normalized_key, body_normalized_sha256,
         submitted_key, submitted_sha256,
         sealed_at, release_at, state, state_at, transport_message_id, last_error, attempts,
-        policy_outcome, policy_versions, state_reason, resend_of)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,?,0,?,?,?,?)`,
+        policy_outcome, policy_versions, state_reason, resend_of, forward_of_message_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,?,?,NULL,?,0,?,?,?,?,?)`,
   )
     .bind(
       manifestId, orgId, composition.mailboxId, composition.authorUserId,
@@ -718,6 +755,7 @@ export async function sealManifest(
       JSON.stringify(decision.matched.map((match) => match.versionId)),
       stateReason,
       composition.resend?.ofManifestId ?? null,
+      composition.forwardOfMessageId ?? null,
     );
 
   // One row per recipient, in the same transaction as the manifest.
@@ -771,6 +809,7 @@ export async function sealManifest(
       recipients: composition.to.length + (composition.cc?.length ?? 0) + (composition.bcc?.length ?? 0),
       fidelity: composition.fidelity,
       inReplyTo: composition.inReplyToMessageId ?? null,
+      forwardOf: composition.forwardOfMessageId ?? null,
       // Which rule applied, in the entry for the act that applied it. §18 requires the audit trail to say
       // this, and it rides in `send.sealed`'s detail rather than as a second entry because sealing is **one**
       // act: a denial is not a separate event that happened afterwards, it is what this seal produced.
@@ -905,13 +944,23 @@ export async function sealManifest(
  * what Bcc means — the other recipients must not learn it — and the envelope carries the recipient
  * list separately.
  */
+function concat(...parts: readonly Bytes[]): Bytes {
+  const out = new Uint8Array(parts.reduce((n, part) => n + part.byteLength, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.byteLength;
+  }
+  return out;
+}
+
 export async function renderRfc822(
   env: Env,
   manifestId: string,
 ): Promise<{ raw: Bytes; sha256: string }> {
   const m = await env.CATALOG.prepare(
     `SELECT envelope_from, envelope_to, envelope_cc, subject, rfc_message_id, references_header,
-            in_reply_to_message_id, body_normalized_key, sealed_at, org_id
+            in_reply_to_message_id, body_normalized_key, sealed_at, org_id, forward_of_message_id
        FROM send_manifests WHERE id = ? LIMIT 1`,
   )
     .bind(manifestId)
@@ -947,10 +996,36 @@ export async function renderRfc822(
     inReplyToHeader = `<${parent.rfc_message_id}>`;
   }
 
+  /*
+   * A forward (0059) carries the original's evidence bytes whole, as a `message/rfc822` part beside the
+   * text. Verbatim: not re-encoded, not quoted, not re-signed — the recipient gets the message as this Node
+   * received it, headers and all, which is the one forward whose provenance survives. Org-scoped like the
+   * parent above, and the same second lock on the same door.
+   */
+  let original: Bytes | null = null;
+  if (m.forward_of_message_id != null) {
+    const row = await env.CATALOG.prepare(
+      "SELECT blob_key FROM messages WHERE org_id = ? AND id = ? LIMIT 1",
+    ).bind(m.org_id, m.forward_of_message_id).first<{ blob_key: string }>();
+    if (row === null) {
+      throw conflict("E_ORIGINAL_NOT_IN_ORG", {
+        what: `manifest ${manifestId} forwards a message outside its organization`,
+        why: "rendering it would send another tenant's mail to the recipient",
+        fix: "this manifest cannot be sent; investigate how the reference was written",
+      });
+    }
+    original = await getEvidence(env, row.blob_key);
+  }
+
   // Built, not concatenated. Every field goes through `HeaderBlock.add`, so validation and RFC 2047
   // encoding cannot be skipped by a future field — there is no array to push a raw line onto, which is
   // the whole reason this is a builder rather than a set of checks.
-  const raw = new HeaderBlock()
+  // The boundary is derived from the manifest id: unique, and a `msg_`/`snd_` ULID cannot occur in a body
+  // as a line of its own. RFC 2046 wants it under 70 characters of the boundary alphabet; a ULID is.
+  const boundary = `=_mailda_${manifestId}`;
+  // The header *set and order* are what the effect envelope binds (`recheck.ts`'s `emittedHeadersFor`), so
+  // a forward changes the Content-Type's value and nothing about which headers there are or where.
+  const headers = new HeaderBlock()
     .add("From", normalizeAddress("from", m.envelope_from!))
     .addAddresses("To", JSON.parse(m.envelope_to ?? "[]") as string[])
     .addAddresses("Cc", m.envelope_cc == null ? [] : (JSON.parse(m.envelope_cc) as string[]))
@@ -958,10 +1033,19 @@ export async function renderRfc822(
     .add("Message-ID", `<${m.rfc_message_id!}>`)
     .add("Date", new Date(m.sealed_at!).toUTCString())
     .add("MIME-Version", "1.0")
-    .add("Content-Type", 'text/plain; charset="utf-8"')
+    .add("Content-Type", original === null ? 'text/plain; charset="utf-8"' : `multipart/mixed; boundary="${boundary}"`)
     .addIfPresent("In-Reply-To", inReplyToHeader)
-    .addIfPresent("References", m.references_header)
-    .bytes(body);
+    .addIfPresent("References", m.references_header);
+  const raw = original === null
+    ? headers.bytes(body)
+    : concat(
+      headers.bytes(
+        `--${boundary}\r\nContent-Type: text/plain; charset="utf-8"\r\n\r\n${body}\r\n--${boundary}\r\n`
+        + "Content-Type: message/rfc822\r\nContent-Disposition: attachment\r\n\r\n",
+      ),
+      original,
+      utf8(`\r\n--${boundary}--\r\n`),
+    );
 
   // Hashed over the bytes rather than over a re-decoding of them. This file used to carry its own
   // `sha256Hex(text)` beside `evidence-store.ts`'s `sha256Hex(bytes)` — two implementations of one hash, one of

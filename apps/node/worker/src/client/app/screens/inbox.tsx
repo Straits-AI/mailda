@@ -525,7 +525,7 @@ function Thread({ conversationId, current }: { conversationId: string | null; cu
   );
 }
 
-function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () => void }) {
+function ReadingPane({ message, onReply, onForward }: { message: MessageRow; onReply: () => void; onForward: () => void }) {
   return (
     <article className="reading-pane" aria-label="Message">
       {/* h2, not h1. The screen's heading is "Inbox"; a message is a section inside it, and two h1s on
@@ -553,6 +553,10 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
       <p className="row-actions">
         <button type="button" className="linkish" onClick={onReply}>
           reply
+        </button>{" "}
+        {/* A forward carries the original whole, so it needs no claim on the case: nothing is answered. */}
+        <button type="button" className="linkish" onClick={onForward}>
+          forward
         </button>
       </p>
       {message.parse_error === null ? null : (
@@ -893,6 +897,20 @@ export function Inbox() {
           // From is the mailbox (ADR 36), so composing needs to know which one. It is read off the message
           // being replied to rather than guessed: that address is routed to exactly one mailbox.
           onReply={() => void reply(current)}
+          onForward={() => {
+            setBlocked(null);
+            // `message_id` is null for a receipt not yet materialised; there is nothing to forward then.
+            if (current.message_id === null) {
+              setBlocked({ message: "This message has not been filed yet, so there is nothing to forward. Try again in a minute.", caseId: "" });
+              return;
+            }
+            setComposing({
+              mailboxId: current.mailbox_id,
+              forwardOfMessageId: current.message_id,
+              subject: /^fwd?:/i.test(current.subject ?? "") ? current.subject ?? "" : `Fwd: ${current.subject ?? ""}`,
+              body: "",
+            });
+          }}
         />
       )}
       {blocked === null ? null : (

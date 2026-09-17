@@ -13,6 +13,7 @@ import { normalizeBody, rebuildReferences, renderRfc822, sealManifest } from "..
 import { HeaderBlock, normalizeAddress, safeFilename } from "../src/outbound/headers.ts";
 import { CallerError } from "../src/errors.ts";
 import { classifyError, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
+import { seedDelivery } from "./fixtures/delivery.ts";
 
 const testEnv = env as unknown as Env;
 const ORG = "org_outbound";
@@ -44,8 +45,8 @@ function atTime(millis: number): Ctx {
 
 beforeEach(async () => {
   for (const table of ["send_manifests", "send_counters", "messages", "addresses", "mailboxes",
-                       "node_capabilities", "relationship_tuples",
-                       "send_recipients", "send_recipient_events"]) {
+                       "node_capabilities", "relationship_tuples", "ingress_receipts", "mailbox_items",
+                       "conversations", "cases", "send_recipients", "send_recipient_events"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -206,6 +207,51 @@ describe("rendering (ADR 36)", () => {
     const row = await testEnv.CATALOG.prepare("SELECT envelope_bcc FROM send_manifests WHERE id = ?")
       .bind(sealed.id).first<{ envelope_bcc: string }>();
     expect(JSON.parse(row!.envelope_bcc)).toEqual(["archive@acme.example"]);
+  });
+});
+
+describe("forwarding (0059): the original goes out whole, as the bytes this Node received", () => {
+  async function readable(userId: string) {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'mailbox.content.read','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, userId, MAILBOX, new Date(ctx.now()).toISOString()).run();
+  }
+
+  it("renders multipart/mixed with the text and a verbatim message/rfc822 part", async () => {
+    await readable(AUTHOR);
+    const original = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId: MAILBOX, address: ADDRESS }, { subject: "Original" });
+    const originalBytes = await getEvidence(testEnv, (await testEnv.CATALOG.prepare("SELECT blob_key FROM messages WHERE id = ?").bind(original.messageId).first<{ blob_key: string }>())!.blob_key);
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, subject: "Fwd: Original", bodyTyped: "See below.", forwardOfMessageId: original.messageId,
+    });
+    const { raw } = await renderRfc822(testEnv, sealed.id);
+    const text = new TextDecoder().decode(raw);
+    expect(text).toMatch(/Content-Type: multipart\/mixed; boundary="=_mailda_snd_/);
+    expect(text).toContain("Content-Type: text/plain; charset=\"utf-8\"\r\n\r\nSee below.");
+    expect(text).toContain("Content-Type: message/rfc822\r\nContent-Disposition: attachment\r\n\r\n");
+    // Verbatim: the original's bytes appear in the output unchanged, as one contiguous run.
+    const originalText = new TextDecoder().decode(originalBytes);
+    expect(text).toContain(originalText);
+    expect(text).toContain(`Subject: Original`);
+    const audited = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE subject = ? AND action = 'send.sealed'")
+      .bind(sealed.id).first<{ detail: string }>();
+    expect(JSON.parse(audited!.detail).forwardOf).toBe(original.messageId);
+  });
+
+  it("refuses an original the author cannot read, as a reply's parent is refused", async () => {
+    const original = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId: MAILBOX, address: ADDRESS });
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, forwardOfMessageId: original.messageId }))
+      .rejects.toThrow(/E_NO_SUCH_ORIGINAL/);
+  });
+
+  it("refuses to forward a message carrying an attachment this Node judged dangerous (0057)", async () => {
+    await readable(AUTHOR);
+    const original = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId: MAILBOX, address: ADDRESS });
+    await testEnv.CATALOG.prepare("UPDATE messages SET attachments = 1, attachments_dangerous = 1 WHERE id = ?").bind(original.messageId).run();
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, forwardOfMessageId: original.messageId }))
+      .rejects.toThrow(/E_FORWARD_CARRIES_DANGEROUS/);
   });
 });
 

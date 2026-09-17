@@ -79,6 +79,8 @@ const AUTOSAVE_IDLE_MS = 1_500;
 export interface ComposerContext {
   mailboxId: string;
   inReplyToMessageId?: string;
+  /** The message this send forwards, whole: its bytes go out as a `message/rfc822` part (0059). */
+  forwardOfMessageId?: string;
   to?: string;
   subject?: string;
   body?: string;
@@ -403,6 +405,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
         body: JSON.stringify({
           mailboxId: context.mailboxId,
           inReplyToMessageId: context.inReplyToMessageId,
+          forwardOfMessageId: context.forwardOfMessageId,
           to: splitAddresses(to),
           subject,
           body,
@@ -472,9 +475,9 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   }
 
   return (
-    <section className="composer-dock" aria-label={context.inReplyToMessageId ? "Reply" : "New message"}>
+    <section className="composer-dock" aria-label={context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message"}>
       <header className="dock-head">
-        <h2>{context.inReplyToMessageId ? "Reply" : "New message"}</h2>
+        <h2>{context.inReplyToMessageId ? "Reply" : context.forwardOfMessageId ? "Forward" : "New message"}</h2>
         <span
           className={phase.kind === "failed" ? "draft-phase mono failed" : "draft-phase mono"}
           // Announced, unlike the session countdown: this one changes on a human action and says whether

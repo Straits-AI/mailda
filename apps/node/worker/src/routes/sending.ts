@@ -124,6 +124,8 @@ export const sending = {
       mailboxId: String(body.mailboxId ?? ""),
       authorUserId: who.userId,
       inReplyToMessageId: body.inReplyToMessageId === undefined ? undefined : String(body.inReplyToMessageId),
+      forwardOfMessageId: body.forwardOfMessageId === undefined || body.forwardOfMessageId === null
+        ? undefined : String(body.forwardOfMessageId),
       // Absent is a real answer: it means "this mailbox has one address, use it". Only a multi-address
       // mailbox refuses when it is absent, which is what makes adding this field non-breaking.
       senderAddress: body.senderAddress === undefined ? undefined : String(body.senderAddress),
