@@ -69,6 +69,7 @@ const BODY = messageBodyResponse.parse({
   truncated: false,
   problem: null,
   attachments: [{ filename: "invoice-4417.pdf", declaredType: "application/pdf", bytes: 20480, verdict: "plain" }],
+  links: [],
 });
 
 function mount() {

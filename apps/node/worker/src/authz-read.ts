@@ -564,7 +564,7 @@ export async function mayExportBulk(
   return (await hasAnyRelation(env, who, ["ediscovery.export"], mailboxId, null)).allowed;
 }
 
-type Authorized = { ok: true; blobKey: string } | { ok: false; response: Response };
+type Authorized = { ok: true; blobKey: string; orgId: string } | { ok: false; response: Response };
 
 /**
  * Authorizes a raw-evidence read.
@@ -624,7 +624,7 @@ export async function authorize(
   // so there is no capability that outlives this call for an expiry to have to revoke (§7's enumeration came
   // back empty). `test/supervised-read.test.ts` proves the stop through this function.
   if (!(await mayRead(env, ctx, who, row.mailbox_id, { action, subject: receiptId }))) return notFound;
-  return { ok: true, blobKey: row.blob_key };
+  return { ok: true, blobKey: row.blob_key, orgId: who.orgId };
 }
 
 /**
@@ -737,7 +737,7 @@ export async function authorizeExport(
     },
   }]);
 
-  return { ok: true, blobKey: row.blob_key };
+  return { ok: true, blobKey: row.blob_key, orgId: who.orgId };
 }
 
 /**

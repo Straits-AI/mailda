@@ -1,6 +1,7 @@
 import { BUDGETS } from "@mailda/budgets";
 
 import { type AttachmentSummary, summariseAttachments } from "../attachments.ts";
+import { type JudgedLink, judgeLink } from "./links.ts";
 
 /**
  * Extracting a message body, and rendering it without trusting it (ADR 37, ADR 38).
@@ -160,7 +161,12 @@ export interface SanitizedBody {
   /** How many remote resources were withheld. Shown to the reader, never hidden (ADR 37). */
   blockedRemote: number;
   inputHadContent: boolean;
+  /** Every kept link, judged against what it says and against `ownDomains` (`links.ts`). */
+  links: JudgedLink[];
 }
+
+/** Links per body a surface is handed. Past this a message is a link farm, and the count says so. */
+const MAX_JUDGED_LINKS = 200;
 
 /**
  * Sanitises with `HTMLRewriter` — a Workers built-in, so this costs no bundle bytes.
@@ -168,8 +174,15 @@ export interface SanitizedBody {
  * Counting blocked resources requires buffering the output, which is why the input is bounded. The
  * *evidence* path stays unbounded and streamed (§16); this bound is on the rendered panel only.
  */
-export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
+export async function sanitizeHtml(html: string, ownDomains: readonly string[] = []): Promise<SanitizedBody> {
   let blockedRemote = 0;
+  /*
+   * Each kept anchor's href and the text inside it, collected as the rewriter passes and judged at the end.
+   * The `text` handler on the `a` selector fires for text inside a matched anchor; nested anchors are not
+   * legal HTML and lol-html closes the outer one, so one open anchor at a time is the true shape.
+   */
+  const anchors: { href: string; text: string }[] = [];
+  let open: { href: string; text: string } | null = null;
 
   const rewriter = new HTMLRewriter().on("*", {
     element(element) {
@@ -225,6 +238,14 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
           // Opening in a new context with no window handle back to this one.
           element.setAttribute("target", "_blank");
           element.setAttribute("rel", "noopener noreferrer nofollow");
+          if (anchors.length < MAX_JUDGED_LINKS) {
+            open = { href, text: "" };
+            anchors.push(open);
+            const mine = open;
+            element.onEndTag(() => {
+              if (open === mine) open = null;
+            });
+          }
         }
       }
     },
@@ -259,6 +280,7 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
       // vector.
       const raw = chunk.text;
       if (raw.includes("<")) chunk.replace(raw.replaceAll("<", "&lt;"), { html: true });
+      if (open !== null && open.text.length < 400) open.text += raw;
     },
   });
 
@@ -280,7 +302,10 @@ export async function sanitizeHtml(html: string): Promise<SanitizedBody> {
     .transform(new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }))
     .text();
 
-  return { html: sanitized, blockedRemote, inputHadContent: html.trim().length > 0 };
+  return {
+    html: sanitized, blockedRemote, inputHadContent: html.trim().length > 0,
+    links: anchors.map((one) => judgeLink(one.href, one.text, ownDomains)),
+  };
 }
 
 /**
@@ -299,9 +324,12 @@ export interface RenderedBody {
   /** Set when `state` is `unparsed`: what went wrong, in the reader's terms. */
   problem: string | null;
   attachments: AttachmentSummary[];
+  /** Every link in the rendered HTML, judged. Empty for a text-only body: a bare URL cannot say one thing and go to another. */
+  links: JudgedLink[];
 }
 
-export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
+/** `ownDomains` are the organization's own, for the lookalike verdict; the caller reads them from `addresses`. */
+export async function renderBody(raw: Uint8Array, ownDomains: readonly string[] = []): Promise<RenderedBody> {
   let extracted: ExtractedBody;
   try {
     extracted = await extractBody(raw);
@@ -315,6 +343,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
       blockedRemote: 0,
       truncated: false,
       attachments: [],
+      links: [],
       problem:
         `This message's body could not be read (${(error as Error).message.split("\n")[0]}). ` +
         `The original is unchanged and can still be downloaded.`,
@@ -323,7 +352,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
 
   if (extracted.html !== null) {
     try {
-      const { html, blockedRemote, inputHadContent } = await sanitizeHtml(extracted.html);
+      const { html, blockedRemote, inputHadContent, links } = await sanitizeHtml(extracted.html, ownDomains);
 
       // Nothing survived, but there was something to begin with. Reporting `html` here would show an
       // empty panel while asserting the message had been rendered — a reader cannot tell that from a
@@ -337,6 +366,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
           blockedRemote,
           truncated: extracted.truncated,
       attachments: extracted.attachments,
+        links,
           problem:
             "Nothing in this message's HTML survived sanitising. " +
             (extracted.text === null
@@ -352,6 +382,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
         blockedRemote,
         truncated: extracted.truncated,
       attachments: extracted.attachments,
+        links,
         problem: null,
       };
     } catch (error) {
@@ -365,7 +396,8 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
         text: extracted.text,
         blockedRemote: 0,
         truncated: extracted.truncated,
-      attachments: extracted.attachments,
+        attachments: extracted.attachments,
+        links: [],
         problem:
           `This message's HTML could not be rendered safely ` +
           `(${(error as Error).message.split("\n")[0]}). ` +
@@ -384,6 +416,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
       blockedRemote: 0,
       truncated: extracted.truncated,
       attachments: extracted.attachments,
+    links: [],
       problem: null,
     };
   }
@@ -395,6 +428,7 @@ export async function renderBody(raw: Uint8Array): Promise<RenderedBody> {
     blockedRemote: 0,
     truncated: extracted.truncated,
     attachments: extracted.attachments,
+    links: [],
     problem: null,
   };
 }

@@ -1576,6 +1576,20 @@ export const attachmentSummary = z.object({
   verdict: attachmentVerdict,
 }).strict();
 
+/**
+ * What a link points at, held against what it says (`src/render/links.ts`). `mismatch`: the text names a
+ * different host. `lookalike`: the host resembles one of this organization's own and is not it. `userinfo`:
+ * `https://ours@theirs`. `ip_host`: a bare address. Nothing is rewritten; the href is the sender's.
+ */
+export const linkVerdict = z.enum(["plain", "mismatch", "lookalike", "userinfo", "ip_host"]);
+export type LinkVerdict = z.infer<typeof linkVerdict>;
+
+export const judgedLink = z.object({
+  href: z.string(),
+  text: z.string(),
+  verdict: linkVerdict,
+}).strict();
+
 /** Why a delivery was held back (0056): the sender's domain failed DMARC and asked receivers to do this. */
 export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous"]);
 export type QuarantineReason = z.infer<typeof quarantineReason>;
@@ -2363,6 +2377,8 @@ export const messageBodyResponse = z.object({
   problem: z.string().nullable(),
   /** Every attached part, named and judged; the bytes stay in the original. Empty when `state` is `unparsed`. */
   attachments: z.array(attachmentSummary),
+  /** Every link in the rendered HTML, judged. Empty for a text-only body. */
+  links: z.array(judgedLink),
 }).loose();
 
 /** Releasing a send a policy put on hold (#60). One field, because there is one question. */

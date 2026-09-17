@@ -1078,6 +1078,7 @@ tbody a { font-size: .8rem; }
 /* Attached parts, listed above the body: a name, a type, a size and — only when there is one — a word. */
 .attachments { list-style: none; padding: 0; margin: 0 0 .75rem; font-size: .82rem; }
 .attachments li { padding: .2rem 0; border-bottom: 1px solid var(--rule); }
+.links-flagged { margin: .35rem 0 0; padding-left: 1.1rem; font-size: .8rem; word-break: break-all; }
 
 /* ---- ledgers ----------------------------------------------------------------------------- */
 

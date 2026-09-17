@@ -74,6 +74,21 @@ sender's domain speaks first: a disowned message carrying an executable is held 
 Archives are named and never opened. Whether a `.zip` holds an executable is not looked at, and the verdict
 says `archive` rather than pretending it has — the *archives-in-archives* case is the part of row 2 still open.
 
+### Links, judged against what they say (17 September 2026)
+
+Nothing is rewritten (ADR 37): the href a reader clicks is the sender's, and a hover shows it. What a hover
+cannot do is compare, and `src/render/links.ts` does, as the sanitiser passes each kept anchor: `mismatch`
+(the text names a host — `https://acme.example/login`, `www.bank.test` — and the href goes to another
+registrable domain), `lookalike` (the host resembles one of this organization's own domains, read from
+`addresses`, and is not it: ours as a label or prefix, one edit away, or punycode), `userinfo`
+(`https://ours@theirs`), `ip_host`, `plain`. `javascript:`, `data:` and every scheme but `http(s)` and
+`mailto` were already refused at render and stay refused. The body route returns every link judged, and the
+reading pane lists the flagged ones above the body with where each really goes. Bounded at 200 links a body.
+
+The own-domain comparison has no public-suffix list behind it — the registrable domain is the last two
+labels, three under `co.uk`-shaped suffixes — and the edit distance is one, so `rn` for `m` is a link the
+reader judges. Render-time only: no count is stored, so no Butler guard or quarantine reads it yet.
+
 ## What is not built, in the order it should be
 
 1. **A policy that acts on the verdict.** Quarantine above is the fixed case. `dmarc == "fail"` as a
@@ -82,8 +97,8 @@ says `archive` rather than pretending it has — the *archives-in-archives* case
 2. **Attachments, the rest of the row.** Executables, scripts and disguises are judged above. Still open:
    a size bound, an allowed-type list a mailbox declares, and archives-in-archives — walking a ZIP's central
    directory to judge what it holds, without extracting it.
-3. **Links.** Nothing is rewritten (ADR 37); the real destination is shown, lookalikes against the
-   customer's own domain are flagged, `javascript:` and `data:` are refused at render.
+3. **Links, the rest of the row.** Judged at render above. Still open: a stored count a guard or a
+   quarantine switch can act on, and a suffix list if a customer's own domain is misjudged.
 4. **Suppression.** The `email.sending` events already carry bounces and complaints; a list derived from
    them, consulted at seal time, is `send-breakers.md` one step further. Whether Cloudflare's
    `drop_suppressed_recipients` is the same list is unmeasured.

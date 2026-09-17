@@ -36,6 +36,36 @@ interface RenderedBody {
     bytes: number;
     verdict: "executable" | "script" | "archive" | "disguised" | "plain";
   }>;
+  links: Array<{ href: string; text: string; verdict: "plain" | "mismatch" | "lookalike" | "userinfo" | "ip_host" }>;
+}
+
+const LINK_WORDS: Record<RenderedBody["links"][number]["verdict"], string | null> = {
+  plain: null,
+  mismatch: "says one place and goes to another",
+  lookalike: "goes to a domain that resembles one of yours and is not it",
+  userinfo: "carries a name before the real host, so it reads as somewhere it is not",
+  ip_host: "goes to a bare address rather than a named site",
+};
+
+/**
+ * The links worth a word, with where each really goes. Nothing is rewritten in the body — the sender's
+ * href is what a click follows — so this is the comparison a hover cannot make, stated once, above the body.
+ */
+function Links({ links }: { links: RenderedBody["links"] }) {
+  const flagged = links.filter((one) => one.verdict !== "plain");
+  if (flagged.length === 0) return null;
+  return (
+    <div className="notice bad" role="alert">
+      <p>{flagged.length} of {links.length} link{links.length === 1 ? "" : "s"} in this message {flagged.length === 1 ? "is" : "are"} not what {flagged.length === 1 ? "it says" : "they say"}:</p>
+      <ul className="links-flagged">
+        {flagged.map((one, index) => (
+          <li key={index}>
+            <span className="mono">{one.text === "" ? "(an image)" : one.text}</span> {LINK_WORDS[one.verdict]}: <span className="mono dim">{one.href}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
@@ -113,6 +143,7 @@ function MessageBody({ id }: { id: string }) {
       ) : null}
       {rendered.truncated ? <p className="notice dim">Shown truncated. The original is complete.</p> : null}
       <Attachments parts={rendered.attachments} />
+      <Links links={rendered.links} />
       {rendered.state === "html" && rendered.html !== null ? (
         <iframe
           className="message-body"
