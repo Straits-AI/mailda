@@ -46,7 +46,7 @@ function atTime(millis: number): Ctx {
 beforeEach(async () => {
   for (const table of ["send_manifests", "send_counters", "messages", "addresses", "mailboxes",
                        "node_capabilities", "relationship_tuples", "ingress_receipts", "mailbox_items",
-                       "conversations", "cases", "send_recipients", "send_recipient_events"]) {
+                       "conversations", "cases", "send_recipients", "send_recipient_events", "send_attachments"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -252,6 +252,49 @@ describe("forwarding (0059): the original goes out whole, as the bytes this Node
     await testEnv.CATALOG.prepare("UPDATE messages SET attachments = 1, attachments_dangerous = 1 WHERE id = ?").bind(original.messageId).run();
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, forwardOfMessageId: original.messageId }))
       .rejects.toThrow(/E_FORWARD_CARRIES_DANGEROUS/);
+  });
+});
+
+describe("attachments on an authored send (0060): judged, stored as evidence, rendered verbatim", () => {
+  const PDF = utf8("%PDF-1.7\n%\xe2\xe3\xcf\xd3\nfake\n");
+  const MZ = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00]);
+
+  it("renders multipart/mixed with the base64 part decoding to the exact bytes, and records the row", async () => {
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
+    });
+    const rows = await testEnv.CATALOG.prepare(
+      "SELECT filename, content_type, bytes, verdict, blob_key FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal",
+    ).bind(sealed.id).all<{ filename: string; content_type: string; bytes: number; verdict: string; blob_key: string }>();
+    expect(rows.results).toMatchObject([{ filename: "invoice.pdf", content_type: "application/pdf", bytes: PDF.length, verdict: "plain" }]);
+    expect(rows.results[0]!.blob_key).toContain(`/sent/${sealed.id}/att-0`);
+    expect(await getEvidence(testEnv, rows.results[0]!.blob_key)).toEqual(PDF);
+
+    const text = new TextDecoder().decode((await renderRfc822(testEnv, sealed.id)).raw);
+    expect(text).toContain('Content-Type: application/pdf; name="invoice.pdf"');
+    expect(text).toContain("Content-Transfer-Encoding: base64");
+    const encoded = /Content-Disposition: attachment; filename="invoice.pdf"\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/.exec(text)!;
+    const decoded = Uint8Array.from(atob(encoded[1]!.replace(/\r\n/g, "")), (c) => c.charCodeAt(0));
+    expect(decoded).toEqual(PDF);
+    expect(text).toContain("We have revised the schedule.");
+  });
+
+  it("refuses a program, a script, or a program under a document's name, by the inbound rule", async () => {
+    for (const [filename, content] of [["setup.exe", MZ], ["run.ps1", PDF], ["invoice.pdf", MZ]] as const) {
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename, contentType: "application/octet-stream", content }],
+      })).rejects.toThrow(/E_ATTACHMENT_DANGEROUS/);
+    }
+    // Nothing was stored for a refused send.
+    const count = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_attachments").first<{ n: number }>();
+    expect(count?.n).toBe(0);
+  });
+
+  it("refuses attachments over the published outbound ceiling before storing anything", async () => {
+    const big = new Uint8Array(BUDGETS["email.outbound.max_bytes"]);
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition, attachments: [{ filename: "big.bin.txt", contentType: "text/plain", content: big }],
+    })).rejects.toThrow(/E_ATTACHMENTS_TOO_LARGE/);
   });
 });
 

@@ -17,7 +17,7 @@ import { putEvidence } from "../src/evidence-store.ts";
 import { dispatchOne, type SendState } from "../src/outbound/dispatch.ts";
 import { renderRfc822, sealManifest } from "../src/outbound/manifest.ts";
 import {
-  bindEnvelope, DISPATCH_REASONS, ENVELOPE_ABSENT, WITHHOLDING,
+  bindEnvelope, DISPATCH_REASONS, ENVELOPE_ABSENT, ENVELOPE_COLUMNS, WITHHOLDING,
 } from "../src/outbound/recheck.ts";
 import { cloudflareTransport, type SubmitOutcome, type TransportAdapter } from "../src/outbound/transport.ts";
 import { createPolicyDraft, publishPolicy } from "../src/policy.ts";
@@ -175,7 +175,7 @@ beforeEach(async () => {
                        "policy_versions", "policies", "send_manifests", "send_recipients", "send_counters",
                        "send_recipient_events", "relationship_tuples", "team_members", "addresses",
                        "mailboxes", "users", "audit_entries", "log_entries", "outbox", "node_claim",
-                       "node_capabilities", "messages", "holds", "hold_lifts"]) {
+                       "node_capabilities", "messages", "holds", "hold_lifts", "send_attachments"]) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table}`).run();
   }
   const ctx = createSystemCtx();
@@ -358,6 +358,37 @@ describe("the six reasons a dispatch withholds a send (#62)", () => {
     // The deadline is `requested_at` plus the constant, computed by the module that writes it rather than
     // restated here — a second copy of that arithmetic is a second thing to get wrong.
     expect(approval?.expires_at).toBe(expiryFor("send_manifest", SEALED_AT));
+  });
+
+  it("binds every attachment's hash and withholds when one no longer hashes to what the seal recorded (0060)", async () => {
+    await published("needs approval att", "require_approval", [1]);
+    const pdf = utf8("%PDF-1.7\nnot really a pdf but it begins like one\n");
+    const sealed = await sealManifest(testEnv, atTime(SEALED_AT), ORG, {
+      ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: pdf }],
+    });
+    expect(sealed.state).toBe("awaiting");
+    await decideApproval(testEnv, atTime(SEALED_AT + 1000), ORG, ANN, sealed.approvalId!, "approve");
+
+    const part = await testEnv.CATALOG.prepare(
+      "SELECT blob_key, sha256, verdict FROM send_attachments WHERE manifest_id = ?",
+    ).bind(sealed.id).first<{ blob_key: string; sha256: string; verdict: string }>();
+    expect(part?.verdict).toBe("plain");
+    // The envelope carries the hash the row recorded, in ordinal order.
+    const row = await testEnv.CATALOG.prepare(
+      `SELECT ${ENVELOPE_COLUMNS} FROM send_manifests WHERE id = ?`,
+    ).bind(sealed.id).first();
+    const bound = await bindEnvelope(testEnv, ORG, sealed.id, row as never, handedOver());
+    expect(bound.artifactHashes.attachments).toEqual([part!.sha256]);
+
+    // Different bytes under the same key, as the body test below does: the recheck withholds by name.
+    await putEvidence(testEnv, part!.blob_key, utf8("%PDF-1.7 tampered"));
+    const transport = handedOver();
+    const result = await dispatchOne(testEnv, atTime(DUE_AT), ORG, sealed.id, transport);
+    expect(result.state).toBe("withheld");
+    const after = await manifestRow(sealed.id);
+    expect(after?.state_reason).toBe("evidence_changed");
+    expect(after?.last_error).toContain("attachment_0");
+    expect(transport.submitted).toHaveLength(0);
   });
 
   it("withholds when the stored typed body no longer hashes to what the manifest recorded", async () => {
@@ -852,6 +883,30 @@ describe("what the two paths cost (#62's whole basis for their differing)", () =
       `  do_rpc=${cost.doRpcs}`,
     );
   }
+
+  it("prices one attachment on both paths, so the receipt can say what each costs per part (0060)", async () => {
+    const pdf = utf8("%PDF-1.7 measured");
+    const attached = { ...composition, attachments: [{ filename: "a.pdf", contentType: "application/pdf", content: pdf }] };
+    const plain = await sealManifest(testEnv, atTime(SEALED_AT), ORG, attached);
+    const unapproved = metering(testEnv);
+    expect((await dispatchOne(unapproved.env, atTime(DUE_AT), ORG, plain.id, handedOver())).state).toBe("handed_over");
+    report("unapproved/one-attachment", unapproved.cost);
+
+    await published("needs approval attached", "require_approval", [1]);
+    const gated = await sealManifest(testEnv, atTime(SEALED_AT), ORG, attached);
+    await decideApproval(testEnv, atTime(SEALED_AT + 1000), ORG, ANN, gated.approvalId!, "approve");
+    const approved = metering(testEnv);
+    expect((await dispatchOne(approved.env, atTime(DUE_AT), ORG, gated.id, handedOver())).state).toBe("handed_over");
+    report("approved/one-attachment", approved.cost);
+    /*
+     * Stated bounds per part, not the plain-send budgets: a send with attachments costs one evidence read
+     * per part at render on every path, and one more at the recheck on the approved path. The plain budgets
+     * stay what they are and stay asserted above for a send with none — a bound that grew with every
+     * attachment would stop being a tripwire for the path it was written for.
+     */
+    expect(unapproved.cost.subrequests).toBeLessThanOrEqual(BUDGETS["send.dispatch_unapproved_max_subrequests"] + 2);
+    expect(approved.cost.subrequests).toBeLessThanOrEqual(BUDGETS["send.dispatch_approved_max_subrequests"] + 4);
+  });
 
   it("costs the unapproved path exactly what it did, and the approved path the recheck more", async () => {
     const plain = await unapprovedSend();

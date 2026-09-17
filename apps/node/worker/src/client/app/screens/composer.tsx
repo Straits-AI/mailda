@@ -128,6 +128,13 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   const [to, setTo] = useState(context.to ?? "");
   const [subject, setSubject] = useState(context.subject ?? "");
   const [body, setBody] = useState(context.body ?? "");
+  /*
+   * Files attached in this session, held in the browser until the seal (0060). Not part of the draft: a
+   * draft is text the Node keeps so writing survives a closed tab, and a file the author still has on disk
+   * is not writing. The list says so beside the control.
+   * ponytail: attachments are lost with the tab; carry them on the draft if that turns out to matter.
+   */
+  const [files, setFiles] = useState<File[]>([]);
   const [bodyUnavailable, setBodyUnavailable] = useState(context.bodyUnavailable ?? null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "empty" });
@@ -406,6 +413,11 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           mailboxId: context.mailboxId,
           inReplyToMessageId: context.inReplyToMessageId,
           forwardOfMessageId: context.forwardOfMessageId,
+          attachments: await Promise.all(files.map(async (file) => ({
+            filename: file.name,
+            contentType: file.type === "" ? "application/octet-stream" : file.type,
+            contentBase64: await base64Of(file),
+          }))),
           to: splitAddresses(to),
           subject,
           body,
@@ -561,6 +573,36 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           />
         </label>
 
+        <label className="field-row" htmlFor="composer-files">
+          <span>Attach</span>
+          <input
+            id="composer-files"
+            type="file"
+            multiple
+            onChange={(event) => {
+              setFiles([...files, ...Array.from(event.target.files ?? [])]);
+              event.target.value = "";
+            }}
+          />
+        </label>
+        {files.length === 0 ? null : (
+          <ul className="attachments" aria-label="Attached files">
+            {files.map((file, index) => (
+              <li key={`${file.name}-${index}`}>
+                <span className="mono">{file.name}</span>{" "}
+                <span className="dim">{Math.max(1, Math.round(file.size / 1024))} KB</span>{" "}
+                <button type="button" className="linkish" onClick={() => setFiles(files.filter((_, i) => i !== index))}>
+                  remove
+                </button>
+              </li>
+            ))}
+            <li className="dim">
+              Files travel with the send, not with the draft: close this and they are not kept. A program, a
+              script, or a program under a document's name is refused at the seal, by name.
+            </li>
+          </ul>
+        )}
+
         {bodyUnavailable === null ? null : (
           /*
            * Said where the empty box is, not in a banner somewhere else (#143). The two states get different
@@ -596,4 +638,14 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
       </form>
     </section>
   );
+}
+
+/** A file's bytes as standard base64, the way the seal decodes it. */
+async function base64Of(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let at = 0; at < bytes.byteLength; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return btoa(binary);
 }

@@ -360,11 +360,12 @@ describe("the referent table is closed over the prefixes", () => {
      * sizes and a restore of them is unverifiable.
      *
      * Asserted as a count rather than a mapping, because the key columns do not spell their prefixes: `sent/`
-     * is served by three columns on one table, and `drafts/` by a column named `body_key`. What can be
+     * is served by three columns on one table plus one on another, and `drafts/` by a column named `body_key`. What can be
      * checked mechanically is that the number of prefixes has not outgrown the referents somebody wrote.
      */
     expect(scannedPrefixes("org_x")).toHaveLength(4);
-    expect(new Set(INVENTORY_REFERENTS.map((one) => one.table)).size).toBe(4);
+    // Five tables for four prefixes since 0060: `sent/` is served by `send_manifests` and `send_attachments`.
+    expect(new Set(INVENTORY_REFERENTS.map((one) => one.table)).size).toBe(5);
     for (const referent of INVENTORY_REFERENTS) {
       expect(referent.key).toMatch(/_key$/);
       expect(referent.hash).toMatch(/sha256$/);

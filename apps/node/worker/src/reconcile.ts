@@ -311,7 +311,7 @@ export async function scanExportObjects(env: Env, ctx: Ctx, orgId: string): Prom
  *
  * ## The referent rule, which is the fourth in this file and the decision #74 was filed to take
  *
- * A send stages three objects — `typed.txt` and `normalized.txt` at seal, `submitted.eml` at hand-over — all
+ * A send stages three objects — `typed.txt` and `normalized.txt` at seal, `submitted.eml` at hand-over — and since 0060 an `att-<n>` per attachment at seal, all
  * under `${orgId}/sent/${manifestId}/`. So the referent is a `send_manifests` row whose `id` is the key's
  * **second segment**, and the lookup is per *manifest* rather than per *object*: three objects resolve to one
  * row, exactly as an export's many objects resolve to one `exports` row.

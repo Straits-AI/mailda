@@ -28,6 +28,8 @@ export const EXPECTED_TABLES = [
   "audit_entries", "log_entries",
   // Migration 0010 (per-recipient outcome), and 0058's one exception to the list derived from it.
   "send_recipients", "send_recipient_events", "suppression_lifts",
+  // Migration 0060: what an authored send attached, as evidence.
+  "send_attachments",
   // Migration 0012 (durable drafts).
   "drafts",
   // Migration 0014 (Layer 3: conversations and cases).

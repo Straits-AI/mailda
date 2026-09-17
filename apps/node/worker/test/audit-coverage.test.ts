@@ -349,6 +349,11 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   },
   outbox: { exempt: "Internal work queue. Its effects are audited where they land, not on enqueue." },
   send_counters: { exempt: "Aggregate counters derived from send_manifests, which is audited." },
+  send_attachments: {
+    exempt:
+      "What an authored send attached, written in the seal's own batch beside the manifest and recorded by " +
+      "send.sealed (0060). One row per part; a second entry per part would be the per-recipient argument below.",
+  },
   send_recipients: {
     exempt:
       "Derived from the manifest and from provider events, not from anything a person did. The acts are " +

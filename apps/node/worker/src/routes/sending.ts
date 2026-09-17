@@ -1,3 +1,5 @@
+import type { Bytes } from "@mailda/evidence";
+
 import { CallerError, unprocessable } from "../errors.ts";
 import { auditedBatch } from "../audit.ts";
 import { streamEvidence } from "../evidence-store.ts";
@@ -126,6 +128,15 @@ export const sending = {
       inReplyToMessageId: body.inReplyToMessageId === undefined ? undefined : String(body.inReplyToMessageId),
       forwardOfMessageId: body.forwardOfMessageId === undefined || body.forwardOfMessageId === null
         ? undefined : String(body.forwardOfMessageId),
+      // `[{filename, contentType, contentBase64}]` (0060). Decoded here and judged at the seal; a part that
+      // is not base64 is refused as a shape rather than sent as whatever `atob` made of it.
+      attachments: Array.isArray(body.attachments)
+        ? (body.attachments as Array<Record<string, unknown>>).map((one) => ({
+          filename: String(one.filename ?? "attachment"),
+          contentType: String(one.contentType ?? "application/octet-stream"),
+          content: decodeBase64(String(one.contentBase64 ?? "")),
+        }))
+        : undefined,
       // Absent is a real answer: it means "this mailbox has one address, use it". Only a multi-address
       // mailbox refuses when it is absent, which is what makes adding this field non-breaking.
       senderAddress: body.senderAddress === undefined ? undefined : String(body.senderAddress),
@@ -532,3 +543,19 @@ export const sending = {
     });
   },
 } satisfies Some;
+
+/** Strict base64 to bytes. A body that is not base64 is a caller's mistake and is refused as one. */
+function decodeBase64(text: string): Bytes {
+  const clean = text.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean) || clean.length % 4 !== 0) {
+    throw unprocessable("E_ATTACHMENT_NOT_BASE64", {
+      what: "an attachment's contentBase64 is not base64",
+      why: "the bytes stored and sent must be the bytes the author attached, and a lenient decode would invent them",
+      fix: "encode the file's bytes as standard base64 with padding",
+    });
+  }
+  const binary = atob(clean);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}

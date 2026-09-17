@@ -38,8 +38,8 @@ function tables(): string[] {
 
 describe("the verifier carries no list of its own", () => {
   it("finds the referent list, so nothing here passes by comparing against nothing", () => {
-    // Four tables and six columns; the count is asserted against the receipt in the workerd suite.
-    expect(tables()).toHaveLength(4);
+    // Five tables and seven columns since 0060; the count is asserted against the receipt in the workerd suite.
+    expect(tables()).toHaveLength(5);
   });
 
   it("names none of the evidence tables in its own code", () => {

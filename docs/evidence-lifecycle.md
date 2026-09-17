@@ -488,6 +488,12 @@ thing rather than a re-rendering of it. Threading anchors point at **Gmail's** M
 the original's stored evidence — which is why a reply threads correctly even though Cloudflare rewrites
 *our* Message-ID on the way out.
 
+An **attachment** on an authored send (0060) is evidence from the seal: stored under the manifest's prefix
+as `att-<n>` with its plaintext hash in `send_attachments`, bound by the effect envelope, verified against
+the row at render before it leaves and again by the recheck on the approved path, and inventoried and
+verified with the bodies. `reconcile.ts` needs nothing new: any object under a manifest's prefix has the
+manifest as its referent.
+
 A **forward** (0059) is the same evidence going out whole. `renderRfc822` emits `multipart/mixed` with the
 typed text and a `message/rfc822` part whose bytes are the original as this Node received it — not quoted,
 not re-encoded, not re-signed — so a recipient has the message with its own headers, and the manifest's
