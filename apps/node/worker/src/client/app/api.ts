@@ -161,6 +161,26 @@ export interface RecipientRow {
   last_error: string | null;
 }
 
+/**
+ * One conversation, both halves: every message in it this reader may see, and every send that replied into
+ * it. Two listings with one more predicate each, so the thread is authorized exactly as the inbox and the
+ * outbox are — a message or a send the reader may not see is simply not in the thread.
+ */
+export function useThread(conversationId: string | null) {
+  return useQuery({
+    queryKey: ["thread", conversationId],
+    queryFn: async () => {
+      const [messages, sends] = await Promise.all([
+        read<MessagesPage>(`${GET("/api/messages")}?${MESSAGE_PAGE_PARAMS.conversation}=${encodeURIComponent(conversationId!)}`),
+        read<SendsResponse>(`${GET("/api/sends")}?conversation=${encodeURIComponent(conversationId!)}`),
+      ]);
+      return { messages: messages.messages, sends: sends.sends };
+    },
+    enabled: conversationId !== null,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export interface SendRow {
   id: string;
   subject: string;

@@ -1058,6 +1058,11 @@ tbody a { font-size: .8rem; }
 
 .reading-pane { padding: 0 0 0 clamp(1rem, 2.5vw, 2rem); min-width: 0; }
 .reading-pane .message-title { font-size: clamp(1.15rem, 2.2vw, 1.5rem); margin: 0 0 .8rem 0; font-weight: 400; }
+/* The rest of the conversation, under the message being read: folded rows, opened one at a time. */
+.thread { margin-top: 1.5rem; border-top: 1px solid var(--rule); padding-top: .8rem; }
+.thread h3 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 400; margin: 0 0 .5rem; }
+.thread-list { list-style: none; margin: 0; padding: 0; }
+.thread-list li { border-bottom: 1px solid var(--rule); }
 .headers { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .2rem .8rem; margin: 0 0 1.2rem 0; }
 .headers dt {
   font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;

@@ -415,7 +415,10 @@ export const sending = {
     return Response.json({ configured: { accountId, configuredAt: at } });
   },
 
-  "GET /api/sends": async ({ env, clock, who }) => {
+  "GET /api/sends": async ({ request, env, clock, who }) => {
+    // A thread's outbound half: the sends whose parent is in the conversation named. Same bound as the
+    // whole outbox, one more predicate.
+    const conversationId = new URL(request.url).searchParams.get("conversation") || null;
     // Subjects are the user plus every team they belong to, which is what `hasRelation` and
     // `listMessages` both do. A relation held through a team is held.
     const subjects = await readableSubjects(env, who);
@@ -452,8 +455,11 @@ export const sending = {
                AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
                ${sponsor.sql}
           )
+          ${conversationId === null ? "" : `AND in_reply_to_message_id IN (
+            SELECT id FROM messages WHERE org_id = ? AND conversation_id = ?)`}
         ORDER BY sealed_at DESC LIMIT 50`,
-    ).bind(who.orgId, who.orgId, ...subjects, ...sponsor.params).all<Record<string, unknown>>();
+    ).bind(who.orgId, who.orgId, ...subjects, ...sponsor.params,
+      ...(conversationId === null ? [] : [who.orgId, conversationId])).all<Record<string, unknown>>();
 
     // Recipients travel with the sends rather than behind a second request per row.
     //

@@ -5,7 +5,7 @@ import { apiFetch } from "/app/session.js";
 import { BUDGETS } from "@mailda/budgets";
 
 import { Nothing } from "../chrome.tsx";
-import { type MessageRow, claimCase, stealCase, useMailboxes, useMessages } from "../api.ts";
+import { type MessageRow, type SendRow, claimCase, stealCase, useMailboxes, useMessages, useThread } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
 /**
@@ -469,6 +469,62 @@ function Authenticated({ message }: { message: MessageRow }) {
   );
 }
 
+/**
+ * The rest of the conversation, around the message being read (#30's other half).
+ *
+ * Every other message in the conversation this reader may see, and every send that replied into it, in
+ * time order, each folded to a line until opened. The message being read is not repeated here: it is the
+ * pane above, with its headers and its body, and this is what came before and after it. Nothing is guessed
+ * about grouping — the conversation is the sender's own root, and a message with none is a thread of one.
+ */
+function Thread({ conversationId, current }: { conversationId: string | null; current: string }) {
+  const thread = useThread(conversationId);
+  const [open, setOpen] = useState<string | null>(null);
+  if (conversationId === null || !thread.isSuccess) return null;
+  const items: Array<{ key: string; at: string; message?: MessageRow; send?: SendRow }> = [
+    ...thread.data.messages.filter((one) => one.id !== current).map((one) => ({ key: one.id, at: one.accepted_at, message: one })),
+    ...thread.data.sends.map((one) => ({ key: one.id, at: one.state_at, send: one })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+  if (items.length === 0) return null;
+  return (
+    <section className="thread" aria-label="Conversation">
+      <h3 className="dim">{items.length} other message{items.length === 1 ? "" : "s"} in this conversation</h3>
+      <ul className="thread-list">
+        {items.map((item) => (
+          <li key={item.key}>
+            <button
+              type="button"
+              className="message-row"
+              aria-expanded={open === item.key}
+              onClick={() => setOpen(open === item.key ? null : item.key)}
+            >
+              <span className="message-from mono">
+                {item.message !== undefined
+                  ? item.message.from_addr ?? item.message.envelope_from
+                  : `→ ${item.send!.envelope_to}`}
+              </span>
+              <span className="message-subject">
+                {item.message !== undefined ? item.message.subject ?? "(no subject)" : item.send!.subject}
+                {item.send !== undefined ? <span className="dim"> · sent, {item.send.state}</span> : null}
+              </span>
+              <span className="message-when dim mono">{received(item.at)}</span>
+            </button>
+            {open === item.key && item.message !== undefined ? <MessageBody id={item.message.id} /> : null}
+            {open === item.key && item.send !== undefined ? (
+              <p className="notice dim">
+                A send from this Node. Its bytes are in the outbox
+                {item.send.has_submitted === 1 ? (
+                  <>: <a className="mono" href={`/api/sends/${encodeURIComponent(item.send.id)}/submitted`}>.eml</a></>
+                ) : null}.
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () => void }) {
   return (
     <article className="reading-pane" aria-label="Message">
@@ -505,6 +561,7 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
         </p>
       )}
       <MessageBody id={message.id} />
+      <Thread conversationId={message.conversation_id} current={message.id} />
     </article>
   );
 }
