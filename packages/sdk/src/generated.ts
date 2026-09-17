@@ -420,6 +420,24 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Deliveries held back from every queue because their From domain disowned them (0056)
+   *
+   * `GET /api/quarantine`
+   */
+  async getQuarantine(): Promise<z.infer<typeof S.quarantineListResponse>> {
+    return await this.json("GET", "/api/quarantine", {}, undefined) as z.infer<typeof S.quarantineListResponse>;
+  }
+
+  /**
+   * Let a quarantined delivery into its mailbox's queue, opening the case it would have had
+   *
+   * `POST /api/quarantine/:messageId/release`
+   */
+  async postQuarantineByMessageIdRelease(params: { messageId: string }, body?: unknown): Promise<z.infer<typeof S.quarantineReleasedResponse>> {
+    return await this.json("POST", "/api/quarantine/:messageId/release", params, body) as z.infer<typeof S.quarantineReleasedResponse>;
+  }
+
+  /**
    * Change a mailbox's settings
    *
    * `PATCH /api/mailboxes/:mailboxId`

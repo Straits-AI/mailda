@@ -417,6 +417,10 @@ export interface MailboxQueue {
   name: string;
   /** NULL means this mailbox promises nothing, which is what a fresh Node ships with. */
   first_response_minutes: number | null;
+  /** 1 when this mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
+  quarantine_dmarc_fail: 0 | 1;
+  /** Deliveries held back and not yet released. Counted for everyone; listed only for administrators. */
+  quarantined: number;
   /**
    * Every address routed to this mailbox, oldest first, comma-separated.
    *
@@ -464,7 +468,11 @@ export async function mailboxQueues(env: Env, orgId: string, userId: string): Pr
   const placeholders = subjects.map(() => "?").join(", ");
 
   const { results } = await env.CATALOG.prepare(
-    `SELECT m.id, m.name, m.first_response_minutes,
+    `SELECT m.id, m.name, m.first_response_minutes, m.quarantine_dmarc_fail,
+            (SELECT COUNT(*) FROM messages q
+              JOIN ingress_receipts r ON r.id = q.ingress_receipt_id
+              JOIN addresses qa ON qa.org_id = r.org_id AND qa.address = r.envelope_to
+              WHERE q.org_id = m.org_id AND qa.mailbox_id = m.id AND q.quarantined_at IS NOT NULL) AS quarantined,
             (SELECT GROUP_CONCAT(a.address) FROM (
                SELECT address FROM addresses
                 WHERE org_id = m.org_id AND mailbox_id = m.id ORDER BY created_at

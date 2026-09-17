@@ -92,10 +92,34 @@ export const mail = {
     return Response.json({ mailboxes: await mailboxQueues(env, who.orgId, who.userId) });
   },
 
+  /*
+   * Quarantine (0056): deliveries held back from every queue because the sender's own domain disowned them.
+   * Administrators only, and the list is the only way to a release — there is no delete, because nothing
+   * deletes mail on this Node.
+   */
+  "GET /api/quarantine": async ({ env, who }) => {
+    const { listQuarantined } = await import("../quarantine.ts");
+    return Response.json({ quarantined: await listQuarantined(env, who.orgId, who.userId) });
+  },
+
+  "POST /api/quarantine/:messageId/release": async ({ env, clock, params, who }) => {
+    const { releaseQuarantine } = await import("../quarantine.ts");
+    return Response.json(await releaseQuarantine(env, clock, who.orgId, who.userId, params.messageId));
+  },
+
   "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    // Absent and null are the same request — "promise nothing" — because a PATCH that omitted the field
-    // would otherwise silently mean "leave it", and there is only one field to change.
+    /*
+     * Two settings since 0056, and a PATCH naming `quarantineDmarcFail` changes only that. The target keeps
+     * its older reading — absent and null are the same request, "promise nothing" — because it was the only
+     * field for a month and callers send `{}` to clear it; the switch is a boolean and has no such default.
+     */
+    if (typeof body.quarantineDmarcFail === "boolean") {
+      const { setQuarantineSwitch } = await import("../mailbox-policy.ts");
+      return Response.json(
+        await setQuarantineSwitch(env, clock, who.orgId, who.userId, params.mailboxId, body.quarantineDmarcFail),
+      );
+    }
     const raw = body.firstResponseMinutes;
     const minutes = raw === null || raw === undefined ? null : Number(raw);
     return Response.json(

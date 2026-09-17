@@ -7,7 +7,8 @@ import { clockOnInbound } from "./response-clock.ts";
 import { bucketFor } from "./ingress.ts";
 import { headerBlock, headerFields, parseHeaders } from "./mime.ts";
 import { authenticationOf, type AuthenticationVerdict } from "./authentication-results.ts";
-import { log } from "./audit.ts";
+import type { QuarantineReason } from "@mailda/contract/schemas";
+import { auditedBatch, log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
 import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
 import { indexableText } from "./search-body.ts";
@@ -45,6 +46,8 @@ export interface MaterialiseOutcome {
   messageId?: string;
   threadRoot?: string;
   parseError?: string;
+  /** Filed and held back from every queue (0056). No case was opened; `releaseQuarantine` opens it. */
+  quarantined?: boolean;
 }
 
 export async function materialiseReceipt(
@@ -101,6 +104,23 @@ export async function materialiseReceipt(
   const at = new Date(ctx.now()).toISOString();
 
   /*
+   * Quarantine (0056): the one act this Node takes on the sender's verdict, and only when the mailbox asked
+   * for it. The test is the sender domain's own: DMARC failed **and** the domain published `quarantine` or
+   * `reject`. A `p=none` domain said "do nothing", and nothing is done. A quarantined delivery is filed —
+   * evidence and row — and opens no case, so it is in nobody's queue until an administrator releases it.
+   */
+  const mailbox = await env.CATALOG.prepare(
+    "SELECT quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(receipt.org_id, receipt.mailbox_id).first<{ quarantine_dmarc_fail: number }>();
+  const disowned = verdict?.dmarc === "fail"
+    && (verdict.dmarcPolicy === "reject" || verdict.dmarcPolicy === "quarantine");
+  // A token, not a sentence (AGENTS.md 2c): the contract's `quarantineReason` is the closed world, and the
+  // reading surface says what it means. The verdict's own columns carry the domain and the policy.
+  const quarantine: QuarantineReason | null = mailbox?.quarantine_dmarc_fail === 1 && disowned
+    ? (verdict?.dmarcPolicy === "reject" ? "dmarc_fail_reject" : "dmarc_fail_quarantine")
+    : null;
+
+  /*
    * The body, as words for the search index (#107 L2).
    *
    * **No extra R2 read**: `raw` was already fetched above to parse the headers, so indexing the body costs
@@ -140,14 +160,15 @@ export async function materialiseReceipt(
 
   // One batch: the message and its delivery commit together, or neither does (#5, §22). A message row
   // without a mailbox item would be mail that exists and is in no inbox.
-  await env.CATALOG.batch([
+  const filing: D1PreparedStatement[] = [
     env.CATALOG.prepare(
       `INSERT OR IGNORE INTO messages
          (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id, thread_id,
           subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
           in_reply_to, thread_root_rfc_id, parse_error, conversation_id,
-          auth_spf, auth_dkim, auth_dmarc, auth_dmarc_policy, auth_from_domain)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          auth_spf, auth_dkim, auth_dmarc, auth_dmarc_policy, auth_from_domain,
+          quarantined_at, quarantine_reason)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       messageId, receipt.org_id, timeBucket, receipt.blob_key, receipt.blob_sha256, receipt.raw_bytes,
       rfcMessageId,
@@ -161,6 +182,7 @@ export async function materialiseReceipt(
       // NULL when the header block could not be read at all — "nobody looked", distinct from `absent`.
       verdict?.spf ?? null, verdict?.dkim ?? null, verdict?.dmarc ?? null,
       verdict?.dmarcPolicy ?? null, verdict?.fromDomain ?? null,
+      quarantine === null ? null : at, quarantine,
     ),
     /*
      * The search index, immediately after the row it is derived from and inside the same batch (#107).
@@ -223,8 +245,20 @@ export async function materialiseReceipt(
     // The case, in the same batch. A message filed with no case is mail in nobody's queue; a case with no
     // message is work about nothing. `INSERT OR IGNORE` against `cas_unique`, so a redelivery or two
     // deliveries racing file one case — the constraint is the concurrency control (#9's shape).
-    caseForDelivery(env, ctx, receipt.org_id, conversationId, receipt.mailbox_id, at),
-  ]);
+    // No case for a quarantined delivery: a case is work in somebody's queue, and this is exactly the mail
+    // that must not be there until a person has looked. `releaseQuarantine` runs this same statement later.
+    ...(quarantine === null ? [caseForDelivery(env, ctx, receipt.org_id, conversationId, receipt.mailbox_id, at)] : []),
+  ];
+  if (quarantine !== null) {
+    // Audited in the same batch as the filing: a message held back from every queue with no entry saying so
+    // would be mail that vanished. `actorUserId` null — the Node did this, on the mailbox's standing instruction.
+    await auditedBatch(env, ctx, receipt.org_id, {
+      action: "message.quarantined", outcome: "ok", actorUserId: null,
+      subject: messageId, detail: { mailboxId: receipt.mailbox_id, reason: quarantine, receiptId: receipt.id },
+    }, (entry) => [...filing, entry]);
+    return { status: "created", messageId, quarantined: true };
+  }
+  await env.CATALOG.batch(filing);
 
   // The clock starts *after* the case exists, because it updates it. Not in the batch above: the case is
   // created with `INSERT OR IGNORE`, so its row id is not knowable here, and the clock is keyed on

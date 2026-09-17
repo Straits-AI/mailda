@@ -32,6 +32,8 @@ const MAX_MINUTES = 60 * 24 * 30; // thirty days
 export interface TargetOutcome {
   mailboxId: string;
   firstResponseMinutes: number | null;
+  /** Whether this mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
+  quarantineDmarcFail: boolean;
 }
 
 export async function setResponseTarget(
@@ -63,8 +65,8 @@ export async function setResponseTarget(
   }
 
   const mailbox = await env.CATALOG.prepare(
-    "SELECT id, first_response_minutes FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
-  ).bind(orgId, mailboxId).first<{ id: string; first_response_minutes: number | null }>();
+    "SELECT id, first_response_minutes, quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, mailboxId).first<{ id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number }>();
   if (mailbox === null) {
     throw notFound("E_NO_MAILBOX", {
       what: `mailbox ${mailboxId} does not exist`,
@@ -90,5 +92,45 @@ export async function setResponseTarget(
     ],
   );
 
-  return { mailboxId, firstResponseMinutes: minutes };
+  return { mailboxId, firstResponseMinutes: minutes, quarantineDmarcFail: mailbox.quarantine_dmarc_fail === 1 };
+}
+
+/**
+ * The quarantine switch (0056): whether this mailbox holds back a delivery whose From domain failed DMARC
+ * and published `quarantine` or `reject`. Off by default, because turning it on decides that some mail will
+ * wait for an administrator, and that is the mailbox's owner's to decide — same gate as the target above.
+ */
+export async function setQuarantineSwitch(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, mailboxId: string, on: boolean,
+): Promise<TargetOutcome> {
+  if (!(await isAdmin(env, orgId, actorUserId))) {
+    throw new CallerError("E_NOT_AN_ADMINISTRATOR", 403, {
+      what: "you are not an administrator of this organization",
+      why: "quarantine decides whose mail a person will not see until somebody looks",
+      fix: "ask somebody who holds org.admin",
+    });
+  }
+  const mailbox = await env.CATALOG.prepare(
+    "SELECT id, first_response_minutes, quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, mailboxId).first<{ id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number }>();
+  if (mailbox === null) {
+    throw notFound("E_NO_MAILBOX", {
+      what: `mailbox ${mailboxId} does not exist`,
+      why: "a switch on a mailbox that is not there would decide nothing",
+      fix: "check the mailbox id",
+    });
+  }
+  await auditedBatch<never>(
+    env, ctx, orgId,
+    {
+      action: "mailbox.quarantine_set", outcome: "ok", actorUserId, subject: mailboxId,
+      detail: { from: mailbox.quarantine_dmarc_fail === 1, to: on },
+    },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare("UPDATE mailboxes SET quarantine_dmarc_fail = ? WHERE org_id = ? AND id = ?")
+        .bind(on ? 1 : 0, orgId, mailboxId),
+    ],
+  );
+  return { mailboxId, firstResponseMinutes: mailbox.first_response_minutes, quarantineDmarcFail: on };
 }

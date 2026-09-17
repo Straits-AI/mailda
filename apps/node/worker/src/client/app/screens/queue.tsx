@@ -3,8 +3,8 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  type CaseRow, type ClaimResult, claimCase, closeCase, mergeConversations, releaseCase,
-  setResponseTarget, stealCase, useCases, useMailboxes, useMe,
+  type CaseRow, type ClaimResult, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
+  setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
 } from "../api.ts";
 
 /**
@@ -218,6 +218,10 @@ export function Queue() {
   const mailboxId = selected ?? mailboxes.data?.mailboxes[0]?.id ?? null;
   const cases = useCases(mailboxId);
   const current = mailboxes.data?.mailboxes.find((box) => box.id === mailboxId);
+  // Fetched only when the count says there is something to list: the route is administrators-only, and a
+  // person who is not one would otherwise be shown a refusal for a list they had no reason to want.
+  const quarantine = useQuarantine((current?.quarantined ?? 0) > 0);
+  const held = quarantine.data?.quarantined.filter((one) => one.mailboxId === mailboxId) ?? [];
 
   /**
    * Merges the two picked cases' conversations.
@@ -253,6 +257,30 @@ export function Queue() {
         ? "This mailbox now promises nothing, so its cases carry no clock."
         : `First response promised within ${minutes} minutes. Clocks start on the next message.`);
     } else setProblem(outcome.message);
+  }
+
+  async function onSetQuarantine(on: boolean) {
+    setNotice(null);
+    setProblem(null);
+    if (mailboxId === null) return;
+    const outcome = await setQuarantineSwitch(mailboxId, on);
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    if (outcome.ok) {
+      setNotice(on
+        ? "From now on, a delivery whose sender's domain disowns it (DMARC fail, p=reject or p=quarantine) is held back here for an administrator."
+        : "This mailbox no longer holds anything back. Deliveries already held stay held until released.");
+    } else setProblem(outcome.message);
+  }
+
+  async function onRelease(messageId: string) {
+    setNotice(null);
+    setProblem(null);
+    const outcome = await releaseQuarantined(messageId);
+    await queryClient.invalidateQueries({ queryKey: ["quarantine"] });
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
+    if (outcome.ok) setNotice("Released. It is in the queue now, with the case it would have had.");
+    else setProblem(outcome.message);
   }
 
   async function onAct(action: "claim" | "steal" | "release" | "close", id: string) {
@@ -356,6 +384,62 @@ export function Queue() {
           <span className="state clock-breached queue-breached">{current.breached} overdue</span>
         ) : null}
       </p>
+
+      {/*
+        The one policy this Node acts on the receiving server's verdict with (0056). A checkbox and not a
+        policy editor: the condition is fixed — the sender's own domain said the message is not theirs and
+        asked receivers to act — and the only decision a mailbox makes is whether to listen.
+      */}
+      <p className="notice dim queue-target">
+        <label className="case-pick">
+          <input
+            type="checkbox"
+            checked={current?.quarantine_dmarc_fail === 1}
+            onChange={(event) => void onSetQuarantine(event.target.checked)}
+            aria-label="Hold back deliveries whose sender's domain disowns them"
+          />
+          <span>Hold back a delivery its sender's domain disowns (DMARC fail, p=reject or p=quarantine).</span>
+        </label>
+        {current !== undefined && current.quarantined > 0 ? (
+          <span className="state clock-due queue-breached">{current.quarantined} held</span>
+        ) : null}
+      </p>
+
+      {current !== undefined && current.quarantined > 0 ? (
+        quarantine.isError ? (
+          <p className="notice bad" role="alert">{quarantine.error.message}</p>
+        ) : held.length === 0 ? null : (
+          <table className="queue-table" aria-label="Held back">
+            <thead>
+              <tr>
+                <th scope="col">Held</th>
+                <th scope="col">Subject</th>
+                <th scope="col">From</th>
+                <th scope="col">Why</th>
+                <th scope="col" className="num">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {held.map((one) => (
+                <tr key={one.messageId}>
+                  <td className="mono dim">{one.quarantinedAt.slice(0, 16).replace("T", " ")}</td>
+                  <td>{one.subject ?? <span className="dim">(no subject)</span>}</td>
+                  <td className="mono">{one.fromAddr ?? <span className="dim">—</span>}</td>
+                  <td>
+                    {one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to{" "}
+                    {one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.
+                  </td>
+                  <td className="num">
+                    <button type="button" className="linkish" onClick={() => void onRelease(one.messageId)}>
+                      release
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : null}
 
       {picked.length === 2 ? (
         <p className="notice">

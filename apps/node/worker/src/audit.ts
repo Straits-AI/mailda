@@ -542,6 +542,22 @@ export const AUDIT_ACTIONS = {
    * All three ride in `auditedBatch` beside the `UPDATE exports` they record, so none is `standalone`: an
    * export whose state moved with nothing in the trail is not representable.
    */
+  /**
+   * A delivery held back from every queue because the sender's domain disowned it (0056). Written by the
+   * Node on the mailbox's standing instruction, in the same batch as the filing, so a message a person will
+   * not see until somebody looks is never a message with no entry saying where it went.
+   */
+  /** The per-mailbox switch behind `message.quarantined`: who turned it on or off, and from what. */
+  "mailbox.quarantine_set": {
+    says: "An administrator changed whether a mailbox holds back deliveries whose From domain disowned them.",
+  },
+  "message.quarantined": {
+    says: "The Node held a delivery back from the queue: its From domain failed DMARC and asks receivers to quarantine or reject.",
+  },
+  /** An administrator let a quarantined delivery into the queue: the case it would have had is opened now. */
+  "message.released": {
+    says: "An administrator released a quarantined delivery into its mailbox's queue.",
+  },
   "message.exported": {
     says: "Somebody downloaded one message's original .eml — a complete RFC822 copy, off this Node.",
     disclosure: true,

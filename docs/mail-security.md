@@ -32,10 +32,33 @@ API; `dmarc`, `spf`, `dkim` as facts a Butler guard reads (`docs/butler-engine.m
 `inbound_authentication`, which counts the week. None of the three chooses a recipient — the taint decision
 (#52) stands.
 
+### Quarantine on DMARC failure (0056, 17 September 2026)
+
+The first thing the Node *does* with the verdict, and the narrowest honest thing. A mailbox has a switch,
+off by default (`PATCH /api/mailboxes/:id {quarantineDmarcFail}`, the checkbox on the queue screen). With
+it on, a delivery whose DMARC failed **and** whose From domain published `p=reject` or `p=quarantine` is
+filed — the evidence is immutable and the `messages` row exists — but opens no case, sits in no queue and
+appears in no listing until an administrator releases it. A `p=none` domain said "do nothing", and the Node
+does nothing: that is the domain's decision, not this Node's to override.
+
+The decision is made once, in `materialise.ts`, from the mailbox's switch at the moment the message is
+filed; turning the switch off later does not release what is already held. Held deliveries are listed at
+`GET /api/quarantine` (administrators; on the queue screen when the count says there are any) with the
+domain, the policy and a reason token from the closed set `dmarc_fail_reject | dmarc_fail_quarantine`.
+`POST /api/quarantine/:messageId/release` runs the same `caseForDelivery` materialise would have, so a
+released message is exactly what an unquarantined one would have been, only later. There is no delete;
+nothing deletes mail on this Node. Every act is audited (`mailbox.quarantine_set`, `message.quarantined`,
+`message.released`) and the doctor's `inbound_authentication` says how many are held.
+
+Not a general policy engine, deliberately. The condition is fixed because it is the one condition whose
+authority is the sender's own domain rather than this Node's guess; a policy that acted on `spf=softfail`
+would be guessing. The row below is still open for the conditions that are not this one.
+
 ## What is not built, in the order it should be
 
-1. **A policy that acts on the verdict.** `dmarc == "fail"` as a condition in the closed set Layer 5 has;
-   the outcomes are the ones §18 names. Today a Butler guard can route on the fact; a policy cannot yet.
+1. **A policy that acts on the verdict.** Quarantine above is the fixed case. `dmarc == "fail"` as a
+   condition in the closed set Layer 5 has, with the outcomes §18 names, is the general one, and it is still
+   open. Today a Butler guard can route on the fact; a policy cannot yet.
 2. **Attachments.** A policy, not a scanner: allowed types, size, executables and archives-in-archives —
    by extension *and* magic bytes, since one lies.
 3. **Links.** Nothing is rewritten (ADR 37); the real destination is shown, lookalikes against the

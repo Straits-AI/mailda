@@ -1265,7 +1265,10 @@ export function messagePageQuery(args: {
   nowIso: string;
 }): { sql: string; params: unknown[] } {
   const subjectPlaceholders = args.subjects.map(() => "?").join(", ");
-  const filters: string[] = [];
+  // Never a quarantined delivery (0056): held back from every listing, not only the queue, until an
+  // administrator releases it through `GET /api/quarantine`. Both plans carry this; `m` is LEFT-joined in
+  // the unsearched one and a receipt with no row yet is NULL here, which is "not quarantined" and right.
+  const filters: string[] = ["AND m.quarantined_at IS NULL"];
   const filterParams: unknown[] = [];
   if (args.page.mailboxId !== null) {
     filters.push("AND a.mailbox_id = ?");

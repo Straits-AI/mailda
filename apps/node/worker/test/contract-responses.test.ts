@@ -1033,12 +1033,18 @@ describe("the operator and key surfaces", () => {
     });
   });
 
-  it("PATCH a mailbox's response target", async () => {
+  it("PATCH a mailbox's response target, and its quarantine switch", async () => {
     const held = await cookie();
     const mailboxId = await mailboxWithSend();
-    await answers("PATCH", "/api/mailboxes/:mailboxId", {
-      params: { mailboxId }, body: { responseTargetMinutes: 60 }, cookie: held,
-    });
+    const target = await answers("PATCH", "/api/mailboxes/:mailboxId", {
+      params: { mailboxId }, body: { firstResponseMinutes: 60 }, cookie: held,
+    }) as { firstResponseMinutes: number | null; quarantineDmarcFail: boolean };
+    expect(target).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: false });
+    const switched = await answers("PATCH", "/api/mailboxes/:mailboxId", {
+      params: { mailboxId }, body: { quarantineDmarcFail: true }, cookie: held,
+    }) as { firstResponseMinutes: number | null; quarantineDmarcFail: boolean };
+    // The switch leaves the target where it was: two settings, and a PATCH names the one it changes.
+    expect(switched).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: true });
   });
 
   it("a draft, read back and discarded", async () => {
@@ -1449,6 +1455,33 @@ describe("the routes that only exist once mail has landed", () => {
     }) as { state: string; text: string | null };
     expect(rendered.state).toBe("text-only");
     expect(rendered.text).toContain("Where is my invoice?");
+  });
+
+  it("the quarantine list, and a release from it", async () => {
+    /*
+     * Quarantined by `UPDATE` rather than by the decision in `materialise`, for the reason the block comment
+     * gives: this suite describes projections over stored rows. `test/quarantine.test.ts` is the claim about
+     * the decision.
+     */
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address });
+    await testEnv.CATALOG.prepare(
+      `UPDATE messages SET quarantined_at = ?, quarantine_reason = 'dmarc_fail_reject',
+              auth_dmarc = 'fail', auth_dmarc_policy = 'reject', auth_from_domain = 'example.net'
+        WHERE id = ?`,
+    ).bind(new Date().toISOString(), delivery.messageId).run();
+
+    const listed = await answers("GET", "/api/quarantine", { cookie: held }) as {
+      quarantined: Array<{ messageId: string; mailboxId: string; dmarcPolicy: string | null }>;
+    };
+    expect(listed.quarantined.map((one) => one.messageId)).toEqual([delivery.messageId]);
+    expect(listed.quarantined[0]).toMatchObject({ mailboxId, dmarcPolicy: "reject" });
+
+    const released = await answers("POST", "/api/quarantine/:messageId/release", {
+      params: { messageId: delivery.messageId }, cookie: held,
+    });
+    expect(released).toEqual({ released: true, messageId: delivery.messageId, mailboxId });
+    expect(await answers("GET", "/api/quarantine", { cookie: held })).toEqual({ quarantined: [] });
   });
 
   it("releasing a send a policy held", async () => {
@@ -1997,7 +2030,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(125);
+    expect(coverage.total).toBe(127);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be
