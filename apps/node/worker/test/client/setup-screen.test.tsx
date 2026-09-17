@@ -246,7 +246,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
   it("subscribes a sending domain's delivery events with the digest it was shown (#222)", async () => {
     const proposal = {
       domain: "mail.example.com", zone: "example.com", zoneId: "z1", sendingDomain: "mail.example.com",
-      subscribed: null, queueId: "q1", queueName: "mailda-sending-events",
+      subscribed: null, queueId: "q1", queueName: "mailda-sending-events", consumerAttached: true,
       events: ["message.delivered", "message.bounced"], digest: "b".repeat(64), error: null,
     };
     mount({
@@ -273,7 +273,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
       subscription: {
         proposal: {
           domain: "mail.example.com", zone: "example.com", zoneId: "z1", sendingDomain: null,
-          subscribed: null, queueId: null, queueName: null, events: [], digest: "c".repeat(64),
+          subscribed: null, queueId: null, queueName: null, consumerAttached: null, events: [], digest: "c".repeat(64),
           error: "mail.example.com is not onboarded for sending — onboard it first: POST /api/provider/sending",
         },
       },

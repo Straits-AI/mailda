@@ -183,6 +183,7 @@ function Consent(
   { ceremony, refresh }: { ceremony: ProviderCeremony; refresh: () => Promise<void> },
 ) {
   const [url, setUrl] = useState<string | null>(null);
+  const [until, setUntil] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   async function begin() {
@@ -190,6 +191,7 @@ function Consent(
     const outcome = await beginConsent(ceremony.scopes.map((one) => one.scope));
     if (!outcome.ok) { setProblem(outcome.message); return; }
     setUrl(outcome.value.authorize.url);
+    setUntil(outcome.value.authorize.expiresAt);
   }
 
   async function noAccount() {
@@ -219,7 +221,10 @@ function Consent(
           */}
           <p>
             <a href={url} target="_blank" rel="noreferrer">Open Cloudflare's consent screen</a>{" "}
-            <span className="dim">opens in a new tab</span>
+            <span className="dim">
+              opens in a new tab
+              {until === null ? "" : ` — valid until ${new Date(until).toLocaleTimeString()}, once`}
+            </span>
           </p>
           <p>
             Cloudflare sends you back to this Node when you agree. Then:{" "}
@@ -641,14 +646,20 @@ function Subscription() {
           {plan.subscribed === null ? null : (
             <p className="notice" role="status">Already subscribed, as <span className="mono">{plan.subscribed}</span>.</p>
           )}
-          {plan.queueName === null ? null : (
+          {plan.queueName === null || plan.subscribed !== null ? null : (
             <p>Would publish {plan.events.length} event types into <span className="mono">{plan.queueName}</span>.</p>
           )}
+          {plan.consumerAttached === false ? (
+            <p className="notice bad" role="alert">
+              Nothing reads <span className="mono">{plan.queueName}</span> yet — events would sit unobserved.
+              Subscribing attaches this Node as its consumer.
+            </p>
+          ) : null}
           <button
             type="button"
             className="primary"
             onClick={() => void apply()}
-            disabled={busy || plan.subscribed !== null || plan.error !== null}
+            disabled={busy || (plan.subscribed !== null && plan.consumerAttached !== false) || plan.error !== null}
           >
             {busy ? "working…" : "subscribe this domain"}
           </button>

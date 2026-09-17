@@ -1601,6 +1601,8 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
     onboarded: Array<{ name: string }>;
     subscriptions?: Array<{ name: string; source: { type: string; domain: string }; destination: { queue_id: string } }>;
     queues?: Array<{ queue_id: string; queue_name: string }>;
+    /** Who consumes the Node's queue. Defaults to this Worker, which is the state a `mailda deploy` leaves. */
+    consumers?: Array<{ script: string; type: string }>;
     postAnswer?: unknown;
   }) {
     const calls: Array<{ url: string; method: string; body: unknown }> = [];
@@ -1621,6 +1623,8 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
         : /\/email\/sending\/subdomains\/[^/]+\/dns$/.test(path) ? []
         : path.includes("/event_subscriptions/subscriptions") ? (page === 1 ? (options.subscriptions ?? []) : [])
         : path.includes("/queues?") ? (page === 1 ? queues.slice(0, 100) : queues.slice(100))
+        : /\/queues\/[^/?]+$/.test(path)
+          ? { queue_name: QUEUE.queue_name, consumers: options.consumers ?? [{ script: "mailda-test", type: "worker" }] }
         : null;
       return new Response(
         JSON.stringify(
@@ -1645,6 +1649,7 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
     // The queue is found by the name wrangler derived from this Worker's, not the first queue listed.
     expect(proposal.queueId).toBe("q_own");
     expect(proposal.queueName).toBe("mailda-test-sending-events");
+    expect(proposal.consumerAttached).toBe(true);
     expect(proposal.events).toHaveLength(6);
     expect(proposal.digest).toHaveLength(64);
   });
@@ -1682,7 +1687,7 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
     expect(proposal.sendingDomain).toBe("example.test");
   });
 
-  it("refuses a second subscription where one already covers the domain", async () => {
+  it("refuses a second subscription where one already covers the domain and this Worker consumes the queue", async () => {
     await granted();
     const calls = serving({
       onboarded: [{ name: "mail.example.test" }],
@@ -1726,6 +1731,45 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
     ).bind(ORG, "provider.delivery_events_subscribed").first<{ subject: string; detail: string }>();
     expect(entry?.subject).toBe("mail.example.test");
     expect(JSON.parse(entry?.detail ?? "{}")).toMatchObject({ queue: "mailda-test-sending-events", subscriptionId: "sub_new" });
+  });
+
+  it("attaches this Worker as the queue's consumer when nothing consumes it (measured 16 September 2026)", async () => {
+    /*
+     * The third object, and the one a button-only install never had: `queue:attach-consumer` was a wrangler
+     * call an operator ran afterwards. `POST /accounts/{id}/queues/{id}/consumers` attaches a Worker
+     * consumer — measured on a throwaway queue — so the confirm does it when the proposal found none.
+     */
+    await granted();
+    const calls = serving({ onboarded: [{ name: "mail.example.test" }], consumers: [] });
+
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    expect(proposal.consumerAttached).toBe(false);
+    await subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    );
+    const posted = calls.filter((one) => one.method === "POST");
+    expect(posted.map((one) => one.url)).toEqual([
+      "/accounts/acc_1/event_subscriptions/subscriptions",
+      "/accounts/acc_1/queues/q_own/consumers",
+    ]);
+    expect(posted[1]!.body).toEqual({
+      type: "worker", script_name: "mailda-test", settings: { batch_size: 25, max_wait_time_ms: 10_000 },
+    });
+  });
+
+  it("attaches only the consumer when the subscription already exists, rather than refusing the whole act", async () => {
+    await granted();
+    const calls = serving({
+      onboarded: [{ name: "mail.example.test" }],
+      subscriptions: [{ name: "already", source: { type: "email.sending", domain: "example.test" }, destination: { queue_id: "q_own" } }],
+      consumers: [],
+    });
+    const proposal = await subscriptionProposalFor(testEnv, atTime(SEPTEMBER_3 + 3000), ORG, "mail.example.test");
+    await subscribeDeliveryEvents(
+      testEnv, atTime(SEPTEMBER_3 + 4000), ORG, ADMIN, "mail.example.test", proposal.digest,
+    );
+    const posted = calls.filter((one) => one.method === "POST");
+    expect(posted.map((one) => one.url)).toEqual(["/accounts/acc_1/queues/q_own/consumers"]);
   });
 
   it("refuses a stale digest, and reaches Cloudflare with no write", async () => {

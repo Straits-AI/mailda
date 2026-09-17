@@ -132,6 +132,8 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",
   },
   // Listed to find this Node's own events queue by name, for the subscription it creates (#222).
+  // Attaches this Worker as a consumer, when nothing consumes the events queue (#222 second half).
+  "/accounts/{}/queues/{}/consumers": { scope: "queues.write", reference: "Queues Write" },
   "/accounts/{}/queues": {
     scope: "queues.write",
     reference: "Queues Write | Queues Read | Workers Scripts Write | Workers Scripts Read",

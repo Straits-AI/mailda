@@ -405,3 +405,23 @@ only `r2_catalog:write` — which suggests buckets are reached through `workers:
 
 **Whether `offline_access` is reachable any other way.** A client cannot request it; the refresh token is
 expected from the `refresh_token` grant type instead. That expectation is untested until a consent completes.
+
+## The client's own list moved after this was written, and a grant is the only receipt for it
+
+The fourteen above were what the picker had checked when the client was registered. `cloudflare-grant-reach.md`
+then narrowed the *grant* to six; at some point the *client* was narrowed to match, which nothing here recorded
+— and it showed on 16 September 2026 as `invalid_scope` for `zone-settings.write`, then for
+`email-routing-rule.write`, each time a scope `REQUIRED_SCOPES` had grown to include without the client
+being told. Both were added back in the dashboard by hand, and the consent that followed granted all nine:
+
+```text
+account-settings.read  zone.read  zone-settings.write  queues.write  email-routing-rule.write
+dns.write  registrar-domains.read  email-sending.write  offline_access
+```
+
+Two things follow. **A private client's permission list cannot be read through the API**, so the only
+receipt for what it carries is a consent that succeeds — the list above is that receipt, and the fourteen are
+history. And **growing `REQUIRED_SCOPES` is two edits**: the code, and the client in the dashboard, in that
+order or the consent answers `invalid_scope`. `ProviderStatus.scopesMissing` names the gap on the Node's side;
+the ceremony's step 3 names the client's.
+
