@@ -83,3 +83,23 @@ worth reading rather than its exit code:
 
 And 86 objects is not a mailbox. It is twenty-eight times the drill and still small, so the next wall above
 it is unknown — what this receipt establishes is that the first one is gone.
+
+## Addition, 17 September 2026: the catalog half at 10,000 and 50,000 messages
+
+Measured on two scratch databases in the live account (created, seeded, exported, imported, deleted), with the
+byte receipt's corpus — real widths, one `mailbox_items` row per message — exported by `d1 export --no-schema`
+exactly as `mailda backup` does and imported by `d1 execute --file` into a fresh database carrying the schema.
+Prose, not values, for the reason the header gives: these are stopwatch readings from a laptop.
+
+| messages | export | export size | statements | import | rows read back |
+|--:|--:|--:|--:|--:|--:|
+| 10,000 | 11.3 s | 15.6 MB | 20,000 | **21.6 s** | 10,000 |
+| 50,000 | 32.8 s | 78.1 MB | 100,000 | **106.9 s** | 50,000 |
+
+Linear at roughly a thousand statements a second in each direction, so the wall `disaster-recovery.md` said
+this drill had not reached is not near: a 50,000-message catalog is under two minutes each way. The one limit
+met was per statement — a hand-built 150 KB multi-row `INSERT` is refused with `SQLITE_TOOBIG` — and an
+export writes one row per statement, so a restore never produces one.
+
+Not measured here, still: the evidence copy at the same scale, which needs an S3-API copy (`rclone` with an
+R2 API token, which the wrangler OAuth token cannot mint) and is the number a mailbox-sized restore turns on.
