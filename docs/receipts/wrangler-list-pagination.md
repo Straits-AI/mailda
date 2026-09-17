@@ -16,7 +16,7 @@ values:
 
 #162's `deploy --plan` decided whether a resource existed by scanning `wrangler d1 list`,
 `r2 bucket list`, `queues list` and `workflows list` for its name. On the first live account it ever met, it
-was wrong — in the worst direction available to it.
+was wrong, in the worst direction available to it.
 
 ## Measured
 
@@ -48,7 +48,7 @@ is past the boundary by alphabet alone.
 ## What that cost, before it was caught
 
 The plan reported the bucket **absent** on an account whose Worker exists, which is the `orphaned`
-disposition — the one `deploy-plan.mjs` documents as *the worst of the five, because the deploy succeeds*.
+disposition, the one `deploy-plan.mjs` documents as *the worst of the five, because the deploy succeeds*.
 It printed, against a healthy Node:
 
 > **MISSING, and the Worker exists.** The binding is linked server-side, so deploying again reports success
@@ -59,7 +59,7 @@ since 3 August with 86 objects in the bucket the plan called missing, and the re
 either a teardown or a repair of something that needed neither.
 
 **This is the failure this repository keeps finding, one layer along: a layer's honest output read as the
-layer above's complete answer.** `r2 bucket list` answered the question it was asked — *the first page* — and
+layer above's complete answer.** `r2 bucket list` answered the question it was asked, *the first page*, and
 the caller took it for the account.
 
 ## The fix is to stop reading lists
@@ -76,7 +76,7 @@ Every kind has a per-name `info` command, and each says *this thing does not exi
 Asking about one resource removes the whole class of error rather than the instance of it:
 
 - **no pagination**, so no page boundary to fall past;
-- **no substring collision** — the list version matched names with hand-rolled boundaries because
+- **no substring collision**: the list version matched names with hand-rolled boundaries because
   `mailda-catalog` is a prefix of `mailda-catalog-2`;
 - **absence is asserted by the provider** rather than inferred from something not appearing.
 
@@ -88,13 +88,13 @@ that makes this safe rather than merely better: a permission error, a network fa
 must not read as a missing resource, because doing so is the bug this receipt is about.
 
 It held immediately. The first version of the per-name probe omitted `wrangler` from its argv and produced
-`npm error could not determine executable to run` — status 1, no kind marker — so all four probes answered
+`npm error could not determine executable to run` (status 1, no kind marker), so all four probes answered
 `unknown` and the plan printed four gaps. A broken probe could not become a claim about the account.
 
 ## What is not established
 
 **The other three list commands' page sizes.** `d1 list` returned 68 rows and `r2 bucket list` truncated at
-20, so they are not the same limit — but no account here has enough queues or Workflows to find theirs. They
+20, so they are not the same limit, but no account here has enough queues or Workflows to find theirs. They
 are no longer read, so the figures are not needed; recorded as unmeasured rather than assumed generous.
 
 **Whether the 20 is per-account or global.** One account, one reading. The `stale_when` names the page size

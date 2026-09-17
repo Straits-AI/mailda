@@ -15,7 +15,7 @@ values:
 ---
 
 **Measured:** `packages/evidence/bench/frame.bench.ts`, Node 22 over WebCrypto
-AES-256-GCM. Not workerd — `performance.now()` there is Spectre-clamped and reports whole
+AES-256-GCM. Not workerd, where `performance.now()` is Spectre-clamped and reports whole
 milliseconds (see `authz-check-rows-read.md`), so it cannot time computation. Both run V8
 over a native AES-GCM implementation, so the shape of the curve holds; absolute numbers on
 Cloudflare hardware will differ.
@@ -25,7 +25,7 @@ Cloudflare hardware will differ.
 #7 decided the default profile encrypts raw MIME, attachments and exports in R2. One-shot
 AES-GCM cannot deliver that on a 25 MiB message (§11B records Cloudflare Email's inbound
 limit): the object must be held whole against the Worker's 128 MB budget, and the
-authentication tag only arrives at the end — so **not one byte can be emitted until the
+authentication tag only arrives at the end, so **not one byte can be emitted until the
 entire object has been decrypted and verified**.
 
 Measured, that wait is **13.2 ms of dead air** before the first byte of a 25 MiB
@@ -42,24 +42,24 @@ attachment. Framing reduces it to 0.145 ms.
 | storage overhead | 6,432 B (0.025%) | 1,632 B (0.006%) | 432 B (0.002%) | 16 B |
 | range-read granularity | 64 KiB | 256 KiB | 1 MiB | whole object |
 
-At 2 MB — a message with inline images, far more common than 25 MiB — 256 KiB frames cost
+At 2 MB, a message with inline images and far more common than 25 MiB, 256 KiB frames cost
 0.855 ms to open with 0.116 ms to first byte. At 20 KB every frame size collapses to a
 single frame and the choice is irrelevant, which is the common case.
 
 ## Sized: 256 KiB
 
 - **91× better time to first byte** than one-shot on a 25 MiB object (0.145 ms vs 13.2 ms).
-- Total decrypt costs 30% more than one-shot — 4 ms on the largest message the platform
+- Total decrypt costs 30% more than one-shot: 4 ms on the largest message the platform
   accepts, against a 25 MiB network transfer. Negligible where it lands.
 - 1 MiB is 28% cheaper in total CPU and would be the choice if throughput were the only
   axis. It was rejected on range granularity: reading one byte costs a whole frame, and
   attachment preview and ranged reads are user-facing paths. 256 KiB gives 4× finer
   granularity for 5 ms on the rarest object size.
-- 64 KiB buys marginally better first-byte latency (0.067 ms — already imperceptible) for
+- 64 KiB buys marginally better first-byte latency (0.067 ms, already imperceptible) for
   76% more total CPU and 4× the storage overhead. Not worth it.
 
-Tripwires are set at 25 ms for seal and open on a 25 MiB object — roughly 1.5× the worst
-measured — and 1 ms for time to first byte, ~7× the measured 0.145 ms. Routine traffic
+Tripwires are set at 25 ms for seal and open on a 25 MiB object, roughly 1.5× the worst
+measured, and 1 ms for time to first byte, ~7× the measured 0.145 ms. Routine traffic
 never approaches them; a regression that reintroduces one-shot behaviour, or drops the
 streaming reader, exceeds the TTFB tripwire by an order of magnitude.
 
@@ -79,7 +79,7 @@ then frameCount frames, each: ciphertext || 16-byte GCM tag
 
 **Nonce discipline.** The 12-byte GCM nonce is `baseNonce(8) || frameIndex(4)`.
 `baseNonce` is 8 fresh random bytes per object; `frameIndex` is unique within it. A nonce
-therefore cannot repeat under a given DEK **by construction** rather than by care — GCM
+therefore cannot repeat under a given DEK **by construction** rather than by care. GCM
 nonce reuse is catastrophic and must not depend on anyone remembering.
 
 **Truncation and reordering.** Every frame's AAD is the full header plus its own index,
@@ -95,7 +95,7 @@ range mapping, and that the streaming reader errors rather than emitting a tampe
 ## Memory
 
 `openStream()` emits each frame as it authenticates and never materialises the whole
-plaintext — that is the property the 128 MB Worker limit needs, and the reason framing
+plaintext. That is the property the 128 MB Worker limit needs, and the reason framing
 exists. `open()` does buffer the full plaintext; it is for small objects and tests, and
 must not be used on a response path. The distinction is documented at both call sites
 because getting it wrong is invisible until a 25 MiB message arrives.
@@ -109,5 +109,5 @@ because getting it wrong is invisible until a 25 MiB message arrives.
   rather than buffer it first. That reader is not written yet.
 - Per-object DEK wrapping by the root KEK (§12) is not implemented here. This measures the
   frame layer only; where the unwrap happens under #4's single-owner rule is still open.
-- R2 ranged GET behaviour against a real bucket is untested — the wrangler token in use
+- R2 ranged GET behaviour against a real bucket is untested; the wrangler token in use
   has no R2 scope. `framesForRange` is unit-tested arithmetic, not an integration test.

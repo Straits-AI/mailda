@@ -30,34 +30,34 @@ values:
 were wrong, and the reason is worth more than the numbers.
 
 They are the **subrequest** limit restated under a D1-flavoured name. 1,000 was the old paid per-invocation
-subrequest ceiling — withdrawn on 11 February 2026, now 10,000 — and 50 is the free plan's *external*
+subrequest ceiling (withdrawn on 11 February 2026, now 10,000), and 50 is the free plan's *external*
 subrequest allowance, which does not apply to D1 at all: D1 is an internal Cloudflare service and free plans
 get 1,000 of those. So one figure was stale and the other was attributed to the wrong category.
 
 **Measured, in `butler-step-budget.md`:** a single Worker invocation performed **10,000 D1 queries** and then
-failed with `Too many API requests by single Worker invocation` — the subrequest error, not a D1 error. Had a
+failed with `Too many API requests by single Worker invocation`, the subrequest error, not a D1 error. Had a
 1,000-query D1 ceiling existed, the run would have stopped at 1,000. D1 imposes **no query ceiling of its
 own**; it spends from the subrequest budget like any other binding.
 
 **Why nothing caught it:** the name put the limit on the wrong subsystem. The changelog that invalidated it
 was about Workers subrequests, and nobody re-reads a D1 receipt when a Workers limit changes. `stale_when`
-below names the D1 conditions it should — and could not name a condition in a subsystem the figure was
+below names the D1 conditions it should, and could not name a condition in a subsystem the figure was
 mislabelled out of.
 
 
 **Measured:** Read from Cloudflare's published documentation on 2 August 2026. Not
-measured against a running Node — these are the platform's stated ceilings, and per
+measured against a running Node. These are the platform's stated ceilings, and per
 Blueprint §11B they are **adapter data**, not constants. The Node must detect them at
 runtime and display them in Admin and `mailda doctor`. Nothing here belongs in application
 code as a literal.
 
 Sources, with their own last-updated dates:
 
-- [D1 limits](https://developers.cloudflare.com/d1/platform/limits/) — page states last updated 21 April 2026
-- [D1 Database Worker API](https://developers.cloudflare.com/d1/worker-api/d1-database/) — `batch()`, `withSession()`, `getBookmark()`
-- [Debug D1](https://developers.cloudflare.com/d1/observability/debug-d1/) — error classes and automatic retries
-- [D1 read replication public beta](https://developers.cloudflare.com/changelog/post/2025-04-10-d1-read-replication-beta/) — 10 April 2025
-- [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) — row read/write accounting
+- [D1 limits](https://developers.cloudflare.com/d1/platform/limits/): page states last updated 21 April 2026
+- [D1 Database Worker API](https://developers.cloudflare.com/d1/worker-api/d1-database/): `batch()`, `withSession()`, `getBookmark()`
+- [Debug D1](https://developers.cloudflare.com/d1/observability/debug-d1/): error classes and automatic retries
+- [D1 read replication public beta](https://developers.cloudflare.com/changelog/post/2025-04-10-d1-read-replication-beta/): 10 April 2025
+- [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/): row read/write accounting
 
 ## Ceilings
 
@@ -86,7 +86,7 @@ adds a second written row whenever the indexed column is written.
 > transactions. If a statement in the sequence fails, then an error is returned for that
 > specific statement, and it aborts or rolls back the entire sequence.
 
-So §22's "data and outbox commit in one transaction" **is achievable** — on the condition
+So §22's "data and outbox commit in one transaction" **is achievable**, on the condition
 that the domain write and the outbox row are statements in the *same* `batch()` call. That
 is a constraint on the repository layer, not a blocker.
 
@@ -107,10 +107,10 @@ Bookmarks are the mechanism §24's backup design needs for "a compatible online 
 ## What this fixes elsewhere
 
 - **§11B's shard thresholds are now sizeable.** The per-database ceiling is 10 GB, so the
-  70/85/90% marks are 7 GB / 8.5 GB / 9 GB. This receipt does not size them — that is
+  70/85/90% marks are 7 GB / 8.5 GB / 9 GB. This receipt does not size them. That is
   ticket #12's job, and it needs the real per-message byte cost first.
 - **§11B does not mention the account-level ceiling.** 1 TB across all databases is the real
-  Node limit, and sharding does not relieve it — it relieves only the per-database 10 GB.
+  Node limit, and sharding does not relieve it. It relieves only the per-database 10 GB.
   A Node approaching 1 TB needs the PostgreSQL `ControlStoreAdapter`, not another shard.
   Flagged for the blueprint.
 - **The 2 MB row limit confirms §12**: raw MIME and attachments cannot live in D1 under any
@@ -120,7 +120,7 @@ Bookmarks are the mechanism §24's backup design needs for "a compatible online 
 ## Stale when
 
 - Automatic resource provisioning or read replication leaves beta.
-- The published limits page changes — it moved most recently on 21 April 2026.
+- The published limits page changes; it moved most recently on 21 April 2026.
 - D1 gains interactive transactions (see residual unknowns below), which would change the
   outbox design in #9.
 
@@ -133,7 +133,7 @@ Recorded rather than glossed, because AGENTS.md treats an unverified assertion a
 1. **Interactive transactions.** No document found either offering or explicitly denying
    `BEGIN`/`COMMIT` spanning awaits. The auto-commit framing strongly implies they do not
    exist, but "strongly implies" is not a receipt. Verify before #9 relies on it.
-2. **Worker eviction mid-`batch()`.** The database either applied the batch or did not — but
+2. **Worker eviction mid-`batch()`.** The database either applied the batch or did not, but
    the *caller* may never learn which. That is the `outcome_unknown` shape appearing
    **inside** the Node, not only at the provider boundary. §22 and §24 discuss unknown
    outcomes solely for external effects. If an internal write can also end unknown, the
