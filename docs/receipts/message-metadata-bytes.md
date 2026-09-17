@@ -16,16 +16,20 @@ values:
 ---
 
 
-## Re-measured 17 September 2026, later the same day: quarantine, and the figure held
+## Re-measured 17 September 2026, later the same day: quarantine and attachments, and the figure held
 
-Migration 0056 adds two nullable columns to `messages` — `quarantined_at`, `quarantine_reason` — and no
-index. **1,787.9 bytes per message, unchanged**; an extra delivery unchanged at 407.6. Every stage reported
-the same byte count as the round below, to the page.
+Migrations 0056 and 0057 add four columns to `messages` — `quarantined_at`, `quarantine_reason`,
+`attachments`, `attachments_dangerous` — and no index. **1,787.9 bytes per message, unchanged**, on both
+rounds; an extra delivery unchanged at 407.6. Every stage reported the same byte count as the round below,
+to the page.
 
-Measured with both NULL on every row, which is the settled state: the per-mailbox switch is off by default,
-and a held delivery is either released or one of a handful. Two NULLs cost two serial types in the record
-header, and a record that already spilled past its page slack last round has room for two bytes of header.
-The first round after slack is spent is the expensive one; this is the round after that.
+The quarantine pair was measured NULL on every row, which is the settled state: the switches are off by
+default, and a held delivery is either released or one of a handful. The attachment pair was measured
+populated — a small integer on every row a settled Node has looked at, `1` on a fifth of them — because
+that is what every row carries once the Node has parsed it. Two NULLs cost two serial types in the record
+header; two small integers cost two header bytes and one byte of payload, and a record that already spilled
+past its page slack last round has room for that. The first round after slack is spent is the expensive
+one; these are the rounds after that.
 
 ## Re-measured 17 September 2026: authentication results, and the first columns that cost what they hold
 

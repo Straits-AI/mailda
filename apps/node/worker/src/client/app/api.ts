@@ -139,6 +139,9 @@ export interface MessageRow {
   auth_dmarc: AuthenticationResult | null;
   auth_dmarc_policy: string | null;
   auth_from_domain: string | null;
+  /** Attached parts, and how many a mailbox may refuse to queue (0057); null before this Node looked. */
+  attachments: number | null;
+  attachments_dangerous: number | null;
   /**
    * The case for this delivery's own mailbox, so replying can claim in one act.
    *
@@ -400,6 +403,8 @@ export interface MailboxQueue {
   first_response_minutes: number | null;
   /** 1 when the mailbox holds back deliveries whose From domain failed DMARC and asks receivers to act. */
   quarantine_dmarc_fail: 0 | 1;
+  /** 1 when it holds back a delivery carrying an executable, a script, or a program under a document's name. */
+  quarantine_dangerous_attachments: 0 | 1;
   /** Held back and not yet released. */
   quarantined: number;
   breached: number;
@@ -511,15 +516,16 @@ export async function setResponseTarget(
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
 }
 
-/** Turns a mailbox's DMARC-failure quarantine on or off. Administrator only, and audited. */
+/** Turns one of a mailbox's quarantine switches on or off. Administrator only, and audited. */
 export async function setQuarantineSwitch(
   mailboxId: string,
+  which: "dmarc" | "attachments",
   on: boolean,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ quarantineDmarcFail: on }),
+    body: JSON.stringify(which === "dmarc" ? { quarantineDmarcFail: on } : { quarantineDangerousAttachments: on }),
   });
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -537,7 +543,7 @@ export interface QuarantinedDelivery {
   dmarcPolicy: string | null;
   acceptedAt: string;
   quarantinedAt: string;
-  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine";
+  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine" | "attachment_dangerous";
 }
 
 /** Every delivery held back on this Node. Administrators only; anyone else is refused, and the hook says so. */

@@ -259,16 +259,18 @@ export function Queue() {
     } else setProblem(outcome.message);
   }
 
-  async function onSetQuarantine(on: boolean) {
+  async function onSetQuarantine(which: "dmarc" | "attachments", on: boolean) {
     setNotice(null);
     setProblem(null);
     if (mailboxId === null) return;
-    const outcome = await setQuarantineSwitch(mailboxId, on);
+    const outcome = await setQuarantineSwitch(mailboxId, which, on);
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     if (outcome.ok) {
       setNotice(on
-        ? "From now on, a delivery whose sender's domain disowns it (DMARC fail, p=reject or p=quarantine) is held back here for an administrator."
-        : "This mailbox no longer holds anything back. Deliveries already held stay held until released.");
+        ? (which === "dmarc"
+          ? "From now on, a delivery whose sender's domain disowns it (DMARC fail, p=reject or p=quarantine) is held back here for an administrator."
+          : "From now on, a delivery carrying an executable, a script, or a program under a document's name is held back here for an administrator.")
+        : "That is off. Deliveries already held stay held until released.");
     } else setProblem(outcome.message);
   }
 
@@ -395,10 +397,19 @@ export function Queue() {
           <input
             type="checkbox"
             checked={current?.quarantine_dmarc_fail === 1}
-            onChange={(event) => void onSetQuarantine(event.target.checked)}
+            onChange={(event) => void onSetQuarantine("dmarc", event.target.checked)}
             aria-label="Hold back deliveries whose sender's domain disowns them"
           />
           <span>Hold back a delivery its sender's domain disowns (DMARC fail, p=reject or p=quarantine).</span>
+        </label>
+        <label className="case-pick">
+          <input
+            type="checkbox"
+            checked={current?.quarantine_dangerous_attachments === 1}
+            onChange={(event) => void onSetQuarantine("attachments", event.target.checked)}
+            aria-label="Hold back deliveries carrying a dangerous attachment"
+          />
+          <span>Hold back a delivery carrying an executable, a script, or a program under a document's name.</span>
         </label>
         {current !== undefined && current.quarantined > 0 ? (
           <span className="state clock-due queue-breached">{current.quarantined} held</span>
@@ -426,8 +437,10 @@ export function Queue() {
                   <td>{one.subject ?? <span className="dim">(no subject)</span>}</td>
                   <td className="mono">{one.fromAddr ?? <span className="dim">—</span>}</td>
                   <td>
-                    {one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to{" "}
-                    {one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.
+                    {one.reason === "attachment_dangerous"
+                      ? "Carries an executable, a script, or a program under a document's name."
+                      : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `
+                        + `${one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.`}
                   </td>
                   <td className="num">
                     <button type="button" className="linkish" onClick={() => void onRelease(one.messageId)}>

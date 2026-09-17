@@ -34,7 +34,16 @@ export interface TargetOutcome {
   firstResponseMinutes: number | null;
   /** Whether this mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
   quarantineDmarcFail: boolean;
+  /** Whether it holds back a delivery carrying an executable, a script, or a program under a document's name (0057). */
+  quarantineDangerousAttachments: boolean;
 }
+
+/** The two switches a mailbox has, each a column. A third is a third entry here and nowhere else. */
+export const QUARANTINE_SWITCHES = {
+  dmarc: "quarantine_dmarc_fail",
+  attachments: "quarantine_dangerous_attachments",
+} as const;
+export type QuarantineSwitch = keyof typeof QUARANTINE_SWITCHES;
 
 export async function setResponseTarget(
   env: Env,
@@ -65,8 +74,12 @@ export async function setResponseTarget(
   }
 
   const mailbox = await env.CATALOG.prepare(
-    "SELECT id, first_response_minutes, quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
-  ).bind(orgId, mailboxId).first<{ id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number }>();
+    `SELECT id, first_response_minutes, quarantine_dmarc_fail, quarantine_dangerous_attachments
+       FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1`,
+  ).bind(orgId, mailboxId).first<{
+    id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number;
+    quarantine_dangerous_attachments: number;
+  }>();
   if (mailbox === null) {
     throw notFound("E_NO_MAILBOX", {
       what: `mailbox ${mailboxId} does not exist`,
@@ -92,17 +105,22 @@ export async function setResponseTarget(
     ],
   );
 
-  return { mailboxId, firstResponseMinutes: minutes, quarantineDmarcFail: mailbox.quarantine_dmarc_fail === 1 };
+  return {
+    mailboxId, firstResponseMinutes: minutes, quarantineDmarcFail: mailbox.quarantine_dmarc_fail === 1,
+    quarantineDangerousAttachments: mailbox.quarantine_dangerous_attachments === 1,
+  };
 }
 
 /**
- * The quarantine switch (0056): whether this mailbox holds back a delivery whose From domain failed DMARC
- * and published `quarantine` or `reject`. Off by default, because turning it on decides that some mail will
- * wait for an administrator, and that is the mailbox's owner's to decide — same gate as the target above.
+ * A quarantine switch: whether this mailbox holds back a delivery whose From domain failed DMARC and
+ * published `quarantine` or `reject` (0056), or one carrying a dangerous attachment (0057). Off by default,
+ * because turning one on decides that some mail will wait for an administrator, and that is the mailbox's
+ * owner's to decide — same gate as the target above.
  */
 export async function setQuarantineSwitch(
-  env: Env, ctx: Ctx, orgId: string, actorUserId: string, mailboxId: string, on: boolean,
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, mailboxId: string, which: QuarantineSwitch, on: boolean,
 ): Promise<TargetOutcome> {
+  const column = QUARANTINE_SWITCHES[which];
   if (!(await isAdmin(env, orgId, actorUserId))) {
     throw new CallerError("E_NOT_AN_ADMINISTRATOR", 403, {
       what: "you are not an administrator of this organization",
@@ -111,8 +129,12 @@ export async function setQuarantineSwitch(
     });
   }
   const mailbox = await env.CATALOG.prepare(
-    "SELECT id, first_response_minutes, quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
-  ).bind(orgId, mailboxId).first<{ id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number }>();
+    `SELECT id, first_response_minutes, quarantine_dmarc_fail, quarantine_dangerous_attachments
+       FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1`,
+  ).bind(orgId, mailboxId).first<{
+    id: string; first_response_minutes: number | null; quarantine_dmarc_fail: number;
+    quarantine_dangerous_attachments: number;
+  }>();
   if (mailbox === null) {
     throw notFound("E_NO_MAILBOX", {
       what: `mailbox ${mailboxId} does not exist`,
@@ -124,13 +146,19 @@ export async function setQuarantineSwitch(
     env, ctx, orgId,
     {
       action: "mailbox.quarantine_set", outcome: "ok", actorUserId, subject: mailboxId,
-      detail: { from: mailbox.quarantine_dmarc_fail === 1, to: on },
+      detail: { which, from: mailbox[column] === 1, to: on },
     },
     (entry) => [
       entry,
-      env.CATALOG.prepare("UPDATE mailboxes SET quarantine_dmarc_fail = ? WHERE org_id = ? AND id = ?")
+      // The column name is one of two literals from `QUARANTINE_SWITCHES`, never a caller's string.
+      env.CATALOG.prepare(`UPDATE mailboxes SET ${column} = ? WHERE org_id = ? AND id = ?`)
         .bind(on ? 1 : 0, orgId, mailboxId),
     ],
   );
-  return { mailboxId, firstResponseMinutes: mailbox.first_response_minutes, quarantineDmarcFail: on };
+  const after = { ...mailbox, [column]: on ? 1 : 0 };
+  return {
+    mailboxId, firstResponseMinutes: mailbox.first_response_minutes,
+    quarantineDmarcFail: after.quarantine_dmarc_fail === 1,
+    quarantineDangerousAttachments: after.quarantine_dangerous_attachments === 1,
+  };
 }

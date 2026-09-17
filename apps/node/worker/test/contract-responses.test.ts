@@ -1039,12 +1039,16 @@ describe("the operator and key surfaces", () => {
     const target = await answers("PATCH", "/api/mailboxes/:mailboxId", {
       params: { mailboxId }, body: { firstResponseMinutes: 60 }, cookie: held,
     }) as { firstResponseMinutes: number | null; quarantineDmarcFail: boolean };
-    expect(target).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: false });
+    expect(target).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: false, quarantineDangerousAttachments: false });
     const switched = await answers("PATCH", "/api/mailboxes/:mailboxId", {
       params: { mailboxId }, body: { quarantineDmarcFail: true }, cookie: held,
     }) as { firstResponseMinutes: number | null; quarantineDmarcFail: boolean };
-    // The switch leaves the target where it was: two settings, and a PATCH names the one it changes.
-    expect(switched).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: true });
+    // The switch leaves the target where it was: three settings, and a PATCH names the one it changes.
+    expect(switched).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: true, quarantineDangerousAttachments: false });
+    const files = await answers("PATCH", "/api/mailboxes/:mailboxId", {
+      params: { mailboxId }, body: { quarantineDangerousAttachments: true }, cookie: held,
+    });
+    expect(files).toMatchObject({ firstResponseMinutes: 60, quarantineDmarcFail: true, quarantineDangerousAttachments: true });
   });
 
   it("a draft, read back and discarded", async () => {

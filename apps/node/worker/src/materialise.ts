@@ -8,6 +8,7 @@ import { bucketFor } from "./ingress.ts";
 import { headerBlock, headerFields, parseHeaders } from "./mime.ts";
 import { authenticationOf, type AuthenticationVerdict } from "./authentication-results.ts";
 import type { QuarantineReason } from "@mailda/contract/schemas";
+import { DANGEROUS } from "./attachments.ts";
 import { auditedBatch, log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
 import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
@@ -110,15 +111,11 @@ export async function materialiseReceipt(
    * evidence and row — and opens no case, so it is in nobody's queue until an administrator releases it.
    */
   const mailbox = await env.CATALOG.prepare(
-    "SELECT quarantine_dmarc_fail FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
-  ).bind(receipt.org_id, receipt.mailbox_id).first<{ quarantine_dmarc_fail: number }>();
+    "SELECT quarantine_dmarc_fail, quarantine_dangerous_attachments FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(receipt.org_id, receipt.mailbox_id)
+    .first<{ quarantine_dmarc_fail: number; quarantine_dangerous_attachments: number }>();
   const disowned = verdict?.dmarc === "fail"
     && (verdict.dmarcPolicy === "reject" || verdict.dmarcPolicy === "quarantine");
-  // A token, not a sentence (AGENTS.md 2c): the contract's `quarantineReason` is the closed world, and the
-  // reading surface says what it means. The verdict's own columns carry the domain and the policy.
-  const quarantine: QuarantineReason | null = mailbox?.quarantine_dmarc_fail === 1 && disowned
-    ? (verdict?.dmarcPolicy === "reject" ? "dmarc_fail_reject" : "dmarc_fail_quarantine")
-    : null;
 
   /*
    * The body, as words for the search index (#107 L2).
@@ -132,6 +129,21 @@ export async function materialiseReceipt(
    * by paging and by subject, which is the same position `renderBody` takes when it reports `unparsed`.
    */
   const bodyWords = await indexableText(raw);
+
+  /*
+   * What was attached (0057), counted and judged from the same parse. NULL when the parser could not read
+   * the message: nobody looked, which is what NULL means on a pre-0057 row too, and a different fact from 0.
+   */
+  const attachments = bodyWords.kind === "unparseable" ? null : bodyWords.attachments;
+  const dangerous = attachments?.filter((one) => DANGEROUS.has(one.verdict)).length ?? null;
+
+  // A token, not a sentence (AGENTS.md 2c): the contract's `quarantineReason` is the closed world, and the
+  // reading surface says what it means. The sender's domain speaks first; a file is judged second.
+  const quarantine: QuarantineReason | null = mailbox?.quarantine_dmarc_fail === 1 && disowned
+    ? (verdict?.dmarcPolicy === "reject" ? "dmarc_fail_reject" : "dmarc_fail_quarantine")
+    : mailbox?.quarantine_dangerous_attachments === 1 && (dangerous ?? 0) > 0
+      ? "attachment_dangerous"
+      : null;
 
   // A message with no readable Message-ID still needs a stable identity to thread on, and it must be
   // one that survives re-parsing. The receipt id is derived, unique and already in hand.
@@ -167,8 +179,8 @@ export async function materialiseReceipt(
           subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
           in_reply_to, thread_root_rfc_id, parse_error, conversation_id,
           auth_spf, auth_dkim, auth_dmarc, auth_dmarc_policy, auth_from_domain,
-          quarantined_at, quarantine_reason)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          quarantined_at, quarantine_reason, attachments, attachments_dangerous)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       messageId, receipt.org_id, timeBucket, receipt.blob_key, receipt.blob_sha256, receipt.raw_bytes,
       rfcMessageId,
@@ -183,6 +195,7 @@ export async function materialiseReceipt(
       verdict?.spf ?? null, verdict?.dkim ?? null, verdict?.dmarc ?? null,
       verdict?.dmarcPolicy ?? null, verdict?.fromDomain ?? null,
       quarantine === null ? null : at, quarantine,
+      attachments?.length ?? null, dangerous,
     ),
     /*
      * The search index, immediately after the row it is derived from and inside the same batch (#107).

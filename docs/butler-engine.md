@@ -274,7 +274,10 @@ A `mail.received` run's `event` carries exactly: `message_id`, `conversation_id`
 `mailbox_address`, `subject`, `from`, `return_path`, `received_at`, `parse_error`, and since 0055 the
 receiving server's verdict on the sender as `dmarc`, `spf`, `dkim` — RFC 8601's own words, `absent` when the
 server wrote no header, null on a message from before the Node evaluated it — so a guard can send a
-`dmarc == "fail"` message where a person looks first, without any of the three ever choosing a recipient. Two of those name a sender
+`dmarc == "fail"` message where a person looks first, without any of the three ever choosing a recipient.
+Since 0057, `attachments` and `attachments_dangerous` — how many parts were attached and how many are an
+executable, a script, or a program under a document's name (`src/attachments.ts`); null before the Node
+looked — so a guard can route `attachments_dangerous > 0` the same way. Two of the facts name a sender
 and the distinction is load-bearing — `from` is the `From:` **header**, content the sender chose, readable so
 a guard can match on it; `return_path` is the **envelope** sender, and it is the only one anything addresses
 mail with. See "Who a Butler's reply goes to" below.

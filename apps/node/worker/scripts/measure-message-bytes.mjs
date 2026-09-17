@@ -110,7 +110,8 @@ function messagesSql(from, count) {
       // Node materialised before 0055 — which a settled table has none of once the backfill runs.
       // Quarantine (0056): NULL on every row of a settled table — the switch is off by default, and a held
       // delivery is released or stays one of a handful. Populating it would measure a Node nobody runs.
-      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0,0,'pass','pass','pass','none','example-supplier.com',NULL,NULL)`,
+      // Attachments (0057): counted on every row a settled Node has looked at, and most mail carries none.
+      `'2026-08-0${(i % 9) + 1}T12:00:05.000Z','indexed',0,0,'pass','pass','pass','none','example-supplier.com',NULL,NULL,${i % 5 === 0 ? 1 : 0},0)`,
     );
   }
   return chunked(rows,
@@ -129,7 +130,7 @@ function messagesSql(from, count) {
     // error and retry columns are left null, which is their state for all but a handful of messages.
     `thread_root_rfc_id,parse_error,conversation_id,body_indexed_at,body_index_state,` +
     `body_index_attempts,body_index_attempt_version,auth_spf,auth_dkim,auth_dmarc,auth_dmarc_policy,` +
-    `auth_from_domain,quarantined_at,quarantine_reason)`);
+    `auth_from_domain,quarantined_at,quarantine_reason,attachments,attachments_dangerous)`);
 }
 
 /**
@@ -182,7 +183,8 @@ CREATE TABLE messages (
   body_index_lease_until TEXT,
   body_index_attempt_version INTEGER NOT NULL DEFAULT 0,
   auth_spf TEXT, auth_dkim TEXT, auth_dmarc TEXT, auth_dmarc_policy TEXT, auth_from_domain TEXT,
-  quarantined_at TEXT, quarantine_reason TEXT
+  quarantined_at TEXT, quarantine_reason TEXT,
+  attachments INTEGER, attachments_dangerous INTEGER
 );
 CREATE UNIQUE INDEX msg_by_receipt ON messages (ingress_receipt_id);
 CREATE INDEX msg_by_thread ON messages (org_id, thread_id, sent_at);

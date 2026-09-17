@@ -1357,6 +1357,7 @@ export function messagePageQuery(args: {
   const columns = `r.id, r.envelope_from, r.envelope_to, r.raw_bytes, r.accepted_at,
             a.mailbox_id, m.id AS message_id, m.subject, m.from_addr, m.parse_error,
             m.conversation_id, m.auth_spf, m.auth_dkim, m.auth_dmarc, m.auth_dmarc_policy, m.auth_from_domain,
+            m.attachments, m.attachments_dangerous,
             sg.grant_id AS supervised_grant_id,
             (SELECT c.id FROM cases c
               WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
@@ -1428,6 +1429,7 @@ export function messagePageQuery(args: {
     "id", "envelope_from", "envelope_to", "raw_bytes", "accepted_at", "mailbox_id", "message_id",
     "subject", "from_addr", "parse_error", "conversation_id", "case_id",
     "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
+    "attachments", "attachments_dangerous",
   ].join(", ");
 
 

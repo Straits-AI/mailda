@@ -471,11 +471,12 @@ export async function checkInboundAuthentication(
        SUM(CASE WHEN auth_dmarc = 'absent' THEN 1 ELSE 0 END) AS absent,
        SUM(CASE WHEN auth_dmarc IS NULL THEN 1 ELSE 0 END) AS unevaluated,
        COUNT(*) AS total,
+       SUM(CASE WHEN attachments_dangerous > 0 THEN 1 ELSE 0 END) AS dangerous,
        (SELECT COUNT(*) FROM messages h WHERE h.org_id = ? AND h.quarantined_at IS NOT NULL) AS held
      FROM messages WHERE org_id = ? AND received_at >= ?`,
   ).bind(orgId, orgId, since).first<{
     pass: number | null; fail: number | null; fail_reject: number | null; none: number | null;
-    absent: number | null; unevaluated: number | null; total: number; held: number;
+    absent: number | null; unevaluated: number | null; total: number; dangerous: number | null; held: number;
   }>().catch(() => null);
   if (row === null) {
     return [{
@@ -497,6 +498,9 @@ export async function checkInboundAuthentication(
         + `${n(row.none)} from domains publishing no policy, ${n(row.absent)} with no authentication header from `
         + `the receiving server${n(row.unevaluated) > 0 ? `, ${n(row.unevaluated)} from before this Node evaluated senders` : ""}. `
         + "A fail is the From domain saying the message is not theirs; the sender line on each message says so."
+        + (n(row.dangerous) > 0
+          ? ` ${n(row.dangerous)} carried an executable, a script, or a program under a document's name (0057).`
+          : "")
         // Not bounded by the week: a delivery held a month ago and never looked at is the one to mention.
         + (row.held > 0
           ? ` ${row.held} deliver${row.held === 1 ? "y is" : "ies are"} held back (0056), waiting for an administrator on the queue screen.`

@@ -19,26 +19,42 @@ const ORG = "org_quarantine";
 const ADMIN = "usr_quarantine_admin";
 const ON = { id: "mbx_quarantine_on", address: "on@quarantine.example" };
 const OFF = { id: "mbx_quarantine_off", address: "off@quarantine.example" };
+/** Switch two (0057): dangerous attachments, and not DMARC. */
+const FILES = { id: "mbx_quarantine_files", address: "files@quarantine.example" };
 
 const DISOWNED = "Authentication-Results: mx.cloudflare.net; dkim=fail header.d=bank.test; "
   + "dmarc=fail header.from=bank.test policy.dmarc=reject; spf=fail smtp.mailfrom=x@bank.test";
 const DISOWNED_P_NONE = DISOWNED.replace("policy.dmarc=reject", "policy.dmarc=none");
 const PASSED = "Authentication-Results: mx.cloudflare.net; dkim=pass header.d=bank.test; "
   + "dmarc=pass header.from=bank.test policy.dmarc=reject; spf=pass smtp.mailfrom=x@bank.test";
+const MZ = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00]);
+const PDF = new TextEncoder().encode("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n");
 
-function raw(authHeader: string, to: string, n: number): Bytes {
+/** A multipart message with one attached part, base64 so the bytes are exactly what the test says. */
+function withAttachment(filename: string, mimeType: string, bytes: Uint8Array): string[] {
+  const b64 = btoa(String.fromCharCode(...bytes));
+  return [
+    "MIME-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"b\"", "", "--b",
+    "Content-Type: text/plain", "", "See attached.", "", "--b",
+    `Content-Type: ${mimeType}; name="${filename}"`, "Content-Transfer-Encoding: base64",
+    `Content-Disposition: attachment; filename="${filename}"`, "", b64, "--b--",
+  ];
+}
+
+function raw(authHeader: string, to: string, n: number, attachment?: string[]): Bytes {
   return utf8([
     authHeader, "From: Bank <x@bank.test>", `To: ${to}`, "Subject: Your account",
-    `Message-ID: <q-${n}@bank.test>`, "Date: Mon, 3 Aug 2026 12:00:00 +0000", "", "body",
+    `Message-ID: <q-${n}@bank.test>`, "Date: Mon, 3 Aug 2026 12:00:00 +0000",
+    ...(attachment ?? ["", "body"]),
   ].join("\r\n"));
 }
 
 let n = 0;
-async function accept(authHeader: string, to: string): Promise<string> {
+async function accept(authHeader: string, to: string, attachment?: string[]): Promise<string> {
   const ctx = createSystemCtx();
   n += 1;
   const id = `rcpt_quarantine_${String(n).padStart(16, "0")}`;
-  const bytes = raw(authHeader, to, n);
+  const bytes = raw(authHeader, to, n, attachment);
   await putEvidence(testEnv, `${ORG}/raw/2026-Q3/${id}.eml`, bytes);
   await testEnv.CATALOG.prepare(
     `INSERT INTO ingress_receipts (id, org_id, provider_event_id, envelope_from, envelope_to, raw_bytes,
@@ -50,10 +66,13 @@ async function accept(authHeader: string, to: string): Promise<string> {
 
 async function row(receiptId: string) {
   return (await testEnv.CATALOG.prepare(
-    `SELECT m.id, m.quarantined_at, m.quarantine_reason,
+    `SELECT m.id, m.quarantined_at, m.quarantine_reason, m.attachments, m.attachments_dangerous,
             (SELECT COUNT(*) FROM cases c WHERE c.conversation_id = m.conversation_id) AS cases
        FROM messages m WHERE m.ingress_receipt_id = ?`,
-  ).bind(receiptId).first<{ id: string; quarantined_at: string | null; quarantine_reason: string | null; cases: number }>())!;
+  ).bind(receiptId).first<{
+    id: string; quarantined_at: string | null; quarantine_reason: string | null; cases: number;
+    attachments: number | null; attachments_dangerous: number | null;
+  }>())!;
 }
 
 async function listedReceipts(): Promise<string[]> {
@@ -79,10 +98,11 @@ beforeAll(async () => {
       `INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
        VALUES (?,?,?,'org.admin','organization',?,?)`,
     ).bind(ctx.id("rt"), ORG, ADMIN, ORG, at),
-    ...[ON, OFF].flatMap((box) => [
+    ...[ON, OFF, FILES].flatMap((box) => [
       testEnv.CATALOG.prepare(
-        "INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at, quarantine_dmarc_fail) VALUES (?,?,?,?,?)",
-      ).bind(box.id, ORG, box.id, at, box === ON ? 1 : 0),
+        `INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at, quarantine_dmarc_fail,
+           quarantine_dangerous_attachments) VALUES (?,?,?,?,?,?)`,
+      ).bind(box.id, ORG, box.id, at, box === ON ? 1 : 0, box === FILES ? 1 : 0),
       testEnv.CATALOG.prepare(
         "INSERT OR IGNORE INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
       ).bind(ctx.id("addr"), ORG, box.address, box.id, at),
@@ -94,7 +114,7 @@ beforeAll(async () => {
   ]);
 });
 
-describe("a mailbox that asked for it holds back a delivery its sender's domain disowned (0056)", () => {
+describe("a mailbox that asked for it holds back a delivery its sender's domain disowned (0056), or a dangerous file (0057)", () => {
   it("quarantines: no case, hidden from the listing, audited, and release undoes all three", async () => {
     const ctx = createSystemCtx();
     const id = await accept(DISOWNED, ON.address);
@@ -146,5 +166,48 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
     const id = await accept(PASSED, ON.address);
     await materialiseReceipt(testEnv, createSystemCtx(), id);
     expect(await row(id)).toMatchObject({ quarantined_at: null, cases: 1 });
+  });
+
+  it("counts what was attached on every delivery, judged, and nobody's switch changes the count", async () => {
+    const id = await accept(PASSED, OFF.address, withAttachment("setup.exe", "application/octet-stream", MZ));
+    await materialiseReceipt(testEnv, createSystemCtx(), id);
+    expect(await row(id)).toMatchObject({ attachments: 1, attachments_dangerous: 1, quarantined_at: null, cases: 1 });
+    const none = await accept(PASSED, OFF.address);
+    await materialiseReceipt(testEnv, createSystemCtx(), none);
+    expect(await row(none)).toMatchObject({ attachments: 0, attachments_dangerous: 0 });
+  });
+
+  it("holds back a program under a document's name when the attachment switch is on, and not a real document", async () => {
+    const disguised = await accept(PASSED, FILES.address, withAttachment("invoice.pdf", "application/pdf", MZ));
+    expect(await materialiseReceipt(testEnv, createSystemCtx(), disguised)).toMatchObject({ quarantined: true });
+    expect(await row(disguised)).toMatchObject({
+      attachments: 1, attachments_dangerous: 1, quarantine_reason: "attachment_dangerous", cases: 0,
+    });
+    const listed = await listQuarantined(testEnv, ORG, ADMIN);
+    expect(listed.find((one) => one.receiptId === disguised)).toMatchObject({ reason: "attachment_dangerous", mailboxId: FILES.id });
+
+    const document = await accept(PASSED, FILES.address, withAttachment("invoice.pdf", "application/pdf", PDF));
+    await materialiseReceipt(testEnv, createSystemCtx(), document);
+    expect(await row(document)).toMatchObject({ attachments: 1, attachments_dangerous: 0, quarantined_at: null, cases: 1 });
+
+    // The sender's domain speaks first: a disowned message with a dangerous file is held for the DMARC reason.
+    const both = await accept(DISOWNED, ON.address, withAttachment("setup.exe", "application/octet-stream", MZ));
+    await materialiseReceipt(testEnv, createSystemCtx(), both);
+    expect(await row(both)).toMatchObject({ quarantine_reason: "dmarc_fail_reject", attachments_dangerous: 1 });
+  });
+
+  it("lists the parts on the body route, judged, and carries none of their bytes", async () => {
+    const id = await accept(PASSED, OFF.address, withAttachment("invoice.pdf", "application/pdf", MZ));
+    await materialiseReceipt(testEnv, createSystemCtx(), id);
+    const session = await issueSession(testEnv, createSystemCtx(), { orgId: ORG, userId: ADMIN });
+    const response = await SELF.fetch(`https://node/api/messages/${id}/body`, {
+      headers: { cookie: `${ACCESS_COOKIE}=${session.accessToken}` },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { attachments: unknown[]; text: string | null };
+    expect(body.attachments).toEqual([
+      { filename: "invoice.pdf", declaredType: "application/pdf", bytes: MZ.length, verdict: "disguised" },
+    ]);
+    expect(body.text).toContain("See attached.");
   });
 });
