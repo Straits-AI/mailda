@@ -227,6 +227,49 @@ export async function steal(
 }
 
 /**
+ * Hands a case to a colleague (17 September 2026): the assign-to-somebody the coverage audit found missing.
+ *
+ * The giver may send from the mailbox, and so must the receiver — a case handed to somebody who cannot
+ * answer it is work in nobody's queue. Audited as `case.assigned` naming both, because unlike a claim this is
+ * one person deciding for another and the trail should say who. The same compare-and-swap as a steal: the
+ * holder must still be who it was when the giver looked.
+ */
+export async function assign(
+  env: Env, ctx: Ctx, orgId: string, userId: string, caseId: string, toUserId: string,
+): Promise<ClaimOutcome | { kind: "not_a_colleague" }> {
+  const existing = await caseById(env, orgId, caseId);
+  if (existing === null) return { kind: "not_found" };
+  if (!(await maySend(env, { orgId, userId }, existing.mailbox_id))) return { kind: "not_found" };
+  if (existing.state === "closed") return { kind: "closed" };
+  if (!(await maySend(env, { orgId, userId: toUserId }, existing.mailbox_id))) return { kind: "not_a_colleague" };
+
+  const at = new Date(ctx.now()).toISOString();
+  const { results } = await auditedBatch<never>(
+    env, ctx, orgId,
+    {
+      action: "case.assigned", outcome: "ok", actorUserId: userId, subject: caseId,
+      detail: { from: existing.assignee, to: toUserId, mailboxId: existing.mailbox_id },
+    },
+    (entry) => [
+      entry,
+      env.CATALOG.prepare(
+        `UPDATE cases SET assignee = ?, claimed_at = ?, state = 'claimed', state_at = ?
+          WHERE org_id = ? AND id = ? AND assignee IS ?`,
+      ).bind(toUserId, at, at, orgId, caseId, existing.assignee),
+    ],
+    {
+      sql: "SELECT 1 FROM cases WHERE org_id = ? AND id = ? AND assignee IS ?",
+      params: [orgId, caseId, existing.assignee],
+    },
+  );
+  if ((results[1]?.meta.changes ?? 0) === 0) {
+    const now = await caseById(env, orgId, caseId);
+    return now === null ? { kind: "not_found" } : { kind: "held", by: now.assignee ?? "(nobody)", since: now.claimed_at ?? now.state_at };
+  }
+  return { kind: "claimed", case: (await caseById(env, orgId, caseId))! };
+}
+
+/**
  * Puts a case back. Only its holder may, which is what makes stealing the mechanism for everything else.
  *
  * Unaudited, like claiming: it is the same act in reverse and at the same frequency.

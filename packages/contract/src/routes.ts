@@ -226,6 +226,7 @@ export const ROUTES = [
   // ---- membership (#83) ------------------------------------------------------------------------------
   { method: "GET", path: "/api/invitations", summary: "Invitations still outstanding", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.invitationListResponse },
   { method: "POST", path: "/api/invitations", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Invite an address to this organization", response: S.invitationCreatedResponse },
+  { method: "DELETE", path: "/api/invitations/:invitationId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Withdraw an outstanding invitation; the link stops working", response: S.invitationRevokedResponse },
   { method: "POST", path: "/api/invitations/redeem", authority: { scope: "public" }, summary: "Redeem an invitation by choosing a password", response: S.redeemedResponse },
   { method: "GET", path: "/api/people", summary: "Everybody in this organization", authority: { scope: "organization", allOf: ["org.admin"] }, response: S.peopleListResponse },
   { method: "GET", path: "/api/teams", summary: "Every team", authority: { scope: "member" }, response: S.teamListResponse },
@@ -342,6 +343,11 @@ export const ROUTES = [
     summary: "One message's rendered body. Takes the receipt id that GET /api/messages returns as `id`",
     response: S.messageBodyResponse,
   },
+  {
+    method: "GET", path: "/api/messages/:receiptId/attachments/:ordinal",
+    summary: "One attached part's bytes, by its position in the body route's `attachments`. A copy leaving the Node, so it takes message.export like the original and is recorded as an export",
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] },
+  },
   { method: "GET", path: "/api/messages/:receiptId/raw", summary: "One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does" , authority: { scope: "mailbox", allOf: ["mailbox.content.read", "message.export"] } },
   {
     /*
@@ -390,6 +396,20 @@ export const ROUTES = [
      */
     summary: "Claim, steal, release or close a case",
     response: S.caseActionResponse,
+  },
+  {
+    authority: { scope: "mailbox", allOf: ["send.propose"] },
+    method: "PUT", path: "/api/cases/:caseId/assignee",
+    summary: "Hand a case to a colleague who may send from its mailbox, by id or by their sign-in address. Audited, naming both",
+    request: S.assignCaseRequest,
+    response: S.caseAssignedResponse,
+  },
+  {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    method: "PUT", path: "/api/messages/:messageId/read",
+    summary: "Mark a message read or unread, for you (0062). Takes the msg_ id. `{read: false}` puts it back",
+    request: S.setReadRequest,
+    response: S.readSetResponse,
   },
   {
     authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
@@ -860,6 +880,7 @@ export function path(spec: RouteSpec, params: Readonly<Record<string, string>> =
 export const NOT_JSON: readonly string[] = [
   "GET /index.html",
   "GET /api/messages/:receiptId/raw",
+  "GET /api/messages/:receiptId/attachments/:ordinal",
   "GET /api/sends/:sendId/submitted",
   "GET /api/exports/:exportId/objects/:objectId",
 ];

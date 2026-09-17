@@ -117,6 +117,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "published one, and a matter is a folder rather than an act on anybody's mail.",
     "PUT /api/drafts",
     "PUT /api/messages/:messageId/labels",
+    "PUT /api/messages/:messageId/read",
     "POST /api/butlers",
     "PUT /api/butlers/:butlerId/draft",
     "POST /api/matters",
@@ -163,6 +164,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "stamps the time from which employee-notification obligations become due (§7). A resumed investigation "
     + "needs a new matter, so this is a governance event rather than filing.",
     "POST /api/matters/:matterId/close",
+  ),
+  ...changing("act",
+    "Handing a case to a colleague is reversible — they release it, or hand it back — and it is exactly the "
+    + "act a triage Butler exists to do; `case.assign` is already a node type. Bounded by send.propose on the "
+    + "mailbox for both people, and audited naming both.",
+    "PUT /api/cases/:caseId/assignee",
   ),
   ...changing("governed",
     "This route carries claim, steal, release **and close**, and close is irreversible: `cases.ts` has no "
@@ -224,6 +231,7 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/domain-pauses",
     "POST /api/domain-pauses/:pauseId/lift",
     "POST /api/suppressions/lift",
+    "DELETE /api/invitations/:invitationId",
     "POST /api/butler-pauses/:pauseId/resume",
     "POST /api/butler-runs/:runId/replay",
   ),

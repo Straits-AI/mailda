@@ -156,6 +156,8 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
    * empty objects, so a component that mounts chrome gets a quiet rail instead of a crash.
    */
   if (path.startsWith("/api/approvals")) return Response.json({ approvals: [] });
+  // The drafts strip on the inbox lists `GET /api/drafts`; the composer's resume asks `?inReplyTo=`.
+  if (path === "/api/drafts") return Response.json({ drafts: [] });
   if (path.startsWith("/api/sends")) {
     return Response.json({ sends: [], daily: { handedOver: 0 } });
   }

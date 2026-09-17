@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 24 capabilities
+## What you can do — 27 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -46,6 +46,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `getMatters` | Matters a hold or an export can be scoped to |
 | `getMe` | Who this session is |
 | `getMessages` | Message metadata, newest first, one page at a time. Pass the previous page's next_cursor to continue; null means nothing older is visible |
+| `getMessagesByReceiptIdAttachmentsByOrdinal` | One attached part's bytes, by its position in the body route's `attachments`. A copy leaving the Node, so it takes message.export like the original and is recorded as an export |
 | `getMessagesByReceiptIdBody` | One message's rendered body. Takes the receipt id that GET /api/messages returns as `id` |
 | `getMessagesByReceiptIdRaw` | One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does |
 | `getNotifications` | What has changed since the last poll |
@@ -58,18 +59,20 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 
 | method | what it does |
 |:--|:--|
+| `putCasesByCaseIdAssignee` | Hand a case to a colleague who may send from its mailbox, by id or by their sign-in address. Audited, naming both |
 | `putDrafts` | Save a draft |
 | `postMatters` | Open a matter |
 | `putMessagesByMessageIdLabels` | Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id. |
+| `putMessagesByMessageIdRead` | Mark a message read or unread, for you (0062). Takes the msg_ id. `{read: false}` puts it back |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 112 withheld
+## What you cannot do, and why — 113 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
 them independently of this document.
 
-### Governed — needs more than one person, or cannot be undone (32)
+### Governed — needs more than one person, or cannot be undone (33)
 
 You are acting inside one person's session. Mailda counts **distinct people**, not credentials or requests,
 so you are that one person and can never be the second. These are not permissions you might be granted.
@@ -82,13 +85,13 @@ so you are that one person and can never be the second. These are not permission
 
   Discarding a draft destroys text somebody wrote. "They can type it again" is not undo, and the body is collected from R2 by the reconciler afterwards — there is nothing to restore from. An agent tidying drafts is an agent deleting a person's unfinished work.
 
+- **`deleteInvitationsByInvitationId`, `postButlerPausesByPauseIdResume`, `postButlerRunsByRunIdReplay`, `postDomainPauses`, `postDomainPausesByPauseIdLift`, `postSuppressionsLift`**
+
+  Stopping or resuming mail to a whole domain, and restarting a Butler a machine stopped. A breaker exists because something went wrong at volume; a machine that could clear one could clear the evidence of its own loop.
+
 - **`postApprovalsByApprovalIdDecide`, `postApprovalsByApprovalIdWithdraw`, `postSendsBySendIdRelease`, `postSendsBySendIdReleaseHold`**
 
   Releasing a held or gated send is a person deciding that mail may go. §18 and #61 count distinct people, and an agent inside somebody's session is that person rather than a second one — so the Node already refuses. What this prevents is *offering* it, which would teach an agent to try an act it can never complete.
-
-- **`postButlerPausesByPauseIdResume`, `postButlerRunsByRunIdReplay`, `postDomainPauses`, `postDomainPausesByPauseIdLift`, `postSuppressionsLift`**
-
-  Stopping or resuming mail to a whole domain, and restarting a Butler a machine stopped. A breaker exists because something went wrong at volume; a machine that could clear one could clear the evidence of its own loop.
 
 - **`postButlersByButlerIdPublish`, `postPoliciesByPolicyIdPublish`**
 

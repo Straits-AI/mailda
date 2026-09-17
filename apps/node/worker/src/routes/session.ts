@@ -29,6 +29,11 @@ export const session = {
     });
   },
 
+  "DELETE /api/invitations/:invitationId": async ({ env, clock, params, who }) => {
+    const { revokeInvitation } = await import("../invitations.ts");
+    return Response.json(await revokeInvitation(env, clock, who.orgId, who.userId, params.invitationId));
+  },
+
   "GET /api/invitations": async ({ env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       // §5C, as with `/api/people`: who has been invited and not yet arrived is the same shape of fact.

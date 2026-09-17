@@ -1241,6 +1241,8 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
 export function messagePageQuery(args: {
   orgId: string;
   subjects: readonly string[];
+  /** Whose read state the page carries (0062): the person, or the agent acting for one. */
+  readerId: string;
   /**
    * The **third term** of a delegated principal's authority — see `delegation.ts`. Inert for a human.
    *
@@ -1389,6 +1391,7 @@ export function messagePageQuery(args: {
             m.attachments, m.attachments_dangerous,
             (SELECT json_group_array(l.label) FROM (
                SELECT label FROM message_labels WHERE message_id = m.id ORDER BY label) l) AS labels_json,
+            EXISTS (SELECT 1 FROM message_reads rd WHERE rd.user_id = ? AND rd.message_id = m.id) AS read,
             sg.grant_id AS supervised_grant_id,
             (SELECT c.id FROM cases c
               WHERE c.org_id = r.org_id AND c.conversation_id = m.conversation_id
@@ -1460,7 +1463,7 @@ export function messagePageQuery(args: {
     "id", "envelope_from", "envelope_to", "raw_bytes", "accepted_at", "mailbox_id", "message_id",
     "subject", "from_addr", "parse_error", "conversation_id", "case_id",
     "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
-    "attachments", "attachments_dangerous", "labels_json",
+    "attachments", "attachments_dangerous", "labels_json", "read",
   ].join(", ");
 
 
@@ -1661,11 +1664,14 @@ export function messagePageQuery(args: {
        * `messages` is what scopes it. `test/node/search-scope-world.test.ts` has a separate rule for that.
        */
       params: [
+        // The reader first in each arm: `read` (0062) is a column, and columns precede every join textually.
+        args.readerId,
         // metadata arm: both grant subqueries, then the match, then the two org predicates
         ...args.supervised.metadata.params, ...args.supervised.content.params,
         searchedMatch, args.orgId, args.orgId, ...filterParams,
         ...metadataArm.params, args.limit,
         // body arm: the same two subqueries again, because the same fragments appear twice
+        args.readerId,
         ...args.supervised.metadata.params, ...args.supervised.content.params,
         searchedMatch, args.orgId, ...filterParams,
         ...bodyArm.params, args.limit,
@@ -1691,7 +1697,7 @@ export function messagePageQuery(args: {
     // their relative position to the planner would let a page boundary fall between them differently on the
     // two queries that span it — dropping one and repeating the other.
     params: [
-      ...args.supervised.metadata.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
+      args.readerId, ...args.supervised.metadata.params, args.orgId, ...filterParams, ...authorized.params, args.limit,
     ],
   };
 }
@@ -1836,6 +1842,7 @@ export async function listMessages(env: Env, ctx: Ctx, request: Request): Promis
     orgId: who.orgId,
     nowIso: new Date(ctx.now()).toISOString(),
     subjects,
+    readerId: who.userId,
     /*
      * Empty for a human, and no query. An agent pays one extra read for the term that makes its sponsor a
      * ceiling rather than a label in the audit trail.

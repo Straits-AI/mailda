@@ -74,7 +74,7 @@ beforeEach(async () => {
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
-    "mailbox_items", "messages", "message_labels", "cases", "conversations", "ingress_receipts", "send_recipient_events",
+    "mailbox_items", "messages", "message_labels", "message_reads", "cases", "conversations", "ingress_receipts", "send_recipient_events",
     "suppression_lifts",
     "relationship_tuples", "users", "node_claim",
   ]) {
@@ -681,8 +681,12 @@ describe("the governance reads answer what the contract says they do", () => {
     const held = await cookie();
     const invited = await post("/api/invitations", { email: "colleague@local.invalid" }, held);
     expect(invited.status, await invited.clone().text()).toBe(200);
-    const read = await answers("GET", "/api/invitations", { cookie: held }) as { invitations: unknown[] };
+    const read = await answers("GET", "/api/invitations", { cookie: held }) as { invitations: Array<{ id: string }> };
     expect(read.invitations.length).toBe(1);
+    // Withdrawn: the link dies, the list empties, and a second withdrawal is a 404.
+    const revoked = await answers("DELETE", "/api/invitations/:invitationId", { params: { invitationId: read.invitations[0]!.id }, cookie: held });
+    expect(revoked).toEqual({ revoked: true, invitationId: read.invitations[0]!.id, email: "colleague@local.invalid" });
+    expect(((await answers("GET", "/api/invitations", { cookie: held })) as { invitations: unknown[] }).invitations).toEqual([]);
   });
 
   it("GET /api/matters, after opening one", async () => {
@@ -1501,6 +1505,44 @@ describe("the routes that only exist once mail has landed", () => {
     expect(rendered.text).toContain("Where is my invoice?");
   });
 
+  it("PUT /api/cases/:caseId/assignee: handing a case to a colleague, and refusing one who cannot answer it", async () => {
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Assign me" });
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    const colleague = ctx.id("usr"), stranger = ctx.id("usr");
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)").bind(colleague, ORG, "c@local.invalid", at),
+      testEnv.CATALOG.prepare("INSERT INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)").bind(stranger, ORG, "s@local.invalid", at),
+      testEnv.CATALOG.prepare(
+        `INSERT INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+         VALUES (?,?,?,'send.propose','mailbox',?,?)`,
+      ).bind(ctx.id("rt"), ORG, colleague, mailboxId, at),
+    ]);
+    const refused = await SELF.fetch(`${ORIGIN}/api/cases/${delivery.caseId}/assignee`, {
+      method: "PUT", headers: { "content-type": "application/json", cookie: held }, body: JSON.stringify({ userId: stranger }),
+    });
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toContain("not_a_colleague");
+    const handed = await answers("PUT", "/api/cases/:caseId/assignee", {
+      params: { caseId: delivery.caseId }, body: { userId: colleague }, cookie: held,
+    }) as { claimed: true; case: { assignee: string | null } };
+    expect(handed.case.assignee).toBe(colleague);
+  });
+
+  it("read state: marked on a message, carried by the listing for the caller, and put back (0062)", async () => {
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Unread" });
+    const before = await answers("GET", "/api/messages", { cookie: held }) as { messages: Array<{ id: string; read: number }> };
+    expect(before.messages.find((one) => one.id === delivery.receiptId)?.read).toBe(0);
+    expect(await answers("PUT", "/api/messages/:messageId/read", { params: { messageId: delivery.messageId }, body: {}, cookie: held }))
+      .toEqual({ messageId: delivery.messageId, read: true });
+    const after = await answers("GET", "/api/messages", { cookie: held }) as { messages: Array<{ id: string; read: number }> };
+    expect(after.messages.find((one) => one.id === delivery.receiptId)?.read).toBe(1);
+    expect(await answers("PUT", "/api/messages/:messageId/read", { params: { messageId: delivery.messageId }, body: { read: false }, cookie: held }))
+      .toEqual({ messageId: delivery.messageId, read: false });
+  });
+
   it("labels on a message, and the listing filtered by one (0061)", async () => {
     const held = await cookie();
     const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Labelled" });
@@ -2115,7 +2157,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(131);
+    expect(coverage.total).toBe(134);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

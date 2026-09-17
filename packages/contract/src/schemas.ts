@@ -819,7 +819,13 @@ export const messageRow = z.object({
   attachments_dangerous: z.number().int().nonnegative().nullable(),
   /** The words on this message (0061), lower-cased, sorted. A JSON array as SQLite built it. */
   labels_json: z.string(),
+  /** Whether the caller has opened this message (0062): SQLite's boolean. */
+  read: z.union([z.literal(0), z.literal(1)]),
 }).strict();
+
+/** Read state (0062): absent means read. */
+export const setReadRequest = z.object({ read: z.boolean().optional() });
+export const readSetResponse = z.object({ messageId: z.string().min(1), read: z.boolean() }).strict();
 
 /** Labels on and off a message (0061). Either list may be empty; a change that changes nothing answers the same. */
 export const setLabelsRequest = z.object({
@@ -977,6 +983,9 @@ export const invitationRow = z.object({
 }).strict();
 
 export const invitationListResponse = z.object({ invitations: z.array(invitationRow) }).loose();
+export const invitationRevokedResponse = z.object({
+  revoked: z.literal(true), invitationId: z.string().min(1), email: z.string().min(1),
+}).strict();
 
 /* ------------------------------------------------------------------ governance --------------------- */
 
@@ -1845,6 +1854,10 @@ const claimedCase = z.object({
  * a case somebody else holds, and the difference is in the audit trail (`case.claim_taken`) rather than in
  * what the caller gets back.
  */
+/** Who to hand the case to: a `usr_` id, or the address they sign in with. One of the two. */
+export const assignCaseRequest = z.object({ userId: z.string().optional(), email: z.string().optional() });
+export const caseAssignedResponse = z.object({ claimed: z.literal(true), case: claimedCase }).strict();
+
 export const caseActionResponse = z.union([
   z.object({ claimed: z.literal(true), case: claimedCase }).strict(),
   z.object({ released: z.literal(true) }).strict(),
@@ -2411,6 +2424,12 @@ export const messageBodyResponse = z.object({
   attachments: z.array(attachmentSummary),
   /** Every link in the rendered HTML, judged. Empty for a text-only body. */
   links: z.array(judgedLink),
+  /** Who the sender addressed, from the headers: what a reply-all is built from. Lower-cased, names dropped. */
+  recipients: z.object({
+    to: z.array(z.string()),
+    cc: z.array(z.string()),
+    replyTo: z.string().nullable(),
+  }).strict(),
 }).loose();
 
 /** Releasing a send a policy put on hold (#60). One field, because there is one question. */

@@ -81,7 +81,10 @@ export interface ComposerContext {
   inReplyToMessageId?: string;
   /** The message this send forwards, whole: its bytes go out as a `message/rfc822` part (0059). */
   forwardOfMessageId?: string;
+  /** A draft to resume by id — a new-message draft from the drafts list, which no reply keys. */
+  draftId?: string;
   to?: string;
+  cc?: string;
   subject?: string;
   body?: string;
   bodyUnavailable?: "missing" | "unreadable" | null;
@@ -91,6 +94,8 @@ interface DraftResponse {
   draft: {
     id: string;
     to: string[];
+    cc: string[];
+    bcc: string[];
     subject: string;
     body: string;
     /** Why `body` is empty when the row says it should not be — see `drafts.ts` (#143). */
@@ -126,6 +131,11 @@ function phaseText(phase: Phase): string {
 
 export function Composer({ context, onClose }: { context: ComposerContext; onClose: () => void }) {
   const [to, setTo] = useState(context.to ?? "");
+  // Cc and Bcc: the seal and the draft have taken both for months (the 17 September coverage audit); the
+  // interface offered one To. Shown folded unless something is in them, so a plain reply stays a plain form.
+  const [cc, setCc] = useState(context.cc ?? "");
+  const [bcc, setBcc] = useState("");
+  const [showCopies, setShowCopies] = useState((context.cc ?? "") !== "");
   const [subject, setSubject] = useState(context.subject ?? "");
   const [body, setBody] = useState(context.body ?? "");
   /*
@@ -145,7 +155,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * to make — the Node decides that, and its refusal names the addresses.
    */
   const [senderAddress, setSenderAddress] = useState("");
-  const [resuming, setResuming] = useState(context.inReplyToMessageId !== undefined);
+  const [resuming, setResuming] = useState(context.inReplyToMessageId !== undefined || context.draftId !== undefined);
   const queryClient = useQueryClient();
   /**
    * The addresses this mailbox may send as, from the rail's own query rather than a second endpoint — it is
@@ -162,8 +172,8 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   // `latest` exists so the debounced save reads the values at the moment it fires rather than the ones
   // captured when the timer was set — otherwise the last keystroke before a pause is the one that is lost,
   // which is the single most annoying way for an autosave to be wrong.
-  const latest = useRef({ to, subject, body, draftId });
-  latest.current = { to, subject, body, draftId };
+  const latest = useRef({ to, cc, bcc, subject, body, draftId });
+  latest.current = { to, cc, bcc, subject, body, draftId };
 
   /**
    * What the Node already has, so opening a draft does not re-save it.
@@ -175,7 +185,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * meaning "when you last looked at it", which is a false statement in a label whose whole job is telling
    * people where their writing is.
    */
-  const saved = useRef<{ to: string; subject: string; body: string } | null>(null);
+  const saved = useRef<{ to: string; cc: string; bcc: string; subject: string; body: string } | null>(null);
 
   /**
    * Resume the draft already in progress for this reply, if there is one.
@@ -185,12 +195,15 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
    * A unique index guarantees at most one, so there is nothing to disambiguate.
    */
   useEffect(() => {
-    if (context.inReplyToMessageId === undefined) return;
+    if (context.inReplyToMessageId === undefined && context.draftId === undefined) return;
     let cancelled = false;
     void (async () => {
       try {
+        // By the reply's parent, or — for a new-message draft opened from the list — by its own id.
         const response = await apiFetch(
-          `/api/drafts?inReplyTo=${encodeURIComponent(context.inReplyToMessageId!)}`,
+          context.draftId !== undefined
+            ? `/api/drafts/${encodeURIComponent(context.draftId)}`
+            : `/api/drafts?inReplyTo=${encodeURIComponent(context.inReplyToMessageId!)}`,
         );
         if (!response.ok) return;
         const { draft } = (await response.json()) as DraftResponse;
@@ -199,6 +212,9 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
         // quote block this code can regenerate at any time.
         setDraftId(draft.id);
         setTo(draft.to.join(", "));
+        setCc(draft.cc.join(", "));
+        setBcc(draft.bcc.join(", "));
+        if (draft.cc.length > 0 || draft.bcc.length > 0) setShowCopies(true);
         setSubject(draft.subject);
         setBody(draft.body);
         /*
@@ -210,7 +226,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
          */
         setBodyUnavailable(draft.bodyUnavailable ?? null);
         // Recorded as already-saved, so resuming is not mistaken for editing.
-        saved.current = { to: draft.to.join(", "), subject: draft.subject, body: draft.body };
+        saved.current = { to: draft.to.join(", "), cc: draft.cc.join(", "), bcc: draft.bcc.join(", "), subject: draft.subject, body: draft.body };
         setPhase({ kind: "saved", at: draft.updatedAt });
       } finally {
         if (!cancelled) setResuming(false);
@@ -219,7 +235,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
     return () => {
       cancelled = true;
     };
-  }, [context.inReplyToMessageId]);
+  }, [context.inReplyToMessageId, context.draftId]);
 
   const touched = to !== "" || subject !== "" || body !== "";
 
@@ -237,10 +253,11 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
   /** Whether the Node's copy is behind what is on screen. The one definition of "there is work to do". */
   function unsaved(): boolean {
     const now = latest.current;
-    if (now.to === "" && now.subject === "" && now.body === "") return false;
+    if (now.to === "" && now.cc === "" && now.bcc === "" && now.subject === "" && now.body === "") return false;
     const stored = saved.current;
     return stored === null
-      || stored.to !== now.to || stored.subject !== now.subject || stored.body !== now.body;
+      || stored.to !== now.to || stored.cc !== now.cc || stored.bcc !== now.bcc
+      || stored.subject !== now.subject || stored.body !== now.body;
   }
 
   /**
@@ -263,6 +280,8 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
           mailboxId: context.mailboxId,
           inReplyToMessageId: context.inReplyToMessageId ?? null,
           to: splitAddresses(current.to),
+          cc: splitAddresses(current.cc),
+          bcc: splitAddresses(current.bcc),
           subject: current.subject,
           body: current.body,
         }),
@@ -287,7 +306,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
       // The snapshot is what was *sent*, not what is on screen now: somebody may have typed while the
       // request was in flight, and recording the newer text as saved would skip the save that would have
       // stored it. `flush` reads this back and writes again when it differs.
-      saved.current = { to: current.to, subject: current.subject, body: current.body };
+      saved.current = { to: current.to, cc: current.cc, bcc: current.bcc, subject: current.subject, body: current.body };
       setPhase({ kind: "saved", at: draft.updatedAt });
       return true;
     } catch (error) {
@@ -339,7 +358,7 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
     // `phase` is deliberately not a dependency: including it would restart the timer on every phase change
     // the timer itself causes, so a save would never fire.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [to, subject, body, resuming, touched, sealing, context.mailboxId, context.inReplyToMessageId]);
+  }, [to, cc, bcc, subject, body, resuming, touched, sealing, context.mailboxId, context.inReplyToMessageId]);
 
   /**
    * The last chance, for the paths that take the dock away without asking.
@@ -419,6 +438,8 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
             contentBase64: await base64Of(file),
           }))),
           to: splitAddresses(to),
+          cc: splitAddresses(cc),
+          bcc: splitAddresses(bcc),
           subject,
           body,
           // Omitted rather than sent empty when there is nothing to choose: absent means "this mailbox has
@@ -552,7 +573,22 @@ export function Composer({ context, onClose }: { context: ComposerContext; onClo
             onChange={(event) => setTo(event.target.value)}
             required
           />
+          {showCopies ? null : (
+            <button type="button" className="linkish composer-copies" onClick={() => setShowCopies(true)}>cc / bcc</button>
+          )}
         </label>
+        {showCopies ? (
+          <>
+            <label className="field-row" htmlFor="composer-cc">
+              <span>Cc</span>
+              <input id="composer-cc" className="mono" value={cc} onChange={(event) => setCc(event.target.value)} />
+            </label>
+            <label className="field-row" htmlFor="composer-bcc">
+              <span>Bcc</span>
+              <input id="composer-bcc" className="mono" value={bcc} onChange={(event) => setBcc(event.target.value)} />
+            </label>
+          </>
+        ) : null}
         <label className="field-row" htmlFor="composer-subject">
           <span>Subject</span>
           <input

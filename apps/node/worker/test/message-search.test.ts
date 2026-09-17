@@ -75,6 +75,7 @@ const FOREIGN = "rcpt_search000000000000000004";
 
 async function search(term: string | null, who = READER, org = ORG): Promise<string[]> {
   const query = messagePageQuery({
+    readerId: "usr_reader",
     // Unwindowed here, so the clock is never read — a fixed value keeps the query byte-stable across runs.
     nowIso: "2026-08-01T00:00:00.000Z",
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
@@ -622,6 +623,7 @@ describe("a supervised grant reaches exactly as far as its scope, in search too"
      * Found by the same external audit, in the matrix cell the first round of fixtures did not combine.
      */
     const query = messagePageQuery({
+    readerId: "usr_reader",
     // Unwindowed here, so the clock is never read — a fixed value keeps the query byte-stable across runs.
     nowIso: "2026-08-01T00:00:00.000Z",
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
@@ -1123,6 +1125,7 @@ describe("a windowed search leaves out the mail outside the window", () => {
   /** The ids a searched page returns for a given window. */
   async function searched(window: { since: string; until?: string }): Promise<string[]> {
     const query = messagePageQuery({
+      readerId: "usr_reader",
       nowIso: "2026-07-03T23:59:59.999Z",
       orgId: WINDOW_ORG,
       subjects: [WINDOW_READER],
@@ -1183,6 +1186,7 @@ describe("a windowed search leaves out the mail outside the window", () => {
      * A mutation removing those parentheses passed every other test in this repository.
      */
     const query = messagePageQuery({
+      readerId: "usr_reader",
       nowIso: "2026-07-03T23:59:59.999Z",
       orgId: WINDOW_ORG,
       subjects: [WINDOW_READER],

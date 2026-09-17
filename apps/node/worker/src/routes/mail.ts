@@ -193,6 +193,42 @@ export const mail = {
     return Response.json(outcome, { status: ok ? 200 : 409 });
   },
 
+  "PUT /api/cases/:caseId/assignee": async ({ request, env, clock, params, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { assign } = await import("../cases.ts");
+    // By id, or by the address a colleague signs in with: the directory is an administrator's read, and a
+    // person handing over a case knows their colleague's address, not their `usr_` id. An address that is
+    // nobody here answers as one who cannot send — the same word, so the route is not a membership oracle.
+    let toUserId = String(body.userId ?? "");
+    if (toUserId === "" && typeof body.email === "string") {
+      const found = await env.CATALOG.prepare("SELECT id FROM users WHERE org_id = ? AND lower(email) = lower(?) LIMIT 1")
+        .bind(who.orgId, body.email.trim()).first<{ id: string }>();
+      toUserId = found?.id ?? "usr_nobody";
+    }
+    const outcome = await assign(env, clock, who.orgId, who.userId, params.caseId, toUserId);
+    if (outcome.kind === "claimed") return Response.json({ claimed: true, case: outcome.case });
+    if (outcome.kind === "not_a_colleague") {
+      return Response.json({
+        claimed: false, error: "not_a_colleague",
+        message: "That person cannot send from this mailbox, so the case would sit in nobody's queue. Grant them send.propose first.",
+      }, { status: 422 });
+    }
+    if (outcome.kind === "closed") return Response.json({ claimed: false, error: "closed", message: "This case is closed." }, { status: 409 });
+    if (outcome.kind === "held") {
+      return Response.json({
+        claimed: false, error: "held", heldBy: outcome.by, heldSince: outcome.since,
+        message: `Held by ${outcome.by} since ${outcome.since}; it changed hands while you looked.`,
+      }, { status: 409 });
+    }
+    return Response.json({ claimed: false, error: "not_found", message: "No such case, or you do not have access to it." }, { status: 404 });
+  },
+
+  "PUT /api/messages/:messageId/read": async ({ request, env, clock, params, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { setRead } = await import("../reads.ts");
+    return Response.json(await setRead(env, clock, who.orgId, who.userId, params.messageId, body.read !== false));
+  },
+
   "PUT /api/messages/:messageId/labels": async ({ request, env, clock, params, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
@@ -311,9 +347,17 @@ export const mail = {
     const own = await env.CATALOG.prepare(
       "SELECT DISTINCT lower(substr(address, instr(address, '@') + 1)) AS domain FROM addresses WHERE org_id = ?",
     ).bind(allowed.orgId).all<{ domain: string }>();
-    return Response.json(await renderBody(
-      await getEvidence(env, allowed.blobKey), own.results.map((row) => row.domain),
-    ));
+    const raw = await getEvidence(env, allowed.blobKey);
+    // Who the message was addressed to, from the header block `mime.ts` owns (ADR 38: the body parser
+    // returns no headers). What a reply-all is built from, and what the pane shows under "to".
+    const { addressesOf, headerBlock, headerFields } = await import("../mime.ts");
+    const fields = headerFields(headerBlock(raw));
+    const recipients = {
+      to: addressesOf(fields.get("to")?.join(", ") ?? ""),
+      cc: addressesOf(fields.get("cc")?.join(", ") ?? ""),
+      replyTo: addressesOf(fields.get("reply-to")?.join(", ") ?? "")[0] ?? null,
+    };
+    return Response.json({ ...await renderBody(raw, own.results.map((row) => row.domain)), recipients });
   },
 
   /**
@@ -330,6 +374,44 @@ export const mail = {
    * `/api/messages/:id/body` deliberately keeps `authorize`: rendering one message's text inside the
    * product is a read, not a copy leaving, which is the boundary the two permissions draw.
    */
+  /**
+   * One attachment's bytes (17 September 2026), by ordinal in the order the body route lists them — the
+   * same parse, so the numbers agree. A copy leaving the Node, so `authorizeExport` and its `message.exported`
+   * entry, as `/raw`. The part's own media type goes out only if it is a token/token; the name through
+   * `safeFilename`; a program is served as octet-stream whatever it claimed, so a browser saves rather than
+   * runs it — the reader was told what it was in the pane.
+   */
+  "GET /api/messages/:receiptId/attachments/:ordinal": async ({ request, env, clock, params }) => {
+    const ordinal = Number(params.ordinal);
+    if (!Number.isInteger(ordinal) || ordinal < 0) return notFound();
+    // Read first, export second: the part has to exist before `message.exported` is recorded, or a 404 would
+    // leave an entry saying a copy left when none did. The read check is the body route's own.
+    const readable = await authorize(env, clock, request, params.receiptId, "supervised.opened");
+    if (!readable.ok) return readable.response;
+    const { default: PostalMime } = await import("postal-mime");
+    const parsed = await PostalMime.parse(await getEvidence(env, readable.blobKey));
+    const part = parsed.attachments[ordinal];
+    if (part === undefined) return notFound();
+    const allowed = await authorizeExport(env, clock, request, params.receiptId);
+    if (!allowed.ok) return allowed.response;
+    const { classifyAttachment, DANGEROUS } = await import("../attachments.ts");
+    const bytes = typeof part.content === "string" ? new TextEncoder().encode(part.content) : new Uint8Array(part.content);
+    const verdict = classifyAttachment(part.filename, bytes.subarray(0, 8));
+    const mediaType = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/.test(part.mimeType) && !DANGEROUS.has(verdict)
+      ? part.mimeType.toLowerCase() : "application/octet-stream";
+    const name = part.filename ?? `part-${ordinal}`;
+    const dot = name.lastIndexOf(".");
+    const filename = safeFilename(dot > 0 ? name.slice(0, dot) : name, dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]/g, "").slice(0, 11) : "");
+    return new Response(bytes, {
+      headers: {
+        "content-type": mediaType,
+        "content-disposition": `attachment; filename="${filename}"`,
+        "x-content-type-options": "nosniff",
+        "cache-control": "no-store",
+      },
+    });
+  },
+
   "GET /api/messages/:receiptId/raw": async ({ request, env, clock, params }) => {
     const allowed = await authorizeExport(env, clock, request, params.receiptId);
     if (!allowed.ok) return allowed.response;

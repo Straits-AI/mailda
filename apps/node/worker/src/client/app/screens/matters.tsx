@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  MATTER_TYPES, askToLiftHold, askToRead, closeMatter, openMatter, placeHold, runExport,
+  MATTER_TYPES, askToLiftHold, askToRead, closeMatter, openMatter, placeHold, requestExport, runExport,
   useExports, useHolds, useMailboxes, useMatters, useSupervised,
 } from "../api.ts";
 
@@ -56,6 +56,9 @@ export function Matters() {
   const [description, setDescription] = useState("");
   const [holdMailbox, setHoldMailbox] = useState("");
   const [holdMatter, setHoldMatter] = useState("");
+  const [exportMailbox, setExportMailbox] = useState("");
+  const [exportMatter, setExportMatter] = useState("");
+  const [exportMax, setExportMax] = useState("100");
   const [readMailbox, setReadMailbox] = useState("");
   const [readScope, setReadScope] = useState<string>("metadata");
   const [readHours, setReadHours] = useState(24);
@@ -369,6 +372,34 @@ export function Matters() {
           An export produces mail that leaves this Node&rsquo;s controls. It cites a matter, it is approved
           before it runs, and what it emitted is counted.
         </p>
+        <div className="limits-ask">
+          <label className="field-row" htmlFor="export-mailbox">
+            <span>Mailbox</span>
+            <select id="export-mailbox" value={exportMailbox} onChange={(event) => setExportMailbox(event.target.value)}>
+              <option value="">choose…</option>
+              {(mailboxes.data?.mailboxes ?? []).map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+            </select>
+          </label>
+          <label className="field-row" htmlFor="export-matter">
+            <span>Under which matter</span>
+            <select id="export-matter" value={exportMatter} onChange={(event) => setExportMatter(event.target.value)}>
+              <option value="">choose…</option>
+              {open.map((matter) => <option key={matter.id} value={matter.id}>{matter.description}</option>)}
+            </select>
+          </label>
+          <label className="field-row" htmlFor="export-max">
+            <span>At most</span>
+            <input id="export-max" className="mono" type="number" min={1} inputMode="numeric" value={exportMax} onChange={(event) => setExportMax(event.target.value)} />
+          </label>
+          <button className="quiet" type="button" disabled={exportMailbox === "" || exportMatter === "" || Number(exportMax) < 1}
+            onClick={() => void run(
+              () => requestExport({ mailboxId: exportMailbox, matterId: exportMatter, maxMessages: Number(exportMax) }),
+              "Asked. Two other administrators have to agree before it runs; then run it here, and download from its manifest.",
+            )}
+          >
+            ask to export
+          </button>
+        </div>
         {(exports.data?.exports ?? []).length === 0 ? (
           <Nothing kind="empty" detail="No exports have been requested." />
         ) : (
@@ -406,7 +437,14 @@ export function Matters() {
                         >
                           run
                         </button>
-                      ) : <span className="dim">{when(row.completedAt)}</span>}
+                      ) : (
+                        <>
+                          <span className="dim">{when(row.completedAt)}</span>{" · "}
+                          {/* The manifest names every object staged; each is a link of the same shape. The
+                              Node re-checks the grant on each, and only the requester may take them. */}
+                          <a className="mono" href={`/api/exports/${encodeURIComponent(row.id)}/objects/manifest.json`}>manifest.json</a>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
