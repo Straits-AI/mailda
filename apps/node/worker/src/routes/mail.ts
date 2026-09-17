@@ -292,7 +292,13 @@ export const mail = {
     const allowed = await authorize(env, clock, request, params.receiptId, "supervised.opened");
     if (!allowed.ok) return allowed.response;
     const { renderBody } = await import("../render/body.ts");
-    return Response.json(await renderBody(await getEvidence(env, allowed.blobKey)));
+    // The organization's own domains, for the lookalike verdict: every domain an address is routed under.
+    const own = await env.CATALOG.prepare(
+      "SELECT DISTINCT lower(substr(address, instr(address, '@') + 1)) AS domain FROM addresses WHERE org_id = ?",
+    ).bind(allowed.orgId).all<{ domain: string }>();
+    return Response.json(await renderBody(
+      await getEvidence(env, allowed.blobKey), own.results.map((row) => row.domain),
+    ));
   },
 
   /**

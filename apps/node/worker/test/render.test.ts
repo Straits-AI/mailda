@@ -30,6 +30,30 @@ const mime = (parts: { html?: string; text?: string }) => {
   );
 };
 
+describe("sanitizer: links, judged against what they say (mail-security row 3)", () => {
+  it("collects each kept anchor's href and its text, including text under nested inline markup", async () => {
+    const { links, html } = await sanitizeHtml(
+      '<p>Please <a href="https://evil.test/x">visit <b>https://acme.example</b>/login</a> and '
+      + '<a href="https://acme.example/help">the help page</a>, or <a href="javascript:alert(1)">this</a>.</p>',
+      ["acme.example"],
+    );
+    expect(links).toEqual([
+      { href: "https://evil.test/x", text: "visit https://acme.example/login", verdict: "mismatch" },
+      { href: "https://acme.example/help", text: "the help page", verdict: "plain" },
+    ]);
+    // The refused scheme is not a link and not judged; the destination of the kept ones is untouched.
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain('href="https://evil.test/x"');
+  });
+
+  it("stops collecting past the bound and says nothing false about the rest", async () => {
+    const many = Array.from({ length: 250 }, (_, i) => `<a href="https://v${i}.test/">v${i}</a>`).join(" ");
+    const { links } = await sanitizeHtml(many);
+    expect(links).toHaveLength(200);
+    expect(links.every((one) => one.verdict === "plain")).toBe(true);
+  });
+});
+
 describe("sanitizer: remote content (the primary job, ADR 37)", () => {
   it("withholds an image and says how many", async () => {
     // A pixel tells a third party when an employee opened a message. That is the whole reason this
