@@ -24,25 +24,25 @@ values:
 
 ## Correction, 5 September 2026: the windowed figure was the reason for a refusal, and it is now 771 (#153)
 
-`search.windowed_rows_read` was **4,335** — a window combined with a search term, against a 1,000-row budget,
+`search.windowed_rows_read` was **4,335**: a window combined with a search term, against a 1,000-row budget,
 for the same 51-row page a bare term answered in 771. That figure was this file's argument for
 `E_MESSAGE_PAGE_WINDOW_SEARCH`: the window was a residual filter *inside* each ranked arm, so the arm scanned
 further through its MATCH result to fill `LIMIT`.
 
-**It is now 771 — the unwindowed figure exactly.** Migration 0054 put the day in both FTS indexes as a token,
+**It is now 771, the unwindowed figure exactly.** Migration 0054 put the day in both FTS indexes as a token,
 so the window narrows the match before the cap rather than filtering after it. On this corpus the window
 covers everything, so the token excludes nothing and costs nothing, which is the property that had to be
 checked first: a day token that cost extra where it excluded nothing would be a tax on every windowed search.
 
 **The narrowing itself is measured elsewhere, and deliberately.** This corpus seeds 1,200 deliveries four
-minutes apart — under a day — so every row carries the same token and no window here can narrow anything. The
+minutes apart, under a day, so every row carries the same token and no window here can narrow anything. The
 figures for a window that does narrow come from `test/message-search-window.probe.test.ts`, on its own 120-day
 corpus, run before this migration existed:
 
 | window | tokenised | residual filter |
 |:--|--:|--:|
 | one day | **20** | 2,386 |
-| seven days | 140 | — |
+| seven days | 140 | not measured |
 | sixty days | 1,188 | 2,970 |
 | none | 2,376 | 2,376 |
 
@@ -55,8 +55,8 @@ moved to 416: **windowed cost tracks the window, unwindowed cost tracks the arch
 per-request rule that admits the cheap case and refuses the expensive one."* That was true of a residual
 filter, where cost tracks the match set and the match set is the corpus for a term the index cannot narrow.
 
-Tokenised, cost tracks the **intersection** — a rare term in a sixty-day window read 12 rows where a common
-term read 1,188 — and the probe's figures are close to linear at **about two rows read per message in the
+Tokenised, cost tracks the **intersection** (a rare term in a sixty-day window read 12 rows where a common
+term read 1,188), and the probe's figures are close to linear at **about two rows read per message in the
 window**, which is the union of two arms each reading one.
 
 So the volume in the window bounds the read, and unlike selectivity it **is** knowable in advance: one seek on
@@ -68,7 +68,7 @@ rather than measured directly, and stated as such: the ratio is what was measure
 budget, and the headroom is a judgement.
 
 `MAX_WINDOW_DAYS = 100` sits beside it in `src/authz-read.ts` and is **not** here, because it is not a
-measurement: it bounds the *query's own size* — the window is enumerated one token per day — and no receipt
+measurement: it bounds the *query's own size*, the window being enumerated one token per day, and no receipt
 should invent a `values:` block for a number nothing measured.
 
 **What a searched inbox page costs, and the design it took three measurements to find.**
@@ -77,7 +77,7 @@ should invent a `values:` block for a number nothing measured.
 in the real Workers runtime against a seeded D1. It imports `messagePageQuery` from `src/authz-read.ts` rather
 than restating the statement, so the figures describe the query that ships.
 
-Corpus: **1,200 deliveries**, the same size as `message-page-size.md`'s, so the two figures are comparable — a
+Corpus: **1,200 deliveries**, the same size as `message-page-size.md`'s, so the two figures are comparable. A
 search measured on a smaller corpus would be the more flattering number for no reason. One message in a
 hundred carries a rare term (`demurrage`, 12 hits); every other one carries a common term (`shipment`, 1,188
 hits). Two terms because they price different things: the rare one is the search people actually run, and the
@@ -88,7 +88,7 @@ inside workerd is clamped by the Spectre mitigation, and D1 bills on rows scanne
 
 ## What ships, and what it costs
 
-A searched page is a **union of two arms** — one over the subject/sender index, one over the body index —
+A searched page is a **union of two arms**, one over the subject/sender index and one over the body index,
 each driven by its own virtual table, each `ORDER BY rank LIMIT n`, with the union sorted by arrival.
 
 | | rare term (12 hits) | common term (1,188 hits) |
@@ -98,7 +98,7 @@ each driven by its own virtual table, each `ORDER BY rank LIMIT n`, with the uni
 
 Against `authz.list.max_rows_read = 1000`. A rare search still costs **less than not searching**, which is
 what an index is for and is asserted as a direction rather than only as a ceiling. The common term at 771 is
-the tight one — **77% of the budget** — and it is the figure `search.max_rows_read_per_page` pins.
+the tight one, **77% of the budget**, and it is the figure `search.max_rows_read_per_page` pins.
 
 ### 616 → 771 across two fixes, and every extra row bought a closed defect
 
@@ -106,18 +106,18 @@ Each arm now joins **two** supervised-grant subqueries rather than one. That is 
 would choose; it is what closing a confidentiality defect cost.
 
 The searched page has two arms because a body match and a subject match are different authorities. The
-*standing relations* were split correctly from the start — subject on `metadata.read` or `content.read`, body
+*standing relations* were split correctly from the start: subject on `metadata.read` or `content.read`, body
 on `content.read` alone. The **supervised grants were not**: `listMessages` built one subquery from
 `SCOPES_FOR_METADATA`, which is `["metadata", "content"]`, and both arms tested it. So a grant of scope
-`metadata` reached the body index and became a membership oracle over content — *does "bankruptcy" occur in
-any message* — one query at a time, returning the subject and sender of whatever matched.
+`metadata` reached the body index and became a membership oracle over content, *does "bankruptcy" occur in
+any message*, one query at a time, returning the subject and sender of whatever matched.
 
 Every test covered standing relations, so the arms looked correctly separated. Nothing exercised the second
 authorization mechanism against the second index, and a third-party audit found it rather than this suite.
 
 Each arm now joins the metadata-scoped subquery **and** the content-scoped one: the first authorizes the
 subject arm, the second authorizes the body arm, and both arms attribute
-`COALESCE(sgc.grant_id, sgm.grant_id)`. The COALESCE is not decoration — `liveGrantsBySubject` names
+`COALESCE(sgc.grant_id, sgm.grant_id)`. The COALESCE is not decoration. `liveGrantsBySubject` names
 `MIN(id)` per mailbox, so a reader holding both grant kinds gets a different id from each subquery, and a
 message matching subject *and* body would come back **twice** from `UNION`, differing only in a column the
 response strips. Naming the stronger grant in both arms makes them agree.
@@ -127,14 +127,14 @@ response strips. Naming the stronger grant in both arms makes them agree.
 The first fix attributed both arms with `COALESCE(sgc.grant_id, sgm.grant_id)` so the two would agree and
 `UNION` could deduplicate. That is wrong in one cell of the matrix, and the cell is not exotic: a reader
 holding standing `content.read` **and** a supervised grant of scope `metadata` is authorized for a body match
-by the *relation*, and the COALESCE then attributed it to the *grant* — so §7's trail recorded a content
+by the *relation*, and the COALESCE then attributed it to the *grant*, so §7's trail recorded a content
 disclosure against an authority that could not have permitted it.
 
 Nothing leaked. The trail lied, which for this product is the worse of the two, and it was found by the same
 audit in the matrix cell the first round of fixtures did not combine.
 
-So each arm now projects only what could have authorized it — the subject arm either scope, the body arm a
-content grant or `NULL` — which makes the two arms disagree again and reintroduces the duplicate. The outer
+So each arm now projects only what could have authorized it (the subject arm either scope, the body arm a
+content grant or `NULL`), which makes the two arms disagree again and reintroduces the duplicate. The outer
 stage became `UNION ALL` collapsed by `GROUP BY id` with `MAX(supervised_grant_id)`, which resolves it
 without discarding the distinction: the arms can never both be non-null *and* differ, so `MAX` is
 deterministic rather than a coin toss.
@@ -142,7 +142,7 @@ deterministic rather than a coin toss.
 That aggregation is the 51 rows.
 
 **77% of the budget is the number to watch.** It is inside, and it has less headroom than anything else this
-receipt records — three fixes have each cost a little and none has given any back. A third arm, a third read
+receipt records. Three fixes have each cost a little and none has given any back. A third arm, a third read
 relation, or another payload column would need re-measuring **before** it shipped rather than after.
 
 ### Three shapes were measured before this one, on subjects alone
@@ -167,11 +167,11 @@ The first half of that is true. The second half is the mistake, and it is not su
 
 **Ordering by time while filtering by match costs O(corpus), not O(matches).** To fill a page with the twelve
 newest matching messages, the scan walks all 1,200 receipts in `accepted_at` order, because nothing about the
-time index knows which of them match. Twelve results, 3,640 rows read — seventeen times the plain page, and
+time index knows which of them match. Twelve results, 3,640 rows read, seventeen times the plain page, and
 three and a half times over the budget, from a query whose entire purpose is to read less.
 
 An intermediate attempt made it slightly worse. `WITH matched AS MATERIALIZED (…)` was added on the theory
-that SQLite was re-running the match per candidate row, which the query plan supported — `SCAN message_search
+that SQLite was re-running the match per candidate row, which the query plan supported: `SCAN message_search
 VIRTUAL TABLE` appeared *after* the receipt access. It removed the repeated match and the figure went from
 3,640 to 3,640: the repeated match was never the expensive part. **The walk was.**
 
@@ -179,8 +179,8 @@ Two things are worth taking from this beyond the number:
 
 - **The losing design read correctly in review** and carried a confident comment explaining why it was safe.
   That comment is in this repository's history and it is wrong. Nothing but a measurement was going to find it.
-- **The common term hid it.** At 2,584 the common term was over budget but only 2.5×, and the rare term — the
-  one a person actually types — was the worse case by a wide margin. A single-term measurement would plausibly
+- **The common term hid it.** At 2,584 the common term was over budget but only 2.5×, and the rare term, the
+  one a person actually types, was the worse case by a wide margin. A single-term measurement would plausibly
   have picked the common one, since it looks like the worst case, and understated the problem.
 
 ## Why ranked and capped, and what that costs the reader
@@ -190,23 +190,23 @@ fetching and sorting the whole match set. Ordering the index-driven plan by time
 common term for exactly that reason: all 1,188 matches must be materialised before fifty can be returned.
 
 So a searched page is **one page of the best matches, with no cursor**. `next_cursor` is always null for a
-search, and the interface says *"best matches — narrow the words to see others"* when a page comes back full.
+search, and the interface says *"best matches. Narrow the words to see others"* when a page comes back full.
 
 **The union is ordered by arrival rather than by rank, and that is forced.** bm25 rank is computed from term
-frequency within one index, so a subject hit's rank and a body hit's rank are numbers on different scales —
+frequency within one index, so a subject hit's rank and a body hit's rank are numbers on different scales, and
 ordering the union by `rank` would be arithmetic on unrelated quantities. Each arm therefore takes its own
 best matches by rank, and the union, which is at most twice the page size, is sorted by `accepted_at`. That
 sort is over a hundred rows and costs nothing; what would be expensive is sorting the match set, which is the
 5,943 shape above.
 
-**This is the same answer the search scoping had already chosen, for an unrelated reason** — bm25 rank depends
+**This is the same answer the search scoping had already chosen, for an unrelated reason.** bm25 rank depends
 on corpus-wide term frequency, so it shifts every time mail arrives, and a cursor into a ranked list would
 skip and repeat rows silently. The correctness argument was made first and believed on its own. The cost
 argument arrived a day later and landed in the same place, which is the only reason this receipt does not have
 to argue with a decision.
 
 Worth being plain about the loss: **there is no way to reach the fifty-first best match.** Narrowing the words
-is the only route, and that is a real limitation rather than a hidden one — it is on the screen.
+is the only route, and that is a real limitation rather than a hidden one. It is on the screen.
 
 ## The plan, printed rather than trusted
 
@@ -223,25 +223,25 @@ SEARCH c USING INDEX cas_unique (conversation_id=? AND mailbox_id=?)
 
 The virtual table is the outer loop and everything else is a seek off it. The measurement asserts that
 `VIRTUAL TABLE` appears **before** `ingress_receipts` in the plan, which is what would catch a future edit
-turning this back into the O(corpus) shape — and it asserts the plain listing still seeks on `ir_org_accepted`
+turning this back into the O(corpus) shape, and it asserts the plain listing still seeks on `ir_org_accepted`
 with no temp b-tree, because the two plans share a column list and an authorization predicate and a change to
 either could quietly re-plan the listing.
 
 ## A misordered bind is a search that silently finds nothing
 
 Recorded because the failure mode is the dangerous kind. The searched plan puts the FTS table first in the
-`FROM`, so the `MATCH` placeholder was bound first — but the supervised-grant subquery is interpolated into a
+`FROM`, so the `MATCH` placeholder was bound first. But the supervised-grant subquery is interpolated into a
 `LEFT JOIN`, which precedes the `WHERE` in the **statement text**, and text order is what binding follows.
 
 The query returned **zero rows for every term** and raised nothing. A search that finds nothing is
 indistinguishable from a mailbox with no matching mail, so this would have shipped as "search does not work"
 with no error anywhere to explain it. It was caught because the measurement asserts the rare term matches more
-than one row — an anti-vacuity check written for a different reason entirely.
+than one row, an anti-vacuity check written for a different reason entirely.
 
 ## A fixture with no bodies measured a query that does not exist
 
 The first version of this measurement indexed only subjects, so the body arm probed an empty index and the
-figures came back at 77 and 310. Those are the costs of a union whose second arm never matches anything —
+figures came back at 77 and 310. Those are the costs of a union whose second arm never matches anything,
 which is no Node anybody will run.
 
 With bodies indexed at the same selectivity as the subjects, the real figures are 150 and 616. Recorded
@@ -249,7 +249,7 @@ because the mistake is easy to repeat and reads as good news: a search index mea
 was never indexed reports the cost of finding nothing.
 
 The second version then made it wrong the other way. Every body said either *"demurrage was claimed"* or
-*"cleared without a demurrage claim being raised"* — so the **rare** term matched all 1,200 bodies and
+*"cleared without a demurrage claim being raised"*, so the **rare** term matched all 1,200 bodies and
 reported 372 rows for what was supposed to be the cheap case. A fixture whose two terms have the same
 selectivity measures one thing twice.
 
@@ -259,22 +259,22 @@ FTS5 requires every term of a query to appear in the same indexed document, and 
 documents in two tables. So a search for *"hapag cabotage"* finds nothing even when `hapag` is in a message's
 subject and `cabotage` is in its body.
 
-Fixing it means one index holding subject and body together — which is exactly what the authorization split
+Fixing it means one index holding subject and body together, which is exactly what the authorization split
 forbids, because then a `mailbox.metadata.read` holder's subject search would match body words. **The
 limitation is the price of the boundary**, and it is asserted in `test/message-search.test.ts` so it stays
 deliberate rather than being discovered by somebody whose search mysteriously fails.
 
 ## What is not measured here
 
-- **The body backfill's cost at scale.** It is bounded by construction — 25 messages per scheduled run, each
-  an R2 read, a key unwrap, a decryption and a MIME parse — but how long a large archive takes to catch up is
+- **The body backfill's cost at scale.** It is bounded by construction (25 messages per scheduled run, each
+  an R2 read, a key unwrap, a decryption and a MIME parse), but how long a large archive takes to catch up is
   not established, because no Node here has one. `doctor`'s `body_index_backlog` is what makes it visible on
   one that does.
 - **Nothing re-indexes a message whose body failed to read transiently.** `backfillBodyIndex` settles every
   message it reaches, including the ones whose evidence could not be fetched or parsed, because an unreadable
   body does not become readable next minute and a pass that retries it forever never reaches the mail behind
-  it. The cost of that choice: a message whose read failed for a *recoverable* reason — a momentary R2 error,
-  a vault hiccup — stays unsearchable by its body until something re-indexes it, and **nothing does**. It is
+  it. The cost of that choice: a message whose read failed for a *recoverable* reason, a momentary R2 error or
+  a vault hiccup, stays unsearchable by its body until something re-indexes it, and **nothing does**. It is
   still listed, readable, and findable by subject and sender. Clearing `body_indexed_at` is what a repair
   would do; no route or command exposes that, so today the repair is a `wrangler d1 execute` by an operator
   who knows to.
@@ -289,7 +289,7 @@ deliberate rather than being discovered by somebody whose search mysteriously fa
 ## What a date window costs, and why it is refused with a search term (#107)
 
 `since` and `until` were meant to land beside `q`. The searched page is ranked, capped and cursor-less, so a
-date range looked like the **only** way to reach past the cap — more valuable there than on the inbox, not
+date range looked like the **only** way to reach past the cap, more valuable there than on the inbox, not
 less. The measurement said the opposite.
 
 | query | rows read | page |
@@ -304,7 +304,7 @@ less. The measurement said the opposite.
 `authz.list.max_rows_read` is **1,000**.
 
 **On the searched plan a window is a residual filter inside each ranked arm**, so the arm scans further
-through its MATCH result to fill `LIMIT` — five and a half times further on a term the index cannot narrow,
+through its MATCH result to fill `LIMIT`, five and a half times further on a term the index cannot narrow,
 for the same page of results. A selective term is affordable, and that is the trap rather than the
 reassurance: selectivity is not knowable before the query runs, so there is no per-request rule that admits
 the cheap case and refuses the expensive one.
@@ -312,12 +312,12 @@ the cheap case and refuses the expensive one.
 Filtering the union **outside** the arms was the alternative, and it keeps the cost exactly. It also changes
 the meaning: the arms cap by rank first, so *"mail about demurrage since October"* answers nothing whenever
 October's demurrage mail ranks below the cap. A wrong answer to a reasonable question, silently, is worse
-than a refusal — so `q` with `since`/`until` is refused, and #153 carries the plan a windowed search needs.
+than a refusal, so `q` with `since`/`until` is refused, and #153 carries the plan a windowed search needs.
 
 **On the unsearched plan a window never costs more, and the reason it sometimes costs less is specific.** It
 is a bound on `accepted_at`, the column `ir_org_accepted` is built on, so it is the same shape as the cursor.
 A window over half the corpus reads **exactly** what an unbounded page reads, because the scan stops at
-`LIMIT` either way — the claim that a bounded page is simply cheaper was wrong, and this is where it was
+`LIMIT` either way. The claim that a bounded page is simply cheaper was wrong, and this is where it was
 corrected. A window holding **less** than a page is where the bound pays: the backward scan reaches the lower
 bound and stops rather than continuing to look for rows that are not there.
 
@@ -330,8 +330,8 @@ filter in #152 does not, which is why it is a different ticket rather than the s
 because `from_addr` is on `messages` and `accepted_at` is on `ingress_receipts`. True of the **`From:`
 header**, and it is the wrong column to filter on.
 
-`envelope_from` is the address the sending server handed over — the transmission fact this Node recorded,
-rather than what the sender chose to display — and it sits on the **same table** as `accepted_at`. So one
+`envelope_from` is the address the sending server handed over, the transmission fact this Node recorded
+rather than what the sender chose to display, and it sits on the **same table** as `accepted_at`. So one
 index serves both, and the ticket's three options were all answers to a problem that only exists for the
 header. The header stays searchable through `q` and the FTS index: two questions, two surfaces, and the
 parameter's description says which is which.
@@ -346,7 +346,7 @@ genuinely a before and an after:
 | bulk sender, no index | 208 | 51 |
 | bulk sender, `ir_org_sender` | 208 | 51 |
 
-`authz.list.max_rows_read` is **1,000**, so the rare case was **over budget** — and the rare case is what an
+`authz.list.max_rows_read` is **1,000**, so the rare case was **over budget**, and the rare case is what an
 investigation is made of. The corpus puts that sender's only message at the *oldest* position on purpose: a
 time-ordered scan starts at the newest and reaches it last, which is the worst case for a plan that filters
 instead of seeking and the ordinary case for somebody looking for something old.
@@ -356,7 +356,7 @@ either way.
 
 **The index is on the expression.** `envelope_to` is lowercased at ingress and `envelope_from` is not, an
 asymmetry that predates this. Normalising in storage would need a backfill over every receipt ever written;
-`lower(envelope_from)` in the index buys the same case-insensitive matching with no data rewrite — and D1's
+`lower(envelope_from)` in the index buys the same case-insensitive matching with no data rewrite, and D1's
 SQLite does use it, which was the open question rather than an assumption:
 
 ```text
