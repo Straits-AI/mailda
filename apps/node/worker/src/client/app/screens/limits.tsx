@@ -3,7 +3,8 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  liftDomainPause, requestDomainPause, useBreakers, useDomainPauses, type BreakerReading,
+  liftDomainPause, liftSuppression, requestDomainPause, useBreakers, useDomainPauses, useSuppressions,
+  type BreakerReading,
 } from "../api.ts";
 
 /**
@@ -200,6 +201,72 @@ function Pauses() {
   );
 }
 
+/**
+ * The recipients this Node will not send to, and the one act on the list. Nothing is placed here: the
+ * provider's own events are the list, so a row appears when a hard bounce or a complaint arrives and goes
+ * when an administrator vouches for the address with a reason.
+ */
+function Suppressions() {
+  const suppressed = useSuppressions();
+  const queryClient = useQueryClient();
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [problem, setProblem] = useState<string | null>(null);
+
+  async function lift(address: string) {
+    setProblem(null);
+    const outcome = await liftSuppression(address, (reasons[address] ?? "").trim());
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await queryClient.invalidateQueries({ queryKey: ["suppressions"] });
+  }
+
+  return (
+    <section className="limits-pauses" aria-label="Suppressed recipients">
+      <h2>Recipients this Node will not send to</h2>
+      <p className="dim">
+        An address the provider hard-bounced, or that marked a message as spam. A send naming one is refused at
+        the seal, by name. Nothing is added here by hand; an administrator can vouch for an address with a reason,
+        and a later bounce puts it back.
+      </p>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {suppressed.isError ? <p className="notice dim">{suppressed.error.message}</p> : null}
+      {suppressed.isSuccess && suppressed.data.suppressed.length > 0 ? (
+        <div className="scroller">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Address</th><th scope="col">Why</th>
+                <th scope="col">Since</th><th scope="col">Vouch</th>
+              </tr>
+            </thead>
+            <tbody>
+              {suppressed.data.suppressed.map((row) => (
+                <tr key={row.address}>
+                  <td className="mono">{row.address}</td>
+                  <td>{row.cause === "complaint" ? "marked as spam" : "hard bounce"}{row.detail === null ? "" : ` — ${row.detail}`}</td>
+                  <td className="mono dim">{row.observedAt.slice(0, 16).replace("T", " ")}</td>
+                  <td>
+                    <label className="target-edit">
+                      <span className="dim mono">why</span>
+                      <input
+                        value={reasons[row.address] ?? ""}
+                        aria-label={`Why ${row.address} is good again`}
+                        onChange={(event) => setReasons({ ...reasons, [row.address]: event.target.value })}
+                      />
+                    </label>{" "}
+                    <button type="button" className="linkish" disabled={(reasons[row.address] ?? "").trim() === ""} onClick={() => void lift(row.address)}>
+                      vouch
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : suppressed.isSuccess ? <p className="dim">None.</p> : null}
+    </section>
+  );
+}
+
 export function Limits() {
   return (
     <>
@@ -208,6 +275,7 @@ export function Limits() {
       </header>
       <Breakers />
       <Pauses />
+      <Suppressions />
     </>
   );
 }

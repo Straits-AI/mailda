@@ -1,6 +1,8 @@
 import type { Ctx } from "@mailda/runtime";
 import { BUDGETS, BUDGET_ORIGINS, type BudgetName } from "@mailda/budgets";
 
+import { type Suppression, suppressedSubselect, suppressionsFromJson } from "./suppression.ts";
+
 /**
  * Send circuit breakers: three windowed rates and one latched domain pause (#66, §18, Layer 5).
  *
@@ -262,6 +264,8 @@ export interface BreakerDecision {
    * all. A send never reads it: `pause` above is the answer to *this* send's question.
    */
   pausedDomains: number;
+  /** Recipients of this send the provider hard-bounced or that complained (0058). Empty when none were asked about. */
+  suppressed: Suppression[];
 }
 
 /* ---- the one statement ------------------------------------------------------------------------ */
@@ -343,6 +347,20 @@ SELECT
   (SELECT COUNT(*) FROM domain_pauses
     WHERE org_id = ?1 AND placed_at IS NOT NULL AND lifted_at IS NULL) AS pauses_in_force`;
 
+/**
+ * The seal's statement: the breakers above plus the suppression list (0058) for this send's recipients, as
+ * one more sub-select. One statement rather than two because butler-step-cost.md has the seal at its bound
+ * with no headroom, and a per-recipient refusal is a breaker by any honest reading -- the provider's own word
+ * that a recipient is gone. Built per call because the recipient count is the placeholder count.
+ */
+function sealSql(recipients: number): string {
+  return recipients === 0
+    ? `${BREAKER_SQL},
+  NULL AS suppressed`
+    : `${BREAKER_SQL},
+  ${suppressedSubselect(6, recipients)} AS suppressed`;
+}
+
 interface BreakerRow {
   volume_n: number;
   volume_oldest: string | null;
@@ -356,6 +374,7 @@ interface BreakerRow {
   pause_at: string | null;
   pause_reason: string | null;
   pauses_in_force: number;
+  suppressed: string | null;
 }
 
 function windowStart(now: number, seconds: number): string {
@@ -420,15 +439,19 @@ export async function evaluateBreakers(
   ctx: Ctx,
   orgId: string,
   senderDomain: string | null,
+  /** This send's recipients, for the suppression list. The seal passes them; doctor and the recheck do not. */
+  recipients: readonly string[] = [],
 ): Promise<BreakerDecision> {
   const now = ctx.now();
-  const row = await env.CATALOG.prepare(BREAKER_SQL)
+  const wanted = [...new Set(recipients.map((one) => one.toLowerCase()))];
+  const row = await env.CATALOG.prepare(sealSql(wanted.length))
     .bind(
       orgId,
       windowStart(now, BUDGETS["breaker.volume_window_seconds"]),
       windowStart(now, BUDGETS["breaker.bounce_window_seconds"]),
       windowStart(now, BUDGETS["breaker.complaint_window_seconds"]),
       senderDomain,
+      ...wanted,
     )
     .first<BreakerRow>();
 
@@ -440,7 +463,7 @@ export async function evaluateBreakers(
     volume_n: 0, volume_oldest: null,
     bounce_obs: 0, bounce_n: 0, bounce_oldest: null,
     complaint_obs: 0, complaint_n: 0, complaint_oldest: null,
-    pause_id: null, pause_at: null, pause_reason: null, pauses_in_force: 0,
+    pause_id: null, pause_at: null, pause_reason: null, pauses_in_force: 0, suppressed: null,
   };
 
   const rates = [
@@ -463,6 +486,7 @@ export async function evaluateBreakers(
     rates,
     gate: rates.find((rate) => rate.tripped) ?? null,
     pausedDomains: counts.pauses_in_force,
+    suppressed: suppressionsFromJson(counts.suppressed),
   };
 }
 

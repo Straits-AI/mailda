@@ -11,6 +11,7 @@ import { applySendingEvent } from "../src/outbound/events.ts";
 import { recordDeliveryReport } from "../src/outbound/delivery-report.ts";
 import { cancelSend, dispatchDue, dispatchOne, type SendState } from "../src/outbound/dispatch.ts";
 import { sealManifest } from "../src/outbound/manifest.ts";
+import { liftSuppression, suppressedAmong } from "../src/suppression.ts";
 import type { SubmitOutcome, TransportAdapter } from "../src/outbound/transport.ts";
 import { runDoctor } from "../src/doctor.ts";
 
@@ -204,6 +205,7 @@ async function manifestRow(id: string) {
 
 beforeEach(async () => {
   for (const table of ["send_manifests", "send_recipients", "send_recipient_events", "send_counters",
+                       "suppression_lifts",
                        "domain_pauses", "approvals", "approval_stages", "approval_decisions",
                        "notifications", "policies", "policy_versions", "relationship_tuples", "mailboxes",
                        "addresses", "users", "audit_entries", "node_claim", "ingress_receipts",
@@ -715,5 +717,58 @@ describe("doctor refuses to arm a breaker with no observations", () => {
     expect(finding.ok).toBe(false);
     expect(finding.severity).toBe("degraded");
     expect(finding.fix).toContain("no denominator");
+  });
+});
+
+/* ---------------------------------------------------- the suppression list (0058) ------------------- */
+
+describe("a recipient the provider hard-bounced or that complained is refused at the seal", () => {
+  /** An event as the consumer stores it, about the address the seal fixture sends to. */
+  async function providerSaid(kind: "hard" | "soft" | "complained", at: number, index = 0): Promise<void> {
+    const type = kind === "complained" ? "cf.email.sending.message.complained" : "cf.email.sending.message.bounced";
+    const outcome = await applySendingEvent(testEnv, atTime(at), ORG, {
+      type,
+      payload: {
+        eventId: `evt_supp_${kind}_${index}`, recipient: "customer@example.net", terminal: true,
+        messageId: `<none-${index}@elsewhere.example>`,
+        ...(kind === "complained" ? {} : { bounce: { type: kind, reason: `550 5.1.1 ${kind}` } }),
+      },
+    });
+    expect(outcome.applied).toBe(true);
+  }
+
+  it("refuses on a hard bounce, names the address and the provider's words, and not on a soft one", async () => {
+    await providerSaid("soft", 1_000);
+    await expect(seal(2_000)).resolves.toBeDefined();
+    await providerSaid("hard", 3_000);
+    await expect(seal(4_000)).rejects.toThrow(/E_RECIPIENT_SUPPRESSED.*customer@example\.net.*550 5\.1\.1 hard/s);
+    // Nothing was persisted for the refused send: the refusal is before the manifest exists.
+    const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests WHERE org_id = ?").bind(ORG).first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+  });
+
+  it("refuses on a complaint, case-insensitively", async () => {
+    await providerSaid("complained", 1_000);
+    expect((await suppressedAmong(testEnv, ORG, ["Customer@Example.NET"])).map((one) => one.cause)).toEqual(["complaint"]);
+    await expect(seal(2_000)).rejects.toThrow(/E_RECIPIENT_SUPPRESSED/);
+  });
+
+  it("a lift with a reason lets the send through, and a later bounce suppresses again", async () => {
+    const admin = "usr_supp_admin";
+    await tuple(admin, "org.admin", "organization", ORG);
+    await providerSaid("hard", 1_000);
+    await expect(liftSuppression(testEnv, atTime(2_000), ORG, admin, "customer@example.net", ""))
+      .rejects.toThrow(/E_REASON_REQUIRED/);
+    await liftSuppression(testEnv, atTime(2_000), ORG, admin, "customer@example.net", "mailbox restored");
+    await expect(seal(3_000)).resolves.toBeDefined();
+    // Lifting what is not suppressed records nothing.
+    await expect(liftSuppression(testEnv, atTime(3_500), ORG, admin, "customer@example.net", "again"))
+      .rejects.toThrow(/E_NOT_SUPPRESSED/);
+    await providerSaid("hard", 4_000, 1);
+    await expect(seal(5_000)).rejects.toThrow(/E_RECIPIENT_SUPPRESSED/);
+    const audited = await testEnv.CATALOG.prepare(
+      "SELECT action, subject FROM audit_entries WHERE org_id = ? AND action = 'suppression.lifted'",
+    ).bind(ORG).all<{ action: string; subject: string }>();
+    expect(audited.results).toEqual([{ action: "suppression.lifted", subject: "customer@example.net" }]);
   });
 });

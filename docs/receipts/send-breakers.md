@@ -52,6 +52,14 @@ are printed by a standing test on every suite run; the third is a one-off delta,
 | `evaluateBreakers`, a pause in force on the sending domain | **1** | 1 | `test/breaker-cost.measure.test.ts` |
 | `doctor`, a bare claimed Node, delta for both new checks | **+1** | +1 | one-off, below |
 
+**17 September 2026 (0058): the statement grew a sub-select and stayed one statement.** The suppression
+list — recipients the provider hard-bounced or that complained — is asked in the same statement when the
+seal passes its recipients, as a `json_group_array` over `send_recipient_events`. `stale_when`'s fourth
+clause is what this was checked against: `test/breaker-cost.measure.test.ts` still prints 1 on every row,
+and the three seal-cost suites (`approval-cost`, `policy-cost`, `butler-run-cost`) hold at their figures.
+Folded in rather than issued separately because `butler-step-cost.md` has the seal at its bound with no
+headroom; a second statement would have tripped all three, correctly.
+
 **The `doctor` delta has no standing test and this receipt does not pretend otherwise.** It was measured by
 running `runDoctor` on a bare claimed Node with `checkBreakers` in the list and again with it removed — 18
 subrequests without, 19 with, 14 → 15 D1 queries, R2 unchanged at 4 — and re-measured the same way on

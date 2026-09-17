@@ -377,6 +377,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * one transaction would make "who asked to stop this domain" answerable from two places that can disagree.
    */
   domain_pauses: { actions: ["domain.pause_placed", "domain.pause_lifted"] },
+  // 0058: the list is derived from `send_recipient_events` (exempt above); the lift is the only write.
+  suppression_lifts: { actions: ["suppression.lifted"] },
 
   /* ---- Layer 4: the Butler object (#49) ---- */
   butlers: {

@@ -1152,6 +1152,27 @@ export const requestDomainPause = (domain: string, reason: string) =>
 export const liftDomainPause = (id: string) =>
   act(at("POST", "/api/domain-pauses/:pauseId/lift", { pauseId: id }));
 
+export interface SuppressionRow {
+  address: string;
+  cause: "hard_bounce" | "complaint";
+  detail: string | null;
+  observedAt: string;
+  eventId: string;
+}
+
+/** Recipients this Node will not send to (0058). Administrators only; derived from the provider's events. */
+export function useSuppressions(): UseQueryResult<{ suppressed: SuppressionRow[] }, Error> {
+  return useQuery({
+    queryKey: ["suppressions"],
+    queryFn: () => read<{ suppressed: SuppressionRow[] }>(GET("/api/suppressions")),
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
+/** Vouches for a suppressed address, with a reason. One administrator, audited. */
+export const liftSuppression = (address: string, reason: string) =>
+  act(at("POST", "/api/suppressions/lift"), "POST", { address, reason });
+
 /* ------------------------------------------------------------------ §7: matters and holds (#81) ---- */
 
 export const MATTER_TYPES = [

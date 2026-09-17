@@ -783,6 +783,24 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Recipients this Node will not send to: the provider's last word was a hard bounce or a complaint (0058)
+   *
+   * `GET /api/suppressions`
+   */
+  async getSuppressions(): Promise<z.infer<typeof S.suppressionListResponse>> {
+    return await this.json("GET", "/api/suppressions", {}, undefined) as z.infer<typeof S.suppressionListResponse>;
+  }
+
+  /**
+   * Vouch for a suppressed recipient, with a reason, so the Node sends to it again
+   *
+   * `POST /api/suppressions/lift`
+   */
+  async postSuppressionsLift(body?: unknown): Promise<z.infer<typeof S.suppressionLiftedResponse>> {
+    return await this.json("POST", "/api/suppressions/lift", {}, body) as z.infer<typeof S.suppressionLiftedResponse>;
+  }
+
+  /**
    * Resume sending to a domain, which takes more than one person
    *
    * `POST /api/domain-pauses/:pauseId/lift`

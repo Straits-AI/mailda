@@ -62,13 +62,13 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
-## What you cannot do, and why — 109 withheld
+## What you cannot do, and why — 111 withheld
 
 This list is here on purpose. An act missing from a Skill reads as a gap somebody forgot; an act listed as
 withheld, with a reason, reads as a decision. **Do not look for another route to these.** The Node refuses
 them independently of this document.
 
-### Governed — needs more than one person, or cannot be undone (31)
+### Governed — needs more than one person, or cannot be undone (32)
 
 You are acting inside one person's session. Mailda counts **distinct people**, not credentials or requests,
 so you are that one person and can never be the second. These are not permissions you might be granted.
@@ -85,7 +85,7 @@ so you are that one person and can never be the second. These are not permission
 
   Releasing a held or gated send is a person deciding that mail may go. §18 and #61 count distinct people, and an agent inside somebody's session is that person rather than a second one — so the Node already refuses. What this prevents is *offering* it, which would teach an agent to try an act it can never complete.
 
-- **`postButlerPausesByPauseIdResume`, `postButlerRunsByRunIdReplay`, `postDomainPauses`, `postDomainPausesByPauseIdLift`**
+- **`postButlerPausesByPauseIdResume`, `postButlerRunsByRunIdReplay`, `postDomainPauses`, `postDomainPausesByPauseIdLift`, `postSuppressionsLift`**
 
   Stopping or resuming mail to a whole domain, and restarting a Butler a machine stopped. A breaker exists because something went wrong at volume; a machine that could clear one could clear the evidence of its own loop.
 
@@ -167,7 +167,7 @@ so you are that one person and can never be the second. These are not permission
 
   The last resort. A recovery code IS the credential — redeem is unauthenticated on purpose, because the state it exists for is one where session keys are unopenable — so an agent able to call these holds this Node's escrow. There are ten codes, single-use: an agent retrying a mistyped one burns the escrow it was trying to use, and rotate destroys the operator's paper set to return successors into a transcript. A second person cannot make any of it safe for a machine, which is why it is `operator` rather than `governed`.
 
-### Out of reach — an ordinary act, and no credential can be provisioned for it (24)
+### Out of reach — an ordinary act, and no credential can be provisioned for it (25)
 
 These are not governed and not operator acts. They are reads and reversible writes a machine could perfectly
 well be trusted with, and there is **no credential that satisfies them**: they require `org.admin`, or they
@@ -186,7 +186,7 @@ these does not help; the answer is a person doing it, or a change to what Mailda
 
   it answers any authenticated caller with that caller's own records, and the acts that create them are withheld from machines — so an agent would be admitted and shown an empty result for ever
 
-- **`getButlerPauses`, `getButlerRuns`, `getButlerRunsByRunId`, `getButlerRunsByRunIdInspect`, `getButlers`, `getButlersByButlerId`, `getExports`, `getHolds`, `getInvitations`, `getPeople`, `getPolicies`, `getQuarantine`, `getSupervised`, `getTeamsByTeamId`, `getTeamsByTeamIdMembers`, `getTransport`, `postButlers`, `postButlersByButlerIdSimulate`, `postPolicies`, `putButlersByButlerIdDraft`, `putPoliciesByPolicyIdDraft`**
+- **`getButlerPauses`, `getButlerRuns`, `getButlerRunsByRunId`, `getButlerRunsByRunIdInspect`, `getButlers`, `getButlersByButlerId`, `getExports`, `getHolds`, `getInvitations`, `getPeople`, `getPolicies`, `getQuarantine`, `getSupervised`, `getSuppressions`, `getTeamsByTeamId`, `getTeamsByTeamIdMembers`, `getTransport`, `postButlers`, `postButlersByButlerIdSimulate`, `postPolicies`, `putButlersByButlerIdDraft`, `putPoliciesByPolicyIdDraft`**
 
   it requires org.admin, which is deliberately not an agent-grantable relation: an agent holding it would administer the organization it acts inside, and nested administration is a design somebody should make on purpose
 
