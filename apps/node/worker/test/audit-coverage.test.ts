@@ -320,9 +320,17 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // rather than a preference, and a breach recorded against it is a fact somebody may be asked about.
     // Creating and archiving mailboxes are still unbuilt; when they land they join this list rather than
     // moving the table back.
-    actions: ["mailbox.response_target_set"],
+    actions: ["mailbox.response_target_set", "mailbox.quarantine_set"],
   },
-  messages: { exempt: "Written by ingress from mail that arrived; the mail is its own evidence (§13)." },
+  messages: {
+    /*
+     * Was exempt: written by ingress from mail that arrived, and the mail is its own evidence (§13). Still
+     * true of the row — and 0056 added two acts *on* the row that are not arrival. Holding a delivery back
+     * from every queue, and letting it in later, are decisions somebody may be asked about, so each names
+     * the message it is about.
+     */
+    actions: ["message.quarantined", "message.released"],
+  },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
   ingress_receipts: {
     // **Was exempt, and the exemption was about the wrong direction.** "The receipt *is* the audit record for

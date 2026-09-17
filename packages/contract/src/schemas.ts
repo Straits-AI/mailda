@@ -770,6 +770,8 @@ export const mailboxRow = z.object({
   claimed: z.number().int().nonnegative(),
   mine: z.number().int().nonnegative(),
   first_response_minutes: z.number().nullable(),
+  quarantine_dmarc_fail: z.union([z.literal(0), z.literal(1)]),
+  quarantined: z.number().int().nonnegative(),
   breached: z.number().int().nonnegative(),
   addresses: z.string().nullable(),
 }).strict();
@@ -1550,6 +1552,32 @@ export const revokedResponse = z.object({ revoked: z.boolean() }).strict();
 export const mailboxPatchedResponse = z.object({
   mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
   firstResponseMinutes: z.number().int().nullable(),
+  /** Whether the mailbox holds back a delivery whose From domain failed DMARC and asks receivers to act (0056). */
+  quarantineDmarcFail: z.boolean(),
+}).strict();
+
+/** Why a delivery was held back (0056): the sender's domain failed DMARC and asked receivers to do this. */
+export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine"]);
+export type QuarantineReason = z.infer<typeof quarantineReason>;
+
+/** One delivery held back from every queue (0056), and why, for an administrator deciding whether to let it in. */
+export const quarantinedDelivery = z.object({
+  messageId: z.string().min(1),
+  receiptId: z.string().min(1),
+  mailboxId: z.string().min(1),
+  mailboxAddress: z.string().min(1),
+  subject: z.string().nullable(),
+  fromAddr: z.string().nullable(),
+  fromDomain: z.string().nullable(),
+  dmarcPolicy: z.string().nullable(),
+  acceptedAt: isoDate,
+  quarantinedAt: isoDate,
+  reason: quarantineReason,
+}).strict();
+
+export const quarantineListResponse = z.object({ quarantined: z.array(quarantinedDelivery) }).strict();
+export const quarantineReleasedResponse = z.object({
+  released: z.literal(true), messageId: z.string().min(1), mailboxId: z.string().min(1),
 }).strict();
 
 export const draftDetailResponse = z.object({ draft: draftRow }).loose();

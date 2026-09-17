@@ -271,6 +271,7 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       agentId: "agt_PARTYAGENT0000000000000000", pauseId: "bpa_PARTYPAUSE0000000000000000",
       holdId: "hld_PARTYHOLD00000000000000000", matterId: "mtr_PARTYMATTER000000000000000",
       approvalId: "apr_PARTYAPPROVAL0000000000000", restoreId: "rst_PARTYRESTORE00000000000000",
+      messageId: "msg_PARTYMESSAGE00000000000000",
     };
     const harvestFailed: string[] = [];
     const created = async (method: string, path: string, body: unknown, key: string) => {

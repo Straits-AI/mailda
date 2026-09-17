@@ -16,6 +16,17 @@ values:
 ---
 
 
+## Re-measured 17 September 2026, later the same day: quarantine, and the figure held
+
+Migration 0056 adds two nullable columns to `messages` — `quarantined_at`, `quarantine_reason` — and no
+index. **1,787.9 bytes per message, unchanged**; an extra delivery unchanged at 407.6. Every stage reported
+the same byte count as the round below, to the page.
+
+Measured with both NULL on every row, which is the settled state: the per-mailbox switch is off by default,
+and a held delivery is either released or one of a handful. Two NULLs cost two serial types in the record
+header, and a record that already spilled past its page slack last round has room for two bytes of header.
+The first round after slack is spent is the expensive one; this is the round after that.
+
 ## Re-measured 17 September 2026: authentication results, and the first columns that cost what they hold
 
 Migration 0055 adds five nullable TEXT columns to `messages` — `auth_spf`, `auth_dkim`, `auth_dmarc`,

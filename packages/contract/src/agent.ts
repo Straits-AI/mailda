@@ -495,6 +495,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     "POST /api/provider/unselectable",
     "GET /oauth/cloudflare/callback",
   ),
+  ...changing("governed",
+    "Releasing a quarantined delivery is a person deciding that mail the sender's own domain disowned goes "
+    + "into somebody's queue after all. The quarantine exists so that a person looks; a machine releasing on "
+    + "its own is the quarantine not existing.",
+    "POST /api/quarantine/:messageId/release",
+  ),
   ...changing("operator",
     "Maintenance sweeps and mailbox settings. Resealing rewrites every stored object under a new key and "
     + "reconciling deletes what it judges stranded; neither is a thing to ask a machine to decide.",

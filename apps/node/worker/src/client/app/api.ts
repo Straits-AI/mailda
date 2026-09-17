@@ -398,6 +398,10 @@ export interface MailboxQueue {
   mine: number;
   /** NULL means the mailbox promises nothing — the shipped default, and not a missing value. */
   first_response_minutes: number | null;
+  /** 1 when the mailbox holds back deliveries whose From domain failed DMARC and asks receivers to act. */
+  quarantine_dmarc_fail: 0 | 1;
+  /** Held back and not yet released. */
+  quarantined: number;
   breached: number;
   /**
    * Every address routed to this mailbox, oldest first, comma-separated — NULL when it has none.
@@ -504,6 +508,52 @@ export async function setResponseTarget(
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
   // The Node's four-part message verbatim: it names the remedy, and paraphrasing drops that half.
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+/** Turns a mailbox's DMARC-failure quarantine on or off. Administrator only, and audited. */
+export async function setQuarantineSwitch(
+  mailboxId: string,
+  on: boolean,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quarantineDmarcFail: on }),
+  });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+export interface QuarantinedDelivery {
+  messageId: string;
+  receiptId: string;
+  mailboxId: string;
+  mailboxAddress: string;
+  subject: string | null;
+  fromAddr: string | null;
+  fromDomain: string | null;
+  dmarcPolicy: string | null;
+  acceptedAt: string;
+  quarantinedAt: string;
+  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine";
+}
+
+/** Every delivery held back on this Node. Administrators only; anyone else is refused, and the hook says so. */
+export function useQuarantine(enabled: boolean) {
+  return useQuery({
+    queryKey: ["quarantine"],
+    queryFn: () => read<{ quarantined: QuarantinedDelivery[] }>(GET("/api/quarantine")),
+    enabled,
+  });
+}
+
+/** Lets one held delivery into its mailbox's queue. */
+export async function releaseQuarantined(messageId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("POST", "/api/quarantine/:messageId/release", { messageId }), { method: "POST" });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
 }
 

@@ -248,6 +248,18 @@ export const ROUTES = [
     summary: "The mailboxes this person may act in",
     response: S.mailboxListResponse,
   },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/quarantine",
+    summary: "Deliveries held back from every queue because their From domain disowned them (0056)",
+    response: S.quarantineListResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/quarantine/:messageId/release",
+    summary: "Let a quarantined delivery into its mailbox's queue, opening the case it would have had",
+    response: S.quarantineReleasedResponse,
+  },
   { method: "PATCH", path: "/api/mailboxes/:mailboxId", authority: { scope: "organization", allOf: ["org.admin"] }, summary: "Change a mailbox's settings", response: S.mailboxPatchedResponse },
   {
     authority: { scope: "mailbox", anyOf: ["mailbox.metadata.read", "mailbox.content.read"] },

@@ -53,6 +53,7 @@ import m0052 from "../migrations/0052_sender_filter.sql";
 import m0053 from "../migrations/0053_provider_binding.sql";
 import m0054 from "../migrations/0054_search_day_token.sql";
 import m0055 from "../migrations/0055_authentication_results.sql";
+import m0056 from "../migrations/0056_quarantine.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -162,6 +163,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0053_provider_binding.sql", sql: m0053 },
   { name: "0054_search_day_token.sql", sql: m0054 },
   { name: "0055_authentication_results.sql", sql: m0055 },
+  { name: "0056_quarantine.sql", sql: m0056 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

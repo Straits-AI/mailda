@@ -454,7 +454,8 @@ export async function checkProviderBinding(env: Env): Promise<Finding[]> {
  * week — a Node seeing `absent` on every message is one whose mail is not arriving through the MX that
  * authenticates, which is a routing fact worth a sentence; a Node with a run of `fail` against `reject`
  * policies is one whose operator should be reading the sender line. `unevaluated` is the count from before
- * this check existed, and it only goes down.
+ * this check existed, and it only goes down. Deliveries held back by a mailbox's quarantine (0056) are
+ * counted whole, not over the week: a held delivery nobody has looked at is the fact, however old.
  */
 export async function checkInboundAuthentication(
   env: Env, ctx: Ctx, orgId: string | null,
@@ -469,11 +470,12 @@ export async function checkInboundAuthentication(
        SUM(CASE WHEN auth_dmarc = 'none' THEN 1 ELSE 0 END) AS none,
        SUM(CASE WHEN auth_dmarc = 'absent' THEN 1 ELSE 0 END) AS absent,
        SUM(CASE WHEN auth_dmarc IS NULL THEN 1 ELSE 0 END) AS unevaluated,
-       COUNT(*) AS total
+       COUNT(*) AS total,
+       (SELECT COUNT(*) FROM messages h WHERE h.org_id = ? AND h.quarantined_at IS NOT NULL) AS held
      FROM messages WHERE org_id = ? AND received_at >= ?`,
-  ).bind(orgId, since).first<{
+  ).bind(orgId, orgId, since).first<{
     pass: number | null; fail: number | null; fail_reject: number | null; none: number | null;
-    absent: number | null; unevaluated: number | null; total: number;
+    absent: number | null; unevaluated: number | null; total: number; held: number;
   }>().catch(() => null);
   if (row === null) {
     return [{
@@ -494,7 +496,11 @@ export async function checkInboundAuthentication(
         + `${n(row.fail_reject) > 0 ? ` (${n(row.fail_reject)} against a domain asking receivers to reject)` : ""}, `
         + `${n(row.none)} from domains publishing no policy, ${n(row.absent)} with no authentication header from `
         + `the receiving server${n(row.unevaluated) > 0 ? `, ${n(row.unevaluated)} from before this Node evaluated senders` : ""}. `
-        + "A fail is the From domain saying the message is not theirs; the sender line on each message says so.",
+        + "A fail is the From domain saying the message is not theirs; the sender line on each message says so."
+        // Not bounded by the week: a delivery held a month ago and never looked at is the one to mention.
+        + (row.held > 0
+          ? ` ${row.held} deliver${row.held === 1 ? "y is" : "ies are"} held back (0056), waiting for an administrator on the queue screen.`
+          : ""),
     receipt: "docs/receipts/email-authentication-results.md",
   }];
 }

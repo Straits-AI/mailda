@@ -94,6 +94,9 @@ const MEASURED_SHAPE = {
        * spent the whole record's overhead shows. The receipt's own warning, measured.
        */
       "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
+      // Added by migration 0056 (quarantine). Re-measured the same day, before this line: 1,788, unchanged.
+      // Two NULLs on a record that already spilled its page slack cost two header bytes, and a page absorbs that.
+      "quarantined_at", "quarantine_reason",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",
