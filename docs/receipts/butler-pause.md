@@ -189,7 +189,7 @@ threshold is low and why the pause latches instead of gating.
 **And what a pause does *not* stop, said in the same breath because the sentence above invites the wrong
 inference.** A pause stops the Butler from **starting runs** and stops a run in flight from going on. It does
 **not** hold the sends that Butler already proposed: those are `send_manifests` rows sitting `awaiting
-butler_release_required`, and `releaseButlerSend` acts on the manifest by its own predicate — which names the
+butler_release_required`, and `releaseButlerSend` acts on the manifest by its own predicate, which names the
 gate and the mailbox and says nothing about `butler_pauses`. So after a pause an administrator can still
 release the replies the looping Butler queued before it was stopped, and they will dispatch.
 
