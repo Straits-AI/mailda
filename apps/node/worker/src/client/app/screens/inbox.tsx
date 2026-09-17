@@ -190,7 +190,13 @@ function replyContext(
    * mailbox's own addresses — a copy to ourselves is the loop `send-breakers.md` exists for. The seal
    * refuses a duplicate across To and Cc, so the sender is removed from Cc here.
    */
-  const sender = rendered?.recipients.replyTo ?? message.envelope_from;
+  /*
+   * Who a reply goes to: Reply-To if the sender set one, else the From header, else the envelope sender.
+   * The envelope sender was the only choice before, and on mail relayed through a bounce-handling path it is
+   * `bounces@cf-bounce.…` — the return path, which is where bounces go, not where people are (seen on the
+   * live Node, 17 September). The `From:` header is content the sender chose, which for a reply is right.
+   */
+  const sender = rendered?.recipients.replyTo ?? message.from_addr ?? message.envelope_from;
   const mine = new Set(ownAddresses.map((one) => one.toLowerCase()));
   const others = all
     ? [...(rendered?.recipients.to ?? []), ...(rendered?.recipients.cc ?? [])]
@@ -204,7 +210,7 @@ function replyContext(
     to: sender,
     cc: others.join(", "),
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-    body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.envelope_from} wrote:\n${quoted}`,
+    body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.from_addr ?? message.envelope_from} wrote:\n${quoted}`,
   };
 }
 
