@@ -17,21 +17,21 @@ values:
 # What it costs to prove the evidence is still what was recorded
 
 Issue [#92](https://github.com/Straits-AI/mailda/issues/92), re-measured for
-[#131](https://github.com/Straits-AI/mailda/issues/131). The restore drill's step 5 — *"prove a sampled set
-of raw messages decrypt and hash-verify against the manifests"* — is the step the ticket says makes the rest
+[#131](https://github.com/Straits-AI/mailda/issues/131). The restore drill's step 5, *"prove a sampled set
+of raw messages decrypt and hash-verify against the manifests"*, is the step the ticket says makes the rest
 true. It needs a verifier, and the number that bounds one is how much fits in an invocation.
 
 ## Why this was re-measured rather than adjusted
 
 The previous version of this receipt bounded **receipts**, and its own `stale_when` named the condition that
-has now happened: *"a verification begins reading rows other than `ingress_receipts`"*. #131 is that change —
-the verifier swept inbound mail only while the inventory covered all four prefixes, so a Node whose evidence
+has now happened: *"a verification begins reading rows other than `ingress_receipts`"*. #131 is that change.
+The verifier swept inbound mail only while the inventory covered all four prefixes, so a Node whose evidence
 is drafts or staged sends verified nothing and said it was clean.
 
 A row bound cannot survive that widening, because rows stopped costing the same. One `send_manifests` row
 stages **three** objects; one `ingress_receipts` row stages one. The cost this number exists to bound is the
 R2 `get` and the decrypt, and both happen per **object**. So the figure is now an object bound, and the rows
-per page are derived from it: `floor(200 / columns)` — 200 rows of receipts, drafts or exports, and 66 rows
+per page are derived from it: `floor(200 / columns)`: 200 rows of receipts, drafts or exports, and 66 rows
 of sends.
 
 That is the same underlying measurement, expressed in the unit that stays constant across tables.
@@ -48,18 +48,18 @@ Two subrequests, and only two:
 | D1 page of rows | 1 per batch | keyset pagination, one query for the whole page |
 
 So a batch of *n* objects costs `n + 2` subrequests. The key cache is what makes the second row zero rather
-than *n* — without it a batch of 200 would spend 400, and the reason it is a per-run parameter rather than an
+than *n*. Without it a batch of 200 would spend 400, and the reason it is a per-run parameter rather than an
 isolate-wide map is argued in `evidence-store.ts`.
 
 **Plus at most three more, and this is new.** A batch begins by walking forward past tables that are empty,
 because an empty table must not end a sweep. Each skipped table costs one D1 query, and there are four
 tables, so the walk-forward adds at most three. A Node with no drafts, no exports and no sends spends four
-queries to discover it has only receipts — once per batch, not once per row.
+queries to discover it has only receipts, once per batch, not once per row.
 
 Worst case per invocation: `200 + 1 + 3 + 1` = **205** subrequests.
 
 **17 September 2026 (0060): a fifth table, and the worst case is 206.** `send_attachments` joined
-`INVENTORY_REFERENTS` — an authored send's attachments are evidence with a hash each, under the `sent/`
+`INVENTORY_REFERENTS`. An authored send's attachments are evidence with a hash each, under the `sent/`
 prefix, so it is a fifth *table* and not a fifth prefix. The walk-forward can now skip four tables rather
 than three: `200 + 1 + 4 + 1` = **206**. `evidence.verify_tables` moves to 5; the objects and per-object
 figures do not move, because an attachment is one R2 object with one hash like every other row.
@@ -83,7 +83,7 @@ number is no longer wrong for three of the four tables.
 
 ## Why four tables and not one query
 
-`evidence.verify_tables` is the count this sweep walks, and it is **derived** — the verifier groups
+`evidence.verify_tables` is the count this sweep walks, and it is **derived**. The verifier groups
 `INVENTORY_REFERENTS` by table rather than listing prefixes again. The number is recorded here so the
 walk-forward arithmetic above has a stated basis, and so a fifth prefix stales this receipt instead of
 quietly making the worst case five.
@@ -94,7 +94,7 @@ groups by table.
 
 ## What is not measured here
 
-**Wall-clock seconds per batch on a live Node.** It has not been run against one — the Node whose evidence
+**Wall-clock seconds per batch on a live Node.** It has not been run against one. The Node whose evidence
 this would sweep is carrying real mail, and this figure is a bound on work per invocation rather than a
 latency promise. `bytesRead` is returned in every verdict precisely so an operator sizing a full sweep reads
 a measured number rather than this document.

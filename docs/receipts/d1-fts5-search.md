@@ -18,7 +18,7 @@ values:
 `dc8d1b7d…`, 27 August 2026, wrangler 4.118.0. Every probe table was dropped afterwards and its absence
 confirmed by reading `sqlite_master`.
 
-These five facts decide whether Mailda can have full-text search at all, and — more importantly — how much
+These five facts decide whether Mailda can have full-text search at all, and, more importantly, how much
 of ADR 28's guarantee it has to give up to get it. The answer to the second question turned out to be much
 less than expected, which is why this was measured before the design was written rather than after.
 
@@ -33,7 +33,7 @@ match, so a search cannot be a read that was authorized separately and then trus
 
 ## A contentless index matches without storing the text
 
-`search.contentless_index_matches: 1` and `search.contentless_stores_body: 0` — the two that matter most.
+`search.contentless_index_matches: 1` and `search.contentless_stores_body: 0` are the two that matter most.
 
 `USING fts5(body, content='')` builds the inverted index and stores **no copy of the document**. Both were
 checked on the same table:
@@ -45,7 +45,7 @@ checked on the same table:
 
 So the second copy of content that a search index would ordinarily create is **not a copy of the content**.
 It is a set of tokens with the message ids they occur in. A D1 dump against a contentless index discloses
-*which words appear in which message* — which is a real disclosure and must be written into ADR 28 — but not
+*which words appear in which message*, which is a real disclosure and must be written into ADR 28, but not
 the message. The body stays only in R2, encrypted, exactly where ADR 28 put it.
 
 This is a materially smaller concession than "an FTS5 index puts your mail in D1 in plaintext", which is what
@@ -56,7 +56,7 @@ the design assumed before anybody checked.
 `search.contentless_delete_supported: 1`.
 
 This was the probe most likely to sink the design. A contentless FTS5 table historically **cannot** delete
-rows — the table has no copy of the document, so it cannot work out which index entries to remove — and a
+rows (the table has no copy of the document, so it cannot work out which index entries to remove), and a
 search index whose rows outlive the messages they describe would defeat content deletion, which
 `content-deletion-world.test.ts` exists to guarantee. SQLite added `contentless_delete=1` to make it
 possible, and D1 ships a version that has it:
@@ -84,14 +84,14 @@ SELECT snippet(fts_probe2, 0, '[', ']', '...', 8) AS s FROM fts_probe2 WHERE fts
   s: null
 ```
 
-So a search result list built the obvious way ships **blank excerpts and no error anywhere** — a feature that
+So a search result list built the obvious way ships **blank excerpts and no error anywhere**, a feature that
 appears to work, degrades silently, and passes any test that only asserts the query returned rows. That is
 this repository's recurring defect (#103) arriving from the platform rather than from our own comments, and
 it is why it gets a number: the next person to reach for `snippet()` needs to find this before they ship it,
 not after.
 
 **What follows for the design:** showing the matching line means fetching that message's body from R2 and
-decrypting it — which is a `mailbox.content.read` operation and authorized as one. Excerpts are therefore a
+decrypting it, which is a `mailbox.content.read` operation and authorized as one. Excerpts are therefore a
 per-result authorized fetch, bounded by the page size, and never a free read out of the index. Which is the
 correct answer on privacy grounds anyway: the cheap path would have let a caller with metadata rights read
 body text out of an index, and the platform has removed that path by not having it.
@@ -100,7 +100,7 @@ body text out of an index, and the platform has removed that path by not having 
 
 Everything above was probed with `wrangler d1 execute`, which is not how a Node gets its schema. A migration
 is raw SQL applied through `batch()`, and `CREATE VIRTUAL TABLE` is a shape this repository's migration path
-had never carried — so it was run for real before anything was built on top of it.
+had never carried, so it was run for real before anything was built on top of it.
 
 `migrations/0040_message_search.sql` applied to the live Node in account `dc8d1b7d…` via
 `mailda deploy` → `wrangler d1 migrations apply`:
@@ -120,7 +120,7 @@ names one:
 That count is why `test/audit-coverage.test.ts` classifies six rather than one: a closed world over tables sees
 what SQLite creates, not what the migration wrote. A seventh appearing would mean the table's options changed.
 
-Then the shipped query shapes, against that table on real D1 — using the exact expression `ftsQuery` emits
+Then the shipped query shapes, against that table on real D1, using the exact expression `ftsQuery` emits
 rather than a hand-written one:
 
 ```
@@ -136,7 +136,7 @@ probe row was deleted afterwards and the table confirmed empty.
 
 **Search has not been exercised through the Worker against real mail.** That needs a claimed Node with a
 session, and this Node is deliberately unclaimed. Every probe above is D1-level plus the deployed route
-answering `401` rather than `500` for `?q=demurrage`, `?q=` with a malformed cursor, and `?q=AND NOT ( *` —
+answering `401` rather than `500` for `?q=demurrage`, `?q=` with a malformed cursor, and `?q=AND NOT ( *`,
 which shows authorization precedes parsing and the operators reach nothing, and does **not** show that a
 signed-in reader gets the right rows. That part is covered by 1,264 tests in workerd and by nothing on this
 account.
@@ -157,7 +157,7 @@ message_body_search        message_body_search_config    message_body_search_dat
 message_body_search_docsize                              message_body_search_idx
 ```
 
-`message_body_search_content` **does not exist** — confirmed by reading `sqlite_master` on the deployed
+`message_body_search_content` **does not exist**, confirmed by reading `sqlite_master` on the deployed
 database. That absence is what `content=''` looks like from the schema, and it is the cheapest available proof
 that a D1 dump does not contain message bodies. Asserted in `test/message-search.test.ts` with the *subject*
 index as the control, so the check discriminates rather than being true of any name it is handed.
@@ -170,7 +170,7 @@ SELECT rowid, body … MATCH '"cabotage"*'   →  rowid 999001,  body NULL
 DELETE … WHERE rowid = 999001              →  changes 4,  table empty
 ```
 
-Prefix matching works, the body reads back **null**, and delete-by-rowid works — the three properties the
+Prefix matching works, the body reads back **null**, and delete-by-rowid works: the three properties the
 design rests on, in the database that will hold real mail. `messages.body_indexed_at` is present.
 
 The probe row was deleted and the table confirmed empty. `doctor` reports neither backlog finding on this
