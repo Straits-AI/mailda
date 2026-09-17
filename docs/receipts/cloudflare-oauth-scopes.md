@@ -37,7 +37,7 @@ refresh_token: present        access_expires_at: one hour
 calling it a blocker is retracted below.
 
 The access token is still an hour. That is what a refresh token is for, and the durable half is the one this
-Node stores wrapped and a revocation kills — which is what makes `grant_refused` an observable state rather
+Node stores wrapped and a revocation kills, which is what makes `grant_refused` an observable state rather
 than a guess.
 
 ## Retraction, 10 September 2026: a refreshable grant **is** obtainable, and the reference said so
@@ -54,7 +54,7 @@ Cloudflare's **API reference** for `oauth_clients`, one sentence:
 > Protocol scopes `offline_access` and `openid` are **added or removed automatically** based on `grant_types`
 > and `response_types`.
 
-So it is not in the picker or the scope list because it is not something you pick — it is derived from the
+So it is not in the picker or the scope list because it is not something you pick. It is derived from the
 client's grant types. `GET` on the client showed the cause:
 
 ```text
@@ -75,7 +75,7 @@ scopes: 15
 > **Colon-delimited scopes are not accepted. Dot-delimited scopes are validated** against available OAuth API
 > scopes; simple identity scopes are allowed.
 
-Colons ruled out, dots confirmed, and protocol scopes admitted as *simple identity scopes* — which is why
+Colons ruled out, dots confirmed, and protocol scopes admitted as *simple identity scopes*, which is why
 `offline_access` carries no dot and needed the schema's pattern widened. Three of this file's findings are in
 that one paragraph, and it was established instead by probing a live client one scope at a time.
 
@@ -90,7 +90,7 @@ that one paragraph, and it was established instead by probing a live client one 
 | the guide's dotted example being unused | the documented format |
 | `offline_access` absent from the picker | derived from `grant_types`, not picked |
 
-Every one is a list read as a menu. The **guide** — `create-an-oauth-client` — is silent on scope format, on
+Every one is a list read as a menu. The **guide**, `create-an-oauth-client`, is silent on scope format, on
 refresh tokens and on rotation state; the **API reference** states all three. Probing is for when the
 documentation does not answer, and here it did.
 
@@ -99,7 +99,7 @@ documentation does not answer, and here it did.
 `has_rotated_secret: true` on the same `GET`. Cloudflare permits two secrets per client, and the guide says
 *"if the value is true, delete the old secret before you create another."* Two were live while the Node held
 one. That is what the exchange failures were, and this repository diagnosed a missing form-url-encoding
-instead, shipped a fix for it, and wrote it up as a spec bug — `cloudflare-oauth-endpoints.md` carries that
+instead, shipped a fix for it, and wrote it up as a spec bug. `cloudflare-oauth-endpoints.md` carries that
 retraction.
 
 ## The consent completed, 9 September 2026, and two of ADR 42's premises did not survive it
@@ -122,7 +122,7 @@ The row it produced:
 ### The token response does not name the account
 
 `oauth.token_response_names_account: 0`. `cloudflare-grant.ts` handled this as unmeasured and left the column
-null rather than inventing a field — which was right, and is now a fact rather than a hedge. Resolving which
+null rather than inventing a field, which was right, and is now a fact rather than a hedge. Resolving which
 account a grant covers costs a separate `GET /client/v4/accounts`, and belongs to the layer that already talks
 to the API.
 
@@ -131,8 +131,8 @@ to the API.
 `oauth.grant_type_alone_yields_refresh_token: 0`. The client is registered with **Refresh Token** as a grant
 type, and no refresh token came back. `oauth.access_token_lifetime_seconds: 3600`.
 
-So the claim this repository substituted for the `offline_access` scope — *"the refresh token comes from the
-client's grant type, not from a scope"* — is **also wrong**. That was the third guess in a row about this one
+So the claim this repository substituted for the `offline_access` scope, *"the refresh token comes from the
+client's grant type, not from a scope"*, is **also wrong**. That was the third guess in a row about this one
 mechanism:
 
 1. `offline_access` is required and discovery lists it → refused, a client may not request it.
@@ -148,8 +148,8 @@ decision's own words: *"without it the grant expires with its access token and t
 
 `oauth.refresh_token_obtainable_by_self_managed_client: 0`. Established two ways, 9 September 2026:
 
-- The dashboard's scope picker has **no `offline_access`** in any category. `Other` — the last one, opened
-  specifically to check — is Artifacts, Resource Library and Resource Sharing.
+- The dashboard's scope picker has **no `offline_access`** in any category. `Other`, the last one, opened
+  specifically to check, is Artifacts, Resource Library and Resource Sharing.
 - `GET /client/v4/oauth/scopes`, the authoritative list, matches nothing for `offline`, `openid` or
   `refresh`.
 
@@ -158,7 +158,7 @@ access token and nothing to renew it with.**
 
 This is a **blocker on ADR 42, not a defect in this Node**, and it is recorded rather than worked around
 because every workaround contradicts something the decision relies on. See the ADR's own amendment; the short
-version is that ADR 42 rejected a pasted API token partly as *"worse hygiene besides — a permanent secret
+version is that ADR 42 rejected a pasted API token partly as *"worse hygiene besides: a permanent secret
 where a refreshable grant with visible scopes and one revocation list is available"*, and the availability
 that comparison rested on is now measured as absent.
 
@@ -172,7 +172,7 @@ that comparison rested on is now measured as absent.
 {"name":"AI Gateway Metadata Read","id":"aig.metadata_read","category":"ai_and_machine_learning"}
 ```
 
-**A dot.** Which is exactly the form Cloudflare's own documentation example uses — `workers-platform.read` —
+**A dot.** Which is exactly the form Cloudflare's own documentation example uses, `workers-platform.read`,
 and which this repository's test asserted **must not appear**, on the grounds that it was *"not the
 vocabulary in use"*. It was the vocabulary. `wrangler`'s colons are a first-party shorthand.
 
@@ -192,7 +192,7 @@ from this single call.
 
 ### The fourteen ids, each verified accepted
 
-Probed one at a time against the real client — a scope it may request redirects to Cloudflare's login, one it
+Probed one at a time against the real client. A scope it may request redirects to Cloudflare's login, one it
 may not comes back `invalid_scope` naming it. An invented `definitely-not-a-scope.read` was refused, which is
 what makes the accepted ones evidence rather than an absence of error.
 
@@ -215,7 +215,7 @@ what makes the accepted ones evidence rather than an absence of error.
 
 Two things the mapping shows that no amount of reasoning would have: the ids are **singular**
 (`email-routing-address.write`, not `-addresses`), and *Workers Read* is `workers-scripts.read` rather than
-`workers.read` — which was probed and refused.
+`workers.read`, which was probed and refused.
 
 All fourteen together were accepted in one request.
 
@@ -223,12 +223,12 @@ All fourteen together were accepted in one request.
 
 `d1.write` and `queues.write` are here because the picker had them on Edit. `d1.read` and `queues.read` both
 exist and are what L1 would ask for, since it provisions nothing. Recorded so the next reader does not take
-the shipped list for a requirement — `/api/provider/authorize` accepts an override for exactly that reason.
+the shipped list for a requirement. `/api/provider/authorize` accepts an override for exactly that reason.
 
 ## Correction, 9 September 2026: the read-only scopes **do** exist, and this file said they did not
 
 The section below claimed, from wrangler's vocabulary, that there is no `d1:read`, `queues:read`,
-`email_routing:read` or `email_sending:read` — and built a design note on it about a read-only layer being
+`email_routing:read` or `email_sending:read`, and built a design note on it about a read-only layer being
 forced to ask for write.
 
 **Wrong.** The dashboard's own scope picker, screenshotted while editing a real client:
@@ -243,7 +243,7 @@ forced to ask for write.
 | Account Settings | Edit, **Read** |
 
 Every one of them has a read. What wrangler's bundle contains is **what wrangler asks for**, and wrangler
-deploys Workers — so it requests write. Reading a client's own request list as the provider's vocabulary is
+deploys Workers, so it requests write. Reading a client's own request list as the provider's vocabulary is
 the same error this file was written about, made one layer further in: *a list of what something uses is not
 a list of what exists.* Fourth time in this flow.
 
@@ -271,7 +271,7 @@ a third-party client selects. L2's MX and routing work will need to name which o
 `oauth.scope_shape_is_group_colon_verb: 0`, and this file asserted `1` for a day.
 
 Probed against the client **after** its fourteen scopes were saved: `d1:read`, `queues:read`,
-`workers:read`, `zone:read`, `account:read`, `email_sending:read`, `email_routing:read` — every one refused
+`workers:read`, `zone:read`, `account:read`, `email_sending:read`, `email_routing:read`: every one refused
 with *"the OAuth 2.0 Client is not allowed to request scope"*, identically to an invented
 `definitely_not_a_scope:read`. wrangler's strings are a **first-party shorthand**, not the vocabulary a
 self-managed client requests.
@@ -281,17 +281,17 @@ What remains is Cloudflare's own instruction, which this flow has now failed to 
 > Fetch the available scopes from the API. Use the **scope ID** when you create a client through the API.
 
 The permission-groups endpoint returns ids like `19637fbb73d242c0a92845d8db0b95b1` beside display names. A
-scope is plausibly one of those, and that cannot be probed without knowing an id the client actually holds —
+scope is plausibly one of those, and that cannot be probed without knowing an id the client actually holds,
 so it is **not guessed**. `GET /client/v4/oauth/scopes` is the one call that ends this, and it needs a token.
 
 ### And the confounded measurement, retested
 
 `oauth.omitted_scope_defaults_to_client_scopes: 0` was first taken against a client with **no scopes at
-all** — so it could not have measured what it claimed. Retested with the fourteen saved: the consent screen
+all**, so it could not have measured what it claimed. Retested with the fourteen saved: the consent screen
 still reads *"0 total permissions"* with `Authorize` disabled.
 
 The figure stands, and now for the right reason. A client's registered scopes are a ceiling on what it may
-request, not a default for what it does — confirmed against a client that had something to default to.
+request, not a default for what it does, confirmed against a client that had something to default to.
 
 **That the first reading happened to be right is not a defence of taking it.** It was a measurement of a
 different thing that agreed by luck, and the only reason anybody knows the difference is that the client
@@ -304,7 +304,7 @@ changed underneath it and it was run again.
 `cloudflare-grant.ts` shipped a list of **capabilities in prose and no scope strings**, on this argument:
 
 > Cloudflare's scope names correspond to API-token permission names and are enumerated from
-> `GET /client/v4/oauth/scopes`, which needs a token — and the only scope strings this repository has *seen*
+> `GET /client/v4/oauth/scopes`, which needs a token, and the only scope strings this repository has *seen*
 > are the two in Cloudflare's own documentation example. Writing a list of eight or ten plausible names
 > beside those would be a fabrication.
 
@@ -331,7 +331,7 @@ $ grep -oE '"[a-z0-9_]+:(read|write|admin|run)"' node_modules/.../wrangler-dist/
 76
 ```
 
-The shape is **`<group>:<verb>`** — not the dotted `workers-platform.read` of Cloudflare's documentation
+The shape is **`<group>:<verb>`**, not the dotted `workers-platform.read` of Cloudflare's documentation
 example, which appears nowhere in the vocabulary actually in use. `wrangler whoami` prints the same set as
 `group (verb)`, which is how the format was first noticed.
 
@@ -356,7 +356,7 @@ L1's whole point was that it **reads**. The capability list it replaced said so:
 > would be right to refuse.
 
 That argument stands, and Cloudflare does not permit it. There is no `d1:read`, `queues:read`,
-`email_routing:read` or `email_sending:read` in the vocabulary — only `:write`. So an inventory of the
+`email_routing:read` or `email_sending:read` in the vocabulary, only `:write`. So an inventory of the
 catalog, the queue or the mail routing costs write authority over them, at L1, for a layer that provisions
 nothing.
 
@@ -381,7 +381,7 @@ GET /oauth2/auth?…&scope=account%3Aread
 No sign-in, no consent screen, no grant. The refusal **names the scope**, so a caller learns which one is not
 permitted rather than that something was wrong.
 
-Run against the client created on 7 September 2026, every one of the seven scopes above was refused — and so
+Run against the client created on 7 September 2026, every one of the seven scopes above was refused, and so
 were `offline_access` and a deliberately invented `definitely_not_a_scope:read`. All nine refused identically
 means the client had **no scopes registered**, which is also why its consent screen read *"0 total
 permissions"*. The dashboard's creation form documents that at least one scope is required; this client has
@@ -394,14 +394,14 @@ control. The invented one is what made the difference legible.
 ## What is not established
 
 **That these are the exact scopes a third-party client may request.** They are what a **first-party** client
-(wrangler) requests. `GET /client/v4/oauth/scopes` is the authority and needs a token this Node does not have
-— so the shape is measured and the *set* is inferred. Cloudflare names any scope it refuses, which makes the
+(wrangler) requests. `GET /client/v4/oauth/scopes` is the authority and needs a token this Node does not have,
+so the shape is measured and the *set* is inferred. Cloudflare names any scope it refuses, which makes the
 failure loud and cheap: `/api/provider/authorize` accepts an override so an operator whose account offers a
 different set can proceed without waiting for a release.
 
 **Whether `workers:read` covers D1, R2, Queues and Workflows provisioning.** Auto-provisioning happens
-through the deploy, and which scope authorises it is untested. There is no `r2:*` in the vocabulary at all —
-only `r2_catalog:write` — which suggests buckets are reached through `workers:write`, unverified.
+through the deploy, and which scope authorises it is untested. There is no `r2:*` in the vocabulary at all,
+only `r2_catalog:write`, which suggests buckets are reached through `workers:write`, unverified.
 
 **Whether `offline_access` is reachable any other way.** A client cannot request it; the refresh token is
 expected from the `refresh_token` grant type instead. That expectation is untested until a consent completes.
@@ -409,8 +409,8 @@ expected from the `refresh_token` grant type instead. That expectation is untest
 ## The client's own list moved after this was written, and a grant is the only receipt for it
 
 The fourteen above were what the picker had checked when the client was registered. `cloudflare-grant-reach.md`
-then narrowed the *grant* to six; at some point the *client* was narrowed to match, which nothing here recorded
-— and it showed on 16 September 2026 as `invalid_scope` for `zone-settings.write`, then for
+then narrowed the *grant* to six; at some point the *client* was narrowed to match, which nothing here recorded,
+and it showed on 16 September 2026 as `invalid_scope` for `zone-settings.write`, then for
 `email-routing-rule.write`, each time a scope `REQUIRED_SCOPES` had grown to include without the client
 being told. Both were added back in the dashboard by hand, and the consent that followed granted all nine:
 
@@ -420,7 +420,7 @@ dns.write  registrar-domains.read  email-sending.write  offline_access
 ```
 
 Two things follow. **A private client's permission list cannot be read through the API**, so the only
-receipt for what it carries is a consent that succeeds — the list above is that receipt, and the fourteen are
+receipt for what it carries is a consent that succeeds. The list above is that receipt, and the fourteen are
 history. And **growing `REQUIRED_SCOPES` is two edits**: the code, and the client in the dashboard, in that
 order or the consent answers `invalid_scope`. `ProviderStatus.scopesMissing` names the gap on the Node's side;
 the ceremony's step 3 names the client's.
