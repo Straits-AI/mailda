@@ -19,7 +19,8 @@ const { Inbox } = await import("../../src/client/app/screens/inbox.tsx");
  */
 const ROW = {
   id: "rcpt_1", message_id: "msg_1", subject: "Invoice", from_addr: "alice@outside.example",
-  envelope_from: "alice@outside.example", envelope_to: "support@example.test", mailbox_id: "mbx_test",
+  // The return path differs from the From header, as it does on relayed mail; a reply goes to the person.
+  envelope_from: "bounces@relay.example", envelope_to: "support@example.test", mailbox_id: "mbx_test",
   raw_bytes: 1024, accepted_at: "2026-08-21T09:00:00.000Z", parse_error: null, conversation_id: null,
   case_id: "cas_1", auth_spf: null, auth_dkim: null, auth_dmarc: null, auth_dmarc_policy: null,
   auth_from_domain: null, attachments: null, attachments_dangerous: null, labels_json: "[]", read: 0,
