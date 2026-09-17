@@ -126,7 +126,7 @@ export interface RouteSpec {
  * already pinned this way, and this is the same problem one character to the right of the `?`.
  */
 export const MESSAGE_PAGE_PARAMS =
-  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from" } as const;
+  { cursor: "cursor", mailbox: "mailbox", q: "q", since: "since", until: "until", from: "from", conversation: "conversation" } as const;
 
 export const METHOD_UNCHECKED: readonly string[] = [
   "/.well-known/jwks.json",
@@ -305,6 +305,12 @@ export const ROUTES = [
         description: "Only mail accepted at or before this point, in the same two shapes. A date means the "
           + "**end** of that day UTC, so `until=2026-09-01` includes 1 September.",
       },
+      {
+        name: MESSAGE_PAGE_PARAMS.conversation,
+        description: "Only this conversation's mail — the `conversation_id` on any listed message — which "
+          + "is how a thread is read. Same authorization as the listing: a message you may not see is not "
+          + "in the thread. Pages like any other listing.",
+      },
     ],
     response: S.messageListResponse,
   },
@@ -378,7 +384,16 @@ export const ROUTES = [
   { method: "PUT", path: "/api/drafts", summary: "Save a draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, request: S.saveDraftRequest, response: S.draftSavedResponse },
   { method: "GET", path: "/api/drafts/:draftId", summary: "One draft", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.draftDetailResponse },
   { method: "DELETE", path: "/api/drafts/:draftId", authority: { scope: "mailbox", allOf: ["send.propose"] }, summary: "Discard a draft", response: S.draftDeletedResponse },
-  { method: "GET", path: "/api/sends", summary: "The outbox", authority: { scope: "mailbox", allOf: ["mailbox.content.read"] }, response: S.sendListResponse },
+  {
+    method: "GET", path: "/api/sends", summary: "The outbox",
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    query: [{
+      name: "conversation",
+      description: "Only sends that reply into this conversation — the other half of a thread. Same "
+        + "authorization as the outbox; a send you may not see is not in the thread.",
+    }],
+    response: S.sendListResponse,
+  },
   { method: "POST", path: "/api/sends", summary: "Seal a manifest: the act that commits a send to policy", authority: { scope: "mailbox", allOf: ["send.propose"] }, response: S.sendSealedResponse },
   /*
    * Declared although it is `governed` and reaches no machine, because the declaration is what the parity

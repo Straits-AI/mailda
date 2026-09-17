@@ -461,9 +461,11 @@ export class GeneratedClient extends Transport {
    *
    * @param query.until Only mail accepted at or before this point, in the same two shapes. A date means the **end** of that day UTC, so `until=2026-09-01` includes 1 September.
    *
+   * @param query.conversation Only this conversation's mail — the `conversation_id` on any listed message — which is how a thread is read. Same authorization as the listing: a message you may not see is not in the thread. Pages like any other listing.
+   *
    * `GET /api/messages`
    */
-  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string }): Promise<z.infer<typeof S.messageListResponse>> {
+  async getMessages(query?: { cursor?: string; mailbox?: string; q?: string; since?: string; from?: string; until?: string; conversation?: string }): Promise<z.infer<typeof S.messageListResponse>> {
     return await this.json("GET", "/api/messages", {}, undefined, query) as z.infer<typeof S.messageListResponse>;
   }
 
@@ -569,10 +571,12 @@ export class GeneratedClient extends Transport {
   /**
    * The outbox
    *
+   * @param query.conversation Only sends that reply into this conversation — the other half of a thread. Same authorization as the outbox; a send you may not see is not in the thread.
+   *
    * `GET /api/sends`
    */
-  async getSends(): Promise<z.infer<typeof S.sendListResponse>> {
-    return await this.json("GET", "/api/sends", {}, undefined) as z.infer<typeof S.sendListResponse>;
+  async getSends(query?: { conversation?: string }): Promise<z.infer<typeof S.sendListResponse>> {
+    return await this.json("GET", "/api/sends", {}, undefined, query) as z.infer<typeof S.sendListResponse>;
   }
 
   /**

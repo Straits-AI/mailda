@@ -885,6 +885,8 @@ export interface MessagePage {
    * believing that was true of both.
    */
   from: string | null;
+  /** One conversation's mail, or null for every conversation. The thread view (#30's other half). */
+  conversationId: string | null;
   /**
    * An FTS5 expression built by `ftsQuery`, or null for no search (#107).
    *
@@ -1181,7 +1183,8 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
       });
     }
   }
-  if (raw === null) return { after: null, mailboxId, q, since, until, from };
+  const conversationId = url.searchParams.get(MESSAGE_PAGE_PARAMS.conversation) || null;
+  if (raw === null) return { after: null, mailboxId, q, since, until, from, conversationId };
 
   const parts = raw.split(" ");
   const instant = parts[0] ?? "";
@@ -1197,7 +1200,7 @@ export function messagePageRequest(url: URL, nowIso: string): MessagePage {
         + "from the newest message.",
     });
   }
-  return { after: { at: instant, id }, mailboxId, q, since, until, from };
+  return { after: { at: instant, id }, mailboxId, q, since, until, from, conversationId };
 }
 
 /**
@@ -1318,6 +1321,12 @@ export function messagePageQuery(args: {
   if (args.page.from !== null) {
     filters.push("AND lower(r.envelope_from) = ?");
     filterParams.push(args.page.from);
+  }
+  // A thread: every message this reader may see whose conversation is the one named. `msg_by_conversation`
+  // serves it; the authorization predicate is the same one every listing carries.
+  if (args.page.conversationId !== null) {
+    filters.push("AND m.conversation_id = ?");
+    filterParams.push(args.page.conversationId);
   }
   if (args.page.after !== null && args.page.q === null) {
     /*
