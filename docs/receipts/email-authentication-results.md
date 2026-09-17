@@ -11,7 +11,7 @@ values:
 ---
 
 **Measured:** two messages held by the live Node `mailda.swmengappdev.workers.dev`, read back through
-`GET /api/messages/:id/raw` on 17 September 2026 — one from Gmail (3 August), one a bounce from
+`GET /api/messages/:id/raw` on 17 September 2026: one from Gmail (3 August), one a bounce from
 `cf-bounce.mailda-test.whymelabs.com` (15 September). Both carry, first among the headers Cloudflare added:
 
 ```text
@@ -23,17 +23,17 @@ Authentication-Results: mx.cloudflare.net; dkim=pass header.d=gmail.com header.s
   arc=pass smtp.remote-ip="2a00:1450:4864:20::535"
 ```
 
-So the receiving MX authenticates every inbound message and records four methods — SPF (twice: HELO and
-MAIL FROM), DKIM per signature, DMARC with the From domain and its published policy, ARC — under the
+So the receiving MX authenticates every inbound message and records four methods (SPF, twice, for HELO and
+MAIL FROM; DKIM per signature; DMARC with the From domain and its published policy; ARC) under the
 authserv-id `mx.cloudflare.net`. Beside it, the same messages carry `ARC-Authentication-Results` and
 `Received-SPF`, and the Gmail one an `Authentication-Results` from `mx.google.com` for an earlier hop.
 
 **What this is adapter data for.** `src/authentication-results.ts` reads the header bearing this authserv-id
-and no other (RFC 8601 §7.1 — a header from any other server, including one a sender forged, is not this
+and no other (RFC 8601 §7.1: a header from any other server, including one a sender forged, is not this
 Node's verdict), and `materialise.ts` stores the four results on the message row (migration 0055). It is the
 deterministic half of mail security: no model, no lookup, no request beyond the bytes already held. What it
-does not establish is whether a message is *unwanted* — a DMARC pass from a domain nobody has heard of is
-still a pass — which is the half a classifier would speak to, and that is a separate decision.
+does not establish is whether a message is *unwanted* (a DMARC pass from a domain nobody has heard of is
+still a pass), which is the half a classifier would speak to, and that is a separate decision.
 
 **Cost:** 139 bytes a message on the row (`message-metadata-bytes.md`, re-measured the same day), no index,
 and one pass over a header block that was already being parsed.
