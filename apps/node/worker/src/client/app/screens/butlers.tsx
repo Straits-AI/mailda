@@ -260,7 +260,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
         />
       </label>
       <p className="butler-actions">
-        <button type="button" onClick={() => void save()} disabled={busy}>save draft</button>
+        <button className="quiet" type="button" onClick={() => void save()} disabled={busy}>save draft</button>
         {" "}
         <button
           type="button"
@@ -317,7 +317,7 @@ function Editing({ butler, onDone }: { butler: ButlerRow; onDone: () => void }) 
               <ul className="butler-dry-runs">
                 {ranButler.slice(0, 5).map((row) => (
                   <li key={row.id}>
-                    <button type="button" onClick={() => void dryRun(row.id)} disabled={busy}>
+                    <button className="quiet" type="button" onClick={() => void dryRun(row.id)} disabled={busy}>
                       dry run over {when(row.started_at)}
                     </button>
                     {" "}
@@ -456,7 +456,7 @@ function Paused({ butler }: { butler: ButlerRow }) {
           onChange={(event) => setReason(event.target.value)}
         />
       </label>
-      <button type="button" onClick={() => void resume()} disabled={reason.trim() === ""}>
+      <button className="quiet" type="button" onClick={() => void resume()} disabled={reason.trim() === ""}>
         resume
       </button>
       {problem === null ? null : <p role="alert">{problem}</p>}

@@ -759,17 +759,9 @@ export function Inbox() {
    * could receive before it could speak.
    */
   const heading = (
+    <>
     <header className="ledger-head">
       <h1>Inbox</h1>
-      <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
-      <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
-      <SearchField term={pages.term} onSearch={pages.searchFor} />
-      {pages.label === null ? null : (
-        <p className="notice dim">
-          Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
-          <button type="button" className="linkish" onClick={() => pages.labelled(null)}>show all</button>
-        </p>
-      )}
       {/*
         `shown`, not `messages`, and the word is the fix rather than a tidy-up (#91).
         `{n} messages` was true only while the listing returned everything there was; against a page it
@@ -799,7 +791,19 @@ export function Inbox() {
               : " · best matches — narrow the words to see others"}
         </p>
       ) : null}
+      <StartMessage onStart={(mailboxId) => setComposing(newMessageContext(mailboxId))} />
     </header>
+    <div className="inbox-tools">
+      <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
+      <SearchField term={pages.term} onSearch={pages.searchFor} />
+      {pages.label === null ? null : (
+        <p className="notice dim">
+          Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
+          <button type="button" className="linkish" onClick={() => pages.labelled(null)}>show all</button>
+        </p>
+      )}
+    </div>
+    </>
   );
 
   /*

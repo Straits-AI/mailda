@@ -15,7 +15,7 @@ import { sealManifest } from "../outbound/manifest.ts";
 import { resendMayDuplicate, retryEffect, retryOffer } from "../outbound/retry.ts";
 import { chooseTransport } from "../outbound/transport.ts";
 import { safeFilename } from "../outbound/headers.ts";
-import { armSweeper } from "./support.ts";
+import { addressList, armSweeper } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const sending = {
@@ -131,7 +131,7 @@ export const sending = {
       // `[{filename, contentType, contentBase64}]` (0060). Decoded here and judged at the seal; a part that
       // is not base64 is refused as a shape rather than sent as whatever `atob` made of it.
       attachments: Array.isArray(body.attachments)
-        ? (body.attachments as Array<Record<string, unknown>>).map((one) => ({
+        ? (body.attachments as unknown[]).map((one) => (typeof one === "object" && one !== null ? one : {}) as Record<string, unknown>).map((one) => ({
           filename: String(one.filename ?? "attachment"),
           contentType: String(one.contentType ?? "application/octet-stream"),
           content: decodeBase64(String(one.contentBase64 ?? "")),
@@ -140,9 +140,9 @@ export const sending = {
       // Absent is a real answer: it means "this mailbox has one address, use it". Only a multi-address
       // mailbox refuses when it is absent, which is what makes adding this field non-breaking.
       senderAddress: body.senderAddress === undefined ? undefined : String(body.senderAddress),
-      to: Array.isArray(body.to) ? (body.to as string[]) : [],
-      cc: Array.isArray(body.cc) ? (body.cc as string[]) : undefined,
-      bcc: Array.isArray(body.bcc) ? (body.bcc as string[]) : undefined,
+      to: addressList(body.to) ?? [],
+      cc: addressList(body.cc),
+      bcc: addressList(body.bcc),
       subject: String(body.subject ?? ""),
       bodyTyped: String(body.body ?? ""),
       // ADR 33 requires this stated rather than inferred. Customer-facing mail is authored, because

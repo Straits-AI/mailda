@@ -779,6 +779,13 @@ export const mailboxRow = z.object({
 
 export const mailboxListResponse = z.object({ mailboxes: z.array(mailboxRow) }).strict();
 
+/** One field, closed: a misspelled `name` would create a mailbox called "" and be refused for that instead. */
+export const createMailboxRequest = z.object({ name: z.string() }).strict().meta({ refusal: "E_MAILBOX_FIELD_UNKNOWN" });
+export const mailboxCreatedResponse = z.object({
+  mailboxId: z.string().regex(idPattern(ID_PREFIXES.mailbox)),
+  name: z.string().min(1),
+}).strict();
+
 /** RFC 8601's result tokens, plus `absent` for a message carrying no header from the receiving server. */
 export const authenticationResult = z.enum([
   "pass", "fail", "softfail", "neutral", "none", "temperror", "permerror", "policy", "absent",

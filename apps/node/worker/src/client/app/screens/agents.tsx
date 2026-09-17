@@ -325,7 +325,7 @@ function Minting({ onMinted }: { onMinted: () => void }) {
         * `POST /api/agents` refuses the same combination. Being stopped here, next to the mailbox list that
         * fixes it, is the difference between a correction and a rejection.
         */}
-      <button
+      <button className="quiet"
         type="submit"
         disabled={name.trim() === "" || chosen.size === 0
           || unmet(capabilities.data?.capabilities ?? [], chosen, reach).length > 0}

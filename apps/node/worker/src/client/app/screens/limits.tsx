@@ -160,7 +160,7 @@ function Pauses() {
             onChange={(event) => setReason(event.target.value)}
           />
         </label>
-        <button
+        <button className="quiet"
           type="button"
           onClick={() => void ask()}
           disabled={domain.trim() === "" || reason.trim() === ""}

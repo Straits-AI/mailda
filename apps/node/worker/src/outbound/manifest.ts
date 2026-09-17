@@ -15,7 +15,7 @@ import { BUTLER_RELEASE_REASON } from "../butler/gate.ts";
 import { domainOf, type Outcome } from "../policy.ts";
 import { stagePolicy } from "../governed.ts";
 import { domainPaused } from "./recheck.ts";
-import { HeaderBlock, normalizeAddress } from "./headers.ts";
+import { HeaderBlock, normalizeAddress, safeFilename } from "./headers.ts";
 import { headerFields, headerBlock, messageIds } from "../mime.ts";
 import { getEvidence } from "../evidence-store.ts";
 
@@ -96,6 +96,13 @@ export interface SendAttachment {
 const MAX_OUTBOUND_BYTES = BUDGETS["email.outbound.max_bytes"];
 /** Room left for headers, the text and the forwarded original: a sized margin, not a measurement. */
 const ATTACHMENT_BUDGET = Math.floor(MAX_OUTBOUND_BYTES * 0.9);
+/** Parts per send. Sized: nobody attaches more by hand, and a count bound is what the byte bound lacks. */
+const MAX_ATTACHMENTS = 20;
+const MEDIA_TYPE = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/;
+function extensionOf(filename: string): string {
+  const match = /\.([A-Za-z0-9]{1,10})$/.exec(filename.replace(/[^\x20-\x7e]/g, ""));
+  return match === null ? "" : `.${match[1]!.toLowerCase()}`;
+}
 
 export interface Composition {
   mailboxId: string;
@@ -427,6 +434,7 @@ export async function readableMessage(
        JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
       WHERE m.org_id = ? AND m.id = ?
+        AND m.quarantined_at IS NULL
         AND a.mailbox_id IN (
           SELECT t.object_id FROM relationship_tuples t
            WHERE t.org_id = ? AND t.subject_id IN (${placeholders})
@@ -538,6 +546,22 @@ export async function sealManifest(
   const to = composition.to.map((address) => normalizeAddress("to", address));
   const cc = (composition.cc ?? []).map((address) => normalizeAddress("cc", address));
   const bcc = (composition.bcc ?? []).map((address) => normalizeAddress("bcc", address));
+  /*
+   * The recipient ceiling, refused here and not at dispatch. Cloudflare's published limit is
+   * `email.max_recipients_per_message` (`cloudflare-email-service-limits.md`), and it was referenced nowhere:
+   * the seal accepted any envelope, wrote a `send_recipients` row per address, and at ninety-six unique
+   * recipients the breaker statement's placeholders passed D1's bound-parameter limit and answered a 500
+   * (the 17 September security audit). AGENTS.md §3 says a limit is a number a person can see.
+   */
+  const recipientCount = to.length + cc.length + bcc.length;
+  if (recipientCount > BUDGETS["email.max_recipients_per_message"]) {
+    throw unprocessable("E_TOO_MANY_RECIPIENTS", {
+      what: `${recipientCount} recipients, over the ${BUDGETS["email.max_recipients_per_message"]} a message may carry`,
+      why: "Cloudflare refuses an outbound message with more (receipt: cloudflare-email-service-limits.md), "
+        + "so the seal refuses first rather than record a send that cannot leave",
+      fix: "split the recipients across messages",
+    });
+  }
 
   const manifestId = ctx.id(ID_PREFIXES.sendManifest);
   const at = new Date(ctx.now()).toISOString();
@@ -731,8 +755,23 @@ export async function sealManifest(
    * they do inbound, and are recorded as such.
    */
   const attachments = composition.attachments ?? [];
+  if (attachments.length > MAX_ATTACHMENTS) {
+    throw unprocessable("E_TOO_MANY_ATTACHMENTS", {
+      what: `${attachments.length} attachments, over the ${MAX_ATTACHMENTS} a send may carry`,
+      why: "each part is an evidence object and a row, and a byte budget alone does not bound the count",
+      fix: "attach fewer files, or an archive",
+    });
+  }
   const judged = attachments.map((one, ordinal) => ({
-    ...one, ordinal, verdict: classifyAttachment(one.filename, one.content.subarray(0, 8)),
+    ...one,
+    ordinal,
+    // The media type is a token/token (RFC 2045 §5.1) or it is `application/octet-stream`; the name goes
+    // through `safeFilename` so a quote, a backslash or a control byte cannot reach the MIME parameter.
+    // Both were interpolated raw (the 17 September audit): no header injection, since `HeaderBlock` refuses
+    // CR/LF, but a malformed part a recipient's client resolves however it likes.
+    contentType: MEDIA_TYPE.test(one.contentType) ? one.contentType.toLowerCase() : "application/octet-stream",
+    filename: safeFilename(one.filename.replace(/\.[^.]*$/, ""), extensionOf(one.filename)),
+    verdict: classifyAttachment(one.filename, one.content.subarray(0, 8)),
   }));
   const dangerous = judged.filter((one) => DANGEROUS.has(one.verdict));
   if (dangerous.length > 0) {
@@ -1112,9 +1151,10 @@ export async function renderRfc822(
     }
     attachmentParts.push(
       new HeaderBlock()
-        .add("Content-Type", `${part.content_type}; name="${part.filename.replaceAll('"', "")}"`)
+        // Both values were validated at the seal (`MEDIA_TYPE`, `safeFilename`) and stored so; rendered as stored.
+        .add("Content-Type", `${part.content_type}; name="${part.filename}"`)
         .add("Content-Transfer-Encoding", "base64")
-        .add("Content-Disposition", `attachment; filename="${part.filename.replaceAll('"', "")}"`)
+        .add("Content-Disposition", `attachment; filename="${part.filename}"`)
         .bytes(base64Lines(bytes)),
     );
   }

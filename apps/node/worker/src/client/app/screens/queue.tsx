@@ -392,7 +392,7 @@ export function Queue() {
         policy editor: the condition is fixed — the sender's own domain said the message is not theirs and
         asked receivers to act — and the only decision a mailbox makes is whether to listen.
       */}
-      <p className="notice dim queue-target">
+      <div className="notice dim queue-switches">
         <label className="case-pick">
           <input
             type="checkbox"
@@ -412,9 +412,9 @@ export function Queue() {
           <span>Hold back a delivery carrying an executable, a script, or a program under a document's name.</span>
         </label>
         {current !== undefined && current.quarantined > 0 ? (
-          <span className="state clock-due queue-breached">{current.quarantined} held</span>
+          <span className="state clock-due">{current.quarantined} held</span>
         ) : null}
-      </p>
+      </div>
 
       {current !== undefined && current.quarantined > 0 ? (
         quarantine.isError ? (
@@ -483,6 +483,7 @@ export function Queue() {
       ) : cases.data.cases.length === 0 ? (
         <Nothing kind="empty" detail="Nothing waiting in this queue." />
       ) : (
+        <div className="scroller">
         <table className="queue-table">
           <thead>
             <tr>
@@ -511,6 +512,7 @@ export function Queue() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   );

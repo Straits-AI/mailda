@@ -290,6 +290,30 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     expect(count?.n).toBe(0);
   });
 
+  it("refuses more parts than a send may carry, and normalises a part's media type and name at the seal", async () => {
+    const many = Array.from({ length: 21 }, (_, i) => ({ filename: `f${i}.txt`, contentType: "text/plain", content: utf8("x") }));
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, attachments: many }))
+      .rejects.toThrow(/E_TOO_MANY_ATTACHMENTS/);
+    // A media type that is not token/token becomes octet-stream; a name with a quote, a backslash or a
+    // control byte reaches the row already safe — the MIME parameter is rendered from the row, verbatim.
+    const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+      ...composition,
+      attachments: [{ filename: 'inv"oice\\.PDF\u0007', contentType: "text/plain; charset=\"x\"\r\nX: y", content: utf8("%PDF-1.7") }],
+    });
+    const row = await testEnv.CATALOG.prepare("SELECT filename, content_type FROM send_attachments WHERE manifest_id = ?")
+      .bind(sealed.id).first<{ filename: string; content_type: string }>();
+    expect(row).toEqual({ filename: "inv_oice_.pdf", content_type: "application/octet-stream" });
+  });
+
+  it("refuses more recipients than Cloudflare accepts on a message, before anything is written", async () => {
+    const to = Array.from({ length: 51 }, (_, i) => `r${i}@example.net`);
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, to })).rejects.toThrow(/E_TOO_MANY_RECIPIENTS/);
+    const rows = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM send_manifests").first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+    // One below the ceiling seals: the bound is Cloudflare's 50, not something narrower.
+    await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, to: to.slice(0, 50) })).resolves.toBeDefined();
+  });
+
   it("refuses attachments over the published outbound ceiling before storing anything", async () => {
     const big = new Uint8Array(BUDGETS["email.outbound.max_bytes"]);
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, {

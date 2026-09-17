@@ -547,6 +547,10 @@ export const AUDIT_ACTIONS = {
    * Node on the mailbox's standing instruction, in the same batch as the filing, so a message a person will
    * not see until somebody looks is never a message with no entry saying where it went.
    */
+  /** A second mailbox, by an administrator (17 September 2026). The creator's two relations ride in the same batch. */
+  "mailbox.created": {
+    says: "An administrator created a mailbox, named, and was granted read and send on it.",
+  },
   /** The per-mailbox switch behind `message.quarantined`: who turned it on or off, and from what. */
   "mailbox.quarantine_set": {
     says: "An administrator changed whether a mailbox holds back deliveries whose From domain disowned them.",

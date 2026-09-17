@@ -10,7 +10,7 @@ import { mergeConversations } from "../merge.ts";
 import { setResponseTarget } from "../mailbox-policy.ts";
 import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
 import { safeFilename } from "../outbound/headers.ts";
-import { isId, notFound } from "./support.ts";
+import { addressList, isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
 
 export const mail = {
@@ -43,9 +43,9 @@ export const mail = {
           body.inReplyToMessageId === undefined || body.inReplyToMessageId === null
             ? null
             : String(body.inReplyToMessageId),
-        to: Array.isArray(body.to) ? (body.to as string[]) : [],
-        cc: Array.isArray(body.cc) ? (body.cc as string[]) : undefined,
-        bcc: Array.isArray(body.bcc) ? (body.bcc as string[]) : undefined,
+        to: addressList(body.to) ?? [],
+        cc: addressList(body.cc),
+        bcc: addressList(body.bcc),
         subject: String(body.subject ?? ""),
         body: String(body.body ?? ""),
       },
@@ -105,6 +105,12 @@ export const mail = {
   "POST /api/quarantine/:messageId/release": async ({ env, clock, params, who }) => {
     const { releaseQuarantine } = await import("../quarantine.ts");
     return Response.json(await releaseQuarantine(env, clock, who.orgId, who.userId, params.messageId));
+  },
+
+  "POST /api/mailboxes": async ({ request, env, clock, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { createMailbox } = await import("../mailboxes.ts");
+    return Response.json(await createMailbox(env, clock, who.orgId, who.userId, String(body.name ?? "")));
   },
 
   "PATCH /api/mailboxes/:mailboxId": async ({ request, env, clock, params, who }) => {

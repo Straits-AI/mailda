@@ -114,7 +114,7 @@ export function Matters() {
               onChange={(event) => setDescription(event.target.value)}
             />
           </label>
-          <button
+          <button className="quiet"
             type="button"
             disabled={description.trim() === ""}
             onClick={() => void run(
@@ -207,7 +207,7 @@ export function Matters() {
               ))}
             </select>
           </label>
-          <button
+          <button className="quiet"
             type="button"
             disabled={holdMailbox === ""}
             onClick={() => void run(
@@ -312,7 +312,7 @@ export function Matters() {
               ))}
             </select>
           </label>
-          <button
+          <button className="quiet"
             type="button"
             disabled={readMailbox === ""}
             onClick={() => void run(

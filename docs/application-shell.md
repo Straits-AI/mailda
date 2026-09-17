@@ -418,7 +418,8 @@ shipping deliberately without it.
   a half-written sentence about a customer.
 - **One draft per reply**, enforced by a partial unique index, so replying twice resumes instead of forking
   and leaving the first to rot. The index is partial because SQLite treats every NULL as distinct: as many
-  unrelated new messages as somebody likes.
+  unrelated new messages as somebody likes — and those are **not** resumed: the composer looks a draft up by
+  the message it replies to, and a new message has none. `GET /api/drafts` lists them; no screen does yet.
 - **A save that changes nothing writes nothing.** `updated_at` is shown as "saved on your node · HH:MM:SS",
   so it has to mean when the draft last *changed*, not when somebody last opened it. Guarded in
   `saveDraft` — the layer that owns the column — as well as in the composer.

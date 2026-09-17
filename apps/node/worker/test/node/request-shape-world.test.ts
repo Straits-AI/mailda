@@ -85,6 +85,7 @@ describe("every closed set the contract declares is a closed set the boundary en
        * the wrong reason and tells the caller nothing about the typo.
        */
       "POST /api/agents",
+      "POST /api/mailboxes",
       "POST /api/policies",
       "PUT /api/policies/:policyId/draft",
       /*
@@ -328,7 +329,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       }
     }
     expect(strict.sort()).toEqual([
-      "POST /api/agents", "POST /api/policies", "POST /api/provider/authorize",
+      "POST /api/agents", "POST /api/mailboxes", "POST /api/policies", "POST /api/provider/authorize",
       "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/sending", "POST /api/provider/subscription", "POST /api/search/repair",

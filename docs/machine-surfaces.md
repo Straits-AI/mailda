@@ -19,7 +19,7 @@ would come to disagree about which acts are safe, which is the worst thing they 
 | `read` | yes | answers a question, changes nothing | 40 |
 | `act` | yes | changes something, and a person can undo it | 9 |
 | `governed` | **no** | needs more than one person, or cannot be undone | 32 |
-| `operator` | **no** | installation, credentials, maintenance | 53 |
+| `operator` | **no** | installation, credentials, maintenance | 54 |
 | `surface` | **no** | the machine surface itself | 1 |
 
 These counts are checked against `exposureOf` by `test/node/agent-exposure-world.test.ts`, which was added
@@ -32,7 +32,7 @@ this route — and it is asked in `authority.ts` rather than here:
 
 | withheld by | how many | example |
 |:--|--:|:--|
-| the tier | 86 | `POST /api/sends` — sealing a send is the one act nobody can undo |
+| the tier | 87 | `POST /api/sends` — sealing a send is the one act nobody can undo |
 | `org.admin`, which no mint confers | 22 | `GET /api/people`, `POST /api/butlers` |
 | a filter no machine can satisfy | 2 | `GET /api/approvals` and `GET /api/auth/passkeys` — 200, and an empty list, for ever |
 | requester-owned | 1 | `GET /api/exports/:exportId/objects/:objectId` |

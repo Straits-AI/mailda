@@ -164,6 +164,22 @@ describe("token contrast (WCAG 2.2 AA)", () => {
     }
   });
 
+  it("gives the primary button a fill its own label clears AA on", () => {
+    /*
+     * The 17 September axe run: `.primary` was --ground on --accent, 4.10 in the light theme — a label is
+     * read, and the fill under it is the token the fill rule above declares safe only at 3:1. The fill is
+     * --accent-text now, and this is the pair the run measured, pinned so it cannot go back.
+     */
+    for (const scope of ["dark", "light"] as const) {
+      const fill = hex(token("accent-text", scope));
+      const label = hex(token("ground", scope));
+      expect(contrast(label, fill), `the ${scope} primary button's label fails AA on its fill`)
+        .toBeGreaterThanOrEqual(AA_NORMAL);
+    }
+    // And the defect, stated: the brand fill alone does not carry a label in the light theme.
+    expect(contrast(hex(token("ground", "light")), hex(token("accent", "light")))).toBeLessThan(AA_NORMAL);
+  });
+
   it("matches the accent ratios the receipt recorded", () => {
     const round = (n: number) => Math.round(n * 100);
     expect(round(worstSolid("accent-text", "light"))).toBe(BUDGETS["contrast.accent_text_light_worst"]);
@@ -223,6 +239,9 @@ describe("the rail's own surface, and the edge of a control", () => {
       // inheriting the light theme's, where they are tuned against Mist.
       expect(againstRail("rail-accent", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
       expect(againstRail("rail-live", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+      // The "unparsed" chip: --alarm reads 2.68 on Ink (axe, 17 September), so the rail has its own.
+      expect(againstRail("rail-alarm", scope)).toBeGreaterThanOrEqual(AA_NORMAL);
+      expect(contrast(hex(token("alarm", "light")), hex(token(RAIL, "light")))).toBeLessThan(AA_NORMAL);
     });
 
     it(`the ${scope} control edge clears 3:1 on every ground a control sits on`, () => {

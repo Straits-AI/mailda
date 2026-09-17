@@ -499,7 +499,7 @@ function SendingCredentials() {
         no route returns it — to change it, supply a new one.
       </p>
       <p>
-        <button
+        <button className="quiet"
           type="button"
           onClick={() => void save()}
           disabled={busy || accountId.trim() === "" || apiToken === ""}
