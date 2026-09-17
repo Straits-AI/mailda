@@ -2,19 +2,46 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-08-29
+re_measured_on: 2026-09-17
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
   measurement in this file, or D1's per-database ceiling moves from 10 GB
 values:
-  message.metadata.bytes_per_message: 1649
-  message.metadata.bytes_per_extra_delivery: 410
-  shard.plan_warn_messages: 4558030
-  shard.plan_stop_messages: 5534751
-  shard.plan_route_messages: 5860325
+  message.metadata.bytes_per_message: 1788
+  message.metadata.bytes_per_extra_delivery: 408
+  shard.plan_warn_messages: 4203687
+  shard.plan_stop_messages: 5104477
+  shard.plan_route_messages: 5404740
 ---
 
+
+## Re-measured 17 September 2026: authentication results, and the first columns that cost what they hold
+
+Migration 0055 adds five nullable TEXT columns to `messages` — `auth_spf`, `auth_dkim`, `auth_dmarc`,
+`auth_dmarc_policy`, `auth_from_domain` — and no index. **1,787.9 bytes per message, up from 1,648.6**; an
+extra delivery unchanged at 407.6. Re-measured against real remote D1 *before* this constant moved, as every
+round insists, with the columns populated the way a real inbound row is: three `pass`, a `none`, and the
+sender's domain.
+
+| stage | reported | previous round |
+|:--|--:|--:|
+| schema only, 2 tables, 9 indexes | 61,440 | 61,440 |
+| + 2,000 messages, 1 delivery each | 3,645,440 | 3,366,912 |
+| + 2,000 more messages | 7,221,248 | 6,664,192 |
+| + 2,000 extra deliveries | 8,036,352 | 7,479,296 |
+
+**139 bytes a message, and this time it is payload.** The two rounds before this one added columns that hid
+in page slack — NULLs and integer zeros cost a serial type in the record header and nothing else. These
+five carry text on every row (`pass`, `pass`, `pass`, `none`, a domain), about 35 bytes of content plus
+five serial types, and 2,000 rows of that no longer fit in the ~830 bytes of slack two rows shared. Once the
+slack is spent the *whole* record's overhead shows, which is why the marginal figure moved by more than the
+content. The receipt's own earlier warning — *"fits in space already paid for" is not "nullable columns are
+free"* — is what this round measured.
+
+A shard now holds **6,005,267 messages** rather than 6.5 million; the three thresholds below are re-derived
+from 1,788. Worth 139 bytes: this is the deterministic half of mail security, and the alternative was a row
+in another table joined on every listing, which the listing's own receipt prices higher than a wider row.
 
 ## Re-measured 29 August 2026: the body-index lease, and the figure held
 
@@ -272,18 +299,18 @@ ULIDs at their true 30-character width (#6). 20 mailboxes, quarterly time bucket
 elsewhere at 90% — three numbers that until now had no measurement behind them. Against
 D1's 10 GB per-database ceiling (receipt: `d1-platform-limits`):
 
-Divisor: **1,649 bytes per message**, from the 28 August measurement above. Every figure in this table is
+Divisor: **1,788 bytes per message**, from the 17 September measurement above. Every figure in this table is
 that ceiling divided by that number, so it can be checked in one line.
 
 | Threshold | Bytes | Messages |
 |---|---:|---:|
-| Shard capacity | 10,737,418,240 | 6,511,472 |
-| 70% — warn and plan the next shard | 7,516,192,768 | **4,558,030** |
-| 85% — stop optional bulky projections | 9,126,805,504 | **5,534,751** |
-| 90% — route new metadata to a new shard | 9,663,676,416 | **5,860,325** |
+| Shard capacity | 10,737,418,240 | 6,005,267 |
+| 70% — warn and plan the next shard | 7,516,192,768 | **4,203,687** |
+| 85% — stop optional bulky projections | 9,126,805,504 | **5,104,477** |
+| 90% — route new metadata to a new shard | 9,663,676,416 | **5,404,740** |
 
-**A single shard holds roughly 6.5 million messages** — down from 7.1 million after threading, and from 8.5
-million before it. For most organisations that is still years of mail, which remains the useful
+**A single shard holds roughly 6 million messages** — down from 6.5 million before authentication results,
+7.1 million after threading, and 8.5 million before it. For most organisations that is still years of mail, which remains the useful
 thing to know: sharding is not a day-one problem, and the planner should say so rather than
 implying it is imminent. But the direction matters. **Two indexes cost 1.4 million messages
 of headroom**, so the next projection added to this table is not free either, and §11B's

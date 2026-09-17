@@ -5,7 +5,8 @@ import { conversationForDelivery } from "./conversations.ts";
 import { caseForDelivery } from "./cases.ts";
 import { clockOnInbound } from "./response-clock.ts";
 import { bucketFor } from "./ingress.ts";
-import { parseHeaders } from "./mime.ts";
+import { headerBlock, headerFields, parseHeaders } from "./mime.ts";
+import { authenticationOf, type AuthenticationVerdict } from "./authentication-results.ts";
 import { log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
 import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
@@ -84,8 +85,12 @@ export async function materialiseReceipt(
 
   let parseError: string | undefined;
   let headers;
+  let verdict: AuthenticationVerdict | null = null;
   try {
     headers = parseHeaders(raw);
+    // The receiving server's word on the sender (0055). Read from the same header block, so it costs no
+    // second pass over the bytes; a message with no header from that server stores `absent` on every method.
+    verdict = authenticationOf(headerFields(headerBlock(raw)));
   } catch (error) {
     // Defensive: the parser is written not to throw, and if it ever does the message still gets a row.
     parseError = `E_HEADERS_UNPARSED  ${(error as Error).message.split("\n")[0]}`;
@@ -140,8 +145,9 @@ export async function materialiseReceipt(
       `INSERT OR IGNORE INTO messages
          (id, org_id, time_bucket, blob_key, blob_sha256, blob_bytes, rfc_message_id, thread_id,
           subject, from_addr, sent_at, received_at, ingress_receipt_id, created_at,
-          in_reply_to, thread_root_rfc_id, parse_error, conversation_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          in_reply_to, thread_root_rfc_id, parse_error, conversation_id,
+          auth_spf, auth_dkim, auth_dmarc, auth_dmarc_policy, auth_from_domain)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       messageId, receipt.org_id, timeBucket, receipt.blob_key, receipt.blob_sha256, receipt.raw_bytes,
       rfcMessageId,
@@ -152,6 +158,9 @@ export async function materialiseReceipt(
       ctx.id("thr"),
       headers.subject, headers.from, sentAtValue, receipt.accepted_at, receipt.id, at,
       headers.inReplyTo, threadRoot, parseError ?? null, conversationId,
+      // NULL when the header block could not be read at all — "nobody looked", distinct from `absent`.
+      verdict?.spf ?? null, verdict?.dkim ?? null, verdict?.dmarc ?? null,
+      verdict?.dmarcPolicy ?? null, verdict?.fromDomain ?? null,
     ),
     /*
      * The search index, immediately after the row it is derived from and inside the same batch (#107).

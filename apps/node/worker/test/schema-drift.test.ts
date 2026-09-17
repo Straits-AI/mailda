@@ -87,6 +87,13 @@ const MEASURED_SHAPE = {
        * `test/node/byte-measurement-corpus.test.ts` now compares the script's schema against this constant.
        */
       "body_index_lease_until", "body_index_attempt_version",
+      /*
+       * Added by migration 0055 (authentication results). Re-measured against real remote D1 on 17 September
+       * 2026 *before* this constant was touched — and the figure moved by more than any round before it:
+       * 1,649 → 1,788 bytes per message. These five carry text on every row, and once two rows' page slack is
+       * spent the whole record's overhead shows. The receipt's own warning, measured.
+       */
+      "auth_spf", "auth_dkim", "auth_dmarc", "auth_dmarc_policy", "auth_from_domain",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",
@@ -129,11 +136,11 @@ describe("message metadata schema drift (#12)", () => {
     });
   }
 
-  it("explains what to do when it fails", () => {
-    // If the assertions above fail, the schema moved and
-    // docs/receipts/message-metadata-bytes.md is stale. Re-run the remote measurement
-    // documented in that receipt, update its `values`, run `pnpm receipts`, then update
-    // MEASURED_SHAPE here. Do not just edit the constant.
-    expect(true).toBe(true);
-  });
+  /*
+   * If the assertions above fail, the schema moved and docs/receipts/message-metadata-bytes.md is stale.
+   * Re-run the remote measurement documented in that receipt (`scripts/measure-message-bytes.mjs`), update
+   * its `values`, run `pnpm receipts`, then update MEASURED_SHAPE here. Do not just edit the constant.
+   * (This used to be an `it` whose only assertion was `expect(true).toBe(true)` — a test that cannot fail,
+   * carrying a comment. The comment stays; the test does not.)
+   */
 });

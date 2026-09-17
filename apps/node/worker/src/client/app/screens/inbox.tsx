@@ -357,6 +357,48 @@ function StartMessage({ onStart }: { onStart: (mailboxId: string) => void }) {
   );
 }
 
+/**
+ * What the receiving server established about the sender, in one line a person can act on.
+ *
+ * DMARC is the verdict that matters — it is the sender's own domain saying whether this message is theirs —
+ * so it leads; SPF and DKIM are the evidence beneath it. `none` is most of the internet (the domain
+ * publishes no policy) and is said plainly rather than as a warning, so the warning that matters — a `fail`
+ * against a domain that asked for `reject` — is the only red thing here. A message from before this Node
+ * evaluated authentication says so, rather than reading as clean.
+ */
+function Authenticated({ message }: { message: MessageRow }) {
+  if (message.auth_dmarc === null) {
+    return <span className="dim">not evaluated — this message arrived before this Node checked senders</span>;
+  }
+  if (message.auth_dmarc === "absent") {
+    return <span className="dim">no authentication header from the receiving server</span>;
+  }
+  const evidence = `spf ${message.auth_spf ?? "absent"}, dkim ${message.auth_dkim ?? "absent"}`;
+  if (message.auth_dmarc === "pass") {
+    return (
+      <span>
+        <span className="mono">{message.auth_from_domain ?? "the From domain"}</span> vouches for this message
+        (dmarc pass; {evidence})
+      </span>
+    );
+  }
+  if (message.auth_dmarc === "fail") {
+    return (
+      <span className="bad" role="alert">
+        <span className="mono">{message.auth_from_domain ?? "the From domain"}</span> says this message is
+        not theirs (dmarc fail; {evidence}
+        {message.auth_dmarc_policy === null ? "" : `; the domain asks receivers to ${message.auth_dmarc_policy}`})
+      </span>
+    );
+  }
+  return (
+    <span className="dim">
+      {message.auth_from_domain === null ? "the From domain" : message.auth_from_domain} publishes no policy
+      (dmarc {message.auth_dmarc}; {evidence})
+    </span>
+  );
+}
+
 function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () => void }) {
   return (
     <article className="reading-pane" aria-label="Message">
@@ -370,6 +412,8 @@ function ReadingPane({ message, onReply }: { message: MessageRow; onReply: () =>
         <dd className="mono">{message.envelope_to}</dd>
         <dt>accepted</dt>
         <dd className="mono">{received(message.accepted_at)}</dd>
+        <dt>sender</dt>
+        <dd><Authenticated message={message} /></dd>
         <dt>original</dt>
         <dd>
           {/* The bytes as they arrived. §12's whole point is that this is producible, so it is a link

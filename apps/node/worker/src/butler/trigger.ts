@@ -116,6 +116,15 @@ export type DeliveryFacts = {
   readonly received_at: string;
   /** Non-null when the message's headers could not be read. §24 keeps such a message, visibly unparsed. */
   readonly parse_error: string | null;
+  /**
+   * What the receiving server established about the sender (0055), as RFC 8601's words — `pass`, `fail`,
+   * `none`, … — or `absent` when it wrote no header, or null on a message from before this Node evaluated
+   * it. Operational rather than content: a verdict about a domain, not a word of the message. This is the
+   * fact a guard reads to route a `dmarc == "fail"` message somewhere a person looks first.
+   */
+  readonly dmarc: string | null;
+  readonly spf: string | null;
+  readonly dkim: string | null;
 };
 
 /**
@@ -167,6 +176,9 @@ export const FACT_DISCLOSURE: { [K in keyof DeliveryFacts]: "content" | "operati
   mailbox_id: "operational",
   mailbox_address: "operational",
   received_at: "operational",
+  dmarc: "operational",
+  spf: "operational",
+  dkim: "operational",
   subject: "content",
   from: "content",
   return_path: "content",
@@ -277,6 +289,7 @@ export async function deliveryFacts(
 ): Promise<DeliveryFacts | null> {
   const row = await env.CATALOG.prepare(
     `SELECT m.id AS message_id, m.conversation_id, m.subject, m.from_addr, m.received_at, m.parse_error,
+            m.auth_dmarc, m.auth_spf, m.auth_dkim,
             r.envelope_from, a.mailbox_id, a.address AS mailbox_address, k.id AS case_id
        FROM messages m
        JOIN ingress_receipts r ON r.org_id = m.org_id AND r.id = m.ingress_receipt_id
@@ -288,6 +301,7 @@ export async function deliveryFacts(
     message_id: string; conversation_id: string | null; subject: string | null; from_addr: string | null;
     envelope_from: string | null; received_at: string; parse_error: string | null; mailbox_id: string;
     mailbox_address: string; case_id: string | null;
+    auth_dmarc: string | null; auth_spf: string | null; auth_dkim: string | null;
   }>();
   if (row === null) return null;
   return {
@@ -307,6 +321,9 @@ export async function deliveryFacts(
     return_path: row.envelope_from ?? "",
     received_at: row.received_at,
     parse_error: row.parse_error,
+    dmarc: row.auth_dmarc,
+    spf: row.auth_spf,
+    dkim: row.auth_dkim,
   };
 }
 

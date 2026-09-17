@@ -363,6 +363,12 @@ const FIGURES: Record<string, Classification> = {
     "routing.rule_accepted_for_unonboarded_subdomain", "routing.rule_creates_subdomain_records",
   ),
 
+  // docs/receipts/email-authentication-results.md
+  ...bothPlans(
+    "what the receiving MX writes on every inbound message; a behaviour of Email Routing, which no plan varies",
+    "inbound.authentication_results_written", "inbound.authentication_methods_reported",
+  ),
+
   // docs/receipts/email-sending-events.md
   ...bothPlans(
     "the shape of the event stream and what one event carries; a schema, which no plan varies",
