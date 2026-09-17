@@ -13,14 +13,14 @@ expiry, and [#160][160] for the gate.
 
 ## The gate, and what it deliberately leaves to its caller
 
-`stagePolicy` in `src/governed.ts` is the sequence an act passes through to be governed: `evaluate`, then —
-only if a version required approval — `requiredStages`, `decidersOf`, `rostersOf` and `planApproval`, folded in
+`stagePolicy` in `src/governed.ts` is the sequence an act passes through to be governed: `evaluate`, then,
+only if a version required approval, `requiredStages`, `decidersOf`, `rostersOf` and `planApproval`, folded in
 that order. It returns a decision plus **the approval's rows for the caller's transaction**, and writes
 nothing itself. That is `planApproval`'s reason carried up one level: the approval and the act it gates are one
 act, so a gate that wrote its own rows would make a half-gated act representable.
 
 It exists because #160 found `requiredStages` had **exactly one caller**. Policy was not a plane acts pass
-through, it was a step inside a send's sealing — correct while sends were the only governed act, and a
+through, it was a step inside a send's sealing. Correct while sends were the only governed act, and a
 correspondence to maintain by hand the moment there was a second one. The lift removes a future duplication
 rather than adding an abstraction now, and `src/outbound/manifest.ts` calls it where those five calls used to
 be inline.
@@ -28,7 +28,7 @@ be inline.
 Three things stay with the caller, and each is a decision rather than an omission:
 
 - **The conditions.** `evaluate` takes `SendFacts`, and `policy_versions`' `when_*` columns are send-shaped. A
-  second governed act either fits them or #60's policy object needs new conditions — which is a decision about
+  second governed act either fits them or #60's policy object needs new conditions, which is a decision about
   what a policy may *say*, not something to pre-build.
 - **The breakers.** The domain pause, the rate gate and #50's Butler release fold in *after* the gate, in the
   total order `sealManifest` documents. They are properties of a send: a label has no recipient domain to pause.
@@ -36,7 +36,7 @@ Three things stay with the caller, and each is a decision rather than an omissio
   `(subject_kind, subject_id)` and does not offer to store an act for you.
 
 `subjectKind` is typed `ApprovalSubjectKind`, not `string`, and that is the point of the type rather than a
-nicety — governing a new act *requires* declaring it in `APPROVAL_SUBJECT_KINDS` beside the five that exist.
+nicety. Governing a new act *requires* declaring it in `APPROVAL_SUBJECT_KINDS` beside the five that exist.
 Widening it would let an act be governed without ever being classified, which is the generic subject 0021
 refused.
 
@@ -47,46 +47,46 @@ An approval decides on a **subject**: `(subject_kind, subject_id)`, unique over 
 | Kind | The subject is | Completion does | Stages come from | Approvers |
 |:--|:--|:--|:--|:--|
 | `send_manifest` | a `send_manifests` row | releases the send to `held` | the fold over every matching `require_approval` policy version | `approval.decide` on the mailbox |
-| `hold_lift` | a `hold_lifts` row — one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's | `approval.decide` on the held mailbox |
+| `hold_lift` | a `hold_lifts` row, one request to lift one legal hold | applies the lift: `lifted_at`, `lifted_reason`, `lift_id` | `[2]`, which is [#64][64]'s decision and not a policy's | `approval.decide` on the held mailbox |
 | `supervised_read` | a `supervised_grants` row | sets `granted_at` and owes §7's notice | `[2]` ([#63][63]) | `approval.decide` on the mailbox being read |
 | `ediscovery_export` | an `exports` row | makes the run permissible | `[2]` ([#65][65]) | `approval.decide` on the mailbox being copied |
-| `domain_pause` | a `domain_pauses` row | sets `placed_at` — **stops every send from a domain** | `[2]` ([#66][66]) | **`org.admin` on the organization** |
+| `domain_pause` | a `domain_pauses` row | sets `placed_at`; **stops every send from a domain** | `[2]` ([#66][66]) | **`org.admin` on the organization** |
 
-It shipped manifest-shaped — `manifest_id TEXT NOT NULL`, `UNIQUE (manifest_id)` — and the lift was the second
+It shipped manifest-shaped (`manifest_id TEXT NOT NULL`, `UNIQUE (manifest_id)`), and the lift was the second
 caller, which found that on its first day. The two alternatives lose for the same reason in two directions: a
 nullable `hold_id` beside `manifest_id` starts a column per subject kind and makes *which subject* a question
 nothing validates, and a separate `hold_lift_approvals` table duplicates the fold, the eligible set and the
-conditional completion — **and all three of [#61][61]'s defects were in that last one**, so a second copy is a
+conditional completion, **and all three of [#61][61]'s defects were in that last one**, so a second copy is a
 second place for them.
 
 **A lift's subject is the request, not the hold**, and that is what keeps the index a full `UNIQUE` rather than
 a partial one over pending rows. Asking again has to have a representation: a send re-seals and mints a new
 manifest id, a refused lift mints a new `hold_lifts` row. Had the subject been the hold id, one denial would
-have made that hold unliftable for ever — [#64][64]'s operational trap arriving through the schema.
+have made that hold unliftable for ever, [#64][64]'s operational trap arriving through the schema.
 
 Two columns carry across every kind, checked rather than assumed:
 
 - **`scope_id`** was `mailbox_id` until [#66][66], and the rename is the point rather than tidying. It always
-  meant *the object whose relation-holders are eligible to decide* — the mailbox a message is from, the *held*
+  meant *the object whose relation-holders are eligible to decide*: the mailbox a message is from, the *held*
   mailbox, the mailbox being read or copied. A domain pause has no mailbox, so it carries the organization
   instead, and a column named `mailbox_id` holding an organization id is the overclaiming name AGENTS.md calls
   a landmine: the join to `mailboxes` returns nothing, and a join that returns nothing is the one nobody
-  notices. **Which relation on which object is not a column** — it is `SCOPE_OF`, a total map keyed on the
+  notices. **Which relation on which object is not a column**. It is `SCOPE_OF`, a total map keyed on the
   subject-kind union, so a sixth kind is a compile error until it says where its approvers come from.
 - **`actor_user_id`** was `author_user_id`. It always meant *the person whose act this approval gates, and
-  therefore the one person who may never decide it* — the author of the send, the requester of the lift. A lift
+  therefore the one person who may never decide it*: the author of the send, the requester of the lift. A lift
   has no author, and a name that overclaims by one word is how a reader is handed a landmine.
 
 One caller-visible consequence: the refusal for deciding your own is `E_APPROVER_IS_ACTOR`, renamed from
-`E_APPROVER_IS_AUTHOR`, and its `what` is per subject kind — *"you composed this send"* against
+`E_APPROVER_IS_AUTHOR`, and its `what` is per subject kind: *"you composed this send"* against
 *"you requested this hold lift"*. A `Record` keyed on the kind means a new subject is a compile error rather
 than a sentence about the wrong act.
 
-A subject kind with **no mailbox at all** — §18 names domain and routing changes — was left open by 0021 as a
+A subject kind with **no mailbox at all** (§18 names domain and routing changes) was left open by 0021 as a
 real question, on exactly these terms: *"that kind either names a mailbox or brings a second source for its
 eligible set, and that is its ticket's work."* [#66][66]'s domain pause is that kind, and it brought the second
 source: `adminsOf` in `src/deciders.ts`, the `org.admin` holders on the organization, resolved through teams
-and de-duplicated on the person. A nullable `scope_id` is still refused, for 0021's reason — eligibility would
+and de-duplicated on the person. A nullable `scope_id` is still refused, for 0021's reason: eligibility would
 become a question nothing validates.
 
 `subject_kind` carries **no CHECK constraint**, and that is stated rather than implied: SQLite cannot add one
@@ -116,12 +116,12 @@ replaced by any single approver, in a rule whose author believed they had writte
 `E_POLICY_STAGE_FIELD_UNKNOWN` and it names the three fields that exist. `teamId` is accepted as a spelling of
 `team` because the route always accepted both.
 
-One qualification, because the sentence above was unqualified and the behaviour is not. A stage is a union —
-a bare number, or an object — and an unknown key is reported only from a branch that failed on *nothing else*.
+One qualification, because the sentence above was unqualified and the behaviour is not. A stage is a union,
+a bare number or an object, and an unknown key is reported only from a branch that failed on *nothing else*.
 So `{count: 1, teem: finance}` is refused by name, and `{count: "one", teem: finance}` is refused for the
 `count` instead: the object branch failed on a type as well, and a branch that never described the value
 should not be reporting which fields it lacks. The caller fixes `count`, resubmits, and then hears about
-`teem`. Two round trips rather than one, and no version of it accepts the stage quietly — which is the
+`teem`. Two round trips rather than one, and no version of it accepts the stage quietly, which is the
 property that matters. The same one-position-at-a-time limit is why a body with unknown keys in two places
 names the first.
 
@@ -129,7 +129,7 @@ names the first.
 defined by a relation has no natural sequence, and naming people in a policy would widen authority. Each
 stage's membership stays derived from relations; only the stages are ordered.
 
-A `require_approval` version with **no stage rows** means one stage of count 1 — one decision by somebody other
+A `require_approval` version with **no stage rows** means one stage of count 1: one decision by somebody other
 than the author, which is the least the words can mean, and which is also what every version published before
 migration 0020 means. Writing `[1]` explicitly normalises to the same thing, so one rule has exactly one stored
 form.
@@ -145,8 +145,8 @@ eligible(stage)    = approval.decide holders on the approval's mailbox
 
 **The team term is an intersection, and that is load-bearing rather than incidental.** It can only ever remove
 people, so Layer 5's may-narrow-never-widen rule survives whole: naming a team makes a stage harder to fill and
-can never make somebody eligible who holds no relation. A team id naming nothing resolves to the **empty** set —
-the restrictive answer for the unclassified input — so a stage naming a team that has ceased to exist refuses
+can never make somebody eligible who holds no relation. A team id naming nothing resolves to the **empty** set,
+the restrictive answer for the unclassified input, so a stage naming a team that has ceased to exist refuses
 rather than passes.
 
 `approval.decide` is a relation on the **mailbox** (`src/access.ts`), grantable by an administrator like any
@@ -154,7 +154,7 @@ other. It is not implied by `org.admin` and not implied by `send.propose`: the f
 administrator an approver, and the second would make every author an approver of their own mailbox.
 
 **Distinctness is measured on `user_id`, not on tuples.** `readableSubjects` authorizes a principal as
-`[userId, ...teamIds]`, so a relation can be held through a team — which means the holder set is a set of
+`[userId, ...teamIds]`, so a relation can be held through a team, which means the holder set is a set of
 *tuples* while a decider is a *person*. One person in two teams that both hold `approval.decide` would satisfy
 a count of 2 if the count were taken at the tuple layer. Two things stop it:
 
@@ -180,23 +180,23 @@ misspelled id and a real team on a quiet week need opposite answers. `E_NO_SUCH_
 
 **A stage freezes the team's id and deliberately not its members.** Membership is authority and §7 makes
 authority live, so somebody who leaves a team stops being able to decide on their next request rather than on
-the next send — which is why the decision is a third check rather than a courtesy.
+the next send, which is why the decision is a third check rather than a courtesy.
 
 Publication-only was rejected. Revoking `approval.decide` would then make a live policy unsatisfiable
-**silently**, and gated sends would collect in `awaiting` with nothing having failed — the shape of a
+**silently**, and gated sends would collect in `awaiting` with nothing having failed, the shape of a
 `stale_when` that named the right condition and which nothing checked.
 
 Publication of a policy with **no mailbox condition** is checked against every mailbox in the organization and
 refused if any of them is short, because such a policy gates sends from all of them.
 
 **A team that is emptied reaches exactly the same answer as a revoked relation**, and that is the point rather
-than a coincidence: removing the last member of a team a live policy names is **permitted** — refusing it would
-put a policy in charge of who may leave a team — and the next send is `withheld` with `approval_unsatisfiable`
+than a coincidence: removing the last member of a team a live policy names is **permitted** (refusing it would
+put a policy in charge of who may leave a team), and the next send is `withheld` with `approval_unsatisfiable`
 naming the stage, the team and the shortfall. Reversible: put somebody back and the next send is gated again.
 
 **What is still not covered**, stated rather than implied: a send *already* `awaiting` when the last approver
-loses the relation — or the last member leaves the stage's team — is not re-checked. Nothing sweeps `awaiting` — it is never dispatched, so [#62][62]'s
-dispatch-time recheck cannot see it — and the drain that exists is the author cancelling their own send. The
+loses the relation, or the last member leaves the stage's team, is not re-checked. Nothing sweeps `awaiting`. It is never dispatched, so [#62][62]'s
+dispatch-time recheck cannot see it, and the drain that exists is the author cancelling their own send. The
 one live case that *is* closed is a withdrawal that leaves too few eligible people, because that path already
 holds the eligible set. Closing the revoke case needs a pass over `awaiting` sends, which is the shape
 [#63][63]'s notification cron already has.
@@ -244,7 +244,7 @@ served.
 
 An approved send goes back to `held`, with `state_reason` cleared: the gate is gone, so it is an ordinary send
 waiting out whatever remains of its hold window. The record that it was gated and approved is in
-`policy_outcome`, in the `approvals` row, and in the trail — not in a stale reason on a released row.
+`policy_outcome`, in the `approvals` row, and in the trail, not in a stale reason on a released row.
 
 ## The recheck before hand-over, and why only approved sends get it
 
@@ -259,27 +259,27 @@ it. An **unapproved** send gets the authority re-read and nothing else.
 |:--|--:|:--|
 | current actor authority (both paths, ADR 39) | 0 extra | `authority_lost` |
 | the approval is `approved`, nobody withdrew, somebody's approval stands | 2 | `approval_revoked` |
-| the deadline has not passed | 0 — same row | `approval_expired` |
+| the deadline has not passed | 0, same row | `approval_expired` |
 | every approver still holds `approval.decide`, and is not the author | 1 | `approver_ineligible` |
 | `max(current policy) > max(bound policy)` | 1–3 | `policy_stricter` |
 | both stored bodies still hash to what the manifest recorded | 4 | `evidence_changed` |
 | the transport's capability | 1 on a Node that can send | recorded, not a gate |
 
 **The two paths differ deliberately, and a future reader must not unify them.** The recheck is a measured
-**8** subrequests — 9 with the shipped adapter — against a 16-subrequest dispatch, so making it universal is a
+**8** subrequests (9 with the shipped adapter) against a 16-subrequest dispatch, so making it universal is a
 50% increase in what every send costs to buy a guarantee nobody asked for. `docs/receipts/dispatch-recheck-cost.md`
 carries the figures, and the tripwire is on the *unapproved* path: a bound of 20 against a measured 16, which a
-unified path would blow through. Deciding which path a send is on costs nothing — it is
+unified path would blow through. Deciding which path a send is on costs nothing. It is
 `policy_outcome = 'require_approval'` on a row `dispatchOne` had already read.
 
 **The checks run cheapest-first, so a refusal costs 6 rather than 24** and never touches R2 or the vault. The
 consequence, stated because it is observable: when two things are wrong at once the *earlier* reason is
-recorded. That is the first answer rather than the worst one, on purpose — reporting a hash mismatch on a send
+recorded. That is the first answer rather than the worst one, on purpose. Reporting a hash mismatch on a send
 whose approval had already lapsed would raise a corruption alarm about a message nobody was going to send.
 
 **`evidence_changed` is the one reason that also raises.** Every other reason is the system working: authority
 withdrawn, policy tightened, a deadline passed, and the person who wrote the message reads their own outbox row.
-A hash mismatch means the archive differs from its own record — corruption, or tampering — so it writes an
+A hash mismatch means the archive differs from its own record, corruption or tampering, so it writes an
 operational log entry (`send.evidence_changed`, carrying the blob key and both hashes) and `doctor` reports it
 as `send_evidence_changed`, which is `degraded`. An unreadable or missing object is the same reason with a
 different detail: it is the same claim about the same object, and §24's worst failure.
@@ -290,7 +290,7 @@ from the normalized body, so verifying the input verifies what the output is bui
 
 `approval_revoked` is the one reason **no path in this Node produces**: `withdrawApproval` refuses a settled
 request, which is exactly what makes an approved send safe to dispatch. It is checked anyway, because the point
-of re-reading is not to trust what the manifest's state implies — and it is the layer that holds if that ever
+of re-reading is not to trust what the manifest's state implies, and it is the layer that holds if that ever
 stops being true. `test/outbound-recheck.test.ts` asserts the refusal as part of producing the state, so the
 distinction is in the test rather than in a comment.
 
@@ -298,16 +298,16 @@ distinction is in the test rather than in a comment.
 
 §18 makes every approval bind a canonical effect envelope, and the recheck is performed *against* it rather than
 producing it as a by-product. It is built from the manifest row plus the approval, and recorded in the
-`send.withheld` audit entry when a check refuses — **1,372 bytes** against the 2,048-byte detail cap, measured,
+`send.withheld` audit entry when a check refuses: **1,372 bytes** against the 2,048-byte detail cap, measured,
 because an over-cap detail is replaced wholesale and would take the reason with it.
 
-**Bound:** the manifest id as target resource, expected version *and* idempotency key — the manifest is the
+**Bound:** the manifest id as target resource, expected version *and* idempotency key. The manifest is the
 revision and [ADR 9][9]'s effect key is already that id, so no second identifier was invented that would have to
 be kept equal to it; From, To, Cc, Bcc and subject; both body hashes; the author as actor; the mailbox; the
 policy outcome and version set as bound at the seal; the approval with its state, deadline, standing approvers
 and withdrawals; the emitted header set; and the adapter's capability.
 
-The header set is fixed and enumerable — From, To, Cc, Subject, Message-ID, Date, MIME-Version, Content-Type,
+The header set is fixed and enumerable: From, To, Cc, Subject, Message-ID, Date, MIME-Version, Content-Type,
 plus In-Reply-To and References on a reply, with To and Cc present only when they have recipients. `Bcc` is
 absent, which is what Bcc means. It is derived from the same columns `renderRfc822` derives it from, and the
 test renders real bytes and reads the names back out of them rather than trusting the list.
@@ -324,7 +324,7 @@ DLP), and `submitted_sha256` (for the structural reason above).
 
 ## Expiry
 
-`approvals.expires_at`, written at request time from `approval.send_expiry_seconds` — **four days**, sized rather
+`approvals.expires_at`, written at request time from `approval.send_expiry_seconds`: **four days**, sized rather
 than measured, with the trade-off in `docs/receipts/dispatch-recheck-cost.md`: long enough that an approver
 working across a weekend plus a public holiday is not defeated, short enough that an approval is not a standing
 permission.
@@ -332,13 +332,13 @@ permission.
 Three properties are decisions rather than accidents.
 
 **It is a constant, not a per-policy field.** The policy object has no expiry column, and adding one would
-invent a governance dimension no ticket has decided — [#60][60]'s own governing failure, a condition backed by no
+invent a governance dimension no ticket has decided, [#60][60]'s own governing failure, a condition backed by no
 interface. The named refinement if somebody asks for it: a nullable column on `policy_versions`, folded by
 **minimum** over the matching versions rather than by maximum, because narrowing runs one way and the shorter
 deadline is the stricter rule. The constant becomes the default.
 
 **Nothing sweeps it.** A deadline passing is not an event; it is a fact the recheck reads. So an approver can
-still decide a lapsed request and their decision lands — the send returns to `held`, and the recheck then
+still decide a lapsed request and their decision lands. The send returns to `held`, and the recheck then
 withholds it with `approval_expired`. One enforcement point rather than two, which is the same argument [#62][62]
 makes for the reason vocabulary; a second would need its own release act and its own state. What that costs is a
 decision taken on a request that will not send, so `expires_at` travels on `GET /api/approvals` and on every
@@ -346,7 +346,7 @@ decision taken on a request that will not send, so `expires_at` travels on `GET 
 
 **A `hold_lift` approval has no deadline**, and `EXPIRES_AFTER_SECONDS` is a total map over the subject kinds so
 a third kind has to decide rather than inherit. Nothing rechecks a lift, so a deadline on one would be a limit no
-code compares — the mirror image of a bound field nothing populates.
+code compares, the mirror image of a bound field nothing populates.
 
 **NULL means no deadline is recorded**, for one of exactly two reasons: the request predates migration 0022, or
 its kind has none. Neither is treated as expired. A migration inventing a deadline for a decision somebody
@@ -362,7 +362,7 @@ records *somebody else's judgement* as the reason a message was stopped, in a tr
 it does not do that.
 
 A denial needs no counterpart. Re-sealing mints a new manifest and a fresh approval, which is the invalidation
-mechanism Layer 5 already rests on — so "I changed my mind" is served by the author composing again.
+mechanism Layer 5 already rests on, so "I changed my mind" is served by the author composing again.
 
 Withdrawal is terminal for the withdrawer: they cannot decide again (`apd_one_per_person`). So the eligible set
 only ever shrinks within one approval, and no amount of withdraw-and-approve oscillation lets one person fill
@@ -371,7 +371,7 @@ fact an investigation asks about, and deleting the row would answer it with sile
 
 ## The races
 
-Both are settled the way every other conflict in this Node is settled — a conditional UPDATE, where the
+Both are settled the way every other conflict in this Node is settled: a conditional UPDATE, where the
 conflict is the signal ([#9][9]).
 
 **Two people casting what each read as the final approval.** Every statement in a decision shares one
@@ -380,18 +380,18 @@ predicate: *the approval is still pending*. So the loser writes nothing at all a
 
 **A withdrawal racing the final approval.** The completion transition is *"every stage satisfied AND nothing
 withdrawn"*, evaluated inside the database at the moment of the write. `changes = 0` on it does **not** by
-itself mean somebody withdrew — every non-final approval leaves it 0, legitimately. The signal is *"this
+itself mean somebody withdrew. Every non-final approval leaves it 0, legitimately. The signal is *"this
 decision should have closed the last stage and did not"*, and that means a withdrawal, because a competing
 finalisation is refused by the shared predicate rather than recorded. The decision is kept, the send stays
 `awaiting`, and the caller is told which conflict happened.
 
-**Two withdrawals landing together.** A withdrawal has to know what it leaves behind — whether enough eligible
-people remain to finish the stages — and that shortfall is computed from decisions read a moment earlier. So its
+**Two withdrawals landing together.** A withdrawal has to know what it leaves behind, whether enough eligible
+people remain to finish the stages, and that shortfall is computed from decisions read a moment earlier. So its
 predicate pins the **decision counts** as well as the request being open: the number standing and the number in
 total, because a new approval and a withdrawal arriving together would leave the first unchanged. Any concurrent
 change to `approval_decisions` therefore makes the withdrawal write nothing and answer `E_WITHDRAW_RACED`, which
 the caller resolves by reading and withdrawing again. Without it, two withdrawals each reading a satisfiable
-request would leave an unsatisfiable one reading as `pending` — the exact state this design closes.
+request would leave an unsatisfiable one reading as `pending`, the exact state this design closes.
 
 The three statements that close an unsatisfiable request run after the withdrawal has moved that count, so they
 carry a different gate: *this call's own withdrawal landed*, keyed on its `withdrawn_at`. Ungated they were
@@ -399,16 +399,16 @@ unconditional, and a withdrawal that lost to a completing approval rewrote the r
 `withheld`.
 
 **A withdrawal racing the approval that completes a lift** is the one place the answer differs, and it differs
-deliberately. That decision carries two audit entries — `approval.decided` and `hold.lifted` — and
+deliberately. That decision carries two audit entries, `approval.decided` and `hold.lifted`, and
 `auditedBatchMany` gates a batch rather than an entry, so under the ordinary `pending` predicate a lost race
 would insert a `hold.lifted` entry for a lift that did not happen: a false statement in the one place that is
-supposed to be checkable. So that decision carries a **stronger** predicate — the approval is pending, *this*
-decision closes every stage, and the hold is not already lifted — and a lost race records nothing and answers
+supposed to be checkable. So that decision carries a **stronger** predicate (the approval is pending, *this*
+decision closes every stage, and the hold is not already lifted), and a lost race records nothing and answers
 `E_HOLD_LIFT_RACED`. A send keeps its decision because it still counts toward its stage whatever else happened;
 the lift's completing decision and the lift itself are one act that must either both be true or both be absent.
 
 The interleaving inside the product cannot be constructed from one isolate, so the refusal is exercised through
-the other door into the same state — a hold lifted outside the product, which is the boundary the hold mechanism
+the other door into the same state: a hold lifted outside the product, which is the boundary the hold mechanism
 has anyway (`wrangler d1 execute`, the dashboard). `test/legal-hold.test.ts` drives it and asserts that nothing
 was recorded: no `hold.lifted`, no second `approval.decided`, no decision row, and a chain still contiguous.
 Stated because a refusal nothing reaches is a refusal nobody has read.
@@ -416,7 +416,7 @@ Stated because a refusal nothing reaches is a refusal nobody has read.
 **Two administrators asking for the same lift at once.** Every statement of a request carries *the hold exists,
 is not lifted, and has no open lift other than this one*, so one request lands and the other is refused with
 `E_HOLD_LIFT_PENDING`. There is no read beforehand that could disagree with it. The clause *"other than this
-one"* is load-bearing rather than defensive: without it the batch invalidated its own predicate — the
+one"* is load-bearing rather than defensive: without it the batch invalidated its own predicate. The
 `approvals` row goes in as `pending`, so the stage inserts that followed were silently skipped and the first
 approver met an approval with an empty stage set.
 
@@ -426,7 +426,7 @@ Four actions, all in the same transaction as the rows they describe (`auditedBat
 
 | Action | Subject | Says |
 |:--|:--|:--|
-| `approval.requested` | the approval | why it was asked — a policy, or an administrator's stated reason for a lift — with the stages and how many people were eligible |
+| `approval.requested` | the approval | why it was asked (a policy, or an administrator's stated reason for a lift) with the stages and how many people were eligible |
 | `approval.decided` | the approval | who approved or denied, at which stage; a denial records `outcome: refused` |
 | `approval.withdrawn` | the approval | who took their own approval back, and whether that left the request unsatisfiable |
 | `hold.lifted` | the **hold** | the lift took effect: the reason it was asked for, who asked, and **both** approvers by name |
@@ -438,11 +438,11 @@ deliberately no `hold.lift_requested`: `approval.requested` already records that
 the request row, and a second entry would make *"who asked to lift this hold"* answerable from two places that
 can disagree.
 
-`hold.lifted` names both approvers because dual control is only evidence if the trail says who the two were —
-the eligible set is live and cannot be reconstructed from the tuples as they stand later.
+`hold.lifted` names both approvers because dual control is only evidence if the trail says who the two were.
+The eligible set is live and cannot be reconstructed from the tuples as they stand later.
 
 `approval.requested` rides in the **same transaction as the seal**, alongside `send.sealed`, through
-`auditedBatchMany` — two entries chained to each other, consecutive sequence numbers, one `batch()`. So a gated
+`auditedBatchMany`: two entries chained to each other, consecutive sequence numbers, one `batch()`. So a gated
 send that exists without a request to decide is not unlikely, it is unrepresentable. Its subject is the
 approval rather than the manifest, because it records that *people are being asked*, which is not something
 `send.sealed` can say without becoming an entry about two things.
@@ -454,9 +454,9 @@ Measured, not counted: `docs/receipts/approval-decision-cost.md`.
 | Operation | Subrequests |
 |:--|--:|
 | eligibility check on one mailbox | 1 |
-| any decision on a send — approve, final approve, deny | 6 |
+| any decision on a send: approve, final approve, deny | 6 |
 | any withdrawal | 6 |
-| seal where policy demanded no approval — a hold, or nothing matching | **12, bounded with no headroom** |
+| seal where policy demanded no approval (a hold, or nothing matching) | **12, bounded with no headroom** |
 | seal gated by an approval | 14 |
 | seal gated by a **team-scoped** approval | 15 |
 | requesting a legal-hold lift | 5 |
@@ -464,7 +464,7 @@ Measured, not counted: `docs/receipts/approval-decision-cost.md`.
 | the approval that **applies** a lift | 7 |
 
 The first two rows read 11 and 13 in this document until 3 September 2026, when they were corrected to the
-receipt's figures — the receipt had recorded the drift on 21 August and this table was not updated with it,
+receipt's figures. The receipt had recorded the drift on 21 August and this table was not updated with it,
 which is a document quoting numbers a reader has no way to know are a fortnight stale.
 
 **The 12 has no headroom on purpose.** It bounds the seal on the path where policy demanded no approval, and
@@ -486,13 +486,13 @@ free, because they ride in the `batch()` the seal was already making. `expires_a
 approval, for the same reason: a column added to a `SELECT` already being issued costs nothing, which is what
 that receipt's *"the approvals tables gain a column a decision has to read"* clause exists to have checked.
 
-The recheck's 8 is spent in the **dispatch** invocation, not in a Butler step — [#62][62] predicted it would
+The recheck's 8 is spent in the **dispatch** invocation, not in a Butler step. [#62][62] predicted it would
 land on `mail.send.propose` and it does not, because dispatch runs from the sweeper's alarm with its own
 subrequest budget. Both halves of that prediction were wrong and the receipt says so at length; the decision it
 was drawn for stands on the measurement instead.
 
 A lift costs one operation more than a send's decision, and exactly one: the request row, whose reason the
-`hold.lifted` entry has to name. Everything else — the second audit entry and the `UPDATE holds` itself — is
+`hold.lifted` entry has to name. Everything else, the second audit entry and the `UPDATE holds` itself, is
 free for the same reason, because it rides in the batch the decision was already making. That is what makes
 *"the lift and its record are one act"* a property of the transaction rather than a claim.
 
@@ -507,17 +507,17 @@ free for the same reason, because it rides in the batch the decision was already
 - **A `doctor` finding for a live policy naming an empty team.** `legal_hold_unliftable` is the analogous check
   one table over. This one is absent for the same reason the `awaiting` sweep above is: it is a pass over live
   policy versions crossed with team rosters, which is cron-shaped rather than request-shaped, and a second
-  mechanism invented here would be the thing to undo later. The two checks that do exist — publication and
-  evaluation — are the two this mechanism has always had.
+  mechanism invented here would be the thing to undo later. The two checks that do exist, publication and
+  evaluation, are the two this mechanism has always had.
 - **Notification.** Every act here is something a person is waiting on, and there is no notification mechanism
-  in this product. [#63][63] owns the harder version — §7 requires a notice the investigator cannot switch off
-  — and has already chosen the shape: the obligation is a row, an existing cron delivers it.
+  in this product. [#63][63] owns the harder version (§7 requires a notice the investigator cannot switch off)
+  and has already chosen the shape: the obligation is a row, an existing cron delivers it.
 - **The approval evidence snapshot** (§18, §21): the minimum-necessary snapshot of the proposed effect and the
   excerpts an approver may see. `approval.decide` is not a read relation, so an approver holding nothing else
   on the mailbox can decide without being able to open the bytes. That is §21's rule about approval not
-  granting ambient access — and it also means this build does not yet give an approver what §18 says they must
+  granting ambient access, and it also means this build does not yet give an approver what §18 says they must
   see. Named here rather than closed by granting a read as a shortcut, which §21 explicitly forbids.
-- **A sweep for lapsed approvals.** Expiry is built — see the section above — and it is enforced at the
+- **A sweep for lapsed approvals.** Expiry is built (see the section above) and it is enforced at the
   dispatch rather than by a pass over `pending` requests. So a lapsed request stays in an approver's queue with
   its deadline shown, and deciding it is honest work whose send is then withheld. What is absent is the cron
   that would resolve it without anybody looking, which is the same shape [#63][63]'s notification obligation
@@ -531,25 +531,25 @@ free for the same reason, because it rides in the batch the decision was already
 
 ```
 GET  /api/approvals                  what is waiting on you: subject, stages, which stage is open, the reason,
-                                     and the deadline — because nothing sweeps it, so it has to be visible
-POST /api/approvals/:id/decide       { "decision": "approve" | "deny" } — no default, deliberately
+                                     and the deadline, because nothing sweeps it, so it has to be visible
+POST /api/approvals/:id/decide       { "decision": "approve" | "deny" }; no default, deliberately
 POST /api/approvals/:id/withdraw     take back your own approval while the request is incomplete
 
-POST /api/holds/:id/lift             { "reason": "..." } — org.admin asks; these three endpoints decide
+POST /api/holds/:id/lift             { "reason": "..." }; org.admin asks, these three endpoints decide
 
-POST /api/teams                      { "name": "..." } — org.admin. See docs/teams.md
-GET  /api/teams                      every team with its size — the number a team-scoped stage turns on
+POST /api/teams                      { "name": "..." }; org.admin. See docs/teams.md
+GET  /api/teams                      every team with its size, the number a team-scoped stage turns on
 ```
 
 Scoped to the mailboxes the caller holds `approval.decide` on, and excluding approvals of their own acts: a
-queue that lists work nobody can do is a queue people learn to ignore. There is deliberately no UI — the shell
-is Layer 1–3's surface — but the outbox already shows a send's consequence, because it renders `awaiting` and
+queue that lists work nobody can do is a queue people learn to ignore. There is deliberately no UI (the shell
+is Layer 1 to 3's surface), but the outbox already shows a send's consequence, because it renders `awaiting` and
 `withheld` with the reason beside them, and `doctor` reports a pending lift beside the hold it would release.
 
 **A lift is decided through the approvals endpoints, not through a second hold endpoint.** That is the whole
 point of the subject: an approver's queue, a decision, a withdrawal and the trail behind them were never about
 sends. `GET /api/approvals` carries the lift's `reason`, because somebody asked to re-permit destruction has to
-see what they are agreeing to *before* they decide — a trail is where a decision is accounted for afterwards.
+see what they are agreeing to *before* they decide. A trail is where a decision is accounted for afterwards.
 
 [9]: https://github.com/Straits-AI/mailda/issues/9
 [60]: https://github.com/Straits-AI/mailda/issues/60
