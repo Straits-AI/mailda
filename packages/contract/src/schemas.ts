@@ -776,6 +776,11 @@ export const mailboxRow = z.object({
 
 export const mailboxListResponse = z.object({ mailboxes: z.array(mailboxRow) }).strict();
 
+/** RFC 8601's result tokens, plus `absent` for a message carrying no header from the receiving server. */
+export const authenticationResult = z.enum([
+  "pass", "fail", "softfail", "neutral", "none", "temperror", "permerror", "policy", "absent",
+]);
+
 export const messageRow = z.object({
   id: z.string().min(1),
   message_id: z.string().nullable(),
@@ -789,6 +794,16 @@ export const messageRow = z.object({
   parse_error: z.string().nullable(),
   conversation_id: z.string().nullable(),
   case_id: z.string().nullable(),
+  /**
+   * What the receiving server established about the sender (0055), as RFC 8601's own words. `null` on a
+   * message materialised before this Node evaluated authentication — not `absent`, which is stored when the
+   * header was looked for and not found, and not `none`, which is a verdict. Three states, three spellings.
+   */
+  auth_spf: authenticationResult.nullable(),
+  auth_dkim: authenticationResult.nullable(),
+  auth_dmarc: authenticationResult.nullable(),
+  auth_dmarc_policy: z.string().nullable(),
+  auth_from_domain: z.string().nullable(),
 }).strict();
 
 export const messageListResponse = z.object({

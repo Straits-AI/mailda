@@ -271,7 +271,10 @@ Three roots: `event` (what the trigger carried), `steps` (what `as` bound), `but
 because the alternative is `"undefined"` interpolated into a subject line and sent.
 
 A `mail.received` run's `event` carries exactly: `message_id`, `conversation_id`, `case_id`, `mailbox_id`,
-`mailbox_address`, `subject`, `from`, `return_path`, `received_at`, `parse_error`. Two of those name a sender
+`mailbox_address`, `subject`, `from`, `return_path`, `received_at`, `parse_error`, and since 0055 the
+receiving server's verdict on the sender as `dmarc`, `spf`, `dkim` — RFC 8601's own words, `absent` when the
+server wrote no header, null on a message from before the Node evaluated it — so a guard can send a
+`dmarc == "fail"` message where a person looks first, without any of the three ever choosing a recipient. Two of those name a sender
 and the distinction is load-bearing — `from` is the `From:` **header**, content the sender chose, readable so
 a guard can match on it; `return_path` is the **envelope** sender, and it is the only one anything addresses
 mail with. See "Who a Butler's reply goes to" below.

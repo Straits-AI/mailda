@@ -1,3 +1,4 @@
+import type { Ctx } from "@mailda/runtime";
 import { type Finding } from "../doctor.ts";
 /**
  * The evidence scan's bound now lives with the reconciler that performs it
@@ -444,3 +445,57 @@ export async function checkProviderBinding(env: Env): Promise<Finding[]> {
 
   return findings;
 }
+
+/**
+ * What the receiving server has been saying about senders (0055), counted over the last seven days.
+ *
+ * A `report`, and `ok` whatever the counts: a message whose From domain disowned it is not this Node being
+ * unhealthy, it is this Node doing its job and saying so. What the finding is *for* is the shape of the
+ * week — a Node seeing `absent` on every message is one whose mail is not arriving through the MX that
+ * authenticates, which is a routing fact worth a sentence; a Node with a run of `fail` against `reject`
+ * policies is one whose operator should be reading the sender line. `unevaluated` is the count from before
+ * this check existed, and it only goes down.
+ */
+export async function checkInboundAuthentication(
+  env: Env, ctx: Ctx, orgId: string | null,
+): Promise<Finding[]> {
+  if (orgId === null) return [];
+  const since = new Date(ctx.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const row = await env.CATALOG.prepare(
+    `SELECT
+       SUM(CASE WHEN auth_dmarc = 'pass' THEN 1 ELSE 0 END) AS pass,
+       SUM(CASE WHEN auth_dmarc = 'fail' THEN 1 ELSE 0 END) AS fail,
+       SUM(CASE WHEN auth_dmarc = 'fail' AND auth_dmarc_policy = 'reject' THEN 1 ELSE 0 END) AS fail_reject,
+       SUM(CASE WHEN auth_dmarc = 'none' THEN 1 ELSE 0 END) AS none,
+       SUM(CASE WHEN auth_dmarc = 'absent' THEN 1 ELSE 0 END) AS absent,
+       SUM(CASE WHEN auth_dmarc IS NULL THEN 1 ELSE 0 END) AS unevaluated,
+       COUNT(*) AS total
+     FROM messages WHERE org_id = ? AND received_at >= ?`,
+  ).bind(orgId, since).first<{
+    pass: number | null; fail: number | null; fail_reject: number | null; none: number | null;
+    absent: number | null; unevaluated: number | null; total: number;
+  }>().catch(() => null);
+  if (row === null) {
+    return [{
+      check: "inbound_authentication", severity: "report", discloses: "data", ok: true,
+      detail: "Could not read the messages table.",
+      fix: "check the migrations_applied finding first",
+    }];
+  }
+  const n = (value: number | null) => Number(value ?? 0);
+  return [{
+    check: "inbound_authentication",
+    severity: "report",
+    discloses: "data",
+    ok: true,
+    detail: row.total === 0
+      ? "No message has arrived in the last seven days, so there is nothing to say about senders."
+      : `Of ${row.total} message(s) in the last seven days, DMARC: ${n(row.pass)} pass, ${n(row.fail)} fail`
+        + `${n(row.fail_reject) > 0 ? ` (${n(row.fail_reject)} against a domain asking receivers to reject)` : ""}, `
+        + `${n(row.none)} from domains publishing no policy, ${n(row.absent)} with no authentication header from `
+        + `the receiving server${n(row.unevaluated) > 0 ? `, ${n(row.unevaluated)} from before this Node evaluated senders` : ""}. `
+        + "A fail is the From domain saying the message is not theirs; the sender line on each message says so.",
+    receipt: "docs/receipts/email-authentication-results.md",
+  }];
+}
+

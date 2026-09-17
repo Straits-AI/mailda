@@ -1181,8 +1181,8 @@ describe("inspect gates the run's recorded input on mailbox authority (#53, #63)
      * and absent from the facts either. `deliveryFacts` is the producer, so its own output is the corpus.
      */
     expect(Object.keys(FACT_DISCLOSURE).slice().sort()).toEqual([
-      "case_id", "conversation_id", "from", "mailbox_address", "mailbox_id", "message_id", "parse_error",
-      "received_at", "return_path", "subject",
+      "case_id", "conversation_id", "dkim", "dmarc", "from", "mailbox_address", "mailbox_id", "message_id",
+      "parse_error", "received_at", "return_path", "spf", "subject",
     ]);
     expect(Object.keys(FACT_DISCLOSURE).filter((key) => FACT_DISCLOSURE[key as "subject"] === "content")
       .sort()).toEqual(CONTENT_FACTS.slice().sort());

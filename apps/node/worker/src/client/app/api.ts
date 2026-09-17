@@ -118,6 +118,9 @@ export interface Me {
   email: string | null;
 }
 
+export type AuthenticationResult =
+  | "pass" | "fail" | "softfail" | "neutral" | "none" | "temperror" | "permerror" | "policy" | "absent";
+
 export interface MessageRow {
   id: string;
   message_id: string | null;
@@ -130,6 +133,12 @@ export interface MessageRow {
   accepted_at: string;
   parse_error: string | null;
   conversation_id: string | null;
+  /** RFC 8601's own words for what the receiving server established; null on a message from before 0055. */
+  auth_spf: AuthenticationResult | null;
+  auth_dkim: AuthenticationResult | null;
+  auth_dmarc: AuthenticationResult | null;
+  auth_dmarc_policy: string | null;
+  auth_from_domain: string | null;
   /**
    * The case for this delivery's own mailbox, so replying can claim in one act.
    *
