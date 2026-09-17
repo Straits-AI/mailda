@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 23 capabilities
+## What you can do — 24 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -60,6 +60,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 |:--|:--|
 | `putDrafts` | Save a draft |
 | `postMatters` | Open a matter |
+| `putMessagesByMessageIdLabels` | Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id. |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
 ## What you cannot do, and why — 111 withheld

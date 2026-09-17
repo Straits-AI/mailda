@@ -405,7 +405,7 @@ export async function rebuildReferences(
 }
 
 /**
- * A message the author may read, or null — the one lookup a reply's parent and a forward's original share.
+ * A message the author may read, or null — the one lookup a reply's parent, a forward's original and a label share.
  *
  * Bounded by **read authority on the message's mailbox**, not merely by organization. This used to be
  * `WHERE org_id = ? AND id = ?` for the reply case, and `test/reply-parent-authority.test.ts` reproduces why
@@ -415,7 +415,7 @@ export async function rebuildReferences(
  * `ingress_receipts.envelope_to` → `addresses`, same subjects, same sponsor term (#109) — so nothing can be
  * replied to or forwarded that the inbox would not have shown.
  */
-async function readableParent(
+export async function readableMessage(
   env: Env, orgId: string, authorUserId: string, messageId: string,
 ): Promise<{ rfc_message_id: string; blob_key: string; attachments_dangerous: number | null } | null> {
   const subjects = await readableSubjects(env, { orgId, userId: authorUserId });
@@ -568,7 +568,7 @@ export async function sealManifest(
     // parent was delivered into, reached through `ingress_receipts.envelope_to` → `addresses`. Same subjects
     // (the user plus every team they belong to), same tuple shape, so a reply cannot thread onto something
     // the inbox would not have shown them.
-    const parent = await readableParent(env, orgId, composition.authorUserId, composition.inReplyToMessageId);
+    const parent = await readableMessage(env, orgId, composition.authorUserId, composition.inReplyToMessageId);
     // Refused rather than silently ignored, and **not-found rather than forbidden**: §5C requires an
     // invisible thing and an absent one to answer alike, which is what stops this being the oracle described
     // above. Persisting an unverified id would leave `renderRfc822` to resolve it later and put a Message-ID
@@ -595,7 +595,7 @@ export async function sealManifest(
    * whoever needs to hand it to somebody, and that act is theirs.
    */
   if (composition.forwardOfMessageId !== undefined) {
-    const original = await readableParent(env, orgId, composition.authorUserId, composition.forwardOfMessageId);
+    const original = await readableMessage(env, orgId, composition.authorUserId, composition.forwardOfMessageId);
     if (original === null) {
       throw notFound("E_NO_SUCH_ORIGINAL", {
         what: `${composition.forwardOfMessageId} is not a message you can forward`,

@@ -74,7 +74,7 @@ beforeEach(async () => {
     "credentials", "webauthn_challenges", "refresh_tokens", "audit_entries", "log_entries",
     "butler_versions", "butlers", "sending_transport", "invitations", "teams", "team_members",
     "matters", "holds", "policy_versions", "policies", "drafts", "addresses", "mailboxes",
-    "mailbox_items", "messages", "cases", "conversations", "ingress_receipts", "send_recipient_events",
+    "mailbox_items", "messages", "message_labels", "cases", "conversations", "ingress_receipts", "send_recipient_events",
     "suppression_lifts",
     "relationship_tuples", "users", "node_claim",
   ]) {
@@ -1490,6 +1490,35 @@ describe("the routes that only exist once mail has landed", () => {
     expect(rendered.text).toContain("Where is my invoice?");
   });
 
+  it("labels on a message, and the listing filtered by one (0061)", async () => {
+    const held = await cookie();
+    const delivery = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Labelled" });
+    const other = await seedDelivery(testEnv, createSystemCtx(), { orgId: ORG, mailboxId, address }, { subject: "Bare" });
+    const set = await answers("PUT", "/api/messages/:messageId/labels", {
+      params: { messageId: delivery.messageId }, body: { add: ["  Urgent ", "invoice", "urgent"] }, cookie: held,
+    });
+    // Normalised: trimmed, lower-cased, de-duplicated, sorted.
+    expect(set).toEqual({ messageId: delivery.messageId, labels: ["invoice", "urgent"] });
+
+    const listed = await answers("GET", "/api/messages", { cookie: held }, "?label=URGENT") as {
+      messages: Array<{ id: string; labels_json: string }>;
+    };
+    expect(listed.messages.map((one) => one.id)).toEqual([delivery.receiptId]);
+    expect(JSON.parse(listed.messages[0]!.labels_json)).toEqual(["invoice", "urgent"]);
+    expect(listed.messages.map((one) => one.id)).not.toContain(other.receiptId);
+
+    const removed = await answers("PUT", "/api/messages/:messageId/labels", {
+      params: { messageId: delivery.messageId }, body: { remove: ["urgent"] }, cookie: held,
+    });
+    expect(removed).toEqual({ messageId: delivery.messageId, labels: ["invoice"] });
+    const audited = await testEnv.CATALOG.prepare(
+      "SELECT detail FROM audit_entries WHERE action = 'message.labelled' AND subject = ? ORDER BY seq",
+    ).bind(delivery.messageId).all<{ detail: string }>();
+    expect(audited.results.map((one) => JSON.parse(one.detail))).toEqual([
+      { added: ["invoice", "urgent"], removed: [] }, { added: [], removed: ["urgent"] },
+    ]);
+  });
+
   it("the quarantine list, and a release from it", async () => {
     /*
      * Quarantined by `UPDATE` rather than by the decision in `materialise`, for the reason the block comment
@@ -2063,7 +2092,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(129);
+    expect(coverage.total).toBe(130);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

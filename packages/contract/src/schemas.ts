@@ -810,6 +810,18 @@ export const messageRow = z.object({
   /** Attached parts, and how many a mailbox may refuse to queue (0057). `null` before this Node looked. */
   attachments: z.number().int().nonnegative().nullable(),
   attachments_dangerous: z.number().int().nonnegative().nullable(),
+  /** The words on this message (0061), lower-cased, sorted. A JSON array as SQLite built it. */
+  labels_json: z.string(),
+}).strict();
+
+/** Labels on and off a message (0061). Either list may be empty; a change that changes nothing answers the same. */
+export const setLabelsRequest = z.object({
+  add: z.array(z.string()).optional(),
+  remove: z.array(z.string()).optional(),
+});
+export const labelsSetResponse = z.object({
+  messageId: z.string().min(1),
+  labels: z.array(z.string()),
 }).strict();
 
 export const messageListResponse = z.object({

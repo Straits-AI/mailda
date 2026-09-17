@@ -23,7 +23,7 @@ function row(n: number, conversation: string | null) {
     envelope_to: "support@example.test", mailbox_id: "mbx_test", raw_bytes: 1024,
     accepted_at: `2026-08-2${n}T09:00:00.000Z`, parse_error: null, conversation_id: conversation, case_id: null,
     auth_spf: null, auth_dkim: null, auth_dmarc: null, auth_dmarc_policy: null, auth_from_domain: null,
-    attachments: null, attachments_dangerous: null,
+    attachments: null, attachments_dangerous: null, labels_json: "[]",
   };
 }
 

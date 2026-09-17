@@ -187,6 +187,15 @@ export const mail = {
     return Response.json(outcome, { status: ok ? 200 : 409 });
   },
 
+  "PUT /api/messages/:messageId/labels": async ({ request, env, clock, params, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
+    const { setLabels } = await import("../labels.ts");
+    return Response.json(await setLabels(env, clock, who.orgId, who.userId, params.messageId, {
+      add: strings(body.add), remove: strings(body.remove),
+    }));
+  },
+
   "POST /api/conversations/merge": async ({ request, env, clock, who }) => {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const outcome = await mergeConversations(

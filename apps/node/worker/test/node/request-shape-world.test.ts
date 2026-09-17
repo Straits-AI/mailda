@@ -375,6 +375,8 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
       "PUT /api/drafts",
+      // Labels (0061): two lists of free words; nothing a misspelled field could silently empty into.
+      "PUT /api/messages/:messageId/labels",
       "PUT /api/transport",
     ]);
   });

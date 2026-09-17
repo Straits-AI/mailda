@@ -30,6 +30,8 @@ export const EXPECTED_TABLES = [
   "send_recipients", "send_recipient_events", "suppression_lifts",
   // Migration 0060: what an authored send attached, as evidence.
   "send_attachments",
+  // Migration 0061: words people put on messages.
+  "message_labels",
   // Migration 0012 (durable drafts).
   "drafts",
   // Migration 0014 (Layer 3: conversations and cases).

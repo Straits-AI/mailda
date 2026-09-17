@@ -1063,6 +1063,10 @@ tbody a { font-size: .8rem; }
 .thread h3 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 400; margin: 0 0 .5rem; }
 .thread-list { list-style: none; margin: 0; padding: 0; }
 .thread-list li { border-bottom: 1px solid var(--rule); }
+/* Labels (0061): a word on a message, in the row and in the pane, and the field that adds one. */
+.state.label { border-color: var(--rule-strong); color: var(--dim); font-size: .62rem; }
+.labels { display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; }
+.label-add { font-family: var(--mono); font-size: .75rem; width: 9rem; background: var(--ground-2); color: var(--text); border: 1px solid var(--rule-strong); padding: .15rem .35rem; }
 .headers { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .2rem .8rem; margin: 0 0 1.2rem 0; }
 .headers dt {
   font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
