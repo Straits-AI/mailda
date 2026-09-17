@@ -1,4 +1,4 @@
-# AGENTS.md — how we work on Mailda
+# AGENTS.md: how we work on Mailda
 
 This is the working agreement for everyone touching this repository: humans and agents,
 equally bound. `Mailda-Full-Engineering-Blueprint.md` says **what** we are building.
@@ -11,23 +11,23 @@ contract; this file wins on method.
 
 ## Vocabulary
 
-We use these five words precisely. They are not decoration — they are the review language.
+We use these five words precisely. They are not decoration. They are the review language.
 
-**landmine** — a decision that costs nothing now and blows up later. By the time it
+**landmine**: a decision that costs nothing now and blows up later. By the time it
 detonates it is load-bearing. An unmeasured limit. A silent `catch`. A hardcoded `25 * 1024
 * 1024` that was true on the day it was typed. A field named `synced` that only forwards.
 
-**receipt** — the measurement behind a number. No receipt, no number. A receipt says what
+**receipt**: the measurement behind a number. No receipt, no number. A receipt says what
 was measured, on what, when, and what makes it stale.
 
-**tripwire** — a limit placed past where any good widget goes, so only broken things touch
+**tripwire**: a limit placed past where any good widget goes, so only broken things touch
 it. A good Butler, a good mailbox, a good message never feels it exists. If a good one
-touches it, the tripwire is wrong — not the widget.
+touches it, the tripwire is wrong, not the widget.
 
-**simple** — how cleanly the logic breaks down. Each step follows from the last, no step
+**simple**: how cleanly the logic breaks down. Each step follows from the last, no step
 doing two jobs.
 
-**obvious** — the next reader never asks "why is this here?". Measured by the reader, not
+**obvious**: the next reader never asks "why is this here?". Measured by the reader, not
 by the author. Not always simple; sometimes obvious has more parts.
 
 When we argue, we argue in these terms. "This is a landmine" is a specific, answerable
@@ -50,7 +50,7 @@ Three things we refuse to trade against each other:
   hosted control plane. If a feature only works when Mailda Control is reachable, it is not
   a feature, it is a hostage.
 - **Automation authoring must feel like the web.** Butlers are the developer surface.
-  Typed nodes, a real type checker, a real compiler, fixtures and simulation — round-tripped
+  Typed nodes, a real type checker, a real compiler, fixtures and simulation, round-tripped
   between a visual graph and text against **one AST**. A web developer or a coding agent
   should be productive in an hour, and the errors should be good enough that the agent can
   fix its own mistake without a human.
@@ -94,7 +94,7 @@ Operational budgets and reported objectives use these evidence contracts; each r
 
 Platform limits are **adapter data, not assumptions scattered through application code**
 (Blueprint §11B). They change under us. Cloudflare's Email Sending entitlement is *detected*,
-never assumed — a healthy Node may be `receive_only`, and the code must say so rather than
+never assumed. A healthy Node may be `receive_only`, and the code must say so rather than
 fail mysteriously.
 
 Objectives that cannot be evidenced are not displayed. Admin and `mailda doctor` compute
@@ -119,7 +119,7 @@ values:
 
 **Measured:** 12,400 published Butler versions across the reference and certified packs;
 p99.9 fan-out was 61 effects, maximum observed 143 (bulk-invoice-reconcile v3).
-**Sized:** 500 — 3.5× the worst real workflow. Only a loop bug reaches it.
+**Sized:** 500, which is 3.5× the worst real workflow. Only a loop bug reaches it.
 **Cost if wrong:** a runaway Butler starves inbound receipt for the whole Node.
 ```
 
@@ -129,7 +129,7 @@ splitting them across files scatters a single receipt.
 **For generated budget constants, write the receipt.** A build step emits
 `packages/budgets` from `docs/receipts/*.md`; that module is generated and never
 hand-edited. CI regenerates on every commit and fails on any diff. Benchmarks re-run
-nightly and flag drift against the recorded value — not per commit, because timing
+nightly and flag drift against the recorded value. Not per commit, because timing
 benchmarks in CI are flaky, a flaky check gets muted, and a muted receipt check is worse
 than no check because it still reads as verified.
 
@@ -151,7 +151,7 @@ re-running the test, none by reading:
 | what the test claimed | why it passed anyway |
 |:--|:--|
 | MCP forwards a page cursor | an empty page reads the same whether or not it forwarded |
-| the escrow is not openable from the table | it tried the wrong attack — the route, not the ciphertext |
+| the escrow is not openable from the table | it tried the wrong attack: the route, not the ciphertext |
 | the parser keeps its balance at any depth | balanced nesting never reaches the capped counter |
 | the deploy gate refuses a bad canary | `if (false && verdict !== "ok")` satisfied both lexical clauses |
 | the deploy steps run in order | a renamed banner still matched as a substring |
@@ -163,34 +163,34 @@ So: **after writing an assertion, break the line it covers and watch that assert
 did not fail, the assertion is about something else than you think.
 
 `pnpm --filter @mailda/worker mutants <source> <test>` automates the loop for one file pair, weakening one
-line at a time. It **reports** rather than gates: a surviving mutant is often a legitimately unreachable
+line at a time. It **reports** rather than gates. A surviving mutant is often a legitimately unreachable
 branch or a deliberate redundancy, and telling those from a real gap is a reader's judgement. Two rules for
-reading its output — a mutant that does not compile measured nothing, and a survivor you decide is fine gets
+reading its output: a mutant that does not compile measured nothing, and a survivor you decide is fine gets
 a comment saying so, because the next person will run it too.
 
 The related failure worth naming beside this: **a module with a top-level side effect cannot be imported by
 the thing that checks it.** The SDK generator's `writeFileSync` regenerated the file before the test could
-read a hand edit; `mailda.mjs` dispatches on `argv`, so its parsers had to move to a file of their own. The
+read a hand edit. `mailda.mjs` dispatches on `argv`, so its parsers had to move to a file of their own. The
 seam is the pure part in one module and the effect in another.
 
 ### 2c. A closed world is held by a type or a registry, not by a scan of the source
 
 A test that reads `src/` as text to establish an invariant is coupled to the wording of the code, and it
 fails when the code is rewritten rather than when the invariant breaks. Fifty such files existed on 16
-September 2026; the largest read the router with regular expressions to check that every path it decided on
+September 2026. The largest read the router with regular expressions to check that every path it decided on
 was registered, and became a mapped type (`Handlers` in `src/router.ts`) the day the router became a table.
 
 The ladder, top rung first:
 
 1. **A type.** `Record<RouteKey, Handler>`, `Record<AppRoute, Screen>`: a missing entry is a compile error.
 2. **A registry.** `ROUTES`, `BUDGETS`, `APP_ROUTES`: the test reads the list, not the code that consumes it.
-3. **A parse.** When the source itself is the only witness — a gate reached from a handler, a table named in
-   a query — read it with the TypeScript parser (`test/node/support/handlers.ts`) so a declaration split
+3. **A parse.** When the source itself is the only witness (a gate reached from a handler, a table named in
+   a query), read it with the TypeScript parser (`test/node/support/handlers.ts`) so a declaration split
    across lines or mentioned in a comment cannot fool the check.
 4. **Never a phrase.** A test that asserts a comment contains three sentences guards nothing a reader
    cannot delete along with the test.
 
-A scan that survives at rung 3 keeps its anti-vacuity control — it must first find the sites, so a parser
+A scan that survives at rung 3 keeps its anti-vacuity control. It must first find the sites, so a parser
 that stopped matching fails loudly rather than passing over an empty set.
 
 ### 3. A limit developers can hit is a limit they must see
@@ -199,7 +199,7 @@ Developers will not read our code. Their agents read our errors. An agent can fi
 `max_recipients=50, asked for 63`. It cannot fix a blank window, a spinner, or a message
 that arrived and vanished.
 
-Every budget failure names **the budget, the limit, and the ask** — at compile time if it
+Every budget failure names **the budget, the limit, and the ask**. At compile time if it
 is knowable there (`mailda butler compile`, `mailda deploy --plan`, `--dry-run`), loudly at
 runtime if it is not. A silent budget is worse than no budget.
 
@@ -225,7 +225,7 @@ This is not only about budgets. The same standard covers every refusal:
 
 **Never swallow.** A `catch` that does not re-raise, record an exception, or produce a
 visible operational state is a landmine with a timer on it. The most dangerous mail failure
-is "accepted but absent" (Blueprint §24) — every silent catch is a way to build one.
+is "accepted but absent" (Blueprint §24), and every silent catch is a way to build one.
 
 ### 4. Fight for the obvious solution
 
@@ -249,8 +249,8 @@ A reader who trusts a name and is wrong has been handed a landmine by the person
 Do not accept a stopgap that only works for now and is meant to be replaced later. There is
 no later; there is only the next person who finds it load-bearing.
 
-The decisions in Blueprint §29 are locked. You may reopen one — that is a real, allowed
-move — but reopening means amending §29 in the same change, with the argument written down.
+The decisions in Blueprint §29 are locked. You may reopen one. That is a real, allowed
+move, but reopening means amending §29 in the same change, with the argument written down.
 It never means quietly building against it.
 
 If a shortcut is genuinely the right call, it is not a shortcut: write down why the
@@ -267,22 +267,22 @@ Every layer is a Node someone could actually deploy and use:
 |---|---|---|
 | 0 | Be deployed to a clean Cloudflare account and pass `doctor` | one-click and CLI reach equivalent healthy Nodes |
 | 1 | Receive one real internet message, store it losslessly, show it to one authorized human | a real message from outside, visible in the web UI, original `.eml` exportable |
-| 2 | Reply — sender authorization, policy, send intent, provider attempt, honest per-recipient state | `accepted` / `bounced` / `outcome_unknown` distinguished, never blurred — see the note below on which scale each word lives at |
-| 3 | Share work — mailboxes, membership, assignment, collision, cases | two people work one queue without colliding |
-| 4 | Automate — Butlers compiled, simulated against fixtures, published as immutable versions | replay causes zero provider calls |
-| 5 | Govern — approvals bound to exact revisions, supervised access, audit, retention | editing an approval-bound field invalidates the approval |
-| 6 | Extend — provider connectors, mail core, LLM profiles, external adapters | each certified independently; none required by the layers below |
+| 2 | Reply: sender authorization, policy, send intent, provider attempt, honest per-recipient state | `accepted` / `bounced` / `outcome_unknown` distinguished, never blurred. See the note below on which scale each word lives at |
+| 3 | Share work: mailboxes, membership, assignment, collision, cases | two people work one queue without colliding |
+| 4 | Automate: Butlers compiled, simulated against fixtures, published as immutable versions | replay causes zero provider calls |
+| 5 | Govern: approvals bound to exact revisions, supervised access, audit, retention | editing an approval-bound field invalidates the approval |
+| 6 | Extend: provider connectors, mail core, LLM profiles, external adapters | each certified independently; none required by the layers below |
 
 **Layer 2's three words live at two different scales, and conflating them is the failure the layer
 exists to prevent.** Submission is what *this Node* did with an envelope: it hands over, or it is
 throttled, refused, suppressed, cancelled, withheld, or its outcome is unknown. `handed_over` is the
-ceiling of what is knowable at that moment — the transport took the bytes — and it is deliberately not
+ceiling of what is knowable at that moment, since the transport took the bytes, and it is deliberately not
 called *sent*. Delivery is what the *receiving world* did with one address, and it arrives later, per
 recipient, on a queue: `accepted` when the receiving server returned a 250, `bounced` when it refused,
 `deferred` while retries continue, and **unobserved** when nothing has been reported at all.
 
 So the ladder's `accepted` is a delivery word, not a submission one, and `outcome_unknown` appears at both
-scales for different reasons. The fourth state — unobserved — is not in the row above and should be: it is
+scales for different reasons. The fourth state, unobserved, is not in the row above and should be. It is
 the one people collapse into the other three, and the whole point is that "we have heard nothing" is a
 distinct and honest answer.
 
@@ -297,8 +297,8 @@ The rule that makes the ladder real: **every layer stays green.** A change that 
 from how it describes it, means editing the blueprint in the same change. Divergence
 discovered later is treated as a bug in both places.
 
-**Contracts before channels.** `packages/contract` — the route registry, its schemas, the relation
-and authority vocabularies — generates or validates UI, API, CLI, SDK, Skill and MCP behaviour. A capability
+**Contracts before channels.** `packages/contract` (the route registry, its schemas, the relation
+and authority vocabularies) generates or validates UI, API, CLI, SDK, Skill and MCP behaviour. A capability
 that exists in one channel and not another is a parity bug, not a feature. Never hand-write
 what a contract can generate.
 
@@ -311,34 +311,34 @@ output is data, never authority.
 
 **Evidence is immutable; everything else is a projection.** Raw MIME, composition manifests
 and audit events are permanent. Parsed forms, search indexes and AI outputs are rebuildable
-derivatives — and must actually be rebuildable, tested.
+derivatives, and must actually be rebuildable, tested.
 
 **Docs move with the code.** Any architectural change, new feature, or removed feature
 updates `README.md` and the relevant technical docs in the same change. A receipt that no
 longer matches the code is deleted or remeasured, never left to rot.
 
 **A path in prose is a citation; a path in a fence is a literal.** Comments and paragraphs here
-carry the evidence, so a path named inline in backticks must resolve —
+carry the evidence, so a path named inline in backticks must resolve.
 `test/node/prose-references-world.test.ts` scans every one of them and fails the build on a
 reference to a file that is not there. When you need to name a path that deliberately does
-*not* exist — a wrong reference quoted as evidence, an illustrative tree, a file a consuming
-repository is told to create — put it in a fenced block, which the scan skips. The measurement
+*not* exist (a wrong reference quoted as evidence, an illustrative tree, a file a consuming
+repository is told to create), put it in a fenced block, which the scan skips. The measurement
 behind the rule, and the three detectors rejected as not worth their cost, are in
 [`false-claim-detectability`](docs/receipts/false-claim-detectability.md). Existence is the part
-that mechanises; accuracy is not, so a claim about a file the reader can check cheaply — a count,
-a test name — is worth writing in a form that a check can resolve.
+that mechanises; accuracy is not. So a claim about a file the reader can check cheaply, a count
+or a test name, is worth writing in a form that a check can resolve.
 
 ## Before you call it done
 
 1. Operational limits and reported objectives have their required evidence; fixed values cite their governing source, and fixture or presentation values do not masquerade as measured results.
 2. Every reachable limit produces an error naming budget, limit, ask, and the next permitted action. A limit is changed only through its governing contract.
-3. No `catch` swallows — each one re-raises, records, or surfaces an operational state.
+3. No `catch` swallows. Each one re-raises, records, or surfaces an operational state.
 4. Names don't overclaim, and match across code, CLI, API and UI.
 5. The layer below still works.
 6. Blueprint, README and technical docs reflect what the code now does, and every path your prose
    names in backticks resolves to a file that is there.
 7. You can answer "why is this here?" for every line, in one sentence, without reading it again.
-8. Every new assertion has been seen to fail. Break the line it covers, watch it go red, restore it — or run
+8. Every new assertion has been seen to fail. Break the line it covers, watch it go red, restore it. Or run
    `pnpm --filter @mailda/worker mutants <source> <test>` and read the survivors.
 
 ---
