@@ -6,6 +6,7 @@ import { type Bytes, utf8 } from "@mailda/evidence";
 
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
+import { backfillAuthentication } from "../src/authentication-backfill.ts";
 
 const testEnv = env as unknown as Env;
 const ORG = "org_authres";
@@ -80,4 +81,28 @@ describe("the receiving server's verdict is stored with the message (0055)", () 
       auth_dmarc_policy: null, auth_from_domain: null,
     });
   });
+
+  it("evaluates a message from before 0055 from the cron, and leaves an evaluated one alone", async () => {
+    const ctx = createSystemCtx();
+    const old = await accept("rcpt_authres_backfill00000001", raw(
+      "Authentication-Results: mx.cloudflare.net; dmarc=pass header.from=gmail.com policy.dmarc=none; "
+      + "spf=pass smtp.mailfrom=alice@gmail.com; dkim=pass header.d=gmail.com",
+    ));
+    expect((await materialiseReceipt(testEnv, ctx, old)).status).toBe("created");
+    // What a pre-0055 row looks like: materialised, and nobody looked.
+    await testEnv.CATALOG.prepare(
+      "UPDATE messages SET auth_spf = NULL, auth_dkim = NULL, auth_dmarc = NULL, auth_dmarc_policy = NULL, "
+      + "auth_from_domain = NULL WHERE ingress_receipt_id = ?",
+    ).bind(old).run();
+    expect((await stored(old))?.auth_dmarc).toBeNull();
+
+    const evaluated = await backfillAuthentication(testEnv, ctx);
+    expect(evaluated).toBeGreaterThanOrEqual(1);
+    expect(await stored(old)).toEqual({
+      auth_spf: "pass", auth_dkim: "pass", auth_dmarc: "pass", auth_dmarc_policy: "none", auth_from_domain: "gmail.com",
+    });
+    // Nothing left to evaluate in this organization's slice: a second pass writes nothing.
+    expect(await backfillAuthentication(testEnv, ctx)).toBe(0);
+  });
 });
+

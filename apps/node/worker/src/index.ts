@@ -14,6 +14,7 @@ import { sweepResponseClocks } from "./response-clock.ts";
 import { dispatchDue } from "./outbound/dispatch.ts";
 import { chooseTransport } from "./outbound/transport.ts";
 import { backfillBodyIndex, backfillSearchIndex } from "./search-backfill.ts";
+import { backfillAuthentication } from "./authentication-backfill.ts";
 import { withSecurityHeaders } from "./security-headers.ts";
 import { clientAsset } from "./ui.ts";
 import { resolve, type Call, type Handler } from "./router.ts";
@@ -152,6 +153,27 @@ const handler = {
         await log(env, clock, {
           level: "warn",
           event: "search.backfill_failed",
+          message: (error as Error).message.split("\n")[0] ?? "unknown",
+        }).catch(() => undefined);
+      }
+
+      try {
+        // Senders of messages from before 0055, evaluated a few a minute. Same shape as the two above: logged
+        // only when it did something, and a failure is `warn` — an unevaluated sender is shown as exactly that.
+        const evaluated = await backfillAuthentication(env, clock);
+        if (evaluated > 0) {
+          await log(env, clock, {
+            level: "info",
+            event: "authentication.backfilled",
+            message: `Evaluated the sender of ${evaluated} message(s) that arrived before this Node checked senders.`,
+            orgId,
+            detail: { evaluated },
+          });
+        }
+      } catch (error) {
+        await log(env, clock, {
+          level: "warn",
+          event: "authentication.backfill_failed",
           message: (error as Error).message.split("\n")[0] ?? "unknown",
         }).catch(() => undefined);
       }

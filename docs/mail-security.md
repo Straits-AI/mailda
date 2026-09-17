@@ -22,7 +22,7 @@ Three spellings, three states, and the distinction is the design:
 |:--|:--|
 | `pass`, `fail`, `none`, … | RFC 8601's own words, as Cloudflare wrote them |
 | `absent` | the header was looked for and the receiving server had not written one |
-| `NULL` | this message was materialised before the Node evaluated authentication |
+| `NULL` | this message was materialised before the Node evaluated authentication — and the cron evaluates those a few a minute (`authentication-backfill.ts`), one evidence read each, until none is left |
 
 A `none` for DMARC is most of the internet — the From domain publishes no policy — and is said plainly, so
 the one red thing on the screen is a `fail` against a domain that asked receivers to `reject`.
