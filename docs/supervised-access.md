@@ -17,11 +17,11 @@ read** and **the person whose mail it was being told**, and resolves the collisi
 
 `org.admin` can grant any grantable relation to any subject, and nothing excluded itself as a subject. So an
 administrator could give themselves `mailbox.content.read` on any mailbox in **one audited call** and read
-anybody's mail. The relation genuinely did not imply the access; the authority to create the relation did.
+anybody's mail. The relation did not imply the access; the authority to create the relation did.
 
 Closing that was the tempting move and it sets a trap. In a two-person organization the only other approver
 is the person being examined, so the ceremony is either theatre or the read is impossible, and "impossible"
-for an administrator who is genuinely responsible for a mailbox is the kind of wall that gets solved by
+for an administrator who is responsible for a mailbox is the kind of wall that gets solved by
 editing the database directly, which is strictly worse than an audited self-grant because it leaves no
 record at all.
 
@@ -293,7 +293,7 @@ given message. A **null** answer is half of that capability. So a supervised rea
 colleague's mailbox for a word, learn it is not there, and leave no record; repeated, that is
 dictionary-style probing with §7's record blind to it, which is the shape `SECURITY.md` lists as reportable.
 
-`supervised.query_empty` closes it. The condition is narrow, and each clause excludes a case that genuinely
+`supervised.query_empty` closes it. The condition is narrow, and each clause excludes a case that really
 discloses nothing: the page returned no supervised rows (otherwise `supervised.query` has it), a search term
 was given (an unsearched empty page is the original argument, still sound), and the reader holds at least one
 live grant (somebody searching only their own mail has probed nobody).

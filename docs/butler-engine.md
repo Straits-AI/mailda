@@ -7,15 +7,15 @@ lifecycle are [`docs/butler-ast.md`](./butler-ast.md)'s; this is what executes o
 
 ## One generic Workflow class, and why that is the whole design
 
-`ButlerRun extends WorkflowEntrypoint` — **one class for every Butler on the Node**, handed
+`ButlerRun extends WorkflowEntrypoint` is **one class for every Butler on the Node**, handed
 `{ orgId, butlerId, butlerVersionId, trigger }` and interpreting whatever `ast_json` it reads.
 
 That is forced rather than chosen. #49 made publication the versioning event with no deploy anywhere in the
-lifecycle, and a Workflow class is code in a bundle — so a class per Butler would have made publishing one
+lifecycle, and a Workflow class is code in a bundle, so a class per Butler would have made publishing one
 require a deploy. Three consequences fall out of the generic form and each is worth more than the tidiness:
 
 - **Retiring or deleting a Butler leaves no residue.** `workflow-provisioning.md` measured that deleting a
-  Worker leaves its workflow behind and it takes `wrangler workflows delete` to remove it — the same
+  Worker leaves its workflow behind and it takes `wrangler workflows delete` to remove it, the same
   asymmetry the R2 reconciler and the Queues subscription already have. With a class per Butler, every
   published Butler would have left one orphaned account-level resource behind it for ever, invisible to the
   Worker. There is exactly **one** workflow no matter how many Butlers come and go, and the only thing a
@@ -29,7 +29,7 @@ require a deploy. Three consequences fall out of the generic form and each is wo
 
 | file | what it owns |
 |:--|:--|
-| `src/butler/run.ts` | the `WorkflowEntrypoint`. Four lines and an adapter — see below |
+| `src/butler/run.ts` | the `WorkflowEntrypoint`. Four lines and an adapter; see below |
 | `src/butler/interpret.ts` | the walk: load, re-check, forecast, interpret, close |
 | `src/butler/effects.ts` | the five nodes that touch storage, each calling what a human calls |
 | `src/butler/expr.ts` | the expression language and the JSON Schema subset `validate` honours |
@@ -41,12 +41,12 @@ require a deploy. Three consequences fall out of the generic form and each is wo
 | `src/butler/replay.ts` | `inspect` and `re-run`: the ledger's two run-scoped replay modes (#53) |
 | `src/outbound/retry.ts` | `retry-effect` and `resend-may-duplicate`: the two send-scoped ones |
 | `src/butler/record.ts` | the run record in D1 |
-| `src/butler/pause.ts` | the latched pause and the loop that places it — **read-only**, because `doctor` imports it |
+| `src/butler/pause.ts` | the latched pause and the loop that places it; **read-only**, because `doctor` imports it |
 | `src/butler/pause-acts.ts` | the two writes: the machine placing a pause, a person resuming one |
 
 **The entrypoint is four lines and the interpreter is a function**, because `run()` receives `this.env` from
 the platform while `metering()` wraps an env a *caller* passes in. An entrypoint that did the work could
-never be measured — and this layer's cost is exactly the thing #54's arithmetic has to be checked against.
+never be measured, and this layer's cost is exactly the thing #54's arithmetic has to be checked against.
 The same seam lets a test drive `wait` and the release gate without waiting for either.
 
 ---
@@ -63,13 +63,13 @@ no human could authorise.
 Why not the publisher, which is the obvious alternative:
 
 1. **It grants everything that person can do, for ever.** A published version is immutable and a tuple is
-   not, so §16's own guarantee — *"new grants do not silently expand a published Butler"* — would be false
+   not, so §16's own guarantee, *"new grants do not silently expand a published Butler"*, would be false
    the moment anybody granted that person anything.
 2. **It puts a person's name on mail they never composed and never saw.**
 3. **It excludes a real human from a gate they never asked for.** The approval planner excludes the actor
    from deciding their own request, so publishing a Butler would silently remove that person from the
    approver pool for every send it ever proposes. With the Butler as actor, every human decider stays
-   eligible — which is what a Butler's proposal *wants*.
+   eligible, which is what a Butler's proposal *wants*.
 4. **A policy could not tell a Butler's send from that person's own.** The `actor` condition compares
    `actorUserId`, so *"anything a Butler proposes requires approval"* is expressible only this way. That
    single rule is the governance lever this layer needs, and it costs nothing.
@@ -79,7 +79,7 @@ lapse on the next publish; and `audit_by_actor` is indexed on `(org_id, actor_us
 as the actor makes *"every effect this Butler has ever had"* one index scan across its whole version history.
 
 **It fails closed and it costs the schema nothing.** `relationship_tuples` has no row for a `btl_` until an
-administrator writes one, and authority is re-read per call — so a published Butler can do nothing at all
+administrator writes one, and authority is re-read per call, so a published Butler can do nothing at all
 until it is granted something, and revoking stops it on the next node. `0001_init.sql` has no `subject_type`
 column by design (identifiers are typed-prefix ULIDs) and `grant` validates the *object*, never the subject,
 so this needed no migration.
@@ -90,7 +90,7 @@ one, so `kindOfActor` in `src/audit.ts` reads it. That is what makes attribution
 function a Butler calls takes an `actorUserId` and knows nothing about Butlers.
 
 **§16's six ownership kinds are still not built and this is not them.** `metadata.owner` stays an opaque
-string. This is the *runtime* identity — whose tuples are checked and who the effects are attributed to —
+string. This is the *runtime* identity, whose tuples are checked and who the effects are attributed to,
 which is a different question from who owns the program.
 
 ### The principal is one term of three, since #51
@@ -102,7 +102,7 @@ one third of the answer. Layer 4's shape decision 4 makes a Butler's effective a
 effective(step) = pinned ceiling ∩ live tuples of the Butler ∩ live tuples of the sponsor
 ```
 
-and the **sponsor** is `butler_versions.published_by`, which is the publisher — the identity this section
+and the **sponsor** is `butler_versions.published_by`, which is the publisher, the identity this section
 rejects two paragraphs above. That is not a reversal, and the distinction is the whole point: all four
 objections there are about *identity*, and an intersection is **monotone downward**. Capping a Butler against
 the publisher's live authority grants it nothing (it still needs its own tuple), puts nobody's name on any
@@ -115,7 +115,7 @@ freezes the program and fingerprinted by the digest that already fingerprints it
 sponsor is a ceiling that is not pinned.
 
 **Two queries, not three**, and the OR-versus-AND conversion that makes it work, are in
-`docs/butler-capability-ceiling.md` — including which nodes can name all three refusal reasons and which
+`docs/butler-capability-ceiling.md`, including which nodes can name all three refusal reasons and which
 cannot, and the four things the ceiling does not reach.
 
 ---
@@ -136,18 +136,18 @@ cannot, and the four things the ceiling does not reach.
 Step 4 lives in `src/butler/walk.ts`, and it was `interpret`'s innermost closure until simulation needed a
 second caller. The extraction is the point rather than tidiness:
 
-**A simulation that diverges from the engine is worse than no simulation — it is a tool that tells authors
+**A simulation that diverges from the engine is worse than no simulation. It is a tool that tells authors
 their Butler is fine.** So there is one switch, one expression evaluator, one set of loop bounds and one
 affordability calculation, and both callers walk them. Two copies would have been the correspondence problem
 this repository keeps paying for, in the worst available place.
 
 `walk.ts` contains **no `env` and no import that reaches one.** Everything a walk can cause arrives as a
-`Walkable`, and the fields of that interface are not a design preference — they are exactly what would not
+`Walkable`, and the fields of that interface are not a design preference. They are exactly what would not
 come along when the walk moved out:
 
 | Seam | Live | Dry |
 |:--|:--|:--|
-| `effects` | `liveEffects(env, ctx, butler)` — the five functions in `effects.ts` | reads performed, writes reported |
+| `effects` | `liveEffects(env, ctx, butler)`, the five functions in `effects.ts` | reads performed, writes reported |
 | `perform` | a `batch()`: the effect row, the spend, the park | an array in memory |
 | `complain` | a terminal row with a message | nothing; the terminal is the return value |
 | `steps` | the Workflow's `do`/`sleep` | inline; a `wait` is reported, not slept |
@@ -156,12 +156,12 @@ come along when the walk moved out:
 
 ## Simulation: what a dry run really asks, and what it cannot (#87)
 
-`POST /api/butlers/:id/simulate` walks the **draft** — or the live version if there is no draft, the same
-fallback the editor makes and for the same reason — over facts from a run this Node actually performed.
+`POST /api/butlers/:id/simulate` walks the **draft** (or the live version if there is no draft, the same
+fallback the editor makes and for the same reason) over facts from a run this Node actually performed.
 
 **The safety is a type, not a flag.** Every function in `src/butler/simulate.ts` takes `ReadOnlyEnv`, which
-is not assignable to `Env`, so nothing reachable from it can construct the live effect handle or write a row
-— *because it does not compile*, for every write that exists and every write anybody adds. The narrowing
+is not assignable to `Env`, so nothing reachable from it can construct the live effect handle or write a row,
+*because it does not compile*, for every write that exists and every write anybody adds. The narrowing
 happens once, in `readOnly(env)` at the route, which is the single line to read when asking how a simulation
 could write. `src/read-only.ts` carries the argument; `test/butler-world.test.ts` witnesses it with
 `@ts-expect-error`, the only assertion that can witness a compile error, mutation-proven in both directions.
@@ -169,7 +169,7 @@ could write. `src/read-only.ts` carries the argument; `test/butler-world.test.ts
 This replaces the mechanism §5's fifth charted answer specified, and the reason is recorded rather than
 quietly substituted. That answer said a simulated run carries **no transport capability**, so
 `mail.send.propose` is a type error. **A Butler run has no transport capability to withhold**: nothing under
-`src/butler/` names `EMAIL`, and `mail.send.propose` is `sealManifest` — it writes a manifest and stops, and
+`src/butler/` names `EMAIL`, and `mail.send.propose` is `sealManifest`. It writes a manifest and stops, and
 a separate later invocation dispatches. The property the answer wanted is already true, for a stronger reason
 than it proposed, and what a simulated run must actually not do is **write**. Ranked by danger the chart's own
 example comes last: a proposed send is parked behind #61's approval, while `case.assign` and `draft` are
@@ -185,13 +185,13 @@ This is what separates a dry run worth running from one that prints the graph:
 | every expression | `expr.ts` is pure; a `${…}` that does not resolve faults exactly as it would live |
 | loop bounds, affordability | arithmetic in the shared walk, so *"this Butler cannot afford to run"* is answerable before publishing |
 | `lookup` | the **real** `lookupRow`, narrowed to a read handle for exactly this reason |
-| a case's actionability | the real `caseMailboxHeldBy` — ceiling ∩ tuples ∩ sponsor's |
+| a case's actionability | the real `caseMailboxHeldBy`: ceiling ∩ tuples ∩ sponsor's |
 | a mailbox's authority | the real `effectiveOnMailbox`, #51's three-term intersection |
 | **who a reply would go to** | `parentDelivery` + `replyRecipients`, both pure, both over the real trigger |
 
 That last row is the answer an author wants, and it is exact: the recipients are derived by the same code the
 live path uses. `test/butler-run.test.ts` asserts a dry run and a live run over **one delivery** reach the
-same nodes in the same order with the same verdicts — `ok` becoming `would` exactly where a live run wrote
+same nodes in the same order with the same verdicts, `ok` becoming `would` exactly where a live run wrote
 something, everything else matching. Mutation-proven three ways: skipping the authority read, dropping the
 `would` promotion, and preferring the published version over the draft all fail it.
 
@@ -199,15 +199,15 @@ something, everything else matching. Mutation-proven three ways: skipping the au
 
 A simulation writes no draft, so from the `draft` node onward it reasons about a row that does not exist.
 `mail.send.propose` normally reads that draft back, and the seal is where `policy.ts` decides,
-`approvals.ts` gates and `breakers.ts` trips — against content this run did not store.
+`approvals.ts` gates and `breakers.ts` trips, against content this run did not store.
 
-So the simulated `draft` binds a value marked `simulated`, `proposeSend` asks the authority it genuinely can
+So the simulated `draft` binds a value marked `simulated`, `proposeSend` asks the authority it can
 and then names what it did not, and every report carries a `limits` list in words. Three things go in it:
 
 - the send's policy decision, breakers and approval gate are made at the seal, so a report says a send
   **would be proposed**, never that it would be sent;
 - whether the *assignee* of a `case.assign` may work the case is decided by the claim, which writes;
-- a **draft** has no publisher, so its ceiling was capped against the asker's own authority — publishing caps
+- a **draft** has no publisher, so its ceiling was capped against the asker's own authority. Publishing caps
   it against whoever publishes, who may hold less.
 
 A dry run that quietly implied policy had been checked would be worse than no dry run: a green light nobody
@@ -215,12 +215,12 @@ granted.
 
 ### What is a step and what is not
 
-A `step.do` per node that performs I/O — the four effects and `lookup`. **Nothing else.** That is the line
+A `step.do` per node that performs I/O: the four effects and `lookup`. **Nothing else.** That is the line
 `butler-step-cost.md` already draws: `guard`, `switch`, `map`, `foreach`, `join`, `wait`, `stop`, `transform`
 and `validate` cost **0** subrequests, so wrapping them would buy a durable record of arithmetic and pay for
 it in step storage.
 
-That is only sound because the expression language is **pure** — it reads the run's state and nothing else,
+That is only sound because the expression language is **pure**. It reads the run's state and nothing else,
 with no clock, no randomness and no I/O. A Workflow re-runs the whole body on every resume and replays cached
 step results, so a pure node recomputes to the same answer. A node that read `Date.now()` would give two
 answers across a sleep and the run would take a different edge on either side of it.
@@ -231,7 +231,7 @@ name and occurrence. The counter comes from the walk, which is the same walk on 
 ### Replay safety, which is where the bookkeeping lives
 
 Anything inside `step.do` happens once per **run**; anything outside it happens once per **invocation**. So
-the D1 write of an effect row is inside — it is the durable record — and the in-memory counters and the
+the D1 write of an effect row is inside (it is the durable record) and the in-memory counters and the
 effect list are **outside**, rebuilt from scratch on every replay. A run that resumed after a sleep would
 otherwise close with a count of the effects performed since the sleep and no others.
 
@@ -240,11 +240,11 @@ otherwise close with a count of the effects performed since the sleep and no oth
 | state | means |
 |:--|:--|
 | `finished` | the graph ran out of nodes |
-| `stopped` | a `stop` node ended it, or a release gate timed out — the reason says which |
+| `stopped` | a `stop` node ended it, or a release gate timed out; the reason says which |
 | `refused` | **the run stopped itself**: the stored AST no longer checks, a `validate` did not hold, its version is no longer published, or it could not afford to go on |
 | `failed` | a fault: an unresolvable path, a schema this engine cannot honour, a loop over more items than its bound |
 
-A *policy* denial, a breaker, an unsatisfiable approval, a held case — none of those is any of the above.
+A *policy* denial, a breaker, an unsatisfiable approval, a held case: none of those is any of the above.
 They are recorded per effect and the run carries on, because **being refused is the system working**.
 
 ---
@@ -252,13 +252,13 @@ They are recorded per effect and the run carries on, because **being refused is 
 ## The expression language, in full
 
 Three forms and nothing else. Small enough to be analysable matters more here than expressive enough to be
-convenient — which #52 then made a stronger argument for rather than a weaker one: with no sink for an
+convenient, which #52 then made a stronger argument for rather than a weaker one: with no sink for an
 expression to reach, the language's smallness is what keeps it that way as nodes are added.
 
 | form | example | result |
 |:--|:--|:--|
 | a **path** | `event.subject` | the value at that path |
-| an **interpolation** | `"Re: ${event.subject}"` | a string — or the value itself when the whole expression is one `${…}` |
+| an **interpolation** | `"Re: ${event.subject}"` | a string, or the value itself when the whole expression is one `${…}` |
 | a **comparison** | `event.security.malware != "clean"` | a boolean |
 
 Three operators: `==`, `!=`, `contains`. No arithmetic, no function calls, no indexing, no boolean
@@ -267,23 +267,23 @@ author who writes `event.count > 3` is told that `>` is not in the language rath
 evaluate as a string comparison.
 
 Three roots: `event` (what the trigger carried), `steps` (what `as` bound), `butler` (`id`, `versionId`,
-`name` — which is how a `case.assign` names the Butler itself). **A path that does not resolve throws**,
+`name`, which is how a `case.assign` names the Butler itself). **A path that does not resolve throws**,
 because the alternative is `"undefined"` interpolated into a subject line and sent.
 
 A `mail.received` run's `event` carries exactly: `message_id`, `conversation_id`, `case_id`, `mailbox_id`,
 `mailbox_address`, `subject`, `from`, `return_path`, `received_at`, `parse_error`, and since 0055 the
-receiving server's verdict on the sender as `dmarc`, `spf`, `dkim` — RFC 8601's own words, `absent` when the
-server wrote no header, null on a message from before the Node evaluated it — so a guard can send a
+receiving server's verdict on the sender as `dmarc`, `spf`, `dkim` (RFC 8601's own words, `absent` when the
+server wrote no header, null on a message from before the Node evaluated it), so a guard can send a
 `dmarc == "fail"` message where a person looks first, without any of the three ever choosing a recipient.
-Since 0057, `attachments` and `attachments_dangerous` — how many parts were attached and how many are an
+Since 0057, `attachments` and `attachments_dangerous` (how many parts were attached and how many are an
 executable, a script, or a program under a document's name (`src/attachments.ts`); null before the Node
-looked — so a guard can route `attachments_dangerous > 0` the same way. Two of the facts name a sender
-and the distinction is load-bearing — `from` is the `From:` **header**, content the sender chose, readable so
+looked), so a guard can route `attachments_dangerous > 0` the same way. Two of the facts name a sender
+and the distinction is load-bearing. `from` is the `From:` **header**, content the sender chose, readable so
 a guard can match on it; `return_path` is the **envelope** sender, and it is the only one anything addresses
 mail with. See "Who a Butler's reply goes to" below.
 
 `validate` honours `type`, `enum`, `const`, `required`, `properties`, `additionalProperties`, `items`,
-`minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum` — and **refuses a schema using
+`minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, and **refuses a schema using
 anything else, by name**. A validator that ignored a keyword it did not understand would be a `validate` node
 that passes everything while reading as though it checked something. `pattern` and `format` are absent
 deliberately: a regular expression compiled from a stored AST is a denial of service with an author's name on
@@ -293,7 +293,7 @@ it.
 
 `collectAs` collects what the body bound **under that same name**, per iteration: inside the body
 `steps.<collectAs>` is this iteration's result, and after the loop it is the array of them. One name, one
-concept. A body that bound nothing under it is **refused** rather than collecting nulls — a name that gathers
+concept. A body that bound nothing under it is **refused** rather than collecting nulls. A name that gathers
 a list of nothing is a name that lies about what the loop did. `foreach` is the node that collects nothing,
 and it says so.
 
@@ -302,17 +302,17 @@ and it says so.
 ## Effects go through Layer 5, not around it
 
 `case.assign` is `claim`. `case.close` is `close`. `draft` is `saveDraft`. `mail.send.propose` is
-`sealManifest`. **Not a copy of any of them** — so every policy decision, every approval gate, every circuit
+`sealManifest`. **Not a copy of any of them**, so every policy decision, every approval gate, every circuit
 breaker, every authority check and every audit entry happens because the same function ran, with a different
 principal. `test/butler-step-cost.measure.test.ts` priced those four functions before this engine existed *on
 that basis*, and the figures only mean anything while it holds.
 
 What the engine adds around each call is four things: it resolves the node's expressions, it checks **the
 Butler's own** authority where the function checks somebody else's, it turns the answer into a row of the
-run record, and — for `draft` — it **supplies the recipients the node does not carry** (below).
+run record, and, for `draft`, it **supplies the recipients the node does not carry** (below).
 
-Every row below is the **three-term intersection** of #51 — the pinned ceiling, the Butler's live tuples and
-the sponsor's live tuples — in two queries, never a bare tuple check. What differs per node is which shape
+Every row below is the **three-term intersection** of #51 (the pinned ceiling, the Butler's live tuples and
+the sponsor's live tuples) in two queries, never a bare tuple check. What differs per node is which shape
 asks it, and that follows from whether the step *names* its mailbox or *discovers* it:
 
 | node | who the Layer 5 function checks | so the engine checks |
@@ -320,7 +320,7 @@ asks it, and that follows from whether the step *names* its mailbox or *discover
 | `case.assign` | the **assignee**'s `send.propose` | the intersection for `send.propose` on the case's mailbox, folded into the case read |
 | `case.close` | that the closer **holds** the case | the same |
 | `draft` | the author's `send.propose` | the intersection on the node's own `mailboxId`, before anything is written. It also supplies the recipients, which the node cannot name |
-| `mail.send.propose` | the author's `send.propose` | the intersection on the **draft's** mailbox, after the draft is read — because that is where the mailbox comes from |
+| `mail.send.propose` | the author's `send.propose` | the intersection on the **draft's** mailbox, after the draft is read, because that is where the mailbox comes from |
 | `lookup` | nothing: it is a row read | the intersection for the entity's read relation, folded into the statement |
 
 The first row is the one that matters. `claim` checks whether the **assignee** may work the case, which is
@@ -339,7 +339,7 @@ construction.
 
 **`mail.send.propose` is the one node whose refusals come in two vocabularies**, and it is the order rather
 than a design: its mailbox is the draft's, which is unknown until `readDraft` has run, and `readDraft`
-re-checks `send.propose` itself — so a Butler holding no tuple is refused there with Layer 2's
+re-checks `send.propose` itself, so a Butler holding no tuple is refused there with Layer 2's
 `E_MAY_NOT_SEND_AS_MAILBOX`, before the intersection is asked. That node records `capability_not_declared`
 and `sponsor_lacks_it` but never `butler_not_granted`.
 
@@ -361,7 +361,7 @@ why the parameter is absent instead of guarded, and what that costs.
 ### The parent delivery, and which of its three addresses is used
 
 A Butler is triggered by `mail.received`: one message, delivered into one mailbox, carrying an SMTP envelope.
-The parent delivery is that message, and a reply to it is addressed to its **return path** — the envelope
+The parent delivery is that message, and a reply to it is addressed to its **return path**, the envelope
 sender, `ingress_receipts.envelope_from`, RFC 5321's reverse path. Three addresses were available and the
 choice is written down rather than left to the next reader:
 
@@ -377,14 +377,14 @@ reply is addressed to. Nothing addresses mail with `event.from`.
 
 **What this buys and what it does not, without dressing it up.** It closes the sink: no value an author wrote
 and no part of the message can decide who the mail goes to. It does **not** make the envelope sender
-trustworthy — a spoofed reverse path aims a reply at whoever it names, which is ordinary backscatter and a
+trustworthy. A spoofed reverse path aims a reply at whoever it names, which is ordinary backscatter and a
 property of email rather than of this design. What bounds that today is the human release gate every Butler
 send carries; what will bound it properly is the trusted-recipient store that CC, forward and
 supervisor-notify are also waiting on. Not claimed as closed, because it is not.
 
 ### A delivery with no return path is refused, never defaulted
 
-A bounce arrives with a null reverse path — `MAIL FROM:<>` — and RFC 3834 forbids answering one
+A bounce arrives with a null reverse path, `MAIL FROM:<>`, and RFC 3834 forbids answering one
 automatically. There is no honest default: the `From:` header would reopen the sink, the mailbox itself would
 be a loop, and a manifest with no recipients is not a send. So the `draft` node **faults**, the run ends
 `failed` with `E_BUTLER_PARENT_HAS_NO_RETURN_PATH`, and no draft and no manifest are written. An author who
@@ -396,8 +396,8 @@ The same fault covers a run with **no parent at all**, and neither shape is hypo
 - **A trigger that is not a delivery.** The trigger enum has one member and #49 says it will grow. The day a
   schedule fires a Butler there is no correspondent, and `E_BUTLER_NO_PARENT_DELIVERY` says that rather than
   inventing one.
-- **A run started before this Node was upgraded.** Workflow instances outlive a deploy — a `wait` reaches 365
-  days — so a payload created before `return_path` existed does not carry one. Its `draft` refuses, which is
+- **A run started before this Node was upgraded.** Workflow instances outlive a deploy (a `wait` reaches 365
+  days), so a payload created before `return_path` existed does not carry one. Its `draft` refuses, which is
   the safe direction: the alternative is guessing a recipient for mail that leaves the building.
 
 ### A reply to the address the delivery arrived at is refused, because it is a loop
@@ -409,7 +409,7 @@ sealed a manifest with that address in `From:` and in `To:`. That is delivered b
 fires the same Butler, and does it again. Forging `MAIL FROM` is all it takes, so it starts from outside.
 
 So `parentDelivery` refuses it: `E_BUTLER_REPLY_WOULD_LOOP`, before a draft is written, comparing the derived
-return path against `event.mailbox_address` case-insensitively. RFC 3834 §2 states the same rule — an
+return path against `event.mailbox_address` case-insensitively. RFC 3834 §2 states the same rule: an
 automatic responder must not answer its own address. A trigger carrying no `mailbox_address` refuses under the
 same code, because a check that switches itself off when its input is missing is absent on exactly the runs
 nobody tested. An author can pre-empt it: `when: event.return_path == event.mailbox_address` is a comparison
@@ -420,7 +420,7 @@ engine can run.
 
 ### The one sink that is still an expression
 
-`draft.mailboxId` is an `Expr`, so untrusted content *can* reach it — and the mailbox decides two of §16's
+`draft.mailboxId` is an `Expr`, so untrusted content *can* reach it, and the mailbox decides two of §16's
 eleven: `From` is the mailbox's address (ADR 36) and `mailbox_id` is a policy condition. Found by re-verifying
 the other ten rather than trusting the list, and recorded because *"sender identity is closed structurally"*
 was only half true.
@@ -429,11 +429,11 @@ It is closed by **validation against trusted organization state**, which is §16
 asymmetry with the recipient is the reason the two are handled differently: a recipient had nothing to be
 validated against, while a mailbox has `relationship_tuples`, which only an administrator writes. `saveDraft`
 and `sealManifest` both bound the choice to mailboxes this Butler was granted `send.propose` on, and the test
-asserts **both** arms — content naming a mailbox the Butler does not hold is refused, and content naming one it
+asserts **both** arms. Content naming a mailbox the Butler does not hold is refused, and content naming one it
 does hold works, which is the residual stated rather than implied.
 
 A related consequence, verified rather than reasoned: `senderAddress` is not a node parameter either, so a
-Butler on a **multi-address mailbox cannot send at all** — `sealManifest` refuses with `E_SENDER_AMBIGUOUS`
+Butler on a **multi-address mailbox cannot send at all**. `sealManifest` refuses with `E_SENDER_AMBIGUOUS`
 rather than letting a `created_at` decide what every recipient sees.
 
 ### The cost
@@ -446,7 +446,7 @@ filling in quietly.
 
 **A person is not constrained by any of this.** `saveDraft` stores the caller's recipient list and derives
 nothing from the message being replied to; the API hands it `body.to` from the request. The composer's reply
-button prefills the envelope sender *in the browser*, as a suggestion the person can change — which is the
+button prefills the envelope sender *in the browser*, as a suggestion the person can change, which is the
 difference between a default and a derivation.
 
 ---
@@ -459,8 +459,8 @@ A Butler-proposed send is sealed **`awaiting` with `butler_release_required`**, 
 **Both halves are necessary and neither is sufficient.** A parked run on its own is not a gate: a manifest
 sealed `held` is picked up by `dispatchDue` the moment its hold window elapses, so a Butler that sealed and
 parked would have had its mail sent by the sweeper while the run waited for a person who was never needed.
-And a gated manifest with no parked run cannot be resumed. So the **gate is in D1** — `movableNow` refuses to
-move an `awaiting` send whose reason is not a breaker's — and the **waiting is in the Workflow**, which costs
+And a gated manifest with no parked run cannot be resumed. So the **gate is in D1** (`movableNow` refuses to
+move an `awaiting` send whose reason is not a breaker's) and the **waiting is in the Workflow**, which costs
 no concurrency, so a Node with ten thousand proposed sends holds ten thousand sleeping instances and no
 capacity.
 
@@ -475,7 +475,7 @@ policy deny  >  domain pause  >  require_approval  >  policy hold  >  butler rel
 ```
 
 Below every policy gate, because a policy gate is a rule somebody wrote about *this send* while this is a
-property of who proposed it — and because `require_approval` already **is** a human gate, so adding a second
+property of who proposed it, and because `require_approval` already **is** a human gate, so adding a second
 ask would mean two people clearing one send for one reason. Above the rate gate, on `sealManifest`'s own
 rule: a rate gate needs *time* and this needs a *person*, and when both apply the reason a reader must act on
 is the human one.
@@ -483,17 +483,17 @@ is the human one.
 **Why not simply require an approval.** It was the tempting answer and #49 already refused it: `approval.request`
 is a *reserved* node because approvals are requested by the policy plane at seal, and a second way to create
 one is the correspondence problem ADR 35 rejected. And it is already expressible, better, as a policy naming
-the `btl_` as actor — governed, versioned, staged, auditable. This gate is the *default* for a program with no
+the `btl_` as actor: governed, versioned, staged, auditable. This gate is the *default* for a program with no
 human present, not a replacement for that rule.
 
 ### Releasing
 
-`POST /api/sends/:id/release`, gated on **`send.propose`** — the authority that would have been needed to
+`POST /api/sends/:id/release`, gated on **`send.propose`**, the authority that would have been needed to
 compose the message, which is what #60 gave a policy hold's release to. The gate exists because no person had
 *seen* it, not because a stricter authority is owed; `approval.decide` would have made this the approval
 machinery with none of its guarantees.
 
-The gate is named in three predicates — the read, the conditional `UPDATE`, and the `AuditGate` beside it —
+The gate is named in three predicates (the read, the conditional `UPDATE`, and the `AuditGate` beside it),
 and **widening any two changes nothing observable**. That is a mutation measurement rather than something a
 test can hold, since widening a predicate means editing the source; what the test pins is the outcome, which
 is that a `policy_hold` send answers `not_found`, stays `awaiting` and appends no entry. The audit entry names the
@@ -512,7 +512,7 @@ in substance, and this Node must not hold two opinions about how long somebody h
 `<butlerVersionId>-<triggerKey>`, where the trigger key is the `msg_` id of the delivery.
 
 `create({ id })` **throws `instance.already_exists`** on a duplicate within the retention window, so the same
-delivery cannot start two runs of the same version — and the refusal comes from the platform rather than from
+delivery cannot start two runs of the same version, and the refusal comes from the platform rather than from
 a check we wrote. §16's `forbid` overlap policy is therefore free. It matters because the trigger is called
 from an **at-least-once** pipeline: `materialiseReceipt` is driven by an outbox event, and a handler will see
 the same event twice.
@@ -521,14 +521,14 @@ Three things that must not be conflated:
 
 - **The run id is not an ADR 9 effect key.** It dedups the *trigger*; every sending step still mints its own
   effect key. One intent, one run, many effects.
-- **The dedup window is 30 days**, being the instance retention — a property of the platform. After it the
+- **The dedup window is 30 days**, being the instance retention, a property of the platform. After it the
   same id is creatable again, and `butler_runs`' primary key is what refuses the second *record* for ever.
 - **`createBatch` is not used and must not be.** It silently skips a duplicate id and excludes it from the
-  returned array — measured at 4 requested, 1 returned, no error.
+  returned array. Measured at 4 requested, 1 returned, no error.
 
 **Miniflare does not reproduce the throw.** Measured: its `create` resolves and swallows the initialisation
 failure, so locally a duplicate returns a handle and starts no second run. The *outcome* holds and the
-*refusal* is invisible, so the two are tested separately — the outcome against real storage, the handling of
+*refusal* is invisible, so the two are tested separately: the outcome against real storage, the handling of
 the throw against a binding that throws.
 
 Matching is a **JSON parse per published Butler**: a trigger lives inside `ast_json`, which is a blob, so no
@@ -544,7 +544,7 @@ The trigger's cost is charged to the **sweeper's** invocation, never to a run's 
 ## Writing one: the authoring surface (#77)
 
 For most of this layer's life a Butler could not be created through the product. `createButlerDraft`,
-`editButlerDraft` and `publishButler` were written, tested and **unreachable** — nothing in the request path
+`editButlerDraft` and `publishButler` were written, tested and **unreachable**. Nothing in the request path
 imported them:
 
 ```
@@ -554,7 +554,7 @@ $ grep -c "createButlerDraft\|editButlerDraft\|publishButler" apps/node/worker/s
 
 That inverted this layer's central decision. #49 made publication the versioning event with **no deploy
 anywhere in that lifecycle**, which is what one generic `ButlerRun` class is *for*: a Butler is runtime data
-so publishing one needs no deploy. With no route, publishing needed direct database access — which is
+so publishing one needs no deploy. With no route, publishing needed direct database access, which is
 stricter than a deploy, available to fewer people, and precisely the edit `interpret.ts` re-checks against in
 its own header: *"a stored AST is still data, and data can be edited by somebody with direct database
 access."* The defence existed and the front door did not.
@@ -571,7 +571,7 @@ Five routes:
 
 **The three writes do not check authority**, deliberately. All three functions call `isAdmin` themselves and
 throw `E_NOT_AN_ADMINISTRATOR`; a check in the route as well would be a second opinion about who may author.
-The two reads *do* gate, and answer **404 rather than 403** — §5C, and the same answer `/api/policies` gives:
+The two reads *do* gate, and answer **404 rather than 403**: §5C, and the same answer `/api/policies` gives:
 a 403 on the list would confirm that this organization automates something.
 
 `publishButler` records `published_by`, which is the sponsor whose live authority caps the version (#51), so
@@ -580,23 +580,23 @@ published version capped against nobody.
 
 The list joins the pause in rather than leaving it to a second request, because *"this Butler is published"*
 and *"this Butler is running"* are different facts. A list showing only the first would be the enablement
-pointer #66 rejected — it would read as *deployed and working* over a Butler a breaker stopped. It calls the
+pointer #66 rejected. It would read as *deployed and working* over a Butler a breaker stopped. It calls the
 same `pausesInForce` the trigger consults, so the list and the gate cannot disagree.
 
 ### One live version, enforced (0033)
 
 0027's `btv_forward_only` comment credits `btv_live` with preventing two live versions of one Butler.
-`btv_live` is `CREATE INDEX ... (org_id) WHERE state = 'published'` — not UNIQUE, and keyed on the
+`btv_live` is `CREATE INDEX ... (org_id) WHERE state = 'published'`, not UNIQUE, and keyed on the
 organization. It prevented nothing. Only the publish transaction did, and a transaction governs only the
 writes that go through it, which is exactly the assumption `interpret.ts` refuses to make about a stored AST.
 
 What it cost, observed: with a published v1 beside a published v2, `publishButler` read the live version with
-`LIMIT 1` and no `ORDER BY`, got v1, computed `1 + 1`, and hit `btv_version` — surfacing as an **unhandled D1
+`LIMIT 1` and no `ORDER BY`, got v1, computed `1 + 1`, and hit `btv_version`, surfacing as an **unhandled D1
 constraint error and a 500**, not a refusal. The same two rows would make `triggerButlers` pick a program by
 row order, which is worse because it is silent.
 
 `btv_one_live` is the partial unique index that makes the claim true, in the shape `btv_one_draft` already
-uses. The migration repairs before it indexes — a unique index over dirty data is a Node that cannot migrate —
+uses. The migration repairs before it indexes (a unique index over dirty data is a Node that cannot migrate)
 and repairs to the lifecycle's own rule: the newest publication is the live one, older published rows become
 `superseded` with `superseded_at` set to their own `published_at`, because "when did this stop being live" is
 answered by when its successor arrived.
@@ -610,12 +610,12 @@ which nothing can check.
 
 The first cut of this said "the draft alone", and opening the screen showed why that was wrong: a Butler with
 a published version and no draft rendered an **empty editor**, which reads as *this Butler has no program*
-over one that is live and running — and invites somebody to write its replacement from scratch instead of
+over one that is live and running, and invites somebody to write its replacement from scratch instead of
 editing what it does. Editing a published Butler means starting from the published program.
 
 Superseded versions stay withheld, which is the part worth keeping. Their bodies are immutable and already
 named by `source_sha256`, and returning all of them would make one response grow with the number of times
-anybody ever edited a Butler — a list endpoint that returns every version of every program is an export under
+anybody ever edited a Butler. A list endpoint that returns every version of every program is an export under
 another name. At most two bodies travel, whatever the history.
 
 ## The run record, and the ledger seam
@@ -633,18 +633,18 @@ would be storage bought for arithmetic. What a person needs is what the run *did
 stopped it, and that is bounded by the affordability checker.
 
 **Each row is written inside the same step as the effect it records**, in one `batch()` with the accumulated
-spend and — for a send that parks — the park. Batching every row at the end of a run would be one subrequest
+spend and, for a send that parks, the park. Batching every row at the end of a run would be one subrequest
 for all of them and would leave a killed invocation with a record of nothing, which is the state this table
 exists to prevent.
 
 **The seam #50 named is now closed, and it closed on these two tables rather than beside them.** #53's ledger
 is four columns (migration 0030), for the reason 0028 gave when it named the seam: a second set of run tables
-would be two accounts of one run that can disagree. `trigger_facts` holds what the run was **given** — mail content, read only through `triggerFactsOf` and disclosed only behind `inspect`'s per-mailbox gate;
+would be two accounts of one run that can disagree. `trigger_facts` holds what the run was **given**: mail content, read only through `triggerFactsOf` and disclosed only behind `inspect`'s per-mailbox gate;
 `replay_of` and `replayed_by` say whether it is a replay and whose decision that was; `send_manifests.resend_of`
 says that one send deliberately repeats another. What is still absent is a row per **step**, for 0028's own
 reason, and recorded LLM or connector output, which has nothing to record until Layer 6 has either.
 
-`GET /api/butler-runs` and `GET /api/butler-runs/:id` read them, gated on **`org.admin`** — the same authority
+`GET /api/butler-runs` and `GET /api/butler-runs/:id` read them, gated on **`org.admin`**, the same authority
 authoring a Butler takes. A run's effect list names ids across every mailbox the Butler touched, so bounding
 it per mailbox would mean either a partial answer that reads as complete or a query deciding visibility row by
 row. There is deliberately no route that *creates* a run: a Butler that could be fired by a request would be an
@@ -667,12 +667,12 @@ assumes a first attempt.
 
 | mode | route | reads | writes |
 |:--|:--|:--|:--|
-| `inspect` | `GET /api/butler-runs/:id/inspect` | the run row, the version's frozen `ast_json` and publication state, the pause in force, the effect rows in order, each send's current state and offer, any replays already made, and — gated per mailbox — what the run was **given** | **nothing**, except the `supervised.opened` entry §7 owes when a supervised grant is what opened the run's content fields |
+| `inspect` | `GET /api/butler-runs/:id/inspect` | the run row, the version's frozen `ast_json` and publication state, the pause in force, the effect rows in order, each send's current state and offer, any replays already made, and, gated per mailbox, what the run was **given** | **nothing**, except the `supervised.opened` entry §7 owes when a supervised grant is what opened the run's content fields |
 | `re-run` | `POST /api/butler-runs/:id/replay` | the source run's `trigger_facts` (through `triggerFactsOf`, the column's one reader), then everything the live path re-asks | a new `butler_runs` row carrying `replay_of`/`replayed_by`, in one transaction with `butler.replayed` |
 | `retry-effect` | `POST /api/sends/:id/retry` | one manifest's `state`, `fidelity`, `submitted_key` | that manifest back to `held`, audited `send.retried`; then dispatch, under the **original** key |
 | `resend-may-duplicate` | the same route, named mode | the same three, plus the envelope and the author's **typed** body | a **new** manifest under a **new** key with `resend_of` set, audited `send.resent` |
 
-`inspect` performs no effect — it creates no run, seals no manifest, writes no evidence and touches no state —
+`inspect` performs no effect (it creates no run, seals no manifest, writes no evidence and touches no state),
 and it appends no entry of its own, because an entry per glance at a screen is the per-row frequency this Node's
 trail keeps out. The one row it can write is not its own: §7 owes `supervised.opened` before a **grant**-
 authorized reader is shown the run's content fields, and that is a precondition of the read rather than a
@@ -682,25 +682,25 @@ pure nodes of the walk left no rows, so which branch a guard took is not recover
 #### `org.admin` is the floor on `inspect`, and not the whole check
 
 A run's recorded input is the `event.*` root, and that carries the triggering message's `subject`, `from`,
-`return_path` and `parse_error` — **mail content**, which `src/butler/trigger.ts` says of `from` in as many
+`return_path` and `parse_error`: **mail content**, which `src/butler/trigger.ts` says of `from` in as many
 words. `org.admin` is a relation on the *organization*: it appears nowhere in `authz-read.ts`'s table of who may
 read a mailbox, and §7 is explicit that no relation implies `message.read`. So gating `inspect` on it alone made
 this route a way for an administrator holding nothing anywhere to read the subject line and the sender of every
-message any Butler ever processed, with nothing recorded — the pair #63 exists to prevent.
+message any Butler ever processed, with nothing recorded, the pair #63 exists to prevent.
 
 Three things close it, and each is a decision rather than a defence:
 
-- **`FACT_DISCLOSURE`, beside `DeliveryFacts`** — a *total* map classifying every fact as `content` or
+- **`FACT_DISCLOSURE`, beside `DeliveryFacts`**, a *total* map classifying every fact as `content` or
   `operational`, so a tenth fact does not compile until somebody classifies it, and an **unknown** key in a
   stored blob is treated as content. A list of fields to hide would guard only the spellings its author thought
   of, and the fact set is the thing that grows: #52 grew it by `return_path`.
 - **`mailbox.metadata.read` or `mailbox.content.read` on the mailbox the delivery landed in, or a live
-  supervised grant of either scope** — `mayReadMetadata`, whose own contract is *"subject lines, sender
+  supervised grant of either scope**: `mayReadMetadata`, whose own contract is *"subject lines, sender
   addresses"*, which is exactly and only what a fact set discloses. Requiring `mailbox.content.read` instead
   would refuse a subject line to the holder of the relation that exists for nothing else, and would refuse
   nobody extra. A grant opens it because #63 built that ceremony for precisely this case, and refusing it here
   would push an investigator to `GET /api/messages` for the same subject lines through a door already sanctioned.
-- **Redaction that is stated, not silent** — the content fields come back `null` and `triggerFactsRedacted`
+- **Redaction that is stated, not silent.** The content fields come back `null` and `triggerFactsRedacted`
   names them and says what authority would open them. A redacted `parse_error` reading `null` would otherwise
   claim the headers parsed cleanly, which is a *false* answer rather than an absent one.
 
@@ -712,33 +712,33 @@ own sentences, but `E_HEADERS_UNPARSED  <parser message>` interpolates the failu
 **standing** relation records nothing, which is the product's settled rule for metadata rather than an exception
 carved here. `queueFor` is the precedent to the letter: it gates on this same `mayReadMetadata`, returns for a
 standing relation having appended nothing, and calls `recordDisclosure` only when `metadata.grantId` is
-non-null. `listMessages` records only its supervised arm, and even `mayRead` — which reaches a *body* — returns
+non-null. `listMessages` records only its supervised arm, and even `mayRead`, which reaches a *body*, returns
 on a standing relation before its append and records only when a grant answered. The one path that records
 unconditionally is `authorizeExport`, whose reason is that an export takes a **copy off the
 Node**; `inspect` produces no copy and no bytes.
 
 **`butler_runs.trigger_facts` is not on `RunRow` at all.** `RunRow` is serialized into three responses gated on
-`org.admin`, so the blob has exactly one reader — `triggerFactsOf` — named for what it returns. That is the
+`org.admin`, so the blob has exactly one reader, `triggerFactsOf`, named for what it returns. That is the
 total shape rather than three route-level omissions: a fourth route cannot leak a column its row does not carry,
 and the per-mailbox gate on the parsed facts cannot be defeated by the raw column sitting beside it.
 
 The two send-scoped modes are on `/api/sends/:id` and not on a run because the states they turn on are states of
-a **manifest**, and a manifest outlives every run — most were never proposed by a Butler at all. Hanging them
+a **manifest**, and a manifest outlives every run. Most were never proposed by a Butler at all. Hanging them
 off a run would have made a person's refused send unretryable and a Butler's retryable.
 
 ### Materially new is decided by content, never by identifier
 
-`contentIdentity` hashes the envelope — the mailbox, To, Cc, Bcc, the subject and the threading parent — plus
+`contentIdentity` hashes the envelope (the mailbox, To, Cc, Bcc, the subject and the threading parent) plus
 `body_normalized_sha256`, one of the three hashes `sealManifest` already computes. Same identity means the same
 effect: the replay records the **old** manifest id as its subject, seals nothing, writes no R2 object and sends
 no mail, with `replay_identical_content` as the reason. Different identity means a new manifest and a new key,
 which by construction moots any approval bound to the old one.
 
 **Reusing the key is right on every state; claiming success is not.** `replay_identical_content`'s justification
-is *"this message exists and is on its way"*, and that is false of an incumbent the world has decided **against**
-— a `withheld` manifest is never going anywhere and a `cancelled` one was stopped by whoever the audit entry names — which is not necessarily a person, since the cancel route is tier `act`. Before this was
-fixed, "a policy wrongly denied a Butler's send; fix the policy and re-run" — the single most obvious use of
-`re-run` — was a no-op reporting `ok`. `incumbentStands` is the total `Record<SendState, boolean>` that decides
+is *"this message exists and is on its way"*, and that is false of an incumbent the world has decided **against**.
+A `withheld` manifest is never going anywhere and a `cancelled` one was stopped by whoever the audit entry names, which is not necessarily a person, since the cancel route is tier `act`. Before this was
+fixed, "a policy wrongly denied a Butler's send; fix the policy and re-run", the single most obvious use of
+`re-run`, was a no-op reporting `ok`. `incumbentStands` is the total `Record<SendState, boolean>` that decides
 it: `cancelled` and `withheld` do not stand, an unrecognised state does (standing performs nothing, so it cannot
 invent a decision nobody made), and an incumbent that does not stand records `replay_send_decided`, **refused**,
 against the incumbent's own id.
@@ -751,7 +751,7 @@ person, a reason and an acknowledged risk.
 **The tempting reading is exactly backwards.** #53's own body proposed *materially new means a different
 manifest id*, citing ADR 35. That property is **directional**: the id is a time-and-random ULID and nothing
 constrains content uniqueness, so same id implies same content and a different id implies nothing. A replay
-reproducing a message byte for byte always gets a new id — so an id-based rule would call it materially new,
+reproducing a message byte for byte always gets a new id, so an id-based rule would call it materially new,
 mint a fresh key and hand the same message over twice.
 
 Three properties of the rule worth stating because each was a decision:
@@ -763,7 +763,7 @@ Three properties of the rule worth stating because each was a decision:
   is a refusal and separating them is a duplicate delivery. Addresses are therefore lower-cased, deduplicated
   and sorted; the subject, the parent and the body hash are compared exactly.
 - **It is scoped to a replay of a run.** A person composing the same words twice is a new intent, and
-  *"please resend that"* stays representable — that is what `resend-may-duplicate` is.
+  *"please resend that"* stays representable; that is what `resend-may-duplicate` is.
 
 An incumbent whose manifest row has been **deleted** refuses the whole replay with `replay_send_unprovable`,
 because content that cannot be compared must not be assumed new.
@@ -772,7 +772,7 @@ because content that cannot be compared must not be assumed new.
 
 Absent, **not failing**: a mode unavailable because the Node cannot prove its precondition is a different thing
 from a mode that errors. What can be proven is narrow, and all four are first-party facts about this Node's own
-attempt rather than reconciliation results — §16's sentence named a reconciler that does not exist, and the
+attempt rather than reconciliation results. §16's sentence named a reconciler that does not exist, and the
 blueprint now says so.
 
 | proof | why it is one |
@@ -784,20 +784,20 @@ blueprint now says so.
 
 `send_recipients.attempts = 0` is **not** a proof and is not consulted: it is updated only after the call
 resolves, so a dead isolate leaves it at zero with the bytes already gone. And provider observation can only
-ever *disprove* non-acceptance — `transport_message_id` is written only on `handed_over`.
+ever *disprove* non-acceptance. `transport_message_id` is written only on `handed_over`.
 
 The rule is a `Record<SendState, …>` rather than a list of states to exclude, and that shape is load-bearing:
 `outcome_unknown` is the **default** for anything unrecognised, so the unprovable population is the one that
 grows and a denylist would guard only the spellings its author thought of. A tenth send state does not compile
 without a classification, and a state string the code has never seen offers nothing at all.
 
-It is expressed twice — in TypeScript for the offer and in SQL for the conditional `UPDATE` that performs the
-act — and `test/butler-replay.test.ts` drives both over every state crossed with both fidelities and both key
+It is expressed twice, in TypeScript for the offer and in SQL for the conditional `UPDATE` that performs the
+act, and `test/butler-replay.test.ts` drives both over every state crossed with both fidelities and both key
 states, because two expressions of one rule need a check rather than care.
 
 `E_RETRY_NOT_PROVEN` has **three** arms and not two, and the third is a correction. A `reconstructed` send
 reaches the refusal with `submitted_key` NULL, so it inherited the *authored* explanation and was told
-*"an absent submitted_key is the only durable proof of non-submission and this send has one"* — about a column
+*"an absent submitted_key is the only durable proof of non-submission and this send has one"*, about a column
 holding nothing. An agent reading that is sent to check the wrong thing, which is worse than a vague reason: a
 false explanation ends the question a blank one would have started. It now says what is actually true of that
 path, which is that it never writes the column at all (ADR 33).
@@ -806,7 +806,7 @@ path, which is that it never writes the column at all (ADR 33).
 
 `retry-effect` reuses the old key: the effect provably did not happen, so the intent is unchanged.
 `resend-may-duplicate` mints a **new** one: the old key may already have been handed over, and reusing it would
-claim these are the same effect — the one thing nobody can say about that case. It is human-only, refuses without
+claim these are the same effect, the one thing nobody can say about that case. It is human-only, refuses without
 `acceptDuplicateRisk: true`, refuses without a reason, enters the hold window rather than dispatching, and its
 audit entry names the **person** who accepted the risk rather than the author, which on a Butler's message is a
 `btl_`.
@@ -825,19 +825,19 @@ recipient reading `handed_over`, citing ADR 40.
 | legal hold | **neither** | it governs destruction, not sending. A hold placed after the fact does not stop a replay, and inventing a coupling would be a control nobody asked for |
 | the hold window | **not inherited** | a replayed send gets its own `release_at`, so it is still cancellable |
 | rate breakers, domain pause | **re-asked** | at the seal and again at hand-over, unchanged |
-| the Butler pause | **re-asked, before any run exists** | a pause refuses rather than gates, so a paused Butler starts no run — and `interpret` asks again per invocation for a pause placed while a replay sleeps |
+| the Butler pause | **re-asked, before any run exists** | a pause refuses rather than gates, so a paused Butler starts no run, and `interpret` asks again per invocation for a pause placed while a replay sleeps |
 | the version's publication state | **re-asked** | a replay runs the **same** version, because a run is one walk of one program; a superseded or deleted one refuses |
 
 ### What a replay does to the run's cost counter: nothing
 
 `butler_runs.subrequests_spent` is accumulated **per instance**, because the pot is per instance. A replay is a
 new instance with a new id, so it opens its own row at zero and the original's figure is untouched. There is no
-double count — and the case that would have mattered now works: a run killed with `budget_exhausted` is
+double count, and the case that would have mattered now works: a run killed with `budget_exhausted` is
 replayable and gets a whole pot, rather than inheriting an exhausted one and being refused a replay that is in
 fact affordable. The two send-scoped modes spend nothing against any run's pot: they run in the request's
 invocation, the way `triggerButlers` runs in the sweeper's.
 
-A replay pays **one** subrequest more than the engine's fixed three — the single read of the replayed run's
+A replay pays **one** subrequest more than the engine's fixed three: the single read of the replayed run's
 sends. It is `1` because it is one statement, `butler.run_cost_engine_fixed` stays pinned at 3 for an ordinary
 run, and the read is deliberately outside the send node so `butler.run_cost_max_send_propose` keeps describing
 what it names.
@@ -846,8 +846,8 @@ what it names.
 
 Not `<butlerVersionId>-<triggerKey>`. 0028 made the instance id the primary key precisely so one delivery cannot
 produce two records of one version, so keying a replay on the delivery would collide with the record it is
-replaying. The second half becomes the replay's own `brp_` ULID: the same shape — *the version, and what made
-this run happen* — the same length to the character (61 against `workflow.instance_id_max_chars = 100`), and ADR
+replaying. The second half becomes the replay's own `brp_` ULID: the same shape, *the version, and what made
+this run happen*, the same length to the character (61 against `workflow.instance_id_max_chars = 100`), and ADR
 9 intact, because for a replay the **intent is a person's decision** rather than a delivery. Two clicks are two
 runs; what stops the second sending a second copy is the content rule, not the id.
 
@@ -860,10 +860,10 @@ question and deserves deciding rather than arriving as a side effect. `src/butle
 
 ### One Layer 2 invariant that assumed a first attempt
 
-`drafts_one_per_reply` is `UNIQUE (org_id, author_user_id, in_reply_to_message_id)` — *"replying to the same
+`drafts_one_per_reply` is `UNIQUE (org_id, author_user_id, in_reply_to_message_id)`: *"replying to the same
 message twice should resume the draft that already exists"*. Written about a person, and it binds a program
 too: a replay drafting the same reply as the same author violated it, and the run died with a constraint error
-before its first effect row, recording `engine_fault` and nothing else. The fix is the index's own sentence —
+before its first effect row, recording `engine_fault` and nothing else. The fix is the index's own sentence:
 on a replay, `writeDraft` resumes this Butler's existing draft for that parent. The argument against an upsert
 on the ordinary path survives, because the lookup is bound to the Butler's own `author_user_id`, so the widest
 thing it can find is a draft the same program wrote.
@@ -881,13 +881,13 @@ reuse.
 ## The pause, and the loop that places it
 
 #66 designed a Butler pause and named it **absent**, because there was no `butlers` table to key one on
-and no run record to place one from. #75 is the same design against the substrate #49, #50 and #54 built.
+and no run record to place one from. #75 is the same design against the tables #49, #50 and #54 built.
 Receipt: [`docs/receipts/butler-pause.md`](./receipts/butler-pause.md). Migration 0029.
 
 ### Keyed on the Butler, never on a version
 
 A published version is frozen in both AST and source by two database triggers, so auto-disabling **cannot** be
-a mutation of the version — invariant 9 forbids it. That rules out one implementation. What decides the key is
+a mutation of the version, since invariant 9 forbids it. That rules out one implementation. What decides the key is
 the consequence: **republishing a fixed Butler must not silently clear a pause the machine placed.** With a
 version-keyed pause, an operator who changed one comment and published would have re-armed a Butler the machine
 stopped, with nobody deciding it was safe.
@@ -902,7 +902,7 @@ recovery would look like an ordinary deploy in the trail.
 ### It refuses rather than gating, so what it looks like is silence
 
 #66's split: a **rate** breaker is a question re-asked per act, so it gates and clears when the window slides;
-an **abuse** breaker latches and refuses. A paused Butler does not run at all — not a run that starts and
+an **abuse** breaker latches and refuses. A paused Butler does not run at all. Not a run that starts and
 refuses itself, not a queue somebody releases later. So its observable is **no runs**, which is what a Butler
 nothing has triggered also produces, which is why `doctor` grew three findings in the same change.
 
@@ -918,16 +918,16 @@ count of the statements the check adds and the count is none:
 
 The second is not symmetry. A workflow outlives the Worker that declared it and a `wait` node reaches 365 days,
 so a pause that stopped new triggers and let ten thousand parked instances wake up and act would be a pause in
-name only. That read is already outside a `step.do` because it must not be cached — which makes it exactly the
+name only. That read is already outside a `step.do` because it must not be cached, which makes it exactly the
 hook a run resuming from a thirty-day sleep needs.
 
 A run that finds its Butler paused ends `refused` with `butler_paused` through **`abandonRun`, not
-`closeRun`** — it writes the state and the reason and states no counts, because the refusing invocation does
+`closeRun`**. It writes the state and the reason and states no counts, because the refusing invocation does
 not know what earlier ones did.
 
 **And the limit of that is stated rather than implied, because the obvious reading of it is wrong.**
 `nodes_executed`, `effects` and `refusals` are written by `closeRun` **alone**, and `abandonRun` can only match
-a run that has never closed — so on this path those three columns read **zero either way**, and calling
+a run that has never closed, so on this path those three columns read **zero either way**, and calling
 `abandonRun` rescues no figure. It is the right call because it does not *state* one. What a suspended run
 actually performed is its `butler_run_effects` rows, which are written with each effect in one transaction and
 returned beside the run row by `GET /api/butler-runs/:id`. Measured, not reasoned: `test/butler-pause.test.ts`
@@ -937,7 +937,7 @@ rows. #53 closes that gap by pointing a reader at the rows rather than by writin
 projection only a close computes.
 
 Measured, `docs/receipts/butler-pause.md`: the trigger is **3** subrequests with a live Butler and **2** with a
-paused one — a pause makes the ingress path *cheaper*, because the `create` never happens. Placing one costs
+paused one. A pause makes the ingress path *cheaper*, because the `create` never happens. Placing one costs
 **4**, once in a Butler's life.
 
 ### Which loop this is, exactly, and which one is absent
@@ -953,13 +953,13 @@ butler_run_effects.run_id -> butler_runs.butler_id       whose run sealed it
 
 So a **self-provoked run** is a run of Butler B whose triggering delivery is a reply to a manifest a run of *B
 itself* sealed. The reading is the count of those inside the window plus one when the delivery being decided is
-itself self-provoked — *how many links of a chain this Butler made itself, counting the one in front of it*.
+itself self-provoked: *how many links of a chain this Butler made itself, counting the one in front of it*.
 Over `butler.loop_max_self_provoked_runs` and the Butler is paused before the run starts.
 
 The query is all index seeks, read from the planner rather than asserted:
 `sm_by_rfc_message_id` then `bre_by_subject`. That index leads on `rfc_message_id` and **not** on `org_id`,
 breaking this schema's convention, because written the usual way round it displaced `sm_evidence_changed` in
-the planner for `doctor`'s evidence check — turning a seek into an empty partial index into a scan of every
+the planner for `doctor`'s evidence check, turning a seek into an empty partial index into a scan of every
 manifest ever sealed. Migration 0029 records the observed plan.
 
 **Named absent, three of them, each with its reason:**
@@ -970,16 +970,16 @@ manifest ever sealed. Migration 0029 records the observed plan.
   reporting a reassuring zero.
 - **A loop through two Butlers.** A → B → A counts for neither, because each counts only what it sealed itself.
   That needs a chain walk rather than a windowed count.
-- **A runs-per-window breaker**, and *not* for want of substrate: `butler_runs` supports it in one `COUNT(*)`.
+- **A runs-per-window breaker**, and *not* for want of a table: `butler_runs` supports it in one `COUNT(*)`.
   It has no threshold anybody can defend, because a Butler's legitimate run rate **is** its mailbox's inbound
   mail rate and nothing here has measured that.
 
 **And what the detector's teeth are today, because the obvious reading overstates them.** `proposeSend` sets
 `releaseRequired: true` unconditionally, so a Butler's send is sealed `awaiting butler_release_required` and
 **cannot leave without a person releasing it**. A self-provoked chain therefore cannot extend itself: every
-link needs an administrator to click release. What this catches now is a *human-assisted* chain — an operator
+link needs an administrator to click release. What this catches now is a *human-assisted* chain (an operator
 releasing a stream of near-identical replies, which is the muted-check failure this repository names in three
-other places — plus the runs and instances behind it. What it exists for is the day that gate is removed or
+other places) plus the runs and instances behind it. What it exists for is the day that gate is removed or
 outranked by a policy, because at that moment a chain with nothing counting it is a sending loop with no bound
 at all.
 
@@ -989,44 +989,44 @@ at all.
 |:--|:--|:--|
 | **Places** | a person asks; **two** administrators agree; mandatory reason | the **machine**, automatically. No human path exists |
 | **Resumes** | **one** administrator, alone, reason optional | **one** administrator, alone, reason **mandatory** |
-| **What a wrong one costs** | a customer's mail stops | a customer's mail is *unautomated* — still filed, still visible, still answerable by hand |
+| **What a wrong one costs** | a customer's mail stops | a customer's mail is *unautomated*: still filed, still visible, still answerable by hand |
 
 Both are the same principle producing different answers, and both halves of the premise differ. Placement is
 automatic because *a breaker that waits for a person is not a breaker*. Resume is **one** administrator because
-*an automatic pause nobody can resume is an outage* — placement needs no administrators at all, so requiring
+*an automatic pause nobody can resume is an outage*. Placement needs no administrators at all, so requiring
 two to undo it would make the machine strictly more powerful than the organization, and a Node with one
 administrator could never restart a Butler. It is `org.admin` and not *anybody*, because *one anybody can
 resume is not a pause*, and because that is the authority publishing a Butler already takes.
 
 The reason is **mandatory here and optional on a domain lift**, which is the inversion worth the paragraph: a
 domain pause was placed by two people who wrote down why, so lifting needs no second justification and delay is
-the harm. A Butler pause was placed by a machine — this resume is the *only* human judgement anywhere in its
+the harm. A Butler pause was placed by a machine. This resume is the *only* human judgement anywhere in its
 lifecycle, so a blank reason would mean nobody recorded a decision at any point in it. And delay here costs a
 convenience rather than somebody's mail.
 
-Nothing lets a person *place* one, and there is no `placed_by` column either — the machine is the only placer,
+Nothing lets a person *place* one, and there is no `placed_by` column either. The machine is the only placer,
 so its only value would be NULL, and an always-NULL column is the placeholder shape this repository has a test
 for. The actor is recorded where an actor belongs: the `butler.paused` entry carries `actor_kind = node`. What a
-person can do to stop a Butler is revoke the relations granted to its `btl_` id — which stops it at its next
-effect, since a Butler's principal is the Butler — or publish a policy denying its sends. Both are audited and
+person can do to stop a Butler is revoke the relations granted to its `btl_` id (which stops it at its next
+effect, since a Butler's principal is the Butler) or publish a policy denying its sends. Both are audited and
 neither needs this table. The column arrives with the act the day a human placement is wanted, which is cheaper
 than carrying an empty one until then.
 
 ### What `doctor` says, and the hard one
 
 `butler_paused` is the easy finding: which Butlers are stopped, since when, what tripped them, the figure
-behind it, and the exact command to resume one. `degraded`, never `refuse` — the mail still arrives.
+behind it, and the exact command to resume one. `degraded`, never `refuse`; the mail still arrives.
 
 `butler_run_silence` is the hard one, and it is #66's `no_observations` reasoning one layer along. From
 `butler_runs` alone, *stopped* and *never triggered* are the same reading. What separates them is whether **mail
-arrived at the address the trigger names** — the address parsed out of the frozen AST, the arrivals from one
+arrived at the address the trigger names**, the address parsed out of the frozen AST, the arrivals from one
 grouped read of `ingress_receipts`:
 
 | | |
 |:--|:--|
-| mail arrived after publication, no runs | **degraded** — it should have run and did not |
-| no mail arrived after publication | **report** — nothing triggered it, which is not a fault |
-| the stored AST will not parse | **degraded** — it can never run, and the trigger agrees |
+| mail arrived after publication, no runs | **degraded**; it should have run and did not |
+| no mail arrived after publication | **report**; nothing triggered it, which is not a fault |
+| the stored AST will not parse | **degraded**; it can never run, and the trigger agrees |
 
 Anchored on `published_at` rather than on a window, because a window would need a figure for *how long may a
 Butler legitimately go without running* and a Butler on a quiet mailbox may honestly go a month. A **paused**
@@ -1034,10 +1034,10 @@ Butler is excluded from it: its silence is already explained, and a check that f
 is a permanent WARN, which is a muted check.
 
 `butler_loop_detection` is the third: `armed=false (no_threaded_replies)` when nothing inbound carries an
-`In-Reply-To`, `degraded` only when a Butler has also proposed a send — because `ok: false` on every freshly
+`In-Reply-To`, `degraded` only when a Butler has also proposed a send, because `ok: false` on every freshly
 installed Node forever is the other way to get a check muted.
 
-Cost: **+1** subrequest on a claimed Node with no Butlers, **+2** when it has one — the delivery scan is issued
+Cost: **+1** subrequest on a claimed Node with no Butlers, **+2** when it has one. The delivery scan is issued
 only when the first read found something. Measured before and after in
 [`docs/receipts/doctor-check-cost.md`](./receipts/doctor-check-cost.md).
 
@@ -1048,7 +1048,7 @@ GET  /api/butler-pauses               every Butler this Node has stopped, with t
 POST /api/butler-pauses/:id/resume    restart one. One org.admin, alone, with a mandatory reason
 ```
 
-There is deliberately **no endpoint that pauses a Butler** — one would contradict the asymmetry above.
+There is deliberately **no endpoint that pauses a Butler**. One would contradict the asymmetry above.
 
 ---
 
@@ -1075,32 +1075,32 @@ Per node, as the engine performs it, against the bound `butler-step-cost.md` car
 | `case.assign` | 8 | 7 |
 | `case.close` | 3 | 2 |
 | `lookup` | 4 | 2 |
-| `mail.send.propose` | **20** | **23** — `readDraft` 5, the seal 16, the record batch 1, the gate's resume 1 |
+| `mail.send.propose` | **20** | **23**: `readDraft` 5, the seal 16, the record batch 1, the gate's resume 1 |
 
 Four of the five nodes fit inside the headroom `butler-step-cost.md`'s bounds already carry. The fifth does
 not: `mail.send.propose` measures **23** against that receipt's **20**, because the node reads the draft back
 before sealing it. At this size the gap is a rounding error. **At loop scale it is not**: a `foreach` of 500
 sends prices at exactly the Paid pot and really costs 11,503, so the instance would be killed at about item
-434 having already sealed 434 manifests — precisely the failure #54's refusal exists to prevent.
+434 having already sealed 434 manifests, precisely the failure #54's refusal exists to prevent.
 
 **#54's arithmetic is not quietly changed.** Its figures are correct measurements of the functions they name,
 and its receipt is the thing that would have to move. What is done instead:
 
 - **The engine meters itself.** `src/cost-meter.ts` wraps the run's env, `butler_runs.subrequests_spent`
   carries the total across invocations, and the run **refuses an effect it cannot afford before performing
-  it** — with AGENTS.md §3's four parts in the operational log. So the 500-send loop stops at item 357 with a
+  it**, with AGENTS.md §3's four parts in the operational log. So the 500-send loop stops at item 357 with a
   refusal a person can read, rather than dying with 434 sends performed and nothing saying why.
 
   The column is written from two places and it took a run against the real platform to notice that it was
   one. `spendStatement` rides in the `batch()` that records an effect, which covers every run that performs
   one; `closeRun` writes it into the `UPDATE` that ends the run, which covers the rest. Before the second, a
-  graph with no effect node — a `stop`, a `guard` that fell to one, a refusal before the walk — closed
+  graph with no effect node (a `stop`, a `guard` that fell to one, a refusal before the walk) closed
   carrying the column's `INSERT` default and reported a spend of **zero** over a run that spent three. See
   `docs/receipts/butler-run-cost.md`'s correction of 21 August 2026 for the measurement and for the one
   subrequest per sleep the figure still does not carry, which is named there rather than paid for.
 - **The reservation comes from `butler-run-cost.md`**, not from #54's table, because where they differ the
   difference is real and reserving the smaller one would reserve too little for the one node it matters for.
-- **The start-time forecast stays a cheap pre-check and is a floor, not a total** — `priceButler(nodes).total
+- **The start-time forecast stays a cheap pre-check and is a floor, not a total**: `priceButler(nodes).total
   + butler.run_cost_engine_fixed`, costing no subrequest, catching the boundary case where a graph priced at
   the whole pot cannot pay for the machinery around it. It is deliberately not a re-pricing of the graph
   against the run-cost table: that would be a second implementation of `priceButler`'s multiplier arithmetic,
@@ -1127,11 +1127,11 @@ have fitted while under-counting kills one that has already sent mail.
 
 `checkButler` refuses every reserved node at publication, and `butler_versions` freezes what was published
 with two database triggers. So `llm.classify` in a stored AST is unreachable through every path this Node
-has — **and a stored AST is still data, which somebody with direct database access can edit.**
+has, **and a stored AST is still data, which somebody with direct database access can edit.**
 
 That is why the interpreter re-checks. It costs no subrequest, and a reserved node makes the run **refuse
-itself before performing any effect**, with the checker's own finding — *"reserved in the AST and refused at
-publication"* plus the sentence saying what is missing — in the run's reason and the operational log. Not a
+itself before performing any effect**, with the checker's own finding, *"reserved in the AST and refused at
+publication"* plus the sentence saying what is missing, in the run's reason and the operational log. Not a
 crash, and not silently skipped. The same re-check catches the other three things a hand-edited row could
 introduce: a cycle, a dangling edge, and a graph that cannot afford itself.
 
@@ -1154,18 +1154,18 @@ no step to retry; and a CPU kill is a termination rather than a thrown error, so
 a run legitimately run" is that a `wait` node reaches 365 days.
 
 **The workflow's name is account-scoped and cannot be omitted.** A `[[workflows]]` entry without `name` is
-refused by the config parser, and wrangler substitutes nothing into config values — so #72's fix for the queue
+refused by the config parser, and wrangler substitutes nothing into config values, so #72's fix for the queue
 (declare the binding, let the deploy derive the name) is unavailable. What is enforced instead is that the
 name is the Worker's own name plus a suffix, so renaming the Worker renames the workflow in the same edit. The
 residual: Workers Builds pins its own Worker name and overrides the config, so a second install into one
-account gets a different *Worker* name and the same *workflow* name. What happens then is **unmeasured** — the
+account gets a different *Worker* name and the same *workflow* name. What happens then is **unmeasured**. The
 queue case collided silently, and this one is not known to.
 
 **No failure edge.** A node carries one `next`, so a Butler cannot say *"if the send was denied, assign the
 case to a human instead"*. What it can do is read the outcome from the run record afterwards.
 
 **A spoofed envelope sender.** Recipients are derived from the parent delivery's return path (above), which
-closes the sink — nothing an author wrote and nothing in the message can *select* a recipient — and does not
+closes the sink (nothing an author wrote and nothing in the message can *select* a recipient) and does not
 make the return path itself trustworthy. A message forged to claim a third party as its reverse path gets a
 reply aimed at that third party. This Node does not authenticate the envelope sender and does not claim to;
 what stands between that and an unattended exfiltration path is the human release gate every Butler send
@@ -1176,15 +1176,15 @@ trusted-recipient store, and it is the same missing store that CC, forward and s
 address the delivery arrived at, which breaks the one-hop loop and nothing longer. A reply that lands in a
 *second* mailbox on this Node whose Butler answers it, or two Nodes answering each other, is not caught: each
 hop passes its own check. The standard answer is `Auto-Submitted: auto-replied` on what a Butler sends plus a
-rule about what ingress does with one, and **neither exists anywhere in this repository** — nothing emits that
+rule about what ingress does with one, and **neither exists anywhere in this repository**. Nothing emits that
 header, and nothing reads it. Until they do, a Butler's send carries no marker saying a program wrote it, and
 what bounds a multi-hop loop is the human release gate on each send and the latched self-provoked-run pause,
 which counts a Butler's runs rather than the loop's hops.
 
 **Still fog.** `queue_one` and `parallel_bounded` (they need a different id shape), the full §16 schedule
 semantics, the trigger catalogue beyond `mail.received`, `simulate-recorded` and simulation generally, the
-**capability preview** — the surface that would show an author the three refusal reasons before a run rather
-than after one, which waits on there being an authoring channel at all — and **how long a run ledger is
+**capability preview** (the surface that would show an author the three refusal reasons before a run rather
+than after one, which waits on there being an authoring channel at all) and **how long a run ledger is
 kept**.
 
 That last one is #53's own open question and it stays open rather than being defaulted. Audit entries are never
@@ -1192,14 +1192,14 @@ trimmed and `log_entries` are bounded; a run ledger is neither, and the honest a
 `audit-and-log-retention.md`'s row-size arithmetic against D1's 10 GB per-database ceiling. What #53 changed
 about it is only the size of the row: `trigger_facts` is the one column that grows it measurably.
 
-**The run ledger and its four replay modes are no longer on that list** — see the replay section above. Nor is
+**The run ledger and its four replay modes are no longer on that list**; see the replay section above. Nor is
 the **capability ceiling at publication**: it is `capabilities:` in the document, its action set is proved
 exactly equal to what the graph needs, and the runtime intersects it with the Butler's and the sponsor's live
 tuples in two queries (`docs/butler-capability-ceiling.md`).
 
 **Static taint tracking is no longer on that list, and it is not because it was built.** #52 reversed it for
 this layer: with the one reachable sink closed by construction there is nothing a dataflow checker could
-refuse, so its tests could only prove that the analysis never fired. The structural guard that replaced it —
-no shipped node exposes a sink parameter — is testable today because it is a property of the node schema.
+refuse, so its tests could only prove that the analysis never fired. The structural guard that replaced it,
+no shipped node exposes a sink parameter, is testable today because it is a property of the node schema.
 The dataflow checker arrives with `connector.*` or `llm.*`, both Layer 6, and arrives with something to
 refuse.

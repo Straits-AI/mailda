@@ -73,7 +73,7 @@ The route now requires a relation that did not exist yesterday. Every existing i
 proof is *"original `.eml` exportable"*, and shipping the check without the grant would have broken that
 everywhere. A regression with a roadmap attached, which the ladder rule in `AGENTS.md` forbids outright.
 
-What genuinely changes: an administrator can now revoke exporting **without** revoking reading, which was
+What does change: an administrator can now revoke exporting **without** revoking reading, which was
 not expressible before, and every download appears in the trail.
 
 **The sibling door is still open and is named rather than half-closed.** `GET /api/sends/:id/submitted`

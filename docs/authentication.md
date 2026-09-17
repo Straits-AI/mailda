@@ -139,7 +139,7 @@ effect on the next call regardless of any outstanding token. A token can only ev
 whether the account still exists.
 
 ES256 rather than HS256 because verification then needs only the public key. Verification can move
-out of this Worker later, to §25's client or to an auditor checking a token was genuinely issued,
+out of this Worker later, to §25's client or to an auditor checking a token was really issued,
 without handing out the ability to mint one. HS256 would require shipping the signing secret to
 every verifier.
 

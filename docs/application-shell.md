@@ -38,7 +38,7 @@ in it, and Layer 3 adds rows rather than a shape.**
 - **Split list and reading pane** for mail. The composer is **docked**, not a route: replying must not move
   the original off screen, because for invoice and shipment mail a reply exists to quote a reference from
   it.
-- **Full-width tables** for the outbox, audit trail and log. For a ledger a table genuinely is the right
+- **Full-width tables** for the outbox, audit trail and log. For a ledger a table is the right
   form, the one thing variant A got right, and it is kept.
 - **A bottom instrument bar** carrying the session countdown, the `doctor` verdict and the outbound counts.
   Layer 1's top status strip does not survive: with a rail present the top-right corner stops being where
@@ -338,7 +338,7 @@ Not a filtered one: nothing has been hidden from you"* to **every** empty state,
 Node happens inside the SQL (ADR 11, §5), so an empty list routinely means "nothing you may see". The
 screens already knew: `matters.tsx` writes *"No matters, or you do not hold org.admin"* and this sentence
 contradicted it two words later on the same line. The reassurance is now opt-in via `unfiltered`, and a
-caller may only assert it where the query genuinely is not narrowed by a relation.
+caller may only assert it where the query is not narrowed by a relation.
 
 ## The composer's From selector, and why the words live outside React
 
@@ -546,7 +546,7 @@ somebody waiting for it) and gives the interface two sources for numbers that mu
 
 It also failed #90's draft-flush test when it was tried, and that reason has since **expired**. The test then
 ran on `vi.useFakeTimers({ shouldAdvanceTime: true })`, where wall-clock time also advances the fake clock,
-so a slower module graph genuinely could push it past the 1,499 ms boundary it sits on. That was the test
+so a slower module graph could push it past the 1,499 ms boundary it sits on. That was the test
 being flaky rather than the import being expensive, and the flake is fixed at its root. The clock now moves
 only when a test moves it. The bundle cost is what keeps this alternative withdrawn; the test failure was a
 symptom of something else and should not be read as evidence.
@@ -910,7 +910,7 @@ an interactive control rendered with real content: `aria-allowed-attr` on a list
 on the message list, `empty-table-header` on the Butler screen.
 
 A state that fails to open reports `COULD NOT OPEN` and is counted as **unchecked**, never as passing: a Node
-with no paused Butler genuinely has no resume form, so the run reports how much of the list this Node could
+with no paused Butler has no resume form, so the run reports how much of the list this Node could
 show rather than failing. That is the same distinction the route sweep draws with `SKIPPED`, and it is the
 reason these surfaces went unaudited for as long as they did. The mechanism was confirmed honest by running
 it against a Node whose fixture had been wiped, where it reported ten states unopened instead of passing

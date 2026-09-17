@@ -604,8 +604,8 @@ Measured on 16 September 2026, by doing it: `wrangler deploy` was run directly r
 refused non-interactively with *"More than one account available"*, listed four, and the wrong id was given
 back to it. A complete Node was provisioned into an account that had never held one: Worker, D1, R2, queue,
 Workflow, and a cron firing every minute. Nothing was lost, because nothing was there to lose, and that is
-precisely why nothing objected: every resource was genuinely absent, so every disposition was genuinely
-`create` and the verdict was genuinely `install`. The plan would have been correct and useless.
+precisely why nothing objected: every resource was absent, so every disposition was
+`create` and the verdict was `install`. The plan would have been correct and useless.
 
 So the header carries the account **id and name** (an operator cannot tell `dc8d1b7d…` from `1e0170aa…` by
 eye, and telling them apart is the whole job at that moment), and `install` carries a second sentence saying

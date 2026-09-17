@@ -701,7 +701,7 @@ never entitled to. Nothing can say what a sender identity's id looks like until 
 
 `src/migrate.ts` applies the Node's own schema by splitting each migration into statements.
 `test/node/migrations.test.ts` used to assert that **no migration contained a trigger**, with the standing
-instruction that the moment one was genuinely needed, `statementsOf` should become a real parser rather than
+instruction that the moment one was needed, `statementsOf` should become a real parser rather than
 gain a rule about how to write SQL.
 
 `btv_frozen` needed one: a trigger body's inner semicolon is mandatory in SQLite's grammar, so "write it as

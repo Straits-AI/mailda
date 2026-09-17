@@ -253,7 +253,7 @@ The decisions in Blueprint §29 are locked. You may reopen one. That is a real, 
 move, but reopening means amending §29 in the same change, with the argument written down.
 It never means quietly building against it.
 
-If a shortcut is genuinely the right call, it is not a shortcut: write down why the
+If a shortcut is the right call, it is not a shortcut: write down why the
 constraint that justified it is permanent. If you can't, it's a stopgap. Don't.
 
 ### 6. Grow the system in layers

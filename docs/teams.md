@@ -39,7 +39,7 @@ have been a second, poorer account of a fact `team.renamed` already carries. It 
 **The name is unique in the organization.** A team is granted to by **id** and picked out of a list by a
 **human reading a name**, so two teams called Finance is exactly how `approval.decide` reaches the wrong one,
 with nothing anywhere to notice. `policies.name` is unique per organization for the same reason and the
-argument transfers whole. What it costs: an organization that genuinely wants two teams under one name has to
+argument transfers whole. What it costs: an organization that wants two teams under one name has to
 distinguish them, and the refusal names the existing team's id so a rename or a reuse is one step.
 
 `tea_name` is the only index, and it does two jobs. It enforces the uniqueness, and its `(org_id, name)` prefix

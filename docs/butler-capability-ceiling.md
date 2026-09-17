@@ -310,7 +310,7 @@ described honestly.
 ## Still not built
 
 - **`case_type:` and `llm_profile:` grains**, refused by name, because both name objects that do not exist.
-- **A per-sender grain.** `sender:enquiries@example.com` is more expressive and genuinely wanted eventually.
+- **A per-sender grain.** `sender:enquiries@example.com` is more expressive and wanted eventually.
   A shared mailbox whose invoicing address only two people may send as is a real arrangement. But it moves
   `maySend`'s signature and every call site, stops `object_id` being a `mbx_` ULID for that relation, and
   requires re-arguing ADR 36 rather than citing it (#51).
