@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "/app/session.js";
 
 import { BUDGETS } from "@mailda/budgets";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, stealCase, useMailboxes, useMessages, useThread,
+  type MessageRow, type SendRow, claimCase, labelsOf, setLabels, setRead, stealCase, useDrafts, useMailboxes, useMessages, useThread,
 } from "../api.ts";
 import { Composer, type ComposerContext } from "./composer.tsx";
 
@@ -39,6 +39,7 @@ interface RenderedBody {
     verdict: "executable" | "script" | "archive" | "disguised" | "plain";
   }>;
   links: Array<{ href: string; text: string; verdict: "plain" | "mismatch" | "lookalike" | "userinfo" | "ip_host" }>;
+  recipients: { to: string[]; cc: string[]; replyTo: string | null };
 }
 
 const LINK_WORDS: Record<RenderedBody["links"][number]["verdict"], string | null> = {
@@ -82,7 +83,7 @@ const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], stri
  * What was attached, named and judged, with no way to open it from here: the bytes stay in the original,
  * which the raw download carries whole. A verdict is a word a person can check against the file, not a scan.
  */
-function Attachments({ parts }: { parts: RenderedBody["attachments"] }) {
+function Attachments({ parts, receiptId }: { parts: RenderedBody["attachments"]; receiptId: string }) {
   if (parts.length === 0) return null;
   return (
     <ul className="attachments" aria-label="Attachments">
@@ -90,7 +91,10 @@ function Attachments({ parts }: { parts: RenderedBody["attachments"] }) {
         const word = VERDICT_WORDS[part.verdict];
         return (
           <li key={index}>
-            <span className="mono">{part.filename ?? "(unnamed)"}</span>{" "}
+            {/* A link to the part's own bytes; the Node serves a flagged one as octet-stream, to save and not run. */}
+            <a className="mono" href={`/api/messages/${encodeURIComponent(receiptId)}/attachments/${index}`}>
+              {part.filename ?? "(unnamed)"}
+            </a>{" "}
             <span className="dim">{part.declaredType} · {Math.max(1, Math.round(part.bytes / 1024))} KB</span>
             {word === null ? null : (
               <span className={part.verdict === "archive" ? "dim" : "bad"}> — {word}</span>
@@ -144,7 +148,7 @@ function MessageBody({ id }: { id: string }) {
         </p>
       ) : null}
       {rendered.truncated ? <p className="notice dim">Shown truncated. The original is complete.</p> : null}
-      <Attachments parts={rendered.attachments} />
+      <Attachments parts={rendered.attachments} receiptId={id} />
       <Links links={rendered.links} />
       {rendered.state === "html" && rendered.html !== null ? (
         <iframe
@@ -167,16 +171,40 @@ function MessageBody({ id }: { id: string }) {
  * rather than when the sender says they wrote it — a sender-supplied Date can be unreadable or absent, and
  * `accepted_at` is the one timestamp the Node observed itself.
  */
-function replyContext(message: MessageRow, mailboxId: string): ComposerContext {
+function replyContext(
+  message: MessageRow, mailboxId: string,
+  rendered: RenderedBody | undefined, all: boolean, ownAddresses: readonly string[],
+): ComposerContext {
   const subject = message.subject ?? "";
+  /*
+   * Quoted from the body the pane already fetched — the same cache entry, so a reply costs no second read.
+   * The plain text when there is one; the HTML's text otherwise, tags dropped, which is a rough quote and
+   * says so by being one. A body not yet fetched leaves the ellipsis the first version always left.
+   */
+  const text = rendered?.text
+    ?? (rendered?.html === null || rendered?.html === undefined ? null
+      : rendered.html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+  const quoted = text === null ? "> …" : text.trim().split("\n").slice(0, 200).map((line) => `> ${line}`).join("\n");
+  /*
+   * Reply-all: the sender (or their Reply-To) in To, everybody else the sender addressed in Cc, minus this
+   * mailbox's own addresses — a copy to ourselves is the loop `send-breakers.md` exists for. The seal
+   * refuses a duplicate across To and Cc, so the sender is removed from Cc here.
+   */
+  const sender = rendered?.recipients.replyTo ?? message.envelope_from;
+  const mine = new Set(ownAddresses.map((one) => one.toLowerCase()));
+  const others = all
+    ? [...(rendered?.recipients.to ?? []), ...(rendered?.recipients.cc ?? [])]
+      .filter((one, index, list) => list.indexOf(one) === index && !mine.has(one) && one !== sender.toLowerCase())
+    : [];
   return {
     mailboxId,
     // ADR 36 threads on the message's own id. Absent when the sender sent none, in which case this is a
     // new message that happens to be addressed back — which is the truth, so it is not faked.
     inReplyToMessageId: message.message_id ?? undefined,
-    to: message.envelope_from,
+    to: sender,
+    cc: others.join(", "),
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-    body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.envelope_from} wrote:\n> …`,
+    body: `\n\nOn ${new Date(message.accepted_at).toLocaleString()}, ${message.envelope_from} wrote:\n${quoted}`,
   };
 }
 
@@ -472,6 +500,30 @@ function Authenticated({ message }: { message: MessageRow }) {
 }
 
 /**
+ * Unfinished writing (17 September 2026). `GET /api/drafts` has listed them for months; only a reply could
+ * be resumed, because the composer looked a draft up by the message it answered. This lists every draft
+ * and opens one by id, so a new message put down is picked up again.
+ */
+function Drafts({ onOpen }: { onOpen: (draft: { id: string; mailboxId: string; inReplyToMessageId: string | null }) => void }) {
+  const drafts = useDrafts();
+  const rows = drafts.data?.drafts ?? [];
+  if (rows.length === 0) return null;
+  return (
+    <p className="notice dim drafts-strip">
+      {rows.length} draft{rows.length === 1 ? "" : "s"}:{" "}
+      {rows.map((draft, index) => (
+        <span key={draft.id}>
+          {index === 0 ? "" : " · "}
+          <button type="button" className="linkish" onClick={() => onOpen(draft)}>
+            {draft.subject.trim() === "" ? "(no subject)" : draft.subject}
+          </button>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/**
  * The rest of the conversation, around the message being read (#30's other half).
  *
  * Every other message in the conversation this reader may see, and every send that replied into it, in
@@ -579,9 +631,24 @@ function Labels({ message, onFilter }: { message: MessageRow; onFilter: (label: 
   );
 }
 
-function ReadingPane({ message, onReply, onForward, onFilterLabel }: {
-  message: MessageRow; onReply: () => void; onForward: () => void; onFilterLabel: (label: string) => void;
+function ReadingPane({ message, onReply, onReplyAll, onForward, onFilterLabel }: {
+  message: MessageRow; onReply: () => void; onReplyAll: () => void; onForward: () => void; onFilterLabel: (label: string) => void;
 }) {
+  const queryClient = useQueryClient();
+  /*
+   * Opening a message marks it read (0062), once, without waiting: a bookmark is not worth a spinner. The
+   * list is refetched so the row's weight changes, which is the one place the state is visible. `message_id`
+   * is null for a receipt not yet materialised, which has nothing to bookmark.
+   */
+  useEffect(() => {
+    if (message.read === 1 || message.message_id === null) return;
+    void setRead(message.message_id, true).then(() => queryClient.invalidateQueries({ queryKey: ["messages"] }));
+  }, [message.id, message.message_id, message.read, queryClient]);
+  async function toggleRead() {
+    if (message.message_id === null) return;
+    await setRead(message.message_id, message.read !== 1);
+    await queryClient.invalidateQueries({ queryKey: ["messages"] });
+  }
   return (
     <article className="reading-pane" aria-label="Message">
       {/* h2, not h1. The screen's heading is "Inbox"; a message is a section inside it, and two h1s on
@@ -612,10 +679,18 @@ function ReadingPane({ message, onReply, onForward, onFilterLabel }: {
         <button type="button" className="linkish" onClick={onReply}>
           reply
         </button>{" "}
+        <button type="button" className="linkish" onClick={onReplyAll}>
+          reply all
+        </button>{" "}
         {/* A forward carries the original whole, so it needs no claim on the case: nothing is answered. */}
         <button type="button" className="linkish" onClick={onForward}>
           forward
-        </button>
+        </button>{" "}
+        {message.message_id === null ? null : (
+          <button type="button" className="linkish dim" onClick={() => void toggleRead()}>
+            {message.read === 1 ? "mark unread" : "mark read"}
+          </button>
+        )}
       </p>
       {message.parse_error === null ? null : (
         <p className="notice dim">
@@ -724,7 +799,8 @@ export function Inbox() {
    * does rather than a step before it. Losing the race means the composer does not open and the reader is
    * told who holds the case — with the option to take it, which is audited.
    */
-  async function reply(message: MessageRow, steal = false) {
+  const mailboxes = useMailboxes();
+  async function reply(message: MessageRow, steal = false, all = false) {
     setBlocked(null);
     if (message.case_id === null) {
       // Honest rather than silent: mail with no case cannot be claimed, so composing would produce a reply
@@ -739,7 +815,9 @@ export function Inbox() {
     await queryClient.invalidateQueries({ queryKey: ["messages"] });
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     if (outcome.ok) {
-      setComposing(replyContext(message, message.mailbox_id));
+      const rendered = queryClient.getQueryData<RenderedBody>(["body", message.id]);
+      const own = mailboxes.data?.mailboxes.find((box) => box.id === message.mailbox_id)?.addresses?.split(",") ?? [];
+      setComposing(replyContext(message, message.mailbox_id, rendered, all, own));
       return;
     }
     setBlocked({ message: outcome.message, caseId: message.case_id });
@@ -796,6 +874,7 @@ export function Inbox() {
     <div className="inbox-tools">
       <MailboxFilter chosen={pages.mailbox} onChoose={pages.narrowTo} />
       <SearchField term={pages.term} onSearch={pages.searchFor} />
+      <Drafts onOpen={(draft) => setComposing({ mailboxId: draft.mailboxId, draftId: draft.id, ...(draft.inReplyToMessageId === null ? {} : { inReplyToMessageId: draft.inReplyToMessageId }) })} />
       {pages.label === null ? null : (
         <p className="notice dim">
           Showing mail labelled <span className="mono">{pages.label}</span>.{" "}
@@ -926,7 +1005,7 @@ export function Inbox() {
           <li key={row.id}>
             <button
               type="button"
-              className={row.id === selected ? "message-row current" : "message-row"}
+              className={`message-row${row.id === selected ? " current" : ""}${row.read === 1 ? "" : " unread"}`}
               aria-current={row.id === selected ? "true" : undefined}
               onClick={() => setSelected(row.id)}
             >
@@ -974,6 +1053,7 @@ export function Inbox() {
           // From is the mailbox (ADR 36), so composing needs to know which one. It is read off the message
           // being replied to rather than guessed: that address is routed to exactly one mailbox.
           onReply={() => void reply(current)}
+          onReplyAll={() => void reply(current, false, true)}
           onFilterLabel={pages.labelled}
           onForward={() => {
             setBlocked(null);

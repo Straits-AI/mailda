@@ -81,6 +81,7 @@ export const CAPABILITIES: readonly Capability[] = [
       "GET /api/messages",
       "GET /api/messages/:receiptId/body",
       "GET /api/messages/:receiptId/raw",
+      "GET /api/messages/:receiptId/attachments/:ordinal",
     ],
   },
   {
@@ -88,7 +89,7 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "Put words on a message, or take them off, to find it again. Reads nothing a mail.read holder "
       + "cannot; changes nothing but the words, and every change is audited with the words named.",
     reachesContent: false,
-    routes: ["PUT /api/messages/:messageId/labels"],
+    routes: ["PUT /api/messages/:messageId/labels", "PUT /api/messages/:messageId/read"],
   },
   {
     id: "mail.draft",
@@ -116,6 +117,13 @@ export const CAPABILITIES: readonly Capability[] = [
     says: "See where there is work: the mailboxes you may send from, and each one's case queue.",
     reachesContent: false,
     routes: ["GET /api/mailboxes", "GET /api/mailboxes/:mailboxId/cases"],
+  },
+  {
+    id: "queue.assign",
+    says: "Hand a case to a colleague who may answer it. Triage, which is what a machine reading a queue is "
+      + "for; the colleague can hand it back, and the trail names both of you.",
+    reachesContent: false,
+    routes: ["PUT /api/cases/:caseId/assignee"],
   },
   {
     id: "notice.read",

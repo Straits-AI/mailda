@@ -130,6 +130,7 @@ export const AUDIT_ACTIONS = {
    * somebody could be asked about. Frequency and answerability, not importance.
    */
   "case.claim_taken": { says: "One person took a claimed case from another; both are named." },
+  "case.assigned": { says: "One person handed a case to a colleague who may answer it; both are named, and who held it before." },
   "mailbox.response_target_set": {
     says: "An administrator set or cleared a mailbox's first-response target, which is a promise to customers.",
   },
@@ -148,6 +149,7 @@ export const AUDIT_ACTIONS = {
    */
   "access.invited": { says: "An administrator invited an address to join the organization." },
   "access.joined": { says: "Somebody redeemed an invitation, and an account now exists for them." },
+  "access.invitation_withdrawn": { says: "An administrator withdrew an outstanding invitation; the address is named and the link is dead." },
 
   /*
    * §28's membership administration (#73). Four actions, and the argument for each is *where it sits between

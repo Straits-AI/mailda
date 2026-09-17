@@ -155,14 +155,14 @@ describe("expanding and reading back a ceiling", () => {
   it("reads a ceiling back as held-of-total, not as a name that implies the whole", () => {
     /*
      * The reason the display is derived rather than stored. An agent minted before a capability grew holds
-     * fewer routes than the capability now names, and the honest answer is `3 of 4` — a stored capability name
+     * fewer routes than the capability now names, and the honest answer is `3 of 5` — a stored capability name
      * would read `mail.read` and imply a route the agent does not have and, because the ceiling is pinned,
      * never will.
      */
     const partial = routesFor(["mail.read"]).routes.slice(0, 3);
     const read = heldCapabilities(partial).held.find((one) => one.id === "mail.read");
     expect(read?.held).toBe(3);
-    expect(read?.total).toBe(4);
+    expect(read?.total).toBe(5);
 
     // The control: a whole capability reads as whole.
     const full = heldCapabilities(routesFor(["mail.read"]).routes).held.find((one) => one.id === "mail.read");

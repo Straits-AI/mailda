@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  GRANTABLE_RELATIONS, createMailbox, createTeam, grant, invite, revokeAccess, setTeamMember,
+  GRANTABLE_RELATIONS, createMailbox, createTeam, grant, invite, revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
   type PersonRow, type TeamRow,
@@ -116,6 +116,13 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
   const [minted, setMinted] = useState<{ secret: string; email: string; expiresAt: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  async function withdraw(id: string) {
+    setProblem(null);
+    const outcome = await revokeInvitation(id);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await onInvited();
+  }
+
   async function send() {
     setBusy(true);
     setProblem(null);
@@ -175,7 +182,7 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
             <thead>
               <tr>
                 <th scope="col">Address</th><th scope="col">Invited by</th>
-                <th scope="col">Expires</th><th scope="col">State</th>
+                <th scope="col">Expires</th><th scope="col">State</th><th scope="col">Withdraw</th>
               </tr>
             </thead>
             <tbody>
@@ -187,6 +194,9 @@ function Invite({ onInvited }: { onInvited: () => Promise<void> }) {
                   {/* An expired invitation is kept and shown as expired, so an administrator can see what
                       went stale rather than wondering whether they ever sent it. */}
                   <td>{row.expired ? <span className="dim">expired — mint another</span> : "waiting"}</td>
+                  <td>
+                    <button type="button" className="linkish" onClick={() => void withdraw(row.id)}>withdraw</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

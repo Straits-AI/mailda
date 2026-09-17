@@ -305,6 +305,40 @@ export interface OpenInvitation {
 }
 
 /** The outstanding invitations. Never the secrets — the table does not hold them. */
+/**
+ * Withdraws an outstanding invitation (17 September 2026). The same act re-minting performs on the way to a
+ * replacement, without the replacement: the row is deleted, as that path deletes it, and the trail records
+ * who withdrew which address's link. An invitation already redeemed is an account, and is not here.
+ */
+export async function revokeInvitation(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, invitationId: string,
+): Promise<{ revoked: true; invitationId: string; email: string }> {
+  if (!(await isAdmin(env, orgId, actorUserId))) {
+    throw new CallerError("E_NOT_AN_ADMINISTRATOR", 403, {
+      what: "you are not an administrator of this organization",
+      why: "an invitation is membership in waiting, and withdrawing one is an administrator's act",
+      fix: "ask somebody who holds org.admin",
+    });
+  }
+  const open = await env.CATALOG.prepare(
+    "SELECT id, email FROM invitations WHERE org_id = ? AND id = ? AND redeemed_at IS NULL LIMIT 1",
+  ).bind(orgId, invitationId).first<{ id: string; email: string }>();
+  if (open === null) {
+    throw notFound("E_NO_OPEN_INVITATION", {
+      what: `${invitationId} is not an outstanding invitation`,
+      why: "either it was redeemed — there is an account now — or it was already withdrawn",
+      fix: "GET /api/invitations lists what is outstanding",
+    });
+  }
+  await auditedBatch<never>(env, ctx, orgId, {
+    action: "access.invitation_withdrawn", outcome: "ok", subject: open.id, actorUserId, detail: { email: open.email },
+  }, (entry) => [
+    entry,
+    env.CATALOG.prepare("DELETE FROM invitations WHERE org_id = ? AND id = ? AND redeemed_at IS NULL").bind(orgId, open.id),
+  ]);
+  return { revoked: true, invitationId: open.id, email: open.email };
+}
+
 export async function openInvitations(env: Env, ctx: Ctx, orgId: string): Promise<OpenInvitation[]> {
   const { results } = await env.CATALOG.prepare(
     `SELECT id, email, invited_by, created_at, expires_at FROM invitations

@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  type CaseRow, type ClaimResult, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
+  type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
   setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
 } from "../api.ts";
 
@@ -30,6 +30,26 @@ import {
  * renders that. A spinner that stops, or a generic failure, would leave somebody guessing whether to wait,
  * steal, or move on.
  */
+
+/**
+ * Handing a case to a colleague, by the address they sign in with. A field that appears on "hand to" rather
+ * than a picker: the directory is an administrator's read, and the person doing this knows the address.
+ */
+function HandTo({ onAssign }: { onAssign: (email: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  if (!open) return <button type="button" className="linkish" onClick={() => setOpen(true)}>hand to…</button>;
+  return (
+    <span className="hand-to">
+      <input
+        className="mono" placeholder="colleague@…" aria-label="Colleague's sign-in address" value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter" && email.trim() !== "") { event.preventDefault(); onAssign(email.trim()); } }}
+      />
+      <button type="button" className="linkish" disabled={email.trim() === ""} onClick={() => onAssign(email.trim())}>hand over</button>
+    </span>
+  );
+}
 
 /** Minutes and hours, not a library. Read at a glance, so rounded is fine. */
 function duration(ms: number): string {
@@ -118,13 +138,14 @@ function Restricted({ what }: { what: "subject" | "sender" }) {
 }
 
 function CaseRowView({
-  row, mine, picked, onPick, onAct,
+  row, mine, picked, onPick, onAct, onAssign,
 }: {
   row: CaseRow;
   mine: boolean;
   picked: boolean;
   onPick: (id: string) => void;
   onAct: (action: "claim" | "steal" | "release" | "close", id: string) => void;
+  onAssign: (id: string, email: string) => void;
 }) {
   const unclaimed = row.assignee === null;
   // The state word, which is the channel that does not depend on colour being measured.
@@ -189,6 +210,7 @@ function CaseRowView({
             <button type="button" className="linkish" onClick={() => onAct("close", row.id)}>
               close
             </button>
+            <HandTo onAssign={(email) => onAssign(row.id, email)} />
           </>
         ) : (
           // Available to any colleague, deliberately. Restricting it to administrators recreates the
@@ -282,6 +304,16 @@ export function Queue() {
     await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
     await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
     if (outcome.ok) setNotice("Released. It is in the queue now, with the case it would have had.");
+    else setProblem(outcome.message);
+  }
+
+  async function onAssign(id: string, email: string) {
+    setLost(null);
+    setProblem(null);
+    const outcome = await assignCase(id, email);
+    await queryClient.invalidateQueries({ queryKey: ["cases", mailboxId] });
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    if (outcome.ok) setNotice(`Handed to ${email}. It is in their queue now, and the trail names you both.`);
     else setProblem(outcome.message);
   }
 
@@ -501,6 +533,7 @@ export function Queue() {
                 key={row.id}
                 row={row}
                 mine={row.assignee !== null && row.assignee === me.data?.userId}
+                onAssign={onAssign}
                 picked={picked.includes(row.id)}
                 onPick={(id) => setPicked((current) =>
                   current.includes(id)

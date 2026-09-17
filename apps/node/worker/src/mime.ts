@@ -164,6 +164,30 @@ export function messageIds(value: string, limit = MAX_REFERENCES): string[] {
   return ids;
 }
 
+/**
+ * Every address in a `To`/`Cc`/`Reply-To` header, lower-cased, display names dropped, in header order.
+ * Split on commas outside quotes and angle brackets, since a display name may carry either. Bounded so a
+ * header of a thousand recipients does not become a thousand-element reply-all.
+ */
+export function addressesOf(value: string, limit = 100): string[] {
+  const out: string[] = [];
+  let depth = 0, quoted = false, piece = "";
+  for (const char of value) {
+    if (char === '"') quoted = !quoted;
+    else if (!quoted && char === "<") depth += 1;
+    else if (!quoted && char === ">") depth = Math.max(0, depth - 1);
+    if (char === "," && !quoted && depth === 0) {
+      const one = addressOf(piece);
+      if (one !== "" && !out.includes(one)) out.push(one);
+      piece = "";
+      if (out.length >= limit) return out;
+    } else piece += char;
+  }
+  const last = addressOf(piece);
+  if (last !== "" && !out.includes(last)) out.push(last);
+  return out;
+}
+
 /** The address from a `From` header, without its display name. */
 export function addressOf(value: string): string {
   const bracketed = /<([^<>]+)>/.exec(value);

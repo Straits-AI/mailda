@@ -144,6 +144,8 @@ export interface MessageRow {
   attachments_dangerous: number | null;
   /** The words on this message (0061), as SQLite built the JSON array: lower-cased, sorted. */
   labels_json: string;
+  /** Whether *you* have opened it (0062). */
+  read: 0 | 1;
   /**
    * The case for this delivery's own mailbox, so replying can claim in one act.
    *
@@ -184,6 +186,8 @@ export function useThread(conversationId: string | null) {
 }
 
 export interface SendRow {
+  /** Which retry the Node offers this send, and why (ADR 40). `mode` null means none. */
+  retry: { mode: string | null; why: string };
   id: string;
   subject: string;
   envelope_to: string;
@@ -519,6 +523,16 @@ async function caseAct(caseId: string, action: "claim" | "steal" | "release" | "
   };
 }
 
+/** Hands a case to a colleague by the address they sign in with. The Node refuses one who cannot send from the mailbox. */
+export async function assignCase(caseId: string, email: string): Promise<ClaimResult> {
+  const response = await apiFetch(at("PUT", "/api/cases/:caseId/assignee", { caseId }), {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }),
+  });
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (response.ok) return { ok: true, case: (body?.case ?? null) as CaseRow };
+  return { ok: false, kind: body?.error === "closed" ? "closed" : body?.error === "not_found" ? "not_found" : "failed", message: String(body?.message ?? `This Node answered ${response.status}.`) };
+}
+
 export const claimCase = (id: string) => caseAct(id, "claim");
 export const stealCase = (id: string) => caseAct(id, "steal");
 export const releaseCase = (id: string) => caseAct(id, "release");
@@ -595,6 +609,28 @@ export async function releaseQuarantined(messageId: string): Promise<{ ok: true 
   if (response.ok) return { ok: true };
   const body = (await response.json().catch(() => null)) as { message?: string } | null;
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
+export interface DraftListRow {
+  id: string;
+  mailboxId: string;
+  inReplyToMessageId: string | null;
+  to: string[];
+  subject: string;
+  updatedAt: string;
+}
+
+/** Every draft of this person's, newest first. What the inbox's Drafts strip lists. */
+export function useDrafts(): UseQueryResult<{ drafts: DraftListRow[] }, Error> {
+  return useQuery({ queryKey: ["drafts"], queryFn: () => read<{ drafts: DraftListRow[] }>(GET("/api/drafts")), ...AUTHORIZATION_SENSITIVE });
+}
+
+/** Marks a message read or unread, for the caller (0062). Fire-and-forget on open; awaited on the toggle. */
+export async function setRead(messageId: string, read: boolean): Promise<{ ok: boolean }> {
+  const response = await apiFetch(at("PUT", "/api/messages/:messageId/read", { messageId }), {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ read }),
+  });
+  return { ok: response.ok };
 }
 
 /** Puts words on a message or takes them off (0061). Answers the whole set afterwards. */
@@ -1344,6 +1380,10 @@ export const askToLiftHold = (id: string, reason: string) =>
 export const askToRead = (mailboxId: string, scope: string, durationSeconds: number, matterId: string | null) =>
   act(at("POST", "/api/supervised"), "POST", { mailboxId, scope, durationSeconds, matterId });
 
+/** Asks for an export: a copy of a mailbox's mail, under a matter, bounded. Approved before it runs. */
+export const requestExport = (input: { mailboxId: string; matterId: string; maxMessages: number; fromDate?: string; toDate?: string; subjectContains?: string }) =>
+  act(at("POST", "/api/exports"), "POST", input);
+
 export const runExport = (id: string) =>
   act(routePath(EXPORT_RUN, { exportId: id }));
 
@@ -1374,6 +1414,10 @@ export function useInvitations(): UseQueryResult<{ invitations: InvitationRow[] 
  * this value has to re-mint, which withdraws the old link. That is why the screen shows it immediately and
  * says so rather than tucking it behind a copy button that might not have been pressed.
  */
+/** Withdraws an outstanding invitation: the link dies. Administrator only, audited. */
+export const revokeInvitation = (id: string) =>
+  act(at("DELETE", "/api/invitations/:invitationId", { invitationId: id }), "DELETE");
+
 export async function invite(
   email: string,
 ): Promise<{ ok: true; secret: string; email: string; expiresAt: string } | { ok: false; message: string }> {

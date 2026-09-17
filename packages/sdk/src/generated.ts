@@ -285,6 +285,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Withdraw an outstanding invitation; the link stops working
+   *
+   * `DELETE /api/invitations/:invitationId`
+   */
+  async deleteInvitationsByInvitationId(params: { invitationId: string }, body?: unknown): Promise<z.infer<typeof S.invitationRevokedResponse>> {
+    return await this.json("DELETE", "/api/invitations/:invitationId", params, body) as z.infer<typeof S.invitationRevokedResponse>;
+  }
+
+  /**
    * Redeem an invitation by choosing a password
    *
    * `POST /api/invitations/redeem`
@@ -490,6 +499,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * One attached part's bytes, by its position in the body route's `attachments`. A copy leaving the Node, so it takes message.export like the original and is recorded as an export
+   *
+   * `GET /api/messages/:receiptId/attachments/:ordinal`
+   */
+  async getMessagesByReceiptIdAttachmentsByOrdinal(params: { receiptId: string; ordinal: string }): Promise<Response> {
+    return await this.raw("GET", "/api/messages/:receiptId/attachments/:ordinal", params, undefined);
+  }
+
+  /**
    * One message's stored bytes, as message/rfc822. Takes the receipt id, as the body route does
    *
    * `GET /api/messages/:receiptId/raw`
@@ -532,6 +550,24 @@ export class GeneratedClient extends Transport {
    */
   async postCasesByCaseIdByAction(params: { caseId: string; action: string }, body?: unknown): Promise<z.infer<typeof S.caseActionResponse>> {
     return await this.json("POST", "/api/cases/:caseId/:action", params, body) as z.infer<typeof S.caseActionResponse>;
+  }
+
+  /**
+   * Hand a case to a colleague who may send from its mailbox, by id or by their sign-in address. Audited, naming both
+   *
+   * `PUT /api/cases/:caseId/assignee`
+   */
+  async putCasesByCaseIdAssignee(params: { caseId: string }, body: z.infer<typeof S.assignCaseRequest>): Promise<z.infer<typeof S.caseAssignedResponse>> {
+    return await this.json("PUT", "/api/cases/:caseId/assignee", params, body) as z.infer<typeof S.caseAssignedResponse>;
+  }
+
+  /**
+   * Mark a message read or unread, for you (0062). Takes the msg_ id. `{read: false}` puts it back
+   *
+   * `PUT /api/messages/:messageId/read`
+   */
+  async putMessagesByMessageIdRead(params: { messageId: string }, body: z.infer<typeof S.setReadRequest>): Promise<z.infer<typeof S.readSetResponse>> {
+    return await this.json("PUT", "/api/messages/:messageId/read", params, body) as z.infer<typeof S.readSetResponse>;
   }
 
   /**

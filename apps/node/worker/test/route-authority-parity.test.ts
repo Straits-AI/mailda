@@ -108,7 +108,7 @@ let memberCookie = "";
 beforeEach(async () => {
   for (
     const table of ["relationship_tuples", "users", "node_claim", "mailboxes", "sessions", "refresh_tokens",
-      "login_attempts", "teams", "matters", "policies", "butlers", "message_labels"]
+      "login_attempts", "teams", "matters", "policies", "butlers", "message_labels", "message_reads"]
   ) {
     await testEnv.CATALOG.prepare(`DELETE FROM ${table} WHERE 1=1`).run().catch(() => undefined);
   }
@@ -215,6 +215,8 @@ const BODIES: Record<string, unknown> = {
   "POST /api/suppressions/lift": { address: "nobody@parity.example", reason: "parity" },
   "PUT /api/messages/:messageId/labels": { add: ["parity"] },
   "POST /api/mailboxes": { name: "Parity Invoices" },
+  "PUT /api/messages/:messageId/read": { read: true },
+  "PUT /api/cases/:caseId/assignee": { userId: MEMBER },
 };
 
 /**
@@ -274,7 +276,7 @@ describe("a route that declares org.admin is actually gated by org.admin", () =>
       agentId: "agt_PARTYAGENT0000000000000000", pauseId: "bpa_PARTYPAUSE0000000000000000",
       holdId: "hld_PARTYHOLD00000000000000000", matterId: "mtr_PARTYMATTER000000000000000",
       approvalId: "apr_PARTYAPPROVAL0000000000000", restoreId: "rst_PARTYRESTORE00000000000000",
-      messageId: "msg_PARTYMESSAGE00000000000000",
+      messageId: "msg_PARTYMESSAGE00000000000000", invitationId: "inv_PARTYINVITE0000000000000000",
     };
     const harvestFailed: string[] = [];
     const created = async (method: string, path: string, body: unknown, key: string) => {
@@ -979,6 +981,9 @@ const UNDISCLOSING: readonly string[] = [
   "POST /api/sends/:sendId/cancel",
   // Needs submitted bytes in R2 beside the manifest.
   "GET /api/sends/:sendId/submitted",
+  // Needs a materialised message with an attached part; `test/quarantine.test.ts` serves one by ordinal and
+  // asserts the export entry. The parity fixture's message has none, so a 404 here is the part's absence.
+  "GET /api/messages/:receiptId/attachments/:ordinal",
   /*
    * Acts whose answers name nothing, so no detector can see them. The two release routes and `PUT /api/drafts`
    * are asserted by **effect** in the block below; the two here are covered elsewhere by name:
@@ -1007,6 +1012,9 @@ const UNDISCLOSING: readonly string[] = [
    * an absence checked against an absence is how six gates stayed untested.
    */
   "POST /api/cases/:caseId/:action",
+  // The same fixture gap as the queue acts: it needs a case row and a colleague who may send. Held by
+  // `contract-responses.test.ts`, which hands a seeded case to a colleague and refuses a stranger.
+  "PUT /api/cases/:caseId/assignee",
   "POST /api/conversations/merge",
   "POST /api/exports",
   "POST /api/exports/:exportId/run",

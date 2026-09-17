@@ -134,7 +134,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
    * somebody become a principal — and one that was minted, handed somewhere and never redeemed is exactly
    * the thing an investigator needs to be able to ask about.
    */
-  invitations: { actions: ["access.invited", "access.joined"] },
+  invitations: { actions: ["access.invited", "access.joined", "access.invitation_withdrawn"] },
   /*
    * The search index and FTS5's five shadow tables (#107).
    *
@@ -386,6 +386,10 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
   suppression_lifts: { actions: ["suppression.lifted"] },
   // 0061: the rows and the entry share one batch; a change that adds nothing and removes nothing writes neither.
   message_labels: { actions: ["message.labelled"] },
+  message_reads: {
+    exempt: "A person's own bookmark: whether they opened a message. Not an act on the mail, and one entry " +
+      "per open would drown the trail. The row is the record, and it is theirs.",
+  },
 
   /* ---- Layer 4: the Butler object (#49) ---- */
   butlers: {
@@ -464,7 +468,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // absent: people do them all day, audit entries are never trimmed, and this receipt sizes the table at
     // a handful per message — so an entry per claim grows it without bound. Claim history lives on the row.
     // The boundary is frequency and answerability, not importance.
-    actions: ["case.claim_taken"],
+    actions: ["case.claim_taken", "case.assigned"],
   },
   conversations: {
     // The exemption anticipated exactly this and named it: automatic grouping is arithmetic and stays

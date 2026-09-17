@@ -375,9 +375,13 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/recovery/conflicts/:restoreId/acknowledge",
       "POST /api/recovery/redeem",
       "PUT /api/butlers/:butlerId/draft",
+      // Handing over a case: an id or an address, either one, and nothing a misspelling could empty.
+      "PUT /api/cases/:caseId/assignee",
       "PUT /api/drafts",
       // Labels (0061): two lists of free words; nothing a misspelled field could silently empty into.
       "PUT /api/messages/:messageId/labels",
+      // Read state (0062): one optional boolean, absent meaning read.
+      "PUT /api/messages/:messageId/read",
       "PUT /api/transport",
     ]);
   });

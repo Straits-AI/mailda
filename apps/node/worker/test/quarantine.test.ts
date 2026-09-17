@@ -205,6 +205,27 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
     expect(await row(both)).toMatchObject({ quarantine_reason: "dmarc_fail_reject", attachments_dangerous: 1 });
   });
 
+  it("serves one part's bytes by ordinal, as octet-stream when the part was judged dangerous, and records the export", async () => {
+    const ctx = createSystemCtx();
+    await testEnv.CATALOG.prepare(
+      `INSERT OR IGNORE INTO relationship_tuples (id, org_id, subject_id, relation, object_type, object_id, created_at)
+       VALUES (?,?,?,'message.export','mailbox',?,?)`,
+    ).bind(ctx.id("rt"), ORG, ADMIN, OFF.id, new Date(ctx.now()).toISOString()).run();
+    const id = await accept(PASSED, OFF.address, withAttachment("invoice.pdf", "application/pdf", MZ));
+    await materialiseReceipt(testEnv, ctx, id);
+    const session = await issueSession(testEnv, ctx, { orgId: ORG, userId: ADMIN });
+    const headers = { cookie: `${ACCESS_COOKIE}=${session.accessToken}` };
+    const part = await SELF.fetch(`https://node/api/messages/${id}/attachments/0`, { headers });
+    expect(part.status).toBe(200);
+    expect(part.headers.get("content-type")).toBe("application/octet-stream");
+    expect(part.headers.get("content-disposition")).toBe('attachment; filename="invoice.pdf"');
+    expect(new Uint8Array(await part.arrayBuffer())).toEqual(MZ);
+    expect((await SELF.fetch(`https://node/api/messages/${id}/attachments/1`, { headers })).status).toBe(404);
+    const exported = await testEnv.CATALOG.prepare("SELECT COUNT(*) AS n FROM audit_entries WHERE action = 'message.exported' AND subject = ?")
+      .bind(id).first<{ n: number }>();
+    expect(exported?.n).toBe(1);
+  });
+
   it("lists the parts on the body route, judged, and carries none of their bytes", async () => {
     const id = await accept(PASSED, OFF.address, withAttachment("invoice.pdf", "application/pdf", MZ));
     await materialiseReceipt(testEnv, createSystemCtx(), id);

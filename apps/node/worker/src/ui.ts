@@ -403,6 +403,8 @@ h1 {
 form { display: grid; gap: 1rem; }
 
 .field-row { display: grid; gap: .35rem; }
+/* The fold that opens Cc and Bcc: a link at the end of the To row, gone once opened. */
+.composer-copies { justify-self: end; font-size: .72rem; }
 .field-row > span {
   font-family: var(--mono);
   font-size: .68rem;
@@ -1104,6 +1106,9 @@ tbody a { font-size: .8rem; }
 .message-row:hover { background: color-mix(in oklab, var(--ground-2) 70%, transparent); }
 .message-row.current { border-left-color: var(--accent); background: color-mix(in oklab, var(--ground-2) 85%, transparent); }
 .message-from { font-size: .74rem; color: var(--dim); }
+/* Unread (0062): the subject at medium weight and a dot the accent draws, both gone once opened. */
+.message-row.unread .message-subject { font-weight: 500; }
+.message-row.unread .message-from::before { content: ""; display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; background: var(--accent); margin-right: .4rem; vertical-align: middle; }
 .message-subject { font-size: .98rem; }
 .message-when { font-size: .68rem; }
 
@@ -1148,6 +1153,7 @@ tbody a { font-size: .8rem; }
    title row holds a name, a count and one action and nothing has to squeeze. */
 /* A table's caption reads with its rows: left, over the header, not centred above the whole table. */
 .table-caption { text-align: left; caption-side: top; padding: 0 0 .4rem; font-size: .8rem; }
+.drafts-strip { flex: 1 1 100%; }
 .inbox-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin: 0 0 .9rem; min-width: 0; }
 .inbox-tools .inbox-search { flex: 1 1 16rem; min-width: 0; }
 .inbox-tools .search-pill { flex: 1 1 12rem; min-width: 0; }
@@ -1257,6 +1263,10 @@ body.shell main#app {
    box, and the visible symptom was the row rule stopping short of the last column. */
 .case-actions { text-align: right; }
 .case-actions button { display: block; margin-left: auto; }
+.hand-to { display: inline-flex; gap: .4rem; align-items: baseline; }
+.hand-to input { width: 11rem; font-size: .78rem; padding: .2rem .3rem; }
+.resend-reason { width: 16rem; font-size: .78rem; padding: .2rem .3rem; }
+.hand-to button { display: inline; margin-left: 0; }
 /* nowrap, not a smarter wrap. overflow-wrap: anywhere still split "billing@example.com" across lines,
    which reads as two addresses. The table has a floor and the ledger scrolls. */
 .ledger td.mono { word-break: normal; overflow-wrap: normal; white-space: nowrap; }

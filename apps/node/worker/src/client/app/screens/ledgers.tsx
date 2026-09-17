@@ -94,6 +94,9 @@ export function Outbox() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The send whose duplicate-risk resend is waiting for a reason, or null. */
+  const [resending, setResending] = useState<string | null>(null);
+  const [resendReason, setResendReason] = useState("");
 
   if (sends.isPending || sends.isError) {
     return (
@@ -105,6 +108,7 @@ export function Outbox() {
   }
 
   const { sends: rows, daily, capability } = sends.data;
+  const resendTarget = rows.find((one) => one.id === resending) ?? null;
 
   async function stop(id: string) {
     const response = await apiFetch(`/api/sends/${encodeURIComponent(id)}/cancel`, { method: "POST" });
@@ -131,12 +135,43 @@ export function Outbox() {
     if (!outcome.released) setProblem(outcome.reason ?? "It could not be released.");
   }
 
+  /**
+   * Retries a send the Node offers a retry for. The listing says which mode (ADR 40): `retry-effect` reuses
+   * the idempotency key and cannot duplicate; `resend-may-duplicate` mints a new one and might, so that one
+   * asks for a reason and an explicit acceptance before it goes. The route existed for months; the button
+   * did not (the 17 September coverage audit).
+   */
+  async function retry(send: SendRow, reason = "") {
+    setProblem(null);
+    const duplicate = send.retry.mode === "resend-may-duplicate";
+    // The duplicate-risk mode asks for a written reason first — inline, not window.prompt, which blocks the
+    // page and cannot be read by the accessibility harness. The row's button opens the field; this sends.
+    if (duplicate && reason.trim() === "") { setResending(send.id); return; }
+    setResending(null);
+    const response = await apiFetch(`/api/sends/${encodeURIComponent(send.id)}/retry`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(duplicate ? { mode: "resend-may-duplicate", acceptDuplicateRisk: true, reason } : { mode: "retry-effect" }),
+    });
+    const outcome = (await response.json().catch(() => null)) as { message?: string; what?: string } | null;
+    await queryClient.invalidateQueries({ queryKey: ["sends"] });
+    if (!response.ok) setProblem(outcome?.message ?? outcome?.what ?? `This Node answered ${response.status}.`);
+  }
+
   return (
     <section className="ledger" aria-label="Outbox">
       <header className="ledger-head">
         <h1>Outbox</h1>
         <p className="dim mono">{rows.length} sends</p>
       </header>
+      {resendTarget === null ? null : (
+        <p className="notice" role="status">
+          Resending <span className="mono">{resendTarget.subject}</span> mints a new message and may deliver it twice —
+          the first attempt's outcome is unknown, not failed. Say why, for the trail:{" "}
+          <input className="mono resend-reason" aria-label="Why resend" value={resendReason} onChange={(event) => setResendReason(event.target.value)} />{" "}
+          <button type="button" className="linkish" disabled={resendReason.trim() === ""} onClick={() => void retry(resendTarget, resendReason)}>resend anyway</button>{" "}
+          <button type="button" className="linkish dim" onClick={() => setResending(null)}>never mind</button>
+        </p>
+      )}
 
       {capability.canSend ? null : (
         <p className="notice bad">{capability.detail}</p>
@@ -229,14 +264,26 @@ export function Outbox() {
                             stop
                           </button>
                         </>
-                      ) : send.fidelity === "authored" && send.has_submitted === 1 ? (
-                        // §12's point is that the submitted bytes are *producible*, so this is a link
-                        // rather than a feature request — but only when they exist.
-                        <a className="mono" href={`/api/sends/${encodeURIComponent(send.id)}/submitted`}>
-                          .eml
-                        </a>
                       ) : (
-                        <span className="dim mono">—</span>
+                        <>
+                          {send.retry.mode === null ? null : (
+                            <>
+                              <button type="button" className="linkish" title={send.retry.why} onClick={() => void retry(send)}>
+                                {send.retry.mode === "retry-effect" ? "retry" : "resend…"}
+                              </button>
+                              {" · "}
+                            </>
+                          )}
+                          {send.fidelity === "authored" && send.has_submitted === 1 ? (
+                            // §12's point is that the submitted bytes are *producible*, so this is a link
+                            // rather than a feature request — but only when they exist.
+                            <a className="mono" href={`/api/sends/${encodeURIComponent(send.id)}/submitted`}>
+                              .eml
+                            </a>
+                          ) : send.retry.mode === null ? (
+                            <span className="dim mono">—</span>
+                          ) : null}
+                        </>
                       )}
                     </td>
                   </tr>

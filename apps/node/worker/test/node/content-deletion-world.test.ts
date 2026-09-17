@@ -169,6 +169,12 @@ const SITES: Site[] = [
     why: "Expired session credentials. Deleting one destroys the ability to sign in, not a record of anything.",
   },
   {
+    file: "src/reads.ts",
+    target: "message_reads",
+    content: false,
+    why: "Marking a message unread (0062) deletes the caller's own bookmark row. The message is untouched.",
+  },
+  {
     file: "src/labels.ts",
     target: "message_labels",
     content: false,

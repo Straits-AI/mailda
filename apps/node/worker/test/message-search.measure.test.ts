@@ -72,6 +72,7 @@ async function cost(
   window: { since?: string | null; until?: string | null } = {},
 ): Promise<Cost> {
   const query = messagePageQuery({
+    readerId: "usr_reader",
     nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,
@@ -92,6 +93,7 @@ async function cost(
 
 async function planFor(term: string | null): Promise<string> {
   const query = messagePageQuery({
+    readerId: "usr_reader",
     nowIso: new Date(AUGUST).toISOString(),
     sponsor: { sql: "", params: [] }, // a human reader has no sponsor ceiling
     orgId: ORG,

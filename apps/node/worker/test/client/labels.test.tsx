@@ -20,7 +20,7 @@ function row(n: number, labels: string[]) {
     envelope_to: "support@example.test", mailbox_id: "mbx_test", raw_bytes: 1024,
     accepted_at: `2026-08-2${n}T09:00:00.000Z`, parse_error: null, conversation_id: null, case_id: null,
     auth_spf: null, auth_dkim: null, auth_dmarc: null, auth_dmarc_policy: null, auth_from_domain: null,
-    attachments: null, attachments_dangerous: null, labels_json: JSON.stringify(labels),
+    attachments: null, attachments_dangerous: null, labels_json: JSON.stringify(labels), read: 1,
   };
 }
 
@@ -35,7 +35,7 @@ beforeEach(() => {
     }
     if (url.pathname === "/api/messages/msg_1/labels") return Response.json({ messageId: "msg_1", labels: ["invoice", "urgent"] });
     if (url.pathname.endsWith("/body")) {
-      return Response.json({ state: "text-only", html: null, text: "hello", blockedRemote: 0, truncated: false, problem: null, attachments: [], links: [] });
+      return Response.json({ state: "text-only", html: null, text: "hello", blockedRemote: 0, truncated: false, problem: null, attachments: [], links: [], recipients: { to: [], cc: [], replyTo: null } });
     }
     return undefined;
   });
