@@ -1,0 +1,37 @@
+/* mailda.site — the product's own tokens (apps/node/worker/src/ui.ts), carried over rather than restated:
+   Ink, Flow Blue and its text sibling, Sky, Mist, White; Plus Jakarta Sans standing in for Satoshi; Inter
+   for body; a mono for anything measured. The same contrast arithmetic applies (docs/receipts/contrast-tokens.md). */
+@font-face { font-family: Inter; src: url("/fonts/inter-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: Inter; src: url("/fonts/inter-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Plus Jakarta Sans"; src: url("/fonts/jakarta-600.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Plus Jakarta Sans"; src: url("/fonts/jakarta-700.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+
+:root {
+  --ink: #0F1720; --blue: #4C77B8; --blue-text: #436BA8; --sky: #E6EEF7; --mist: #F2F4F7; --white: #FFFFFF;
+  --ground: var(--mist); --ground-2: var(--white); --text: var(--ink);
+  --dim: rgba(15, 23, 32, .66); --rule: rgba(15, 23, 32, .10); --rule-strong: rgba(15, 23, 32, .22);
+  --warn: #9A5410; --live: #2F6F4E; --alarm: #A5342A;
+  --display: Satoshi, "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --body: Inter, ui-sans-serif, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Starlight's theme, pointed at the same tokens so the docs and the landing are one surface. */
+  --sl-color-accent-low: var(--sky); --sl-color-accent: var(--blue-text); --sl-color-accent-high: var(--ink);
+  --sl-color-white: var(--ink); --sl-color-gray-1: #1c2733; --sl-color-gray-2: #2f3b49; --sl-color-gray-3: #5b6775;
+  --sl-color-gray-4: #9aa4ae; --sl-color-gray-5: #d9dee4; --sl-color-gray-6: var(--sky); --sl-color-gray-7: var(--mist);
+  --sl-color-black: var(--white); --sl-color-text: var(--ink); --sl-color-text-accent: var(--blue-text);
+  --sl-font: var(--body); --sl-font-system: var(--body); --sl-font-mono: var(--mono);
+}
+:root[data-theme="dark"] {
+  --ground: #0F1720; --ground-2: #16212C; --text: #E8EDF3; --dim: rgba(232, 237, 243, .66);
+  --rule: rgba(232, 237, 243, .12); --rule-strong: rgba(232, 237, 243, .25);
+  --blue: #6E93CC; --blue-text: #6E93CC; --live: #86C9A4; --warn: #E0A458; --alarm: #E8A39B;
+  --sl-color-accent-low: #1c2733; --sl-color-accent: #6E93CC; --sl-color-accent-high: #E8EDF3;
+  --sl-color-white: #E8EDF3; --sl-color-gray-1: #d9dee4; --sl-color-gray-2: #b7c0c9; --sl-color-gray-3: #8b96a1;
+  --sl-color-gray-4: #5b6775; --sl-color-gray-5: #2f3b49; --sl-color-gray-6: #1c2733; --sl-color-gray-7: #16212C;
+  --sl-color-black: #0F1720; --sl-color-text: #E8EDF3; --sl-color-text-accent: #6E93CC;
+}
+.sl-markdown-content h1, .sl-markdown-content h2, .sl-markdown-content h3, .site-title, h1, h2 { font-family: var(--display); letter-spacing: -0.02em; }
+.sl-markdown-content code { font-size: .92em; }
+/* A receipt's frontmatter, rendered: the YAML block is the record, so it reads as one rather than as code. */
+.sl-markdown-content .starlight-aside--note + .expressive-code { border-left: 2px solid var(--blue); }

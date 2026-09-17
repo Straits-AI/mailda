@@ -1,0 +1,186 @@
+---
+import mark from "../assets/mark.svg?raw";
+import "../styles/site.css";
+
+interface Props { gaps: { title: string; detail: string }[] }
+const { gaps } = Astro.props;
+
+/*
+ * The landing page as a doctor report (the roll of 18 September). Every `ok` line names a doc that holds it
+ * to account; every `warn` line is the README's own gap table, read at build time and unedited. The copy
+ * above the report is for the owner; the report is for the builder. Nothing here is a claim the repository
+ * does not make.
+ */
+const checks: { check: string; says: string; doc: string; href: string }[] = [
+  { check: "install", says: "Three commands into your own Cloudflare account: deploy, claim, point a domain. The first install measured 108 s; a second Node in the same account is a name.", doc: "onboarding-journey.md", href: "/docs/operating/onboarding-journey/" },
+  { check: "receiving", says: "Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, search over subjects, senders and bodies.", doc: "application-shell.md", href: "/docs/product/application-shell/" },
+  { check: "mail_security", says: "The receiving server's SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model.", doc: "mail-security.md", href: "/docs/product/mail-security/" },
+  { check: "sending", says: "Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider's own bounces build.", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
+  { check: "butlers", says: "Programs that act on mail: deterministic, refused at publication if they cannot afford to run, paused if they loop, released by a person before anything leaves. The llm.* node types are declared and refused.", doc: "butler-engine.md", href: "/docs/product/butler-engine/" },
+  { check: "your_ai", says: "A contract-generated SDK, an agent Skill and an MCP server, every one derived from the same route registry. Agents hold a pinned ceiling of capabilities and an org.admin can never be minted.", doc: "machine-surfaces.md", href: "/docs/operating/machine-surfaces/" },
+  { check: "governance", says: "An audit trail nothing trims, matters, legal holds two people lift, supervised reads that leave a record, e-discovery exports approved before they run.", doc: "supervised-access.md", href: "/docs/product/supervised-access/" },
+  { check: "custody", says: "Evidence sealed under keys only your Node holds, escrowed to ten recovery codes; a backup you can verify offline; a restore drilled three times, once through to receiving mail.", doc: "disaster-recovery.md", href: "/docs/operating/disaster-recovery/" },
+];
+---
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Mailda — your mail, in your Cloudflare account</title>
+  <meta name="description" content="Open-source, customer-owned mail operations: shared inboxes, a queue, policies, Butlers and a governance ledger, deployed into your own Cloudflare account. No Mailda service to depend on." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta property="og:title" content="Mailda" />
+  <meta property="og:description" content="Shared inboxes that know who replied. Runs entirely in your own Cloudflare account." />
+</head>
+<body class="landing">
+  <header class="masthead">
+    <a class="lockup" href="/" aria-label="Mailda"><span class="mark" set:html={mark}></span><span class="word">Mailda</span></a>
+    <nav class="masthead-nav" aria-label="Site">
+      <a href="/docs/readme/">Docs</a>
+      <a href="/docs/receipts/">Receipts</a>
+      <a href="https://github.com/Straits-AI/mailda">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title">Shared inboxes that know who replied.</h1>
+      <p class="lede">
+        Mailda turns an email address into governed work: who is answering, whether anybody has, what a rule
+        held back and why. It runs entirely in <strong>your own Cloudflare account</strong> — you own the
+        domain, the messages, the keys and the bill. There is no Mailda service to depend on, no licence
+        server, no telemetry. Disconnect us and nothing stops working.
+      </p>
+      <p class="owner">
+        <span class="label">For the owner</span>
+        Workers Paid is the one thing it needs: <strong>$5 a month</strong>, 3,000 emails included, then $0.35 per thousand.
+        A twenty-person team sending ten thousand a month pays about $7.45. Inbound mail is unlimited.
+        Not for newsletters; not for Outlook. Open source, Apache-2.0.
+      </p>
+      <p class="actions">
+        <a class="primary" href="/docs/readme/#installing-it-and-the-honest-state-of-that">Install it</a>
+        <a class="quiet" href="/docs/operating/machine-surfaces/">Put it in your AI</a>
+      </p>
+    </section>
+
+    <section class="report" aria-labelledby="report-title">
+      <h2 id="report-title" class="report-head">
+        <span class="cmd">mailda doctor</span>
+        <span class="verdict">functional alpha</span>
+        <span class="dim">— what is built, what is thin, each with the page that holds it to account</span>
+      </h2>
+      <ol class="findings">
+        {checks.map((one) => (
+          <li class="finding">
+            <span class="sev ok">ok</span>
+            <span class="check">{one.check}</span>
+            <span class="says">{one.says} <a class="doc" href={one.href}>{one.doc}</a></span>
+          </li>
+        ))}
+        {gaps.map((gap) => (
+          <li class="finding">
+            <span class="sev warn">warn</span>
+            <span class="check">{gap.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 3).join("_")}</span>
+            <span class="says"><strong>{gap.title}.</strong> {gap.detail} <a class="doc" href="/docs/readme/#status-functional-alpha-not-production-ready">README</a></span>
+          </li>
+        ))}
+        <li class="finding">
+          <span class="sev report">report</span>
+          <span class="check">receipts</span>
+          <span class="says">Every number the product carries — a limit, a cost, a timing — has a receipt stating how it was measured and when it goes stale, and the build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
+        </li>
+      </ol>
+      <p class="report-foot dim">
+        Read the whole thing before you rely on it: <a href="/docs/readme/#status-functional-alpha-not-production-ready">the honest state</a>,
+        in the README's own words, is the part of this page a vendor would leave off.
+      </p>
+    </section>
+
+    <section class="install" aria-labelledby="install-title">
+      <h2 id="install-title">Three commands, one afternoon</h2>
+      <pre class="terminal"><code>export CLOUDFLARE_ACCOUNT_ID=&lt;your account&gt;
+node packages/cli/src/mailda.mjs deploy --url https://&lt;your-node&gt;.workers.dev
+node packages/cli/src/mailda.mjs claim-secret</code></pre>
+      <p class="dim">
+        Then open the Node, claim it, and point a subdomain at it from <em>Setup</em> — the Node writes the
+        Cloudflare records through its own grant, reads them back, and refuses if they are not there. The
+        dashboard path is documented for builders who would rather arrange the account by hand.
+        <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
+      </p>
+    </section>
+
+    <section class="values" aria-label="What the product is built to be">
+      <ul>
+        <li><strong>Intelligent</strong> — your app in your AI, never AI in your app.</li>
+        <li><strong>Reliable</strong> — every assertion can fail; every number has a receipt.</li>
+        <li><strong>Flowing</strong> — mail arrives, is filed, is answered, and leaves a record.</li>
+        <li><strong>Helpful</strong> — a refusal names the problem, the reason and the remedy.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span class="mark small" set:html={mark}></span>
+    <span>Mailda · Apache-2.0 · <a href="https://github.com/Straits-AI/mailda">Straits-AI/mailda</a> · <a href="/docs/agents/">how decisions get made</a> · <a href="https://github.com/Straits-AI/mailda/blob/main/SECURITY.md">security</a></span>
+  </footer>
+</body>
+</html>
+
+<style>
+  :global(html) { background: var(--ground); }
+  body.landing { margin: 0; font: 400 1rem/1.6 var(--body); color: var(--text); background: var(--ground); }
+  .landing a { color: var(--blue-text); text-underline-offset: .18em; }
+  .masthead { max-width: 74rem; margin: 0 auto; padding: 1.1rem clamp(1rem, 4vw, 2.5rem); display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--rule); }
+  .lockup { display: inline-flex; align-items: center; gap: .55rem; text-decoration: none; color: var(--text); font: 700 1.15rem/1 var(--display); letter-spacing: -0.01em; }
+  .mark { display: inline-flex; width: 30px; color: var(--text); }
+  .mark :global(svg) { width: 100%; height: auto; }
+  .mark.small { width: 22px; opacity: .8; }
+  .masthead-nav { display: flex; gap: 1.25rem; font: 400 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  .masthead-nav a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); padding-bottom: .15rem; }
+  .masthead-nav a:hover { color: var(--text); border-bottom-color: var(--rule-strong); }
+
+  main { max-width: 74rem; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2.5rem) 4rem; }
+  .hero { padding: clamp(2.5rem, 7vw, 5rem) 0 2.5rem; max-width: 46rem; }
+  .hero h1 { font: 700 clamp(2rem, 5vw, 3.4rem)/1.08 var(--display); letter-spacing: -0.03em; margin: 0 0 1rem; text-wrap: balance; }
+  .lede { font-size: clamp(1.05rem, 1.6vw, 1.2rem); margin: 0 0 1.4rem; max-width: 42rem; }
+  .owner { border-left: 2px solid var(--blue); padding: .2rem 0 .2rem 1rem; margin: 0 0 1.6rem; color: var(--dim); max-width: 42rem; }
+  .owner .label { display: block; font: 400 .66rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--blue-text); margin-bottom: .35rem; }
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem 1rem; margin: 0; align-items: center; }
+  a.primary { display: inline-block; font: 400 .72rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ground); background: var(--blue-text); border: 1px solid var(--blue-text); padding: .85rem 1.2rem; text-decoration: none; }
+  a.primary:hover { filter: brightness(1.12); }
+  a.quiet { font: 400 .72rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--text); border: 1px solid var(--rule-strong); padding: .85rem 1.2rem; text-decoration: none; background: var(--ground-2); }
+  a.quiet:hover { background: var(--sky); }
+
+  /* The report: the product's own doctor output, as a list a screen reader walks in order. */
+  .report { margin-top: 1.5rem; border-top: 1px solid var(--rule-strong); padding-top: 1.2rem; }
+  .report-head { font: 400 .8rem/1.6 var(--mono); margin: 0 0 .9rem; display: flex; flex-wrap: wrap; gap: .4rem .8rem; align-items: baseline; letter-spacing: 0; }
+  .report-head .cmd { color: var(--text); }
+  .report-head .verdict { border: 1px solid var(--warn); color: var(--warn); padding: .1rem .45rem; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; }
+  .findings { list-style: none; margin: 0; padding: 0; }
+  .finding { display: grid; grid-template-columns: 3.6rem 9rem minmax(0, 1fr); gap: .3rem 1rem; padding: .7rem 0; border-top: 1px solid var(--rule); align-items: baseline; }
+  .sev { font: 400 .66rem/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: .15rem .35rem; border: 1px solid; justify-self: start; }
+  .sev.ok { color: var(--live); border-color: var(--live); }
+  .sev.warn { color: var(--warn); border-color: var(--warn); }
+  .sev.report { color: var(--dim); border-color: var(--rule-strong); }
+  .check { font: 400 .82rem/1.5 var(--mono); color: var(--text); overflow-wrap: anywhere; }
+  .says { font-size: .95rem; }
+  .says .doc { font: 400 .74rem/1 var(--mono); color: var(--dim); white-space: nowrap; margin-left: .35rem; }
+  .report-foot { font-size: .85rem; margin: 1rem 0 0; }
+  @media (max-width: 40rem) {
+    .finding { grid-template-columns: 3.6rem minmax(0, 1fr); }
+    .check { grid-column: 2; }
+    .says { grid-column: 1 / -1; }
+  }
+
+  .install { margin-top: 3rem; max-width: 46rem; }
+  .install h2, .values h2 { font: 700 1.4rem/1.2 var(--display); letter-spacing: -0.02em; margin: 0 0 .8rem; }
+  .terminal { background: var(--ink); color: #E8EDF3; font: 400 .82rem/1.65 var(--mono); padding: 1rem 1.2rem; overflow-x: auto; border-left: 2px solid var(--blue); margin: 0 0 .9rem; }
+  .dim { color: var(--dim); }
+  .values { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1.5rem; }
+  .values ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .8rem 2rem; font-size: .92rem; color: var(--dim); }
+  .values strong { color: var(--text); font-family: var(--display); font-weight: 600; }
+  .foot { max-width: 74rem; margin: 0 auto; padding: 1.2rem clamp(1rem, 4vw, 2.5rem) 2.5rem; border-top: 1px solid var(--rule); display: flex; gap: .8rem; align-items: center; font: 400 .72rem/1.6 var(--mono); color: var(--dim); flex-wrap: wrap; }
+  .foot a { color: var(--dim); }
+  @media (prefers-reduced-motion: no-preference) { a.primary { transition: filter .18s; } }
+</style>

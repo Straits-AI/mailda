@@ -1,0 +1,21 @@
+{
+  "name": "@mailda/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "docs:generate": "node scripts/generate-docs.mjs",
+    "dev": "pnpm docs:generate && astro dev",
+    "build": "pnpm docs:generate && astro build",
+    "preview": "astro preview",
+    "test": "pnpm build && node --test",
+    "deploy": "pnpm build && wrangler deploy"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.36.0",
+    "astro": "^5.14.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.118.0"
+  }
+}
