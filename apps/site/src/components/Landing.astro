@@ -27,7 +27,7 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>Mailda — your mail, in your Cloudflare account</title>
+  <title>Mailda, in your Cloudflare account</title>
   <meta name="description" content="Open-source, customer-owned mail operations: shared inboxes, a queue, policies, Butlers and a governance ledger, deployed into your own Cloudflare account. No Mailda service to depend on." />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <meta property="og:title" content="Mailda" />
@@ -47,10 +47,10 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
     <section class="hero" aria-labelledby="hero-title">
       <h1 id="hero-title">Shared inboxes that know who replied.</h1>
       <p class="lede">
-        Mailda turns an email address into governed work: who is answering, whether anybody has, what a rule
-        held back and why. It runs entirely in <strong>your own Cloudflare account</strong> — you own the
-        domain, the messages, the keys and the bill. There is no Mailda service to depend on, no licence
-        server, no telemetry. Disconnect us and nothing stops working.
+        Mailda turns an email address into governed work. Who is answering, whether anybody has, what a rule
+        held back and why. It runs in <strong>your own Cloudflare account</strong>, so you own the domain,
+        the messages, the keys and the bill. There is no Mailda service to depend on, no licence server, no
+        telemetry. Disconnect us and nothing stops working.
       </p>
       <p class="owner">
         <span class="label">For the owner</span>
@@ -68,7 +68,7 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
       <h2 id="report-title" class="report-head">
         <span class="cmd">mailda doctor</span>
         <span class="verdict">functional alpha</span>
-        <span class="dim">— what is built, what is thin, each with the page that holds it to account</span>
+        <span class="dim">what is built, what is thin, and the page that holds each claim to account</span>
       </h2>
       <ol class="findings">
         {checks.map((one) => (
@@ -88,12 +88,12 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
         <li class="finding">
           <span class="sev report">report</span>
           <span class="check">receipts</span>
-          <span class="says">Every number the product carries — a limit, a cost, a timing — has a receipt stating how it was measured and when it goes stale, and the build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
+          <span class="says">Every limit, cost and timing in the product has a receipt saying how it was measured and when it goes stale. The build refuses a constant without one. <a class="doc" href="/docs/receipts/">docs/receipts/</a></span>
         </li>
       </ol>
       <p class="report-foot dim">
-        Read the whole thing before you rely on it: <a href="/docs/readme/#status-functional-alpha-not-production-ready">the honest state</a>,
-        in the README's own words, is the part of this page a vendor would leave off.
+        The warn rows are the README's own words. A vendor's page would leave them off.
+        <a href="/docs/readme/#status-functional-alpha-not-production-ready">Read the whole status</a> before you rely on any of this.
       </p>
     </section>
 
@@ -103,19 +103,19 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
 node packages/cli/src/mailda.mjs deploy --url https://&lt;your-node&gt;.workers.dev
 node packages/cli/src/mailda.mjs claim-secret</code></pre>
       <p class="dim">
-        Then open the Node, claim it, and point a subdomain at it from <em>Setup</em> — the Node writes the
-        Cloudflare records through its own grant, reads them back, and refuses if they are not there. The
-        dashboard path is documented for builders who would rather arrange the account by hand.
+        Then open the Node, claim it, and point a subdomain at it from <em>Setup</em>. The Node writes the
+        Cloudflare records through its own grant, reads them back, and refuses if they are not there. If you
+        would rather arrange the account by hand, the dashboard path is written down too.
         <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
       </p>
     </section>
 
     <section class="values" aria-label="What the product is built to be">
       <ul>
-        <li><strong>Intelligent</strong> — your app in your AI, never AI in your app.</li>
-        <li><strong>Reliable</strong> — every assertion can fail; every number has a receipt.</li>
-        <li><strong>Flowing</strong> — mail arrives, is filed, is answered, and leaves a record.</li>
-        <li><strong>Helpful</strong> — a refusal names the problem, the reason and the remedy.</li>
+        <li><strong>Intelligent.</strong> Your app in your AI, never AI in your app.</li>
+        <li><strong>Reliable.</strong> Every assertion can fail. Every number has a receipt.</li>
+        <li><strong>Flowing.</strong> Mail arrives, gets filed, gets answered, and leaves a record.</li>
+        <li><strong>Helpful.</strong> A refusal names the problem, the reason and the remedy.</li>
       </ul>
     </section>
   </main>

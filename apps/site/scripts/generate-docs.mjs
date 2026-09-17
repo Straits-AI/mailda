@@ -94,10 +94,11 @@ writeFileSync(join(out, "receipts", "index.md"), `---
 title: "Receipts"
 description: "Every number the product carries, with how it was measured and when it goes stale."
 ---
-Every constant in the product — a limit, a cost, a timing, a platform fact — comes from one of these files.
-\`packages/budgets\` is generated from their \`values:\` blocks and never hand-edited; a test refuses a
-constant without a receipt, and each receipt's \`stale_when\` names what would make it wrong. **Measured** means
-somebody ran it; **sized** means somebody reasoned and said so; **platform-limit** means Cloudflare published it.
+Every limit, cost, timing and platform fact in the product comes from one of these files. A generator
+writes \`packages/budgets\` from their \`values:\` blocks, nobody edits it by hand, and a test refuses a
+constant without a receipt. Each receipt's \`stale_when\` names what would make it wrong. A **measured**
+receipt means somebody ran it. **Sized** means somebody reasoned and said so. **Platform-limit** means
+Cloudflare published it.
 
 | receipt | kind | measured |
 |:--|:--|:--|
