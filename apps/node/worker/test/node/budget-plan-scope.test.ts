@@ -813,6 +813,12 @@ const FIGURES: Record<string, Classification> = {
       + " token carries regardless of plan",
     "workflow.provisioned_by_button",
   ),
+  // docs/receipts/workers-ai-classifier.md
+  ...bothPlans(
+    "what the Workers AI catalogue holds and how an embedding call answers over REST: the catalogue is the"
+      + " same on every plan, and the latency was measured from a laptop, which no plan changes",
+    "ai.text_classification_models_for_mail", "ai.embedding_dims_bge_small", "ai.embedding_latency_ms_rest_warm",
+  ),
 };
 
 function planSegmentsIn(key: string): string[] {
