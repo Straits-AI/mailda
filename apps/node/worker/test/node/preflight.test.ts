@@ -192,7 +192,7 @@ describe("the deploy consults it before anything can change", () => {
      * a substring, and the reason the value-level tests above carry the weight.
      */
     const preflighted = cli.indexOf("await runPreflight(argv)");
-    const guard = cli.indexOf("refuseIfWorkflowBelongsElsewhere();");
+    const guard = cli.indexOf("refuseIfWorkflowBelongsElsewhere(deployConfig.text);");
     expect(preflighted, "deploy no longer preflights").toBeGreaterThan(-1);
     expect(guard, "the Workflow guard is never called").toBeGreaterThan(-1);
     expect(preflighted).toBeLessThan(guard);

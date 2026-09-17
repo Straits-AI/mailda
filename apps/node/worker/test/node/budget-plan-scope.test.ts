@@ -650,6 +650,10 @@ const FIGURES: Record<string, Classification> = {
     "deploy.workflow_collision_refused_by_plan",
     "deploy.migrations_before_first_deploy", "deploy.workflow_name_is_account_level",
     "deploy.second_node_reassigns_workflow",
+    // The fifth drill's timings and the override attempt count: measured on Paid; wall-clock is dominated by
+    // wrangler's uploads and the doctor round trips, which no plan changes. Free is unmeasured, as the row says.
+    "deploy.second_node_first_install_seconds", "deploy.second_node_canary_deploy_seconds",
+    "deploy.canary_override_attempts_named_node",
   ),
 
   // docs/receipts/wrangler-list-pagination.md

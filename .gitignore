@@ -61,3 +61,6 @@ worker-configuration.d.ts
 # deploy path produces it; not committed, because it would put a hundred kilobytes of minified diff on
 # every interface commit and a reviewer cannot notice anything wrong inside it.
 apps/node/worker/generated/
+
+# Derived by `mailda deploy --name <worker>` from wrangler.jsonc; never committed (ADR 24)
+apps/node/worker/wrangler.*.jsonc

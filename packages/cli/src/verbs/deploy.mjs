@@ -1,9 +1,8 @@
 import { doctor } from "./doctor.mjs";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { activeVersionFrom, contractingAmong, deployExitCode, promotionVerdict, servedVersionOf, versionIdFrom } from "../deploy-parse.mjs";
 import { planFor, renderPlan, resourcesFrom as resourcesFromConfig } from "../deploy-plan.mjs";
-import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, ENV, runPreflight } from "../support.mjs";
+import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, configFor, useConfig } from "../support.mjs";
 /**
  * Whether this account has no `mailda` Worker yet.
  *
@@ -31,7 +30,7 @@ import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, ENV, 
 function firstInstall() {
   // Quiet, by `capture`'s own rule: this is a question — is there a Worker — and the answer is one word
   // below. Echoing every version ever uploaded above the plan was fifteen entries a person scrolled past.
-  const probe = capture("npx", ["wrangler", "versions", "list", ...ENV], { quiet: true });
+  const probe = capture("npx", ["wrangler", "versions", "list", ...WRANGLER_ARGS], { quiet: true });
   if (probe.status === 0) return false;
   if (/does not yet exist|workers\.api\.error\.script_not_found|\[code: 10007\]/i.test(probe.text)) return true;
   fail(
@@ -74,8 +73,7 @@ function firstInstall() {
  * that names what went unchecked is. The reverse of `firstInstall`, deliberately: there, being wrong means
  * skipping the canary on a live Node, so ambiguity stops the command.
  */
-function refuseIfWorkflowBelongsElsewhere() {
-  const config = readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8");
+function refuseIfWorkflowBelongsElsewhere(config) {
   const workerName = /"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
   const workflowName = /"workflows"[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
   if (workerName === null || workflowName === null) return;
@@ -227,7 +225,7 @@ function refuseIfWorkflowBelongsElsewhere() {
  * error messages for resources a first install is *expected* not to have would bury the plan under them.
  */
 function accountInventory() {
-  const { resources } = resourcesFromConfig(readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"));
+  const { resources } = resourcesFromConfig(deployConfig.text);
 
   /**
    * The `info` verb per kind, measured against wrangler 4.118.0.
@@ -249,7 +247,7 @@ function accountInventory() {
   for (const resource of resources) {
     const args = INFO[resource.kind];
     if (args === undefined) continue;
-    probes[resource.name] = capture("npx", [...args(resource.name), ...ENV], { quiet: true });
+    probes[resource.name] = capture("npx", [...args(resource.name), ...WRANGLER_ARGS], { quiet: true });
   }
 
   return {
@@ -264,8 +262,16 @@ function accountInventory() {
 }
 
 
+/** The config this deploy acts on: `wrangler.jsonc`, or the file `--name` derives from it. Set once, first. */
+let deployConfig = null;
+
 export async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
+  deployConfig = configFor(argv);
+  useConfig(deployConfig);
+  if (deployConfig.args.length > 0) {
+    process.stdout.write(`== deploying as \`${deployConfig.name}\` from ${deployConfig.path}\n`);
+  }
 
   /*
    * `--plan` answers and stops. It runs preflight first for the same reason the deploy does — the account has
@@ -281,7 +287,7 @@ export async function deploy(argv) {
     const settled = await runPreflight(argv, { needsUrl: false });
     if (!settled.ok) fail(settled.report);
     const plan = planFor({
-      configText: readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8"),
+      configText: deployConfig.text,
       inventory: accountInventory(),
       // Settled above. Null in the single-account case, where there is nothing to disambiguate.
       account: settled.accountId === null
@@ -307,7 +313,7 @@ export async function deploy(argv) {
    * **Is there anything here yet?** Measured against a real account rather than assumed, and it changed this
    * whole function — see `firstInstall` for what the drill found.
    */
-  refuseIfWorkflowBelongsElsewhere();
+  refuseIfWorkflowBelongsElsewhere(deployConfig.text);
 
   const first = firstInstall();
   if (first) {
@@ -317,13 +323,13 @@ export async function deploy(argv) {
       + "   roll back to and nothing a migration could break — and the bindings do not exist until a deploy\n"
       + "   provisions them, which is why neither step below can come first.\n",
     );
-    if (run("npx", ["wrangler", "deploy", ...ENV]) !== 0) fail("the first deploy failed.");
+    if (run("npx", ["wrangler", "deploy", ...WRANGLER_ARGS]) !== 0) fail("the first deploy failed.");
     process.stdout.write("\n== applying migrations for the first time\n");
-    if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...ENV]) !== 0) {
+    if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...WRANGLER_ARGS]) !== 0) {
       fail("applying migrations failed. The Worker is deployed against an empty schema — re-run to finish.");
     }
     process.stdout.write("\n== attaching the delivery-events consumer on a new Node\n");
-    if (run("node", ["scripts/attach-queue-consumer.mjs"]) !== 0) {
+    if (run("node", ["scripts/attach-queue-consumer.mjs", "--name", deployConfig.name]) !== 0) {
       fail("attaching the consumer failed. Delivery outcomes will be unobserved until it is.");
     }
     if (origin !== null) {
@@ -375,7 +381,7 @@ export async function deploy(argv) {
    * currently serving — before the canary has even been uploaded, and while nothing has gone wrong yet.
    */
   process.stdout.write("\n== checking which migrations are pending\n");
-  const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...ENV]);
+  const pending = capture("npx", ["wrangler", "d1", "migrations", "list", "CATALOG", "--remote", ...WRANGLER_ARGS]);
   if (pending.status !== 0) {
     /*
      * **"The bindings are not provisioned" is a state, not a failure to list migrations** (#150).
@@ -430,7 +436,7 @@ export async function deploy(argv) {
   }
 
   process.stdout.write("\n== applying migrations\n");
-  if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...ENV]) !== 0) {
+  if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...WRANGLER_ARGS]) !== 0) {
     fail("applying migrations failed. Nothing was deployed, so the version currently serving is unchanged.");
   }
 
@@ -439,7 +445,7 @@ export async function deploy(argv) {
    * this command found live rather than from whatever the list says after it has changed.
    */
   process.stdout.write("\n== reading the version currently serving\n");
-  const deployments = capture("npx", ["wrangler", "deployments", "list", ...ENV]);
+  const deployments = capture("npx", ["wrangler", "deployments", "list", ...WRANGLER_ARGS]);
   if (deployments.status !== 0) fail(`could not list deployments (exit ${deployments.status}).`);
   const serving = activeVersionFrom(deployments.text);
   if (serving === null) {
@@ -454,7 +460,7 @@ export async function deploy(argv) {
 
   process.stdout.write("\n== uploading a canary version (no traffic)\n");
   const uploaded = capture("npx", [
-    "wrangler", "versions", "upload", "--message", "mailda deploy", ...ENV,
+    "wrangler", "versions", "upload", "--message", "mailda deploy", ...WRANGLER_ARGS,
   ]);
   if (uploaded.status !== 0) {
     fail(`uploading the canary failed (exit ${uploaded.status}). No traffic moved.`);
@@ -476,7 +482,7 @@ export async function deploy(argv) {
    */
   process.stdout.write("\n== placing the canary in the deployment at 0%\n");
   if (run("npx", [
-    "wrangler", "versions", "deploy", `${version}@0`, `${serving}@100`, "--yes", ...ENV,
+    "wrangler", "versions", "deploy", `${version}@0`, `${serving}@100`, "--yes", ...WRANGLER_ARGS,
   ]) !== 0) {
     fail(
       "could not place the canary in the deployment.\n\n"
@@ -521,7 +527,11 @@ export async function deploy(argv) {
    * a real condition — a Node with no `version_metadata` binding cannot report its version at all — and the
    * refusal below is the honest answer to it.
    */
-  const overridden = { ...asked, "Cloudflare-Workers-Version-Overrides": `mailda="${version}"` };
+  // The header names the **Worker**, and it used to say `mailda` whatever the config said. On the third
+  // restore drill's `mailda-drill` Node the override therefore never applied, the incumbent answered, and
+  // the gate refused — correctly — every time, and the operator promoted by hand. The name comes from the
+  // config now, which is the only place it is true.
+  const overridden = { ...asked, "Cloudflare-Workers-Version-Overrides": `${deployConfig.name}="${version}"` };
   let report = await doctorReport(origin, overridden, "the canary");
   for (let attempt = 1; attempt < 6 && servedVersionOf(report) !== version; attempt++) {
     process.stdout.write(`   the override has not propagated yet; retrying (${attempt}/5)\n`);
@@ -582,7 +592,7 @@ export async function deploy(argv) {
   }
 
   process.stdout.write("\n== moving traffic to the checked version\n");
-  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes", ...ENV]) !== 0) {
+  if (run("npx", ["wrangler", "versions", "deploy", `${version}@100`, "--yes", ...WRANGLER_ARGS]) !== 0) {
     fail("promoting the canary failed. The previous version is still serving.");
   }
 
@@ -591,7 +601,7 @@ export async function deploy(argv) {
    * consumer cannot name a queue whose name Cloudflare derives (`queue-provisioning.md`).
    */
   process.stdout.write("\n== attaching the delivery-events consumer\n");
-  if (run("node", ["scripts/attach-queue-consumer.mjs"]) !== 0) {
+  if (run("node", ["scripts/attach-queue-consumer.mjs", "--name", deployConfig.name]) !== 0) {
     fail("attaching the consumer failed. The new version is live but delivery outcomes are unobserved.");
   }
 

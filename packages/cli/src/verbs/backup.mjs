@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { backupIndex, checkBackup, exportableTables, needsIndexRebuild, whyAdminCannotExist } from "../backup.mjs";
-import { fail, capture, run, flag, sessionCookie, doctorReport, ENV, runPreflight, claimState } from "../support.mjs";
+import { fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, claimState, configFor, useConfig } from "../support.mjs";
 /* ------------------------------------------------------------------ backup ------------------------- */
 
 /**
@@ -37,6 +37,8 @@ import { fail, capture, run, flag, sessionCookie, doctorReport, ENV, runPrefligh
  * that as *not asked* rather than as clean.
  */
 export async function backup(argv) {
+  // `--name`, as `deploy` takes it: a backup of a second Node reads that Node's D1, which the derived config names.
+  useConfig(configFor(argv));
   const ready = await runPreflight(argv);
   if (!ready.ok) fail(ready.report);
   const origin = ready.origin;
@@ -95,7 +97,7 @@ export async function backup(argv) {
    */
   process.stdout.write("\n== reading the catalog's shape\n");
   const schema = capture("npx", ["wrangler", "d1", "execute", "CATALOG", "--remote", "--json",
-    "--command", "SELECT name, sql FROM sqlite_master WHERE type = 'table'", ...ENV], { quiet: true });
+    "--command", "SELECT name, sql FROM sqlite_master WHERE type = 'table'", ...WRANGLER_ARGS], { quiet: true });
   if (schema.status !== 0) fail(`could not read the catalog's table list (exit ${schema.status}).`);
   let master;
   try {
@@ -112,7 +114,7 @@ export async function backup(argv) {
   process.stdout.write("\n== exporting the catalog\n");
   const catalogPath = `${out}/catalog.sql`;
   if (run("npx", ["wrangler", "d1", "export", "CATALOG", "--remote", "--output", catalogPath,
-    "--skip-confirmation", "--no-schema", ...ENV,
+    "--skip-confirmation", "--no-schema", ...WRANGLER_ARGS,
     ...included.flatMap((name) => ["--table", name])]) !== 0) {
     fail("exporting D1 failed, so there is no backup. Nothing was written that could be mistaken for one.");
   }

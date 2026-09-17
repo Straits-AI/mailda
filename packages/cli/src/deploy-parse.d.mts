@@ -55,3 +55,12 @@ export function doctorExitCode(verdict: string | undefined): number;
  * worse, so a carried finding is the incumbent's condition rather than this command's doing.
  */
 export function deployExitCode(verdict: string | undefined): number;
+
+/**
+ * `wrangler.jsonc` as a second Node would have it (`mailda deploy --name`): the Worker's `name`, the
+ * Workflow's `name` (`<worker>-butler-runs`) and `vars.WORKER_NAME` rewritten, comments kept.
+ */
+export function deriveConfig(source: string, name: string): string;
+
+/** The Worker's name as the config states it, or null when the config names none. */
+export function workerNameIn(config: string): string | null;

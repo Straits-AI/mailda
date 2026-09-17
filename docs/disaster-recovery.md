@@ -509,6 +509,11 @@ Two more, outside receiving: the deploy gate's version override did not reach a 
 within its fifteen-second retry (the canary was promoted by hand, as the gate's own `fix` says to), and the
 consent state a URL carries expires faster than a URL handed across a chat gets clicked.
 
+**The first of those was not propagation.** Found on 17 September (`deploy-drill-live-account.md`, the
+fifth drill): the override header named `mailda` as a literal, whatever the Worker was called, so on a Node
+named `mailda-drill` it could never apply. Fixed, and measured reaching a named Node on the first attempt.
+The three `wrangler.jsonc` edits this drill made by hand and reverted are `mailda deploy --name` now.
+
 ### Torn down
 
 In the runbook's unwind order, with the drill's names: the routing rule on `mailda.site` first, because a rule
@@ -522,8 +527,20 @@ routed anywhere — and keeps the sending subscription the live Node created for
 
 - **The copy at scale.** 5.4 s per object is the cost of the tool, not of R2; an S3-API copy (`rclone`, or an
   R2 bucket-to-bucket job) was not measured, and is the number a mailbox-sized restore actually needs.
-- **The catalog import's wall.** 411 KB imported in 5 s. `wrangler d1 execute --file` has a size it refuses
-  at, and this drill did not reach it.
+- **The catalog import's wall — measured on 17 September, and it is not near.** On scratch databases in the
+  live account, seeded with the byte receipt's corpus and exported with `d1 export --no-schema` — the shape
+  the backup writes — then `execute --file` into a fresh database with the schema:
+
+  | messages (+ one item each) | export | export size | statements | import | rows read back |
+  |--:|--:|--:|--:|--:|--:|
+  | 10,000 | 11 s | 15.6 MB | 20,000 | **22 s** | 10,000 |
+  | 50,000 | 33 s | 78.1 MB | 100,000 | **107 s** | 50,000 |
+
+  Linear, about 1,000 statements a second. `wrangler d1 execute --file` uploads the file once and processes it
+  server-side, so a laptop's link is paid once per restore rather than per row. The wall it does have is per
+  **statement**: a hand-built 150 KB `INSERT` was refused with `SQLITE_TOOBIG`, which an export never produces
+  (one row a statement). So the catalog half of a mailbox-sized restore is minutes, and the copy above is the
+  hours — the order to fix them in is the one already stated.
 - **Cross-account receiving.** Structurally impossible for a zone the destination does not own; a customer
   moving accounts moves the zone first, and that move was not drilled.
 
