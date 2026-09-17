@@ -4,7 +4,7 @@ kind: measured-tripwire
 measured_on: 2026-08-20
 stale_when: >
   the recheck gains or loses a subject — a seventh withholding reason, or an envelope member that needs its own
-  read; getEvidence stops costing one R2 get plus one vault RPC, which is what makes the two body hashes four
+  read; a send's attachment stops costing one evidence read at render and one more at the recheck; getEvidence stops costing one R2 get plus one vault RPC, which is what makes the two body hashes four
   subrequests; the vault starts caching an opening key across two reads in one invocation, which would take two
   of them off; policy evaluation changes how many derived inputs it fetches (policy-evaluation-cost.md owns
   that figure and this one contains it); a D1 batch() stops being one round trip; the unapproved path gains any
@@ -197,3 +197,27 @@ one ticket. Detail and the per-scenario figures: `send-breakers.md`.
 The recheck delta is unchanged at 8, which is the number this receipt exists to hold: the breaker read sits
 *outside* it, before the branch, so making the recheck universal still costs the same half-again it always
 did.
+
+## Correction, 17 September 2026 (0060): attachments, priced per part, and the plain figures re-read
+
+An authored send may carry attachments now. Each is stored as evidence at the seal and **read back and
+hashed at render on every path** — the bytes about to leave are checked against the row — and read back and
+hashed **again by the recheck on the approved path**, as the two bodies are. Measured in
+`test/outbound-recheck.test.ts` ("prices one attachment on both paths"), same instrument, same runtime:
+
+| Scenario | No attachment | One attachment | Per part |
+|:--|--:|--:|--:|
+| `dispatchOne`, unapproved, handed over | 18 | **20** | +2 (one R2 get, one vault RPC) |
+| `dispatchOne`, approved, handed over | 26 | **30** | +4 (the same, twice) |
+
+**The two budgets do not move, and the test says why in place.** `send.dispatch_unapproved_max_subrequests`
+stays 20 and `send.dispatch_approved_max_subrequests` 28, asserted on a send with no attachment as before; a
+bound that grew with every attachment would stop being a tripwire for the path it was written for. The
+attachment scenario is bounded separately at the plain budget plus the per-part figure. The envelope binds
+every attachment's hash from the same widened `SELECT` (`ENVELOPE_COLUMNS` gained a correlated sub-select),
+so binding costs nothing; verifying costs what the table says.
+
+**The plain figures read 18 and 26 today, against the 17 and 25 recorded above.** Something landed one read
+on both paths between 20 August and now and no correction was written for it — this one records the
+reading rather than the cause, which it did not establish. The headroom on both budgets is therefore **2**,
+not 3.

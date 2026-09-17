@@ -288,8 +288,11 @@ export interface EffectEnvelope {
     subject: string;
     isReply: boolean;
   };
-  /** §18's referenced artifact hashes. Two, for the structural reason in this module's header. */
-  artifactHashes: { bodyTyped: string; bodyNormalized: string };
+  /**
+   * §18's referenced artifact hashes. Two bodies, for the structural reason in this module's header, and
+   * since 0060 every attachment's, in ordinal order — bound from the rows, verified against the bytes below.
+   */
+  artifactHashes: { bodyTyped: string; bodyNormalized: string; attachments: string[] };
   /** §18's actor. The delegator is in `ENVELOPE_ABSENT`. */
   actorUserId: string;
   mailboxId: string;
@@ -348,7 +351,10 @@ export interface EffectEnvelope {
 export const ENVELOPE_COLUMNS =
   `author_user_id, mailbox_id, envelope_from, envelope_to, envelope_cc, envelope_bcc, subject,
    in_reply_to_message_id, references_header, body_typed_key, body_typed_sha256,
-   body_normalized_key, body_normalized_sha256, policy_outcome, policy_versions`;
+   body_normalized_key, body_normalized_sha256, policy_outcome, policy_versions,
+   (SELECT json_group_array(json_object('key', a.blob_key, 'sha256', a.sha256))
+      FROM (SELECT blob_key, sha256 FROM send_attachments
+             WHERE manifest_id = send_manifests.id ORDER BY ordinal) a) AS attachments_json`;
 
 export interface EnvelopeRow {
   author_user_id: string;
@@ -366,6 +372,13 @@ export interface EnvelopeRow {
   body_normalized_sha256: string;
   policy_outcome: string | null;
   policy_versions: string | null;
+  /** 0060: `[{key, sha256}]` in ordinal order, as one column of the same read — `[]` when nothing was attached. */
+  attachments_json: string | null;
+}
+
+function attachmentsOf(row: EnvelopeRow): Array<{ key: string; sha256: string }> {
+  // `== null` rather than `=== null`: a test-built row from a hand-written SELECT has no such column at all.
+  return row.attachments_json == null ? [] : JSON.parse(row.attachments_json) as Array<{ key: string; sha256: string }>;
 }
 
 /**
@@ -450,7 +463,10 @@ export async function bindEnvelope(
     expectedVersion: manifestId,
     idempotencyKey: manifestId,
     parameters,
-    artifactHashes: { bodyTyped: row.body_typed_sha256, bodyNormalized: row.body_normalized_sha256 },
+    artifactHashes: {
+      bodyTyped: row.body_typed_sha256, bodyNormalized: row.body_normalized_sha256,
+      attachments: attachmentsOf(row).map((one) => one.sha256),
+    },
     actorUserId: row.author_user_id,
     mailboxId: row.mailbox_id,
     policy: {
@@ -718,10 +734,12 @@ export async function recheckApproved(
   }
 
   // 5. The two body hashes, last because they are the expensive pair: an R2 get and a vault RPC each, then a
-  //    SHA-256 over real bytes.
+  //    SHA-256 over real bytes. And every attachment (0060), the same way: one more get, RPC and hash each,
+  //    which `dispatch-recheck-cost.md` prices per attachment rather than folding into the figure for none.
   for (const body of [
     { name: "body_typed", key: row.body_typed_key, expected: row.body_typed_sha256 },
     { name: "body_normalized", key: row.body_normalized_key, expected: row.body_normalized_sha256 },
+    ...attachmentsOf(row).map((one, index) => ({ name: `attachment_${index}`, key: one.key, expected: one.sha256 })),
   ]) {
     const verified = await verifyBody(env, body.key, body.expected);
     if (verified.ok) continue;

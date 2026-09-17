@@ -56,7 +56,7 @@ import { scannedPrefixes } from "./reconcile.ts";
  * always from one prefix, so only that prefix's referents can possibly name its keys; joining a page of raw
  * mail against the drafts table was pointless work as well as one arm too many.
  *
- * Worst case is now three arms, for `sent/`.
+ * Worst case is now four arms, for `sent/` (0060 added the attachments table).
  *
  * **`bytes` is here for the verifier, which reads this same list** (#131). It names the column recording the
  * plaintext's length at the time it was sealed, and it is `null` on two tables that never recorded one — so
@@ -80,6 +80,8 @@ const REFERENTS = [
     segment: "sent", table: "send_manifests",
     key: "submitted_key", hash: "submitted_sha256", bytes: null,
   },
+  // 0060: a send's attachments, under the same prefix, one row each with the plaintext's hash and length.
+  { segment: "sent", table: "send_attachments", key: "blob_key", hash: "sha256", bytes: "bytes" },
 ] as const;
 
 /**

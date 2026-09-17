@@ -71,7 +71,9 @@ A mailbox's second switch, `quarantineDangerousAttachments`, holds back a delive
 zero — the same mechanism as the DMARC switch, reason `attachment_dangerous`, released the same way. The
 sender's domain speaks first: a disowned message carrying an executable is held for the DMARC reason.
 
-Archives are named and never opened. Whether a `.zip` holds an executable is not looked at, and the verdict
+The same judge reads outbound mail (0060): an attachment on an authored send is classified at the seal and
+a dangerous one refuses the whole send, by name — a Node that would hold back a disguised program arriving
+does not sign one leaving. Archives are named and never opened. Whether a `.zip` holds an executable is not looked at, and the verdict
 says `archive` rather than pretending it has — the *archives-in-archives* case is the part of row 2 still open.
 
 ### Links, judged against what they say (17 September 2026)

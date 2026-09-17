@@ -11,7 +11,7 @@ stale_when: >
 values:
   evidence.verify_objects: 200
   evidence.verify_subrequests_per_object: 2
-  evidence.verify_tables: 4
+  evidence.verify_tables: 5
 ---
 
 # What it costs to prove the evidence is still what was recorded
@@ -57,6 +57,12 @@ tables, so the walk-forward adds at most three. A Node with no drafts, no export
 queries to discover it has only receipts — once per batch, not once per row.
 
 Worst case per invocation: `200 + 1 + 3 + 1` = **205** subrequests.
+
+**17 September 2026 (0060): a fifth table, and the worst case is 206.** `send_attachments` joined
+`INVENTORY_REFERENTS` — an authored send's attachments are evidence with a hash each, under the `sent/`
+prefix, so it is a fifth *table* and not a fifth prefix. The walk-forward can now skip four tables rather
+than three: `200 + 1 + 4 + 1` = **206**. `evidence.verify_tables` moves to 5; the objects and per-object
+figures do not move, because an attachment is one R2 object with one hash like every other row.
 
 ## Why 200 and not 900
 

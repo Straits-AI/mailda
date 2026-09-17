@@ -6,6 +6,7 @@ import { type AuditEvent, auditedBatchMany } from "../audit.ts";
 import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
+import { classifyAttachment, DANGEROUS } from "../attachments.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { recipientsSuppressed } from "../suppression.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
@@ -80,6 +81,22 @@ const HOLD_DEFAULT = BUDGETS["send.hold_window_default_seconds"];
 /** ADR 33. Required of every caller, never inferred — the record's worth depends on it. */
 export type Fidelity = "authored" | "reconstructed";
 
+export interface SendAttachment {
+  filename: string;
+  contentType: string;
+  content: Bytes;
+}
+
+/**
+ * The most a rendered message may be, base64 and boundaries included: Cloudflare's published outbound
+ * ceiling for arbitrary recipients (`cloudflare-email-service-limits.md`), which `send()` answers with
+ * `E_CONTENT_TOO_LARGE` past. Checked at the seal on the attachment bytes at their base64 size, so an
+ * author is refused before a manifest exists rather than after a dispatch fails.
+ */
+const MAX_OUTBOUND_BYTES = BUDGETS["email.outbound.max_bytes"];
+/** Room left for headers, the text and the forwarded original: a sized margin, not a measurement. */
+const ATTACHMENT_BUDGET = Math.floor(MAX_OUTBOUND_BYTES * 0.9);
+
 export interface Composition {
   mailboxId: string;
   authorUserId: string;
@@ -112,6 +129,11 @@ export interface Composition {
    * when the original carries an attachment this Node judges dangerous.
    */
   forwardOfMessageId?: string;
+  /**
+   * Files the author attached (0060). Judged by the same rule as inbound mail (`src/attachments.ts`) and
+   * refused when dangerous; stored as evidence beside the bodies; bound by the effect envelope.
+   */
+  attachments?: SendAttachment[];
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -702,6 +724,37 @@ export async function sealManifest(
     stateReason = RATE_BREAKERS[breakers.gate.breaker].reason;
   }
 
+  /*
+   * Attachments (0060): judged before anything is stored, by the rule that judges inbound mail. A send is
+   * refused whole for a dangerous part — no stripping, for the reason the suppression refusal gives: a send
+   * with a part quietly removed is a different message from the one the author sealed. Archives pass, as
+   * they do inbound, and are recorded as such.
+   */
+  const attachments = composition.attachments ?? [];
+  const judged = attachments.map((one, ordinal) => ({
+    ...one, ordinal, verdict: classifyAttachment(one.filename, one.content.subarray(0, 8)),
+  }));
+  const dangerous = judged.filter((one) => DANGEROUS.has(one.verdict));
+  if (dangerous.length > 0) {
+    throw unprocessable("E_ATTACHMENT_DANGEROUS", {
+      what: `${dangerous.map((one) => `${one.filename} (${one.verdict})`).join(", ")} would not be accepted from a stranger, and is not sent to one`,
+      why: "this Node judges every attachment by its name and its first bytes, inbound and outbound alike; a "
+        + "program, a script, or a program under a document's name leaves under this Node's name only by "
+        + "some other route",
+      fix: "remove it, or send a link to where the file is kept",
+    });
+  }
+  const encodedBytes = judged.reduce((n, one) => n + Math.ceil(one.content.byteLength / 3) * 4, 0);
+  if (encodedBytes > ATTACHMENT_BUDGET) {
+    throw unprocessable("E_ATTACHMENTS_TOO_LARGE", {
+      what: `the attachments come to ${encodedBytes} bytes once encoded, over the ${ATTACHMENT_BUDGET} this Node allows`,
+      why: `Cloudflare refuses an outbound message over ${MAX_OUTBOUND_BYTES} bytes to an arbitrary recipient `
+        + "(receipt: cloudflare-email-service-limits.md), and the text, the headers and any forwarded original "
+        + "share that",
+      fix: "attach less, or send a link to where the file is kept",
+    });
+  }
+
   const normalized = normalizeBody(composition.bodyTyped);
 
   // Both bodies to R2, before the row exists. Same ordering rule as ingress: the reachable partial
@@ -712,6 +765,18 @@ export async function sealManifest(
   const normalizedStored = await putEvidence(
     env, sentObjectKey(orgId, manifestId, "normalized.txt"), utf8(normalized),
   );
+  // Each attachment the same way, and its row goes in the batch below: an orphan object is collectable, a
+  // row naming a missing object is not.
+  const attachmentRows: D1PreparedStatement[] = [];
+  for (const one of judged) {
+    const stored = await putEvidence(env, sentObjectKey(orgId, manifestId, `att-${one.ordinal}`), one.content);
+    attachmentRows.push(env.CATALOG.prepare(
+      `INSERT INTO send_attachments
+         (id, org_id, manifest_id, ordinal, filename, content_type, bytes, sha256, blob_key, verdict, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    ).bind(ctx.id("sat"), orgId, manifestId, one.ordinal, one.filename, one.contentType,
+      one.content.byteLength, stored.plaintextSha256, stored.blobKey, one.verdict, at));
+  }
 
   // The Message-ID this Node authors. Derived from the manifest id, so it is stable, unique, and
   // traceable back to its record without a lookup table.
@@ -914,7 +979,7 @@ export async function sealManifest(
     [sealEvent, ...(approvalEvent === null ? [] : [approvalEvent]),
       ...(breakerEvent === null ? [] : [breakerEvent]),
       ...(resendEvent === null ? [] : [resendEvent])],
-    (entries) => [manifestRow, ...recipientRows, ...approvalStatements, ...entries],
+    (entries) => [manifestRow, ...recipientRows, ...attachmentRows, ...approvalStatements, ...entries],
   );
 
   return {
@@ -944,6 +1009,15 @@ export async function sealManifest(
  * what Bcc means — the other recipients must not learn it — and the envelope carries the recipient
  * list separately.
  */
+/** RFC 2045 §6.8 base64: 76 characters a line, CRLF-terminated. */
+function base64Lines(bytes: Bytes): string {
+  let binary = "";
+  for (let at = 0; at < bytes.byteLength; at += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  }
+  return btoa(binary).replace(/.{1,76}/g, "$&\r\n");
+}
+
 function concat(...parts: readonly Bytes[]): Bytes {
   const out = new Uint8Array(parts.reduce((n, part) => n + part.byteLength, 0));
   let at = 0;
@@ -1017,6 +1091,34 @@ export async function renderRfc822(
     original = await getEvidence(env, row.blob_key);
   }
 
+  /*
+   * Attachments (0060), read back as evidence and hashed against the row before they leave — the same check
+   * the recheck makes on an approved send, made here on every send because these bytes are about to be
+   * sent. Base64 in 76-column lines (RFC 2045 §6.8); the filename goes through `safeFilename`'s rule via
+   * the header builder's own refusal of control characters, and is RFC 2047-encoded when it needs to be.
+   */
+  const parts = await env.CATALOG.prepare(
+    "SELECT filename, content_type, sha256, blob_key FROM send_attachments WHERE manifest_id = ? ORDER BY ordinal",
+  ).bind(manifestId).all<{ filename: string; content_type: string; sha256: string; blob_key: string }>();
+  const attachmentParts: Bytes[] = [];
+  for (const part of parts.results) {
+    const bytes = await getEvidence(env, part.blob_key);
+    if ((await sha256Hex(bytes)) !== part.sha256) {
+      throw conflict("E_ATTACHMENT_CHANGED", {
+        what: `attachment ${part.filename} of ${manifestId} no longer hashes to what the seal recorded`,
+        why: "the bytes that leave must be the bytes the author attached; the archive cannot answer for this one",
+        fix: "this manifest cannot be sent; run the evidence verifier",
+      });
+    }
+    attachmentParts.push(
+      new HeaderBlock()
+        .add("Content-Type", `${part.content_type}; name="${part.filename.replaceAll('"', "")}"`)
+        .add("Content-Transfer-Encoding", "base64")
+        .add("Content-Disposition", `attachment; filename="${part.filename.replaceAll('"', "")}"`)
+        .bytes(base64Lines(bytes)),
+    );
+  }
+
   // Built, not concatenated. Every field goes through `HeaderBlock.add`, so validation and RFC 2047
   // encoding cannot be skipped by a future field — there is no array to push a raw line onto, which is
   // the whole reason this is a builder rather than a set of checks.
@@ -1033,17 +1135,19 @@ export async function renderRfc822(
     .add("Message-ID", `<${m.rfc_message_id!}>`)
     .add("Date", new Date(m.sealed_at!).toUTCString())
     .add("MIME-Version", "1.0")
-    .add("Content-Type", original === null ? 'text/plain; charset="utf-8"' : `multipart/mixed; boundary="${boundary}"`)
+    .add("Content-Type", original === null && attachmentParts.length === 0
+      ? 'text/plain; charset="utf-8"' : `multipart/mixed; boundary="${boundary}"`)
     .addIfPresent("In-Reply-To", inReplyToHeader)
     .addIfPresent("References", m.references_header);
-  const raw = original === null
+  const raw = original === null && attachmentParts.length === 0
     ? headers.bytes(body)
     : concat(
-      headers.bytes(
-        `--${boundary}\r\nContent-Type: text/plain; charset="utf-8"\r\n\r\n${body}\r\n--${boundary}\r\n`
-        + "Content-Type: message/rfc822\r\nContent-Disposition: attachment\r\n\r\n",
-      ),
-      original,
+      headers.bytes(`--${boundary}\r\nContent-Type: text/plain; charset="utf-8"\r\n\r\n${body}`),
+      ...attachmentParts.flatMap((part) => [utf8(`\r\n--${boundary}\r\n`), part]),
+      ...(original === null ? [] : [
+        utf8(`\r\n--${boundary}\r\nContent-Type: message/rfc822\r\nContent-Disposition: attachment\r\n\r\n`),
+        original,
+      ]),
       utf8(`\r\n--${boundary}--\r\n`),
     );
 
