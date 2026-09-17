@@ -20,6 +20,9 @@ values:
   deploy.second_node_per_account_supported: 1
   deploy.workflow_name_derives_from_worker: 0
   deploy.workflow_collision_refused_by_plan: 1
+  deploy.second_node_first_install_seconds: 108
+  deploy.second_node_canary_deploy_seconds: 76
+  deploy.canary_override_attempts_named_node: 1
 ---
 
 ## Correction, 10 September 2026: the canary gate was refusing on a propagation race
@@ -373,3 +376,42 @@ delete`) because a Workflow survives its script's deletion.
 So the residual `wrangler.jsonc` stated is smaller than it feared. It is not *"a second Node may silently
 steal the Workflow"*; it is *"the Workflow name is the one that must be edited by hand, and forgetting is
 caught."*
+
+## The fifth drill, 17 September 2026: a second Node is a name, and the gate reaches it
+
+Two things the third restore drill (`disaster-recovery.md`) did by hand are done by the tool now, and both
+were measured on the live `Swmengappdev` account with a Node named `mailda-drill` beside the live `mailda`.
+
+**`mailda deploy --name mailda-drill`.** The three places the Worker's name lives — `name`, the Workflow's
+`name`, `vars.WORKER_NAME` — are rewritten into a derived file beside `wrangler.jsonc` (`wrangler.<name>.jsonc`,
+git-ignored, comments kept) and every wrangler call takes `--config` to it. The checked-in config is not
+touched. `deploy.workflow_name_derives_from_worker` stays **0** — Cloudflare still requires the literal on
+the binding — but the edit is the tool's, once, and the rule `workflow-name-world.test.ts` holds is applied
+rather than remembered. `--plan --name` reads as the 15 September plan above, unchanged.
+
+| step | measured |
+|:--|--:|
+| first install, `--name mailda-drill --url …` (deploy, migrations, consumer, doctor) | **108 s** |
+| second deploy to the same Node: upload, canary at 0 %, gate, promote, consumer, doctor | **76 s** |
+| override attempts before the canary answered as itself | **1** |
+
+**The canary gate now reaches a Node that is not called `mailda`.** The override header read
+`mailda="<version>"` as a literal, whatever the config said. On the third drill's `mailda-drill` Node the
+override therefore never applied, the incumbent answered every time, and the gate refused — correctly, for
+the reason the 10 September correction gives — so the operator promoted by hand and wrote it down as a
+propagation race. It was the name. The header takes the Worker's name from the config now
+(`test/node/deploy-sequence.test.ts` pins the literal's absence), and on this run the first attempt was
+answered by the uploaded version: no retry, `signing_key` carried from the incumbent, traffic moved without a
+hand.
+
+**The consumer attach had the same defect from the other end.** `attach-queue-consumer.mjs` already took
+`--name`; the deploy never passed it, so the first install above reported *"mailda is already the consumer
+of mailda-sending-events. Nothing to do."* — the **live** Node's queue, read for a deploy of the drill Node.
+Passed now, and re-run by hand for this drill: *"Attached mailda-drill as the consumer of
+mailda-drill-sending-events."* A defect that reads as success is the kind the README's account-abstraction
+row exists to stop; it is recorded here because it shipped.
+
+Torn down afterwards, and the order is a finding: `wrangler delete` refuses a Worker that is a queue's
+consumer (`code: 10064`), so the unwind is consumer off the queue → Worker → D1 → bucket (emptied first: R2
+refuses a bucket with objects) → queue → Workflow (which survives its script's deletion). The live Node was
+not touched; `deployments list --name mailda` read the same ten versions before and after.

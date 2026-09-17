@@ -198,3 +198,22 @@ export function doctorExitCode(verdict) {
 export function deployExitCode(verdict) {
   return verdict === "refuse" ? 2 : 0;
 }
+
+/**
+ * `wrangler.jsonc` as a second Node would have it: the three places the Worker's name lives, rewritten
+ * (`mailda deploy --name`). Text substitution rather than a JSON rewrite so the comments survive, and the
+ * Workflow name follows the rule `workflow-name-world.test.ts` holds: `<worker>-butler-runs`.
+ *
+ * Pure, so it can be tested without writing a file, and so the test can hand it the real config.
+ */
+export function deriveConfig(source, name) {
+  return source
+    .replace(/"name"\s*:\s*"[^"]+"/, `"name": "${name}"`)
+    .replace(/("workflows"[\s\S]{0,400}?"name"\s*:\s*")[^"]+(")/, `$1${name}-butler-runs$2`)
+    .replace(/"WORKER_NAME"\s*:\s*"[^"]+"/, `"WORKER_NAME": "${name}"`);
+}
+
+/** The Worker's name as the config states it. */
+export function workerNameIn(config) {
+  return /"name"\s*:\s*"([^"]+)"/.exec(config)?.[1] ?? null;
+}

@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, urlRequirement, wranglerVersionFrom } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
+import { deriveConfig, workerNameIn } from "./deploy-parse.mjs";
 export const here = dirname(fileURLToPath(import.meta.url));
 
 export const workerDir = resolve(here, "../../../apps/node/worker");
@@ -223,6 +225,49 @@ export async function doctorReport(origin, extraHeaders = {}, subject = "the Nod
  * somebody's shell had `CLOUDFLARE_ENV` set.
  */
 export const ENV = ["--env", ""];
+
+/**
+ * A second Node in the same account is `mailda deploy --name <worker>` (#99's other half).
+ *
+ * `wrangler.jsonc` carries the Worker's name in **three** places that must agree: `name`, the Workflow's
+ * `name` (`<worker>-butler-runs`, the rule `workflow-name-world.test.ts` holds) and `vars.WORKER_NAME` (what
+ * the Node calls itself when it writes a routing rule). Every other resource derives its name from the
+ * Worker's — measured in `deploy-drill-live-account.md` — so those three are the whole of what a second Node
+ * is. The third restore drill edited them by hand and reverted them afterwards; this does that once, into a
+ * derived file **beside** `wrangler.jsonc` so that `main` and `migrations_dir` resolve as they do there, and
+ * passes it to every wrangler call. The file is regenerated on each run and git-ignored: the checked-in
+ * config stays byte-identical across Nodes (ADR 24), and the name is an argument rather than an edit.
+ *
+ * Text substitution on the three literals rather than a JSON rewrite, so the comments — which are where the
+ * config explains itself — survive into the derived file a reader may open to see what was deployed.
+ */
+export function configFor(argv) {
+  const name = flag(argv, "name");
+  const source = readFileSync(resolve(workerDir, "wrangler.jsonc"), "utf8");
+  if (name === null) return { name: nameIn(source), path: resolve(workerDir, "wrangler.jsonc"), text: source, args: [] };
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(name)) {
+    fail(
+      `\`--name ${name}\` is not a Worker name.\n\n`
+      + "  why      Cloudflare accepts lower-case letters, digits and hyphens, up to 63 characters.\n"
+      + "  fix      pick one like `mailda-support`.",
+    );
+  }
+  const base = nameIn(source);
+  const derived = deriveConfig(source, name);
+  const path = resolve(workerDir, `wrangler.${name}.jsonc`);
+  writeFileSync(path, `// Derived by \`mailda deploy --name ${name}\` from wrangler.jsonc (base name \`${base}\`). Do not edit; do not commit.\n${derived}`);
+  return { name, path, text: derived, args: ["--config", path] };
+}
+
+function nameIn(config) {
+  return workerNameIn(config) ?? "mailda";
+}
+
+/** The wrangler arguments every call takes: the environment, and the derived config when `--name` was given. */
+export let WRANGLER_ARGS = [...ENV];
+export function useConfig(config) {
+  WRANGLER_ARGS = [...ENV, ...config.args];
+}
 
 
 /* ------------------------------------------------------------------ preflight ---------------------- */

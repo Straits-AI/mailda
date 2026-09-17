@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -26,8 +27,10 @@ const cli = cliSource()
  * the top level, so importing it would *run* it — the same defect the SDK's generator had, where a top-level
  * `writeFileSync` meant the test checking for a hand edit regenerated the file first.
  */
-const { activeVersionFrom, deployExitCode, doctorExitCode, promotionVerdict, servedVersionOf, versionIdFrom } =
-  await import("../../../../../packages/cli/src/deploy-parse.mjs");
+const {
+  activeVersionFrom, deployExitCode, deriveConfig, doctorExitCode, promotionVerdict, servedVersionOf, versionIdFrom,
+  workerNameIn,
+} = await import("../../../../../packages/cli/src/deploy-parse.mjs");
 
 /**
  * The order `mailda deploy` does things in, and the gate it cannot skip (#98).
@@ -496,5 +499,41 @@ describe("a Node whose bindings are gone is a state, not a failed listing", () =
     const source = guard();
     expect(source).toContain("could not list migrations");
     expect(source).toMatch(/pending\.status !== 0/);
+  });
+});
+
+describe("a second Node is a name, not an edit (`mailda deploy --name`)", () => {
+  const real = readFileSync(join(import.meta.dirname, "../../wrangler.jsonc"), "utf8");
+
+  it("rewrites exactly the three places the Worker's name lives in the real config, and keeps the comments", () => {
+    const derived = deriveConfig(real, "mailda-support");
+    expect(workerNameIn(derived)).toBe("mailda-support");
+    expect(/"workflows"[\s\S]{0,400}?"name"\s*:\s*"([^"]+)"/.exec(derived)?.[1]).toBe("mailda-support-butler-runs");
+    expect(/"WORKER_NAME"\s*:\s*"([^"]+)"/.exec(derived)?.[1]).toBe("mailda-support");
+    // Nothing else moved: the diff between the two texts is those three literals and no more.
+    const back = derived
+      .replace('"name": "mailda-support"', `"name": "${workerNameIn(real)}"`)
+      .replace("mailda-support-butler-runs", `${workerNameIn(real)}-butler-runs`)
+      .replace('"WORKER_NAME": "mailda-support"', `"WORKER_NAME": "${workerNameIn(real)}"`);
+    expect(back).toBe(real);
+    expect(derived).toContain("/*");
+  });
+
+  it("uses the config's Worker name in the version-override header, never a literal", () => {
+    // The third restore drill: the header said `mailda` on a Node named `mailda-drill`, the override never
+    // applied, the incumbent answered, and the gate refused every deploy. The literal is gone.
+    expect(cli).not.toMatch(/Version-Overrides"\s*:\s*`mailda=/);
+    expect(cli).toMatch(/Version-Overrides"\s*:\s*`\$\{deployConfig\.name\}=/);
+  });
+
+  it("passes the derived config to every wrangler call the deploy makes", () => {
+    // Every `wrangler` argument list in the deploy verb spreads WRANGLER_ARGS; a call that took ENV alone
+    // would act on `wrangler.jsonc` while the rest of the run acted on the derived file.
+    // Account-level questions (`whoami`, `workflows list`) take no config: they are about the account, and
+    // the list is read to find which Worker owns a Workflow, whichever config asked.
+    const accountLevel = /"wrangler", "(whoami|workflows", "list)"/;
+    const calls = (cli.match(/(?:capture|run)\("npx",\s*\[[^\]]*\]/g) ?? []).filter((call) => !accountLevel.test(call));
+    expect(calls.length).toBeGreaterThan(5);
+    for (const call of calls) expect(call, call).toContain("...WRANGLER_ARGS");
   });
 });

@@ -58,7 +58,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
   mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
-  mailda deploy [--url <origin>]     deploy, migrate, attach the events consumer, then check
+  mailda deploy [--url <origin>] [--name <worker>]
+                                     deploy, migrate, attach the events consumer, then check
   mailda doctor --url <origin>       what the Node says about itself; exit 0 ok, 1 degraded, 2 refuse
   mailda claim-secret [--local]      write the install secret and print it once
   mailda set-password <email>        set a password from the terminal, never echoed

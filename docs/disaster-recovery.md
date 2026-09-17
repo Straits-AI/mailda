@@ -509,6 +509,11 @@ Two more, outside receiving: the deploy gate's version override did not reach a 
 within its fifteen-second retry (the canary was promoted by hand, as the gate's own `fix` says to), and the
 consent state a URL carries expires faster than a URL handed across a chat gets clicked.
 
+**The first of those was not propagation.** Found on 17 September (`deploy-drill-live-account.md`, the
+fifth drill): the override header named `mailda` as a literal, whatever the Worker was called, so on a Node
+named `mailda-drill` it could never apply. Fixed, and measured reaching a named Node on the first attempt.
+The three `wrangler.jsonc` edits this drill made by hand and reverted are `mailda deploy --name` now.
+
 ### Torn down
 
 In the runbook's unwind order, with the drill's names: the routing rule on `mailda.site` first, because a rule
