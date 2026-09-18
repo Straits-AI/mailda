@@ -1190,36 +1190,13 @@ export async function cloudflareGet<T>(
  * this does not weaken it — `domain-check` is a `POST` because it takes a list of names in a body, and
  * Cloudflare documents it as *"read-only — it does not create, modify, or reserve any domains"*.
  *
- * So this is deliberately **not** a general `cloudflarePost`. It throws rather than returning a result
- * union, because its callers have nothing useful to say about a refusal, and it is named for the one thing
- * it is for. The route that actually registers a domain will write its own call, in the open, where it can
- * be read.
+ * It throws rather than returning a result union, because its callers have nothing useful to say about a
+ * refusal. The routes that actually write name their calls in the open, where they can be read.
  */
 export async function cloudflarePost<T>(
   env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
 ): Promise<T> {
-  const token = await accessTokenFor(env, ctx, orgId);
-  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-  }).catch(() => null);
-
-  const payload = (await response?.json().catch(() => ({}))) as {
-    success?: boolean; result?: T; errors?: Array<{ message?: string; code?: number }>;
-  };
-  if (response !== null && response.ok && payload.success === true && payload.result !== undefined) {
-    return payload.result;
-  }
-  const said = (payload?.errors ?? [])
-    .map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
-  throw unprocessable("E_CLOUDFLARE_REFUSED", {
-    what: `Cloudflare refused ${path}`,
-    why: said === "" ? `the API answered ${response?.status ?? "nothing"}` : said,
-    fix: "check the grant still carries the scope this call needs, and that the account may perform it",
-  });
+  return await cloudflareWrite<T>(env, ctx, orgId, "POST", path, body);
 }
 
 /**
@@ -1232,9 +1209,26 @@ export async function cloudflarePost<T>(
 export async function cloudflarePatch<T>(
   env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
 ): Promise<T> {
+  return await cloudflareWrite<T>(env, ctx, orgId, "PATCH", path, body);
+}
+
+/**
+ * One authenticated `PUT`, for replacing a routing rule (#258). Measured: the rules endpoint refuses a
+ * partial body (`2007 matchers: must have matchers`), so a caller sends the whole rule as it read it
+ * (`docs/receipts/email-routing-rule-takeover.md`).
+ */
+export async function cloudflarePut<T>(
+  env: Env, ctx: Ctx, orgId: string, path: string, body: unknown,
+): Promise<T> {
+  return await cloudflareWrite<T>(env, ctx, orgId, "PUT", path, body);
+}
+
+async function cloudflareWrite<T>(
+  env: Env, ctx: Ctx, orgId: string, method: "POST" | "PATCH" | "PUT", path: string, body: unknown,
+): Promise<T> {
   const token = await accessTokenFor(env, ctx, orgId);
   const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
-    method: "PATCH",
+    method,
     headers: {
       authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json",
     },

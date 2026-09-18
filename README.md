@@ -41,6 +41,12 @@ subscription is created from the Node's own Setup screen once the Node holds a g
 `unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as
 "nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
 
+**A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
+point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
+previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
+addresses and the catch-all are left alone. `mailda provider --routing-rules <domain>` is the same from
+the CLI.
+
 **Updating an installed Node.** The button clones without history, so the first update is a merge:
 
 ```sh

@@ -925,6 +925,13 @@ export const AUDIT_ACTIONS = {
    * answers later is *who pointed our mail at this Node* — and DNS write on a customer's zone is the largest
    * authority this Node holds.
    */
+  "provider.routing_rule_taken_over": {
+    says: "An administrator pointed an existing routing rule at this Node. The action it had before is on "
+      + "this entry, and a put-back restores it.",
+  },
+  "provider.routing_rule_put_back": {
+    says: "An administrator restored a routing rule to the action it had before this Node took it over.",
+  },
   "provider.receiving_onboarded": {
     says: "An administrator pointed a subdomain at this Node to receive mail, and this Node wrote the MX "
       + "records Cloudflare's Email Routing requires.",

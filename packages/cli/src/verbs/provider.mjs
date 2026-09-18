@@ -143,6 +143,51 @@ export async function provider(argv) {
     return;
   }
 
+  const rulesOn = flag(argv, "routing-rules");
+  if (rulesOn !== null) {
+    const { routing } = await call("GET", `/api/provider/routing-rules?domain=${encodeURIComponent(rulesOn)}`);
+    process.stdout.write(`\n   ${routing.domain}${routing.zone === null ? "" : `  (zone ${routing.zone})`}\n`);
+    if (routing.error !== null) { process.stdout.write(`     unknown   ${routing.error}\n\n`); return; }
+    if (routing.rules.length === 0) process.stdout.write("     no rules\n");
+    for (const rule of routing.rules) {
+      const where = `${rule.action}${rule.destinations.length === 0 ? "" : ` -> ${rule.destinations.join(", ")}`}`;
+      process.stdout.write(
+        `     ${rule.catchAll ? "catch-all" : rule.to}\n`
+        + `               ${where}${rule.ours ? "  (this Node)" : ""}${rule.enabled ? "" : "  (disabled)"}\n`
+        + `               id ${rule.id}  digest ${rule.digest}\n`,
+      );
+    }
+    process.stdout.write(
+      "\n   take one over: mailda provider --take-over <id> --domain "
+      + `${routing.domain} --confirm <digest>\n\n`,
+    );
+    return;
+  }
+
+  const takeOver = flag(argv, "take-over");
+  const putBack = flag(argv, "put-back");
+  if (takeOver !== null || putBack !== null) {
+    const domain = flag(argv, "domain");
+    if (domain === null) fail("pass --domain <the domain whose zone holds the rule>");
+    if (takeOver !== null && flag(argv, "confirm") === null) {
+      fail(`pass --confirm <digest>, from: mailda provider --routing-rules ${domain}`);
+    }
+    const { outcome } = takeOver !== null
+      ? await call("POST", "/api/provider/routing-rules/take-over", {
+        domain, ruleId: takeOver, digest: flag(argv, "confirm"),
+        ...(flag(argv, "mailbox") === null ? {} : { mailboxId: flag(argv, "mailbox") }),
+      })
+      : await call("POST", "/api/provider/routing-rules/put-back", { domain, ruleId: putBack });
+    const said = (one) => `${one.action}${one.destinations.length === 0 ? "" : ` -> ${one.destinations.join(", ")}`}`;
+    process.stdout.write(
+      `\n   ${outcome.to}\n     was       ${said(outcome.before)}\n     now       ${said(outcome.after)}\n`
+      + (takeOver !== null
+        ? `\n   put it back: mailda provider --put-back ${outcome.ruleId} --domain ${domain}\n\n`
+        : "\n"),
+    );
+    return;
+  }
+
   const receiving = flag(argv, "onboard-receiving");
   if (receiving !== null) {
     const confirming = flag(argv, "confirm");

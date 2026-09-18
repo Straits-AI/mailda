@@ -467,6 +467,11 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * is meant to perform when automation has stopped, which is the moment automation must not resume.
      */
     "GET /api/provider/receiving",
+    /*
+     * The zone's routing rules (#258). `operator` because the listing carries each rule's digest, which is
+     * what a take-over quotes — and a take-over changes where an address's mail goes.
+     */
+    "GET /api/provider/routing-rules",
     "GET /api/provider/domains/purchase",
     "GET /api/provider/domains/purchase/status",
     "GET /api/provider/handover",
@@ -498,6 +503,8 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
      * changes who receives.
      */
     "POST /api/provider/receiving",
+    "POST /api/provider/routing-rules/take-over",
+    "POST /api/provider/routing-rules/put-back",
     "POST /api/provider/domains/purchase",
     "POST /api/provider/sending",
     "POST /api/provider/subscription",

@@ -252,6 +252,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.domain_purchase_attempted",
       // DNS written on a customer's zone, against the binding whose grant authorized it.
       "provider.receiving_onboarded",
+      "provider.routing_rule_taken_over",
+      "provider.routing_rule_put_back",
     ],
   },
   /*

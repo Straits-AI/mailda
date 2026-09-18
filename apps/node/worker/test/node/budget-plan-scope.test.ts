@@ -363,6 +363,14 @@ const FIGURES: Record<string, Classification> = {
     "routing.rule_accepted_for_unonboarded_subdomain", "routing.rule_creates_subdomain_records",
   ),
 
+  // docs/receipts/email-routing-rule-takeover.md
+  ...bothPlans(
+    "what the rules API's PUT does and refuses (#258): shapes of the API, which no plan changes",
+    "routing.rule_put_replaces_action", "routing.rule_put_read_back_agrees",
+    "routing.rule_actions_per_rule_max", "routing.rule_put_partial_body_accepted",
+    "routing.catch_all_listed_among_rules", "routing.rule_takeover_through_grant",
+  ),
+
   // docs/receipts/email-authentication-results.md
   ...bothPlans(
     "what the receiving MX writes on every inbound message; a behaviour of Email Routing, which no plan varies",

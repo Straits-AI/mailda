@@ -205,7 +205,7 @@ export interface ReceivingOutcome {
  * product ever inserted an `addresses` row — the live Node's two were put there by hand. A rule to a
  * Worker that refuses the recipient is the inert-rule failure this module exists to prevent, one layer up.
  */
-async function mailboxForAddress(
+export async function mailboxForAddress(
   env: Env, orgId: string, mailboxId: string | null,
 ): Promise<{ id: string; name: string }> {
   const rows = await env.CATALOG.prepare(
@@ -404,7 +404,7 @@ export async function onboardReceiving(
  * Read from the binding rather than configured: ADR 24 keeps ids out of committed config, and a Node that
  * wrote its own name into a rule from a constant would route another Node's mail after a rename.
  */
-function workerNameFor(env: Env): string {
+export function workerNameFor(env: Env): string {
   const named = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME;
   if (typeof named === "string" && named !== "") return named;
   throw unprocessable("E_RECEIVING_NO_WORKER_NAME", {
