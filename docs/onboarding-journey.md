@@ -73,8 +73,8 @@ The blueprint offers two entry paths (§5A): the Deploy to Cloudflare button, an
 
 **Both are currently blocked or unbuilt:**
 
-- The button requires a **public repository**. `mailda` is private, so the button cannot
-  work at all until open-sourcing is decided.
+- The button requires a **public repository**. `mailda` was private when this was written, so
+  the button could not work at all until open-sourcing was decided. It is public now, under Apache-2.0.
 - The button deploys **one** Workers application, while a Node is nine least-privilege
   Workers (#4). Unresolved: #13.
 - Auto-provisioning creates **one D1 per Worker, never shared** (receipt:
