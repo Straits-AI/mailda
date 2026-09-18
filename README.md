@@ -2,18 +2,18 @@
 
 Shared inboxes that know who replied.
 
-If two people have ever answered the same customer email, or nobody could tell you whether
-`invoices@` got a response, or your shared inbox is a Gmail account four people know the
-password to, that's the problem. Mailda turns email addresses into governed work
-endpoints: assignment, collision detection, cases, approvals, audit, and deterministic
-automation, with AI available only where you explicitly put it.
+Two people answer the same customer. Nobody can say whether `invoices@` got a reply. The shared inbox is a
+Gmail account four people know the password to. Mailda turns an email address into governed work:
+assignment, collision detection, cases, approvals, an audit trail, and deterministic automation. AI is
+available only where you put it.
 
-It runs entirely in **your own Cloudflare account**. You own the domains, the message data,
-the encryption keys, the model keys and the bill. There is no Mailda service to depend on,
-no licence server, and no telemetry. Disconnect us and nothing stops working.
+It runs in **your own Cloudflare account**. You own the domain, the messages, the encryption keys, the
+model keys and the bill. There is no Mailda service, no licence server and no telemetry. Disconnect us and
+nothing stops working.
 
-[mailda.site](https://mailda.site) is this README, `AGENTS.md`, `docs/` and the receipts, rendered. Its landing
-page is the status table below in the shape of a `mailda doctor` report. Nothing on the site is written anywhere but here.
+[mailda.site](https://mailda.site) is this README, `AGENTS.md`, `docs/` and the receipts, rendered. Its
+landing page is the status table below in the shape of a `mailda doctor` report. Nothing on the site is
+written anywhere but here.
 
 ---
 
@@ -21,31 +21,27 @@ page is the status table below in the shape of a `mailda doctor` report. Nothing
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
 
-**Measured on 6 August 2026, and then fixed.** The install produced a green build and a dead Node:
-Cloudflare runs `npx wrangler deploy` rather than this repository's `deploy` script, so the schema was
-never applied. An empty catalog and every request answering 500. Depending on somebody else's script
-detection to produce a working mail server is a hope with a 500 attached, so **the Node applies its own
-schema now** (`POST /api/prepare`, or automatically as part of being claimed). The full log, and the four
-defects the install exposed in Mailda itself, are in the
-[receipt](./docs/receipts/deploy-button-install.md). It is here because the
-only way to find out what a customer's first five minutes actually look like is to put the real button
-on the real repository and click it. And because a button that appears once it already works teaches
-nobody anything about why it took so long.
+The button provisions D1 and R2, builds the Worker, and writes no ids into your clone. The Node applies its
+own schema when it is claimed. The first click produced a dead Node, and what that found and fixed is in the
+[receipt](./docs/receipts/deploy-button-install.md).
 
-What the measurement settled:
+The CLI path does the same from a clone:
 
-- **The monorepo works.** The URL points at the repository root deliberately. Cloudflare
-  [does not fully support monorepos](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
-  and clones a *subdirectory* URL as the whole new repository, which would leave behind the three
-  `workspace:*` packages the Worker depends on. Pointed at the root, `pnpm install` resolved all 7
-  workspace projects and the build bundled.
-- **Resources are provisioned, and no ids are written into your clone.** D1 and R2 are both created by
-  the build, and `wrangler.jsonc` comes out byte-identical to upstream.
-- **Your clone is not a fork.** It arrives as a single squashed commit with no shared history, so a
-  `git pull` from upstream is not a fast-forward, and `.github/workflows/` is stripped. An installed
-  Node has no CI until its first update restores it.
+```sh
+pnpm install
+pnpm run deploy                  # provisions D1 and R2, applies the schema
+pnpm run queue:attach-consumer   # once, after the first deploy; safe to re-run
+```
 
-**Updating an installed Node.** Once, because the install left no shared history to build on:
+**One step neither path can do for you.** Delivery outcomes (`accepted`, `bounced`, per recipient) arrive
+on a queue, and observing them needs two things in your account: a consumer on that queue, and an
+`email.sending` event subscription publishing to it. The command above attaches the consumer. The
+subscription is created from the Node's own Setup screen once the Node holds a grant on your account
+([`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md)). Until both exist every recipient stays
+`unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as
+"nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
+
+**Updating an installed Node.** The button clones without history, so the first update is a merge:
 
 ```sh
 git remote add upstream https://github.com/Straits-AI/mailda.git
@@ -54,86 +50,35 @@ git merge upstream/main --allow-unrelated-histories
 # One conflict, in package.json. Keep your own `name`, take upstream's everything else.
 ```
 
-That merge creates the ancestor the install did not leave, so **every later update is an ordinary
-`git pull upstream main`** with no conflict, and this first one also restores the CI the install
-stripped. `package.json` is the only file that can conflict, and
-`test/node/update-path.test.ts` fails if a second one ever joins it, because at that point these four
-lines stop being true.
+Every later update is `git pull upstream main`. `package.json` is the only file that can conflict, and
+`test/node/update-path.test.ts` fails if a second one ever joins it.
 
-**Resetting a password.** There is no password-change flow in the product yet, which for a self-hosted
-system is a gap rather than a simplification. A lockout has to be recoverable from outside the thing
-that locked you out. `pnpm run set-password <email>` reads the new password from a terminal with echo
-off, so it never reaches shell history or a process listing, derives the verifier with the *same*
-chained PBKDF2 the Worker uses rather than a second copy of it, and revokes every existing session in
-the same breath. It cannot appear in the audit trail: it runs outside the Worker, and an operator with
-database access is outside what a hash chain can attest to.
-
-**One step the install does not do, and what it costs you.** Delivery outcomes, whether a message was
-`accepted` or `bounced` per recipient, arrive on a Cloudflare queue. A queue name is *account-scoped*, so
-this repository names none, and the deploy is expected to provision one per Worker the way it already does
-for D1 and R2. That much is **Cloudflare's documentation, which we have not measured**, so the command
-below discovers the queue from the deployed Worker and refuses if the deploy created none, rather than
-assuming a name ([receipt](./docs/receipts/queue-provisioning.md)). Naming none is not optional: the
-committed name meant a **second** Node installed into the same Cloudflare
-account bound its producer to the **first** Node's queue and had its sending events drained by the first
-Node's consumer, across two separate catalogs, with nothing looking wrong on either
-([#72](https://github.com/Straits-AI/mailda/issues/72)).
-
-The cost is that a *consumer* cannot be declared in configuration at all. A consumer block must name its
-queue, and the derived name is not knowable in a committed file. So attaching it is one command, after the
-first deploy:
-
-```sh
-pnpm run queue:attach-consumer
-```
-
-It discovers the queue from the deployed Worker's own binding rather than guessing its name, and re-running
-it is safe.
-
-**This is not a cost the per-Node queue introduced, and saying otherwise would be the more flattering
-version.** Delivery outcomes need *two* account-level objects: a consumer on the queue, and an
-`email.sending` **event subscription** that publishes to it. The subscription has never been creatable by
-wrangler. Re-measured 19 August 2026: `--source` accepts `artifacts`, `artifacts.repo`, `images`, `kv`,
-`r2`, `superSlurper`, `vectorize`, `workersAi.model`, `workersBuilds.worker` and `workflows.workflow`, and
-**not** `email.sending`. So a button-only install has **never** observed a delivery outcome, before this
-change or after it: the queue existed, the consumer was attached, and nothing was ever published to it.
-
-What changed is the count. One out-of-band step became two, both in the same place, and neither is
-scriptable end to end. So **running the command above is necessary and not sufficient**, and a reader who
-stops there still has a blind Node. Until both exist every recipient stays `unobserved`, which is honest but
-blind, and `mailda doctor` reports each missing half separately rather than letting silence read as
-"nothing bounced" ([receipt](./docs/receipts/queue-provisioning.md)).
-
-The CLI path escapes the button's caveats above but **not** this one: clone, `pnpm install`,
-`pnpm run deploy` provisions D1 and R2 on first deploy ([receipt](./docs/receipts/r2-auto-provisioning.md))
-and applies the schema. Then `pnpm run queue:attach-consumer`, deliberately **not** chained into `deploy`.
-The button's install path never runs our scripts anyway, and a discovery failure inside `deploy` would turn a
-working install red for a Node that works in every respect but one.
+**Resetting a password.** There is no password-change flow in the product yet. `pnpm run set-password
+<email>` reads the new password at a prompt with echo off, derives the verifier with the same PBKDF2 the
+Worker uses, and revokes every session. It runs outside the Worker, so it does not appear in the audit
+trail.
 
 ---
 
 ## Status: functional alpha, not production-ready
 
 **Do not make this the only copy of mail you care about.** It receives, stores, reads, replies, governs and
-automates, and the release gates it sets for *itself* are not all closed. That sentence used to read "this
-is not deployable software yet", which by August 2026 had become the opposite overclaim: too pessimistic
-about the code and still correct about the verdict.
+automates, and the release gates it sets for itself are not all closed.
 
-What is honestly blocking, as of 27 August 2026, with everything else on the [issue
-tracker](https://github.com/Straits-AI/mailda/issues):
+What is blocking, as of 17 September 2026, with everything else on the
+[issue tracker](https://github.com/Straits-AI/mailda/issues):
 
 | | |
 |---|---|
-| **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account on 2 September; a real backup on 15 September; and on 16 September a same-account restore that took a domain, wrote its own routing through the restored grant, and accepted a message from outside, with four defects found in the receiving step and fixed. Scale, half measured on 17 September: the catalog imports at about a thousand rows a second (50,000 messages in 107 s), so the wall is the evidence copy. One request per object at 5.4 s each with wrangler, and the S3-API copy a mailbox-sized restore needs has not been timed because it needs an R2 API token nobody has minted. The [runbook](./docs/disaster-recovery.md) has the figures and what they are worth. |
-| **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). Preview URLs do not exist for a Worker with Durable Objects, so the canary is reached by a version override on the production hostname, and on 17 September that override reached a Node not called `mailda` on the first attempt and promoted without a hand ([receipt](./docs/receipts/deploy-drill-live-account.md): 76 s end to end). The earlier "propagation race" and "manual promotion on Free" were the header naming the wrong Worker. Still unmeasured: a Free account, where ADR 25 says not to run anyway. |
-| **A second Node in one account is a name** | `mailda deploy --name <worker>` derives the config (Worker, Workflow and `WORKER_NAME` together) into a git-ignored file beside `wrangler.jsonc` and deploys from it; every other resource derives from the name ([receipt](./docs/receipts/deploy-drill-live-account.md): first install 108 s). Deploying a second Node without `--name` is still refused when the Workflow belongs to another Worker, by name. What remains: the Workflow's name is a literal Cloudflare requires on the binding, so the derivation is the tool's edit rather than the platform's. |
-| **Mail security is thin** | The receiving server's SPF/DKIM/DMARC verdict is read, stored and shown on every message since 17 September ([`docs/mail-security.md`](./docs/mail-security.md)), deterministic, no model. Attachments are judged by name and by magic bytes (executable, script, disguised, archive, plain), listed on every message and read by Butler guards. A mailbox can hold back a delivery its sender's domain disowns (DMARC fail against `p=reject`/`p=quarantine`) or one carrying a dangerous attachment, for an administrator to release. Every link is judged at render (text naming one host and going to another, lookalikes of your own domains, `user@host` tricks, bare addresses) and the flagged ones are listed with their real destination. A recipient the provider hard-bounced or that complained is refused at the seal, by name, until an administrator vouches for it with a reason. Still absent: a general policy on the verdict, an attachment size bound and allowed-type list, archives opened, a stored link verdict a guard can act on, and any classifier. Measured 17 September: Workers AI has no text classifier for mail, only sentiment, so none ships ([receipt](./docs/receipts/workers-ai-classifier.md)). A public mailbox should not be accepting attachments. |
-| **The mail client is thin** | Since 17 September: **read/unread** per person, **Cc/Bcc and reply-all** with the original quoted, **hand a case to a colleague** by their address (audited), **download one attachment** (recorded as an export; a flagged part is served as octet-stream), a **drafts** strip that resumes any draft, **retry/resend** from the outbox with the written reason the duplicate-risk mode asks for, **ask for an export** from Matters and fetch its manifest, and **withdraw an invitation**. A second **mailbox** can be created since 17 September (`POST /api/mailboxes`, on the People screen; an address is routed at it from Setup). Until then the only mailbox was the one the claim made. **Labels**, not folders, since 17 September: words a person puts on a message (`PUT /api/messages/:id/labels`, audited), shown on the row and filtered by `?label=`; a message never moves, so it never goes missing; the migration says why. A Butler `label` node is not built. **Attachments in the composer** since 17 September: judged by the same name-and-magic-bytes rule as inbound mail and refused when dangerous, stored as evidence beside the bodies, bound by the effect envelope, sent as base64 parts; the published 5 MiB outbound ceiling is checked at the seal. **Forwarding** since 17 September sends the original whole, its stored bytes as a `message/rfc822` part, verbatim, beside what the author typed, under the same read authority as a reply's parent, and refuses to forward a message carrying an attachment this Node judged dangerous. Built: pagination and per-mailbox filtering (#91); search over subjects, senders and bodies (#107) with `since`/`until` bounds, a windowed search as a day token (0054), a sender filter on the envelope (#152); and since 17 September a **thread**: the reading pane carries the rest of the conversation, both halves, as `?conversation=` on the inbox and outbox listings with their own authorization. Grouping is the sender's own root and nothing else (`conversations.ts`); a merge is the remedy for a broken one. |
-| **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and **refused**. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
+| **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account, then a real backup, then a same-account restore that took a domain, wrote its own routing, and accepted a message from outside. The catalog imports at about a thousand rows a second; the evidence copy is one request per object at 5.4 s each with wrangler, and the bucket-to-bucket copy a mailbox-sized restore needs is untimed. [Runbook](./docs/disaster-recovery.md). |
+| **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). The canary is reached by a version override on the production hostname, because preview URLs do not exist for a Worker with Durable Objects. Unmeasured on a Free account, where ADR 25 says not to run anyway. [Receipt](./docs/receipts/deploy-drill-live-account.md). |
+| **A second Node in one account is a name** | `mailda deploy --name <worker>` derives the Worker, Workflow and `WORKER_NAME` into a git-ignored config and deploys from it; every other resource derives from the name. First install measured at 108 s. The Workflow's name is still a literal Cloudflare requires on the binding, so the derivation is the tool's edit rather than the platform's. |
+| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. Absent: a general policy on the verdict, attachment size and type limits, opened archives, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
+| **The mail client is thin** | Read state, Cc/Bcc and reply-all, hand-over, attachment download, drafts, retry and resend, labels, threads, forwarding, composer attachments, a second mailbox, search with a date window. No HTML composer, no signatures, no folders. Grouping is the sender's own thread root and nothing else. [`docs/application-shell.md`](./docs/application-shell.md). |
+| **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and refused. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
 
-What it is good for now: a controlled design-partner alpha, a non-critical shared mailbox, and
-exercising the governance and deterministic-automation model, which is the part that is further along than
-anything else here.
+What it is good for now: a design-partner alpha, a non-critical shared mailbox, and exercising the
+governance and deterministic-automation model, which is further along than anything else here.
 
 What exists today:
 
@@ -143,184 +88,108 @@ What exists today:
 | **Working agreement** | [`AGENTS.md`](./AGENTS.md): how decisions get made and what counts as done |
 | **Decisions taken** | Recorded with full reasoning and rejected alternatives, on the [issue tracker](https://github.com/Straits-AI/mailda/issues?q=is%3Aissue) |
 | **Measurements** | The receipts in [`docs/receipts/`](./docs/receipts/), generating every constant in `packages/budgets`, which is itself generated and never hand-edited |
-| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual and last covered 30 views with 0 AA violations; the screens added since have not been through it. |
+| **Code** | One Worker. Tests across three runtimes: workerd, node, and a DOM for the interface. The accessibility audit is manual and last covered 30 views with 0 AA violations; screens added since have not been through it. |
 | **Licence** | [Apache-2.0](./LICENSE). Security reports go to [`SECURITY.md`](./SECURITY.md), privately. |
+
 ## What's distinctive about how it's built
 
 - **Every number has a receipt.** No limit, timeout or budget enters the code without a measurement behind
-  it; the constants in `packages/budgets` are *generated from* [`docs/receipts/`](./docs/receipts/), so you
-  cannot write the number, only the measurement. The rule and the vocabulary are in [`AGENTS.md`](./AGENTS.md).
+  it. The constants in `packages/budgets` are generated from [`docs/receipts/`](./docs/receipts/), so you
+  cannot write the number, only the measurement.
 - **Every assertion has been seen to fail.** A test is mutated against the line it covers before it counts.
-- **Names do not overclaim.** A forwarded copy is a `copy`; a provider action is `observed`; a send is
+- **Names do not overclaim.** A forwarded copy is a `copy`. A provider action is `observed`. A send is
   `handed_over`, never `sent`, until a delivery event says otherwise.
-- **Contracts before channels.** Routes are declared once in `packages/contract`; the SDK, the Agent Skill
+- **Contracts before channels.** Routes are declared once in `packages/contract`. The SDK, the Agent Skill
   and the MCP surface are generated from it, and a route that exists in one channel and not another fails
   a test.
 - **The screens you need when it is broken carry no framework.** Sign-in, first-run claim and a locked-out
   `doctor` are server-rendered and load zero bytes of the React bundle (ADR 30).
 
 What each change found on the way (the defects, the measurements that reversed a plan, the tests that
-turned out to be theatre) is kept in [`docs/history.md`](./docs/history.md), in the order it happened.
+turned out to be theatre) is in [`docs/history.md`](./docs/history.md), in the order it happened.
 
 ## What it will need from you
 
 Every Cloudflare setting a Node depends on is listed once, with both ways to put it there, in
-[`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md). The intended experience is that an operator
-never opens the Cloudflare dashboard. The Node does the account work through its own grant, from `/setup`,
-and the dashboard path is kept for builders who would rather arrange the account by hand, with `doctor`
-verifying either the same way.
+[`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md). The Node does the account work through its
+own grant, from `/setup`. The dashboard path is kept for builders who would rather do it by hand, and
+`doctor` verifies either the same way.
 
 | | |
 |---|---|
 | A Cloudflare account | Free to create |
-| A domain you control | Or a delegated subdomain; `mail.example.com` is the default. **Pointing MX at Cloudflare is required**; nothing avoids it |
+| A domain you control | Or a delegated subdomain; `mail.example.com` is the default. **Pointing MX at Cloudflare is required.** |
 | **Workers Paid, mandatory** | **$5/month minimum**, 3,000 emails included, then $0.35/1,000 |
 | Inbound mail | Unlimited, included |
 
 A 20-person organisation sending 10,000 emails a month costs roughly **$7.45/month**, plus
-storage. ([receipt](./docs/receipts/cloudflare-plan-costs.md))
+storage ([receipt](./docs/receipts/cloudflare-plan-costs.md)).
 
-**There is no free tier.** Not a pricing choice. Cloudflare's free plan forces 24-hour,
-non-configurable queue retention, so a message stuck in a queue for a day is silently
-deleted. A mail system cannot run there. **Nothing enforces this**: a Worker cannot read
-its own account's plan and Cloudflare exposes no documented API for it, so `doctor` reports
-the requirement as unverified and names where to look. This paragraph used to say
-`mailda deploy` detected the plan and refused; there was no CLI at all, which is the whole
-of #80. ([ADR 25](./Mailda-Full-Engineering-Blueprint.md))
+**There is no free tier.** Cloudflare's free plan forces 24-hour queue retention, so a message stuck in a
+queue for a day is deleted. A mail system cannot run there. Nothing enforces this: a Worker cannot read its
+own account's plan, so `doctor` reports the requirement as unverified and says where to look
+([ADR 25](./Mailda-Full-Engineering-Blueprint.md)).
 
 ### Deliberate limitations
 
-- **No Gmail or Microsoft 365 connector.** Adopting Mailda means moving mail to it. There's
-  no import path for existing history. ([why](./Mailda-Full-Engineering-Blueprint.md))
-- **No IMAP, JMAP or SMTP mailbox service.** The web app is the only way to read mail. No
-  Outlook, Apple Mail or Thunderbird.
-- **5 MiB outbound** to arbitrary recipients, and 50 recipients per message. A Node can
-  receive a 25 MiB attachment and be unable to reply with it.
-- **Cloudflare is a hard dependency.** You own your data and your bill; the Node is not
-  portable to another platform.
+- **No Gmail or Microsoft 365 connector.** Adopting Mailda means moving mail to it. There is no import
+  path for existing history ([why](./Mailda-Full-Engineering-Blueprint.md)).
+- **No IMAP, JMAP or SMTP mailbox service.** The web app is the only way to read mail.
+- **5 MiB outbound** to arbitrary recipients, and 50 recipients per message. A Node can receive a 25 MiB
+  attachment and be unable to reply with it.
+- **Cloudflare is a hard dependency.** The Node is not portable to another platform.
 - **Not for bulk or marketing mail.** Transactional and operational only.
-- **The composer is plain text**: To, Cc, Bcc, files and a quoted reply; no HTML, no signatures or
-  templates. Read state is per person (0062). There is no archive, trash or spam folder. Labels are the one
-  way to sort mail (ADR 13).
-- **Remote images are blocked until you ask for them.** A tracking pixel tells a third party when
-  your colleague opened a message. Mailda will not proxy them either. That would make your Node
-  fetch URLs a stranger chose, from inside your own Cloudflare account.
-- **Your daily sending limit is invisible, so Mailda measures it.** Cloudflare starts new accounts on
-  a conservative daily quota that scales with reputation and publishes no number for it. Mailda counts
-  sends per rolling day and records the count at which you were first throttled. A limit you can hit
-  is a limit you must see. ([receipt](./docs/receipts/cloudflare-email-sending.md))
-- **Delivery outcomes take one command after the install, and are blind until it runs.** The queue that
-  carries `accepted` and `bounced` is provisioned per Node with a name Cloudflare derives (documented by
-  Cloudflare and unmeasured by us, so nothing here writes that name down), because a queue name is
-  account-scoped and a committed one made two Nodes in one account share a queue. A consumer cannot
-  name a derived queue, so `pnpm run queue:attach-consumer` attaches it out of band, and a button-only
-  install that never runs it observes nothing, honestly and permanently, until somebody does.
-  ([receipt](./docs/receipts/queue-provisioning.md))
-- **Paying for Workers is not enough to send.** Arbitrary recipients require a *sending domain
-  onboarded* with SPF and DKIM. Until then a Node can only send to addresses already verified in your
-  own account, so it can receive a customer's message and be unable to answer it. **Nothing checks
-  this either.** Onboarding is a dashboard flow with no endpoint listing its result, and the only
-  honest probe would be sending a real message to a stranger to see whether it was refused. The
-  outbox says the capability was never verified, and `mailda`'s own help says the same.
+- **The composer is plain text.** To, Cc, Bcc, files and a quoted reply. No HTML, signatures or templates.
+  No archive, trash or spam folder; labels are the one way to sort mail (ADR 13).
+- **Remote images are blocked until you ask for them.** A tracking pixel tells a third party when your
+  colleague opened a message. Mailda will not proxy them either, because that would make your Node fetch
+  URLs a stranger chose from inside your own account.
+- **Your daily sending limit is invisible, so Mailda measures it.** Cloudflare starts new accounts on a
+  quota it does not publish. Mailda counts sends per rolling day and records the count at which you were
+  first throttled ([receipt](./docs/receipts/cloudflare-email-sending.md)).
+- **Delivery outcomes take two out-of-band steps.** The consumer and the event subscription, above. A
+  button-only install that never does them observes nothing, and says so.
+- **Paying for Workers is not enough to send.** Arbitrary recipients need a sending domain onboarded with
+  SPF and DKIM. Until then a Node can only send to addresses already verified in your account, so it can
+  receive a customer's message and be unable to answer it. The outbox says when the capability was never
+  verified.
 - **Nobody is emailed an invitation.** An administrator mints a secret and hands it over however they
-  already trust; the person redeems it and chooses their own password, which the administrator never
-  sees. The Node can send, which is what makes emailing it tempting, and it would mean posting a
-  credential to an address nobody has verified, from a mailbox whose sending capability is itself
-  unverified.
-- **Search covers subjects, senders and message bodies. Attachments are not indexed.** Body search requires
-  `mailbox.content.read`; the weaker `mailbox.metadata.read` reaches subjects and senders only, because
-  answering *"the word X occurs in message Y"* discloses the message itself one word at a time. That applies
-  to **supervised grants too**: a grant of scope `metadata` reaches subjects and not text. It did not at
-  first: one grant subquery authorized both index arms, and a metadata grant could ask whether any word
-  occurred in any message. Found by an external audit, not by the suite, because every test used standing
-  relations and nothing exercised the second authorization mechanism against the second index. Attachment
-  contents are not indexed and are not planned to be. There is no document parser on the ingest path, and
-  adding one would be a new attack surface for a search feature.
-- **A search whose words are split between a subject and a body finds nothing.** Every word of a query has to
-  appear in the same index, and the subject index and the body index are separate, which is what keeps the
-  authorization boundary above enforceable. Searching `hapag cabotage` fails even when `hapag` is in a
-  message's subject and `cabotage` is in its text; each word alone finds it. This is the price of the
-  boundary, and it is stated rather than left to be discovered.
-- **The body index makes a D1 dump slightly more revealing, and ADR 28 was amended to say so.** It is
-  *contentless*, the inverted index without any copy of the documents, so a dump lets somebody confirm that
-  a given word appears in a given message, and not read the message. Bodies stay in R2, encrypted. There are
-  no body excerpts in search results for the same reason: showing the matching line means fetching and
-  decrypting the message, which is an authorized read rather than a free one.
-- **A search returns one page of the best matches, and there is no way to reach the fifty-first.** Narrowing
-  the words is the only route. Relevance ordering is bm25, which depends on how often a term appears across
-  the whole corpus, so it shifts every time mail arrives, and a cursor into a ranked list would skip and
-  repeat rows without saying so. The cost measurement landed on the same answer independently: ordering by
-  time while filtering by a term costs O(corpus) rather than O(matches), and a rare search read 3,640 rows
-  against a 1,000-row budget before the plan was driven from the index instead.
-  ([receipt](./docs/receipts/message-search-cost.md))
-- **Mail that arrived before the indexes existed is searchable only once the backfill reaches it.** Two
-  backfills with very different speeds: subjects and senders go 500 a minute because it is one statement
-  inside D1, and bodies go **25** a minute because each one is an R2 read, a key unwrap, a decryption and a
-  MIME parse. `doctor` reports `search_index_backlog` and `body_index_backlog` separately for that reason. A
-  single figure would look alarming while nothing was wrong. Unindexed mail stays reachable by paging.
-- **A message whose body cannot be *parsed* is never searchable by its contents; one whose evidence could not
-  be *read* is retried.** Those were the same thing until the state machine landed, which meant a momentary
-  R2 error made a message permanently unsearchable with no record of why. A read failure now backs off from
-  one minute to sixteen, gives up after six attempts, and keeps the reason. `doctor`'s `body_index_failed`
-  reports what it gave up on and `mailda search list` shows why each one failed; `mailda search repair` puts
-  chosen messages back in the queue. Repair is per message rather than a sweep, because some failures are
-  deterministic and retrying those spends the backfill's budget on work that cannot succeed.
-- **The pass claims what it works on, and settles under compare-and-swap.** The pass runs every minute and
-  costs an R2 read plus a decryption plus a MIME parse per message, so it can take longer than a minute, and
-  the next tick used to select the same rows, because the state stayed `pending` until the first pass committed
-  at the very end. The wasted work was not the defect: attempts were counted as `read value + 1`, so two
-  overlapping passes both wrote `attempts = 1`, the counter stopped advancing, and the six-attempt bound that
-  exists so a pass cannot spend its budget on one failure for ever never tripped. Selection is now one
-  `UPDATE … RETURNING` that picks the batch and leases it in the same statement, and each settlement is
-  conditional on the claim version it was given, so a slow pass whose lease lapsed cannot overwrite the newer
-  answer with its stale one. The version parameter is *required* rather than optional, because making it
-  optional left the one call site free to drop it and every test still passed.
-- **Repairing a message takes it out of the index first.** Leaving the row was argued safe on the grounds that
-  the next pass overwrites it, which is true only when that pass finds text. A re-parse settling `empty` writes nothing,
-  so the old terms went on answering for a message whose state column said it had never been indexed. The
-  index and the state column now agree, and repair clears any live claim so the message does not wait out the
-  lease of the pass that failed it.
-- **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts in
-  time order until it has found enough belonging to it. Measured at 2,410 rows read to return 3 messages from
-  a mailbox holding the oldest 3 of 1,200. This is not something the filter introduced: the authorization
-  predicate has the same shape, so a reader who may see one mailbox in ten has always paid it. Fixing it means
-  driving the listing from a per-mailbox ordering rather than from the evidence table, which is a change to
-  what the inbox reads. ([receipt](./docs/receipts/message-page-size.md))
-- **Recovery codes minted before 28 August 2026 carry 80 bits, not 128, and cannot be upgraded.** The
-  encoder rendered one base32 character per random byte, so sixteen bytes became sixteen characters. New sets
-  are 26 characters and correct; a hash is one-way, so existing sets can only be *replaced*. `doctor` reports
-  them degraded and `mailda recovery-codes rotate` is the replacement path.
-- **A recovery code set nobody has confirmed is reported degraded.** Minting returns the plaintext once, so a
-  lost response leaves this Node looking exactly as it would if the codes had been written down (ten rows,
-  good hashes, current escrow), and health over an organization that cannot recover is the failure the whole
-  escrow exists to prevent. `mailda recovery-codes confirm` compares one code without spending it, and it is
-  typed at a prompt rather than passed as a flag. A confirmation a script can make from a file proves nothing
-  about a person holding the sheet, which is the only thing it asserts (#136). A freshly claimed Node is
-  therefore degraded until an operator confirms, which is intended rather than noise.
-- **A person cannot be removed.** Deleting an account with audit entries, cases and sealed manifests
-  attributed to it is a different question with its own answer, and guessing it would be worse than
-  leaving it. Revoking every relation is the available act, and it takes effect on the next request.
-- **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id,
-  so verifiers are PBKDF2 at 600,000 effective iterations, an accepted baseline rather than a strong one.
-  Passkeys are built (#84) and are the stronger factor; a password remains the fallback, and the per-user
-  switch that would turn it off (Blueprint ADR 29) is not built. The reasoning, including what this does
-  and does not protect against, is written down rather than implied.
-  ([receipt](./docs/receipts/password-hash-cost.md))
-- **Downloading a message used to leave no trace. It does now.** The `.eml` button produces a complete
-  copy of somebody's mail, off the Node, and until now it did that on the strength of "you can read this
-  mailbox" and recorded nothing, so *has anyone taken a copy of this message* had no answer. It is a
-  permission of its own, `message.export`, which every existing reader was granted so nothing broke, and
-  every download is now in the trail. What that buys is that exporting can be taken away without taking
-  away reading. The bulk version, a whole mailbox for a matter, is a different permission with a
-  different price: two approvers, and they agree to a **hash of the query and a hard message count**,
-  because a query that matches forty things today matches four hundred next month. An export that would
-  exceed the count stops and asks again rather than quietly copying more, and one too large for a manifest
-  to name is refused with the number rather than truncated. Revoking the permission stops a running export
-  at its next page and a download at its next file. ([the design](./docs/ediscovery-export.md))
-- **A signed token cannot be recalled.** Removing someone's access takes effect on the next request
-  for everything authorization-related, because authority is never carried in the token. But a
-  revoked account keeps a working *session* for up to ten minutes. That window is the access
-  token's lifetime, and it is a measured number rather than a comfortable one.
+  already trust; the person redeems it and chooses their own password. Emailing it would post a credential
+  to an address nobody has verified.
+- **Search covers subjects, senders and bodies. Attachments are not indexed.** Body search needs
+  `mailbox.content.read`; the weaker `mailbox.metadata.read` reaches subjects and senders only, and so does
+  a supervised grant of scope `metadata`. A query whose words are split between a subject and a body finds
+  nothing, because the two indexes are separate and that separation is what keeps the authorization
+  boundary enforceable.
+- **A search returns one page of the best matches, and there is no way to reach the fifty-first.** Narrow
+  the words. Relevance is bm25, which shifts as mail arrives, so a cursor into a ranked list would skip and
+  repeat rows silently ([receipt](./docs/receipts/message-search-cost.md)).
+- **Mail that arrived before the indexes existed is searchable once the backfill reaches it.** Subjects go
+  500 a minute, bodies 25, because each body is an R2 read, a decryption and a parse. `doctor` reports the
+  two backlogs separately. A body that cannot be parsed is never body-searchable; one whose read failed is
+  retried with backoff, and `mailda search repair` requeues chosen messages.
+- **A page bounded to a quiet mailbox is bounded by the archive.** Filtering to one mailbox walks receipts
+  in time order until it finds enough: 2,410 rows read to return 3 messages from a mailbox holding the
+  oldest 3 of 1,200. Fixing it means driving the listing from a per-mailbox ordering
+  ([receipt](./docs/receipts/message-page-size.md)).
+- **Recovery codes minted before 28 August 2026 carry 80 bits, not 128.** A hash is one-way, so they can
+  only be replaced. `doctor` reports them degraded and `mailda recovery-codes rotate` replaces them. A set
+  nobody has confirmed is also reported degraded, and `mailda recovery-codes confirm` is typed at a prompt,
+  never passed as a flag, because a confirmation a script can make from a file proves nothing about a person
+  holding the sheet.
+- **A person cannot be removed.** Revoking every relation is the available act, and it takes effect on the
+  next request.
+- **Passwords are the weakest part of the design, deliberately.** Workers has no native Argon2id, so
+  verifiers are PBKDF2 at 600,000 effective iterations. Passkeys are built and are the stronger factor; the
+  per-user switch that would turn passwords off (ADR 29) is not
+  ([receipt](./docs/receipts/password-hash-cost.md)).
+- **Every download is recorded.** The `.eml` button needs `message.export`, which every existing reader was
+  granted, and each download is in the trail. The bulk export for a matter needs two approvers, who agree
+  to a hash of the query and a hard message count; an export that would exceed the count stops and asks
+  again ([the design](./docs/ediscovery-export.md)).
+- **A signed token cannot be recalled.** Removing someone's access takes effect on the next request for
+  everything authorization-related, but a revoked account keeps a working session for up to ten minutes,
+  the access token's lifetime.
 
 ---
 
@@ -398,14 +267,3 @@ gap with legal effect. Without a licence file, default copyright applies: nobody
 modify or deploy this source, which is the entire distribution model. The product described itself as
 customer-owned software you run yourself, and that was not something anybody was licensed to do.
 
-Apache-2.0 rather than MIT for the **patent grant**, which matters for a project already taking outside
-contributions and for the enterprise buyers the paid offerings are aimed at. Rather than AGPL, because
-customers self-host by design. The network clause would bind resellers rather than users, and it would cost
-adoption at firms that forbid AGPL outright, for protection this deployment model largely already has.
-
-The paid offerings are unaffected. What is licensed here is the software; what is sold is deployment,
-updates, deliverability, assurance and managed responsibility, which is Blueprint §30's open-core position
-and needed no change.
-
-Security problems go to [`SECURITY.md`](./SECURITY.md), privately, and **not** to the issue tracker. It also
-lists what is already known, so nobody spends time reporting a documented limitation.
