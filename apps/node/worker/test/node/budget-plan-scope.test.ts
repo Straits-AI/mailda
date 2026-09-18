@@ -368,7 +368,7 @@ const FIGURES: Record<string, Classification> = {
     "what the rules API's PUT does and refuses (#258): shapes of the API, which no plan changes",
     "routing.rule_put_replaces_action", "routing.rule_put_read_back_agrees",
     "routing.rule_actions_per_rule_max", "routing.rule_put_partial_body_accepted",
-    "routing.catch_all_listed_among_rules",
+    "routing.catch_all_listed_among_rules", "routing.rule_takeover_through_grant",
   ),
 
   // docs/receipts/email-authentication-results.md

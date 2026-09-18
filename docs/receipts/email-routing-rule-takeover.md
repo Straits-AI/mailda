@@ -11,6 +11,7 @@ values:
   routing.rule_actions_per_rule_max: 1
   routing.rule_put_partial_body_accepted: 0
   routing.catch_all_listed_among_rules: 1
+  routing.rule_takeover_through_grant: 1
 ---
 
 ## Question
@@ -54,6 +55,15 @@ as stale rather than overwritten with what the Node last saw.
 "all" }]`, `actions: [{ type: "drop" }]`, `enabled: false`, `priority: 2147483647`, the same object
 `GET …/rules/catch_all` returns. A listing that offered every row for take-over would offer the catch-all,
 so the listing names it as one and the take-over refuses a rule whose matcher is not `literal` on `to`.
+
+## Through the Node's own grant
+
+Same day, after the routes were built: the dev Node (`mailda.swmengappdev.workers.dev`, its grant consented
+with `email-routing-rule.write`) listed `mailda.site`'s rules, took over a `drill@mailda.site → drop` rule
+(`was drop, now worker -> mailda`), and put it back (`was worker -> mailda, now drop`), each step confirmed
+by listing again. The first take-over was refused with `E_RECEIVING_MAILBOX_AMBIGUOUS` because the
+organization has two mailboxes and none was named, which is the refusal `onboardReceiving` makes for the
+same reason. The drill rule was then deleted and the address row removed.
 
 ## What this settles
 
