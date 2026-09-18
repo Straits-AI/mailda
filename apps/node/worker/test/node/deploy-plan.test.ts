@@ -319,12 +319,12 @@ describe("which account the plan is about", () => {
     const rendered = renderPlan(planFor({
       configText: CONFIG,
       inventory: emptyAccount(),
-      account: { id: "dc8d1b7da0b7adc9a295faad8e519458", name: "Mystraits.ai@gmail.com's Account" },
+      account: { id: "f9e8d7c6b5a493827160f5e4d3c2b1a0", name: "Ops@beta.example's Account" },
     }));
 
-    expect(rendered).toContain("dc8d1b7da0b7adc9a295faad8e519458");
+    expect(rendered).toContain("f9e8d7c6b5a493827160f5e4d3c2b1a0");
     // The name too: an operator scanning a plan cannot tell two hex ids apart, and that is the whole failure.
-    expect(rendered).toContain("Mystraits.ai@gmail.com's Account");
+    expect(rendered).toContain("Ops@beta.example's Account");
   });
 
   it("states both readings of a first install, and accuses of neither", () => {

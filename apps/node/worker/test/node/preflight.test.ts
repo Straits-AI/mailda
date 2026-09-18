@@ -35,9 +35,9 @@ const WHOAMI = [
   "┌───────────────────────────────────┬──────────────────────────────────┐",
   "│ Account Name                      │ Account ID                       │",
   "├───────────────────────────────────┼──────────────────────────────────┤",
-  "│ Admin@arbuilder.app's Account     │ e842216b23604d45c318ae890bbd2999 │",
+  "│ Ops@alpha.example's Account       │ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │",
   "├───────────────────────────────────┼──────────────────────────────────┤",
-  "│ Mystraits.ai@gmail.com's Account  │ dc8d1b7da0b7adc9a295faad8e519458 │",
+  "│ Ops@beta.example's Account        │ f9e8d7c6b5a493827160f5e4d3c2b1a0 │",
   "└───────────────────────────────────┴──────────────────────────────────┘",
 ].join("\n");
 
@@ -45,8 +45,8 @@ describe("reading what wrangler will do before it does it", () => {
   it("finds every account in the table, and not the header row", () => {
     const accounts = accountsFrom(WHOAMI);
     expect(accounts).toEqual([
-      { name: "Admin@arbuilder.app's Account", id: "e842216b23604d45c318ae890bbd2999" },
-      { name: "Mystraits.ai@gmail.com's Account", id: "dc8d1b7da0b7adc9a295faad8e519458" },
+      { name: "Ops@alpha.example's Account", id: "0a1b2c3d4e5f60718293a4b5c6d7e8f9" },
+      { name: "Ops@beta.example's Account", id: "f9e8d7c6b5a493827160f5e4d3c2b1a0" },
     ]);
   });
 
@@ -57,11 +57,11 @@ describe("reading what wrangler will do before it does it", () => {
      * not exist — the failure furthest from its cause.
      */
     const swapped = WHOAMI
-      .replace("│ Admin@arbuilder.app's Account     │ e842216b23604d45c318ae890bbd2999 │",
-        "│ e842216b23604d45c318ae890bbd2999 │ Admin@arbuilder.app's Account     │");
+      .replace("│ Ops@alpha.example's Account       │ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │",
+        "│ 0a1b2c3d4e5f60718293a4b5c6d7e8f9 │ Ops@alpha.example's Account       │");
     const [first] = accountsFrom(swapped);
-    expect(first?.id).toBe("e842216b23604d45c318ae890bbd2999");
-    expect(first?.name).toBe("Admin@arbuilder.app's Account");
+    expect(first?.id).toBe("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
+    expect(first?.name).toBe("Ops@alpha.example's Account");
   });
 
   it("knows a signed-out wrangler from a signed-in one", () => {
@@ -79,8 +79,8 @@ describe("choosing the account, which is the failure this was built from", () =>
     if (chosen.ok) return;
     // The remedy names every candidate with its id, because the operator has to pick and cannot from a count.
     expect(chosen.fix).toContain("CLOUDFLARE_ACCOUNT_ID");
-    expect(chosen.fix).toContain("dc8d1b7da0b7adc9a295faad8e519458");
-    expect(chosen.fix).toContain("e842216b23604d45c318ae890bbd2999");
+    expect(chosen.fix).toContain("f9e8d7c6b5a493827160f5e4d3c2b1a0");
+    expect(chosen.fix).toContain("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
     // And it names the consequence that is easy to miss: a guard that silently stops guarding.
     expect(chosen.why).toContain("#99");
   });
@@ -89,14 +89,14 @@ describe("choosing the account, which is the failure this was built from", () =>
     const single = resolveAccount({ accounts: [accounts[0]!], chosen: undefined });
     expect(single.ok).toBe(true);
     if (!single.ok) return;
-    expect(single.id).toBe("e842216b23604d45c318ae890bbd2999");
+    expect(single.id).toBe("0a1b2c3d4e5f60718293a4b5c6d7e8f9");
   });
 
   it("accepts a chosen account and reports which one it is", () => {
-    const chosen = resolveAccount({ accounts, chosen: "dc8d1b7da0b7adc9a295faad8e519458" });
+    const chosen = resolveAccount({ accounts, chosen: "f9e8d7c6b5a493827160f5e4d3c2b1a0" });
     expect(chosen.ok).toBe(true);
     if (!chosen.ok) return;
-    expect(chosen.name).toBe("Mystraits.ai@gmail.com's Account");
+    expect(chosen.name).toBe("Ops@beta.example's Account");
   });
 
   it("gives a chosen-but-unknown account its own message, not the ambiguous one", () => {

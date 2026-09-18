@@ -9,8 +9,8 @@ const GMAIL =
   + "dmarc=pass header.from=gmail.com policy.dmarc=none; "
   + "spf=none (mx.cloudflare.net: no SPF records found for postmaster@mail-ed1-x535.google.com) "
   + "smtp.helo=mail-ed1-x535.google.com; "
-  + "spf=pass (mx.cloudflare.net: domain of wmhy.tech@gmail.com designates 2a00:1450:4864:20::535 as permitted "
-  + "sender) smtp.mailfrom=wmhy.tech@gmail.com; arc=pass smtp.remote-ip=\"2a00:1450:4864:20::535\"";
+  + "spf=pass (mx.cloudflare.net: domain of sender@alpha.example designates 2a00:1450:4864:20::535 as permitted "
+  + "sender) smtp.mailfrom=sender@alpha.example; arc=pass smtp.remote-ip=\"2a00:1450:4864:20::535\"";
 
 function fieldsOf(...headers: string[]): Map<string, string[]> {
   return headerFields(`${headers.join("\r\n")}\r\nFrom: a@b.test\r\n`);

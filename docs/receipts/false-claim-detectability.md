@@ -16,7 +16,7 @@ values:
 
 # Which false claims in prose can be caught mechanically
 
-Issue [#103](https://github.com/wms2537/mailda/issues/103). The ticket asked for an investigation, not a
+Issue [#103](https://github.com/Straits-AI/mailda/issues/103). The ticket asked for an investigation, not a
 build: *"The honest possible outcome, that no automated check is worth its cost … should be concluded, not
 assumed."* This is the conclusion, with the measurement behind each half.
 
