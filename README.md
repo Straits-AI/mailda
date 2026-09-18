@@ -17,7 +17,7 @@ written anywhere but here.
 
 ---
 
-## Installing it, and the honest state of that
+## Installing it
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
 
