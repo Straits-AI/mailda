@@ -51,6 +51,9 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --subscribe <domain>         subscribe its delivery events to this Node's queue; add --confirm <digest> to do it
   mailda provider --onboard-receiving <domain> point a subdomain at this Node to receive; --address and --confirm to do it,
                                               --mailbox <id> when the organization has more than one
+  mailda provider --routing-rules <domain>     the routing rules already on its zone, and which point here
+  mailda provider --take-over <rule id> --domain <domain>  point that rule at this Node; --confirm <digest> to do it
+  mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced
   mailda provider --ownership       who owns this installation, and where each answer came from
   mailda provider --handover [--out <file>]    a signed handover manifest, verified before it is shown
   mailda provider --domains <keyword>          cached domain suggestions with indicative prices

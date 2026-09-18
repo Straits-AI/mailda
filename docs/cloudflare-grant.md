@@ -498,6 +498,29 @@ restore drill on 16 September 2026 found by running it against a restored Node's
   that files and no rule (harmless) rather than a rule and no address (mail rejected). The mailbox is the
   organization's only one, or the `mailboxId` the request names; several and none named is refused.
 
+## A zone that already routes (#258)
+
+`onboardReceiving` keeps a rule that already routes the address it is asked for, so on a zone that received
+mail before this Node existed, onboarding `hello@` leaves `hello@` forwarding to wherever it went and
+reports success. Three routes cover that case, all administrator-only and withheld from machines:
+
+- `GET /api/provider/routing-rules?domain=` lists the zone's rules: the address, the action and its
+  destinations, whether it is the catch-all, whether it already names this Worker, and a digest over the
+  rule as listed. `/setup` → receiving shows the table; `mailda provider --routing-rules <domain>` prints it.
+- `POST /api/provider/routing-rules/take-over {domain, ruleId, digest, mailboxId?}` registers the rule's
+  address on this Node (the #92 lesson, in the same batch as the audit entry), records the action the rule
+  had on that entry, then `PUT`s the rule with `worker → this Node`. A rule holds exactly one action
+  (measured, `email-routing-rule-takeover.md`), so this replaces; there is no forward-and-also-here. A
+  stale digest, the catch-all, and a rule already pointing here are refused.
+- `POST /api/provider/routing-rules/put-back {domain, ruleId}` reads the latest take-over entry for that
+  rule and `PUT`s its previous action back. A rule this Node never took, or one somebody changed since the
+  take-over, is refused rather than overwritten. The address row stays; an address that files and nothing
+  routes is harmless.
+
+Not built, on purpose: editing forward destinations, deleting rules, or taking over the catch-all. The
+first two would make this Node a routing-rule editor; the third would have every address without its own
+rule rejected here as an unknown recipient.
+
 And the half-done case is resumable at every step: MX already on the name that is entirely Cloudflare's
 own routing hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody
 else's mail host to refuse, which is what the proposal said about its own records after the scope refusal

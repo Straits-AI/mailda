@@ -686,6 +686,29 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "GET", path: "/api/provider/routing-rules",
+    summary: "The Email Routing rules already on the zone carrying a domain: what each routes where, whether "
+      + "it is the catch-all, whether it already names this Worker, and the digest a take-over must quote. "
+      + "Changes nothing",
+    query: [{ name: "domain", description: "a domain whose zone's rules to list" }],
+    response: S.providerRoutingRulesResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/routing-rules/take-over",
+    summary: "Point an existing routing rule at this Node, registering its address here first and recording "
+      + "the action it had on the audit entry. Refuses the catch-all, a stale digest, and a rule already here",
+    request: S.providerRoutingRuleTakeOverRequest, response: S.providerRoutingRuleOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/routing-rules/put-back",
+    summary: "Restore a rule this Node took over to the action the take-over recorded. Refuses a rule this "
+      + "Node never took, or one somebody changed since",
+    request: S.providerRoutingRulePutBackRequest, response: S.providerRoutingRuleOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "GET", path: "/api/provider/handover",
     summary: "A signed handover manifest: what the client owns, what revocation stops, and which provider "
       + "ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda",

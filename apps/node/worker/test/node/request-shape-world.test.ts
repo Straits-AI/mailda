@@ -120,6 +120,9 @@ describe("every closed set the contract declares is a closed set the boundary en
        * misspelled `address` would route mail to a name nobody chose.
        */
       "POST /api/provider/receiving",
+      // Replacing and restoring a routing rule's action (#258): the same zone, the same reason.
+      "POST /api/provider/routing-rules/take-over",
+      "POST /api/provider/routing-rules/put-back",
       "POST /api/provider/domains/purchase",
       "POST /api/provider/sending",
       "POST /api/provider/subscription",
@@ -332,6 +335,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/agents", "POST /api/mailboxes", "POST /api/policies", "POST /api/provider/authorize",
       "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
+      "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",
       "POST /api/provider/sending", "POST /api/provider/subscription", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);

@@ -389,6 +389,23 @@ describe("every schema-bearing route answers what the contract says it does", ()
     })).rejects.toThrow(/E_RECEIVING_WILL_NOT_ONBOARD|E_PROVIDER_NO_ACCOUNT|answered 4/);
 
     /*
+     * The zone's rules (#258). The listing **answers** with its error, the way the proposals do, and both
+     * writes refuse: no rule can be replaced on a zone this Node cannot first read.
+     */
+    const listedRules = await answers(
+      "GET", "/api/provider/routing-rules", { cookie: held }, "?domain=mail.example.test",
+    ) as { routing: { domain: string; rules: unknown[]; error: string | null } };
+    expect(listedRules.routing.domain).toBe("mail.example.test");
+    expect(listedRules.routing.rules).toEqual([]);
+    expect(listedRules.routing.error).not.toBeNull();
+    await expect(answers("POST", "/api/provider/routing-rules/take-over", {
+      cookie: held, body: { domain: "mail.example.test", ruleId: "r", digest: "0".repeat(64) },
+    })).rejects.toThrow(/E_ROUTING_RULES_UNREADABLE|E_PROVIDER_NO_ACCOUNT|answered 4/);
+    await expect(answers("POST", "/api/provider/routing-rules/put-back", {
+      cookie: held, body: { domain: "mail.example.test", ruleId: "r" },
+    })).rejects.toThrow(/E_ROUTING_RULES_UNREADABLE|E_PROVIDER_NO_ACCOUNT|answered 4/);
+
+    /*
      * The purchase's three routes. All refuse on this fixture — no account is determined — and the `POST`
      * being among them is the assertion that matters most: the one route that spends money must not reach
      * Cloudflare when this Node cannot first establish whose account it would spend from.
@@ -2152,12 +2169,16 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
      * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
      *
+     * The 135th to 137th are the zone's routing rules (#258): list, take over, put back. The listing carries
+     * a digest per rule, the take-over quotes it, and the outcome carries `before` beside `after` because
+     * `before` is the one thing a put-back needs and it is recorded on the audit entry for that reason.
+     *
      * The 124th and 125th are `GET` and `POST /api/provider/subscription` (#222) — the third of the three
      * objects `delivery-events` reports on, proposed and applied the way sending is. The proposal names the
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(134);
+    expect(coverage.total).toBe(137);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

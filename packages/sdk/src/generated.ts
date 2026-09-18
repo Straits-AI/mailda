@@ -1193,6 +1193,35 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * The Email Routing rules already on the zone carrying a domain: what each routes where, whether it is the catch-all, whether it already names this Worker, and the digest a take-over must quote. Changes nothing
+   *
+   * @param query.domain a domain whose zone's rules to list
+   *
+   * `GET /api/provider/routing-rules`
+   */
+  async getProviderRoutingRules(query?: { domain?: string }): Promise<z.infer<typeof S.providerRoutingRulesResponse>> {
+    return await this.json("GET", "/api/provider/routing-rules", {}, undefined, query) as z.infer<typeof S.providerRoutingRulesResponse>;
+  }
+
+  /**
+   * Point an existing routing rule at this Node, registering its address here first and recording the action it had on the audit entry. Refuses the catch-all, a stale digest, and a rule already here
+   *
+   * `POST /api/provider/routing-rules/take-over`
+   */
+  async postProviderRoutingRulesTakeOver(body: z.infer<typeof S.providerRoutingRuleTakeOverRequest>): Promise<z.infer<typeof S.providerRoutingRuleOutcomeResponse>> {
+    return await this.json("POST", "/api/provider/routing-rules/take-over", {}, body) as z.infer<typeof S.providerRoutingRuleOutcomeResponse>;
+  }
+
+  /**
+   * Restore a rule this Node took over to the action the take-over recorded. Refuses a rule this Node never took, or one somebody changed since
+   *
+   * `POST /api/provider/routing-rules/put-back`
+   */
+  async postProviderRoutingRulesPutBack(body: z.infer<typeof S.providerRoutingRulePutBackRequest>): Promise<z.infer<typeof S.providerRoutingRuleOutcomeResponse>> {
+    return await this.json("POST", "/api/provider/routing-rules/put-back", {}, body) as z.infer<typeof S.providerRoutingRuleOutcomeResponse>;
+  }
+
+  /**
    * A signed handover manifest: what the client owns, what revocation stops, and which provider ceremonies a person must perform. Verifiable against this Node's JWKS without Mailda
    *
    * `GET /api/provider/handover`

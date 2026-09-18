@@ -1789,6 +1789,47 @@ export const onboardReceiving = (domain: string, digest: string, address: string
     domain, digest, address, ...(mailboxId === undefined ? {} : { mailboxId }),
   });
 
+/** A routing rule already on a zone (#258). `digest` is what a take-over quotes. */
+export interface RoutingRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  to: string;
+  action: string;
+  destinations: string[];
+  catchAll: boolean;
+  ours: boolean;
+  digest: string;
+}
+
+export interface RoutingRules {
+  domain: string;
+  zone: string | null;
+  zoneId: string | null;
+  rules: RoutingRule[];
+  error: string | null;
+}
+
+export interface RoutingRuleOutcome {
+  ruleId: string;
+  to: string;
+  before: { action: string; destinations: string[] };
+  after: { action: string; destinations: string[] };
+}
+
+export const routingRulesOn = (domain: string) =>
+  proposalFor<{ routing: RoutingRules }>(GET("/api/provider/routing-rules"), domain);
+
+export const takeOverRule = (domain: string, ruleId: string, digest: string, mailboxId?: string) =>
+  act<{ outcome: RoutingRuleOutcome }>(at("POST", "/api/provider/routing-rules/take-over"), "POST", {
+    domain, ruleId, digest, ...(mailboxId === undefined ? {} : { mailboxId }),
+  });
+
+export const putBackRule = (domain: string, ruleId: string) =>
+  act<{ outcome: RoutingRuleOutcome }>(at("POST", "/api/provider/routing-rules/put-back"), "POST", {
+    domain, ruleId,
+  });
+
 export const sendingProposal = (domain: string) =>
   proposalFor<{ proposal: SendingProposal }>(GET("/api/provider/sending"), domain);
 

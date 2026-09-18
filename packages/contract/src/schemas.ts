@@ -616,6 +616,54 @@ export const providerReceivingRequest = z.object({
   mailboxId: z.string().min(1).max(64).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
+/** The routing rules already on a zone (#258): what routes where, and whether each already names this Worker. */
+export const providerRoutingRulesResponse = z.object({
+  routing: z.object({
+    domain: z.string().min(1),
+    zone: z.string().nullable(),
+    zoneId: z.string().nullable(),
+    rules: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      enabled: z.boolean(),
+      /** The literal `to` address, or `*` for the catch-all. */
+      to: z.string(),
+      action: z.string(),
+      destinations: z.array(z.string()),
+      catchAll: z.boolean(),
+      ours: z.boolean(),
+      /** Over the rule as listed; a take-over quotes it so a rule edited since is refused as stale. */
+      digest: z.string().length(64),
+    }).strict()),
+    error: z.string().nullable(),
+  }).strict(),
+}).strict();
+
+const routingRuleAction = z.object({ action: z.string(), destinations: z.array(z.string()) }).strict();
+
+/** `before` is what a put-back restores; it is also on the audit entry. */
+export const providerRoutingRuleOutcomeResponse = z.object({
+  outcome: z.object({
+    ruleId: z.string(),
+    to: z.string(),
+    before: routingRuleAction,
+    after: routingRuleAction,
+  }).strict(),
+}).strict();
+
+export const providerRoutingRuleTakeOverRequest = z.object({
+  domain: z.string().min(3).max(253),
+  ruleId: z.string().min(1).max(64),
+  digest: z.string().length(64),
+  /** The mailbox the address files into. Optional when the organization has exactly one. */
+  mailboxId: z.string().min(1).max(64).optional(),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+export const providerRoutingRulePutBackRequest = z.object({
+  domain: z.string().min(3).max(253),
+  ruleId: z.string().min(1).max(64),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
 /** The client id and secret the operator created in the dashboard. The redirect URI is not theirs to choose. */
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),

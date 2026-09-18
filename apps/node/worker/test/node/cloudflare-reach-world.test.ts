@@ -120,6 +120,8 @@ const REACHES: Record<string, { scope: string; reference: string | null }> = {
    */
   // Measured refused under zone-settings.write on the #92 drill; the picker's Email Routing Rules Edit.
   "/zones/{}/email/routing/rules": { scope: "email-routing-rule.write", reference: null },
+  // One rule, read and replaced whole (#258). The same scope as the list; measured with a PUT on 19 Sept.
+  "/zones/{}/email/routing/rules/{}": { scope: "email-routing-rule.write", reference: null },
   "/zones/{}/dns_records": { scope: "dns.write", reference: "DNS Write" },
   // Read to know whether a send's outcome would be seen; `POST`ed to make it so (#222). `queues.read` was
   // measured refused for the write, so the scope is the write form and the read rides on it.

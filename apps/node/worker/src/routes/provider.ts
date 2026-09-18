@@ -218,6 +218,45 @@ export const provider = {
     });
   },
 
+  "GET /api/provider/routing-rules": async ({ env, clock, url, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const { routingRulesFor } = await import("../provider/routing-rules.ts");
+    return Response.json({
+      routing: await routingRulesFor(env, clock, who.orgId, url.searchParams.get("domain") ?? ""),
+    });
+  },
+
+  "POST /api/provider/routing-rules/take-over": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    // Replaces one rule's action on the customer's zone (#258). The previous action rides on the audit entry.
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { takeOverRule } = await import("../provider/routing-rules.ts");
+    return Response.json({
+      outcome: await takeOverRule(
+        env, clock, who.orgId, who.userId,
+        String(body.domain ?? ""), String(body.ruleId ?? ""), String(body.digest ?? ""),
+        typeof body.mailboxId === "string" ? body.mailboxId : null,
+      ),
+    });
+  },
+
+  "POST /api/provider/routing-rules/put-back": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { putBackRule } = await import("../provider/routing-rules.ts");
+    return Response.json({
+      outcome: await putBackRule(
+        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.ruleId ?? ""),
+      ),
+    });
+  },
+
   "GET /api/provider/handover": async ({ env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });

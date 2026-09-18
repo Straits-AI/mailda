@@ -3,10 +3,12 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  beginConsent, onboardReceiving, onboardSending, receivingProposal, reportUnselectable,
+  beginConsent, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
+  routingRulesOn, takeOverRule,
   resolveProviderAccount, sendingProposal, setProviderClient, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
-  type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type SendingProposal, type SubscriptionProposal,
+  type ProviderBinding, type ProviderCeremony, type ReceivingProposal, type RoutingRules, type SendingProposal,
+  type SubscriptionProposal,
 } from "../api.ts";
 
 /**
@@ -482,7 +484,127 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
           ) : null}
         </div>
       )}
+
+      <ExistingRules boxes={boxes} refresh={refresh} />
     </section>
+  );
+}
+
+/**
+ * The rules already on a zone, and taking one over (#258).
+ *
+ * A zone that received mail before this Node existed has rules that forward elsewhere, and onboarding an
+ * address with such a rule keeps the rule. So the rules are shown with where each goes, and one can be
+ * pointed here in two clicks. A rule holds one action (measured), so this replaces; the action it had is on
+ * the audit entry and "put back" restores it.
+ */
+function ExistingRules({ boxes, refresh }: { boxes: Array<{ id: string; name: string }>; refresh: () => Promise<void> }) {
+  const [domain, setDomain] = useState("");
+  const [listing, setListing] = useState<RoutingRules | null>(null);
+  const [mailboxId, setMailboxId] = useState("");
+  const [arming, setArming] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function list() {
+    setProblem(null);
+    setOutcome(null);
+    setArming(null);
+    setBusy(true);
+    const answer = await routingRulesOn(domain.trim());
+    setBusy(false);
+    if (!answer.ok) { setProblem(answer.message); return; }
+    setListing(answer.value.routing);
+  }
+
+  async function act(ruleId: string, digest: string | null) {
+    if (listing === null) return;
+    setProblem(null);
+    setBusy(true);
+    const answer = digest === null
+      ? await putBackRule(listing.domain, ruleId)
+      : await takeOverRule(listing.domain, ruleId, digest, mailboxId === "" ? undefined : mailboxId);
+    setBusy(false);
+    setArming(null);
+    if (!answer.ok) { setProblem(answer.message); return; }
+    const done = answer.value.outcome;
+    const said = (one: { action: string; destinations: string[] }) =>
+      `${one.action}${one.destinations.length === 0 ? "" : ` → ${one.destinations.join(", ")}`}`;
+    setOutcome(`${done.to}: was ${said(done.before)}, now ${said(done.after)}.`);
+    await refresh();
+    await list();
+  }
+
+  return (
+    <div className="setup-plan">
+      <h3>Rules already on a zone</h3>
+      <p className="dim">
+        A zone that was receiving mail before this Node has rules that send it elsewhere. Pointing one here
+        replaces where that address goes; the previous destination is kept on the audit trail, and put back
+        restores it. The catch-all is listed and left alone.
+      </p>
+      <Refusal said={problem} />
+      {outcome === null ? null : <p className="notice" role="status">{outcome}</p>}
+      <div className="limits-ask">
+        <label className="field-row" htmlFor="setup-rules-domain">
+          <span>Domain</span>
+          <input
+            id="setup-rules-domain" className="mono" placeholder="example.com" value={domain}
+            onChange={(event) => setDomain(event.target.value)}
+          />
+        </label>
+        {boxes.length > 1 ? (
+          <label className="field-row" htmlFor="setup-rules-mailbox">
+            <span>Into mailbox</span>
+            <select id="setup-rules-mailbox" className="mono" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
+              <option value="">choose a mailbox…</option>
+              {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+            </select>
+          </label>
+        ) : null}
+        <button className="quiet" type="button" onClick={() => void list()} disabled={busy || domain.trim() === ""}>
+          list the rules on this zone
+        </button>
+      </div>
+      {listing === null ? null : listing.error !== null ? (
+        <Refusal said={listing.error} />
+      ) : listing.rules.length === 0 ? (
+        <p className="dim">No routing rules on {listing.zone}.</p>
+      ) : (
+        <div className="scroller">
+          <table>
+            <caption className="dim table-caption">Routing rules on {listing.zone}.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Address</th><th scope="col">Goes to</th><th scope="col"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {listing.rules.map((rule) => (
+                <tr key={rule.id}>
+                  <td className="mono">{rule.catchAll ? <span className="dim">catch-all</span> : rule.to}{rule.enabled ? "" : <span className="dim"> (disabled)</span>}</td>
+                  <td className="mono">
+                    {rule.ours ? "this Node" : `${rule.action}${rule.destinations.length === 0 ? "" : ` → ${rule.destinations.join(", ")}`}`}
+                  </td>
+                  <td>
+                    {rule.catchAll ? null : arming === rule.id ? (
+                      <button type="button" className="primary" disabled={busy} onClick={() => void act(rule.id, rule.ours ? null : rule.digest)}>
+                        {busy ? "working…" : rule.ours ? "yes, put it back" : `yes, point ${rule.to} here`}
+                      </button>
+                    ) : (
+                      <button type="button" className="quiet" disabled={busy} onClick={() => setArming(rule.id)}>
+                        {rule.ours ? "put back" : "point here"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
