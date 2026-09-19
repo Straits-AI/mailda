@@ -7,6 +7,7 @@ import { type Bytes, utf8 } from "@mailda/evidence";
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
 import { holdDelivery, releaseQuarantine, listQuarantined } from "../src/quarantine.ts";
+import { setAttachmentLimits } from "../src/mailbox-policy.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 
 /**
@@ -289,5 +290,60 @@ describe("held on request (0064, #263): the act a customer's own classifier reac
     await expect(holdDelivery(testEnv, ctx, ORG, ADMIN, "msg_nope", { reason: "x", score: null }))
       .rejects.toThrow(/E_NO_SUCH_MESSAGE/);
     expect((await row(id)).quarantined_at).toBeNull();
+  });
+});
+
+describe("a mailbox's own attachment limits (0065, #265)", () => {
+  const LIMITED = { id: "mbx_quarantine_limited", address: "limited@quarantine.example" };
+  beforeAll(async () => {
+    const ctx = createSystemCtx();
+    const at = new Date(ctx.now()).toISOString();
+    await testEnv.CATALOG.batch([
+      testEnv.CATALOG.prepare("INSERT OR IGNORE INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+        .bind(LIMITED.id, ORG, LIMITED.id, at),
+      testEnv.CATALOG.prepare(
+        "INSERT OR IGNORE INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+      ).bind(ctx.id("addr"), ORG, LIMITED.address, LIMITED.id, at),
+    ]);
+  });
+
+  it("validates the bound and the list, normalises extensions, and reports both back", async () => {
+    const ctx = createSystemCtx();
+    await expect(setAttachmentLimits(testEnv, ctx, ORG, ADMIN, LIMITED.id, { maxBytes: 0 }))
+      .rejects.toThrow(/E_BAD_ATTACHMENT_LIMIT/);
+    await expect(setAttachmentLimits(testEnv, ctx, ORG, ADMIN, LIMITED.id, { allowedTypes: [] }))
+      .rejects.toThrow(/E_BAD_ATTACHMENT_TYPES/);
+    await expect(setAttachmentLimits(testEnv, ctx, ORG, ADMIN, LIMITED.id, { allowedTypes: ["application/pdf"] }))
+      .rejects.toThrow(/E_BAD_ATTACHMENT_TYPES/);
+    const set = await setAttachmentLimits(testEnv, ctx, ORG, ADMIN, LIMITED.id, {
+      maxBytes: 24, allowedTypes: [" .PDF", "pdf", "Docx"],
+    });
+    expect(set).toMatchObject({ attachmentMaxBytes: 24, attachmentAllowedTypes: ["docx", "pdf"] });
+    // One at a time: naming only the list leaves the bound.
+    const listOnly = await setAttachmentLimits(testEnv, ctx, ORG, ADMIN, LIMITED.id, { allowedTypes: ["pdf"] });
+    expect(listOnly).toMatchObject({ attachmentMaxBytes: 24, attachmentAllowedTypes: ["pdf"] });
+  });
+
+  it("holds a delivery over the bound, and one of a type not on the list, and files the rest", async () => {
+    // Bound 24 bytes and pdf only, from the test above. PDF is 18 bytes once encoded; MZ is 10.
+    const fine = await accept(PASSED, LIMITED.address, withAttachment("invoice.pdf", "application/pdf", PDF));
+    await materialiseReceipt(testEnv, createSystemCtx(), fine);
+    expect(await row(fine)).toMatchObject({ quarantined_at: null, cases: 1, quarantine_reason: null });
+
+    const big = new Uint8Array(40).fill(0x25);
+    const large = await accept(PASSED, LIMITED.address, withAttachment("scan.pdf", "application/pdf", big));
+    expect(await materialiseReceipt(testEnv, createSystemCtx(), large)).toMatchObject({ quarantined: true });
+    expect(await row(large)).toMatchObject({ quarantine_reason: "attachment_too_large", cases: 0 });
+
+    const wrongType = await accept(PASSED, LIMITED.address, withAttachment("notes.txt", "text/plain", PDF));
+    expect(await materialiseReceipt(testEnv, createSystemCtx(), wrongType)).toMatchObject({ quarantined: true });
+    expect(await row(wrongType)).toMatchObject({ quarantine_reason: "attachment_type_refused", cases: 0 });
+
+    // The dangerous judge still speaks before the limits: a program under a pdf name, under the bound.
+    await setAttachmentLimits(testEnv, createSystemCtx(), ORG, ADMIN, FILES.id, { maxBytes: 4 });
+    const disguised = await accept(PASSED, FILES.address, withAttachment("invoice.pdf", "application/pdf", MZ));
+    await materialiseReceipt(testEnv, createSystemCtx(), disguised);
+    expect(await row(disguised)).toMatchObject({ quarantine_reason: "attachment_dangerous" });
+    await setAttachmentLimits(testEnv, createSystemCtx(), ORG, ADMIN, FILES.id, { maxBytes: null });
   });
 });

@@ -553,12 +553,17 @@ export const AUDIT_ACTIONS = {
   "mailbox.created": {
     says: "An administrator created a mailbox, named, and was granted read and send on it.",
   },
+  /** A mailbox's attachment limits (0065): the bound and the list, before and after. */
+  "mailbox.attachment_limits_set": {
+    says: "An administrator changed the attachment size bound or the allowed-type list on a mailbox.",
+  },
   /** The per-mailbox switch behind `message.quarantined`: who turned it on or off, and from what. */
   "mailbox.quarantine_set": {
     says: "An administrator changed whether a mailbox holds back deliveries whose From domain disowned them.",
   },
   "message.quarantined": {
-    says: "The Node held a delivery back from the queue: its From domain failed DMARC and asks receivers to quarantine or reject.",
+    says: "The Node held a delivery back from the queue: its From domain disowned it, it carries a dangerous "
+      + "attachment, or an attachment breaks the mailbox's declared limits. The reason token says which.",
   },
   /** Held on request (0064): a person or their agent, with the reason in words and the score if one was given. */
   "message.held": {

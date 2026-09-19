@@ -433,6 +433,9 @@ export interface MailboxQueue {
   quarantine_dmarc_fail: 0 | 1;
   /** 1 when it holds back a delivery carrying an executable, a script, or a program under a document's name. */
   quarantine_dangerous_attachments: 0 | 1;
+  /** The attachment size bound and allowed-type list (0065), as stored; null is unbounded. */
+  attachment_max_bytes: number | null;
+  attachment_allowed_types: string | null;
   /** Held back and not yet released. */
   quarantined: number;
   breached: number;
@@ -580,6 +583,19 @@ export async function setQuarantineSwitch(
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
 }
 
+/** Sets a mailbox's attachment limits (0065). Administrator only, and audited. */
+export async function setAttachmentLimits(
+  mailboxId: string,
+  limits: { attachmentMaxBytes?: number | null; attachmentAllowedTypes?: string[] | null },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const response = await apiFetch(at("PATCH", "/api/mailboxes/:mailboxId", { mailboxId }), {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(limits),
+  });
+  if (response.ok) return { ok: true };
+  const body = (await response.json().catch(() => null)) as { message?: string } | null;
+  return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
+}
+
 export interface QuarantinedDelivery {
   messageId: string;
   receiptId: string;
@@ -591,7 +607,8 @@ export interface QuarantinedDelivery {
   dmarcPolicy: string | null;
   acceptedAt: string;
   quarantinedAt: string;
-  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine" | "attachment_dangerous" | "held";
+  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine" | "attachment_dangerous" | "attachment_too_large"
+    | "attachment_type_refused" | "held";
   note: string | null;
 }
 

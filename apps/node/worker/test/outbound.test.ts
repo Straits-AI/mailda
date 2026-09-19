@@ -290,6 +290,28 @@ describe("attachments on an authored send (0060): judged, stored as evidence, re
     expect(count?.n).toBe(0);
   });
 
+  it("refuses a send that breaks the mailbox's own attachment limits, by the same judge filing uses (0065)", async () => {
+    await testEnv.CATALOG.prepare(
+      "UPDATE mailboxes SET attachment_max_bytes = ?, attachment_allowed_types = ? WHERE id = ?",
+    ).bind(PDF.length, JSON.stringify(["pdf"]), MAILBOX).run();
+    try {
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename: "scan.pdf", contentType: "application/pdf", content: new Uint8Array(PDF.length + 1).fill(0x25) }],
+      })).rejects.toThrow(/E_ATTACHMENT_OVER_MAILBOX_LIMIT/);
+      await expect(sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename: "notes.txt", contentType: "text/plain", content: utf8("hi") }],
+      })).rejects.toThrow(/E_ATTACHMENT_TYPE_REFUSED/);
+      const sealed = await sealManifest(testEnv, createSystemCtx(), ORG, {
+        ...composition, attachments: [{ filename: "invoice.pdf", contentType: "application/pdf", content: PDF }],
+      });
+      expect(sealed.id).toMatch(/^snd_/);
+    } finally {
+      await testEnv.CATALOG.prepare(
+        "UPDATE mailboxes SET attachment_max_bytes = NULL, attachment_allowed_types = NULL WHERE id = ?",
+      ).bind(MAILBOX).run();
+    }
+  });
+
   it("refuses more parts than a send may carry, and normalises a part's media type and name at the seal", async () => {
     const many = Array.from({ length: 21 }, (_, i) => ({ filename: `f${i}.txt`, contentType: "text/plain", content: utf8("x") }));
     await expect(sealManifest(testEnv, createSystemCtx(), ORG, { ...composition, attachments: many }))

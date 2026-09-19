@@ -820,6 +820,9 @@ export const mailboxRow = z.object({
   first_response_minutes: z.number().nullable(),
   quarantine_dmarc_fail: z.union([z.literal(0), z.literal(1)]),
   quarantine_dangerous_attachments: z.union([z.literal(0), z.literal(1)]),
+  /** The attachment size bound and allowed-type list (0065), as stored; NULL is unbounded. */
+  attachment_max_bytes: z.number().int().nullable(),
+  attachment_allowed_types: z.string().nullable(),
   quarantined: z.number().int().nonnegative(),
   breached: z.number().int().nonnegative(),
   addresses: z.string().nullable(),
@@ -1639,6 +1642,9 @@ export const mailboxPatchedResponse = z.object({
   quarantineDmarcFail: z.boolean(),
   /** Whether it holds back a delivery carrying an executable, a script, or a program under a document's name (0057). */
   quarantineDangerousAttachments: z.boolean(),
+  /** The attachment size bound and the allowed extensions (0065); null is unbounded. */
+  attachmentMaxBytes: z.number().int().nullable(),
+  attachmentAllowedTypes: z.array(z.string()).nullable(),
 }).strict();
 
 /**
@@ -1670,7 +1676,10 @@ export const judgedLink = z.object({
 }).strict();
 
 /** Why a delivery was held back (0056): the sender's domain failed DMARC and asked receivers to do this. */
-export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous", "held"]);
+export const quarantineReason = z.enum([
+  "dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous", "attachment_too_large",
+  "attachment_type_refused", "held",
+]);
 export type QuarantineReason = z.infer<typeof quarantineReason>;
 
 /** One delivery held back from every queue (0056), and why, for an administrator deciding whether to let it in. */

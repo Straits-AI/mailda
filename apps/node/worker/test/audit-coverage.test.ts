@@ -322,7 +322,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     // rather than a preference, and a breach recorded against it is a fact somebody may be asked about.
     // Creating and archiving mailboxes are still unbuilt; when they land they join this list rather than
     // moving the table back.
-    actions: ["mailbox.response_target_set", "mailbox.quarantine_set", "mailbox.created"],
+    actions: ["mailbox.response_target_set", "mailbox.quarantine_set", "mailbox.attachment_limits_set", "mailbox.created"],
   },
   messages: {
     /*

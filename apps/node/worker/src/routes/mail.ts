@@ -136,6 +136,17 @@ export const mail = {
         await setQuarantineSwitch(env, clock, who.orgId, who.userId, params.mailboxId, which, body[field]),
       );
     }
+    if ("attachmentMaxBytes" in body || "attachmentAllowedTypes" in body) {
+      const { setAttachmentLimits } = await import("../mailbox-policy.ts");
+      return Response.json(await setAttachmentLimits(env, clock, who.orgId, who.userId, params.mailboxId, {
+        ...("attachmentMaxBytes" in body
+          ? { maxBytes: body.attachmentMaxBytes === null ? null : Number(body.attachmentMaxBytes) } : {}),
+        ...("attachmentAllowedTypes" in body
+          ? { allowedTypes: body.attachmentAllowedTypes === null ? null
+            : Array.isArray(body.attachmentAllowedTypes) ? body.attachmentAllowedTypes.map(String) : [] }
+          : {}),
+      }));
+    }
     const raw = body.firstResponseMinutes;
     const minutes = raw === null || raw === undefined ? null : Number(raw);
     return Response.json(

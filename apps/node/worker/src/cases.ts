@@ -464,6 +464,9 @@ export interface MailboxQueue {
   quarantine_dmarc_fail: 0 | 1;
   /** 1 when it holds back a delivery carrying an executable, a script, or a program under a document's name (0057). */
   quarantine_dangerous_attachments: 0 | 1;
+  /** The attachment size bound and allowed-type list (0065), as stored. */
+  attachment_max_bytes: number | null;
+  attachment_allowed_types: string | null;
   /** Deliveries held back and not yet released. Counted for everyone; listed only for administrators. */
   quarantined: number;
   /**
@@ -514,6 +517,7 @@ export async function mailboxQueues(env: Env, orgId: string, userId: string): Pr
 
   const { results } = await env.CATALOG.prepare(
     `SELECT m.id, m.name, m.first_response_minutes, m.quarantine_dmarc_fail, m.quarantine_dangerous_attachments,
+            m.attachment_max_bytes, m.attachment_allowed_types,
             (SELECT COUNT(*) FROM messages q
               JOIN ingress_receipts r ON r.id = q.ingress_receipt_id
               JOIN addresses qa ON qa.org_id = r.org_id AND qa.address = r.envelope_to

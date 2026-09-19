@@ -8,7 +8,7 @@ import { bucketFor } from "./ingress.ts";
 import { headerBlock, headerFields, parseHeaders } from "./mime.ts";
 import { authenticationOf, type AuthenticationVerdict } from "./authentication-results.ts";
 import type { QuarantineReason } from "@mailda/contract/schemas";
-import { DANGEROUS } from "./attachments.ts";
+import { allowedTypesOf, DANGEROUS, overLimits } from "./attachments.ts";
 import { auditedBatch, log } from "./audit.ts";
 import { isDeliveryReport, recordDeliveryReport } from "./outbound/delivery-report.ts";
 import { indexBody, indexMessage, settleBodyIndex } from "./search.ts";
@@ -111,9 +111,13 @@ export async function materialiseReceipt(
    * evidence and row — and opens no case, so it is in nobody's queue until an administrator releases it.
    */
   const mailbox = await env.CATALOG.prepare(
-    "SELECT quarantine_dmarc_fail, quarantine_dangerous_attachments FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+    `SELECT quarantine_dmarc_fail, quarantine_dangerous_attachments, attachment_max_bytes, attachment_allowed_types
+       FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1`,
   ).bind(receipt.org_id, receipt.mailbox_id)
-    .first<{ quarantine_dmarc_fail: number; quarantine_dangerous_attachments: number }>();
+    .first<{
+      quarantine_dmarc_fail: number; quarantine_dangerous_attachments: number;
+      attachment_max_bytes: number | null; attachment_allowed_types: string | null;
+    }>();
   const disowned = verdict?.dmarc === "fail"
     && (verdict.dmarcPolicy === "reject" || verdict.dmarcPolicy === "quarantine");
 
@@ -136,6 +140,13 @@ export async function materialiseReceipt(
    */
   const attachments = bodyWords.kind === "unparseable" ? null : bodyWords.attachments;
   const dangerous = attachments?.filter((one) => DANGEROUS.has(one.verdict)).length ?? null;
+  // The mailbox's own limits (0065): a bound and a list, both unbounded by default. Judged after the
+  // dangerous verdict, so a program under the size limit is still held for what it is.
+  const broken = attachments === null || mailbox === undefined || mailbox === null
+    ? []
+    : overLimits(attachments, {
+      maxBytes: mailbox.attachment_max_bytes, allowedTypes: allowedTypesOf(mailbox.attachment_allowed_types),
+    });
 
   // A token, not a sentence (AGENTS.md 2c): the contract's `quarantineReason` is the closed world, and the
   // reading surface says what it means. The sender's domain speaks first; a file is judged second.
@@ -143,7 +154,11 @@ export async function materialiseReceipt(
     ? (verdict?.dmarcPolicy === "reject" ? "dmarc_fail_reject" : "dmarc_fail_quarantine")
     : mailbox?.quarantine_dangerous_attachments === 1 && (dangerous ?? 0) > 0
       ? "attachment_dangerous"
-      : null;
+      : broken.some((one) => one.because === "too_large")
+        ? "attachment_too_large"
+        : broken.length > 0
+          ? "attachment_type_refused"
+          : null;
 
   // A message with no readable Message-ID still needs a stable identity to thread on, and it must be
   // one that survives re-parsing. The receipt id is derived, unique and already in hand.
