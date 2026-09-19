@@ -99,7 +99,10 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
 
     <section class="install" aria-labelledby="install-title">
       <h2 id="install-title">One command, one afternoon</h2>
-      <pre class="terminal"><code>curl -fsSL https://mailda.site/install.sh | bash</code></pre>
+      <div class="terminal">
+        <pre><code id="install-command">curl -fsSL https://mailda.site/install.sh | bash</code></pre>
+        <button type="button" class="copy" data-copy="install-command" aria-label="Copy the install command">copy</button>
+      </div>
       <p class="dim">
         It signs you in to Cloudflare, deploys into your account, and opens the Node with its claim secret.
         Claim it, then point a subdomain at it from <em>Setup</em>. The Node writes the
@@ -174,7 +177,11 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
 
   .install { margin-top: 3rem; max-width: 46rem; }
   .install h2, .values h2 { font: 700 1.4rem/1.2 var(--display); letter-spacing: -0.02em; margin: 0 0 .8rem; }
-  .terminal { background: var(--ink); color: #E8EDF3; font: 400 .82rem/1.65 var(--mono); padding: 1rem 1.2rem; overflow-x: auto; border-left: 2px solid var(--blue); margin: 0 0 .9rem; }
+  .terminal { position: relative; background: var(--ink); color: #E8EDF3; font: 400 .82rem/1.65 var(--mono); border-left: 2px solid var(--blue); margin: 0 0 .9rem; }
+  .terminal pre { margin: 0; padding: 1rem 5rem 1rem 1.2rem; overflow-x: auto; }
+  .terminal .copy { position: absolute; top: .55rem; right: .6rem; font: 500 .72rem/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: #E8EDF3; background: transparent; border: 1px solid rgba(232, 237, 243, .35); border-radius: 3px; padding: .4rem .6rem; cursor: pointer; }
+  .terminal .copy:hover, .terminal .copy:focus-visible { border-color: #E8EDF3; outline: none; }
+  .terminal .copy[data-done] { color: var(--ink); background: #E8EDF3; }
   .dim { color: var(--dim); }
   .values { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1.5rem; }
   .values ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: .8rem 2rem; font-size: .92rem; color: var(--dim); }
@@ -183,3 +190,19 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
   .foot a { color: var(--dim); }
   @media (prefers-reduced-motion: no-preference) { a.primary { transition: filter .18s; } }
 </style>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>("button.copy[data-copy]")) {
+    button.addEventListener("click", async () => {
+      const text = document.getElementById(button.dataset.copy ?? "")?.textContent ?? "";
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "copied";
+        button.setAttribute("data-done", "");
+        setTimeout(() => { button.textContent = "copy"; button.removeAttribute("data-done"); }, 1600);
+      } catch {
+        button.textContent = "select it";
+      }
+    });
+  }
+</script>
