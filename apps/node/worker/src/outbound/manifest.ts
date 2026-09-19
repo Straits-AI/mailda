@@ -6,7 +6,7 @@ import { type AuditEvent, auditedBatchMany } from "../audit.ts";
 import { describeShortfall, type Shortfall } from "../approvals.ts";
 import { maySend, readableSubjects } from "../authz-read.ts";
 import { sponsorTerm } from "../delegation.ts";
-import { classifyAttachment, DANGEROUS } from "../attachments.ts";
+import { allowedTypesOf, classifyAttachment, DANGEROUS, overLimits } from "../attachments.ts";
 import { conflict, notFound, unprocessable } from "../errors.ts";
 import { recipientsSuppressed } from "../suppression.ts";
 import { putEvidence, sha256Hex } from "../evidence-store.ts";
@@ -782,6 +782,27 @@ export async function sealManifest(
         + "program, a script, or a program under a document's name leaves under this Node's name only by "
         + "some other route",
       fix: "remove it, or send a link to where the file is kept",
+    });
+  }
+  // The mailbox's own limits (0065), the same judge filing uses. A mailbox that will not accept a 20 MB
+  // file or a .zip does not send one under its name either.
+  // Read only when there is something to judge: a send with no attachment costs no extra query.
+  const limits = judged.length === 0 ? null : await env.CATALOG.prepare(
+    "SELECT attachment_max_bytes, attachment_allowed_types FROM mailboxes WHERE org_id = ? AND id = ? LIMIT 1",
+  ).bind(orgId, composition.mailboxId)
+    .first<{ attachment_max_bytes: number | null; attachment_allowed_types: string | null }>();
+  const broken = limits === null ? [] : overLimits(
+    judged.map((one) => ({ filename: one.filename, bytes: one.content.byteLength })),
+    { maxBytes: limits.attachment_max_bytes, allowedTypes: allowedTypesOf(limits.attachment_allowed_types) },
+  );
+  if (broken.length > 0) {
+    const tooLarge = broken.filter((one) => one.because === "too_large");
+    throw unprocessable(tooLarge.length > 0 ? "E_ATTACHMENT_OVER_MAILBOX_LIMIT" : "E_ATTACHMENT_TYPE_REFUSED", {
+      what: `${broken.map((one) => `${one.filename ?? "(unnamed)"} (${one.because === "too_large" ? "too large" : "type not allowed"})`).join(", ")}`,
+      why: tooLarge.length > 0
+        ? `this mailbox holds back attachments over ${limits!.attachment_max_bytes} bytes, arriving or leaving`
+        : `this mailbox accepts only ${allowedTypesOf(limits!.attachment_allowed_types)?.join(", ") ?? "?"}, arriving or leaving`,
+      fix: "attach something the mailbox accepts, or an administrator changes the mailbox's limits",
     });
   }
   const encodedBytes = judged.reduce((n, one) => n + Math.ceil(one.content.byteLength / 3) * 4, 0);

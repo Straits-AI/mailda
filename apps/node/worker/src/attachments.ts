@@ -40,6 +40,39 @@ export interface AttachmentSummary {
 /** Verdicts a mailbox may hold a delivery back for. Archives are not among them: see the module note. */
 export const DANGEROUS: ReadonlySet<AttachmentVerdict> = new Set(["executable", "script", "disguised"]);
 
+/** A mailbox's declared limits (0065). `null` on either is unbounded. */
+export interface AttachmentLimits {
+  maxBytes: number | null;
+  /** Lower-case extensions without the dot. An attachment with no extension matches nothing on the list. */
+  allowedTypes: readonly string[] | null;
+}
+
+/** The extensions list as the column stores it. Tolerates a NULL or unparseable column as unbounded. */
+export function allowedTypesOf(column: string | null): string[] | null {
+  if (column === null) return null;
+  try {
+    const parsed = JSON.parse(column) as unknown;
+    return Array.isArray(parsed) ? parsed.map((one) => String(one).toLowerCase()) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Which of the attachments break the mailbox's limits, and how. Empty when nothing does. */
+export function overLimits(
+  attachments: ReadonlyArray<{ filename: string | null; bytes: number }>, limits: AttachmentLimits,
+): Array<{ filename: string | null; because: "too_large" | "type_refused" }> {
+  const broken: Array<{ filename: string | null; because: "too_large" | "type_refused" }> = [];
+  for (const one of attachments) {
+    if (limits.maxBytes !== null && one.bytes > limits.maxBytes) {
+      broken.push({ filename: one.filename, because: "too_large" });
+    } else if (limits.allowedTypes !== null && !limits.allowedTypes.includes(extensionOf(one.filename))) {
+      broken.push({ filename: one.filename, because: "type_refused" });
+    }
+  }
+  return broken;
+}
+
 const EXECUTABLE_EXTENSIONS = new Set([
   "exe", "dll", "com", "scr", "pif", "cpl", "msi", "msp", "sys", "drv", "ocx", "app", "dmg", "pkg", "deb",
   "rpm", "jar", "class", "elf", "bin", "run", "lnk", "hta", "reg", "inf", "chm",
@@ -71,7 +104,7 @@ function signatureOf(head: Uint8Array): Signature | null {
   return null;
 }
 
-function extensionOf(filename: string | null): string {
+export function extensionOf(filename: string | null): string {
   const name = (filename ?? "").trim().toLowerCase();
   const dot = name.lastIndexOf(".");
   return dot < 0 ? "" : name.slice(dot + 1);

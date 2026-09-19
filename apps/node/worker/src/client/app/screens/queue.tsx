@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Nothing } from "../chrome.tsx";
 import {
   type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
-  setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
+  setAttachmentLimits, setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
 } from "../api.ts";
 
 /**
@@ -296,6 +296,16 @@ export function Queue() {
     } else setProblem(outcome.message);
   }
 
+  async function onSetLimits(limits: { attachmentMaxBytes?: number | null; attachmentAllowedTypes?: string[] | null }) {
+    setNotice(null);
+    setProblem(null);
+    if (mailboxId === null) return;
+    const outcome = await setAttachmentLimits(mailboxId, limits);
+    await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+    if (outcome.ok) setNotice("Attachment limits saved. They apply to the next message in and the next send out.");
+    else setProblem(outcome.message);
+  }
+
   async function onRelease(messageId: string) {
     setNotice(null);
     setProblem(null);
@@ -443,6 +453,39 @@ export function Queue() {
           />
           <span>Hold back a delivery carrying an executable, a script, or a program under a document's name.</span>
         </label>
+        {/*
+          The mailbox's own limits (0065). A bound and a list, both empty by default; either one holds a
+          delivery that breaks it and refuses a send that would. Extensions, not media types: the name is
+          what a person reads, and the judge already goes by it.
+        */}
+        <label className="field-row" htmlFor="queue-attachment-max">
+          <span>Largest attachment, in KB</span>
+          <input
+            id="queue-attachment-max" className="mono" type="number" min={1} inputMode="numeric"
+            placeholder="no limit"
+            key={`max-${current?.attachment_max_bytes ?? "none"}`}
+            defaultValue={current?.attachment_max_bytes == null ? "" : String(Math.round(current.attachment_max_bytes / 1024))}
+            onBlur={(event) => {
+              const raw = event.target.value.trim();
+              const next = raw === "" ? null : Math.round(Number(raw) * 1024);
+              if (next !== (current?.attachment_max_bytes ?? null)) void onSetLimits({ attachmentMaxBytes: next });
+            }}
+          />
+        </label>
+        <label className="field-row" htmlFor="queue-attachment-types">
+          <span>Allowed attachment types</span>
+          <input
+            id="queue-attachment-types" className="mono" type="text" placeholder="any — or pdf, docx, png"
+            key={`types-${current?.attachment_allowed_types ?? "none"}`}
+            defaultValue={current?.attachment_allowed_types == null ? "" : (JSON.parse(current.attachment_allowed_types) as string[]).join(", ")}
+            onBlur={(event) => {
+              const raw = event.target.value.trim();
+              const next = raw === "" ? null : raw.split(/[,\s]+/).filter((one) => one !== "");
+              const was = current?.attachment_allowed_types == null ? null : (JSON.parse(current.attachment_allowed_types) as string[]).join(",");
+              if ((next === null ? null : next.join(",")) !== was) void onSetLimits({ attachmentAllowedTypes: next });
+            }}
+          />
+        </label>
         {current !== undefined && current.quarantined > 0 ? (
           <span className="state clock-due">{current.quarantined} held</span>
         ) : null}
@@ -471,6 +514,10 @@ export function Queue() {
                   <td>
                     {one.reason === "held"
                       ? `Held on request: ${one.note ?? "no reason given"}`
+                      : one.reason === "attachment_too_large"
+                        ? "Carries an attachment over this mailbox's size limit."
+                      : one.reason === "attachment_type_refused"
+                        ? "Carries an attachment of a type this mailbox does not accept."
                       : one.reason === "attachment_dangerous"
                         ? "Carries an executable, a script, or a program under a document's name."
                         : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `

@@ -77,6 +77,19 @@ not sign one leaving. Archives are named and never opened. Whether a `.zip` hold
 at, and the verdict says `archive` rather than pretending it has. The *archives-in-archives* case is the part
 of row 2 still open.
 
+### Attachment limits a mailbox declares (0065, 19 September 2026)
+
+Two settings on a mailbox, both empty by default: a size bound in bytes and a list of allowed extensions.
+`PATCH /api/mailboxes/:id {attachmentMaxBytes, attachmentAllowedTypes}`, on the queue screen beside the
+switches, administrator-only and audited (`mailbox.attachment_limits_set`). A delivery over the bound or
+carrying a type off the list is held the way the switches hold: `attachment_too_large` or
+`attachment_type_refused`, filed, no case, released the same way. The sender's domain speaks first and the
+dangerous judge second, so a program under a document's name is held for what it is whatever its size. The
+same judge (`overLimits`) runs at the seal: a send from the mailbox that breaks its own limits is refused by
+name (`E_ATTACHMENT_OVER_MAILBOX_LIMIT`, `E_ATTACHMENT_TYPE_REFUSED`), read only when something is attached
+so a plain send costs no extra query. Extensions rather than media types, because the name is what a person
+reads and what the judge already goes by; a declared media type is the sender's claim.
+
 ### Links, judged against what they say (17 September 2026)
 
 Nothing is rewritten (ADR 37). The href a reader clicks is the sender's, and a hover shows it. What a hover
@@ -141,9 +154,8 @@ the customer's corpus produces, and nothing ships in the Node before it has them
 
 1. **The rest of the verdict policy.** Inbound acts beyond the quarantine switch, and conditions with an
    authority behind them other than the sender's own domain, when one exists.
-2. **Attachments, the rest of the row.** Executables, scripts and disguises are judged above. Still open:
-   a size bound, an allowed-type list a mailbox declares, and archives-in-archives, which means walking a
-   ZIP's central directory to judge what it holds without extracting it.
+2. **Archives-in-archives.** Executables, scripts and disguises are judged, and a mailbox can bound size
+   and type. Still open: walking a ZIP's central directory to judge what it holds without extracting it.
 3. **Links, the rest of the row.** Judged at render above. Still open: a stored count a guard or a
    quarantine switch can act on, and a suffix list if a customer's own domain is misjudged.
 4. **Suppression, the measurement.** Built above. Still open: whether Cloudflare's
