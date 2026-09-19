@@ -61,6 +61,7 @@ import m0060 from "../migrations/0060_send_attachments.sql";
 import m0061 from "../migrations/0061_message_labels.sql";
 import m0062 from "../migrations/0062_message_reads.sql";
 import m0063 from "../migrations/0063_policy_reply_to_dmarc_fail.sql";
+import m0064 from "../migrations/0064_quarantine_note.sql";
 
 import { statementsOf } from "./sql-statements.ts";
 
@@ -178,6 +179,7 @@ const MIGRATIONS: ReadonlyArray<{ name: string; sql: string }> = [
   { name: "0061_message_labels.sql", sql: m0061 },
   { name: "0062_message_reads.sql", sql: m0062 },
   { name: "0063_policy_reply_to_dmarc_fail.sql", sql: m0063 },
+  { name: "0064_quarantine_note.sql", sql: m0064 },
 ];
 
 /** Wrangler's ledger, created exactly as wrangler creates it so the two cannot disagree. */

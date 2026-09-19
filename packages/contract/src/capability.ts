@@ -92,6 +92,14 @@ export const CAPABILITIES: readonly Capability[] = [
     routes: ["PUT /api/messages/:messageId/labels", "PUT /api/messages/:messageId/read"],
   },
   {
+    id: "mail.hold",
+    says: "Hold a received message back from its mailbox's queue, with the reason in words and, from a "
+      + "model, its score. The act a classifier you run reaches (#263). An administrator releases it, and "
+      + "the release is the answer the next run learns from. Reads nothing a mail.read holder cannot.",
+    reachesContent: false,
+    routes: ["POST /api/quarantine/:messageId/hold"],
+  },
+  {
     id: "mail.draft",
     says: "Write and revise drafts. Sending is not included and cannot be — sealing a send is withheld from "
       + "every machine.",

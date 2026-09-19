@@ -560,6 +560,10 @@ export const AUDIT_ACTIONS = {
   "message.quarantined": {
     says: "The Node held a delivery back from the queue: its From domain failed DMARC and asks receivers to quarantine or reject.",
   },
+  /** Held on request (0064): a person or their agent, with the reason in words and the score if one was given. */
+  "message.held": {
+    says: "Somebody, or an agent acting for them, held a delivery back from its mailbox's queue and said why.",
+  },
   /** An administrator let a quarantined delivery into the queue: the case it would have had is opened now. */
   "message.released": {
     says: "An administrator released a quarantined delivery into its mailbox's queue.",

@@ -2,7 +2,7 @@
 id: message-metadata-bytes
 kind: measured-tripwire
 measured_on: 2026-08-03
-re_measured_on: 2026-09-17
+re_measured_on: 2026-09-19
 stale_when: >
   the messages or mailbox_items schema changes, an index is added or removed, the
   identifier scheme changes width (#6), the `values:` block stops being derived from the most recent
@@ -15,6 +15,13 @@ values:
   shard.plan_route_messages: 5404740
 ---
 
+
+## Re-measured 19 September 2026: a hold's reason in words, and the figure held
+
+Migration 0064 adds one nullable TEXT column to `messages` (`quarantine_note`, #263) and no index.
+**1,787.9 bytes per message, unchanged**; an extra delivery unchanged at 407.6. Every stage reported the
+same byte count as the round below, to the page. Measured NULL on every row, which is the settled state:
+the column carries words only on a delivery somebody held on request, one of a handful.
 
 ## Re-measured 17 September 2026, later the same day: quarantine and attachments, and the figure held
 

@@ -1613,6 +1613,20 @@ describe("the routes that only exist once mail has landed", () => {
       params: { messageId: delivery.messageId }, cookie: held,
     });
     expect(released).toEqual({ released: true, messageId: delivery.messageId, mailboxId });
+
+    // Held on request (#263): the act a customer's classifier reaches, then the same release.
+    const heldAgain = await answers("POST", "/api/quarantine/:messageId/hold", {
+      params: { messageId: delivery.messageId }, cookie: held,
+      body: { reason: "a model said so", score: 0.5 },
+    });
+    expect(heldAgain).toEqual({ held: true, messageId: delivery.messageId, mailboxId });
+    const listedAgain = await answers("GET", "/api/quarantine", { cookie: held }) as {
+      quarantined: Array<{ messageId: string; reason: string; note: string | null }>;
+    };
+    expect(listedAgain.quarantined[0]).toMatchObject({ reason: "held", note: "a model said so" });
+    await answers("POST", "/api/quarantine/:messageId/release", {
+      params: { messageId: delivery.messageId }, cookie: held,
+    });
     expect(await answers("GET", "/api/quarantine", { cookie: held })).toEqual({ quarantined: [] });
   });
 
@@ -2169,6 +2183,9 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
      * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
      *
+     * The 138th is `POST /api/quarantine/:messageId/hold` (#263): the act a customer's own classifier
+     * reaches, since the Node keeps none. The reason travels in words and the score on the audit entry.
+     *
      * The 135th to 137th are the zone's routing rules (#258): list, take over, put back. The listing carries
      * a digest per rule, the take-over quotes it, and the outcome carries `before` beside `after` because
      * `before` is the one thing a put-back needs and it is recorded on the audit entry for that reason.
@@ -2178,7 +2195,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(137);
+    expect(coverage.total).toBe(138);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

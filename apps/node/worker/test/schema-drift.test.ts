@@ -98,6 +98,9 @@ const MEASURED_SHAPE = {
       // line: 1,788, unchanged both times. Two NULLs and two small integers on a record that already spilled
       // its page slack cost a few header bytes, and a page absorbs that.
       "quarantined_at", "quarantine_reason", "attachments", "attachments_dangerous",
+      // Added by migration 0064 (a hold's reason in words). NULL on every row but the handful held on
+      // request; re-measured 19 September 2026 before this line: see the receipt.
+      "quarantine_note",
     ],
     indexes: [
       "msg_by_receipt", "msg_by_root", "msg_by_thread", "msg_by_rfc_id", "msg_by_conversation",

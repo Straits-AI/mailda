@@ -103,7 +103,7 @@ export default tseslint.config(
   {
     // `packages/cli` is the `mailda` binary (#80): a Node program, not a Worker, and the only one in the
     // workspace that runs on an operator's own machine.
-    files: [".github/scripts/**/*.mjs", "apps/node/worker/scripts/**/*.mjs", "packages/cli/**/*.mjs",
+    files: [".github/scripts/**/*.mjs", "apps/node/worker/scripts/**/*.mjs", "packages/cli/**/*.mjs", "examples/**/*.mjs",
             "*.config.js"],
     languageOptions: { globals: { ...globals.node } },
     rules: { "no-restricted-syntax": "off" },

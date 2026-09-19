@@ -102,6 +102,15 @@ export const mail = {
     return Response.json({ quarantined: await listQuarantined(env, who.orgId, who.userId) });
   },
 
+  "POST /api/quarantine/:messageId/hold": async ({ request, env, clock, params, who }) => {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { holdDelivery } = await import("../quarantine.ts");
+    return Response.json(await holdDelivery(env, clock, who.orgId, who.userId, params.messageId, {
+      reason: String(body.reason ?? ""),
+      score: typeof body.score === "number" ? body.score : null,
+    }));
+  },
+
   "POST /api/quarantine/:messageId/release": async ({ env, clock, params, who }) => {
     const { releaseQuarantine } = await import("../quarantine.ts");
     return Response.json(await releaseQuarantine(env, clock, who.orgId, who.userId, params.messageId));

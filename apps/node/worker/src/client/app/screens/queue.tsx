@@ -469,10 +469,12 @@ export function Queue() {
                   <td>{one.subject ?? <span className="dim">(no subject)</span>}</td>
                   <td className="mono">{one.fromAddr ?? <span className="dim">—</span>}</td>
                   <td>
-                    {one.reason === "attachment_dangerous"
-                      ? "Carries an executable, a script, or a program under a document's name."
-                      : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `
-                        + `${one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.`}
+                    {one.reason === "held"
+                      ? `Held on request: ${one.note ?? "no reason given"}`
+                      : one.reason === "attachment_dangerous"
+                        ? "Carries an executable, a script, or a program under a document's name."
+                        : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `
+                          + `${one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.`}
                   </td>
                   <td className="num">
                     <button type="button" className="linkish" onClick={() => void onRelease(one.messageId)}>

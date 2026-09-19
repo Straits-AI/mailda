@@ -258,6 +258,14 @@ export const ROUTES = [
     response: S.quarantineListResponse,
   },
   {
+    authority: { scope: "mailbox", allOf: ["mailbox.content.read"] },
+    method: "POST", path: "/api/quarantine/:messageId/hold",
+    summary: "Hold a received message back from its mailbox's queue, with the reason in words. The act a "
+      + "customer's own classifier reaches; an administrator releases it from GET /api/quarantine",
+    request: S.quarantineHoldRequest,
+    response: S.quarantineHeldResponse,
+  },
+  {
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/quarantine/:messageId/release",
     summary: "Let a quarantined delivery into its mailbox's queue, opening the case it would have had",
