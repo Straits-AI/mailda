@@ -12,7 +12,7 @@ const { gaps } = Astro.props;
  * does not make.
  */
 const checks: { check: string; says: string; doc: string; href: string }[] = [
-  { check: "install", says: "Three commands into your own Cloudflare account: deploy, claim, point a domain. The first install measured 108 s; a second Node in the same account is a name.", doc: "onboarding-journey.md", href: "/docs/operating/onboarding-journey/" },
+  { check: "install", says: "One command into your own Cloudflare account: it signs you in, deploys, and opens the Node with its claim secret. Drilled on a clean account; a second Node in the same account is a name.", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
   { check: "receiving", says: "Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, search over subjects, senders and bodies.", doc: "application-shell.md", href: "/docs/product/application-shell/" },
   { check: "mail_security", says: "The receiving server's SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model.", doc: "mail-security.md", href: "/docs/product/mail-security/" },
   { check: "sending", says: "Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider's own bounces build.", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
@@ -98,12 +98,11 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
     </section>
 
     <section class="install" aria-labelledby="install-title">
-      <h2 id="install-title">Three commands, one afternoon</h2>
-      <pre class="terminal"><code>export CLOUDFLARE_ACCOUNT_ID=&lt;your account&gt;
-node packages/cli/src/mailda.mjs deploy --url https://&lt;your-node&gt;.workers.dev
-node packages/cli/src/mailda.mjs claim-secret</code></pre>
+      <h2 id="install-title">One command, one afternoon</h2>
+      <pre class="terminal"><code>curl -fsSL https://mailda.site/install.sh | bash</code></pre>
       <p class="dim">
-        Then open the Node, claim it, and point a subdomain at it from <em>Setup</em>. The Node writes the
+        It signs you in to Cloudflare, deploys into your account, and opens the Node with its claim secret.
+        Claim it, then point a subdomain at it from <em>Setup</em>. The Node writes the
         Cloudflare records through its own grant, reads them back, and refuses if they are not there. If you
         would rather arrange the account by hand, the dashboard path is written down too.
         <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
