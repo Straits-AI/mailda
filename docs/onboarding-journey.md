@@ -90,9 +90,12 @@ Mailda working before committing a domain. Every evaluation path runs through a 
 
 **Specified:** §5A entry paths. **Decided:** partially. See #13.
 
-The CLI path is six commands. That is fine for the technical founder identified above and
-wrong for anyone else, but anyone else cannot change MX either, so the audience is
-consistent at this stage.
+The CLI path was six commands when this was written, and three in the README until 19 September
+2026, when a drill on a clean account found the three did not work. It is one now
+(`curl -fsSL https://mailda.site/install.sh | bash`, or `mailda install` from a clone), which asks the
+two questions a first install has and ends with the claim secret. That is fine for the technical
+founder identified above and wrong for anyone else, but anyone else cannot change MX either, so the
+audience is consistent at this stage.
 
 What §5A gets right: one resumable setup state shared by both paths, so a technical
 operator can install and hand the checklist to a business administrator without
