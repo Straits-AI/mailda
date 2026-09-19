@@ -772,7 +772,7 @@ export async function sealManifest(
     // CR/LF, but a malformed part a recipient's client resolves however it likes.
     contentType: MEDIA_TYPE.test(one.contentType) ? one.contentType.toLowerCase() : "application/octet-stream",
     filename: safeFilename(one.filename.replace(/\.[^.]*$/, ""), extensionOf(one.filename)),
-    verdict: classifyAttachment(one.filename, one.content.subarray(0, 8)),
+    verdict: classifyAttachment(one.filename, one.content),
   }));
   const dangerous = judged.filter((one) => DANGEROUS.has(one.verdict));
   if (dangerous.length > 0) {

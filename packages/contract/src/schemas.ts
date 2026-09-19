@@ -1649,9 +1649,12 @@ export const mailboxPatchedResponse = z.object({
 
 /**
  * What an attached part is (0057), from its name and its first bytes (`src/attachments.ts`). `disguised` is a
- * program under a document's name. `archive` says only that it is one: nothing opens it.
+ * program under a document's name. `archive` says only that it is one: nothing opens it. `archive_dangerous`
+ * is a ZIP whose central directory names a program or a script, read without extracting (#267).
  */
-export const attachmentVerdict = z.enum(["executable", "script", "archive", "disguised", "plain"]);
+export const attachmentVerdict = z.enum([
+  "executable", "script", "archive", "archive_dangerous", "disguised", "plain",
+]);
 export type AttachmentVerdict = z.infer<typeof attachmentVerdict>;
 
 export const attachmentSummary = z.object({

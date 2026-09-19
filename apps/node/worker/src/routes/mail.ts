@@ -416,7 +416,7 @@ export const mail = {
     if (!allowed.ok) return allowed.response;
     const { classifyAttachment, DANGEROUS } = await import("../attachments.ts");
     const bytes = typeof part.content === "string" ? new TextEncoder().encode(part.content) : new Uint8Array(part.content);
-    const verdict = classifyAttachment(part.filename, bytes.subarray(0, 8));
+    const verdict = classifyAttachment(part.filename, bytes);
     const mediaType = /^[A-Za-z0-9!#$&^_.+-]{1,64}\/[A-Za-z0-9!#$&^_.+-]{1,64}$/.test(part.mimeType) && !DANGEROUS.has(verdict)
       ? part.mimeType.toLowerCase() : "application/octet-stream";
     const name = part.filename ?? `part-${ordinal}`;

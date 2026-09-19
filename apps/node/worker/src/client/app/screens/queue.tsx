@@ -519,7 +519,7 @@ export function Queue() {
                       : one.reason === "attachment_type_refused"
                         ? "Carries an attachment of a type this mailbox does not accept."
                       : one.reason === "attachment_dangerous"
-                        ? "Carries an executable, a script, or a program under a document's name."
+                        ? "Carries an executable, a script, a program under a document's name, or an archive listing one."
                         : `${one.fromDomain ?? "The From domain"} says this is not theirs and asks receivers to `
                           + `${one.reason === "dmarc_fail_reject" ? "reject" : "quarantine"} it.`}
                   </td>

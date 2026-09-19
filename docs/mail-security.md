@@ -73,9 +73,16 @@ domain speaks first: a disowned message carrying an executable is held for the D
 
 The same judge reads outbound mail (0060). An attachment on an authored send is classified at the seal and a
 dangerous one refuses the whole send, by name. A Node that would hold back a disguised program arriving does
-not sign one leaving. Archives are named and never opened. Whether a `.zip` holds an executable is not looked
-at, and the verdict says `archive` rather than pretending it has. The *archives-in-archives* case is the part
-of row 2 still open.
+not sign one leaving.
+
+**Archives are listed, never extracted** (#267, 19 September 2026). A ZIP's central directory names every
+entry, and `zipEntries` reads it from the end record back, so `invoice.zip` holding `Invoice.EXE` or
+`run.ps1` is `archive_dangerous`, the sixth verdict, held and refused like the other three. Nothing is
+inflated: a nested archive is a name in that list and stays closed, since what it holds is compressed data
+and reading it would mean extracting. Names in a password-protected ZIP are still in the clear, so the
+password hides nothing from this. What cannot be read whole (no end record in the last 64 KiB, a ZIP64
+offset, a directory that runs off the end) is `archive`, the verdict that says nothing was looked at, rather
+than a guess. RAR and 7z are still `archive` by name and signature only.
 
 ### Attachment limits a mailbox declares (0065, 19 September 2026)
 
@@ -154,8 +161,9 @@ the customer's corpus produces, and nothing ships in the Node before it has them
 
 1. **The rest of the verdict policy.** Inbound acts beyond the quarantine switch, and conditions with an
    authority behind them other than the sender's own domain, when one exists.
-2. **Archives-in-archives.** Executables, scripts and disguises are judged, and a mailbox can bound size
-   and type. Still open: walking a ZIP's central directory to judge what it holds without extracting it.
+2. **Attachments, the rest.** Executables, scripts, disguises and ZIP listings are judged, and a mailbox can
+   bound size and type. Still open: RAR and 7z listings, and a nested archive's contents, which cannot be
+   read without extracting and will not be.
 3. **Links, the rest of the row.** Judged at render above. Still open: a stored count a guard or a
    quarantine switch can act on, and a suffix list if a customer's own domain is misjudged.
 4. **Suppression, the measurement.** Built above. Still open: whether Cloudflare's
