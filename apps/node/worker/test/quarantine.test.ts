@@ -6,7 +6,7 @@ import { type Bytes, utf8 } from "@mailda/evidence";
 
 import { putEvidence } from "../src/evidence-store.ts";
 import { materialiseReceipt } from "../src/materialise.ts";
-import { releaseQuarantine, listQuarantined } from "../src/quarantine.ts";
+import { holdDelivery, releaseQuarantine, listQuarantined } from "../src/quarantine.ts";
 import { ACCESS_COOKIE, issueSession } from "../src/auth/session.ts";
 
 /**
@@ -66,11 +66,11 @@ async function accept(authHeader: string, to: string, attachment?: string[]): Pr
 
 async function row(receiptId: string) {
   return (await testEnv.CATALOG.prepare(
-    `SELECT m.id, m.quarantined_at, m.quarantine_reason, m.attachments, m.attachments_dangerous,
+    `SELECT m.id, m.quarantined_at, m.quarantine_reason, m.quarantine_note, m.attachments, m.attachments_dangerous,
             (SELECT COUNT(*) FROM cases c WHERE c.conversation_id = m.conversation_id) AS cases
        FROM messages m WHERE m.ingress_receipt_id = ?`,
   ).bind(receiptId).first<{
-    id: string; quarantined_at: string | null; quarantine_reason: string | null; cases: number;
+    id: string; quarantined_at: string | null; quarantine_reason: string | null; quarantine_note: string | null; cases: number;
     attachments: number | null; attachments_dangerous: number | null;
   }>())!;
 }
@@ -239,5 +239,55 @@ describe("a mailbox that asked for it holds back a delivery its sender's domain 
       { filename: "invoice.pdf", declaredType: "application/pdf", bytes: MZ.length, verdict: "disguised" },
     ]);
     expect(body.text).toContain("See attached.");
+  });
+});
+
+describe("held on request (0064, #263): the act a customer's own classifier reaches", () => {
+  it("holds a filed delivery with a reason, hides it, audits the score, and release undoes it", async () => {
+    const ctx = createSystemCtx();
+    const id = await accept(PASSED, OFF.address);
+    expect(await materialiseReceipt(testEnv, ctx, id)).toMatchObject({ status: "created" });
+    const filed = await row(id);
+    expect(filed.quarantined_at).toBeNull();
+    expect(await listedReceipts()).toContain(id);
+
+    const held = await holdDelivery(testEnv, ctx, ORG, ADMIN, filed.id, {
+      reason: "nearest neighbours are three released phishing messages", score: 0.91,
+    });
+    expect(held).toEqual({ held: true, messageId: filed.id, mailboxId: OFF.id });
+    expect(await row(id)).toMatchObject({ quarantine_reason: "held" });
+    expect(await listedReceipts()).not.toContain(id);
+    const listed = (await listQuarantined(testEnv, ORG, ADMIN)).find((one) => one.messageId === filed.id);
+    expect(listed).toMatchObject({
+      reason: "held", note: "nearest neighbours are three released phishing messages", mailboxId: OFF.id,
+    });
+    const audited = await testEnv.CATALOG.prepare(
+      "SELECT action, detail FROM audit_entries WHERE org_id = ? AND subject = ? ORDER BY seq",
+    ).bind(ORG, filed.id).all<{ action: string; detail: string }>();
+    expect(audited.results.map((one) => one.action)).toEqual(["message.held"]);
+    expect(JSON.parse(audited.results[0]!.detail)).toMatchObject({ score: 0.91, mailboxId: OFF.id });
+
+    // A held message is hidden by id, so a second hold cannot see it and cannot overwrite the first reason.
+    await expect(holdDelivery(testEnv, ctx, ORG, ADMIN, filed.id, { reason: "again", score: null }))
+      .rejects.toThrow(/E_NO_SUCH_MESSAGE/);
+    expect((await row(id)).quarantine_note).toBe("nearest neighbours are three released phishing messages");
+
+    await releaseQuarantine(testEnv, ctx, ORG, ADMIN, filed.id);
+    expect((await row(id)).quarantined_at).toBeNull();
+    expect(await listedReceipts()).toContain(id);
+  });
+
+  it("answers 404 for a message the holder may not read, the same as for one that does not exist", async () => {
+    const ctx = createSystemCtx();
+    const id = await accept(PASSED, OFF.address);
+    await materialiseReceipt(testEnv, ctx, id);
+    const stranger = "usr_quarantine_stranger";
+    await testEnv.CATALOG.prepare("INSERT OR IGNORE INTO users (id, org_id, email, created_at) VALUES (?,?,?,?)")
+      .bind(stranger, ORG, "stranger@quarantine.example", new Date(ctx.now()).toISOString()).run();
+    await expect(holdDelivery(testEnv, ctx, ORG, stranger, (await row(id)).id, { reason: "x", score: null }))
+      .rejects.toThrow(/E_NO_SUCH_MESSAGE/);
+    await expect(holdDelivery(testEnv, ctx, ORG, ADMIN, "msg_nope", { reason: "x", score: null }))
+      .rejects.toThrow(/E_NO_SUCH_MESSAGE/);
+    expect((await row(id)).quarantined_at).toBeNull();
   });
 });

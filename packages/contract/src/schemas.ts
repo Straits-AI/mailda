@@ -1670,7 +1670,7 @@ export const judgedLink = z.object({
 }).strict();
 
 /** Why a delivery was held back (0056): the sender's domain failed DMARC and asked receivers to do this. */
-export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous"]);
+export const quarantineReason = z.enum(["dmarc_fail_reject", "dmarc_fail_quarantine", "attachment_dangerous", "held"]);
 export type QuarantineReason = z.infer<typeof quarantineReason>;
 
 /** One delivery held back from every queue (0056), and why, for an administrator deciding whether to let it in. */
@@ -1686,6 +1686,18 @@ export const quarantinedDelivery = z.object({
   acceptedAt: isoDate,
   quarantinedAt: isoDate,
   reason: quarantineReason,
+  /** The words a hold on request carried (`reason: "held"`); null for the switches. */
+  note: z.string().nullable(),
+}).strict();
+
+/** Hold a filed delivery back from its queue, with the reason in words and, from a model, its score (#263). */
+export const quarantineHoldRequest = z.object({
+  reason: z.string().min(1).max(500),
+  /** A model's own number, 0 to 1, kept on the audit entry so a decision can be read back against it. */
+  score: z.number().min(0).max(1).optional(),
+}).strict().meta({ refusal: "E_QUARANTINE_FIELD_UNKNOWN" });
+export const quarantineHeldResponse = z.object({
+  held: z.literal(true), messageId: z.string().min(1), mailboxId: z.string().min(1),
 }).strict();
 
 export const quarantineListResponse = z.object({ quarantined: z.array(quarantinedDelivery) }).strict();

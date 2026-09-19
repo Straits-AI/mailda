@@ -27,7 +27,7 @@ Responses are validated against the contract, so a field you read is a field the
 arrives as a `MaildaError` carrying `code`, and its message has three parts — what happened, why, and what
 to do. **Read the `fix` before retrying.** Most refusals here are not transient and retrying will not help.
 
-## What you can do — 27 capabilities
+## What you can do — 28 capabilities
 
 ### Reading — answers a question, changes nothing
 
@@ -64,6 +64,7 @@ to do. **Read the `fix` before retrying.** Most refusals here are not transient 
 | `postMatters` | Open a matter |
 | `putMessagesByMessageIdLabels` | Put words on a message, or take them off (0061). Takes the msg_ id, not the receipt id. |
 | `putMessagesByMessageIdRead` | Mark a message read or unread, for you (0062). Takes the msg_ id. `{read: false}` puts it back |
+| `postQuarantineByMessageIdHold` | Hold a received message back from its mailbox's queue, with the reason in words. The act a customer's own classifier reaches; an administrator releases it from GET /api/quarantine |
 | `postSendsBySendIdCancel` | Cancel a send that has not left |
 
 ## What you cannot do, and why — 116 withheld

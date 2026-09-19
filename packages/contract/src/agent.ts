@@ -117,6 +117,12 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "published one, and a matter is a folder rather than an act on anybody's mail.",
     "PUT /api/drafts",
     "PUT /api/messages/:messageId/labels",
+    /*
+     * Holding a delivery (#263). Reversible by the release button an administrator already has, and it is
+     * the one act a customer's own classifier needs: the Node keeps no model, so a model the customer runs
+     * scores and this is where the score lands. Bounded by content.read on the mailbox, like a label.
+     */
+    "POST /api/quarantine/:messageId/hold",
     "PUT /api/messages/:messageId/read",
     "POST /api/butlers",
     "PUT /api/butlers/:butlerId/draft",

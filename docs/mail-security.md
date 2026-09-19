@@ -121,6 +121,22 @@ published policy constrains the condition, the same cost rule as `recipient_exte
 Still not a general verdict policy: an inbound message is filed by the quarantine switch above or not at
 all, and `spf=softfail` still has no authority behind it.
 
+### Held on request: the act a customer's own classifier reaches (0064, 19 September 2026)
+
+The Node keeps no classifier, and the line at the top says where one goes: in the customer's own account,
+scoring what a policy reads. What was missing was the act. `POST /api/quarantine/:messageId/hold
+{reason, score?}` holds a filed delivery back from its queue the way the two switches do, with the reason
+in words and the model's score on the audit entry (`message.held`). It is bounded by `mailbox.content.read`
+on the mailbox, like a label, and it is offered to machines as `act` (#263): an agent minted for the
+mailbox can read the page, score it against whatever it knows, and hold what it distrusts. A held message
+is hidden by id, so nothing overwrites the first reason. The administrator sees the reason on the queue
+screen beside the switches' rows and releases it with the same button, which is the person's answer to
+the model, and the answer the next model reads.
+
+`examples/hold-agent/` is a reference: nearest-neighbour over `bge-small` embeddings against this Node's
+own released and held messages, through the SDK. A shape, not a receipt. Precision and recall are numbers
+the customer's corpus produces, and nothing ships in the Node before it has them.
+
 ## What is not built, in the order it should be
 
 1. **The rest of the verdict policy.** Inbound acts beyond the quarantine switch, and conditions with an
@@ -133,7 +149,8 @@ all, and `spf=softfail` still has no authority behind it.
 4. **Suppression, the measurement.** Built above. Still open: whether Cloudflare's
    `drop_suppressed_recipients` keeps the same list, which needs a bounced address and a send with the
    option on. A receipt, not code.
-5. **A classifier, measured and not shipped.** `docs/receipts/workers-ai-classifier.md`, 17 September:
+5. **A classifier, measured and not shipped.** The seam exists now (held on request, above); the model
+   does not. `docs/receipts/workers-ai-classifier.md`, 17 September:
    Workers AI lists two text-classification models, a sentiment model and a reranker, and the sentiment
    model scores "you have won a prize" as the most positive text tried. There is no lightweight edge
    classifier for this job on the platform today. What would work is nearest-neighbour over embeddings

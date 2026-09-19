@@ -591,7 +591,8 @@ export interface QuarantinedDelivery {
   dmarcPolicy: string | null;
   acceptedAt: string;
   quarantinedAt: string;
-  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine" | "attachment_dangerous";
+  reason: "dmarc_fail_reject" | "dmarc_fail_quarantine" | "attachment_dangerous" | "held";
+  note: string | null;
 }
 
 /** Every delivery held back on this Node. Administrators only; anyone else is refused, and the hook says so. */

@@ -119,6 +119,12 @@ describe("every closed set the contract declares is a closed set the boundary en
        * unknown field here reaches the one route that **writes DNS on the customer's zone**, and a
        * misspelled `address` would route mail to a name nobody chose.
        */
+      /*
+       * Holding a delivery on request (#263). Strict because the body is a reason and a score, and a
+       * misspelled `score` silently dropped would record a hold with no number beside it — the one thing a
+       * later reader needs to judge the model that asked.
+       */
+      "POST /api/quarantine/:messageId/hold",
       "POST /api/provider/receiving",
       // Replacing and restoring a routing rule's action (#258): the same zone, the same reason.
       "POST /api/provider/routing-rules/take-over",
@@ -336,7 +342,8 @@ describe("strictness is decided per route, not turned on globally", () => {
       "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",
-      "POST /api/provider/sending", "POST /api/provider/subscription", "POST /api/search/repair",
+      "POST /api/provider/sending", "POST /api/provider/subscription",
+      "POST /api/quarantine/:messageId/hold", "POST /api/search/repair",
       "PUT /api/policies/:policyId/draft", "PUT /api/provider/client",
     ]);
     expect(tolerant.sort()).toEqual([

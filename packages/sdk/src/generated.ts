@@ -438,6 +438,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Hold a received message back from its mailbox's queue, with the reason in words. The act a customer's own classifier reaches; an administrator releases it from GET /api/quarantine
+   *
+   * `POST /api/quarantine/:messageId/hold`
+   */
+  async postQuarantineByMessageIdHold(params: { messageId: string }, body: z.infer<typeof S.quarantineHoldRequest>): Promise<z.infer<typeof S.quarantineHeldResponse>> {
+    return await this.json("POST", "/api/quarantine/:messageId/hold", params, body) as z.infer<typeof S.quarantineHeldResponse>;
+  }
+
+  /**
    * Let a quarantined delivery into its mailbox's queue, opening the case it would have had
    *
    * `POST /api/quarantine/:messageId/release`

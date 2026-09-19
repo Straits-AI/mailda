@@ -850,6 +850,13 @@ describe("a mailbox route requires the relation it declares, not merely some rel
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    if (spec.path === "/api/quarantine/:messageId/hold") {
+      // A hold hides the fixture message by id, so every route walked after it would answer 404. Put the
+      // row back the way release would, minus the case, so the walk keeps its one message.
+      await testEnv.CATALOG.prepare(
+        "UPDATE messages SET quarantined_at = NULL, quarantine_reason = NULL, quarantine_note = NULL WHERE id = ?",
+      ).bind(MESSAGE).run();
+    }
     if (response.status < 200 || response.status >= 300) return false;
     const text = await response.text();
     return SECRETS.some((secret) => text.includes(secret));

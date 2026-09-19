@@ -331,7 +331,7 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
      * from every queue, and letting it in later, are decisions somebody may be asked about, so each names
      * the message it is about.
      */
-    actions: ["message.quarantined", "message.released"],
+    actions: ["message.quarantined", "message.held", "message.released"],
   },
   mailbox_items: { exempt: "Derived placement of an already-evidenced message, not an independent act." },
   ingress_receipts: {
