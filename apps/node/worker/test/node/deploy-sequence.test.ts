@@ -529,9 +529,9 @@ describe("a second Node is a name, not an edit (`mailda deploy --name`)", () => 
   it("passes the derived config to every wrangler call the deploy makes", () => {
     // Every `wrangler` argument list in the deploy verb spreads WRANGLER_ARGS; a call that took ENV alone
     // would act on `wrangler.jsonc` while the rest of the run acted on the derived file.
-    // Account-level questions (`whoami`, `workflows list`) take no config: they are about the account, and
-    // the list is read to find which Worker owns a Workflow, whichever config asked.
-    const accountLevel = /"wrangler", "(whoami|workflows", "list)"/;
+    // Account-level questions (`whoami`, `login`, `workflows list`) take no config: they are about the
+    // account, and the list is read to find which Worker owns a Workflow, whichever config asked.
+    const accountLevel = /"wrangler", "(whoami|login|workflows", "list)"/;
     const calls = (cli.match(/(?:capture|run)\("npx",\s*\[[^\]]*\]/g) ?? []).filter((call) => !accountLevel.test(call));
     expect(calls.length).toBeGreaterThan(5);
     for (const call of calls) expect(call, call).toContain("...WRANGLER_ARGS");

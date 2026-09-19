@@ -31,6 +31,7 @@
 
 import { doctorExitCode } from "./deploy-parse.mjs";
 import { doctor } from "./verbs/doctor.mjs";
+import { install } from "./verbs/install.mjs";
 import { provider } from "./verbs/provider.mjs";
 import { deploy, preflight } from "./verbs/deploy.mjs";
 import { claimSecret, setPassword, recoveryCodes } from "./verbs/secrets.mjs";
@@ -60,6 +61,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --price a.com,b.dev          real-time registry price, which is what an approval binds to
   mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
   mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
+  mailda install [--yes] [--no-open] the first run as one conversation: sign in, pick the account, deploy,
+                                     seed the claim secret, open the Node
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
@@ -100,6 +103,7 @@ switch (verb) {
   case "verify-evidence": await verifyEvidence(rest); break;
   case "search": await search(rest); break;
   case "provider": await provider(rest); break;
+  case "install": await install(rest); break;
   default:
     process.stdout.write(USAGE);
     process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);
