@@ -3,6 +3,8 @@
 Read [`AGENTS.md`](./AGENTS.md) first. It is the working agreement, it is short, and it binds humans and
 agents equally. This file only adds the mechanics.
 
+Conduct is in [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+
 ## Where work is tracked
 
 Issues on this repository. [Issue #1](https://github.com/Straits-AI/mailda/issues/1) is the map: one issue

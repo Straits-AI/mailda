@@ -11,12 +11,12 @@ import { CallerError, conflict, notFound, unprocessable } from "./errors.ts";
 import { readTeam } from "./teams.ts";
 
 /**
- * The policy object: five conditions, four totally-ordered outcomes, and a draft/publish lifecycle (#60,
+ * The policy object: six conditions, four totally-ordered outcomes, and a draft/publish lifecycle (#60,
  * §18, Layer 5).
  *
- * ## Five conditions, and everything else named absent
+ * ## Six conditions, and everything else named absent
  *
- * §18 lists thirteen policy dimensions. Five ship, and they are exactly the ones answerable from a column
+ * §18 lists thirteen policy dimensions. Six ship, and they are exactly the ones answerable from a column
  * that exists or from one derivation over storage that exists:
  *
  * | Condition | Answered from |
@@ -26,6 +26,7 @@ import { readTeam } from "./teams.ts";
  * | `recipient_external` | the recipient's domain is not among the domains in `addresses` |
  * | `is_reply` | `in_reply_to_message_id IS NOT NULL` |
  * | `org_daily_volume` | `send_counters.handed_over`, which is org-wide and daily |
+ * | `reply_to_dmarc_fail` | `messages.auth_dmarc` on the message `in_reply_to_message_id` names (0055, #260) |
  *
  * **Named absent with the reason rather than stubbed:** data class, contact trust, DLP, device, geography,
  * velocity, budget, reputation, Butler autonomy, LLM profile, attachment/link state, delegator — and
@@ -293,8 +294,8 @@ export async function requiredStages(env: Env, versionIds: readonly string[]): P
 /**
  * A policy's conditions. `undefined`/absent means unconstrained, which is stored as NULL.
  *
- * Five fields, closed. A sixth would be a type error at the moment somebody tries to express it, which is
- * the property the five-column schema exists to give — a JSON bag would have accepted `dataClass` and
+ * Six fields, closed. A seventh would be a type error at the moment somebody tries to express it, which is
+ * the property the typed-column schema exists to give — a JSON bag would have accepted `dataClass` and
  * published a rule that never fires.
  */
 export interface PolicyConditions {
@@ -304,15 +305,23 @@ export interface PolicyConditions {
   isReply?: boolean | null;
   /** Matches when today's org-wide `handed_over` is at or above this. */
   orgDailyVolumeMin?: number | null;
+  /**
+   * `true` matches a reply to a message whose stored DMARC verdict is `fail` (#260). `false` matches
+   * everything else: a new message, or a reply to mail that passed, had no policy, or was never evaluated.
+   * A `NULL` verdict (materialised before 0055, backfill pending) is not a fail, and is not guessed to be.
+   */
+  replyToDmarcFail?: boolean | null;
 }
 
-/** What a send is, as far as the five conditions are concerned. Supplied by the caller at seal. */
+/** What a send is, as far as the six conditions are concerned. Supplied by the caller at seal. */
 export interface SendFacts {
   mailboxId: string;
   actorUserId: string;
   /** Every envelope recipient, To plus Cc plus Bcc, already normalized. */
   recipients: readonly string[];
   isReply: boolean;
+  /** The parent, when this is a reply. Read only when a published policy constrains `reply_to_dmarc_fail`. */
+  inReplyToMessageId: string | null;
 }
 
 export interface MatchedPolicy {
@@ -328,7 +337,7 @@ export interface PolicyDecision {
   outcome: Outcome;
   matched: MatchedPolicy[];
   /** Which derived inputs this evaluation had to fetch. The cost story, readable rather than inferred. */
-  fetched: { domains: boolean; dailyVolume: boolean };
+  fetched: { domains: boolean; dailyVolume: boolean; parentDmarc: boolean };
 }
 
 interface VersionRow {
@@ -342,6 +351,7 @@ interface VersionRow {
   when_recipient_external: number | null;
   when_is_reply: number | null;
   when_org_daily_volume_min: number | null;
+  when_reply_to_dmarc_fail: number | null;
 }
 
 /**
@@ -385,7 +395,7 @@ export async function evaluate(env: Env, ctx: Ctx, orgId: string, facts: SendFac
   const { results } = await env.CATALOG.prepare(
     `SELECT v.id, v.policy_id, p.name, v.version, v.outcome,
             v.when_mailbox_id, v.when_actor_user_id, v.when_recipient_external, v.when_is_reply,
-            v.when_org_daily_volume_min
+            v.when_org_daily_volume_min, v.when_reply_to_dmarc_fail
        FROM policy_versions v
        JOIN policies p ON p.id = v.policy_id AND p.org_id = v.org_id
       WHERE v.org_id = ? AND v.state = 'published'
@@ -395,6 +405,7 @@ export async function evaluate(env: Env, ctx: Ctx, orgId: string, facts: SendFac
   const live = results;
   const needsDomains = live.some((row) => row.when_recipient_external !== null);
   const needsVolume = live.some((row) => row.when_org_daily_volume_min !== null);
+  const needsParentDmarc = live.some((row) => row.when_reply_to_dmarc_fail !== null);
 
   // The two derived inputs, fetched only when something asks. `false`/`0` are the honest defaults for the
   // unasked case because they are never read: a policy that does not constrain a condition never compares it.
@@ -402,6 +413,9 @@ export async function evaluate(env: Env, ctx: Ctx, orgId: string, facts: SendFac
     ? await anyRecipientExternal(env, orgId, facts.recipients)
     : false;
   const dailyVolume = needsVolume ? await orgDailyVolume(env, ctx, orgId) : 0;
+  const replyToDmarcFail = needsParentDmarc && facts.inReplyToMessageId !== null
+    ? await parentDmarcFailed(env, orgId, facts.inReplyToMessageId)
+    : false;
 
   const matched: MatchedPolicy[] = [];
   let outcome: Outcome = "allow";
@@ -412,6 +426,7 @@ export async function evaluate(env: Env, ctx: Ctx, orgId: string, facts: SendFac
     if (row.when_recipient_external !== null && (row.when_recipient_external === 1) !== recipientExternal) continue;
     if (row.when_is_reply !== null && (row.when_is_reply === 1) !== facts.isReply) continue;
     if (row.when_org_daily_volume_min !== null && dailyVolume < row.when_org_daily_volume_min) continue;
+    if (row.when_reply_to_dmarc_fail !== null && (row.when_reply_to_dmarc_fail === 1) !== replyToDmarcFail) continue;
 
     // A stored outcome outside the four is a schema violation, not an input to tolerate. Skipping it would
     // silently weaken the decision — the failure direction #60's rejection of a priority field is about — so
@@ -435,7 +450,10 @@ export async function evaluate(env: Env, ctx: Ctx, orgId: string, facts: SendFac
     outcome = stricter(outcome, row.outcome);
   }
 
-  return { outcome, matched, fetched: { domains: needsDomains, dailyVolume: needsVolume } };
+  return {
+    outcome, matched,
+    fetched: { domains: needsDomains, dailyVolume: needsVolume, parentDmarc: needsParentDmarc },
+  };
 }
 
 /**
@@ -462,6 +480,18 @@ async function anyRecipientExternal(
 }
 
 /** Today's org-wide hand-over count. The one counter that exists, read the way `dailySendState` reads it. */
+/**
+ * Whether the message a reply answers was disowned by its sender's domain (#260). One indexed read of the
+ * row 0055 stores the verdict on; `fail` and nothing else, so a `NULL` verdict (not yet evaluated) or an
+ * `absent` header is not treated as a failure this Node never saw.
+ */
+async function parentDmarcFailed(env: Env, orgId: string, messageId: string): Promise<boolean> {
+  const row = await env.CATALOG.prepare(
+    "SELECT auth_dmarc FROM messages WHERE org_id = ? AND id = ?",
+  ).bind(orgId, messageId).first<{ auth_dmarc: string | null }>();
+  return row?.auth_dmarc === "fail";
+}
+
 async function orgDailyVolume(env: Env, ctx: Ctx, orgId: string): Promise<number> {
   const day = new Date(ctx.now()).toISOString().slice(0, 10);
   const row = await env.CATALOG.prepare(
@@ -506,6 +536,9 @@ export function canonicalConditions(
     bit(conditions.recipientExternal),
     bit(conditions.isReply),
     num(conditions.orgDailyVolumeMin),
+    // Prefixed and absent when unconstrained, so every hash written before 0063 stays valid (#73's rule).
+    conditions.replyToDmarcFail === null || conditions.replyToDmarcFail === undefined
+      ? "" : `|dmarc${bit(conditions.replyToDmarcFail)}`,
     // A stage is its count, and `@team` after it when it names one (#73). An unconstrained stage serializes
     // to exactly the digit it always did, so **every hash written before migration 0032 stays valid** — the
     // same property #61 got from normalising the implicit stage to no rows, one level down. `@` is a
@@ -656,9 +689,9 @@ function draftInsert(
     `INSERT INTO policy_versions
        (id, org_id, policy_id, version, state, outcome,
         when_mailbox_id, when_actor_user_id, when_recipient_external, when_is_reply,
-        when_org_daily_volume_min, canonical_sha256, created_by, created_at,
+        when_org_daily_volume_min, when_reply_to_dmarc_fail, canonical_sha256, created_by, created_at,
         published_by, published_at, superseded_at)
-     VALUES (?,?,?,NULL,'draft',?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)`,
+     VALUES (?,?,?,NULL,'draft',?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)`,
   ).bind(
     versionId, orgId, policyId, outcome,
     conditions.mailboxId ?? null,
@@ -666,6 +699,7 @@ function draftInsert(
     bit(conditions.recipientExternal),
     bit(conditions.isReply),
     conditions.orgDailyVolumeMin ?? null,
+    bit(conditions.replyToDmarcFail),
     hash, actorUserId, at,
   );
   // The version and its stages are one draft, so they are one list of statements handed to one transaction.
@@ -880,6 +914,7 @@ function couldBothMatch(a: VersionRow, b: VersionRow): boolean {
   if (bothNamed(a.when_actor_user_id, b.when_actor_user_id)) return false;
   if (bothNamed(a.when_recipient_external, b.when_recipient_external)) return false;
   if (bothNamed(a.when_is_reply, b.when_is_reply)) return false;
+  if (bothNamed(a.when_reply_to_dmarc_fail, b.when_reply_to_dmarc_fail)) return false;
   return true;
 }
 
@@ -898,7 +933,7 @@ async function assertNoTeamConflict(
   const { results } = await env.CATALOG.prepare(
     `SELECT v.id, v.policy_id, p.name, v.version, v.outcome,
             v.when_mailbox_id, v.when_actor_user_id, v.when_recipient_external, v.when_is_reply,
-            v.when_org_daily_volume_min
+            v.when_org_daily_volume_min, v.when_reply_to_dmarc_fail
        FROM policy_versions v
        JOIN policies p ON p.id = v.policy_id AND p.org_id = v.org_id
       WHERE v.org_id = ? AND v.state = 'published' AND v.outcome = 'require_approval'
@@ -959,7 +994,7 @@ export async function publishPolicy(
   const draft = await env.CATALOG.prepare(
     `SELECT id, policy_id, '' AS name, 0 AS version, outcome, canonical_sha256,
             when_mailbox_id, when_actor_user_id, when_recipient_external, when_is_reply,
-            when_org_daily_volume_min
+            when_org_daily_volume_min, when_reply_to_dmarc_fail
        FROM policy_versions
       WHERE org_id = ? AND policy_id = ? AND state = 'draft' LIMIT 1`,
   ).bind(orgId, policyId).first<VersionRow & { canonical_sha256: string }>();

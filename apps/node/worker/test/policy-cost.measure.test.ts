@@ -80,6 +80,7 @@ const FACTS = {
   actorUserId: AUTHOR,
   recipients: ["customer@example.net"],
   isReply: false,
+  inReplyToMessageId: null,
 };
 
 beforeEach(async () => {
@@ -143,7 +144,7 @@ describe("what policy evaluation costs (#60's owed receipt)", () => {
     const { env: metered, cost } = metering(testEnv);
     const decision = await evaluate(metered, atTime(AUGUST_10), ORG, FACTS);
     expect(decision.outcome).toBe("hold");
-    expect(decision.fetched).toEqual({ domains: false, dailyVolume: false });
+    expect(decision.fetched).toEqual({ domains: false, dailyVolume: false, parentDmarc: false });
 
     report("evaluate/three-column-conditions", cost);
     expect(cost.d1Executions).toBe(1);
@@ -154,7 +155,7 @@ describe("what policy evaluation costs (#60's owed receipt)", () => {
 
     const { env: metered, cost } = metering(testEnv);
     const decision = await evaluate(metered, atTime(AUGUST_10), ORG, FACTS);
-    expect(decision.fetched).toEqual({ domains: true, dailyVolume: false });
+    expect(decision.fetched).toEqual({ domains: true, dailyVolume: false, parentDmarc: false });
 
     report("evaluate/recipient-external", cost);
     expect(cost.d1Executions).toBe(2);
@@ -170,7 +171,7 @@ describe("what policy evaluation costs (#60's owed receipt)", () => {
 
     const { env: metered, cost } = metering(testEnv);
     const decision = await evaluate(metered, atTime(AUGUST_10), ORG, FACTS);
-    expect(decision.fetched).toEqual({ domains: true, dailyVolume: true });
+    expect(decision.fetched).toEqual({ domains: true, dailyVolume: true, parentDmarc: false });
 
     report("evaluate/all-five-conditions", cost);
     expect(cost.d1Executions).toBe(3);

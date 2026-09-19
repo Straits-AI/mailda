@@ -371,7 +371,8 @@ export const governance = {
     const rows = await env.CATALOG.prepare(
       `SELECT p.id AS policy_id, p.name, v.id AS version_id, v.version, v.state, v.outcome,
               v.when_mailbox_id, v.when_actor_user_id, v.when_recipient_external, v.when_is_reply,
-              v.when_org_daily_volume_min, v.created_at, v.published_at, v.superseded_at
+              v.when_org_daily_volume_min, v.when_reply_to_dmarc_fail,
+              v.created_at, v.published_at, v.superseded_at
          FROM policy_versions v
          JOIN policies p ON p.id = v.policy_id AND p.org_id = v.org_id
         WHERE v.org_id = ?

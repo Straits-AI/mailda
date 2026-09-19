@@ -639,7 +639,7 @@ export async function sealManifest(
   /**
    * The policy decision (#60), after the parent is resolved and before anything is persisted.
    *
-   * After the parent, because `is_reply` is one of the five conditions and a named parent that fails the
+   * After the parent, because `is_reply` is one of the six conditions and a named parent that fails the
    * authority check above must refuse rather than be evaluated as a reply. Before the writes, because the
    * outcome decides the state the row is inserted with — the whole reason evaluation is here rather than at
    * dispatch. The refusals above still come first: an unauthorized send is refused without a policy being
@@ -658,6 +658,7 @@ export async function sealManifest(
     actorUserId: composition.authorUserId,
     recipients: [...to, ...cc, ...bcc],
     isReply: composition.inReplyToMessageId !== undefined,
+    inReplyToMessageId: composition.inReplyToMessageId ?? null,
   });
 
   const decision = { outcome: staged.outcome, matched: staged.matched };

@@ -88,12 +88,14 @@ async function published(
 
 function facts(overrides?: Partial<{
   mailboxId: string; actorUserId: string; recipients: string[]; isReply: boolean;
+  inReplyToMessageId: string | null;
 }>) {
   return {
     mailboxId: MAILBOX,
     actorUserId: AUTHOR,
     recipients: ["customer@example.net"],
     isReply: false,
+    inReplyToMessageId: null,
     ...overrides,
   };
 }
@@ -279,7 +281,7 @@ describe("the indexes the migration claims evaluation needs", () => {
   });
 });
 
-describe("the five conditions", () => {
+describe("the six conditions", () => {
   it("matches on mailbox, and does not match another mailbox", async () => {
     await published("support only", "deny", { mailboxId: MAILBOX });
     expect((await evaluate(testEnv, atTime(AUGUST_10), ORG, facts())).outcome).toBe("deny");
@@ -300,6 +302,33 @@ describe("the five conditions", () => {
     expect((await evaluate(testEnv, atTime(AUGUST_10), ORG, facts({ isReply: true }))).outcome).toBe("hold");
     expect((await evaluate(testEnv, atTime(AUGUST_10), ORG, facts({ isReply: false }))).outcome)
       .toBe("require_approval");
+  });
+
+  it("matches a reply to a message whose DMARC failed, and only a `fail` (#260)", async () => {
+    await published("answering disowned mail needs approval", "require_approval", { replyToDmarcFail: true });
+    const ctx = atTime(AUGUST_10);
+    const parent = await aParentMessage(ctx);
+    const verdict = async (value: string | null) =>
+      testEnv.CATALOG.prepare("UPDATE messages SET auth_dmarc = ? WHERE id = ?").bind(value, parent).run();
+    const reply = () => evaluate(testEnv, ctx, ORG, facts({ isReply: true, inReplyToMessageId: parent }));
+
+    await verdict("fail");
+    const gated = await reply();
+    expect(gated.outcome).toBe("require_approval");
+    expect(gated.fetched.parentDmarc).toBe(true);
+    // `pass`, `none`, `absent` and a verdict not yet evaluated are all not-a-fail. A NULL is not guessed.
+    for (const other of ["pass", "none", "absent", null]) {
+      await verdict(other);
+      expect((await reply()).outcome, String(other)).toBe("allow");
+    }
+    // A new message is not a reply to anything, so it cannot be a reply to disowned mail.
+    await verdict("fail");
+    expect((await evaluate(testEnv, ctx, ORG, facts())).outcome).toBe("allow");
+
+    // And `false` is a condition, like `isReply: false`.
+    await published("other sends hold", "hold", { replyToDmarcFail: false });
+    expect((await reply()).outcome).toBe("require_approval");
+    expect((await evaluate(testEnv, ctx, ORG, facts())).outcome).toBe("hold");
   });
 
   it("matches on org_daily_volume at or above the floor, and not below it", async () => {
@@ -386,12 +415,12 @@ describe("recipient_external is derived from the customer's own domains", () => 
     // query rather than three (receipt: policy-evaluation-cost.md).
     await published("mailbox only", "hold", { mailboxId: MAILBOX });
     const decision = await evaluate(testEnv, atTime(AUGUST_10), ORG, facts());
-    expect(decision.fetched).toEqual({ domains: false, dailyVolume: false });
+    expect(decision.fetched).toEqual({ domains: false, dailyVolume: false, parentDmarc: false });
 
     await published("external too", "deny", { recipientExternal: true });
     await published("volume too", "deny", { orgDailyVolumeMin: 5 });
     const both = await evaluate(testEnv, atTime(AUGUST_10), ORG, facts());
-    expect(both.fetched).toEqual({ domains: true, dailyVolume: true });
+    expect(both.fetched).toEqual({ domains: true, dailyVolume: true, parentDmarc: false });
   });
 });
 

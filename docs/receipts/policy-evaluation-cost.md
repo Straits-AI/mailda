@@ -39,7 +39,7 @@ RPCs, the last of which `doctor`'s meter cannot see at all.
 | `evaluate`, no policies at all | **1** | 1 | 0 | 0 | 0 |
 | `evaluate`, three column-answerable conditions | **1** | 1 | 0 | 0 | 0 |
 | `evaluate`, `recipient_external` in play | **2** | 2 | 0 | 0 | 0 |
-| `evaluate`, all five conditions in play | **3** | 3 | 0 | 0 | 0 |
+| `evaluate`, all five original conditions in play | **3** | 3 | 0 | 0 | 0 |
 | `evaluate`, thirty published policies | **1** | 1 | 0 | 0 | 0 |
 | `publishPolicy` | **5** | 5 | 1 | 0 | 0 |
 | `sealManifest`, new thread, no policies | **11** | 7 | 1 | 2 | 2 |
@@ -52,8 +52,9 @@ RPCs, the last of which `doctor`'s meter cannot see at all.
 difference is not an accident of the fixture. It is the reason the matching predicate is evaluated in
 TypeScript rather than pushed into SQL.
 
-Every one of the five conditions is a column, so the whole predicate *is* expressible as
-`AND (when_x IS NULL OR when_x = ?)`. Two of the five are **derived**: `recipient_external` needs the
+Every one of the conditions is a column, so the whole predicate *is* expressible as
+`AND (when_x IS NULL OR when_x = ?)`. Two of the original five are **derived** (a third, the parent's
+DMARC verdict, joined them in 0063 under the same rule): `recipient_external` needs the
 organization's domain set, `org_daily_volume` needs today's counter. A pushed-down predicate would have to
 bind both inputs before the query could run, spending both queries **whether or not any live policy asks for
 them**. Reading the candidate rows first lets each derived input be fetched only when some published policy

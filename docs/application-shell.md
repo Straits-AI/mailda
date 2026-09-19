@@ -723,12 +723,13 @@ which is exactly why the claim secret is typed rather than clicked.
 ### `/rules` (#60, #81)
 
 Policies, under the word a person uses for them. Each rule renders as a **sentence**, *"Mail to anyone
-outside is held for a person to release."*, assembled from the same five columns the evaluator reads, so a
+outside is held for a person to release."*, assembled from the same six columns the evaluator reads, so a
 sentence cannot describe a condition that is not there. `outcome: hold, when_recipient_external: 1` is
 accurate and tells a reader nothing about what their organization does.
 
-The editor offers exactly five conditions because #60 stored them as typed columns rather than a blob,
-precisely so a sixth that nothing evaluates cannot be written. Each condition has **three** states, not two:
+The editor offers exactly six conditions because #60 stored them as typed columns rather than a blob,
+precisely so a seventh that nothing evaluates cannot be written. The sixth, a reply to a message whose DMARC
+failed, arrived with #260 and is one indexed read of the parent row, made only when a published policy asks. Each condition has **three** states, not two:
 "not part of this rule" is different from "must be false", the column is nullable for that reason, and a
 checkbox would silently turn every unticked box into a condition the evaluator now reads.
 

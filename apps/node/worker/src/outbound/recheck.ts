@@ -287,6 +287,8 @@ export interface EffectEnvelope {
     bcc: string[];
     subject: string;
     isReply: boolean;
+    /** The parent's id, for the sixth condition's re-evaluation (#260). Bound from the row like the rest. */
+    inReplyToMessageId: string | null;
   };
   /**
    * §18's referenced artifact hashes. Two bodies, for the structural reason in this module's header, and
@@ -455,6 +457,7 @@ export async function bindEnvelope(
     bcc: jsonList(row.envelope_bcc),
     subject: row.subject,
     isReply: row.in_reply_to_message_id !== null,
+    inReplyToMessageId: row.in_reply_to_message_id,
   };
 
   return {
@@ -711,6 +714,7 @@ export async function recheckApproved(
     actorUserId: envelope.actorUserId,
     recipients: [...envelope.parameters.to, ...envelope.parameters.cc, ...envelope.parameters.bcc],
     isReply: envelope.parameters.isReply,
+    inReplyToMessageId: envelope.parameters.inReplyToMessageId,
   });
   const bound = envelope.policy.boundOutcome ?? "allow";
   if (isStricter(current.outcome, bound)) {

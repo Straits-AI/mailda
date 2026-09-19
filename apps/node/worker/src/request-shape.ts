@@ -8,7 +8,7 @@ import { CallerError, unprocessable } from "./errors.ts";
  *
  * ## The defect this closes, because it is not obvious from the outside
  *
- * `conditionsFrom` in `index.ts` reads a policy's five conditions by name and drops everything else. A
+ * `conditionsFrom` in `index.ts` reads a policy's six conditions by name and drops everything else. A
  * caller who wrote `{"conditions":{"mailbox_id":"mbx_…"}}` — snake case instead of camel — got `{}`, which
  * stores five NULLs, which is a policy version **matching every send in the organization**. The `allow`
  * meant to narrow a gate widened it; the `deny` stopped all outbound mail; the `require_approval` gated the
