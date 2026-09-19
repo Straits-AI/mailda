@@ -19,23 +19,28 @@ written anywhere but here.
 
 ## Installing it
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
-
-The button provisions D1 and R2, builds the Worker, and writes no ids into your clone. The Node applies its
-own schema when it is claimed. The first click produced a dead Node, and what that found and fixed is in the
-[receipt](./docs/receipts/deploy-button-install.md).
-
-The CLI path does the same from a clone:
+One command, on macOS, Linux, WSL or Git Bash:
 
 ```sh
-pnpm install
-pnpm run deploy                  # provisions D1 and R2, applies the schema
-pnpm run queue:attach-consumer   # once, after the first deploy; safe to re-run
+curl -fsSL https://mailda.site/install.sh | bash
 ```
+
+It checks for git and Node 22, clones this repository, installs, signs you in to Cloudflare, asks which
+account if you have several, deploys the Worker with its D1, R2 and queue, applies the schema, and opens
+your new Node with the claim secret beside it. You paste the secret and choose the first administrator's
+email and password. Nothing in your account changes before it asks. From a clone, the same is
+`pnpm install && pnpm mailda install`; on Windows without a bash, run that in PowerShell.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
+
+The button does the deploy half without a terminal: it provisions D1 and R2, builds the Worker, and writes
+no ids into your clone; the Node applies its own schema when it is claimed. You then need the claim secret,
+which `pnpm mailda claim-secret` prints from a clone. The first click produced a dead Node, and what that
+found and fixed is in the [receipt](./docs/receipts/deploy-button-install.md).
 
 **One step neither path can do for you.** Delivery outcomes (`accepted`, `bounced`, per recipient) arrive
 on a queue, and observing them needs two things in your account: a consumer on that queue, and an
-`email.sending` event subscription publishing to it. The command above attaches the consumer. The
+`email.sending` event subscription publishing to it. The installer attaches the consumer. The
 subscription is created from the Node's own Setup screen once the Node holds a grant on your account
 ([`docs/cloudflare-settings.md`](./docs/cloudflare-settings.md)). Until both exist every recipient stays
 `unobserved`, and `mailda doctor` names whichever half is missing rather than letting silence read as

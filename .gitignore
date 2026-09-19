@@ -68,4 +68,5 @@ apps/node/worker/wrangler.*.jsonc
 # The site's docs pages are rendered from README.md, AGENTS.md and docs/ by `apps/site/scripts/generate-docs.mjs`
 # on every build; committing them would put a second copy of every doc in the tree, one edit behind the first.
 apps/site/src/content/docs/docs/
+apps/site/public/install.sh
 apps/site/.astro/

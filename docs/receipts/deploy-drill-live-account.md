@@ -25,6 +25,22 @@ values:
   deploy.canary_override_attempts_named_node: 1
 ---
 
+## Addition, 19 September 2026: `mailda install` on a clean account, and the URL a first deploy withheld
+
+`mailda install --yes` was run against an account with no Worker (arbuilder, ours). It signed in from the
+existing wrangler session, resolved the account from `CLOUDFLARE_ACCOUNT_ID`, took `mailda deploy`'s
+first-install path (deploy, migrations, consumer attach: *"Attached mailda as the consumer of
+mailda-sending-events"*), seeded the claim secret, and printed the two things a person needs next side by
+side: `https://mailda.arbuilder-app.workers.dev` and the secret. The unclaimed Node's `/api/doctor` answered
+`degraded` with 11 findings, which is the expected state before a claim. Torn down in the order below;
+every list read empty afterwards and the URL answered 404.
+
+Two defects the drill found in what the README had been telling people. `mailda deploy` demanded a URL
+before it checked whether this was a first install, and a Node that does not exist has no URL, so the
+documented `pnpm run deploy` refused on a clean account; the preflight now asks for the URL only once the
+install is known not to be the first. And the first deploy was run with the terminal attached, so the one
+place wrangler prints the Node's URL went by and nothing kept it; it is captured now.
+
 ## Correction, 10 September 2026: the canary gate was refusing on a propagation race
 
 `mailda deploy` publishes the canary at 0% and immediately asks it for a report, addressed with

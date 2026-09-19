@@ -265,6 +265,9 @@ function accountInventory() {
 /** The config this deploy acts on: `wrangler.jsonc`, or the file `--name` derives from it. Set once, first. */
 let deployConfig = null;
 
+/** The URL wrangler printed on a first install, for `mailda install` to hand on. Null until one happens. */
+export let installedUrl = null;
+
 export async function deploy(argv) {
   const contracting = flag(argv, "contract") !== null || argv.includes("--contract");
   deployConfig = configFor(argv);
@@ -305,7 +308,9 @@ export async function deploy(argv) {
    * was skipped in exactly the situation where nothing else worked either. Settling the account before the
    * guard runs is what makes the guard's answer mean something.
    */
-  const ready = await runPreflight(argv);
+  // `needsUrl: false`: a first install has no URL to give, since the Node does not exist yet, and the
+  // refusal below still names it once `firstInstall()` says this is not one.
+  const ready = await runPreflight(argv, { needsUrl: false });
   if (!ready.ok) fail(ready.report);
   const origin = ready.origin;
 
@@ -323,7 +328,11 @@ export async function deploy(argv) {
       + "   roll back to and nothing a migration could break — and the bindings do not exist until a deploy\n"
       + "   provisions them, which is why neither step below can come first.\n",
     );
-    if (run("npx", ["wrangler", "deploy", ...WRANGLER_ARGS]) !== 0) fail("the first deploy failed.");
+    // Captured (and echoed) rather than run attached: wrangler prints the Node's URL exactly once, here,
+    // and `mailda install` needs it to say where to go next.
+    const uploaded = capture("npx", ["wrangler", "deploy", ...WRANGLER_ARGS]);
+    if (uploaded.status !== 0) fail("the first deploy failed.");
+    installedUrl = /https:\/\/[a-z0-9.-]+\.workers\.dev/i.exec(uploaded.text)?.[0] ?? null;
     process.stdout.write("\n== applying migrations for the first time\n");
     if (run("npx", ["wrangler", "d1", "migrations", "apply", "CATALOG", "--remote", ...WRANGLER_ARGS]) !== 0) {
       fail("applying migrations failed. The Worker is deployed against an empty schema — re-run to finish.");

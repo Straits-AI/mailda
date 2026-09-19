@@ -104,4 +104,9 @@ Cloudflare published it.
 |:--|:--|:--|
 ${receipts.map((one) => `| [${one.id}](/docs/receipts/${one.slug}/) | ${one.kind} | ${one.on} |`).join("\n")}
 `);
-console.log(`rendered ${n + 1} pages into src/content/docs/docs`);
+
+// The installer, served at /install.sh so `curl -fsSL https://mailda.site/install.sh | bash` is the repo's
+// own file. Copied at build, never committed here: the root is the one place it is written.
+mkdirSync(resolve(here, "../public"), { recursive: true });
+writeFileSync(resolve(here, "../public/install.sh"), readFileSync(join(repo, "install.sh"), "utf8"));
+console.log(`rendered ${n + 1} pages into src/content/docs/docs, and install.sh into public/`);
