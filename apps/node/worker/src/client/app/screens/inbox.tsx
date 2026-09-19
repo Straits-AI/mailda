@@ -36,7 +36,7 @@ interface RenderedBody {
     filename: string | null;
     declaredType: string;
     bytes: number;
-    verdict: "executable" | "script" | "archive" | "disguised" | "plain";
+    verdict: "executable" | "script" | "archive" | "archive_dangerous" | "disguised" | "plain";
   }>;
   links: Array<{ href: string; text: string; verdict: "plain" | "mismatch" | "lookalike" | "userinfo" | "ip_host" }>;
   recipients: { to: string[]; cc: string[]; replyTo: string | null };
@@ -73,7 +73,8 @@ function Links({ links }: { links: RenderedBody["links"] }) {
 
 const VERDICT_WORDS: Record<RenderedBody["attachments"][number]["verdict"], string | null> = {
   plain: null,
-  archive: "an archive; what is inside has not been looked at",
+  archive: "an archive; what is inside has not been opened",
+  archive_dangerous: "an archive listing a program or a script",
   executable: "a program",
   script: "a script",
   disguised: "a program under a document's name",

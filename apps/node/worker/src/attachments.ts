@@ -38,7 +38,9 @@ export interface AttachmentSummary {
 }
 
 /** Verdicts a mailbox may hold a delivery back for. Archives are not among them: see the module note. */
-export const DANGEROUS: ReadonlySet<AttachmentVerdict> = new Set(["executable", "script", "disguised"]);
+export const DANGEROUS: ReadonlySet<AttachmentVerdict> = new Set([
+  "executable", "script", "disguised", "archive_dangerous",
+]);
 
 /** A mailbox's declared limits (0065). `null` on either is unbounded. */
 export interface AttachmentLimits {
@@ -110,17 +112,67 @@ export function extensionOf(filename: string | null): string {
   return dot < 0 ? "" : name.slice(dot + 1);
 }
 
-export function classifyAttachment(filename: string | null, head: Uint8Array): AttachmentVerdict {
+/**
+ * The verdict from the name and the first bytes. Given the **whole** attachment, a ZIP is also read for what
+ * it lists (`zipEntries`), and one naming a program or a script is `archive_dangerous`. Eight bytes are
+ * enough for everything else, which is why the two callers that only have a head still get a verdict.
+ */
+export function classifyAttachment(filename: string | null, bytes: Uint8Array): AttachmentVerdict {
   const extension = extensionOf(filename);
-  const signature = signatureOf(head);
+  const signature = signatureOf(bytes.subarray(0, 8));
   if (EXECUTABLE_EXTENSIONS.has(extension)) return "executable";
   if (SCRIPT_EXTENSIONS.has(extension)) return "script";
   // The bytes say program and the name did not. `bin`/`elf` are above, so this is a name chosen to look
   // like something else — or no name at all, which is not more trustworthy.
   if (signature === "executable") return "disguised";
   if (ZIP_DOCUMENT_EXTENSIONS.has(extension)) return "plain";
-  if (ARCHIVE_EXTENSIONS.has(extension) || signature === "archive") return "archive";
+  if (ARCHIVE_EXTENSIONS.has(extension) || signature === "archive") {
+    const listed = zipEntries(bytes);
+    return listed !== null && listed.some((name) => {
+      const inner = extensionOf(name);
+      return EXECUTABLE_EXTENSIONS.has(inner) || SCRIPT_EXTENSIONS.has(inner);
+    }) ? "archive_dangerous" : "archive";
+  }
   return "plain";
+}
+
+/** Entries the central directory walk will read before giving up. A listing this long is not mail. */
+const MAX_ZIP_ENTRIES = 10_000;
+
+/**
+ * The names a ZIP's central directory lists, without extracting anything (#267). Null when the bytes are
+ * not a ZIP this can read whole: no end-of-central-directory record in the last 64 KiB, a ZIP64 offset, or a
+ * directory that runs off the end. A nested archive is a name in this list and is not opened; what it holds
+ * is compressed data and reading it would mean extracting, which is the line this does not cross. Names in
+ * an encrypted ZIP are still in the clear, so a password does not hide a `.exe` from this.
+ */
+export function zipEntries(bytes: Uint8Array): string[] | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // End of central directory: signature 0x06054b50, fixed 22 bytes plus a comment of at most 65,535.
+  const floor = Math.max(0, bytes.byteLength - 22 - 65_535);
+  let eocd = -1;
+  for (let at = bytes.byteLength - 22; at >= floor; at--) {
+    if (view.getUint32(at, true) === 0x06054b50) { eocd = at; break; }
+  }
+  if (eocd < 0) return null;
+  const count = view.getUint16(eocd + 10, true);
+  const size = view.getUint32(eocd + 12, true);
+  const offset = view.getUint32(eocd + 16, true);
+  if (offset === 0xffffffff || count === 0xffff || offset + size > bytes.byteLength) return null;
+  const names: string[] = [];
+  let at = offset;
+  const decoder = new TextDecoder();
+  for (let i = 0; i < Math.min(count, MAX_ZIP_ENTRIES); i++) {
+    // Central directory file header: signature 0x02014b50, fixed 46 bytes, then name, extra, comment.
+    if (at + 46 > bytes.byteLength || view.getUint32(at, true) !== 0x02014b50) return null;
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    if (at + 46 + nameLength > bytes.byteLength) return null;
+    names.push(decoder.decode(bytes.subarray(at + 46, at + 46 + nameLength)));
+    at += 46 + nameLength + extraLength + commentLength;
+  }
+  return names;
 }
 
 /** Summarises `postal-mime`'s attachments: names, declared types, sizes, and a verdict each. */
@@ -135,7 +187,7 @@ export function summariseAttachments(
       filename: part.filename,
       declaredType: part.mimeType,
       bytes: bytes.byteLength,
-      verdict: classifyAttachment(part.filename, bytes.subarray(0, 8)),
+      verdict: classifyAttachment(part.filename, bytes),
     };
   });
 }
