@@ -108,11 +108,23 @@ lift. A bounce after somebody vouched suppresses again. `GET /api/suppressions` 
 screen shows it beside the domain pauses. Whether Cloudflare's own `drop_suppressed_recipients` keeps the
 same list is still unmeasured, which is why this Node keeps its own and says so at the seal.
 
+### A policy on the verdict, at the reply (0063, 19 September 2026)
+
+The send policy's sixth condition, `reply_to_dmarc_fail` (#260). A forged invoice arrives, somebody
+answers it, and the answer carries what the forger asked for: the compromise is the reply, so that is where
+the verdict is read. A published policy naming the condition matches a reply whose parent's stored
+`auth_dmarc` is `fail`, and only `fail`. `none`, `absent` and a verdict not yet evaluated are not failures
+this Node saw, and are not guessed to be. The outcomes are §18's four, so an organization can hold, require
+approval for, or refuse replies to disowned mail. One indexed read of the parent row, made only when a
+published policy constrains the condition, the same cost rule as `recipient_external`.
+
+Still not a general verdict policy: an inbound message is filed by the quarantine switch above or not at
+all, and `spf=softfail` still has no authority behind it.
+
 ## What is not built, in the order it should be
 
-1. **A policy that acts on the verdict.** Quarantine above is the fixed case. `dmarc == "fail"` as a
-   condition in the closed set Layer 5 has, with the outcomes §18 names, is the general one, and it is still
-   open. Today a Butler guard can route on the fact; a policy cannot yet.
+1. **The rest of the verdict policy.** Inbound acts beyond the quarantine switch, and conditions with an
+   authority behind them other than the sender's own domain, when one exists.
 2. **Attachments, the rest of the row.** Executables, scripts and disguises are judged above. Still open:
    a size bound, an allowed-type list a mailbox declares, and archives-in-archives, which means walking a
    ZIP's central directory to judge what it holds without extracting it.

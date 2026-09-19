@@ -391,14 +391,15 @@ describe("strictness is decided per route, not turned on globally", () => {
   });
 });
 
-describe("the contract's five conditions are the five the Node stores", () => {
+describe("the contract's six conditions are the six the Node stores", () => {
   /**
    * The other correspondence #93 could break, and the reason to hold it here rather than trust it.
    *
    * The refusal names the fields **from the schema**, so the message cannot go stale on its own. What can go
-   * stale is the schema against the code: a sixth condition added to `PolicyConditions` and the five columns
+   * stale is the schema against the code: a seventh condition added to `PolicyConditions` and the columns
    * but not to `policyConditions` would be refused at the boundary as unknown — a field the Node supports,
-   * rejected by its own contract, with a message listing five.
+   * rejected by its own contract, with a message listing six. (#260 added the sixth this way and this test
+   * was the one that named the schema.)
    *
    * Read lexically because `src/routes/support.ts` reaches Worker modules and cannot be imported under Node. The narrowness is stated rather than hidden — this sees `source.x`
    * inside `conditionsFrom` and nothing else — and it fails in the safe direction, because a read the
@@ -410,7 +411,7 @@ describe("the contract's five conditions are the five the Node stores", () => {
     expect(body, "conditionsFrom is no longer where this test expects it").not.toBeNull();
     const read = [...body![1]!.matchAll(/source\.(\w+)/g)].map((match) => match[1]!);
     // Anti-vacuity: a regex that matched nothing would agree with an empty schema.
-    expect(read.length).toBe(5);
+    expect(read.length).toBe(6);
 
     const conditions = closedSets().find((set) => set.path.join(".") === "conditions");
     expect([...read].sort()).toEqual([...conditions!.known].sort());

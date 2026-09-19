@@ -47,6 +47,9 @@ previous destination is kept on the audit trail, and *put back* restores it. Exi
 addresses and the catch-all are left alone. `mailda provider --routing-rules <domain>` is the same from
 the CLI.
 
+**A second Node in the same account.** `mailda deploy --name <worker>` derives the Worker, the Workflow
+and every other resource from that name into a git-ignored config; first install measured at 108 s.
+
 **Updating an installed Node.** The button clones without history, so the first update is a merge:
 
 ```sh
@@ -71,17 +74,14 @@ trail.
 **Do not make this the only copy of mail you care about.** It receives, stores, reads, replies, governs and
 automates, and the release gates it sets for itself are not all closed.
 
-What is blocking, as of 17 September 2026, with everything else on the
+What is blocking, as of 19 September 2026, with everything else on the
 [issue tracker](https://github.com/Straits-AI/mailda/issues):
 
 | | |
 |---|---|
 | **A restore has worked three times, and once through to receiving mail** | Three drills (#92): cross-account, then a real backup, then a same-account restore that took a domain, wrote its own routing, and accepted a message from outside. The catalog imports at about a thousand rows a second; the evidence copy is one request per object at 5.4 s each with wrangler, and the bucket-to-bucket copy a mailbox-sized restore needs is untimed. [Runbook](./docs/disaster-recovery.md). |
 | **Deployment promotes on its own, measured twice** | `mailda deploy` does expand/contract with a canary and refuses to promote a version whose `doctor` is worse than the incumbent's (#98). The canary is reached by a version override on the production hostname, because preview URLs do not exist for a Worker with Durable Objects. Unmeasured on a Free account, where ADR 25 says not to run anyway. [Receipt](./docs/receipts/deploy-drill-live-account.md). |
-| **A second Node in one account is a name** | `mailda deploy --name <worker>` derives the Worker, Workflow and `WORKER_NAME` into a git-ignored config and deploys from it; every other resource derives from the name. First install measured at 108 s. The Workflow's name is still a literal Cloudflare requires on the binding, so the derivation is the tool's edit rather than the platform's. |
-| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. Absent: a general policy on the verdict, attachment size and type limits, opened archives, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
-| **The mail client is thin** | Read state, Cc/Bcc and reply-all, hand-over, attachment download, drafts, retry and resend, labels, threads, forwarding, composer attachments, a second mailbox, search with a date window. No HTML composer, no signatures, no folders. Grouping is the sender's own thread root and nothing else. [`docs/application-shell.md`](./docs/application-shell.md). |
-| **AI is reserved, not built** | The Butler engine is deterministic and the `llm.*` node types are declared and refused. There is no provider configuration, prompt versioning, cost governance or evaluation. Calling this AI-native today would be a claim about intent. |
+| **Mail security is thin** | The receiving server's SPF, DKIM and DMARC verdict is stored and shown on every message. Attachments are judged by name and magic bytes, links by where they really go, and a mailbox can hold back mail its sender's domain disowns or that carries a dangerous attachment. A hard-bounced recipient is refused at the seal until an administrator vouches for it. A send policy can hold, gate or refuse a reply to a message whose DMARC failed, which is where a forged invoice does its damage. Absent: inbound acts beyond the quarantine switch, attachment size and type limits, opened archives, and any classifier, because Workers AI has none for mail ([receipt](./docs/receipts/workers-ai-classifier.md)). [`docs/mail-security.md`](./docs/mail-security.md). |
 
 What it is good for now: a design-partner alpha, a non-critical shared mailbox, and exercising the
 governance and deterministic-automation model, which is further along than anything else here.
@@ -145,6 +145,9 @@ own account's plan, so `doctor` reports the requirement as unverified and says w
   attachment and be unable to reply with it.
 - **Cloudflare is a hard dependency.** The Node is not portable to another platform.
 - **Not for bulk or marketing mail.** Transactional and operational only.
+- **No AI inside the app.** The Butler engine is deterministic and the `llm.*` node types are declared and
+  refused. The app goes in your AI instead: the MCP server, the Agent Skill and the SDK are generated from
+  the same route contract, and a model you run scores what a policy reads, never decides.
 - **The composer is plain text.** To, Cc, Bcc, files and a quoted reply. No HTML, signatures or templates.
   No archive, trash or spam folder; labels are the one way to sort mail (ADR 13).
 - **Remote images are blocked until you ask for them.** A tracking pixel tells a third party when your

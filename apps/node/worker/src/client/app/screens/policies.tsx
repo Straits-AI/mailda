@@ -19,12 +19,12 @@ import {
  * from the same five columns the evaluator reads, so a sentence cannot describe a condition that is not
  * there.
  *
- * ## Five conditions, and the screen cannot offer a sixth
+ * ## Six conditions, and the screen cannot offer a seventh
  *
  * #60 stored the conditions as **typed columns** rather than a JSON blob, precisely because a blob would
- * admit a sixth condition nothing evaluates. That decision is what lets this screen be honest: it offers
- * exactly the five that exist, and the blueprint's other eight dimensions are absent here for the same
- * reason they are absent from the table — nothing would read them.
+ * admit a condition nothing evaluates. That decision is what lets this screen be honest: it offers exactly
+ * the six that exist, and the blueprint's other seven dimensions are absent here for the same reason they
+ * are absent from the table — nothing would read them.
  *
  * ## What is deliberately not offered
  *
@@ -56,6 +56,11 @@ function sentence(row: PolicyVersionRow, mailboxName: (id: string) => string): s
     when.push(row.when_recipient_external === 1 ? "to anyone outside" : "to colleagues only");
   }
   if (row.when_is_reply !== null) when.push(row.when_is_reply === 1 ? "as a reply" : "as a new message");
+  if (row.when_reply_to_dmarc_fail !== null) {
+    when.push(row.when_reply_to_dmarc_fail === 1
+      ? "answering mail its sender's domain disowned"
+      : "not answering disowned mail");
+  }
   if (row.when_org_daily_volume_min !== null) {
     when.push(`once this Node has sent ${row.when_org_daily_volume_min} today`);
   }
@@ -86,6 +91,9 @@ function Editing({
       ? null
       : draft.when_recipient_external === 1,
     isReply: draft?.when_is_reply === null || draft === null ? null : draft.when_is_reply === 1,
+    replyToDmarcFail: draft?.when_reply_to_dmarc_fail === null || draft === null
+      ? null
+      : draft.when_reply_to_dmarc_fail === 1,
   });
   const [approvals, setApprovals] = useState(1);
   const [problem, setProblem] = useState<string | null>(null);
@@ -166,6 +174,21 @@ function Editing({
           <option value="">either — not part of this rule</option>
           <option value="true">only replies</option>
           <option value="false">only new messages</option>
+        </select>
+      </label>
+
+      <label className="field-row" htmlFor="policy-reply-dmarc">
+        <span>Answering mail its sender's domain disowned?</span>
+        <select
+          id="policy-reply-dmarc"
+          value={conditions.replyToDmarcFail === null ? "" : String(conditions.replyToDmarcFail)}
+          onChange={(event) => setConditions((c) => ({
+            ...c, replyToDmarcFail: event.target.value === "" ? null : event.target.value === "true",
+          }))}
+        >
+          <option value="">either — not part of this rule</option>
+          <option value="true">only replies to a message whose DMARC failed</option>
+          <option value="false">everything else</option>
         </select>
       </label>
 

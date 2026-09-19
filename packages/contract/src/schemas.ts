@@ -1095,6 +1095,7 @@ export const policyVersionRow = z.object({
   when_recipient_external: z.number().int().nullable(),
   when_is_reply: z.number().int().nullable(),
   when_org_daily_volume_min: z.number().int().nullable(),
+  when_reply_to_dmarc_fail: z.number().int().nullable(),
   created_at: isoDate,
   published_at: isoDate.nullable(),
   superseded_at: isoDate.nullable(),
@@ -1444,7 +1445,7 @@ export const evidenceInventoryResponse = z.object({
 /* ------------------------------------------------------------------ policy authoring (#60, #93) ---- */
 
 /**
- * The five conditions a policy can name, and **nothing else** (#93).
+ * The six conditions a policy can name, and **nothing else** (#93).
  *
  * ## Why this one object is strict when request schemas are not
  *
@@ -1480,6 +1481,8 @@ export const policyConditions = z.object({
   recipientExternal: z.boolean().nullish(),
   isReply: z.boolean().nullish(),
   orgDailyVolumeMin: z.union([z.number(), z.string()]).nullish(),
+  /** A reply to a message whose DMARC verdict was `fail` (#260). */
+  replyToDmarcFail: z.boolean().nullish(),
 }).strict().meta({ refusal: "E_POLICY_CONDITION_UNKNOWN" });
 
 /**

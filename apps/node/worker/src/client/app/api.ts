@@ -1045,8 +1045,8 @@ export const withdrawDecision = (id: string) =>
  * One policy **version**, as the list returns it — the endpoint returns every version of every policy, so a
  * row is a version and the policy it belongs to is `policy_id` / `name`.
  *
- * The five conditions arrive as typed columns rather than a blob, which is #60's decision and matters here:
- * a screen can render exactly the five that exist, and a sixth cannot appear without the column that would
+ * The six conditions arrive as typed columns rather than a blob, which is #60's decision and matters here:
+ * a screen can render exactly the six that exist, and a seventh cannot appear without the column that would
  * make something evaluate it.
  */
 export interface PolicyVersionRow {
@@ -1062,6 +1062,7 @@ export interface PolicyVersionRow {
   when_recipient_external: number | null;
   when_is_reply: number | null;
   when_org_daily_volume_min: number | null;
+  when_reply_to_dmarc_fail: number | null;
   created_at: string;
   published_at: string | null;
   superseded_at: string | null;
@@ -1073,6 +1074,7 @@ export interface PolicyConditions {
   recipientExternal?: boolean | null;
   isReply?: boolean | null;
   orgDailyVolumeMin?: number | null;
+  replyToDmarcFail?: boolean | null;
 }
 
 export function usePolicies(): UseQueryResult<{ policies: PolicyVersionRow[] }, Error> {

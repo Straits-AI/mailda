@@ -63,7 +63,7 @@ export function unauthenticated(): Response {
 }
 
 /**
- * A policy's five conditions out of a JSON body, and nothing else.
+ * A policy's six conditions out of a JSON body, and nothing else.
  *
  * Five named reads rather than a spread, deliberately. `{ ...body.conditions }` would accept `dataClass` or
  * `device` — a field #60 named **absent** because no data answers it — and store it nowhere while the caller
@@ -98,6 +98,7 @@ export function conditionsFrom(raw: unknown): PolicyConditions {
     recipientExternal: flag(source.recipientExternal),
     isReply: flag(source.isReply),
     orgDailyVolumeMin: count(source.orgDailyVolumeMin),
+    replyToDmarcFail: flag(source.replyToDmarcFail),
   };
 }
 
