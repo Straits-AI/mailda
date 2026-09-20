@@ -1,3 +1,5 @@
+import { BUDGETS } from "@mailda/budgets";
+
 import type { Ctx } from "@mailda/runtime";
 import { bodyIndexState, unindexedMessages } from "../search.ts";
 import { draftBodyPrefix, reconcileEvidence, type DraftBodyScan } from "../reconcile.ts";
@@ -30,8 +32,8 @@ export async function checkOutbox(env: Env, ctx: Ctx): Promise<Finding[]> {
 }
 
 
-/** Ten minutes: long enough that fast-path publication and one alarm retry have both had a turn. */
-export const STALLED_OUTBOX_MS = 10 * 60 * 1000;
+/** From its receipt, where the basis (provisional, unmeasured) is written down rather than implied here. */
+export const STALLED_OUTBOX_MS = BUDGETS["doctor.stalled_outbox_seconds"] * 1000;
 
 
 /**

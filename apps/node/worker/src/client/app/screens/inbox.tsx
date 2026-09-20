@@ -363,9 +363,9 @@ function SearchField({ term, onSearch }: {
         * **The capability, said where somebody can discover it** — and it is a tripwire, not a nicety.
         *
         * The field used to be labelled "search" with the placeholder "sender, subject or message text". The
-        * brand's pill wants "Search mail", which is shorter and denies a feature the Node has:
-        * `search-copy-world.test.ts` failed on exactly that, and its reasoning is that *"people do not
-        * discover a feature the interface denies having"*. Putting the three fields back into the
+        * brand's pill wants "Search mail", which is shorter and denies a feature the Node has: a copy test
+        * (deleted 20 September 2026 as a phrase check, AGENTS.md §2c) failed on exactly that, and its
+        * reasoning stands: *"people do not discover a feature the interface denies having"*. Putting the three fields back into the
         * placeholder would either overflow the pill or truncate at the tail, hiding "message text" —
         * the one word the test exists for.
         *

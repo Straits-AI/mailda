@@ -338,6 +338,10 @@ const FIGURES: Record<string, Classification> = {
     ["doctor.evidence_sample_size"],
     "doctor.max_subrequests_per_run",
   ),
+  ...mailda(
+    "how old an unpublished outbox event may be before doctor calls the sweeper stalled; the sweeper is Mailda's",
+    "doctor.stalled_outbox_seconds",
+  ),
 
   // docs/receipts/email-routing-subdomain-onboarding.md
   ...bothPlans(
@@ -525,6 +529,7 @@ const FIGURES: Record<string, Classification> = {
     "auth.refresh_token_ttl_seconds", "auth.signing_key_verify_grace_seconds",
     "auth.signing_key_cache_seconds", "auth.refresh_replay_window_seconds",
     "auth.access_token_refresh_margin_seconds", "auth.max_failed_logins_per_15min",
+    "auth.failed_login_window_seconds",
     // #83's invitation window. Mailda's own policy about how long a bearer credential for membership stays
     // usable — the plan has no opinion about it, and no platform limit bounds it.
     "auth.invitation_expiry_seconds",

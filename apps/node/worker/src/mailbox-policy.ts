@@ -2,6 +2,8 @@ import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
+import { BUDGETS } from "@mailda/budgets";
+
 import { allowedTypesOf } from "./attachments.ts";
 import { CallerError, notFound, unprocessable } from "./errors.ts";
 
@@ -168,8 +170,8 @@ export async function setQuarantineSwitch(
 /** Extensions: letters and digits, a handful of characters, a bounded list. `.PDF`, `pdf` and ` pdf ` are one. */
 const EXTENSION = /^[a-z0-9]{1,12}$/;
 const MAX_ALLOWED_TYPES = 64;
-/** The bound's ceiling is what a message can be at all: Cloudflare's 25 MiB inbound. */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/** The bound's ceiling is what a message can be at all: the inbound limit, from its receipt. */
+const MAX_ATTACHMENT_BYTES = BUDGETS["email.inbound.max_bytes"];
 
 /**
  * A mailbox's attachment limits (0065): a size bound and an allowed-type list, each null to say nothing.

@@ -167,6 +167,13 @@ importers:
       '@mailda/budgets':
         specifier: workspace:*
         version: link:../budgets
+      '@mailda/contract':
+        specifier: workspace:*
+        version: link:../contract
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
 
   packages/contract:
     dependencies:

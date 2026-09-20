@@ -8,6 +8,7 @@ import { isAdmin } from "../access.ts";
 import { liftDomainPause, requestDomainPause } from "../domain-pause.ts";
 import { evaluateBreakers, pausesInForce, RATE_BREAKERS } from "../breakers.ts";
 import { deleteDraft } from "../drafts.ts";
+import { capped } from "../list-cap.ts";
 import { sponsorTerm } from "../delegation.ts";
 import { releaseButlerSend } from "../butler/release.ts";
 import { cancelSend, dailySendState, dispatchDue, releasePolicyHold } from "../outbound/dispatch.ts";
@@ -17,6 +18,9 @@ import { chooseTransport } from "../outbound/transport.ts";
 import { safeFilename } from "../outbound/headers.ts";
 import { addressList, armSweeper } from "./support.ts";
 import type { Some } from "../router.ts";
+
+/** The outbox shows this many sends, newest first, and says when older ones exist. */
+const SEND_LIST_CAP = 50;
 
 export const sending = {
   /**
@@ -101,8 +105,9 @@ export const sending = {
    * a list, and a lift that vouches for one address with a reason.
    */
   "GET /api/suppressions": async ({ env, who }) => {
-    const { listSuppressions } = await import("../suppression.ts");
-    return Response.json({ suppressed: await listSuppressions(env, who.orgId, who.userId) });
+    const { listSuppressions, SUPPRESSION_LIST_CAP } = await import("../suppression.ts");
+    const { rows, truncated } = capped(await listSuppressions(env, who.orgId, who.userId), SUPPRESSION_LIST_CAP);
+    return Response.json({ suppressed: rows, truncated });
   },
 
   "POST /api/suppressions/lift": async ({ request, env, clock, who }) => {
@@ -470,7 +475,7 @@ export const sending = {
           )
           ${conversationId === null ? "" : `AND in_reply_to_message_id IN (
             SELECT id FROM messages WHERE org_id = ? AND conversation_id = ?)`}
-        ORDER BY sealed_at DESC LIMIT 50`,
+        ORDER BY sealed_at DESC LIMIT ${SEND_LIST_CAP + 1}`,
     ).bind(who.orgId, who.orgId, ...subjects, ...sponsor.params,
       ...(conversationId === null ? [] : [who.orgId, conversationId])).all<Record<string, unknown>>();
 
@@ -480,7 +485,8 @@ export const sending = {
     // "one bounced and two were accepted" — which is the distinction Layer 2 is judged on. A UI that
     // rendered only the manifest state would show one chip for a mixed outcome, so the data it needs
     // arrives together with it. One query for up to 50 sends, not fifty.
-    const recipients = rows.results.length === 0
+    const { rows: sends, truncated } = capped(rows.results, SEND_LIST_CAP);
+    const recipients = sends.length === 0
       ? { results: [] as Array<Record<string, unknown>> }
       : await env.CATALOG.prepare(
           // Ordered the way a person writes an envelope, not the way SQLite sorts strings. `ORDER BY
@@ -488,11 +494,11 @@ export const sending = {
           // before the actual addressee, and the summary chips inherited that order too.
           `SELECT manifest_id, kind, address, submission_state, delivery_state, bounce_type, last_error
              FROM send_recipients
-            WHERE org_id = ? AND manifest_id IN (${rows.results.map(() => "?").join(", ")})
+            WHERE org_id = ? AND manifest_id IN (${sends.map(() => "?").join(", ")})
             ORDER BY manifest_id,
                      CASE kind WHEN 'to' THEN 0 WHEN 'cc' THEN 1 WHEN 'bcc' THEN 2 ELSE 3 END,
                      address`,
-        ).bind(who.orgId, ...rows.results.map((r) => r.id)).all<Record<string, unknown>>();
+        ).bind(who.orgId, ...sends.map((r) => r.id)).all<Record<string, unknown>>();
 
     const byManifest = new Map<string, Array<Record<string, unknown>>>();
     for (const row of recipients.results) {
@@ -501,7 +507,8 @@ export const sending = {
     }
 
     return Response.json({
-      sends: rows.results.map((send) => ({
+      truncated,
+      sends: sends.map((send) => ({
         ...send,
         recipients: byManifest.get(String(send.id)) ?? [],
         /*

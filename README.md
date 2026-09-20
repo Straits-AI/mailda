@@ -111,8 +111,11 @@ What exists today:
 - **Names do not overclaim.** A forwarded copy is a `copy`. A provider action is `observed`. A send is
   `handed_over`, never `sent`, until a delivery event says otherwise.
 - **Contracts before channels.** Routes are declared once in `packages/contract`. The SDK, the Agent Skill
-  and the MCP surface are generated from it, and a route that exists in one channel and not another fails
-  a test.
+  and the MCP surface are generated from it, the CLI resolves every path through it, and a route that
+  exists in one channel and not another fails a test.
+- **A list that stops says so.** Every capped listing (quarantine, suppressions, the outbox, drafts,
+  notifications, audit, log) reads one row past its cap and returns `truncated`, so nobody mistakes the
+  newest N for all of them.
 - **The screens you need when it is broken carry no framework.** Sign-in, first-run claim and a locked-out
   `doctor` are server-rendered and load zero bytes of the React bundle (ADR 30).
 

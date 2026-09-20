@@ -49,15 +49,21 @@ export interface AttachmentLimits {
   allowedTypes: readonly string[] | null;
 }
 
-/** The extensions list as the column stores it. Tolerates a NULL or unparseable column as unbounded. */
+/**
+ * The extensions list as the column stores it. NULL is unbounded, by declaration. Anything that is not a
+ * JSON array is not "unbounded": only `setAttachmentLimits` writes the column and it writes an array, so any
+ * other value is corruption, and reading corruption as "accept everything" would fail a policy open.
+ */
 export function allowedTypesOf(column: string | null): string[] | null {
   if (column === null) return null;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(column) as unknown;
-    return Array.isArray(parsed) ? parsed.map((one) => String(one).toLowerCase()) : null;
-  } catch {
-    return null;
+    parsed = JSON.parse(column);
+  } catch (error) {
+    throw new Error(`mailboxes.attachment_allowed_types is not JSON: ${(error as Error).message}`);
   }
+  if (!Array.isArray(parsed)) throw new Error("mailboxes.attachment_allowed_types is JSON but not an array");
+  return parsed.map((one) => String(one).toLowerCase());
 }
 
 /** Which of the attachments break the mailbox's limits, and how. Empty when nothing does. */

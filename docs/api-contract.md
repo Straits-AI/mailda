@@ -330,6 +330,20 @@ to reach `methodNameFor` regenerated the file before the test could read a hand 
 never fail. Emitting is pure now and `src/write.ts` is the only thing that touches the disk. A module with a
 top-level side effect is a module that cannot be imported by the thing that checks it.
 
+## The CLI reads the registry too (20 September 2026)
+
+The CLI is a `.mjs` package and cannot get the compile-time check the UI client gets from `route()`'s typed
+template parameter. It gets the runtime half: `api(method, template, query)` in `packages/cli/src/support.mjs`
+fills the path from the registry and throws on a template this Node does not serve, so a moved route fails at
+the verb with the route's name rather than reaching the Worker and being answered with the interface shell.
+The compile-time half is approximated by `test/node/cli-route-parity.test.ts`, which parses every string and
+template literal in the CLI's source (the TypeScript parser, so a comment is not a finding) and fails on any
+`/api/...` path the registry does not carry. Before this, twenty-nine paths were written by hand and nothing
+compared them to anything.
+
+Capped listings carry `truncated` (a boolean) beside their rows. It is in each response schema, because a
+cap a client cannot see is the hidden limit AGENTS.md §3 forbids.
+
 ## What comes next
 
 The **Agent Skill** and **MCP server**, which #85 scoped to their own tickets so that neither becomes the

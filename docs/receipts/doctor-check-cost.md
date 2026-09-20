@@ -13,7 +13,18 @@ values:
   doctor.paid.max_subrequests: 10000
   doctor.free.max_subrequests: 1000
   doctor.max_subrequests_per_run: 220
+  doctor.stalled_outbox_seconds: 600
 ---
+
+## Addition, 20 September 2026: `doctor.stalled_outbox_seconds` is provisional, and says so
+
+`stalled_outbox` reports outbox events older than this that nothing has published. Ten minutes was a literal
+in `src/doctor/evidence.ts` with the comment *"long enough that fast-path publication and one alarm retry have
+both had a turn"*, which is a basis and not a measurement: the sweeper's alarm cadence is five seconds, so
+this is 120 sweeps, and nobody has recorded how old an unpublished event gets on a healthy Node under load.
+It moves here so that it is governed like every other number rather than because it was measured. **Stale
+when** a healthy Node's `stalled_outbox` finding fires: that is the measurement, and it replaces this
+figure rather than being explained away.
 
 ## Correction, 28 August 2026: a third search finding that costs no subrequest
 

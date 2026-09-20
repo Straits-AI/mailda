@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { fail, wrapAt, flag, sessionCookie } from "../support.mjs";
+import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -57,7 +57,8 @@ export async function provider(argv) {
   const cookie = await sessionCookie(origin);
   if (cookie === null) fail("set MAILDA_EMAIL and MAILDA_PASSWORD to sign in to this Node.");
 
-  const call = async (method, path, body) => {
+  const call = async (method, template, body, query) => {
+    const path = api(method, template, query);
     const response = await fetch(`${origin}${path}`, {
       method,
       headers: { cookie, "content-type": "application/json" },
@@ -145,7 +146,7 @@ export async function provider(argv) {
 
   const rulesOn = flag(argv, "routing-rules");
   if (rulesOn !== null) {
-    const { routing } = await call("GET", `/api/provider/routing-rules?domain=${encodeURIComponent(rulesOn)}`);
+    const { routing } = await call("GET", "/api/provider/routing-rules", undefined, { domain: rulesOn });
     process.stdout.write(`\n   ${routing.domain}${routing.zone === null ? "" : `  (zone ${routing.zone})`}\n`);
     if (routing.error !== null) { process.stdout.write(`     unknown   ${routing.error}\n\n`); return; }
     if (routing.rules.length === 0) process.stdout.write("     no rules\n");
@@ -193,9 +194,7 @@ export async function provider(argv) {
     const confirming = flag(argv, "confirm");
     const address = flag(argv, "address");
     if (confirming === null) {
-      const { proposal } = await call(
-        "GET", `/api/provider/receiving?domain=${encodeURIComponent(receiving)}`,
-      );
+      const { proposal } = await call("GET", "/api/provider/receiving", undefined, { domain: receiving });
       process.stdout.write(`\n   ${proposal.domain}\n`);
       if (proposal.zone !== null) {
         process.stdout.write(`     zone      ${proposal.zone} (routing ${proposal.zoneRouting ?? "?"})\n`);
@@ -274,9 +273,7 @@ export async function provider(argv) {
   if (buying !== null) {
     const confirming = flag(argv, "confirm");
     if (confirming === null) {
-      const { proposal } = await call(
-        "GET", `/api/provider/domains/purchase?domain=${encodeURIComponent(buying)}`,
-      );
+      const { proposal } = await call("GET", "/api/provider/domains/purchase", undefined, { domain: buying });
       process.stdout.write(`\n   ${proposal.domain}\n`);
       printDomain(proposal.price);
       if (proposal.existing !== null) {
@@ -312,16 +309,14 @@ export async function provider(argv) {
 
   const watching = flag(argv, "buy-status");
   if (watching !== null) {
-    const { outcome } = await call(
-      "GET", `/api/provider/domains/purchase/status?domain=${encodeURIComponent(watching)}`,
-    );
+    const { outcome } = await call("GET", "/api/provider/domains/purchase/status", undefined, { domain: watching });
     printOutcome(outcome);
     return;
   }
 
   const suggesting = flag(argv, "domains");
   if (suggesting !== null) {
-    const { suggestions } = await call("GET", `/api/provider/domains?q=${encodeURIComponent(suggesting)}`);
+    const { suggestions } = await call("GET", "/api/provider/domains", undefined, { q: suggesting });
     process.stdout.write(`\n   suggestions for "${suggesting}" — cached, and not a basis to buy\n\n`);
     for (const one of suggestions) printDomain(one);
     process.stdout.write(
@@ -440,7 +435,7 @@ export async function provider(argv) {
      */
     const confirming = flag(argv, "confirm");
     if (confirming === null) {
-      const { proposal } = await call("GET", `/api/provider/sending?domain=${encodeURIComponent(onboarding)}`);
+      const { proposal } = await call("GET", "/api/provider/sending", undefined, { domain: onboarding });
       process.stdout.write(`\n   ${proposal.domain}\n`);
       if (proposal.zone !== null) process.stdout.write(`     zone      ${proposal.zone}\n`);
       if (proposal.error !== null) {
@@ -485,9 +480,7 @@ export async function provider(argv) {
     // The third object `--delivery-events` reports on (#222), proposed and confirmed like onboarding.
     const confirming = flag(argv, "confirm");
     if (confirming === null) {
-      const { proposal } = await call(
-        "GET", `/api/provider/subscription?domain=${encodeURIComponent(subscribing)}`,
-      );
+      const { proposal } = await call("GET", "/api/provider/subscription", undefined, { domain: subscribing });
       process.stdout.write(`\n   ${proposal.domain}\n`);
       if (proposal.zone !== null) process.stdout.write(`     zone      ${proposal.zone}\n`);
       if (proposal.sendingDomain !== null) process.stdout.write(`     sending   ${proposal.sendingDomain}\n`);

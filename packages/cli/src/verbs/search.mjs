@@ -1,4 +1,4 @@
-import { fail, flag, sessionCookie } from "../support.mjs";
+import { api, fail, flag, sessionCookie } from "../support.mjs";
 /**
  * Listing and repairing what the body index failed on.
  *
@@ -38,7 +38,7 @@ export async function search(argv) {
   if (held === null) fail("could not sign in — these routes need an administrator.");
   const auth = { cookie: held, "content-type": "application/json" };
 
-  const listed = await fetch(`${origin}/api/search/failed`, { headers: auth })
+  const listed = await fetch(`${origin}${api("GET", "/api/search/failed")}`, { headers: auth })
     .then((response) => response.json())
     .catch((error) => fail(`could not reach ${origin}: ${error.message}`));
   const failures = listed.failed ?? [];
@@ -75,7 +75,7 @@ export async function search(argv) {
       + "  fix      run `mailda search list` first and choose");
   }
 
-  const response = await fetch(`${origin}/api/search/repair`, {
+  const response = await fetch(`${origin}${api("POST", "/api/search/repair")}`, {
     method: "POST", headers: auth, body: JSON.stringify({ messageIds: ids }),
   }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
   const payload = await response.json().catch(() => ({}));

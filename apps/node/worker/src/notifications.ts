@@ -294,6 +294,9 @@ export interface Notification {
  * Delivered rows only. An undelivered notice is an obligation the Node has not discharged, not a message
  * somebody has been sent, and showing it early would make `delivered_at` a decoration.
  */
+/** Newest first, and this many; the route reports whether older ones exist. */
+export const NOTIFICATION_LIST_CAP = 50;
+
 export async function notificationsFor(env: Env, who: Principal, subjects: readonly string[]):
 Promise<Notification[]> {
   const placeholders = subjects.map(() => "?").join(", ");
@@ -313,7 +316,7 @@ Promise<Notification[]> {
                       AND t.object_type = 'mailbox' AND t.relation = 'mailbox.content.read'
                       AND t.object_id = n.mailbox_id
                       ${sponsor.sql})))
-      ORDER BY n.due_at DESC, n.id DESC LIMIT 50`,
+      ORDER BY n.due_at DESC, n.id DESC LIMIT ${NOTIFICATION_LIST_CAP + 1}`,
   ).bind(who.orgId, who.userId, ...subjects, ...sponsor.params).all<{
     id: string; kind: NotificationKind; subject_id: string; user_id: string | null;
     mailbox_id: string | null; matter_id: string | null; created_at: string;

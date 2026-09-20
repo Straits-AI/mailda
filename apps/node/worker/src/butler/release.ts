@@ -127,9 +127,15 @@ export async function releaseButlerSend(
     const instance = await env.BUTLER_RUNS.get(runId);
     await instance.sendEvent({ type: RELEASE_EVENT, payload: { manifestId, by: actorUserId, at } });
     return { released: true, runId, resumed: true };
-  } catch {
-    // The counts are left exactly as the run last wrote them — see `abandonRun`.
-    await abandonRun(env, ctx, orgId, runId, "finished", "released_after_run_expired");
+  } catch (error) {
+    // The counts are left exactly as the run last wrote them — see `abandonRun`. The reason names what was
+    // observed: an instance the platform no longer has is `released_after_run_expired`; anything else (a D1
+    // outage, a binding that is not there) is the run being unreachable, and calling that "expired" would
+    // overclaim (AGENTS.md §4). The message travels with it, since the row is the only place it lands.
+    const message = error instanceof Error ? error.message : String(error);
+    const expired = /not[ _]found|does not exist|expired/i.test(message);
+    await abandonRun(env, ctx, orgId, runId, "finished",
+      expired ? "released_after_run_expired" : `released_but_run_unreachable: ${message}`);
     return { released: true, runId, resumed: false };
   }
 }

@@ -80,7 +80,9 @@ Mailda has **one** deployment mode.
 
 Amended 3 August 2026. Earlier revisions specified three modes — Cloudflare Native, Provider Connected (Gmail/Microsoft 365) and Full Mail Adapter (a standards mail core behind `MailCoreAdapter`). Both alternatives are withdrawn. The reasoning is recorded at ADR 4 and ADR 5 in §29.
 
-The adapter **seams** remain. `TransportAdapter` and `MailCoreAdapter` stay as interfaces with exactly one shipped implementation each, so an organization can write its own without forking Mailda. Mailda builds, certifies, documents and supports none. An interface is not a promise.
+Amended 20 September 2026: no adapter seam exists in code. There is no `TransportAdapter` and no `MailCoreAdapter` interface; the one transport is called directly (`apps/node/worker/src/outbound/`), and a second one would be written when somebody has one, not before. An interface with one implementation is not a promise, and an interface with none is a sentence.
+
+Added 20 September 2026: a Node can **buy a domain** through the Cloudflare grant (`apps/node/worker/src/provider/purchase.ts` and `apps/node/worker/src/provider/registrar.ts`; `GET|POST /api/provider/domains/purchase`, `GET /api/provider/domains/purchase/status`; `mailda provider --buy`). It is a real-money effect and is gated like one: `org.admin` only, a priced proposal whose digest the confirmation must repeat, refused when the price or the account's holding has changed since the proposal, refused when a registration already exists, and audited whether or not the registrar accepted. There is no automatic retry of a purchase. Operator notes in `docs/cloudflare-settings.md`.
 
 Two consequences are accepted rather than hidden:
 
@@ -130,7 +132,7 @@ Mailda is built around explicit objects instead of treating an email account as 
 | Sender identity | A From identity a principal may use under policy |
 | Message | Immutable parsed representation linked to original MIME |
 | Delivery | One message placed into one mailbox |
-| Conversation | Standards-linked thread graph with human split/merge controls |
+| Conversation | Standards-linked thread graph with a human merge control (split not built) |
 | Draft revision | Editable proposed content; immutable once referenced by approval/send |
 | Send intent | Governed request to produce an external email effect |
 | Case | Operational work object linking messages, facts, owners, deadlines and actions |
@@ -162,7 +164,7 @@ A user may own a private mailbox, respond from `sales@`, review `finance@`, and 
 | Mailda Admin | Directory, domains, mailboxes, policy, AI, compliance, delivery and operations |
 | Mailda CLI | Deterministic access for humans, scripts, CI, cron and AI agents |
 | REST API | Stable typed command/query API used by web, CLI and integrations |
-| SDKs | Generated TypeScript, Python and Go clients |
+| SDKs | Generated TypeScript client (Python and Go not built) |
 | Agent Skill | Safe operating instructions for agents invoking the deterministic CLI |
 | MCP server | Typed tools mapped to the same API and OAuth authorization model |
 | Webhooks/events | Signed outbound events, retries, replay and integration health |
@@ -1323,6 +1325,8 @@ ADR 43 withdrew Control, "never required" is the only mode there is.
 
 ## 11B. Platform limits, cost visibility and failure containment
 
+Added 20 September 2026: a Node measures what an operation spends against Workers' per-invocation D1 budget with `apps/node/worker/src/cost-meter.ts`, counting executions rather than prepared statements, and the measured suites use it to keep receipts honest.
+
 Cloudflare/provider limits are adapter data, not assumptions scattered through application code. The Node snapshots observed quotas and provider capability versions, displays them in Admin and `mailda doctor`, and blocks an effect predicted to exceed a hard limit before approval when possible.
 
 These are now **product** limits rather than adapter limits, because there is one transport (§2). Measured 3 August 2026 and recorded in `docs/receipts/cloudflare-email-service-limits.md`: 25 MiB inbound; **5 MiB outbound to arbitrary recipients**, 25 MiB only to pre-verified destination addresses; 50 recipients per message; 998-character subject; 16 KB of custom headers; 200 routing rules per domain; 200 destination addresses per account; 30 domains per zone. Sending is intended for transactional and operational mail, not marketing or bulk.
@@ -1357,7 +1361,7 @@ Scale and isolation rules:
 - One Node begins with a D1 catalog/control database plus one metadata/search shard. The planner treats the current D1 per-database size ceiling as adapter data and forecasts rows/bytes at mailbox, shard and Node level.
 - **Sharding relieves the per-database ceiling only.** D1 also imposes an account-wide storage ceiling (1 TB on Workers Paid) that no amount of sharding relieves. The planner forecasts against both, and a Node approaching the account ceiling must select the PostgreSQL `ControlStoreAdapter` rather than add another shard. Receipts: `d1-platform-limits.md`, `message-metadata-bytes.md`.
 - Immutable message metadata is assigned by stable mailbox hash plus time bucket through a cataloged shard map; control/identity/policy/outbox data stays in the catalog. Shard creation is a planned binding/deployment change, never an implicit runtime Cloudflare-admin call.
-- At 70% forecast/usage the Node warns and plans the next shard or external store; at 85% it stops optional bulky projections/backfills; at 90% it routes future eligible metadata to a new shard and blocks nonessential imports. Inbound raw evidence is never silently discarded because a search/index shard is full.
+- Amended 20 September 2026: the 70/85/90% forecasting ladder is not built. The ceilings live in `packages/budgets` (`d1.*`, receipt `d1-platform-limits.md`) and nothing in `doctor` reads usage against them yet; there is one D1 database and no shard map. Inbound raw evidence is never silently discarded because a database is full: the receipt is written to R2 first, and a full catalog is a visible exception.
 - Cross-shard query uses fan-out cursors with stable sort/tie-break keys and live ACL recheck; SearchAdapter may maintain a rebuildable global projection. Rebalancing copies immutable ranges, verifies counts/hashes, atomically flips the catalog generation and retains the old shard through rollback/backup expiry.
 - Backup/restore inventories every shard and catalog generation. A Node expected to exceed practical D1 shard/query limits must select PostgreSQL `ControlStoreAdapter` during planning rather than discover the boundary in production.
 - Raw MIME and attachments never live in D1; preview and search representations are bounded.
@@ -1418,7 +1422,7 @@ operations:
 2. Raw inbound MIME, canonical outbound composition manifests and any materialized provider-submission representation are immutable evidence; parsed/search/AI forms are rebuildable derivatives.
 3. A message may have many deliveries; access is evaluated per delivery/mailbox.
 4. No cross-organization raw-content deduplication, including in optional Control, search, scanner or AI services.
-5. Every mailbox mutation advances a monotonic change/version number.
+5. Amended 20 September 2026: mailboxes carry no monotonic version number, and none is claimed. Where a mutation must bind to an exact prior state, the state is an immutable object with its own id — a sealed manifest (ADR 35), a Butler version, a policy version — and the id is the version (`outbound/recheck.ts`).
 6. Every draft edit produces a revision; approval and send bind one exact revision.
 7. Every external effect has an internal intent and idempotency key before execution.
 8. No `outcome_unknown` provider submission is blindly retried.
@@ -1485,7 +1489,7 @@ Cloudflare Native receipt details:
 - Allocate `ingress_receipt_id`; record provider event identity, envelope, recipient and timestamp.
 - Persist the lossless MIME to R2 and its hash/size/pointer in D1 before treating the receipt as durable.
 - Because R2 and D1 are not one transaction, orphan-blob and missing-blob reconcilers cover each partial order; a D1 outbox ensures queue publication can resume.
-- A Cloudflare `transparent_forward` must be requested while the original Email Worker event is available. Mailda persists first, performs only bounded synchronous envelope/size/loop checks, calls `message.forward()` and discloses that asynchronous deep attachment scanning/DLP did not precede the copy. Local storage and each destination have independent outcomes; forward failure never deletes the local copy.
+- Amended 20 September 2026: Mailda does not call `message.forward()`. A forward is an ordinary sealed send (§14) that carries the stored original verbatim as a `message/rfc822` part (`migrations/0059_forward.sql`), authorized as a reply on the mailbox it was delivered into, refused when the original carries an attachment this Node judges dangerous, and reported per recipient like any other send. Persisting the receipt always precedes it, and a failed forward never touches the local copy.
 - The queue receives only receipt/blob references, never the full MIME payload.
 
 Asynchronous processing performs:
@@ -1512,7 +1516,7 @@ Quarantined messages remain evidence but cannot feed attachments/content into a 
 2. Exact `References` ancestry.
 3. Internal `Message-ID` map.
 4. Conservative subject/participant/time heuristic.
-5. Explicit human split/merge.
+5. Explicit human merge (`POST /api/conversations/merge`). Amended 20 September 2026: split is not built; a merge is the only human threading action a Node offers today.
 
 Heuristic relationships remain reversible and visible as such.
 
@@ -1539,10 +1543,16 @@ draft revision
 Per-recipient/provider state:
 
 ```text
-queued → submitted → provider_accepted → delivered
-                   ↘ deferred → submitted
-                   ↘ bounced | complained | failed | outcome_unknown
+submission (what this Node did with the envelope; `send_manifests.state`, ADR 39):
+  held → handed_over
+       ↘ awaiting (a policy gate somebody can clear) → handed_over | withheld
+       ↘ throttled | refused | suppressed | cancelled | outcome_unknown
+
+delivery (what the receiving world did with one address, reported later on the events queue):
+  unobserved → accepted | deferred → accepted | bounced
 ```
+
+Amended 20 September 2026 to the vocabulary the code has carried since ADR 39/40: there is no `sent`, `submitted`, `provider_accepted` or `delivered` state. `handed_over` is the ceiling of what a Node can know at submission, `unobserved` is the honest delivery state until the queue reports one, and `outcome_unknown` appears at the submission scale only.
 
 Mailda guarantees one local send intent/Sent item per idempotency key. Internet email cannot guarantee exactly-once remote delivery. If a provider may have accepted a message but its response was lost, the attempt becomes `outcome_unknown`; reconciliation occurs before any new send.
 
@@ -1580,7 +1590,7 @@ The router selects an adapter before sending based on domain, stream, message si
 - Track each destination and relay attempt.
 - Use SRS/ARC/loop protection where required.
 - Never present a forward copy as bidirectional synchronization.
-- Cloudflare `message.forward()` is one bounded adapter; large-scale forwarding uses the relay abstraction.
+- Amended 20 September 2026: there is no `message.forward()` adapter and no relay abstraction; every forward is a sealed send carrying the original as `message/rfc822` (§13).
 
 ---
 
@@ -1638,6 +1648,8 @@ The CLI never decides to invoke AI on its own. A cron job or ordinary program ca
 | System | Security/delivery/lifecycle use only |
 
 ### Triggers
+
+Amended 20 September 2026: of the families below only *message received* (`mail.received`) is built; see the AST subsection. The rest are fog, and so is the schedule contract at the end of this section.
 
 - Message received/sent/delivered/bounced/complained/replied.
 - Thread, case, attachment or security state change.
@@ -1916,6 +1928,8 @@ A replay **inherits its input and re-asks its judgement**, and the split is exha
 Cloudflare Queues provide at-least-once delivery; Mailda's own run/effect ledger provides idempotency. Workflows handle waits and retryable long-running execution; Durable Objects serialize only critical claims/races.
 
 ### Cron and schedule semantics
+
+Amended 20 September 2026: not built. No schedule trigger exists; `docs/butler-engine.md` marks it fog. What follows is the target contract.
 
 Every schedule declares an IANA timezone, calendar/cron expression, start/end window, missed-run policy (`skip`, `run_once`, `catch_up_bounded`), overlap policy (`forbid`, `queue_one`, `parallel_bounded`), maximum lateness, optional jitter and owning principal. The UI shows the next executions including DST transitions before publication. Organization/team/mailbox schedules survive individual offboarding; personal schedules pause immediately on suspension. A scheduled trigger creates a normal workflow run and gains no extra authority from time or ownership.
 
@@ -2305,29 +2319,9 @@ the row. That is the same failure the eight absent policy dimensions above are a
 
 ### API
 
-Publish an OpenAPI 3.1 contract. Consequential actions use explicit command endpoints rather than ambiguous CRUD.
+Amended 20 September 2026. The API is the route registry in `packages/contract/src/routes.ts`, explained in `docs/api-contract.md`: resource-style `/api/...` paths, each with its method, authority, request and response schema, from which the UI client, the TypeScript SDK and the MCP tool list are generated (ADR 12). There is no `/v1/commands/*` command plane and no OpenAPI document; the registry is the contract, and a route added without an entry is a compile error.
 
-```text
-POST /v1/commands/user.suspend
-POST /v1/commands/mailbox.archive
-POST /v1/commands/draft.create
-POST /v1/commands/send.propose
-POST /v1/commands/approval.decide
-POST /v1/commands/butler.publish
-POST /v1/commands/butler.kill
-POST /v1/commands/domain.send-freeze
-```
-
-Every mutation accepts:
-
-```text
-Idempotency-Key
-If-Match
-X-Request-ID
-X-Mailda-Reason
-```
-
-Every response returns request/correlation, policy decision, audit event, resource version and—where asynchronous—a command/operation receipt.
+No request header carries idempotency, versioning, correlation or a reason. Idempotency exists where an effect exists: a send's manifest id is its effect key (ADR 35), a Butler run's id is `<butlerVersion>-<triggerKey>`, and a purchase confirms a proposal digest. Concurrency is bound by immutable object ids rather than an `If-Match` (§12 invariant 5). Every refusal carries a request id and a stable code with what happened, why, and the next permitted action.
 
 ### CLI families
 
@@ -2401,7 +2395,7 @@ mailda butler kill but_sales --reason incident-4821 --wait
 
 ### SDKs
 
-- TypeScript, Python and Go generated from OpenAPI.
+- Amended 20 September 2026: TypeScript only, generated from the route registry (`packages/sdk/src/generate.ts`, checked by `pnpm sdk:check`). No Python or Go client and no OpenAPI document exist; a second language is generated from the same registry when somebody needs one.
 - Shared error, pagination, receipt and webhook types.
 - Provider/connector SDK for extensions.
 
@@ -2422,7 +2416,7 @@ The skill grants nothing. OAuth/delegation supplies authority.
 
 ### MCP
 
-The remote MCP server maps narrow typed tools such as `search_messages`, `create_draft`, `propose_send`, `get_approval` and `run_butler` onto the same API. It does not expose a general shell/`execute_cli` tool. It uses its own audience/scopes, OAuth protected-resource metadata and normal authorization discovery. There is no upstream token passthrough, content-size bypass or separate authorization semantics.
+The remote MCP server maps narrow typed tools such as `search_messages`, `create_draft`, `propose_send`, `get_approval` and `run_butler` onto the same API. It does not expose a general shell/`execute_cli` tool. Amended 20 September 2026: it authenticates with the Node's own session, exactly as the browser does, and there is no third credential kind after passwords and passkeys (`apps/node/worker/src/mcp.ts`). An MCP-specific token would be one more thing to mint, revoke and leak, and every act it authorized is already authorized for the person whose session it is; the tool list offered is the session's capabilities, and a delegated agent uses its agent token the same way. There is no upstream token passthrough, content-size bypass or separate authorization semantics.
 
 ### Surface-parity contract
 
@@ -2491,7 +2485,7 @@ Provider-backed mailboxes explicitly declare whether Mailda is mirror, migration
 - No scripts/forms/storage; remote images blocked or privacy-proxied.
 - Unicode/confusable domain warning.
 - MIME nesting/decompression/parser time limits.
-- Attachment quarantine and safe preview.
+- Attachment quarantine and safe preview. Added 20 September 2026: a mailbox list can be filtered by envelope sender (`apps/node/worker/migrations/0052_sender_filter.sql`), and a delivery held on request through the API (a person's or an agent's own classifier, #263) carries the holder's reason in words (`apps/node/worker/migrations/0064_quarantine_note.sql`) so whoever releases it knows what the holder saw.
 - DLP labels and egress controls.
 - Auto-reply and forwarding loop protection.
 
@@ -2638,7 +2632,7 @@ Remote delivery finality remains provider/recipient dependent and is shown per a
 - Raw MIME and attachment objects are reconciled against message/blob rows and content hashes before a backup is marked verified.
 - Search and semantic indexes are disposable projections and rebuild from canonical content.
 - Secrets are not copied into ordinary backups. The recovery package records secret references and requires the administrator to restore or rotate secret values deliberately.
-- The CLI supports `mailda backup create|verify|list|export` and `mailda restore plan|run|verify` with dry-run, integrity checks and explicit target environment.
+- Amended 20 September 2026: the CLI has `mailda backup` and `mailda verify-backup`. There is no `mailda restore` verb and no signed or encrypted bundle: restore is the drilled runbook in `docs/disaster-recovery.md`, run with Cloudflare's own tooling, and the evidence copy is plain objects any tool can read. The verbs above remain the target and are not built.
 - Upgrades take or verify a recoverable checkpoint before destructive migrations.
 - Message-level, mailbox-level, organization-level and clean-account restoration are tested.
 
@@ -2664,7 +2658,7 @@ The most dangerous mail failure is “accepted but absent.” Raw-message persis
 |---|---|
 | Web/PWA | React + TypeScript, TanStack Router/Query and an accessible Mailda component system |
 | Node runtime | One Cloudflare project deploying least-privilege Hono/TypeScript Workers, Static Assets and typed service bindings |
-| API/contracts | OpenAPI 3.1 + JSON Schema, generated clients and runtime validation |
+| API/contracts | `packages/contract` route registry with zod schemas, generated clients and runtime validation (no OpenAPI document) |
 | Default control data | D1 plus repository layer and transactional outbox |
 | Contention/realtime | Durable Objects with narrow ownership and rebuildable presence/counters/rate/FTS state |
 | Blob/evidence | R2 object storage, encrypted export/backup and optional object-store adapter |
@@ -2673,7 +2667,7 @@ The most dangerous mail failure is “accepted but absent.” Raw-message persis
 | Search | D1/DO SQLite FTS projection + optional external/semantic SearchAdapter |
 | Policy conditions | CEL or equivalently pure typed expression engine |
 | CLI/scaffolder | TypeScript npm packages with optional signed standalone binaries; generated against OpenAPI contracts |
-| SDKs | TypeScript, Python and Go |
+| SDKs | TypeScript (Python and Go not built) |
 | Optional scale store | PostgreSQL through Hyperdrive behind `ControlStoreAdapter` |
 | Observability | OpenTelemetry, metrics/log/traces, SIEM export |
 | Infrastructure | Wrangler + Deploy to Cloudflare metadata; OpenTofu/Pulumi modules for advanced adapters |

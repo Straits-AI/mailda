@@ -9,6 +9,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mailda/budgets": "workspace:*"
+    "@mailda/budgets": "workspace:*",
+    "@mailda/contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2"
   }
 }

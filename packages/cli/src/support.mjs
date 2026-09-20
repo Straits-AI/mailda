@@ -4,8 +4,23 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { accountsFrom, atLeast, reportsItsVersion, resolveAccount, signedIn, urlRequirement, wranglerVersionFrom } from "./preflight.mjs";
 import { BUDGETS } from "@mailda/budgets";
+import { path as fillPath, route } from "@mailda/contract/routes";
 import { deriveConfig, workerNameIn } from "./deploy-parse.mjs";
 export const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * A route's path from the registry, never a string written here (ADR 12: every channel from one contract).
+ * `route` throws on a template this Node does not serve, so a verb naming a moved route fails at the call
+ * with the route's name rather than reaching the Worker and being answered with the interface shell.
+ * `query` is appended as a query string; a route's own parameters are filled by name.
+ */
+export function api(method, template, query = {}, params = {}) {
+  const filled = fillPath(route(method, template), params);
+  const search = new URLSearchParams(
+    Object.entries(query).filter(([, value]) => value !== undefined && value !== null),
+  );
+  return search.size === 0 ? filled : `${filled}?${search}`;
+}
 
 export const workerDir = resolve(here, "../../../apps/node/worker");
 
@@ -125,7 +140,7 @@ export async function sessionCookie(origin) {
   let signIn = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (attempt > 0) await new Promise((settle) => setTimeout(settle, attempt * 500));
-    signIn = await fetch(`${origin}/api/auth/login`, {
+    signIn = await fetch(`${origin}${api("POST", "/api/auth/login")}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -189,7 +204,7 @@ export async function doctorReport(origin, extraHeaders = {}, subject = "the Nod
    * — three sentences about a deploy, from a command that deploys nothing. A message that names the wrong
    * act sends its reader to the wrong place, which costs more than saying nothing.
    */
-  const response = await fetch(`${origin.replace(/\/$/, "")}/api/doctor`, {
+  const response = await fetch(`${origin.replace(/\/$/, "")}${api("GET", "/api/doctor")}`, {
     headers: { accept: "application/json", ...extraHeaders },
   }).catch((error) => fail(`could not reach ${subject} at ${origin}: ${error.message}`));
   const text = await response.text();
@@ -346,7 +361,7 @@ export async function runPreflight(argv, { announce = true, needsUrl = true } = 
      * the new code and will name itself, and a fall-through to the incumbent then reports no version at all,
      * which is precisely what the gate refuses on. Worth saying in advance so the refusal is not a surprise.
      */
-    const response = await fetch(`${origin}/api/doctor`, { headers: { accept: "application/json" } })
+    const response = await fetch(`${origin}${api("GET", "/api/doctor")}`, { headers: { accept: "application/json" } })
       .catch(() => null);
     if (response === null) {
       notes.push(`could not reach ${origin}. If this is a first install that is expected — there is no Node `

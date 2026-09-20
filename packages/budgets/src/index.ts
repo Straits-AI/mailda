@@ -5,7 +5,9 @@ export type { BudgetOrigin } from "./generated.ts";
 
 /**
  * Thrown when a budget is exceeded. The message carries the four parts AGENTS.md
- * requires: the named budget, its limit, the ask, and where the limit came from.
+ * requires: the named budget, its limit, the ask, and what changes it — which for a
+ * generated budget is remeasuring its receipt and regenerating this package, since a
+ * budget has no runtime override by design (§2: the constants are generated, never set).
  *
  * An agent reading `butler.fanout.max_effects=500, asked for 512` can act. An agent
  * reading a stack trace cannot.
@@ -30,7 +32,8 @@ export class BudgetExceededError extends Error {
         detail +
         `  receipt  ${origin.receipt}\n` +
         `  measured ${origin.measuredOn}\n` +
-        `  stale if ${origin.staleWhen}`,
+        `  stale if ${origin.staleWhen}\n` +
+        `  raise    remeasure ${origin.receipt}, then pnpm receipts`,
     );
     this.name = "BudgetExceededError";
     this.budget = budget;

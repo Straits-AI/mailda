@@ -2792,8 +2792,9 @@ reader would: *"Search mail, edit"* then *"Search mail, button"*, with nothing t
 names itself; the button names the act.
 
 **The brand's short placeholder denied a feature.** "Search mail" replaced "sender, subject or message text",
-and `search-copy-world.test.ts` failed on exactly that, because *"people do not discover a feature the
-interface denies having"*. The pill keeps the brand's two words and a hint beside it carries the rest.
+and the search-copy test (since deleted, see 20 September 2026) failed on exactly that, because *"people do
+not discover a feature the interface denies having"*. The pill keeps the brand's two words and a hint beside
+it carries the rest.
 
 ### And the mark is not shipped, because it does not work
 
@@ -2907,3 +2908,52 @@ exactly what an unbounded page reads, because the scan stops at `LIMIT` either w
 `stale_when` did not anticipate a new predicate, so adding one would have left `771` describing a query that
 no longer existed — a landmine by this repository's own definition, in the file whose job is to prevent them.
 
+
+## The whole tree reviewed on two axes, and what each finding turned into (20 September 2026)
+
+A review of the entire repository against `AGENTS.md` on one axis and the Blueprint on the other. Two
+reports, kept apart on purpose so neither could mask the other. What each finding became:
+
+**Standards.** The 25 MiB attachment ceiling in `src/mailbox-policy.ts` was the exact landmine `AGENTS.md`
+uses as its example, typed by hand while `email.inbound.max_bytes` sat in the budgets with a receipt; it
+reads the budget now. The queue consumer's `batch_size: 25, max_wait_time_ms: 10_000` (and the attach
+script's `--batch-size 25 --batch-timeout 10`) were inherited from a deleted wrangler block and measured by
+nobody, so they are gone: the consumer takes the platform's defaults, which is where a platform number
+belongs. Two more literals moved under receipts, `auth.failed_login_window_seconds` (the window the budget
+key `auth.max_failed_logins_per_15min` already named) and `doctor.stalled_outbox_seconds`, the latter written
+up as **provisional** because it never was measured and the receipt says so. The doctor's seven-day DMARC
+window is a presentation constant and is now named as one.
+
+`BudgetExceededError` printed three of §3's four parts. The fourth, "the exact command that changes it",
+pointed at a `mailda policy set` verb that never existed and never will: a generated budget has no runtime
+override by design. The error now ends `raise    remeasure <receipt>, then pnpm receipts`, and §3 was amended
+to say that rather than promise a verb.
+
+The CLI carried twenty-nine `/api/...` strings written by hand. Every one now goes through `api()` in
+`packages/cli/src/support.mjs`, which reads the contract's route registry and throws on a route this Node
+does not serve, and `test/node/cli-route-parity.test.ts` parses the CLI's string literals so a stray
+path fails a test rather than a customer's terminal.
+
+Seven lists had a hidden `LIMIT`. Each now reads one row past its cap and returns `truncated`, so a reader
+of the quarantine, suppressions, sends, drafts, notifications, audit or log listing is told when older rows
+exist (§3). Three copies of the routing-rules listing read one page of fifty and stopped; they share
+`routingRulesOf`, which follows pages. `allowedTypesOf` read an unparseable column as "accept everything";
+it throws, because only our own code writes that column and anything else is corruption. The Butler release
+path labelled every failure to reach a run `released_after_run_expired`, including a D1 outage; the reason
+now says `released_but_run_unreachable` with the message when the error was not an absent instance.
+
+One test was deleted: `search-copy-world` asserted three sentences of product copy against the inbox
+source as text, which §2c rung 4 calls guarding nothing. Its argument survives in the comment beside the
+search field.
+
+`approvals.ts` and `provider/cloudflare-grant.ts` each changed for five reasons and were split by reason;
+both paths remain as barrels so nothing that imported or cited them moved.
+
+**Spec.** Thirteen places where the Blueprint described something other than what is built. None were
+code defects; all were the document overclaiming or lagging, which `AGENTS.md` treats as a bug in both
+places. Each section now says what exists: the resource-style route registry rather than a command plane with
+four headers nobody implemented; MCP on the session cookie; no per-mailbox version counter; the real
+submission and delivery vocabularies in the §14 diagram; forward as a sealed send; restore as a runbook
+with no `mailda restore` verb; one trigger and reserved node kinds; merge without split; D1 forecasting not
+built; a TypeScript SDK only; no `MailCoreAdapter`. And the one thing the code did that the document never
+mentioned, domain purchase through the registrar, is now in §2 with its gate.

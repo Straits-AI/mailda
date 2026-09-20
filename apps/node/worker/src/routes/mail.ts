@@ -5,10 +5,11 @@ import { getEvidence, streamEvidence } from "../evidence-store.ts";
 import { listMessages, authorize, authorizeExport, readableSubjects, readableMailboxes } from "../authz-read.ts";
 import { claim, close, mailboxQueues, queueFor, release, steal } from "../cases.ts";
 import { assertAdmin } from "../access.ts";
-import { notificationsFor } from "../notifications.ts";
+import { NOTIFICATION_LIST_CAP, notificationsFor } from "../notifications.ts";
 import { mergeConversations } from "../merge.ts";
 import { setResponseTarget } from "../mailbox-policy.ts";
-import { deleteDraft, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
+import { deleteDraft, DRAFT_LIST_CAP, draftForReply, listDrafts, readDraft, saveDraft } from "../drafts.ts";
+import { capped } from "../list-cap.ts";
 import { safeFilename } from "../outbound/headers.ts";
 import { addressList, isId, notFound } from "./support.ts";
 import type { Some } from "../router.ts";
@@ -27,7 +28,8 @@ export const mail = {
     if (inReplyTo !== null) {
       return Response.json({ draft: await draftForReply(env, who.orgId, who.userId, inReplyTo) });
     }
-    return Response.json({ drafts: await listDrafts(env, who.orgId, who.userId) });
+    const { rows, truncated } = capped(await listDrafts(env, who.orgId, who.userId), DRAFT_LIST_CAP);
+    return Response.json({ drafts: rows, truncated });
   },
 
   "PUT /api/drafts": async ({ request, env, clock, who }) => {
@@ -98,8 +100,9 @@ export const mail = {
    * deletes mail on this Node.
    */
   "GET /api/quarantine": async ({ env, who }) => {
-    const { listQuarantined } = await import("../quarantine.ts");
-    return Response.json({ quarantined: await listQuarantined(env, who.orgId, who.userId) });
+    const { listQuarantined, QUARANTINE_LIST_CAP } = await import("../quarantine.ts");
+    const { rows, truncated } = capped(await listQuarantined(env, who.orgId, who.userId), QUARANTINE_LIST_CAP);
+    return Response.json({ quarantined: rows, truncated });
   },
 
   "POST /api/quarantine/:messageId/hold": async ({ request, env, clock, params, who }) => {
@@ -346,7 +349,8 @@ export const mail = {
     // Subjects are the person plus every team they belong to, which is what every other read here does. A
     // mailbox read through a team is a mailbox whose notices reach that team's members.
     const subjects = await readableSubjects(env, who);
-    return Response.json({ notifications: await notificationsFor(env, who, subjects) });
+    const { rows, truncated } = capped(await notificationsFor(env, who, subjects), NOTIFICATION_LIST_CAP);
+    return Response.json({ notifications: rows, truncated });
   },
 
   /**

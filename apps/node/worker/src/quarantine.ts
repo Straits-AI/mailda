@@ -41,6 +41,9 @@ export interface QuarantinedDelivery {
   note: string | null;
 }
 
+/** Newest first, and this many; the route reports whether older ones exist. */
+export const QUARANTINE_LIST_CAP = 200;
+
 export async function listQuarantined(env: Env, orgId: string, actorUserId: string): Promise<QuarantinedDelivery[]> {
   await assertAdmin(env, orgId, actorUserId);
   const rows = await env.CATALOG.prepare(
@@ -51,7 +54,7 @@ export async function listQuarantined(env: Env, orgId: string, actorUserId: stri
        JOIN ingress_receipts r ON r.id = m.ingress_receipt_id
        JOIN addresses a ON a.org_id = r.org_id AND a.address = r.envelope_to
       WHERE m.org_id = ? AND m.quarantined_at IS NOT NULL
-      ORDER BY m.quarantined_at DESC LIMIT 200`,
+      ORDER BY m.quarantined_at DESC LIMIT ${QUARANTINE_LIST_CAP + 1}`,
   ).bind(orgId).all<{
     message_id: string; receipt_id: string; mailbox_id: string; mailbox_address: string;
     subject: string | null; from_addr: string | null; auth_from_domain: string | null;

@@ -18,6 +18,7 @@ values:
   auth.refresh_replay_window_seconds: 30
   auth.access_token_refresh_margin_seconds: 120
   auth.max_failed_logins_per_15min: 10
+  auth.failed_login_window_seconds: 900
   auth.invitation_expiry_seconds: 604800
 ---
 

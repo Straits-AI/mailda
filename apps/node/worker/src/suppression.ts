@@ -116,13 +116,17 @@ export async function suppressedAmong(env: Env, orgId: string, addresses: readon
     const one = rowToSuppression(row);
     if (!seen.has(one.address)) seen.set(one.address, one);
   }
+  // One address per row is the worst case, so a cap-and-one on rows is a cap-and-one on addresses too.
   return [...seen.values()];
 }
 
 /** Every suppressed address on this Node, newest first. Administrators only. */
+/** Newest first, and this many rows read; the route reports whether older ones exist. */
+export const SUPPRESSION_LIST_CAP = 500;
+
 export async function listSuppressions(env: Env, orgId: string, actorUserId: string): Promise<Suppression[]> {
   await assertAdmin(env, orgId, actorUserId);
-  const rows = await env.CATALOG.prepare(`${CAUSE_SQL} ORDER BY e.received_at DESC LIMIT 500`)
+  const rows = await env.CATALOG.prepare(`${CAUSE_SQL} ORDER BY e.received_at DESC LIMIT ${SUPPRESSION_LIST_CAP + 1}`)
     .bind(orgId).all<{ address: string; event_type: string; payload: string; received_at: string; event_id: string }>();
   const seen = new Map<string, Suppression>();
   for (const row of rows.results) {
