@@ -218,9 +218,11 @@ export async function setAttachmentLimits(
   };
   await auditedBatch<never>(env, ctx, orgId, {
     action: "mailbox.attachment_limits_set", outcome: "ok", actorUserId, subject: mailboxId,
+    // The columns as stored, not parsed: an audit entry records what was there, and a column that cannot be
+    // parsed is exactly the state this act repairs, so parsing it here would make the repair impossible.
     detail: {
-      from: { maxBytes: mailbox.attachment_max_bytes, allowedTypes: allowedTypesOf(mailbox.attachment_allowed_types) },
-      to: { maxBytes: next.attachment_max_bytes, allowedTypes: allowedTypesOf(next.attachment_allowed_types) },
+      from: { maxBytes: mailbox.attachment_max_bytes, allowedTypes: mailbox.attachment_allowed_types },
+      to: { maxBytes: next.attachment_max_bytes, allowedTypes: next.attachment_allowed_types },
     },
   }, (entry) => [
     entry,
