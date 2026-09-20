@@ -72,7 +72,13 @@ describe("the Cloudflare grant is reachable from nothing that carries mail", () 
       .filter((path) => readFileSync(path, "utf8").includes("provider_binding"))
       .map(relative)
       .sort();
-    expect(readers).toEqual(["doctor/node.ts", "migrate.ts", "provider/cloudflare-grant.ts"]);
+    // The grant module is three siblings behind the `cloudflare-grant.ts` barrel since 20 September 2026; the
+    // barrel itself reads nothing, and the world is still closed over exactly the module, the migration and
+    // the doctor.
+    expect(readers).toEqual([
+      "doctor/node.ts", "migrate.ts",
+      "provider/account-routing.ts", "provider/cloudflare-api.ts", "provider/grant-oauth.ts",
+    ]);
   });
 
   it("keeps a refused grant out of the verdict, which is what makes a revocation harmless", () => {

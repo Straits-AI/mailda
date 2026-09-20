@@ -18,7 +18,7 @@ values:
 
 ## Addition, 20 September 2026: `doctor.stalled_outbox_seconds`, measured on the live Node
 
-`stalled_outbox` reports outbox events older than this that nothing has published. Ten minutes was a literal
+`outbox_draining` reports outbox events older than this that nothing has published. Ten minutes was a literal
 in `src/doctor/evidence.ts` with the comment *"long enough that fast-path publication and one alarm retry have
 both had a turn"*, which is a basis and not a measurement. It moved here and was then measured the same day.
 
@@ -36,7 +36,7 @@ The six-hour row is stamped `2026-08-04T00:00:00.000Z` exactly, which no arrival
 from the 4 August drills and not traffic, and it is recorded here rather than dropped so the next reader
 does not rediscover it. The worst real lag is **25.3 s**, five sweeps of the alarm. **Sized:** 600 s stands,
 24× the worst real lag; only a sweeper that is not running reaches it. **Stale when** a healthy Node's
-`stalled_outbox` finding fires, or the worst real publication lag on this Node passes 60 s. Eight events is
+`outbox_draining` finding fires, or the worst real publication lag on this Node passes 60 s. Eight events is
 a small corpus, and it is the whole corpus this Node has; a busier Node remeasures.
 
 ## Correction, 28 August 2026: a third search finding that costs no subrequest

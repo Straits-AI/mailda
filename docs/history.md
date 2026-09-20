@@ -2925,7 +2925,7 @@ the same day on the live Node (worst real publication lag 25 s; 600 s stands at 
 window is a presentation constant and is now named as one.
 
 `BudgetExceededError` printed three of §3's four parts. The fourth, "the exact command that changes it",
-pointed at a `mailda policy set` verb that never existed and never will: a generated budget has no runtime
+pointed at a policy-set verb that never existed and never will: a generated budget has no runtime
 override by design. The error now ends `raise    remeasure <receipt>, then pnpm receipts`, and §3 was amended
 to say that rather than promise a verb.
 
@@ -2954,6 +2954,6 @@ code defects; all were the document overclaiming or lagging, which `AGENTS.md` t
 places. Each section now says what exists: the resource-style route registry rather than a command plane with
 four headers nobody implemented; MCP on the session cookie; no per-mailbox version counter; the real
 submission and delivery vocabularies in the §14 diagram; forward as a sealed send; restore as a runbook
-with no `mailda restore` verb; one trigger and reserved node kinds; merge without split; D1 forecasting not
+with no restore verb; one trigger and reserved node kinds; merge without split; D1 forecasting not
 built; a TypeScript SDK only; no `MailCoreAdapter`. And the one thing the code did that the document never
 mentioned, domain purchase through the registrar, is now in §2 with its gate.
