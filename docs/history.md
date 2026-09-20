@@ -2977,3 +2977,63 @@ the chosen name's derived config, where before the secret would have landed in t
 been refused as already claimed. The URL an upgrade needs is asked once per Node per machine and kept in a
 git-ignored `.mailda/nodes.json`. Driven against the live account with `expect`, declining at the deploy
 question: the upgrade path, the remembered URL, and a new name each behaved, and nothing was deployed.
+
+## Three things a founder saw on the inbox, and one face too many (20 September 2026)
+
+Looking at the live Node: the search field was small, its hint touched it, and the page was set in two
+typefaces. The first two were sizes: the field's input grows from .85rem to 1rem with the pill's padding to
+match, and the hint takes a small margin and the pill's own inset so it reads as a caption of the field
+rather than a part of it.
+
+The third was drift. `--mono` is kept by a rule older than the brand, that every figure is tabular, and it
+had spread from figures to hints, notices, buttons, uppercase labels, table headers, inputs, selects and the
+whole status bar, so that a screen with no numbers on it was still half monospace. Prose is `--body` now;
+a small uppercase label is `--body` at weight 500 with tracking, the same register without the second face.
+What keeps the tabular face is what the rule was for: counts and rail figures, the status bar's numbers and
+countdown, ids, hashes, state chips, dates in the message list, code and message source. Checked on a local
+Node with the fixture inbox before and after; the contrast receipt's tokens are untouched, so its figures
+stand.
+
+## One family, one spacing scale: what a browser audit of every screen found (21 September 2026)
+
+The previous section moved prose off the monospace face and left figures on it. The founder looked again and
+asked for one font on the entire page, unified styles, and proper padding and margins everywhere. Rather
+than read the stylesheet, fourteen agents opened each route on a local Node with fixture data, signed in,
+and measured computed styles: every font family in use and which elements carried it; every element whose
+text sat within four pixels of its own edge; siblings with gaps under four pixels; buttons, cells and inputs
+with under six pixels of vertical padding; controls of one role styled two ways. Two hundred and
+twenty-two findings. Two skeptics per finding re-measured each one to refute it; one hundred and
+thirty-one fell (already adequate, mis-measured, or a size-and-weight variation the one-family rule
+accepts) and ninety-one stood. One agent then wrote the plan over the stylesheet, grouped by rule.
+
+**Three families became one.** Inter was already the body face. The display token named Satoshi, never
+shipped, with Plus Jakarta Sans behind it, and reached two elements. The monospace token, kept for figures
+by a rule older than the brand, had spread to twenty-plus elements on the bare inbox and thirty-four with a
+message open: rail counts, the status bar, the reading pane's header labels and values, every sender and
+date in the message list, the state chips, code blocks. Both tokens now resolve to the body face, so every
+rule keeps working and the audit's per-element list needed no per-element edit. What the other faces bought
+is bought another way: headings by weight 700 and tight tracking, figures by tabular digits, machine text
+by weight 500 in the dim colour. Inter 600 and 700 replace the two Jakarta files, byte-identical to the same
+Fontsource package as the 400 and 500 already here. The trade the plan named: source in the Butler editor
+and raw message bodies lose fixed-width indentation cues and are read by indent depth alone.
+
+**Six label rules became one.** Field names, table headers, rail headings, ledger counts, picker labels,
+recipient kinds, legends and chips each had their own size and tracking, from .6rem to .72rem. One rule sets
+all of them, and the chip takes the same size with display inline-block so it stops rendering at two
+heights on one screen. **Selects became one control:** the field-row style is the global one, so the inbox
+mailbox filter (a native Arial select), the queue picker (bordered, monospace) and the composer's mailbox
+choice match the inputs beside them. **Buttons took one box:** primary and quiet share padding and height.
+The ledger head, declared twice six hundred lines apart with different margins, is one block.
+
+**Spacing moved to a scale** of .25, .5, .75, 1 and 1.5rem: inputs and selects gain a half-rem inset so text
+no longer touches the underline's ends; field rows, switches, grant lists, dry-run rows and Butler actions
+open up; notices stack with a half-rem between them; the composer dock drops to half the viewport so the
+reply actions under it stay reachable. Screen edits were three: a flex class the agents' capability
+checkboxes lacked, an empty state for the suppressions table in place of a bare "None.", and captions
+styled by element so four tables that omitted the class match the one that carried it.
+
+Verified after the edit by the same instrument: every route renders one family, the last stray being the
+browser's default monospace on a code element, now inherited away. Typecheck, lint, the client and node
+suites, the fonts test (four weights of one face) and the contrast scan pass; the contrast receipt's colour
+tokens are untouched.
+

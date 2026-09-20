@@ -80,7 +80,7 @@ export const CONTENT_SECURITY_POLICY = [
   // interface now loads four, and the substance of that reasoning is unchanged rather than abandoned: they
   // are served from this origin, so the directive stays as narrow as it can be. `'self'` and not a CDN is
   // the whole point — a page about owning your mail must not hand a third party every viewer's IP address,
-  // and `fonts/README.md` records that this is why Satoshi is named in the stack and never shipped.
+  // and `fonts/README.md` records why the brand's Satoshi was never shipped.
   "font-src 'self'",
   // `data:` for the favicon and the grain texture, both inline SVG in `ui.ts` for the same custody reason
   // the fonts are local: a page about owning your mail must not fetch anything from anywhere.

@@ -1,6 +1,6 @@
-# The typefaces this Node serves
+# The typeface this Node serves
 
-Four files, 71 KB, served from this origin at `/app/fonts/*.woff2` and referenced by `@font-face` in
+One face in four weights, 97 KB, served from this origin at `/app/fonts/*.woff2` and referenced by `@font-face` in
 `src/ui.ts`. **Nothing here is fetched from a third party at runtime**, which is the whole reason they are
 committed rather than linked: Mailda's premise is custody, and a page that loads a font from someone else's
 CDN hands that party every viewer's IP address on every load. There is no version of that consistent with
@@ -10,26 +10,27 @@ the promise.
 |:--|:--|--:|--:|
 | `inter-400.woff2` | Inter | 400 | 23.1 KB |
 | `inter-500.woff2` | Inter | 500 | 23.7 KB |
-| `jakarta-600.woff2` | Plus Jakarta Sans | 600 | 11.9 KB |
-| `jakarta-700.woff2` | Plus Jakarta Sans | 700 | 12.0 KB |
+| `inter-600.woff2` | Inter | 600 | 23.9 KB |
+| `inter-700.woff2` | Inter | 700 | 23.8 KB |
 
 All four are the **Latin subset** as published by [Fontsource](https://fontsource.org), copied verbatim from
-`@fontsource/inter@5.3.0` and `@fontsource/plus-jakarta-sans@5.3.0`. Not subset further and not modified in
+`@fontsource/inter@5.3.0`. Plus Jakarta Sans 600 and 700 were served as the heading face until 21 September
+2026, when a browser audit found the interface set in three families and the product went to one; the two
+files and their licence left with it. Not subset further and not modified in
 any way — what is here is byte-identical to what those packages ship, which keeps provenance checkable.
 
-Those two packages are **not** dependencies of this repository. They were the source of the copy and nothing
+That package is **not** a dependency of this repository. They were the source of the copy and nothing
 imports them, so keeping them in `package.json` would be two entries in every customer's `node_modules` that
 no code reaches. To reproduce or verify the copy:
 
-1. `pnpm add -D @fontsource/inter@5.3.0 @fontsource/plus-jakarta-sans@5.3.0` anywhere convenient.
-2. Copy `files/inter-latin-{400,500}-normal.woff2` and
-   `files/plus-jakarta-sans-latin-{600,700}-normal.woff2` in, under the names in the table above.
-3. Copy each package's `LICENSE` beside them.
+1. `pnpm add -D @fontsource/inter@5.3.0` anywhere convenient.
+2. Copy `files/inter-latin-{400,500,600,700}-normal.woff2` in, under the names in the table above.
+3. Copy the package's `LICENSE` beside them.
 4. `shasum` against what is already here — the files are unmodified, so they must match exactly.
-5. Remove the packages again.
+5. Remove the package again.
 
-Both are **SIL Open Font License 1.1**, and the licences are beside the files as OFL §2 requires:
-`LICENSE-Inter.txt`, `LICENSE-PlusJakartaSans.txt`.
+Inter is **SIL Open Font License 1.1**, and the licence is beside the files as OFL §2 requires:
+`LICENSE-Inter.txt`.
 
 ## Satoshi is in the brand and is deliberately not in this directory
 

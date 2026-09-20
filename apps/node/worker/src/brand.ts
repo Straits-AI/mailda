@@ -26,13 +26,13 @@
  *
  * ## Why the wordmark is text and not a path
  *
- * "Mailda" is set as real text in the display face rather than traced. Three reasons and the first is
+ * "Mailda" is set as real text in the interface's one face rather than traced. Three reasons and the first is
  * decisive: it is **selectable, translatable and readable by a screen reader**, where a path is a picture of
  * a word. It also costs no bytes beyond the font already being loaded, and it stays crisp at any size
  * without a second set of optical sizes.
  *
- * The cost is that the wordmark renders in Plus Jakarta Sans rather than Satoshi wherever Satoshi is not
- * installed — see `fonts/README.md` for why Satoshi is named in the stack and not shipped. For the
+ * The cost is that the wordmark renders in Inter 700 rather than the brand's Satoshi, which is never shipped
+ * (`fonts/README.md`) and, since 21 September 2026, no longer named: the interface is one family. For the
  * lockup that appears in the product this is the right trade; for a logo file handed to a printer it is
  * not, and that file should come from the designer.
  */
@@ -164,7 +164,7 @@ export function faviconDataUri(): string {
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`,
       `<rect width="64" height="64" rx="14" fill="${BRAND.ink}"/>`,
       `<text x="32" y="45" text-anchor="middle" fill="${BRAND.white}"`,
-      ` font-family="Satoshi, 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif"`,
+      ` font-family="Inter, ui-sans-serif, system-ui, sans-serif"`,
       ` font-size="42" font-weight="700">M</text>`,
       `<circle cx="47" cy="20" r="5" fill="${BRAND.blue}"/>`,
       `</svg>`,

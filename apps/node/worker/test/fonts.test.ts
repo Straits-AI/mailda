@@ -23,8 +23,8 @@ import { clientAsset } from "../src/ui.ts";
 const SERVED = [
   "/app/fonts/inter-400.woff2",
   "/app/fonts/inter-500.woff2",
-  "/app/fonts/jakarta-600.woff2",
-  "/app/fonts/jakarta-700.woff2",
+  "/app/fonts/inter-600.woff2",
+  "/app/fonts/inter-700.woff2",
 ];
 
 describe("the fonts are served from this origin", () => {
@@ -66,7 +66,7 @@ describe("the fonts are served from this origin", () => {
     expect(clientAsset("/app/app.css")!.headers.get("cache-control")).toBe("public, max-age=60");
   });
 
-  it("references exactly these four faces from the stylesheet, and no others", async () => {
+  it("references exactly these four weights from the stylesheet, and no others", async () => {
     /*
      * The closed world. A fifth `@font-face` pointing at a path nothing serves is a face that silently falls
      * back — the page renders, in the wrong type, with no error anywhere. Derived from the stylesheet rather
