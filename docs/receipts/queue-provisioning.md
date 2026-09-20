@@ -24,6 +24,23 @@ values:
   queues.queue_list_default_page: 100
 ---
 
+## Addition, 20 September 2026: what a consumer attached without settings gets
+
+The Node stopped passing `batch_size: 25, max_wait_time_ms: 10_000` when it attaches the consumer (they were
+inherited from a deleted wrangler block and measured by nobody). What the platform applies instead, read
+back through `GET /accounts/{id}/queues/{id}/consumers` on a throwaway queue in the Swmengappdev account,
+20 September 2026, consumer added by `wrangler queues consumer worker add` with no flags:
+
+```json
+{ "batch_size": 10, "max_retries": 3, "max_wait_time_ms": 5000, "retry_delay": 0 }
+```
+
+The queue and its consumer were deleted afterwards; the account was verified back to baseline. The live
+`mailda-sending-events` consumer, attached on 7 August, still carries `25` and `10000`; a consumer's
+settings are not patched by a re-run, so it keeps them until it is removed and re-added. Delivery events
+arrive a few per send, so neither pair is load-bearing; what matters is that the number in force is now
+observed rather than typed. Not a `values:` entry, because nothing in the code reads it.
+
 ## Addition, 10 September 2026: the subscription is readable from inside the Node now, and is in no menu (#163)
 
 ADR 42 gave the Node its own Cloudflare grant, and `doctor`'s `sending_events_consumer` had said since #72

@@ -16,15 +16,28 @@ values:
   doctor.stalled_outbox_seconds: 600
 ---
 
-## Addition, 20 September 2026: `doctor.stalled_outbox_seconds` is provisional, and says so
+## Addition, 20 September 2026: `doctor.stalled_outbox_seconds`, measured on the live Node
 
 `stalled_outbox` reports outbox events older than this that nothing has published. Ten minutes was a literal
 in `src/doctor/evidence.ts` with the comment *"long enough that fast-path publication and one alarm retry have
-both had a turn"*, which is a basis and not a measurement: the sweeper's alarm cadence is five seconds, so
-this is 120 sweeps, and nobody has recorded how old an unpublished event gets on a healthy Node under load.
-It moves here so that it is governed like every other number rather than because it was measured. **Stale
-when** a healthy Node's `stalled_outbox` finding fires: that is the measurement, and it replaces this
-figure rather than being explained away.
+both had a turn"*, which is a basis and not a measurement. It moved here and was then measured the same day.
+
+**Measured:** every row of `outbox` on `mailda-catalog` in the Swmengappdev account, 20 September 2026, by
+`wrangler d1 execute --remote`. Nine rows since 3 August, all `mail.ingress.accepted`, none unpublished.
+Publication lag, created to published:
+
+| rows | lag |
+|:--|:--|
+| 5 | 7.0–9.6 s |
+| 3 | 10.4–25.3 s |
+| 1 | 21,766 s (six hours) |
+
+The six-hour row is stamped `2026-08-04T00:00:00.000Z` exactly, which no arrival does; it is a seeded row
+from the 4 August drills and not traffic, and it is recorded here rather than dropped so the next reader
+does not rediscover it. The worst real lag is **25.3 s**, five sweeps of the alarm. **Sized:** 600 s stands,
+24× the worst real lag; only a sweeper that is not running reaches it. **Stale when** a healthy Node's
+`stalled_outbox` finding fires, or the worst real publication lag on this Node passes 60 s. Eight events is
+a small corpus, and it is the whole corpus this Node has; a busier Node remeasures.
 
 ## Correction, 28 August 2026: a third search finding that costs no subrequest
 

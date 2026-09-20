@@ -2920,8 +2920,8 @@ reads the budget now. The queue consumer's `batch_size: 25, max_wait_time_ms: 10
 script's `--batch-size 25 --batch-timeout 10`) were inherited from a deleted wrangler block and measured by
 nobody, so they are gone: the consumer takes the platform's defaults, which is where a platform number
 belongs. Two more literals moved under receipts, `auth.failed_login_window_seconds` (the window the budget
-key `auth.max_failed_logins_per_15min` already named) and `doctor.stalled_outbox_seconds`, the latter written
-up as **provisional** because it never was measured and the receipt says so. The doctor's seven-day DMARC
+key `auth.max_failed_logins_per_15min` already named) and `doctor.stalled_outbox_seconds`, the latter measured
+the same day on the live Node (worst real publication lag 25 s; 600 s stands at 24× it). The doctor's seven-day DMARC
 window is a presentation constant and is now named as one.
 
 `BudgetExceededError` printed three of §3's four parts. The fourth, "the exact command that changes it",
