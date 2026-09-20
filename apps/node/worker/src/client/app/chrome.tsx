@@ -371,6 +371,15 @@ export function Rail() {
  * scoped by a relation. The default says nothing extra, because a blank prompts a question and a wrong
  * reassurance ends one.
  */
+/**
+ * A capped list says where it stopped. The Node returns `truncated` on every listing it caps (AGENTS.md §3:
+ * a limit you can hit is a limit you must see), and this is the sentence that makes the flag visible.
+ */
+export function Truncated({ when, shown, noun }: { when: boolean; shown: number; noun: string }) {
+  if (!when) return null;
+  return <p className="notice dim">Showing the newest {shown} {noun}. Older ones exist and are not listed.</p>;
+}
+
 export function Nothing(
   { kind, detail, unfiltered = false, action }: {
     kind: "empty" | "failed" | "loading";
@@ -469,6 +478,7 @@ export function Notices() {
 
   return (
     <section className="notices" aria-label="Notifications">
+      <Truncated when={notices.data.truncated} shown={notices.data.notifications.length} noun="notices" />
       {notices.data.notifications.map((notice) => {
         const { headline, meta } = noticeText(notice);
         return (

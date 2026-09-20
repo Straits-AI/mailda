@@ -3,7 +3,7 @@ import { Fragment, useState } from "react";
 import { apiFetch } from "/app/session.js";
 import { DELIVERY_STATES, UNOBSERVED, describeReason, describeSend, orderRecipients, summariseDelivery } from "/app/delivery.js";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Truncated } from "../chrome.tsx";
 import {
   type AuditRow, configureTransport, type SendRow, useAudit, useDoctor, useLogs, useSends,
   useTransport,
@@ -183,6 +183,7 @@ export function Outbox() {
           : `${daily.handedOver} handed over today. This Node was first rate-limited at ${daily.throttledAtCount}.`}
       </p>
 
+      <Truncated when={sends.data.truncated} shown={rows.length} noun="sends" />
       {rows.length === 0 ? (
         <Nothing kind="empty" detail="Nothing has been sent from this Node yet." />
       ) : (
@@ -370,6 +371,7 @@ export function Audit() {
         </button>
       </header>
       {verdict === null ? null : <p className="notice mono">{verdict}</p>}
+      <Truncated when={audit.data.truncated} shown={audit.data.entries.length} noun="entries" />
       {audit.data.entries.length === 0 ? (
         <Nothing kind="empty" detail="No audited action has been taken on this Node yet." />
       ) : (
@@ -425,6 +427,7 @@ export function Log() {
           {logs.data.counts.map((count) => `${count.n} ${count.level}`).join(" · ") || "empty"}
         </p>
       </header>
+      <Truncated when={logs.data.truncated} shown={logs.data.entries.length} noun="entries" />
       {logs.data.entries.length === 0 ? (
         <Nothing kind="empty" detail="Nothing has been logged. This Node trims its log by design." />
       ) : (

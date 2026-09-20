@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Truncated } from "../chrome.tsx";
 import {
   type CaseRow, type ClaimResult, assignCase, claimCase, closeCase, mergeConversations, releaseCase, releaseQuarantined,
   setAttachmentLimits, setQuarantineSwitch, setResponseTarget, stealCase, useCases, useMailboxes, useMe, useQuarantine,
@@ -495,6 +495,12 @@ export function Queue() {
         quarantine.isError ? (
           <p className="notice bad" role="alert">{quarantine.error.message}</p>
         ) : held.length === 0 ? null : (
+          <>
+          {/* The cap is on the Node's whole list, and `held` is this mailbox's share of it, so the noun says so. */}
+          <Truncated
+            when={quarantine.data?.truncated === true} shown={quarantine.data?.quarantined.length ?? 0}
+            noun="held deliveries across this Node"
+          />
           <table className="queue-table" aria-label="Held back">
             <thead>
               <tr>
@@ -532,6 +538,7 @@ export function Queue() {
               ))}
             </tbody>
           </table>
+          </>
         )
       ) : null}
 
