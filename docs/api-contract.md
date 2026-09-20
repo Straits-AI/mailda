@@ -342,7 +342,9 @@ template literal in the CLI's source (the TypeScript parser, so a comment is not
 compared them to anything.
 
 Capped listings carry `truncated` (a boolean) beside their rows. It is in each response schema, because a
-cap a client cannot see is the hidden limit AGENTS.md §3 forbids.
+cap a client cannot see is the hidden limit AGENTS.md §3 forbids. The interface renders it through one
+component, `Truncated` in `src/client/app/chrome.tsx`, on every screen that shows a capped list;
+`test/client/truncated.test.tsx` holds it to its word.
 
 ## What comes next
 

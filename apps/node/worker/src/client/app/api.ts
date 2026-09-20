@@ -311,10 +311,10 @@ export interface NotificationRow {
  * the standing relations on the mailbox, so a cache would be a decision about visibility held on the client
  * — which ADR 11 puts on the server on every request.
  */
-export function useNotifications(): UseQueryResult<{ notifications: NotificationRow[] }, Error> {
+export function useNotifications(): UseQueryResult<{ notifications: NotificationRow[]; truncated: boolean }, Error> {
   return useQuery({
     queryKey: ["notifications"],
-    queryFn: () => read<{ notifications: NotificationRow[] }>(GET("/api/notifications")),
+    queryFn: () => read<{ notifications: NotificationRow[]; truncated: boolean }>(GET("/api/notifications")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -375,6 +375,8 @@ export function useMessages(
 
 export interface SendsResponse {
   sends: SendRow[];
+  /** The outbox shows the newest fifty; true says older ones exist and are not in `sends`. */
+  truncated: boolean;
   daily: DailySendState;
   capability: SendCapability;
 }
@@ -387,18 +389,18 @@ export function useSends(): UseQueryResult<SendsResponse, Error> {
   });
 }
 
-export function useAudit(): UseQueryResult<{ entries: AuditRow[] }, Error> {
+export function useAudit(): UseQueryResult<{ entries: AuditRow[]; truncated: boolean }, Error> {
   return useQuery({
     queryKey: ["audit"],
-    queryFn: () => read<{ entries: AuditRow[] }>(GET("/api/audit")),
+    queryFn: () => read<{ entries: AuditRow[]; truncated: boolean }>(GET("/api/audit")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
 
-export function useLogs(): UseQueryResult<{ entries: LogRow[]; counts: Array<{ level: string; n: number }> }, Error> {
+export function useLogs(): UseQueryResult<{ entries: LogRow[]; truncated: boolean; counts: Array<{ level: string; n: number }> }, Error> {
   return useQuery({
     queryKey: ["logs"],
-    queryFn: () => read<{ entries: LogRow[]; counts: Array<{ level: string; n: number }> }>(GET("/api/logs")),
+    queryFn: () => read<{ entries: LogRow[]; truncated: boolean; counts: Array<{ level: string; n: number }> }>(GET("/api/logs")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
@@ -616,7 +618,7 @@ export interface QuarantinedDelivery {
 export function useQuarantine(enabled: boolean) {
   return useQuery({
     queryKey: ["quarantine"],
-    queryFn: () => read<{ quarantined: QuarantinedDelivery[] }>(GET("/api/quarantine")),
+    queryFn: () => read<{ quarantined: QuarantinedDelivery[]; truncated: boolean }>(GET("/api/quarantine")),
     enabled,
   });
 }
@@ -639,8 +641,8 @@ export interface DraftListRow {
 }
 
 /** Every draft of this person's, newest first. What the inbox's Drafts strip lists. */
-export function useDrafts(): UseQueryResult<{ drafts: DraftListRow[] }, Error> {
-  return useQuery({ queryKey: ["drafts"], queryFn: () => read<{ drafts: DraftListRow[] }>(GET("/api/drafts")), ...AUTHORIZATION_SENSITIVE });
+export function useDrafts(): UseQueryResult<{ drafts: DraftListRow[]; truncated: boolean }, Error> {
+  return useQuery({ queryKey: ["drafts"], queryFn: () => read<{ drafts: DraftListRow[]; truncated: boolean }>(GET("/api/drafts")), ...AUTHORIZATION_SENSITIVE });
 }
 
 /** Marks a message read or unread, for the caller (0062). Fire-and-forget on open; awaited on the toggle. */
@@ -1272,10 +1274,10 @@ export interface SuppressionRow {
 }
 
 /** Recipients this Node will not send to (0058). Administrators only; derived from the provider's events. */
-export function useSuppressions(): UseQueryResult<{ suppressed: SuppressionRow[] }, Error> {
+export function useSuppressions(): UseQueryResult<{ suppressed: SuppressionRow[]; truncated: boolean }, Error> {
   return useQuery({
     queryKey: ["suppressions"],
-    queryFn: () => read<{ suppressed: SuppressionRow[] }>(GET("/api/suppressions")),
+    queryFn: () => read<{ suppressed: SuppressionRow[]; truncated: boolean }>(GET("/api/suppressions")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }
