@@ -2964,3 +2964,12 @@ exist and are not listed"* on the outbox, audit, log, suppressions, quarantine, 
 band. The quarantine sentence says *across this Node*, because the cap is on the Node's list and the queue
 shows one mailbox's share of it.
 
+**The install asks for the URL before it asks to deploy (20 September 2026).** Run on an account that already
+had a Node, `mailda install` asked "deploy now?", took the yes, and then refused for want of the Node's URL,
+which the canary needs. It knew the account had a Node before it asked, so the question moves to where the
+knowledge is: an upgrade says so and asks for the URL first. The same run printed every Workflow the account
+owns and every deployment the Node ever had, both wrangler tables the CLI reads one row from; both are
+quiet now, by `capture`'s own rule that a question is answered in the CLI's words and never echoed raw.
+And the install takes `--name`, so a second Node in the account is one conversation too: the probe, the
+deploy and the claim secret all follow the derived config, where before the secret would have landed in the
+first Node's catalog and been refused as already claimed.

@@ -27,7 +27,7 @@ import { workerDir, fail, capture, run, flag, sessionCookie, doctorReport, WRANG
  * **existing** Node down the direct-deploy path — skipping the canary, on a Node with users. So only
  * wrangler's own words for absence count; anything else stops the command.
  */
-function firstInstall() {
+export function firstInstall() {
   // Quiet, by `capture`'s own rule: this is a question — is there a Worker — and the answer is one word
   // below. Echoing every version ever uploaded above the plan was fifteen entries a person scrolled past.
   const probe = capture("npx", ["wrangler", "versions", "list", ...WRANGLER_ARGS], { quiet: true });
@@ -99,7 +99,9 @@ function refuseIfWorkflowBelongsElsewhere(config) {
     );
   }
 
-  const listed = capture("npx", ["wrangler", "workflows", "list"]);
+  // Quiet: the answer is one row of the table, and echoing every Workflow the account owns above the deploy
+  // was a screenful of somebody else's names for an operator to scroll past.
+  const listed = capture("npx", ["wrangler", "workflows", "list"], { quiet: true });
   if (listed.status !== 0) {
     process.stdout.write(
       `\n   note: could not read this account's Workflows, so whether \`${workflowName}\` already belongs to\n`
@@ -454,7 +456,9 @@ export async function deploy(argv) {
    * this command found live rather than from whatever the list says after it has changed.
    */
   process.stdout.write("\n== reading the version currently serving\n");
-  const deployments = capture("npx", ["wrangler", "deployments", "list", ...WRANGLER_ARGS]);
+  // Quiet, by `capture`'s rule: a question, answered in one line below. The full list is every deployment
+  // this Node has ever had, and it scrolled past the plan on every upgrade.
+  const deployments = capture("npx", ["wrangler", "deployments", "list", ...WRANGLER_ARGS], { quiet: true });
   if (deployments.status !== 0) fail(`could not list deployments (exit ${deployments.status}).`);
   const serving = activeVersionFrom(deployments.text);
   if (serving === null) {
@@ -466,6 +470,7 @@ export async function deploy(argv) {
       + "  fix      nothing has changed. Run `wrangler deployments list` and check the output.",
     );
   }
+  process.stdout.write(`   serving   ${serving}\n`);
 
   process.stdout.write("\n== uploading a canary version (no traffic)\n");
   const uploaded = capture("npx", [

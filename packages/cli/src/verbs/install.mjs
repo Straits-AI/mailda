@@ -2,8 +2,8 @@ import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
-import { capture, fail, run } from "../support.mjs";
-import { deploy, installedUrl } from "./deploy.mjs";
+import { capture, configFor, fail, flag, run, useConfig } from "../support.mjs";
+import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -14,8 +14,8 @@ import { deploy, installedUrl } from "./deploy.mjs";
  * not), runs the deploy, seeds the claim secret, and ends with the URL and the secret side by side, opened
  * in a browser where one exists. Nothing here is new authority: every step is a verb that already exists.
  *
- * Not for a second Node in the same account; that is `mailda deploy --name`, which the claim-secret script
- * does not yet follow.
+ * A second Node in the same account is `--name <worker>`, the same flag `mailda deploy` takes: the deploy
+ * derives that Node's config, and the claim secret is seeded into that Node's catalog rather than the first's.
  */
 export async function install(argv) {
   process.stdout.write("\n== mailda install\n   One Node, in your Cloudflare account. Nothing is changed until the deploy step.\n");
@@ -47,16 +47,34 @@ export async function install(argv) {
   process.stdout.write(`\n   account   ${account?.name ?? "?"}  ${process.env.CLOUDFLARE_ACCOUNT_ID ?? "(not chosen)"}\n`);
   process.stdout.write("   plan      Workers Paid is required to send mail; the Free plan deletes queued delivery events after a day.\n");
 
-  // 3. The deploy. A first install deploys directly, applies the schema and attaches the queue consumer;
-  //    a later run of this on an existing Node goes through the canary like any deploy.
-  const go = argv.includes("--yes") ? "y" : await ask("\n   deploy now? [y/N]: ");
+  // 3. Which kind of deploy. A first install deploys directly, applies the schema and attaches the queue
+  //    consumer; an account that already has a Node gets an upgrade through the canary, and the canary is
+  //    checked on the Node's own hostname, so the URL is a question this conversation asks here, before
+  //    "deploy now?", rather than a refusal the deploy step raises after the operator has said yes.
+  const named = flag(argv, "name");
+  // The named Node's derived config, before the first-install probe: the probe asks wrangler whether *this*
+  // Worker exists, and without the config it would ask about the default one and answer for the wrong Node.
+  if (named !== null) useConfig(configFor(argv));
+  const upgrading = !firstInstall();
+  if (upgrading) {
+    process.stdout.write(`\n   this account already has a Node${named === null ? "" : ` named ${named}`}, so this run upgrades it: a new\n`
+      + "   version is uploaded, checked as a canary on the Node's own hostname, and promoted only if doctor\n"
+      + `   passes. For a second Node instead, re-run with --name <worker>${named === null ? "" : " and another name"}.\n`);
+    const given = flag(argv, "url") ?? process.env.MAILDA_URL ?? "";
+    const url = given !== "" ? given : (await ask("   its URL (https://<your-node>): ")).trim();
+    if (!/^https:\/\/\S+$/.test(url)) fail(`"${url}" is not a URL; re-run with --url https://<your-node>, or set MAILDA_URL.`);
+    process.env.MAILDA_URL = url.replace(/\/$/, "");
+    process.stdout.write(`   node      ${process.env.MAILDA_URL}\n`);
+  }
+  const go = argv.includes("--yes") ? "y" : await ask(`\n   ${upgrading ? "upgrade" : "deploy"} now? [y/N]: `);
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed.\n\n"); return; }
-  await deploy([]);
+  await deploy(named === null ? [] : ["--name", named]);
   const url = installedUrl ?? process.env.MAILDA_URL ?? null;
 
   // 4. The claim secret. Printed once by the script, captured here so it can sit beside the URL.
   process.stdout.write("\n== the claim secret\n");
-  const seeded = capture("node", ["--experimental-strip-types", "scripts/seed-claim-secret.mjs"], { quiet: true });
+  const seeded = capture("node", ["--experimental-strip-types", "scripts/seed-claim-secret.mjs",
+    ...(named === null ? [] : ["--name", named])], { quiet: true });
   const secret = /^\s{2}([A-Za-z0-9_-]{40,})\s*$/m.exec(seeded.text)?.[1] ?? null;
   if (seeded.status !== 0 || secret === null) {
     process.stdout.write(seeded.text);
@@ -79,7 +97,10 @@ export async function install(argv) {
 }
 
 async function ask(prompt) {
-  if (process.stdin.isTTY !== true) fail("mailda install asks questions; run it in a terminal, or pass --yes with CLOUDFLARE_ACCOUNT_ID set.");
+  if (process.stdin.isTTY !== true) {
+    fail("mailda install asks questions; run it in a terminal, or pass --yes with CLOUDFLARE_ACCOUNT_ID set "
+      + "(and MAILDA_URL, when the account already has a Node).");
+  }
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try { return await rl.question(prompt); } finally { rl.close(); }
 }

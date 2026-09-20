@@ -11,7 +11,7 @@
  * finds its URL first. It is printed once and never stored in plaintext — what lands in D1 is the hash,
  * computed by `claimSecretHash` from `src/claim.ts` rather than by a second implementation here.
  *
- *   node --experimental-strip-types apps/node/worker/scripts/seed-claim-secret.mjs [--local]
+ *   node --experimental-strip-types apps/node/worker/scripts/seed-claim-secret.mjs [--local] [--name <worker>]
  */
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -22,13 +22,19 @@ import { d1 as run } from "./d1.mjs";
 
 const workerDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const local = process.argv.includes("--local");
+// A second Node in the account (`mailda deploy --name`) has its own derived config and its own catalog;
+// without this the secret would land in the first Node's `node_claim`, refused as "already claimed".
+const nameAt = process.argv.indexOf("--name");
+const name = nameAt === -1 ? null : process.argv[nameAt + 1] ?? null;
+if (nameAt !== -1 && name === null) fail("usage: seed-claim-secret.mjs [--local] [--name <worker-name>]");
+const config = name === null ? null : resolve(workerDir, `wrangler.${name}.jsonc`);
 
 function fail(message) {
   console.error(`\n${message}\n`);
   process.exit(1);
 }
 
-const d1 = (sql, params) => run(workerDir, sql, params, { local });
+const d1 = (sql, params) => run(workerDir, sql, params, { local, config });
 
 /*
  * Refused rather than overwritten, and the two cases are told apart.
