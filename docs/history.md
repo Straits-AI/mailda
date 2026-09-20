@@ -2957,3 +2957,10 @@ submission and delivery vocabularies in the §14 diagram; forward as a sealed se
 with no restore verb; one trigger and reserved node kinds; merge without split; D1 forecasting not
 built; a TypeScript SDK only; no `MailCoreAdapter`. And the one thing the code did that the document never
 mentioned, domain purchase through the registrar, is now in §2 with its gate.
+
+**The flag reached the eye the same day.** A `truncated` nobody renders is the hidden limit with a new name,
+so one component (`Truncated` in `src/client/app/chrome.tsx`) prints *"Showing the newest N … Older ones
+exist and are not listed"* on the outbox, audit, log, suppressions, quarantine, drafts strip and the notices
+band. The quarantine sentence says *across this Node*, because the cap is on the Node's list and the queue
+shows one mailbox's share of it.
+

@@ -517,7 +517,9 @@ function Drafts({ onOpen }: { onOpen: (draft: { id: string; mailboxId: string; i
   if (rows.length === 0) return null;
   return (
     <p className="notice dim drafts-strip">
-      {rows.length} draft{rows.length === 1 ? "" : "s"}:{" "}
+      {drafts.data?.truncated
+        ? `newest ${rows.length} drafts, older ones not listed`
+        : `${rows.length} draft${rows.length === 1 ? "" : "s"}`}:{" "}
       {rows.map((draft, index) => (
         <span key={draft.id}>
           {index === 0 ? "" : " · "}

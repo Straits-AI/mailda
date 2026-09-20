@@ -114,8 +114,8 @@ What exists today:
   and the MCP surface are generated from it, the CLI resolves every path through it, and a route that
   exists in one channel and not another fails a test.
 - **A list that stops says so.** Every capped listing (quarantine, suppressions, the outbox, drafts,
-  notifications, audit, log) reads one row past its cap and returns `truncated`, so nobody mistakes the
-  newest N for all of them.
+  notifications, audit, log) reads one row past its cap and returns `truncated`, and the screen that shows
+  the list says so in a sentence, so nobody mistakes the newest N for all of them.
 - **The screens you need when it is broken carry no framework.** Sign-in, first-run claim and a locked-out
   `doctor` are server-rendered and load zero bytes of the React bundle (ADR 30).
 

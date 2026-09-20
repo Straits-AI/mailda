@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Nothing } from "../chrome.tsx";
+import { Nothing, Truncated } from "../chrome.tsx";
 import {
   liftDomainPause, liftSuppression, requestDomainPause, useBreakers, useDomainPauses, useSuppressions,
   type BreakerReading,
@@ -229,6 +229,9 @@ function Suppressions() {
       </p>
       {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
       {suppressed.isError ? <p className="notice dim">{suppressed.error.message}</p> : null}
+      {suppressed.isSuccess
+        ? <Truncated when={suppressed.data.truncated} shown={suppressed.data.suppressed.length} noun="addresses" />
+        : null}
       {suppressed.isSuccess && suppressed.data.suppressed.length > 0 ? (
         <div className="scroller">
           <table>
