@@ -93,7 +93,8 @@ Mailda working before committing a domain. Every evaluation path runs through a 
 The CLI path was six commands when this was written, and three in the README until 19 September
 2026, when a drill on a clean account found the three did not work. It is one now
 (`curl -fsSL https://mailda.site/install.sh | bash`, or `mailda install` from a clone), which asks the
-two questions a first install has and ends with the claim secret. That is fine for the technical
+two questions a first install has (a third, the Node's URL, when the account already has one and the run
+is an upgrade) and ends with the claim secret. That is fine for the technical
 founder identified above and wrong for anyone else, but anyone else cannot change MX either, so the
 audience is consistent at this stage.
 
