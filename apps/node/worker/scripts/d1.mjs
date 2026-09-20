@@ -89,8 +89,9 @@ export function fill(sql, params = []) {
  * miniflare database while somebody believed they were fixing production would be the worst possible
  * failure of a recovery tool.
  */
-export function d1(workerDir, sql, params = [], { local = false } = {}) {
+export function d1(workerDir, sql, params = [], { local = false, config = null } = {}) {
   const args = ["wrangler", "d1", "execute", "CATALOG", local ? "--local" : "--remote", "--json",
+    ...(config === null ? [] : ["--config", config]),
     "--command", fill(sql, params)];
   const run = spawnSync("npx", args, { cwd: workerDir, encoding: "utf8", env: process.env });
   const text = `${run.stdout ?? ""}${run.stderr ?? ""}`;

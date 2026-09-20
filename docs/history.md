@@ -2970,4 +2970,6 @@ which the canary needs. It knew the account had a Node before it asked, so the q
 knowledge is: an upgrade says so and asks for the URL first. The same run printed every Workflow the account
 owns and every deployment the Node ever had, both wrangler tables the CLI reads one row from; both are
 quiet now, by `capture`'s own rule that a question is answered in the CLI's words and never echoed raw.
-
+And the install takes `--name`, so a second Node in the account is one conversation too: the probe, the
+deploy and the claim secret all follow the derived config, where before the secret would have landed in the
+first Node's catalog and been refused as already claimed.
