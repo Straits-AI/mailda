@@ -346,4 +346,22 @@ describe("a mailbox's own attachment limits (0065, #265)", () => {
     expect(await row(disguised)).toMatchObject({ quarantine_reason: "attachment_dangerous" });
     await setAttachmentLimits(testEnv, createSystemCtx(), ORG, ADMIN, FILES.id, { maxBytes: null });
   });
+
+  it("files a delivery when the mailbox's type list cannot be read, and says so on the row", async () => {
+    /*
+     * Only `setAttachmentLimits` writes the column and it writes an array, so this is corruption. The wrong
+     * answer is a throw: `materialiseReceipt` runs from the outbox, and a same-input failure there is retried
+     * by the sweeper for ever, which is a message accepted and never filed. The right one is a filed message
+     * carrying the fault where every other read fault of the function lands.
+     */
+    await testEnv.CATALOG.prepare("UPDATE mailboxes SET attachment_allowed_types = ? WHERE id = ?")
+      .bind('{"not":"an array"}', LIMITED.id).run();
+    const odd = await accept(PASSED, LIMITED.address, withAttachment("notes.txt", "text/plain", PDF));
+    await expect(materialiseReceipt(testEnv, createSystemCtx(), odd)).resolves.toMatchObject({ status: "created" });
+    const filed = await testEnv.CATALOG.prepare(
+      "SELECT parse_error FROM messages WHERE ingress_receipt_id = ?",
+    ).bind(odd).first<{ parse_error: string | null }>();
+    expect(filed?.parse_error).toMatch(/E_ATTACHMENT_TYPES_UNREADABLE/);
+    await setAttachmentLimits(testEnv, createSystemCtx(), ORG, ADMIN, LIMITED.id, { allowedTypes: ["pdf"] });
+  });
 });
