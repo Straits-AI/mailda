@@ -2970,6 +2970,10 @@ which the canary needs. It knew the account had a Node before it asked, so the q
 knowledge is: an upgrade says so and asks for the URL first. The same run printed every Workflow the account
 owns and every deployment the Node ever had, both wrangler tables the CLI reads one row from; both are
 quiet now, by `capture`'s own rule that a question is answered in the CLI's words and never echoed raw.
-And the install takes `--name`, so a second Node in the account is one conversation too: the probe, the
-deploy and the claim secret all follow the derived config, where before the secret would have landed in the
-first Node's catalog and been refused as already claimed.
+And the name is a question, not a flag, because the install is one command and stays one: the account's
+Nodes are listed from the `ButlerRun` Workflows every Node registers, the operator names the Node they want,
+and the name decides between upgrade and second Node. The probe, the deploy and the claim secret all follow
+the chosen name's derived config, where before the secret would have landed in the first Node's catalog and
+been refused as already claimed. The URL an upgrade needs is asked once per Node per machine and kept in a
+git-ignored `.mailda/nodes.json`. Driven against the live account with `expect`, declining at the deploy
+question: the upgrade path, the remembered URL, and a new name each behaved, and nothing was deployed.

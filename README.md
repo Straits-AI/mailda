@@ -26,10 +26,16 @@ curl -fsSL https://mailda.site/install.sh | bash
 ```
 
 It checks for git and Node 22, clones this repository, installs, signs you in to Cloudflare, asks which
-account if you have several, deploys the Worker with its D1, R2 and queue, applies the schema, and opens
-your new Node with the claim secret beside it. You paste the secret and choose the first administrator's
-email and password. Nothing in your account changes before it asks. From a clone, the same is
-`pnpm install && pnpm mailda install`; on Windows without a bash, run that in PowerShell.
+account if you have several and what to call the Node (`mailda` by default), deploys the Worker with its
+D1, R2 and queue, applies the schema, and opens your new Node with the claim secret beside it. You paste
+the secret and choose the first administrator's email and password. Nothing in your account changes before
+it asks. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows without a bash, run
+that in PowerShell.
+
+The same command is the upgrade and the second Node. It lists the Nodes the account already has (every
+Node registers a `ButlerRun` Workflow under its own name), and the name you give decides: an existing name
+is upgraded through the canary, which needs the Node's URL once and remembers it in a git-ignored
+`.mailda/nodes.json`; a new name deploys another Node beside the first, with every resource named from it.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Straits-AI/mailda)
 
@@ -52,8 +58,9 @@ previous destination is kept on the audit trail, and *put back* restores it. Exi
 addresses and the catch-all are left alone. `mailda provider --routing-rules <domain>` is the same from
 the CLI.
 
-**A second Node in the same account.** `mailda deploy --name <worker>` derives the Worker, the Workflow
-and every other resource from that name into a git-ignored config; first install measured at 108 s.
+**A second Node in the same account.** Give the installer a new name; `mailda deploy --name <worker>` is
+the same from a script. Either derives the Worker, the Workflow and every other resource from that name
+into a git-ignored config; first install measured at 108 s.
 
 **Updating an installed Node.** The button clones without history, so the first update is a merge:
 

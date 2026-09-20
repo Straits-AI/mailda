@@ -70,3 +70,6 @@ apps/node/worker/wrangler.*.jsonc
 apps/site/src/content/docs/docs/
 apps/site/public/install.sh
 apps/site/.astro/
+
+# `mailda install` remembers each Node's URL here, per account and name, so an upgrade does not ask twice.
+.mailda/

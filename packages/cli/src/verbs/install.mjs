@@ -1,8 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
-import { capture, configFor, fail, flag, run, useConfig } from "../support.mjs";
+import { capture, configFor, fail, flag, run, useConfig, workerDir } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 
 /**
@@ -47,34 +49,52 @@ export async function install(argv) {
   process.stdout.write(`\n   account   ${account?.name ?? "?"}  ${process.env.CLOUDFLARE_ACCOUNT_ID ?? "(not chosen)"}\n`);
   process.stdout.write("   plan      Workers Paid is required to send mail; the Free plan deletes queued delivery events after a day.\n");
 
-  // 3. Which kind of deploy. A first install deploys directly, applies the schema and attaches the queue
-  //    consumer; an account that already has a Node gets an upgrade through the canary, and the canary is
-  //    checked on the Node's own hostname, so the URL is a question this conversation asks here, before
-  //    "deploy now?", rather than a refusal the deploy step raises after the operator has said yes.
-  const named = flag(argv, "name");
-  // The named Node's derived config, before the first-install probe: the probe asks wrangler whether *this*
-  // Worker exists, and without the config it would ask about the default one and answer for the wrong Node.
-  if (named !== null) useConfig(configFor(argv));
+  // 3. Which Node. A name, chosen freely, with `mailda` as the default; and whether that name is already a
+  //    Node in this account. Every Mailda Node registers a Workflow whose class is `ButlerRun`, so the
+  //    account's Nodes are the script names on those rows of `wrangler workflows list`, and the question
+  //    "upgrade or add one" is answered by the name rather than asked as a flag. The name is validated by
+  //    the same rule `mailda deploy --name` uses, and the derived config is applied *before* the
+  //    first-install probe, which asks wrangler whether *this* Worker exists.
+  const base = configFor([]).name;
+  const existing = existingNodes();
+  if (existing.length > 0) {
+    process.stdout.write(`\n== this account already has ${existing.length === 1 ? "a Node" : "Nodes"}\n`);
+    for (const one of existing) process.stdout.write(`   ${one}\n`);
+    process.stdout.write("   Choose one of them to upgrade it, or a new name to add another.\n");
+  }
+  const suggested = flag(argv, "name") ?? process.env.MAILDA_NODE_NAME ?? base;
+  const name = argv.includes("--yes") || flag(argv, "name") !== null
+    ? suggested
+    : ((await ask(`\n   name for this Node [${suggested}]: `)).trim() || suggested);
+  const nameArgs = name === base ? [] : ["--name", name];
+  useConfig(configFor(nameArgs));
   const upgrading = !firstInstall();
+  process.stdout.write(`\n   node      ${name}  ${upgrading ? "(exists: this run upgrades it)" : "(new)"}\n`);
+
+  //    An upgrade uploads a version and checks it as a canary on the Node's own hostname, so it needs the
+  //    URL. Asked once per Node on this machine and remembered in a git-ignored file, because a Node's URL
+  //    does not change between upgrades and a question with a known answer is noise.
   if (upgrading) {
-    process.stdout.write(`\n   this account already has a Node${named === null ? "" : ` named ${named}`}, so this run upgrades it: a new\n`
-      + "   version is uploaded, checked as a canary on the Node's own hostname, and promoted only if doctor\n"
-      + `   passes. For a second Node instead, re-run with --name <worker>${named === null ? "" : " and another name"}.\n`);
-    const given = flag(argv, "url") ?? process.env.MAILDA_URL ?? "";
-    const url = given !== "" ? given : (await ask("   its URL (https://<your-node>): ")).trim();
-    if (!/^https:\/\/\S+$/.test(url)) fail(`"${url}" is not a URL; re-run with --url https://<your-node>, or set MAILDA_URL.`);
+    const remembered = rememberedUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name);
+    const given = flag(argv, "url") ?? process.env.MAILDA_URL ?? remembered ?? "";
+    const url = given !== "" || argv.includes("--yes")
+      ? given
+      : (await ask("   its URL (https://<your-node>): ")).trim();
+    if (!/^https:\/\/\S+$/.test(url)) fail(`"${url}" is not a URL; the canary upgrade is checked on the Node's own hostname. Re-run and give it, or set MAILDA_URL.`);
     process.env.MAILDA_URL = url.replace(/\/$/, "");
-    process.stdout.write(`   node      ${process.env.MAILDA_URL}\n`);
+    // Remembered now, not after the deploy: an operator who answers and then declines should not be asked again.
+    rememberUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name, process.env.MAILDA_URL);
+    process.stdout.write(`   url       ${process.env.MAILDA_URL}${remembered !== null && given === remembered ? "  (remembered)" : ""}\n`);
   }
   const go = argv.includes("--yes") ? "y" : await ask(`\n   ${upgrading ? "upgrade" : "deploy"} now? [y/N]: `);
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed.\n\n"); return; }
-  await deploy(named === null ? [] : ["--name", named]);
+  await deploy(nameArgs);
   const url = installedUrl ?? process.env.MAILDA_URL ?? null;
+  if (url !== null) rememberUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name, url);
 
   // 4. The claim secret. Printed once by the script, captured here so it can sit beside the URL.
   process.stdout.write("\n== the claim secret\n");
-  const seeded = capture("node", ["--experimental-strip-types", "scripts/seed-claim-secret.mjs",
-    ...(named === null ? [] : ["--name", named])], { quiet: true });
+  const seeded = capture("node", ["--experimental-strip-types", "scripts/seed-claim-secret.mjs", ...nameArgs], { quiet: true });
   const secret = /^\s{2}([A-Za-z0-9_-]{40,})\s*$/m.exec(seeded.text)?.[1] ?? null;
   if (seeded.status !== 0 || secret === null) {
     process.stdout.write(seeded.text);
@@ -94,6 +114,34 @@ export async function install(argv) {
     + "   keep them, they are the only way back in without a password.\n\n",
   );
   if (url !== null && !argv.includes("--no-open")) openInBrowser(url);
+}
+
+/**
+ * The Mailda Nodes this account holds: the script name of every Workflow whose class is `ButlerRun`, which
+ * every Node registers under its own name. Empty when the list cannot be read; the per-name probe that
+ * follows still decides, so an unreadable list costs a suggestion and not a wrong path.
+ */
+function existingNodes() {
+  const listed = capture("npx", ["wrangler", "workflows", "list"], { quiet: true });
+  if (listed.status !== 0) return [];
+  return listed.text.split("\n")
+    .map((line) => line.split("│").map((cell) => cell.trim()).filter(Boolean))
+    .filter((cells) => cells[2] === "ButlerRun")
+    .map((cells) => cells[1])
+    .filter((one, i, all) => typeof one === "string" && all.indexOf(one) === i)
+    .sort();
+}
+
+/** `.mailda/nodes.json` at the clone's root, git-ignored: `{ "<account>/<name>": "<url>" }`. */
+const NODES_FILE = resolve(workerDir, "../../..", ".mailda", "nodes.json");
+function rememberedUrl(accountId, name) {
+  try { return JSON.parse(readFileSync(NODES_FILE, "utf8"))[`${accountId}/${name}`] ?? null; } catch { return null; }
+}
+function rememberUrl(accountId, name, url) {
+  let all = {};
+  try { all = JSON.parse(readFileSync(NODES_FILE, "utf8")); } catch { /* first Node remembered on this machine */ }
+  mkdirSync(dirname(NODES_FILE), { recursive: true });
+  writeFileSync(NODES_FILE, `${JSON.stringify({ ...all, [`${accountId}/${name}`]: url }, null, 2)}\n`);
 }
 
 async function ask(prompt) {
