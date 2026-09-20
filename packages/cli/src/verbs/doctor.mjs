@@ -1,4 +1,4 @@
-import { fail, flag } from "../support.mjs";
+import { api, fail, flag } from "../support.mjs";
 /* ------------------------------------------------------------------ doctor ------------------------- */
 
 /**
@@ -37,7 +37,7 @@ export async function doctor(argv) {
   const email = process.env.MAILDA_EMAIL;
   const password = process.env.MAILDA_PASSWORD;
   if (email !== undefined && password !== undefined) {
-    const signIn = await fetch(`${origin}/api/auth/login`, {
+    const signIn = await fetch(`${origin}${api("POST", "/api/auth/login")}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -52,7 +52,7 @@ export async function doctor(argv) {
   }
 
   const wantsJson = argv.includes("--json");
-  const url = `${origin}/api/doctor${wantsJson ? "" : "?format=text"}`;
+  const url = `${origin}${api("GET", "/api/doctor", wantsJson ? {} : { format: "text" })}`;
   const response = await fetch(url, { headers })
     .catch((error) => fail(`could not reach ${origin}: ${error.message}`));
   const body = await response.text();

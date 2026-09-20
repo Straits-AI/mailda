@@ -3,7 +3,7 @@ import type { Ctx } from "@mailda/runtime";
 import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
-import { cloudflareGet, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
+import { cloudflareGet, cloudflareGetAll, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
 
 /**
  * Onboarding a subdomain to **receive** mail (#163 L2, and the half #92's drill ran aground on).
@@ -74,10 +74,19 @@ async function digestOf(of: Omit<ReceivingProposal, "digest">): Promise<string> 
   ])));
 }
 
-interface CloudflareRule {
+export interface CloudflareRule {
   id?: string;
   name?: string;
-  matchers?: Array<{ field?: string; value?: string }>;
+  enabled?: boolean;
+  matchers?: Array<{ type?: string; field?: string; value?: string }>;
+  actions?: Array<{ type?: string; value?: string[] }>;
+}
+
+/** Every routing rule on a zone, all pages of them. The one listing three callers share. */
+export async function routingRulesOf(
+  env: Env, ctx: Ctx, orgId: string, zoneId: string,
+): Promise<{ ok: true; result: CloudflareRule[] } | { ok: false; error: string }> {
+  return await cloudflareGetAll<CloudflareRule>(env, ctx, orgId, `/zones/${zoneId}/email/routing/rules`);
 }
 
 /** Every rule on the zone whose `to` matcher names this exact domain. */
@@ -153,9 +162,7 @@ export async function receivingProposalFor(
   const existing = await cloudflareGet<Array<{ type?: string; content?: string }>>(
     env, ctx, orgId, `/zones/${zone.id}/dns_records?type=MX&name=${encodeURIComponent(domain)}`,
   );
-  const rules = await cloudflareGet<CloudflareRule[]>(
-    env, ctx, orgId, `/zones/${zone.id}/email/routing/rules?per_page=50`,
-  );
+  const rules = await routingRulesOf(env, ctx, orgId, zone.id);
   const found = rules.ok ? ruleFor(rules.result, domain) : undefined;
 
   const present = existing.ok ? existing.result.map((one) => one.content ?? "?") : [];
@@ -239,6 +246,14 @@ export async function onboardReceiving(
       what: `this Node will not onboard ${domain} for receiving`,
       why: proposal.refusal,
       fix: "read the proposal again once the reason has changed: GET /api/provider/receiving?domain=…",
+    });
+  }
+  // A proposal that refuses nothing names its zone; the type cannot see that, so it is said once, here.
+  if (proposal.zoneId === null) {
+    throw unprocessable("E_RECEIVING_WILL_NOT_ONBOARD", {
+      what: `this Node will not onboard ${domain} for receiving`,
+      why: "the proposal names no zone",
+      fix: "read the proposal again: GET /api/provider/receiving?domain=…",
     });
   }
   if (digest !== proposal.digest) {
@@ -370,9 +385,7 @@ export async function onboardReceiving(
    * whose first had written the rule and whose second had registered the address. The check is on the
    * address, so a rule for a different address on the same domain still gets its own.
    */
-  const rules = await cloudflareGet<CloudflareRule[]>(
-    env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules?per_page=50`,
-  );
+  const rules = await routingRulesOf(env, ctx, orgId, proposal.zoneId);
   const existing = rules.ok
     ? rules.result.find((one) => (one.matchers ?? []).some((m) =>
       m.field === "to" && typeof m.value === "string" && m.value.toLowerCase() === normalized))
@@ -405,7 +418,8 @@ export async function onboardReceiving(
  * wrote its own name into a rule from a constant would route another Node's mail after a rename.
  */
 export function workerNameFor(env: Env): string {
-  const named = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME;
+  // Typed as the two names `wrangler.jsonc` declares; a fork renames the Worker, so read it as any string.
+  const named: string | undefined = env.WORKER_NAME;
   if (typeof named === "string" && named !== "") return named;
   throw unprocessable("E_RECEIVING_NO_WORKER_NAME", {
     what: "this Node does not know its own Worker name, so it cannot name itself as a routing destination",

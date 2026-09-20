@@ -142,11 +142,18 @@ export async function materialiseReceipt(
   const dangerous = attachments?.filter((one) => DANGEROUS.has(one.verdict)).length ?? null;
   // The mailbox's own limits (0065): a bound and a list, both unbounded by default. Judged after the
   // dangerous verdict, so a program under the size limit is still held for what it is.
+  // A list the column cannot yield is a fault on the row, recorded where every other read fault of this
+  // function lands, and the delivery goes on without the list: a throw here would leave the message
+  // unpublished for the sweeper to retry against the same column for ever (the module note above).
+  let allowedTypes: readonly string[] | null = null;
+  try {
+    allowedTypes = mailbox === undefined || mailbox === null ? null : allowedTypesOf(mailbox.attachment_allowed_types);
+  } catch (error) {
+    parseError ??= `E_ATTACHMENT_TYPES_UNREADABLE  ${(error as Error).message}; the mailbox's type list was not applied`;
+  }
   const broken = attachments === null || mailbox === undefined || mailbox === null
     ? []
-    : overLimits(attachments, {
-      maxBytes: mailbox.attachment_max_bytes, allowedTypes: allowedTypesOf(mailbox.attachment_allowed_types),
-    });
+    : overLimits(attachments, { maxBytes: mailbox.attachment_max_bytes, allowedTypes });
 
   // A token, not a sentence (AGENTS.md 2c): the contract's `quarantineReason` is the closed world, and the
   // reading surface says what it means. The sender's domain speaks first; a file is judged second.

@@ -4,7 +4,7 @@ import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
 import { cloudflareGet, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
-import { mailboxForAddress, workerNameFor } from "./receiving.ts";
+import { type CloudflareRule, mailboxForAddress, routingRulesOf, workerNameFor } from "./receiving.ts";
 
 /**
  * The routing rules already on a zone, and taking one over (#258).
@@ -45,14 +45,6 @@ export interface RoutingRules {
   error: string | null;
 }
 
-interface CloudflareRule {
-  id?: string;
-  name?: string;
-  enabled?: boolean;
-  matchers?: Array<{ type?: string; field?: string; value?: string }>;
-  actions?: Array<{ type?: string; value?: string[] }>;
-}
-
 async function describe(raw: CloudflareRule, worker: string | null): Promise<RoutingRule> {
   const literal = (raw.matchers ?? []).find((m) => m.type === "literal" && m.field === "to");
   const catchAll = literal === undefined && (raw.matchers ?? []).some((m) => m.type === "all");
@@ -78,12 +70,10 @@ export async function routingRulesFor(
   if (!carrying.ok) return { ...blank, error: carrying.error };
   if (carrying.zone === null) return { ...blank, error: `no zone in this account carries ${domain}` };
   const zone = carrying.zone;
-  const listed = await cloudflareGet<CloudflareRule[]>(
-    env, ctx, orgId, `/zones/${zone.id}/email/routing/rules?per_page=50`,
-  );
+  const listed = await routingRulesOf(env, ctx, orgId, zone.id);
   if (!listed.ok) return { ...blank, zone: zone.name, zoneId: zone.id, error: listed.error };
   // Listing must not fail on a Node that does not know its own name; taking over must.
-  const worker = (env as unknown as { WORKER_NAME?: string }).WORKER_NAME ?? null;
+  const worker = env.WORKER_NAME ?? null;
   return {
     domain, zone: zone.name, zoneId: zone.id, error: null,
     rules: await Promise.all(listed.result.map((one) => describe(one, worker))),

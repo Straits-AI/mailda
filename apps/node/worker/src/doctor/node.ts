@@ -461,11 +461,17 @@ export async function checkProviderBinding(env: Env): Promise<Finding[]> {
  * this check existed, and it only goes down. Deliveries held back by a mailbox's quarantine (0056) are
  * counted whole, not over the week: a held delivery nobody has looked at is the fact, however old.
  */
+/**
+ * A week. A presentation window for a `report`, not a tripwire (AGENTS.md §2: a presentation constant states
+ * its basis): it is the span a person reading the finding thinks of as "lately", and nothing acts on it.
+ */
+const INBOUND_AUTHENTICATION_REPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 export async function checkInboundAuthentication(
   env: Env, ctx: Ctx, orgId: string | null,
 ): Promise<Finding[]> {
   if (orgId === null) return [];
-  const since = new Date(ctx.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(ctx.now() - INBOUND_AUTHENTICATION_REPORT_WINDOW_MS).toISOString();
   const row = await env.CATALOG.prepare(
     `SELECT
        SUM(CASE WHEN auth_dmarc = 'pass' THEN 1 ELSE 0 END) AS pass,

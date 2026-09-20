@@ -1,4 +1,4 @@
-import { fail, run, flag, sessionCookie, readSecret } from "../support.mjs";
+import { api, fail, flag, readSecret, run, sessionCookie } from "../support.mjs";
 /* ------------------------------------------------------------------ claim-secret ------------------- */
 
 /**
@@ -129,7 +129,7 @@ export async function recoveryCodes(argv) {
     const code = (await readSecret("Recovery code: ")).trim();
     if (code === "") fail("no code entered; nothing was spent.");
 
-    const response = await fetch(`${origin}/api/recovery/redeem`, {
+    const response = await fetch(`${origin}${api("POST", "/api/recovery/redeem")}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code }),
@@ -255,7 +255,7 @@ export async function recoveryCodes(argv) {
   };
 
   if (action === "rotate") {
-    const { codes, notice } = await post("/api/recovery-codes/rotate");
+    const { codes, notice } = await post(api("POST", "/api/recovery-codes/rotate"));
     process.stdout.write("\n== ten replacement recovery codes, shown once\n\n");
     for (const code of codes) process.stdout.write(`   ${code}\n`);
     process.stdout.write(`\n${notice}\n\n`);
@@ -270,6 +270,6 @@ export async function recoveryCodes(argv) {
 
   const typed = (await readSecret("Recovery code: ")).trim();
   if (typed === "") fail("no code entered; nothing was confirmed.");
-  const { message } = await post("/api/recovery-codes/confirm", { code: typed });
+  const { message } = await post(api("POST", "/api/recovery-codes/confirm"), { code: typed });
   process.stdout.write(`\n${message}\n\n`);
 }

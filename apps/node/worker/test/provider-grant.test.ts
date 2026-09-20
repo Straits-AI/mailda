@@ -1752,9 +1752,9 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
       "/accounts/acc_1/event_subscriptions/subscriptions",
       "/accounts/acc_1/queues/q_own/consumers",
     ]);
-    expect(posted[1]!.body).toEqual({
-      type: "worker", script_name: "mailda-test", settings: { batch_size: 25, max_wait_time_ms: 10_000 },
-    });
+    // No `settings`: the two batch numbers this used to carry were never measured, so the platform's defaults
+    // are the platform's to choose (AGENTS.md §2).
+    expect(posted[1]!.body).toEqual({ type: "worker", script_name: "mailda-test" });
   });
 
   it("attaches only the consumer when the subscription already exists, rather than refusing the whole act", async () => {

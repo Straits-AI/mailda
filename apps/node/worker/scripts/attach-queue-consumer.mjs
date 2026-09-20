@@ -96,15 +96,13 @@
  *                      whose output shape moved, produces no evidence about whose consumer it is, and
  *                      "unreadable" must not be allowed to print as "somebody else's".
  *
- * ## Two numbers, and where they come from
+ * ## No batch numbers
  *
- * `--batch-size 25` and `--batch-timeout 10` are carried over verbatim from the `max_batch_size` and
- * `max_batch_timeout` that the deleted consumers block declared. **They are not receipt-backed** — they
- * were unmeasured literals in `wrangler.jsonc` before this change and they are unmeasured literals here.
- * Stated rather than dressed up: nothing measured them, and passing them explicitly at least keeps
- * behaviour identical to the config that shipped instead of silently inheriting whatever the platform
- * default becomes. An existing consumer's settings are **not** updated by a re-run — `consumer worker add`
- * conflicts rather than patching — so changing either number means removing the consumer first.
+ * This used to pass `--batch-size 25 --batch-timeout 10`, carried over from a deleted consumers block and
+ * measured by nobody. AGENTS.md §2 leaves an unmeasured production decision unqualified, so the consumer
+ * takes the platform's defaults: a platform value belongs to the platform, not to a literal here. An
+ * existing consumer's settings are **not** updated by a re-run — `consumer worker add` conflicts rather
+ * than patching — so a consumer attached with the old numbers keeps them until it is removed.
  */
 
 import { spawnSync } from "node:child_process";
@@ -116,10 +114,6 @@ import { parse as parseJsonc } from "jsonc-parser";
 
 const workerDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = join(workerDir, "wrangler.jsonc");
-
-/** Unmeasured, and inherited from the consumers block this replaces. See the header. */
-const BATCH_SIZE = "25";
-const BATCH_TIMEOUT_SECONDS = "10";
 
 function fail(message) {
   console.error(`\n${message}\n`);
@@ -258,13 +252,11 @@ console.log(`Queue    ${queueName}   (discovered from the deployed binding, neve
 // Step 3: attach, and let a conflict answer the question.
 const add = wrangler([
   "queues", "consumer", "worker", "add", queueName, workerName,
-  "--batch-size", BATCH_SIZE, "--batch-timeout", BATCH_TIMEOUT_SECONDS,
 ]);
 
 if (add.ok) {
   console.log(`\nAttached ${workerName} as the consumer of ${queueName}.`);
-  console.log(`Batch    ${BATCH_SIZE} messages / ${BATCH_TIMEOUT_SECONDS}s — unmeasured, carried over from`);
-  console.log(`         the consumers block wrangler.jsonc used to declare.`);
+  console.log("Batch    the platform's defaults; nothing here has measured a better number.");
 } else if (/already has a consumer|11004/.test(add.text)) {
   // The conflict is the signal — but only if the consumer already there is *this* Worker. Whose it is
   // decides whether the desired state holds or whether this is #72 happening again.

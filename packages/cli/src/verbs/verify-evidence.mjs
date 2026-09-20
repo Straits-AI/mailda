@@ -1,5 +1,5 @@
 import { whyAdminCannotExist } from "../backup.mjs";
-import { fail, flag, sessionCookie, claimState } from "../support.mjs";
+import { api, claimState, fail, flag, sessionCookie } from "../support.mjs";
 /* ------------------------------------------------------------------ dispatch ----------------------- */
 
 /* ------------------------------------------------------------------ verify-evidence ---------------- */
@@ -71,7 +71,7 @@ export async function verifyEvidence(argv) {
    */
   for (;;) {
     const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
-    const response = await fetch(`${origin}/api/evidence/verify${query}`, {
+    const response = await fetch(`${origin}${api("POST", "/api/evidence/verify")}${query}`, {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
       body: "{}",

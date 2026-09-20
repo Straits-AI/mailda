@@ -351,11 +351,14 @@ export interface DraftSummary {
 }
 
 /** The caller's own drafts, newest first. Bodies are not read — a list does not need them. */
+/** Newest first, and this many; the route reports whether older ones exist. */
+export const DRAFT_LIST_CAP = 50;
+
 export async function listDrafts(env: Env, orgId: string, userId: string): Promise<DraftSummary[]> {
   const { results } = await env.CATALOG.prepare(
     `SELECT id, mailbox_id, in_reply_to_message_id, to_addresses, subject, body_bytes, updated_at
        FROM drafts WHERE org_id = ? AND author_user_id = ?
-      ORDER BY updated_at DESC LIMIT 50`,
+      ORDER BY updated_at DESC LIMIT ${DRAFT_LIST_CAP + 1}`,
   )
     .bind(orgId, userId)
     .all<Omit<Row, "author_user_id" | "cc_addresses" | "bcc_addresses" | "body_key">>();

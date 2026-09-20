@@ -6,12 +6,17 @@ import { acknowledgeKeyConflict, conflictNotice, confirmRecoveryCodes, mintRecov
 import { migrate } from "../migrate.ts";
 import { principalFor } from "../authz-read.ts";
 import { assertAdmin, isAdmin } from "../access.ts";
+import { capped } from "../list-cap.ts";
 import { authenticationIsImpossible, authenticationProbe, formatReport, runDoctor, withoutDataFindings } from "../doctor.ts";
 import { formatReconcile, reconcileEvidence } from "../reconcile.ts";
 import { resealBatch } from "../reseal.ts";
 import { sessionResponse, unauthenticated, organizationId, armSweeper, claimMessage } from "./support.ts";
 import { page } from "../ui.ts";
 import type { Some } from "../router.ts";
+
+/** The audit trail and the log each show this many entries, newest first, and say when older ones exist. */
+const AUDIT_LIST_CAP = 200;
+const LOG_LIST_CAP = 200;
 
 export const node = {
   /**
@@ -446,11 +451,12 @@ export const node = {
               hash
          FROM audit_entries
         WHERE org_id = ?${action === null ? "" : " AND action = ?"}
-        ORDER BY seq DESC LIMIT 200`,
+        ORDER BY seq DESC LIMIT ${AUDIT_LIST_CAP + 1}`,
     )
       .bind(...(action === null ? [who.orgId] : [who.orgId, action]))
       .all();
-    return Response.json({ entries: rows.results });
+    const { rows: entries, truncated } = capped(rows.results, AUDIT_LIST_CAP);
+    return Response.json({ entries, truncated });
   },
 
   // Verification is the point of a hash chain: a log an administrator has to trust is not evidence.
@@ -523,14 +529,15 @@ export const node = {
     const rows = await env.CATALOG.prepare(
       `SELECT id, at, level, event, message, detail, request_id FROM log_entries
         ${level === null ? "" : "WHERE level = ?"}
-        ORDER BY at DESC LIMIT 200`,
+        ORDER BY at DESC LIMIT ${LOG_LIST_CAP + 1}`,
     )
       .bind(...(level === null ? [] : [level]))
       .all();
     const counts = await env.CATALOG.prepare(
       "SELECT level, COUNT(*) AS n FROM log_entries GROUP BY level",
     ).all<{ level: string; n: number }>();
-    return Response.json({ entries: rows.results, counts: counts.results });
+    const { rows: entries, truncated } = capped(rows.results, LOG_LIST_CAP);
+    return Response.json({ entries, truncated, counts: counts.results });
   },
 
   /*

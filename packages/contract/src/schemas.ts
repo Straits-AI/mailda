@@ -925,7 +925,7 @@ export const auditRow = z.object({
   hash: sha256,
 }).strict();
 
-export const auditListResponse = z.object({ entries: z.array(auditRow) }).loose();
+export const auditListResponse = z.object({ entries: z.array(auditRow), truncated: z.boolean() }).loose();
 
 export const logRow = z.object({
   // A `log_` identifier, not a rowid. The client had this right and the first draft of this schema did not.
@@ -940,6 +940,7 @@ export const logRow = z.object({
 
 export const logListResponse = z.object({
   entries: z.array(logRow),
+  truncated: z.boolean(),
   counts: z.array(z.object({ level: z.string(), n: z.number().int() }).strict()),
 }).loose();
 
@@ -986,6 +987,7 @@ export const notificationRow = z.object({
 
 export const notificationListResponse = z.object({
   notifications: z.array(notificationRow),
+  truncated: z.boolean(),
 }).strict();
 
 /* ------------------------------------------------------------------ people and teams (#73, #83) ---- */
@@ -1348,13 +1350,15 @@ export const draftRow = z.object({
   updatedAt: isoDate,
 }).strict();
 
-export const draftListResponse = z.object({ drafts: z.array(draftRow.omit({ body: true })) }).loose();
+export const draftListResponse = z.object({ drafts: z.array(draftRow.omit({ body: true })), truncated: z.boolean() }).loose();
 export const draftSavedResponse = z.object({ draft: draftRow }).strict();
 
 export const sendListResponse = z.object({
   // Tightened from `z.unknown()` in tranche seven, once a sealed manifest could be produced to check it
   // against. A list schema whose elements are unknown checks an envelope and nothing in it.
   sends: z.array(z.lazy(() => sendRow)),
+  /** The outbox shows the newest fifty; this says whether older ones exist (AGENTS.md §3). */
+  truncated: z.boolean(),
   /** Today's count, for the volume breaker. `throttledAtCount` is null until something is throttled. */
   daily: z.object({
     day: z.string().min(1),
@@ -1712,7 +1716,7 @@ export const quarantineHeldResponse = z.object({
   held: z.literal(true), messageId: z.string().min(1), mailboxId: z.string().min(1),
 }).strict();
 
-export const quarantineListResponse = z.object({ quarantined: z.array(quarantinedDelivery) }).strict();
+export const quarantineListResponse = z.object({ quarantined: z.array(quarantinedDelivery), truncated: z.boolean() }).strict();
 export const quarantineReleasedResponse = z.object({
   released: z.literal(true), messageId: z.string().min(1), mailboxId: z.string().min(1),
 }).strict();
@@ -2328,7 +2332,7 @@ export const suppressionRow = z.object({
   observedAt: isoDate,
   eventId: z.string().min(1),
 }).strict();
-export const suppressionListResponse = z.object({ suppressed: z.array(suppressionRow) }).strict();
+export const suppressionListResponse = z.object({ suppressed: z.array(suppressionRow), truncated: z.boolean() }).strict();
 export const suppressionLiftedResponse = z.object({
   lifted: z.literal(true), address: z.string().min(1), liftId: z.string().min(1),
 }).strict();

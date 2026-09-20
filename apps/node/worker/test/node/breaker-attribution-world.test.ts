@@ -92,7 +92,7 @@ describe("every rate over send_recipient_events counts attributed events only", 
   });
 
   it("keeps domain_pauses to the two writers its asymmetry is made of", () => {
-    // Placing is `src/approvals.ts` (the completing decision's `UPDATE domain_pauses`), because a pause is
+    // Placing is `src/approval-decide.ts` (the completing decision's `UPDATE domain_pauses`), because a pause is
     // #61's fifth approval subject. Everything else — the request row and the lift — is `src/domain-pause.ts`.
     // A third writer would be a way to stop or restart a domain's mail that skips one of those two acts, and
     // it is exactly what `content-deletion-world.test.ts` refuses for `holds` on #64's terms.
@@ -107,17 +107,17 @@ describe("every rate over send_recipient_events counts attributed events only", 
         continue;
       }
       const path = relative.replace(/\\/g, "/");
-      if (path !== "approvals.ts" && path !== "domain-pause.ts") offenders.push(path);
+      if (path !== "approval-decide.ts" && path !== "domain-pause.ts") offenders.push(path);
     }
     expect(
       offenders.length === 0 ? null
-        : `domain_pauses is written from ${offenders.join(", ")} as well as approvals.ts and `
+        : `domain_pauses is written from ${offenders.join(", ")} as well as approval-decide.ts and `
           + "domain-pause.ts. Placing takes two administrators and lifting takes one; a third writer is a "
           + "way to stop or restart a customer's mail that goes through neither.",
     ).toBeNull();
 
     // Anti-vacuity: the two expected writers must actually be found, or the scan is passing on nothing.
-    for (const expected of ["approvals.ts", "domain-pause.ts"]) {
+    for (const expected of ["approval-decide.ts", "domain-pause.ts"]) {
       expect(
         withoutComments(readFileSync(join(srcDir, expected), "utf8")),
         `${expected} must write domain_pauses, or this scan is passing on nothing`,

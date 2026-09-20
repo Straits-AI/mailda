@@ -209,11 +209,14 @@ The shape:
 E_BUDGET_EXCEEDED  butler.fanout.max_effects=500, this run asked for 512
   butler   lead-response@v7   step  notify_owners   run  run_01JQ...
   receipt  docs/receipts/butler-fanout-max-effects.md
-  raise    mailda policy set butler.fanout.max_effects 750 --org acme
+  raise    remeasure docs/receipts/butler-fanout-max-effects.md, then pnpm receipts
 ```
 
 Four required parts: the stable code, the named budget with its number and the ask, the
-identifiers to find it, and the exact command that changes it if the answer is "raise it".
+identifiers to find it, and what changes it if the answer is "raise it". *Amended 20 September
+2026:* the fourth part used to read `mailda policy set …`, a per-organization override no verb
+ever offered. A generated budget has no runtime override by design (§2: the constants come from
+receipts, never from a setting), so the thing that changes it is the receipt, and the error says so.
 
 This is not only about budgets. The same standard covers every refusal:
 

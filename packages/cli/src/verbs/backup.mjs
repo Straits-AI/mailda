@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { backupIndex, checkBackup, exportableTables, needsIndexRebuild, whyAdminCannotExist } from "../backup.mjs";
-import { fail, capture, run, flag, sessionCookie, doctorReport, WRANGLER_ARGS, runPreflight, claimState, configFor, useConfig } from "../support.mjs";
+import { api, capture, claimState, configFor, doctorReport, fail, flag, run, runPreflight, sessionCookie, useConfig, WRANGLER_ARGS } from "../support.mjs";
 /* ------------------------------------------------------------------ backup ------------------------- */
 
 /**
@@ -136,7 +136,7 @@ export async function backup(argv) {
   const lines = [];
   for (;;) {
     const query = cursor === null ? "" : `?after=${encodeURIComponent(cursor)}`;
-    const response = await fetch(`${origin}/api/evidence/inventory${query}`, {
+    const response = await fetch(`${origin}${api("GET", "/api/evidence/inventory")}${query}`, {
       headers: { accept: "application/json", cookie },
     }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
     if (!response.ok) {
@@ -165,7 +165,7 @@ export async function backup(argv) {
     let faults = 0;
     for (;;) {
       const query = after === null ? "" : `?after=${encodeURIComponent(after)}`;
-      const response = await fetch(`${origin}/api/evidence/verify${query}`, {
+      const response = await fetch(`${origin}${api("POST", "/api/evidence/verify")}${query}`, {
         method: "POST", headers: { "content-type": "application/json", cookie }, body: "{}",
       }).catch((error) => fail(`could not reach ${origin}: ${error.message}`));
       if (!response.ok) fail(`/api/evidence/verify answered ${response.status}; the backup was not indexed.`);

@@ -2,6 +2,8 @@ import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "./audit.ts";
 import { isAdmin } from "./access.ts";
+import { BUDGETS } from "@mailda/budgets";
+
 import { allowedTypesOf } from "./attachments.ts";
 import { CallerError, notFound, unprocessable } from "./errors.ts";
 
@@ -168,8 +170,8 @@ export async function setQuarantineSwitch(
 /** Extensions: letters and digits, a handful of characters, a bounded list. `.PDF`, `pdf` and ` pdf ` are one. */
 const EXTENSION = /^[a-z0-9]{1,12}$/;
 const MAX_ALLOWED_TYPES = 64;
-/** The bound's ceiling is what a message can be at all: Cloudflare's 25 MiB inbound. */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/** The bound's ceiling is what a message can be at all: the inbound limit, from its receipt. */
+const MAX_ATTACHMENT_BYTES = BUDGETS["email.inbound.max_bytes"];
 
 /**
  * A mailbox's attachment limits (0065): a size bound and an allowed-type list, each null to say nothing.
@@ -216,9 +218,11 @@ export async function setAttachmentLimits(
   };
   await auditedBatch<never>(env, ctx, orgId, {
     action: "mailbox.attachment_limits_set", outcome: "ok", actorUserId, subject: mailboxId,
+    // The columns as stored, not parsed: an audit entry records what was there, and a column that cannot be
+    // parsed is exactly the state this act repairs, so parsing it here would make the repair impossible.
     detail: {
-      from: { maxBytes: mailbox.attachment_max_bytes, allowedTypes: allowedTypesOf(mailbox.attachment_allowed_types) },
-      to: { maxBytes: next.attachment_max_bytes, allowedTypes: allowedTypesOf(next.attachment_allowed_types) },
+      from: { maxBytes: mailbox.attachment_max_bytes, allowedTypes: mailbox.attachment_allowed_types },
+      to: { maxBytes: next.attachment_max_bytes, allowedTypes: next.attachment_allowed_types },
     },
   }, (entry) => [
     entry,

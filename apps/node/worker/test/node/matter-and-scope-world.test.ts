@@ -230,7 +230,7 @@ describe("the supervised scope enum is a constraint rather than a convention", (
      * one: `granted_at` **is** the authority, so a second writer would be a way to grant a supervised read
      * without two approvers, without the `supervised.granted` entry, and without anything noticing.
      *
-     * The one writer is `approveStatements` in `src/approvals.ts`, gated on the approval having become
+     * The one writer is `approveStatements` in `src/approval-decide.ts`, gated on the approval having become
      * `approved` in the same transaction.
      */
     const writes: string[] = [];
@@ -240,13 +240,13 @@ describe("the supervised scope enum is a constraint rather than a convention", (
       });
     }
     expect(
-      writes.length === 1 && writes[0]!.startsWith("src/approvals.ts:") ? null
+      writes.length === 1 && writes[0]!.startsWith("src/approval-decide.ts:") ? null
         : `${writes.length} UPDATE supervised_grants statement(s) in src/ (${writes.join(", ") || "none"}); `
-          + "there must be exactly one, in src/approvals.ts, because granted_at is the authority and a second "
+          + "there must be exactly one, in src/approval-decide.ts, because granted_at is the authority and a second "
           + "writer would be a supervised read granted without its two approvers",
     ).toBeNull();
 
-    const source = codeOf("src/approvals.ts");
+    const source = codeOf("src/approval-decide.ts");
     const statement = /UPDATE supervised_grants[\s\S]{0,400}?`/.exec(source)?.[0] ?? "";
     // Anti-vacuity: the extractor found the statement, so the two clause assertions below are about SQL and
     // not about an empty string.
@@ -338,9 +338,9 @@ describe("the export state enum is a constraint rather than a convention", () =>
     // The one `exports.state` literal outside `src/exports.ts`: `COMPLETING_EFFECT.ediscovery_export.undone`,
     // which is what stops a completing decision authorizing an export that already ran. A typo there would
     // make every export's approval un-completable — loudly, but only once somebody tried.
-    const approvals = codeOf("src/approvals.ts");
+    const approvals = codeOf("src/approval-effects.ts");
     const undone = /FROM exports e[\s\S]{0,200}?e\.state = '([a-z_]+)'/.exec(approvals);
-    expect(undone, "the export's completing predicate could not be read in src/approvals.ts").not.toBeNull();
+    expect(undone, "the export's completing predicate could not be read in src/approval-effects.ts").not.toBeNull();
     expect(declared).toContain(undone![1]!);
     expect(undone![1]).toBe("requested");
   });

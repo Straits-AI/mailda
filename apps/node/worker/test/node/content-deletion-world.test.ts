@@ -97,7 +97,7 @@ interface Site {
  */
 const SITES: Site[] = [
   {
-    file: "src/provider/cloudflare-grant.ts",
+    file: "src/provider/grant-oauth.ts",
     target: "provider_authorizations",
     content: false,
     why: "A consent in flight, discarded because the OAuth client was re-registered (#162, ADR 42). It "
@@ -624,13 +624,13 @@ describe("the closed world over content-destroying call sites", () => {
       (file) => /\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+approvals\b/i.test(readFileSync(join(workerDir, file), "utf8")),
     );
     expect(
-      writers.join(", ") === "src/approvals.ts" ? null
+      writers.join(", ") === "src/approval-plan.ts" ? null
         : `approvals is written from ${writers.length === 0 ? "nowhere" : writers.join(", ")}, and it must be `
-          + "written only from src/approvals.ts: subject_kind has a column default, so a writer that omitted "
+          + "written only from src/approval-plan.ts: subject_kind has a column default, so a writer that omitted "
           + "it would file its approval under the wrong kind and nothing would notice",
     ).toBeNull();
 
-    const source = readFileSync(join(workerDir, "src", "approvals.ts"), "utf8");
+    const source = readFileSync(join(workerDir, "src", "approval-plan.ts"), "utf8");
 
     // The one INSERT names the column. This is the assertion the `DEFAULT 'send_manifest'` in migration 0021
     // rests on: a writer that omitted `subject_kind` would file a hold lift as a send approval, silently, and

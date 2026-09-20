@@ -46,7 +46,7 @@ const ACCESS_TTL = BUDGETS["auth.access_token_ttl_seconds"];
 const REFRESH_TTL = BUDGETS["auth.refresh_token_ttl_seconds"];
 const REPLAY_WINDOW_MS = BUDGETS["auth.refresh_replay_window_seconds"] * 1000;
 const MAX_FAILURES = BUDGETS["auth.max_failed_logins_per_15min"];
-const FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const FAILURE_WINDOW_MS = BUDGETS["auth.failed_login_window_seconds"] * 1000;
 
 /*
  * `__Host-` prefixed (#96). The prefix is a **browser-enforced** promise: a cookie named this way can only

@@ -764,7 +764,7 @@ describe("the governance reads answer what the contract says they do", () => {
       body: { address: "Gone@example.net", reason: "the mailbox was restored" }, cookie: held,
     }) as { address: string };
     expect(lifted.address).toBe("gone@example.net");
-    expect(await answers("GET", "/api/suppressions", { cookie: held })).toEqual({ suppressed: [] });
+    expect(await answers("GET", "/api/suppressions", { cookie: held })).toEqual({ suppressed: [], truncated: false });
   });
 
   it("GET /api/policies, after writing one", async () => {
@@ -1627,7 +1627,7 @@ describe("the routes that only exist once mail has landed", () => {
     await answers("POST", "/api/quarantine/:messageId/release", {
       params: { messageId: delivery.messageId }, cookie: held,
     });
-    expect(await answers("GET", "/api/quarantine", { cookie: held })).toEqual({ quarantined: [] });
+    expect(await answers("GET", "/api/quarantine", { cookie: held })).toEqual({ quarantined: [], truncated: false });
   });
 
   it("releasing a send a policy held", async () => {
