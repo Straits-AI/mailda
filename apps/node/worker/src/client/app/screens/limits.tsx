@@ -265,7 +265,7 @@ function Suppressions() {
             </tbody>
           </table>
         </div>
-      ) : suppressed.isSuccess ? <p className="dim">None.</p> : null}
+      ) : suppressed.isSuccess ? <Nothing kind="empty" detail="No address is suppressed on this Node." /> : null}
     </section>
   );
 }

@@ -240,7 +240,7 @@ describe("the policy says what it needs to say", () => {
      * The directive that did not exist until the interface acquired webfonts, and the one most likely to be
      * widened by somebody reaching for Google Fonts or a CDN. Mailda's premise is custody: a page about
      * owning your mail must not hand a third party every viewer's IP address on every load, and
-     * `fonts/README.md` records that this is why Satoshi is named in the type stack and never shipped.
+     * `fonts/README.md` records why the brand's Satoshi was never shipped.
      *
      * Asserted as an exact match rather than "contains 'self'", so an added host fails. A policy that lists
      * `'self'` **and** a CDN is not a narrower policy than one listing the CDN alone.

@@ -81,9 +81,14 @@ clause is the operative one: **this repository is the distribution channel** (AD
 merge from it), so a font committed here is redistributed from a public URL to every customer, and subsetting
 it for size is precisely the modification the licence names.
 
-So `--display` is `Satoshi, "Plus Jakarta Sans", …`: a designer with Satoshi installed sees the brand exactly,
-everybody else gets the closest OFL face, served from this origin. Inter is the brand's body face and is
-served the same way. Four faces, 72 KB, `font-display: swap`, cached for a year.
+So `--display` was `Satoshi, "Plus Jakarta Sans", …` until 21 September 2026: a designer with Satoshi
+installed saw the brand exactly, everybody else got the closest OFL face. **The interface is one family
+now.** A browser audit of every screen measured the page in three families at once, Inter for prose, the
+display face for two headings, and a monospace that had drifted from figures onto labels, chips, ids and
+whole message rows. `--display` and `--mono` both resolve to `--body` (Inter, four weights, 97 KB, served
+from this origin); headings are weight 700 with tight tracking, figures keep their columns with
+`font-variant-numeric: tabular-nums`, and machine text is weight 500 in the dim colour. Satoshi is no longer
+named anywhere.
 
 **The no-webfont rule was about third parties, not about webfonts.** `ui.ts` said for months that the
 interface loads none, because "a page that fetches a font from a third party hands that third party every

@@ -7,8 +7,8 @@ import shellBundle from "../generated/app.bundle.client.js";
 // not in the directory.
 import interRegular from "../fonts/inter-400.woff2";
 import interMedium from "../fonts/inter-500.woff2";
-import jakartaSemibold from "../fonts/jakarta-600.woff2";
-import jakartaBold from "../fonts/jakarta-700.woff2";
+import interSemibold from "../fonts/inter-600.woff2";
+import interBold from "../fonts/inter-700.woff2";
 import deliveryScript from "./client/delivery.client.js";
 import sessionScript from "./client/session.client.js";
 import { EXPIRY_COOKIE } from "./auth/session.ts";
@@ -120,18 +120,17 @@ const SHELL_CSS = `
   --alarm: #A5342A;
   --live: #2F6F4E;
 
-  /* Satoshi first and never shipped — fonts/README.md records why: its licence permits self-hosting and
-     forbids redistribution, and this repository *is* the distribution channel (ADR 24). A designer with it
-     installed sees the brand exactly; everybody else gets Plus Jakarta Sans, which is the closest OFL face
-     to it and is served from this origin. Inter is the brand's body face and is served the same way.
-     Nothing is fetched from a third party, which is the rule the fonts changed the mechanism of but not
-     the substance of. */
-  --display: Satoshi, "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* One family (21 September 2026). Inter is the brand's body face, served from this origin in four weights
+     (fonts/README.md). The two other tokens used to name other faces — Satoshi / Plus Jakarta Sans for
+     headings and a monospace for figures — and a browser audit of every screen found the page set in three
+     families at once, with the monospace drifted from figures onto labels, chips, ids and whole rows. Both
+     tokens now resolve to the body face so every rule keeps working; what they used to buy is bought
+     another way: headings by weight 700 and tight tracking, figures by font-variant-numeric: tabular-nums
+     (see the .mono rule), and machine text — ids, hashes, addresses — by weight 500 and a dim colour.
+     Satoshi was never shipped (its licence forbids redistribution) and is no longer named. */
   --body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  /* Kept. The brand names no monospace and this product needs one: every figure on this interface is
-     tabular by a rule older than the branding — "every number carries a receipt" is not a typographic
-     preference, and a proportional 8 beside a proportional 3 in a column of costs is unreadable. */
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --display: var(--body);
+  --mono: var(--body);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -172,7 +171,7 @@ const SHELL_CSS = `
   }
 }
 
-/* The four faces this Node serves, from its own origin (fonts/README.md).
+/* The four weights of the one face this Node serves, from its own origin (fonts/README.md).
    font-display: swap on purpose: the alternative is a page that shows nothing until 71 KB has arrived,
    and on a Node whose whole job is showing somebody their mail, text that arrives in a fallback and then
    settles is better than text that is briefly absent. */
@@ -187,13 +186,13 @@ const SHELL_CSS = `
   font-weight: 500; font-style: normal; font-display: swap;
 }
 @font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("/app/fonts/jakarta-600.woff2") format("woff2");
+  font-family: Inter;
+  src: url("/app/fonts/inter-600.woff2") format("woff2");
   font-weight: 600; font-style: normal; font-display: swap;
 }
 @font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("/app/fonts/jakarta-700.woff2") format("woff2");
+  font-family: Inter;
+  src: url("/app/fonts/inter-700.woff2") format("woff2");
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
@@ -259,10 +258,10 @@ body::before {
      viewBox, so at a 26px mark that is about 1.6px — too small to be the whole gap at this size, and the
      rule is a minimum rather than a target. .5rem sits comfortably above it. */
   gap: .5rem;
-  font-family: var(--display);
+  font-family: var(--body);
   font-weight: 700;
   font-size: 1.15rem;
-  letter-spacing: -.015em;
+  letter-spacing: -.02em;
   margin: 0;
   padding-right: clamp(.9rem, 3vw, 2rem);
   border-right: 1px solid var(--rule);
@@ -277,17 +276,18 @@ body::before {
   align-items: center;
   gap: clamp(.8rem, 2.5vw, 1.75rem);
   flex-wrap: wrap;
-  font-family: var(--mono);
-  font-size: .715rem;
-  letter-spacing: .07em;
+  font-family: var(--body);
+  font-weight: 500;
+  font-size: .72rem;
+  letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--dim);
   margin-left: auto;
 }
 #status .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 #status .key { opacity: .6; }
-#status .num { color: var(--text); font-variant-numeric: tabular-nums; }
-#status .session { color: var(--accent); font-variant-numeric: tabular-nums; }
+#status .num { color: var(--text); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+#status .session { color: var(--accent); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .dot.live { background: var(--live); animation: pulse 2.8s ease-out infinite; }
@@ -339,8 +339,11 @@ main {
   .dot.live { animation: none; }
 }
 
+h2 { font-size: 1.1rem; font-weight: 700; margin: 0 0 .5rem; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 h1 {
-  font-family: var(--display);
+  font-family: var(--body);
+  letter-spacing: -.02em;
   /* 700, not 400. The old serif carried a display size at book weight; a geometric sans does not — at
      3rem, Plus Jakarta Sans 400 reads as an outline rather than a heading, and the brand's own wordmark is
      bold. Only weights 600 and 700 are served, so nothing here can ask for one that is not there. */
@@ -391,9 +394,10 @@ h1 {
   border-right: 1px solid var(--accent);
 }
 .panel h2 {
-  font-family: var(--mono);
-  font-size: .715rem;
-  letter-spacing: .16em;
+  font-family: var(--body);
+  font-weight: 500;
+  font-size: .72rem;
+  letter-spacing: .14em;
   text-transform: uppercase;
   color: var(--dim);
   font-weight: 400;
@@ -402,31 +406,36 @@ h1 {
 
 form { display: grid; gap: 1rem; }
 
-.field-row { display: grid; gap: .35rem; }
+.field-row { display: grid; gap: .5rem; }
 /* The fold that opens Cc and Bcc: a link at the end of the To row, gone once opened. */
 .composer-copies { justify-self: end; font-size: .72rem; }
-.field-row > span {
-  font-family: var(--mono);
+/* The one small label. Six rules used to say nearly this with six sets of numbers; every uppercase caption
+   on the interface — a field's name, a table header, a rail heading, a ledger's count, a chip — is this. */
+.label, .field-row > span, .headers dt, thead th, .rail-heading, .ledger-head p, .queue-picker span,
+.target-edit span, tr.detail dt, .recipient .label, legend, .butler-format legend {
+  font-family: var(--body);
+  font-weight: 500;
   font-size: .68rem;
-  letter-spacing: .12em;
+  line-height: 1.4;
+  letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--dim);
 }
 
 input {
-  font: 400 .95rem/1.5 var(--mono);
+  font: 400 .95rem/1.5 var(--body);
   color: var(--text);
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--rule-strong);
-  padding: .5rem .1rem;
+  padding: .5rem .5rem;
   width: 100%;
   transition: border-color .18s, background-color .18s;
 }
 /* The rule above is for text fields. A checkbox given width: 100% and a bottom rule became a box floating
    in the middle of its own label (the queue's quarantine switches, 17 September). Its own size, its own edge,
    the theme's accent when checked. */
-input[type="checkbox"] {
+input[type="checkbox"], input[type="radio"] {
   width: 1rem; height: 1rem; flex: none; margin: .15rem 0 0;
   border: 1px solid var(--control-edge); border-radius: 2px; padding: 0;
   accent-color: var(--accent-text); background: var(--ground-2);
@@ -444,18 +453,18 @@ button.primary,
 a.primary {
   display: inline-block;
   text-decoration: none;
-  font: 400 .72rem/1 var(--mono);
-  letter-spacing: .14em;
+  font: 500 .72rem/1 var(--body);
+  letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--ground);
   /* --accent-text, not --accent: a button's label is read, and Mist on the brand blue is 4.10 — under AA.
      The five-percent-darker text blue gives 4.88. Dark mode defines the two as one value. */
   background: var(--accent-text);
   border: 1px solid var(--accent-text);
-  padding: .8rem 1.3rem;
+  padding: .75rem 1.25rem;
   cursor: pointer;
   justify-self: start;
-  margin-top: .4rem;
+  margin-top: 0;
   transition: filter .18s, transform .12s;
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.12); }
@@ -465,21 +474,21 @@ button.primary:disabled { opacity: .55; cursor: progress; }
 /* A plain button — "see what this would do", "ask to stop this domain" — was the browser's own grey box beside
    .primary and .linkish. One quiet control for the reversible act: outlined, mono, the theme's edge. */
 button.quiet {
-  font: 400 .72rem/1 var(--mono);
+  font: 500 .72rem/1 var(--body);
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--text);
   background: var(--ground-2);
   border: 1px solid var(--control-edge);
-  padding: .5rem .8rem;
+  padding: .75rem 1.25rem;
   cursor: pointer;
 }
 button.quiet:hover:not(:disabled) { background: var(--sky); }
 button.quiet:disabled { opacity: .5; cursor: not-allowed; }
 
 .hint {
-  font-family: var(--mono);
-  font-size: .7rem;
+  font-family: var(--body);
+  font-size: .78rem;
   line-height: 1.55;
   color: var(--dim);
   margin: .6rem 0 0;
@@ -491,13 +500,13 @@ button.quiet:disabled { opacity: .5; cursor: not-allowed; }
 form > .hint { margin: -.6rem 0 0; }
 
 .notice {
-  font-family: var(--mono);
-  font-size: .74rem;
+  font-family: var(--body);
+  font-size: .82rem;
   line-height: 1.6;
   white-space: pre-wrap;
   border-left: 2px solid var(--rule-strong);
   padding: .55rem .8rem;
-  margin: 0;
+  margin: 0 0 .5rem;
   color: var(--dim);
 }
 .notice.bad { border-left-color: var(--alarm); color: var(--text); }
@@ -520,23 +529,27 @@ form > .hint { margin: -.6rem 0 0; }
 
 /* ---- ledger ----------------------------------------------------------------------------- */
 
+/* One block for the ledger head. It was declared twice, six hundred lines apart, with different gaps and
+   margins, and which one won depended on the order the rules happened to be in. */
 .ledger-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
+  gap: .5rem 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
   border-bottom: 1px solid var(--rule-strong);
-  padding-bottom: .9rem;
-  margin-bottom: .25rem;
+  padding-bottom: .75rem;
+  margin-bottom: .5rem;
 }
-.ledger-head h1 { margin: 0; font-size: clamp(1.5rem, 3vw, 2rem); }
+.ledger-head h1 { margin: 0; font-size: clamp(1.4rem, 2.6vw, 2rem); }
 /*
   The new-message control (#79) is the third child of a space-between header, which would otherwise strand
   it in the middle. margin-left:auto takes up the slack so the heading stays left and the control sits with
   the count on the right, where the other per-screen actions are.
 */
 .new-message { margin: 0 0 0 auto; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
-.new-message select { font: inherit; font-family: var(--mono); font-size: .8rem; max-width: min(100%, 20rem); min-width: 0; }
+.new-message select { max-width: min(100%, 20rem); min-width: 0; }
 .new-message { min-width: 0; max-width: 100%; }
 
 /* The Butler screen (#78). */
@@ -574,9 +587,9 @@ form > .hint { margin: -.6rem 0 0; }
   color: var(--dim);
   font-size: .8rem;
 }
-.butler-format label { font-family: var(--mono); font-size: .8rem; }
+.butler-format label { font-size: .8rem; }
 .butler-format .dim { font-size: .78rem; }
-.butler-actions { margin: .6rem 0 1.2rem; }
+.butler-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .75rem 0 1.5rem; }
 
 /* Your own passkeys (#84), on the People screen. */
 .passkeys { margin: 1.4rem 0 2rem; border-top: 1px solid var(--rule); padding-top: 1rem; max-width: 46rem; }
@@ -595,7 +608,7 @@ form > .hint { margin: -.6rem 0 0; }
 .butler-dry { border-top: 1px solid var(--rule); padding-top: .9rem; margin-bottom: 1.4rem; }
 .butler-dry h3 { margin: 0 0 .4rem; font-size: .95rem; }
 .butler-dry-runs { list-style: none; margin: .5rem 0; padding: 0; }
-.butler-dry-runs li { margin: .25rem 0; font-size: .82rem; }
+.butler-dry-runs li { display: flex; gap: .5rem; align-items: center; margin: .25rem 0; font-size: .82rem; }
 .butler-dry-result { margin-top: .8rem; }
 /* The detail is JSON on one line and can be long. It scrolls in its own cell rather than widening the
    table, which is the rule the whole panel follows: nothing makes the page scroll sideways. */
@@ -606,7 +619,7 @@ form > .hint { margin: -.6rem 0 0; }
 /* The checker's findings arrive as several lines and are the whole value of a refusal — kept as written. */
 .butler-findings { white-space: pre-wrap; font-family: var(--mono); font-size: .78rem; }
 .butler-pause { margin-top: 1rem; }
-.butler-pause p { margin: 0 0 .4rem; }
+.butler-pause > * { margin: 0 0 .5rem; }
 .butler-runs-heading { margin-top: 2rem; font-size: 1.1rem; }
 
 /* Approvals (#81). One card per decision — a table would make the gravest and the most routine identical. */
@@ -626,25 +639,28 @@ form > .hint { margin: -.6rem 0 0; }
   border-left: 2px solid var(--rule-strong);
   font-style: italic;
 }
-.approval-actions { margin: .8rem 0 0; }
+.approval > p.approval-actions { margin: .75rem 0 0; }
 
 /* Rules (#81). The editor is a column of labelled controls, not a grid — each answer changes the sentence. */
 .policy-editor {
+  display: grid;
+  gap: 1rem;
   margin-top: 1.5rem;
   border-top: 1px solid var(--rule-strong);
   padding-top: 1rem;
   max-width: 44rem;
 }
-.policy-editor h2 { margin: 0 0 .8rem; font-size: 1.1rem; }
-.policy-editor select, .policy-editor input { font: inherit; font-family: var(--mono); font-size: .82rem; }
+.policy-editor h2 { margin: 0; }
+.policy-editor select, .policy-editor input { font: inherit; font-size: .9rem; }
 .policy-actions { margin: 1rem 0 0; }
 
 /* People (#81). Relations as a list of what each one lets somebody do, not a grid of tokens. */
 .people-mailbox { margin-top: 1.75rem; }
 .people-mailbox h2, .people-teams h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
 .people-teams { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
-.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
-.grant-list label { display: block; font-size: .84rem; cursor: pointer; }
+.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.grant-list label { display: flex; gap: .5rem; align-items: baseline; font-size: .84rem; cursor: pointer; }
+.check { display: flex; gap: .5rem; align-items: baseline; }
 .grant-object { margin: .4rem 0 0; font-size: .7rem; }
 
 /* Sending limits (#81). */
@@ -688,12 +704,6 @@ form > .hint { margin: -.6rem 0 0; }
 .scroller { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 thead th {
-  font-family: var(--mono);
-  font-size: .655rem;
-  font-weight: 400;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--dim);
   text-align: left;
   padding: .9rem .7rem;
   border-bottom: 1px solid var(--rule);
@@ -706,7 +716,13 @@ tbody td {
   vertical-align: baseline;
   word-break: break-word;
 }
-.mono { font-family: var(--mono); }
+/* Figures and machine text, in the one family: tabular digits keep a column of costs aligned, and weight
+   500 in the dim colour is what marks an id, a hash or an address as something to copy rather than read. */
+.mono, .num, .state, td, .rail-row .num, .instrument-bar, #status { font-variant-numeric: tabular-nums; }
+.mono { font-weight: 500; }
+/* The browser's own monospace default for code, pre and kbd is the last second family; the one family holds
+   everywhere, and preformatted text keeps its shape through white-space rather than through a face. */
+code, pre, kbd, samp { font-family: inherit; }
 /*
   The two tone classes the screens have used all along and the sheet never defined: .dim on every
   explanatory paragraph in /setup and the consent page, .bad on a failed cell in the routing table. Both
@@ -741,7 +757,7 @@ tr.detail dl {
   font-family: var(--mono);
   font-size: .73rem;
 }
-tr.detail dt { color: var(--dim); letter-spacing: .1em; text-transform: uppercase; font-size: .655rem; padding-top: .12rem; }
+tr.detail dt { padding-top: .12rem; }
 tr.detail dd { margin: 0; word-break: break-all; }
 
 /* ---- body, composer, outbox ------------------------------------------------------------- */
@@ -768,7 +784,7 @@ tr.detail dd { margin: 0; word-break: break-all; }
   overflow: auto;
 }
 .body-host:empty { display: none; }
-.row-actions { margin: .6rem 0 .2rem; display: flex; gap: 1rem; }
+.row-actions { margin: .75rem 0 .25rem; display: flex; gap: 1rem; position: relative; z-index: 1; }
 
 textarea {
   font: 400 .9rem/1.6 var(--mono);
@@ -784,11 +800,14 @@ textarea:focus { outline: 0; border-color: var(--accent); }
 /* One colour per state, because §16 requires a state to mean the same thing everywhere and a reader
    should not have to remember which grey means which. */
 .state {
-  font-family: var(--mono);
-  font-size: .655rem;
+  display: inline-block;
+  font-family: var(--body);
+  font-weight: 500;
+  font-size: .68rem;
+  line-height: 1.2;
   letter-spacing: .1em;
   text-transform: uppercase;
-  padding: .18rem .45rem;
+  padding: .25rem .5rem;
   border: 1px solid var(--rule-strong);
   white-space: nowrap;
 }
@@ -836,7 +855,7 @@ textarea:focus { outline: 0; border-color: var(--accent); }
   gap: .5rem;
   align-items: baseline;
 }
-.recipient .label { font-size: .6rem; }
+
 .recipient .mono { font-size: .73rem; word-break: break-all; }
 /* The provider's own words, on their own line so a long SMTP response does not shove the state chip out
    of the row. Shown verbatim: a paraphrase of somebody else's mail server is a guess. */
@@ -903,10 +922,6 @@ tbody a { font-size: .8rem; }
    brand's monochrome-versus-full choice made explicitly rather than by whatever colour was nearest. */
 .rail .wordmark svg { color: var(--rail-text); }
 .rail-heading {
-  font-family: var(--mono);
-  font-size: .62rem;
-  letter-spacing: .14em;
-  text-transform: uppercase;
   color: var(--rail-dim);
   margin: .9rem 1rem .2rem 1rem;
 }
@@ -957,16 +972,17 @@ tbody a { font-size: .8rem; }
   gap: clamp(.8rem, 2.2vw, 1.6rem);
   flex-wrap: wrap;
   padding: .5rem clamp(1rem, 2.5vw, 2rem);
-  font-family: var(--mono);
-  font-size: .69rem;
-  letter-spacing: .07em;
+  font-family: var(--body);
+  font-weight: 500;
+  font-size: .7rem;
+  letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--dim);
 }
 .instrument-bar .field { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 .instrument-bar .key { opacity: .6; }
-.instrument-bar .num { color: var(--text); font-variant-numeric: tabular-nums; }
-.instrument-bar .session { color: var(--accent); font-variant-numeric: tabular-nums; }
+.instrument-bar .num { color: var(--text); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.instrument-bar .session { color: var(--accent); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .instrument-bar a.linkish { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--rule); }
 .bar-spacer { margin-left: auto; }
 
@@ -1038,7 +1054,7 @@ tbody a { font-size: .8rem; }
   background: var(--ground);
   border: 1px solid var(--control-edge);
   border-radius: 999px;
-  padding: .1rem .3rem .1rem .7rem;
+  padding: .15rem .4rem .15rem 1rem;
   min-width: min(22rem, 100%);
 }
 .search-pill input {
@@ -1048,8 +1064,8 @@ tbody a { font-size: .8rem; }
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: .85rem;
-  padding: .32rem 0;
+  font-size: 1rem;
+  padding: .55rem 0;
 }
 /* The pill takes the focus ring, not the input inside it: a ring drawn around a borderless input inside a
    rounded container reads as a rectangle inside a pill. */
@@ -1067,11 +1083,12 @@ tbody a { font-size: .8rem; }
 /* The magnifier **is** the submit button, so a keyboard reaches it and a screen reader is told the search
    can be run. A decorative glyph beside a field that submits on Enter loses both. */
 .search-go {
+  font: inherit;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.7rem; height: 1.7rem;
+  width: 2.1rem; height: 2.1rem;
   padding: 0;
   border: 0;
   border-radius: 999px;
@@ -1084,14 +1101,16 @@ tbody a { font-size: .8rem; }
 /* The hint sits with the field rather than under the whole toolbar, so it reads as a description of the
    box beside it. Flex order keeps it after the pill and before Clear on one line, and it wraps below on a
    narrow screen rather than squeezing the pill. */
-.search-hint { flex: 1 1 100%; margin: 0; font-size: .72rem; }
+/* Set off from the pill by the gap it would otherwise close: a hint touching the field's edge reads as part
+   of the control, and this one describes it. */
+.search-hint { flex: 1 1 100%; margin: .2rem 0 0; padding-left: 1rem; font-size: .78rem; }
 
 .message-list { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--rule); }
 .message-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .message-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: .1rem;
+  gap: .25rem;
   width: 100%;
   text-align: left;
   background: none;
@@ -1113,7 +1132,7 @@ tbody a { font-size: .8rem; }
 .message-when { font-size: .68rem; }
 
 .reading-pane { padding: 0 0 0 clamp(1rem, 2.5vw, 2rem); min-width: 0; }
-.reading-pane .message-title { font-size: clamp(1.15rem, 2.2vw, 1.5rem); margin: 0 0 .8rem 0; font-weight: 400; }
+.reading-pane .message-title { font-size: clamp(1.15rem, 2.2vw, 1.5rem); margin: 0 0 .75rem 0; font-weight: 600; }
 /* The rest of the conversation, under the message being read: folded rows, opened one at a time. */
 .thread { margin-top: 1.5rem; border-top: 1px solid var(--rule); padding-top: .8rem; }
 .thread h3 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 400; margin: 0 0 .5rem; }
@@ -1124,10 +1143,7 @@ tbody a { font-size: .8rem; }
 .labels { display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; }
 .label-add { font-family: var(--mono); font-size: .75rem; width: 9rem; background: var(--ground-2); color: var(--text); border: 1px solid var(--rule-strong); padding: .15rem .35rem; }
 .headers { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .2rem .8rem; margin: 0 0 1.2rem 0; }
-.headers dt {
-  font-family: var(--mono); font-size: .62rem; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--dim);
-}
+.headers dt { padding-top: .1rem; }
 .headers dd { margin: 0; font-size: .85rem; word-break: break-word; }
 
 /* An opaque-origin frame with no scripts and no same-origin access. The sandbox is the boundary, not
@@ -1148,19 +1164,15 @@ tbody a { font-size: .8rem; }
 /* ---- ledgers ----------------------------------------------------------------------------- */
 
 .ledger { min-width: 0; }
-.ledger-head { display: flex; align-items: baseline; gap: .6rem 1rem; margin-bottom: .6rem; flex-wrap: wrap; min-width: 0; }
 /* The inbox's second line: the mailbox filter and the search, under the title rather than beside it, so the
    title row holds a name, a count and one action and nothing has to squeeze. */
 /* A table's caption reads with its rows: left, over the header, not centred above the whole table. */
-.table-caption { text-align: left; caption-side: top; padding: 0 0 .4rem; font-size: .8rem; }
+caption, .table-caption { text-align: left; caption-side: top; padding: 0 0 .5rem; font-size: .8rem; }
 .drafts-strip { flex: 1 1 100%; }
 .inbox-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin: 0 0 .9rem; min-width: 0; }
 .inbox-tools .inbox-search { flex: 1 1 16rem; min-width: 0; }
 .inbox-tools .search-pill { flex: 1 1 12rem; min-width: 0; }
-/* No font-weight 400 here: this block used to re-declare it and win over the rule above that says 700, so
-   every ledger's h1 rendered as the outline the theme's own comment warns against. */
-.ledger-head h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); margin: 0; }
-.ledger-head p { margin: 0; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+.ledger-head p { margin: 0; }
 /* Tables scroll inside their own container. A ledger of send outcomes is the last thing that should
    make the whole page scroll sideways. */
 .ledger table { width: 100%; }
@@ -1184,7 +1196,7 @@ tbody a { font-size: .8rem; }
   background: var(--ground-2);
   padding: .9rem clamp(1rem, 2.5vw, 1.6rem) 1.1rem;
   /* Bounded, so a long reply scrolls inside the dock and the message behind it stays visible. */
-  max-height: 60vh;
+  max-height: 50vh;
   overflow-y: auto;
 }
 .dock-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: .5rem; }
@@ -1308,31 +1320,25 @@ body.shell main#app {
 /* The composer's From selector, matched to the bare-underline fields beside it rather than left as browser
    furniture. It first shipped as an unstyled full-width native select among underlined inputs and looked
    like it belonged to a different application. */
-.field-row select {
+/* Every select, one style: the same underline and inset as a text input, so a form of mixed fields reads
+   as one form. This used to be the .field-row select rule only, and the pickers outside a field row were each
+   their own control — one native, one bordered, one in the old monospace. */
+select {
   font: inherit;
-  font-family: var(--mono);
   font-size: .95rem;
   background: transparent;
   color: var(--text);
   border: 0;
-  border-bottom: 1px solid var(--rule);
-  padding: .3rem 0;
+  border-bottom: 1px solid var(--rule-strong);
+  padding: .5rem .5rem;
   width: auto;
-  min-width: 18rem;
+  max-width: 100%;
 }
-.field-row select:focus { outline: none; border-bottom-color: var(--accent); }
+.field-row select { min-width: 18rem; }
+select:focus { outline: none; border-bottom-color: var(--accent); }
 
 .queue-picker { display: inline-flex; align-items: baseline; gap: .5rem; margin-left: auto; }
-.queue-picker span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
-.queue-picker select {
-  font: inherit;
-  font-family: var(--mono);
-  font-size: .78rem;
-  background: var(--ground-2);
-  color: var(--text);
-  border: 1px solid var(--rule-strong);
-  padding: .2rem .4rem;
-}
+
 
 /* Per-mailbox depths under the Queue row. Indented rather than bulleted, so the rail stays a rail. */
 .rail-sublist { list-style: none; margin: 0; padding: 0 0 .3rem 0; }
@@ -1341,6 +1347,7 @@ body.shell main#app {
   align-items: baseline;
   justify-content: space-between;
   gap: .5rem;
+  padding: .25rem 1rem .25rem 1.9rem;
   padding: .16rem 1rem .16rem 1.9rem;
   font-size: .8rem;
 }
@@ -1356,21 +1363,13 @@ body.shell main#app {
 
 .queue-target { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; white-space: normal; }
 /* The two quarantine switches: a row each, box then sentence, under the target. */
-.queue-switches { display: grid; gap: .35rem; margin: 0 0 .8rem; white-space: normal; }
+.queue-switches { display: grid; gap: .75rem; margin: 0 0 1rem; white-space: normal; }
 .queue-switches .case-pick { align-items: start; }
 .queue-breached { margin-left: auto; }
 
 .target-edit { display: inline-flex; align-items: baseline; gap: .4rem; }
-.target-edit span { font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; }
-.target-edit input {
-  font-family: var(--mono);
-  font-size: .78rem;
-  width: 5rem;
-  background: var(--ground-2);
-  color: var(--text);
-  border: 1px solid var(--rule-strong);
-  padding: .18rem .35rem;
-}
+
+.target-edit input { width: 5rem; }
 
 /* The pick control sits with the state word rather than in a column of its own: a case is picked *as* a
    state, and a bare checkbox column reads as a table that wants bulk actions it does not have. */
@@ -1614,8 +1613,8 @@ const CLIENT_ASSETS: Record<string, { readonly source: string | (() => string); 
 const FONT_FILES: Record<string, ArrayBuffer> = {
   "/app/fonts/inter-400.woff2": interRegular,
   "/app/fonts/inter-500.woff2": interMedium,
-  "/app/fonts/jakarta-600.woff2": jakartaSemibold,
-  "/app/fonts/jakarta-700.woff2": jakartaBold,
+  "/app/fonts/inter-600.woff2": interSemibold,
+  "/app/fonts/inter-700.woff2": interBold,
 };
 
 export function clientAsset(pathname: string): Response | null {
