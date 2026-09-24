@@ -99,21 +99,36 @@ Two things this cannot verify, said here rather than discovered later:
 
 
 const [verb, ...rest] = process.argv.slice(2);
-switch (verb) {
-  case "deploy": await deploy(rest); break;
-  case "doctor": process.exit(doctorExitCode(await doctor(rest))); break;
-  case "claim-secret": claimSecret(rest); break;
-  case "set-password": setPassword(rest); break;
-  case "recovery-codes": await recoveryCodes(rest); break;
-  case "backup": await backup(rest); break;
-  case "verify-backup": verifyBackup(rest); break;
-  case "preflight": await preflight(rest); break;
-  case "verify-evidence": await verifyEvidence(rest); break;
-  case "search": await search(rest); break;
-  case "provider": await provider(rest); break;
-  case "install": await install(rest); break;
-  case "upgrade": await upgrade(rest); break;
-  default:
-    process.stdout.write(USAGE);
-    process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);
+/*
+ * Ctrl-C at a raw-mode prompt (`choose`, `readSecret`) rejects with "cancelled" rather than letting the
+ * terminal's SIGINT end the process, because raw mode has taken SIGINT away from the terminal. Awaited at
+ * the top level, that rejection is a thrown error, and it printed a stack: a crash report for a decision
+ * the operator made. Caught once here, for every verb.
+ */
+try {
+  switch (verb) {
+    case "deploy": await deploy(rest); break;
+    case "doctor": process.exit(doctorExitCode(await doctor(rest))); break;
+    case "claim-secret": claimSecret(rest); break;
+    case "set-password": setPassword(rest); break;
+    case "recovery-codes": await recoveryCodes(rest); break;
+    case "backup": await backup(rest); break;
+    case "verify-backup": verifyBackup(rest); break;
+    case "preflight": await preflight(rest); break;
+    case "verify-evidence": await verifyEvidence(rest); break;
+    case "search": await search(rest); break;
+    case "provider": await provider(rest); break;
+    case "install": await install(rest); break;
+    case "upgrade": await upgrade(rest); break;
+    default:
+      process.stdout.write(USAGE);
+      process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);
+  }
+} catch (error) {
+  if (error instanceof Error && error.message === "cancelled") {
+    process.stdout.write("\n\n   cancelled. Nothing past the last step that said so was changed.\n\n");
+    process.exit(130);
+  }
+  throw error;
 }
+

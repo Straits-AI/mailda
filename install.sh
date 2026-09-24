@@ -14,14 +14,32 @@ set -euo pipefail
 say() { printf '\n%s\n' "$*"; }
 die() { printf '\n%s\n\n' "$*" >&2; exit 1; }
 
-command -v git >/dev/null 2>&1 || die "git is needed. https://git-scm.com/downloads"
-command -v node >/dev/null 2>&1 || die "Node.js 22 or later is needed. https://nodejs.org/en/download"
+# A missing tool is named with the one command that installs it on this machine, found by which package
+# manager is here. Printed, not run: a script read off the network does not install system software on your
+# behalf, and most of these commands ask for your password. Re-run afterwards.
+installer() {
+  if command -v brew >/dev/null 2>&1; then echo "brew install $1"
+  elif command -v apt-get >/dev/null 2>&1; then echo "sudo apt-get install -y $2"
+  elif command -v dnf >/dev/null 2>&1; then echo "sudo dnf install -y $2"
+  elif command -v winget >/dev/null 2>&1; then echo "winget install $3"
+  else echo "see $4"; fi
+}
+command -v git >/dev/null 2>&1 || die "git is needed. Install it, then re-run:
+  $(installer git git Git.Git https://git-scm.com/downloads)"
+command -v node >/dev/null 2>&1 || die "Node.js 22 or later is needed. Install it, then re-run:
+  $(installer node nodejs OpenJS.NodeJS.LTS https://nodejs.org/en/download)"
 major="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$major" -ge 22 ] || die "Node.js $(node -v) is too old; 22 or later is needed. https://nodejs.org/en/download"
+[ "$major" -ge 22 ] || die "Node.js $(node -v) is too old; 22 or later is needed. Update it, then re-run:
+  $(installer node nodejs OpenJS.NodeJS.LTS https://nodejs.org/en/download)"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   say "== enabling pnpm through corepack"
-  corepack enable 2>/dev/null || die "pnpm is needed and corepack could not enable it. https://pnpm.io/installation"
+  if ! command -v corepack >/dev/null 2>&1; then
+    die "corepack is not on this machine's Node.js, so pnpm cannot be enabled. Install it, then re-run:
+  npm install -g corepack"
+  fi
+  corepack enable 2>/dev/null || die "pnpm is needed and corepack could not enable it. Install it, then re-run:
+  npm install -g pnpm@10"
 fi
 
 if [ -f package.json ] && grep -q '"name": "mailda"' package.json 2>/dev/null; then
