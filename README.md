@@ -66,7 +66,13 @@ the CLI.
 the same from a script. Either derives the Worker, the Workflow and every other resource from that name
 into a git-ignored config; first install measured at 108 s.
 
-**Updating an installed Node** is `pnpm mailda upgrade`. It fetches the release remote and says *current*
+**Updating an installed Node** is one command, run where the install left the clone:
+
+```sh
+curl -fsSL https://mailda.site/update.sh | bash
+```
+
+It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It fetches the release remote and says *current*
 and stops when this clone already has everything; otherwise it fast-forwards, reinstalls, asks which Node
 if the account has several, and then, before the schema is touched, takes a `mailda backup` into a
 git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
@@ -75,7 +81,12 @@ refused unless `--contract`), asks once, and runs the same expand, canary, gate,
 `mailda deploy`. It never creates a Node; `mailda install` with an existing name still upgrades too, but
 with whatever code the clone has, which is why the verb exists.
 
-The button clones without history, so its first update is a merge by hand, once:
+The button clones without history and without a remote. The upgrade handles that on its first run: it adds
+the release remote, merges once with unrelated histories allowed, and resolves the one conflict the update
+path allows, `package.json`, by keeping your Worker's `name` and taking upstream's everything else. If
+anything else conflicts it aborts the merge and names the files, because that is a clone somebody edited.
+`test/node/update-path.test.ts` is what holds `package.json` to being the only file, and the same steps by
+hand are:
 
 ```sh
 git remote add upstream https://github.com/Straits-AI/mailda.git
@@ -83,9 +94,6 @@ git fetch upstream main
 git merge upstream/main --allow-unrelated-histories
 # One conflict, in package.json. Keep your own `name`, take upstream's everything else.
 ```
-
-Every later update is `pnpm mailda upgrade`. `package.json` is the only file that can conflict, and
-`test/node/update-path.test.ts` fails if a second one ever joins it.
 
 **Resetting a password.** There is no password-change flow in the product yet. `pnpm run set-password
 <email>` reads the new password at a prompt with echo off, derives the verifier with the same PBKDF2 the

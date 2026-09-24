@@ -109,4 +109,6 @@ ${receipts.map((one) => `| [${one.id}](/docs/receipts/${one.slug}/) | ${one.kind
 // own file. Copied at build, never committed here: the root is the one place it is written.
 mkdirSync(resolve(here, "../public"), { recursive: true });
 writeFileSync(resolve(here, "../public/install.sh"), readFileSync(join(repo, "install.sh"), "utf8"));
-console.log(`rendered ${n + 1} pages into src/content/docs/docs, and install.sh into public/`);
+// And the updater beside it, for the same reason: the command in the README has to be the script in the repo.
+writeFileSync(resolve(here, "../public/update.sh"), readFileSync(join(repo, "update.sh"), "utf8"));
+console.log(`rendered ${n + 1} pages into src/content/docs/docs, and install.sh and update.sh into public/`);

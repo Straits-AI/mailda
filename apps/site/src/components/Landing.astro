@@ -110,6 +110,11 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
         would rather arrange the account by hand, the dashboard path is written down too.
         <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
       </p>
+      <p class="dim">
+        Later, in the same directory, <code>curl -fsSL https://mailda.site/update.sh | bash</code> pulls the
+        release, backs the Node up, says what its schema will do, and redeploys through the canary. No git
+        command is yours to type, including for a Node the deploy button made.
+      </p>
     </section>
 
     <section class="values" aria-label="What the product is built to be">

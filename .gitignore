@@ -69,6 +69,7 @@ apps/node/worker/wrangler.*.jsonc
 # on every build; committing them would put a second copy of every doc in the tree, one edit behind the first.
 apps/site/src/content/docs/docs/
 apps/site/public/install.sh
+apps/site/public/update.sh
 apps/site/.astro/
 
 # `mailda install` remembers each Node's URL here, per account and name, so an upgrade does not ask twice.

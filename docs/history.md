@@ -3138,3 +3138,25 @@ token page link, the permission's name and the unverified prefill, so the screen
 request is deleted with its tests; the request is built in one place and tested there. The agent registry
 withholds the route for the reason the grant exists: a token is a person's, and handing one to a machine to
 spend is what the grant makes unnecessary.
+
+## An update command with no git in it (24 September 2026)
+
+`mailda upgrade` pulled the release for the ordinary clone and printed the README's four git commands for a
+deploy-button clone, which has no history and no remote. The founder did not want an operator typing git
+at all, and there was no reason they should: the one conflict that merge produces is `package.json`'s
+`name`, measured and held by `test/node/update-path.test.ts`, so the resolution is mechanical. The upgrade
+now adds the release remote when there is none, merges once with unrelated histories allowed, keeps the
+clone's name and takes upstream's everything else, and commits. Any other conflict aborts the merge and
+names the files, since that is an edit only its author can merge. `update.sh` is the installer's twin,
+served from the site: it finds the clone where the install left it, checks the same three tools, and hands
+over to `mailda upgrade`. The two pure pieces, which files conflicted and how package.json is resolved, are
+tested, and the resolution is checked against the same property the update-path test names: the
+customer's name, upstream's scripts.
+
+Drilled twice before it was right. A history-less clone with its own name, run against a local release,
+was refused as "402 behind, 1 ahead, cannot fast-forward": `git rev-list --left-right --count` does not
+fail on unrelated histories, it counts every commit on both sides, so the clone read as one with its own
+commits. The detector is `merge-base` failing, which the update-path test had used all along. With that,
+the same clone joined the release, kept its name, left no conflict marker and a clean tree, and reported
+*current*. The abort path was drilled by accident first: a clone carrying uncommitted files upstream
+lacked conflicted in ten, and the merge was aborted with their names and nothing half-done.
