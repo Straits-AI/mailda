@@ -11,7 +11,9 @@ Every claim on the site comes from the repository's Markdown, so the site cannot
 ```sh
 pnpm dev                       # astro dev, regenerates docs first
 pnpm test                      # build, then the three checks above
-CLOUDFLARE_ACCOUNT_ID=… pnpm deploy   # wrangler deploy: custom domains mailda.site and www.mailda.site
+CLOUDFLARE_ACCOUNT_ID=… pnpm run deploy   # wrangler deploy: custom domains mailda.site and www.mailda.site.
+                                         # `run`, because bare `pnpm deploy` is pnpm's own workspace command and answers
+                                         # ERR_PNPM_NOTHING_TO_DEPLOY without ever reaching wrangler (24 September 2026)
 ```
 
 The fonts are copied from `apps/node/worker/fonts`, the mark from `brand.ts`. The palette in `src/styles/site.css` is the Node's, mapped onto Starlight's tokens.
