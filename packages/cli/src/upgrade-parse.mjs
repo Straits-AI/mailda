@@ -36,3 +36,31 @@ export function pendingByPhase(listOutput, migrationNames, contracting) {
     contract: pending.filter((name) => contracting.includes(name)),
   };
 }
+
+/**
+ * The release remote's URL, for a clone that has none: the deploy button clones without history or remote.
+ * One place, so the README, the installer and the upgrade agree about where releases come from.
+ */
+export const RELEASE_URL = "https://github.com/Straits-AI/mailda.git";
+
+/**
+ * Whether a merge's conflicts are the one file the update path allows. `package.json` is the only file a
+ * deploy-button clone rewrites (its `name`), and `test/node/update-path.test.ts` fails the day a second one
+ * joins it; anything else conflicting is a clone somebody edited, which is theirs to merge.
+ */
+export function onlyPackageJson(conflicted) {
+  const files = conflicted.split("\n").map((one) => one.trim()).filter(Boolean);
+  return files.length === 1 && files[0] === "package.json";
+}
+
+/**
+ * The resolution of that one conflict: upstream's package.json with the clone's own `name` kept. Taking
+ * "ours" wholesale would freeze the customer's scripts at install time, which is what the update-path test
+ * checks against; taking "theirs" wholesale would rename their Worker.
+ */
+export function resolvePackageJson(ours, theirs) {
+  const name = JSON.parse(ours).name;
+  const merged = JSON.parse(theirs);
+  if (typeof name === "string" && name !== "") merged.name = name;
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}

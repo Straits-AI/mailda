@@ -1,9 +1,9 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
 import { WRANGLER_ARGS, capture, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
-import { distance, pendingByPhase, releaseRemote } from "../upgrade-parse.mjs";
+import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
@@ -32,21 +32,29 @@ export async function upgrade(argv) {
   const yes = argv.includes("--yes");
 
   // 1. Is there anything to upgrade to. The release channel is the git remote, and nothing else (ADR 43).
-  const remote = releaseRemote(git(["remote", "-v"]).text);
+  //    A deploy-button clone has no remote and no history; both are given here, once, so no git command is
+  //    ever the operator's to type.
+  let remote = releaseRemote(git(["remote", "-v"]).text);
   if (remote === null) {
-    fail("this clone has no remote pointing at Straits-AI/mailda, so there is no release to pull.\n\n"
-      + "  why      a deploy-button clone has no history and no remote; the README's \"Updating an installed\n"
-      + "           Node\" section has the one-time merge that gives it one\n"
-      + "  fix      git remote add upstream https://github.com/Straits-AI/mailda.git, follow that section once,\n"
-      + "           then re-run");
+    if (git(["remote", "add", "upstream", RELEASE_URL]).status !== 0) fail("could not add the release remote.");
+    remote = "upstream";
+    process.stdout.write(`   remote    upstream added: ${RELEASE_URL}\n`);
   }
   if (git(["fetch", "--quiet", remote, "main"]).status !== 0) fail(`could not fetch ${remote}; is the network up?`);
-  const where = distance(git(["rev-list", "--left-right", "--count", `HEAD...${remote}/main`]).text);
-  if (where === null) {
-    fail(`could not compare this clone with ${remote}/main.\n\n`
-      + "  why      the histories may be unrelated, which is what a deploy-button clone has before its first merge\n"
-      + "  fix      the README's \"Updating an installed Node\" section, once; every later upgrade is this command");
+  /*
+   * Unrelated histories are detected by `merge-base` failing, not by `rev-list`: measured in a drill on
+   * 24 September 2026, `rev-list --left-right --count` on two unrelated branches does not fail, it counts
+   * every commit on both sides, and a deploy-button clone read as "402 behind, 1 ahead" and was refused as
+   * a clone with its own commits. `test/node/update-path.test.ts` uses the same detector.
+   */
+  if (git(["merge-base", "HEAD", `${remote}/main`]).status !== 0) {
+    if (git(["status", "--porcelain"]).text.trim() !== "") {
+      fail("this clone has uncommitted changes, so the release cannot be merged over them.\n\n  fix      commit or stash them, then re-run");
+    }
+    joinHistories(remote);
   }
+  const where = distance(git(["rev-list", "--left-right", "--count", `HEAD...${remote}/main`]).text);
+  if (where === null) fail(`could not compare this clone with ${remote}/main; \`git status\` in the clone says why.`);
   process.stdout.write(`\n   code      ${where.behind === 0 ? "current" : `${where.behind} release commit(s) behind`}`
     + `${where.ahead > 0 ? `, ${where.ahead} local commit(s) ahead` : ""}\n`);
   if (where.behind === 0 && !argv.includes("--force")) {
@@ -127,4 +135,31 @@ export async function upgrade(argv) {
 
 function git(args) {
   return capture("git", args, { cwd: REPO, quiet: true });
+}
+
+/**
+ * The deploy button's first update: a clone with no common ancestor is merged with upstream once, and the
+ * one conflict the update path allows, package.json's `name`, is resolved by keeping the clone's name and
+ * taking upstream's everything else. Any other conflict is a clone somebody edited, and the merge is
+ * aborted with the file names rather than resolved by guessing. `test/node/update-path.test.ts` is the
+ * measurement that package.json is the only file that can conflict.
+ */
+function joinHistories(remote) {
+  process.stdout.write("   history   none shared with the release: merging once, as a deploy-button clone needs\n");
+  const merged = git(["merge", `${remote}/main`, "--allow-unrelated-histories", "-m", "Join this clone to the Mailda release history"]);
+  if (merged.status === 0) return;
+  const conflicted = git(["diff", "--name-only", "--diff-filter=U"]).text;
+  if (!onlyPackageJson(conflicted)) {
+    git(["merge", "--abort"]);
+    fail(`the first merge conflicts in more than package.json: ${conflicted.trim().split("\n").join(", ")}.\n\n`
+      + "  why      the update path allows exactly one conflict, the Worker's name in package.json; the rest is\n"
+      + "           an edit this clone made that only its author can merge\n"
+      + `  fix      git merge ${remote}/main --allow-unrelated-histories, resolve by hand, then re-run`);
+  }
+  const ours = git(["show", ":2:package.json"]).text;
+  const theirs = git(["show", ":3:package.json"]).text;
+  writeFileSync(resolve(REPO, "package.json"), resolvePackageJson(ours, theirs));
+  git(["add", "package.json"]);
+  if (git(["commit", "--no-edit"]).status !== 0) fail("could not commit the first merge; `git status` in the clone says why.");
+  process.stdout.write(`   merged    package.json keeps this clone's name (${JSON.parse(readFileSync(resolve(REPO, "package.json"), "utf8")).name}) and takes the rest\n`);
 }

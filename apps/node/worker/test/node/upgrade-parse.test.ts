@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-const { distance, pendingByPhase, releaseRemote } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
+const { distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } = await import("../../../../../packages/cli/src/upgrade-parse.mjs");
 
 /**
  * `mailda upgrade` decides three things from text before it touches anything: which remote carries
@@ -29,5 +29,23 @@ describe("what mailda upgrade reads before acting", () => {
     const listed = "┌ 0066_widen.sql │\n│ 0067_drop_old.sql │\n";
     const phases = pendingByPhase(listed, ["0001_init.sql", "0066_widen.sql", "0067_drop_old.sql"], ["0067_drop_old.sql"]);
     expect(phases).toEqual({ expand: ["0066_widen.sql"], contract: ["0067_drop_old.sql"] });
+  });
+});
+
+describe("joining a deploy-button clone to the release history", () => {
+  it("allows exactly one conflicted file, and it is package.json", () => {
+    expect(onlyPackageJson("package.json\n")).toBe(true);
+    expect(onlyPackageJson("")).toBe(false);
+    expect(onlyPackageJson("package.json\nREADME.md\n")).toBe(false);
+    expect(onlyPackageJson("apps/node/worker/wrangler.jsonc\n")).toBe(false);
+  });
+
+  it("keeps the clone's name and takes upstream's everything else", () => {
+    const ours = JSON.stringify({ name: "mailda-btn", scripts: { old: "x" } });
+    const theirs = JSON.stringify({ name: "mailda", scripts: { build: "turbo build", upgrade: "y" }, engines: { node: ">=22" } });
+    const merged = JSON.parse(resolvePackageJson(ours, theirs)) as { name: string; scripts: Record<string, string>; engines: unknown };
+    expect(merged.name).toBe("mailda-btn");
+    expect(Object.keys(merged.scripts).sort()).toEqual(["build", "upgrade"]);
+    expect(merged.engines).toEqual({ node: ">=22" });
   });
 });

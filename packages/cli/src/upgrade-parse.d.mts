@@ -15,3 +15,12 @@ export function pendingByPhase(
   migrationNames: readonly string[],
   contracting: readonly string[],
 ): { expand: string[]; contract: string[] };
+
+/** Where releases come from, for a clone with no remote. */
+export const RELEASE_URL: string;
+
+/** True when `git diff --name-only --diff-filter=U` names package.json and nothing else. */
+export function onlyPackageJson(conflicted: string): boolean;
+
+/** Upstream's package.json text with the clone's own name kept. */
+export function resolvePackageJson(ours: string, theirs: string): string;
