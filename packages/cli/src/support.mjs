@@ -469,6 +469,66 @@ export async function claimState(origin) {
 
 
 /**
+ * One choice from a short list, with the arrow keys.
+ *
+ * Asked for on the first real upgrade (25 September 2026), when *"Node to upgrade [mailda]:"* under a list
+ * of two names read as a text field an operator had to type into. A list is answered by pointing at a row.
+ * Up/down or j/k move, a digit jumps, Enter takes the row, Ctrl-C leaves; the list is redrawn in place and
+ * collapses to one line once answered, so the transcript reads as a question and its answer.
+ *
+ * Raw mode, like `readSecret` above and for the same reason: readline reads lines, and an arrow key is not
+ * a line. No dependency: the CLI's only dependencies are the workspace's own packages, and forty lines do
+ * not justify a prompt library. Not a terminal, not a question: `--yes` and the flags exist for that.
+ */
+export function choose(prompt, options, { initial = 0 } = {}) {
+  if (process.stdin.isTTY !== true) {
+    fail(`${prompt.trim()} asks for a choice; run this in a terminal, or pass it as a flag or --yes.`);
+  }
+  let index = Math.max(0, Math.min(initial, options.length - 1));
+  const lines = options.length + 1;
+  const draw = (first) => {
+    if (!first) process.stdout.write(`\x1b[${lines}A`);
+    process.stdout.write(`\x1b[2K${prompt}\n`);
+    options.forEach((one, i) => {
+      const label = typeof one === "string" ? one : one.label;
+      process.stdout.write(`\x1b[2K   ${i === index ? "›" : " "} ${label}\n`);
+    });
+  };
+  draw(true);
+  return new Promise((done, reject) => {
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+    const finish = (result, error) => {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+      // Collapse the list to the question and its answer.
+      process.stdout.write(`\x1b[${lines}A\x1b[J`);
+      if (error !== undefined) { reject(error); return; }
+      const picked = options[result];
+      process.stdout.write(`${prompt} ${typeof picked === "string" ? picked : picked.label}\n`);
+      done(typeof picked === "string" ? picked : picked.value);
+    };
+    const onData = (chunk) => {
+      const key = String(chunk);
+      if (key === "\u0003") { finish(undefined, new Error("cancelled")); return; }
+      if (key === "\r" || key === "\n") { finish(index); return; }
+      if (key === "\x1b[A" || key === "k") index = (index + options.length - 1) % options.length;
+      else if (key === "\x1b[B" || key === "j") index = (index + 1) % options.length;
+      else if (/^[1-9]$/.test(key) && Number(key) <= options.length) index = Number(key) - 1;
+      else return;
+      draw(false);
+    };
+    process.stdin.on("data", onData);
+  }).catch((error) => {
+    if (error.message === "cancelled") { process.stdout.write("\n"); process.exit(130); }
+    throw error;
+  });
+}
+
+
+/**
  * Reads a secret from the terminal without echoing it.
  *
  * ## Why this is here and not imported

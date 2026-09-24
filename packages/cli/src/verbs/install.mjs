@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
-import { api, capture, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
+import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 
 /**
@@ -43,15 +43,17 @@ export async function install(argv) {
   //    first-install probe, which asks wrangler whether *this* Worker exists.
   const base = configFor([]).name;
   const existing = existingNodes();
-  if (existing.length > 0) {
-    process.stdout.write(`\n== this account already has ${existing.length === 1 ? "a Node" : "Nodes"}\n`);
-    for (const one of existing) process.stdout.write(`   ${one}\n`);
-    process.stdout.write("   Choose one of them to upgrade it, or a new name to add another.\n");
-  }
   const suggested = flag(argv, "name") ?? process.env.MAILDA_NODE_NAME ?? base;
-  const name = argv.includes("--yes") || flag(argv, "name") !== null
-    ? suggested
-    : ((await ask(`\n   name for this Node [${suggested}]: `)).trim() || suggested);
+  let name = suggested;
+  if (!argv.includes("--yes") && flag(argv, "name") === null) {
+    // Existing Nodes are rows to point at; a new one is typed. One list, so the choice between upgrading
+    // and adding is made by pointing rather than by spelling a name that happens to match.
+    const picked = existing.length === 0 ? "" : await choose("\n   this run is for:", [
+      ...existing.map((one) => ({ label: `${one}  (upgrade it)`, value: one })),
+      { label: "a new Node, named below", value: "" },
+    ]);
+    name = picked !== "" ? picked : ((await ask(`   name for the new Node [${suggested}]: `)).trim() || suggested);
+  }
   const nameArgs = name === base ? [] : ["--name", name];
   useConfig(configFor(nameArgs));
   const upgrading = !firstInstall();
@@ -232,12 +234,10 @@ export async function signInAndChooseAccount() {
   const accounts = accountsFrom(whoami.text);
   const chosen = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
   if (chosen === "" && accounts.length > 1) {
-    process.stdout.write("\n== which Cloudflare account\n");
-    accounts.forEach((one, i) => process.stdout.write(`   ${i + 1}. ${one.name}  ${one.id}\n`));
-    const answer = await ask(`   number [1-${accounts.length}]: `);
-    const picked = accounts[Number(answer) - 1];
-    if (picked === undefined) fail(`"${answer}" is not one of the numbers above.`);
-    process.env.CLOUDFLARE_ACCOUNT_ID = picked.id;
+    process.env.CLOUDFLARE_ACCOUNT_ID = await choose(
+      "\n== which Cloudflare account",
+      accounts.map((one) => ({ label: `${one.name}  ${one.id}`, value: one.id })),
+    );
   } else if (chosen === "" && accounts.length === 1) {
     process.env.CLOUDFLARE_ACCOUNT_ID = accounts[0].id;
   }

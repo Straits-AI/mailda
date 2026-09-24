@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
-import { WRANGLER_ARGS, capture, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
+import { WRANGLER_ARGS, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
 import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
@@ -85,12 +85,14 @@ export async function upgrade(argv) {
   await signInAndChooseAccount();
   const base = configFor([]).name;
   const existing = existingNodes();
-  if (existing.length > 0) {
-    process.stdout.write(`\n== this account's ${existing.length === 1 ? "Node" : "Nodes"}\n`);
-    for (const one of existing) process.stdout.write(`   ${one}\n`);
-  }
   const suggested = flag(argv, "name") ?? process.env.MAILDA_NODE_NAME ?? (existing.length === 1 ? existing[0] : base);
-  const name = yes || flag(argv, "name") !== null ? suggested : ((await ask(`\n   Node to upgrade [${suggested}]: `)).trim() || suggested);
+  // Point at the Node. Typed only when the account's list could not be read, which is the one case a name
+  // has to be spelled; the probe below still refuses a name that is not a Node.
+  const name = yes || flag(argv, "name") !== null
+    ? suggested
+    : existing.length === 0
+      ? ((await ask(`\n   Node to upgrade [${suggested}]: `)).trim() || suggested)
+      : await choose("\n== Node to upgrade", existing, { initial: Math.max(0, existing.indexOf(suggested)) });
   const nameArgs = name === base ? [] : ["--name", name];
   useConfig(configFor(nameArgs));
   if (firstInstall()) {
