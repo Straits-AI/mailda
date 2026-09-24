@@ -3037,3 +3037,70 @@ browser's default monospace on a code element, now inherited away. Typecheck, li
 suites, the fonts test (four weights of one face) and the contrast scan pass; the contrast receipt's colour
 tokens are untouched.
 
+
+## The install claims the Node and creates its OAuth client, and one recorded contradiction closed (23 September 2026)
+
+A founder looked at the Setup screen of a freshly installed Node and read the ceremony it printed: create an
+OAuth client in the dashboard, set two grant types, add one exact redirect URI, tick eight exact scopes, leave
+it private, copy two values back. Twelve fields, each a place to get it wrong, after an install that had
+promised one command. The question was whether wrangler, already signed in, could do it.
+
+It cannot, and finding out why produced the path that can. Cloudflare has a documented OAuth Clients API,
+`POST /accounts/{account_id}/oauth_clients`, which the 9 September receipt had guessed at and left unrun.
+Probed read-only against the operator's account, the route answered 403 *Authentication error* where a
+made-up sibling answered *No route*, so it exists and wrangler's token may not call it; `wrangler login
+--scopes-list` has no scope that could. The permission that governs it is *OAuth App Registrations Write*,
+read from the account's permission groups, and only an API token can carry it. So the dashboard visit is
+not eliminated. It shrinks from a twelve-field form to one token with one permission, and the form is filled
+by the installer from the Node's own `GET /api/provider`, so the scopes and the redirect URI cannot be
+mistyped.
+
+For the installer to register the client it needs a session, and a session needs a claimed Node, so the
+install now claims too: administrator email, a password typed twice with echo off, `POST /api/claim` with
+the secret the run just seeded, and the ten recovery codes printed in the same terminal. Then the token, the
+client, `PUT /api/provider/client`, `POST /api/provider/authorize`, and the consent opened in the browser.
+Both questions can be declined, and the ending is then the one it was: the URL and the secret, and the Node's
+own screens. `--yes` reads the three values from the environment.
+
+ADR 42 had rejected a pasted API token, and is amended rather than quietly contradicted: that rejection was
+of a permanent secret held by the Node in place of a refreshable grant, and this token is held by the
+operator's terminal for one request, grants nothing over mail or DNS, and is deleted afterwards. The same
+reading of the API closed the contradiction the endpoints receipt had carried for two weeks: the create
+schema admits only `authorization_code` and `refresh_token`, so there is no client-credentials or device
+path and the browser consent is the ceremony. The request builder and the reading of Cloudflare's answer are
+a pure module with five tests, each seen to fail against a mutated line; the fetches are in the installer.
+Not yet measured: a client created through the API completing a consent, which the first install to run
+this path will report.
+
+## An upgrade verb, and a backup before the schema moves (23 September 2026)
+
+The upgrade was `mailda install` with an existing name, decided two days earlier so that install and upgrade
+would be one command. Asked how a Node is upgraded, the honest answer exposed a name that overclaimed: the
+run deploys whatever code the clone holds, so an operator who never pulled gets a canary, a gate, a
+promotion and the word *upgraded* while nothing changed. And asked what happens to existing data when the
+schema changes, the answer was good, expand before the canary and contract only on request, with one gap:
+the expansions and their backfills run in place on the customer's only copy of their mail, and nothing took
+a backup first.
+
+`mailda upgrade` is those two fixes and nothing else. It finds the release remote by URL rather than by the
+name `origin`, since a fork fetches from itself, fetches, and stops with *current* when the clone is not
+behind. It fast-forwards only, refusing over uncommitted changes or local commits with the command to run
+instead, and reinstalls. It refuses a name that is not already a Node. Then it takes `mailda backup` into
+`.mailda/backups/<node>/<time>`, with an administrator's credentials asked once and kept for the canary
+gate, and does not proceed without one. It lists the pending migrations by phase, using the same
+statement-derived rule the deploy refuses contractions by, so the answer to *what will this do to my data*
+is on screen before the question *upgrade now?*. Then it calls `mailda deploy`, which is not copied. The
+three readings it makes of text, the remote, the distance, the phases, are a pure module with tests, and
+each of four mutants was seen to fail, one only after a fixture separated a remote's fetch URL from its push
+URL. Not measured: an upgrade with a pending migration on a live Node, which the next release with one will
+be.
+
+### And whether the token itself could go (24 September 2026)
+
+Asked plainly, *can it not all be automated*, the answer was checked against the current documentation
+rather than restated. It cannot, below one token and one click, and the receipt now cites where Cloudflare
+says so: client creation is the dashboard or an API token with OAuth Clients Write, third-party clients get
+the authorization-code flow only, and there is no dynamic registration. What could still shrink was the
+token form, and it did: Cloudflare's token template URLs prefill the permission, the account and the name,
+so the installer opens that link and the operator's part is Continue, Create, copy, paste, delete. The
+permission's template key is inferred from its label and said to be, in the receipt and on screen.

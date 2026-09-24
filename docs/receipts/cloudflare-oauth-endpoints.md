@@ -6,9 +6,10 @@ stale_when: >
   the discovery document at https://dash.cloudflare.com/.well-known/openid-configuration stops answering, or
   any of the three endpoints this Node uses moves — authorization, token or revocation; the issuer stops being
   https://dash.cloudflare.com; client_secret_basic leaves token_endpoint_auth_methods_supported; S256 leaves
-  code_challenge_methods_supported, which would make PKCE unavailable as defence in depth; or
-  grant_types_supported stops advertising client_credentials, which would resolve the contradiction recorded
-  below in the documentation's favour and close the probe named here
+  code_challenge_methods_supported, which would make PKCE unavailable as defence in depth; the create
+  schema at /accounts/{account_id}/oauth_clients admits a grant type beyond authorization_code and
+  refresh_token, which would reopen ADR 42's browser-redirect premise; or the permission group "OAuth App
+  Registrations Write" is renamed or stops governing that endpoint, which would break `mailda install`
 values:
   oauth.endpoints_from_discovery: 1
   oauth.token_auth_is_client_secret_basic: 1
@@ -241,7 +242,56 @@ discovery. That puts the drift check in the thing whose job is detecting drift r
 path an operator is waiting on, and it means a moved endpoint is reported as a finding rather than met as a
 failure.
 
-## The contradiction, recorded because it bears on ADR 42's cost and is not resolved
+## The contradiction, resolved 23 September 2026: the client-registration API admits two grant types
+
+The section below was written on 9 September with its probe unrun. It was settled from the other end, by
+reading Cloudflare's **OAuth Clients API** (IAM → OAuth Clients), which did not have to create anything:
+
+- `POST /accounts/{account_id}/oauth_clients` is a documented, public endpoint. Its `grant_types` field is
+  an enum of exactly `authorization_code` and `refresh_token`, with the first required. No
+  `client_credentials`, no device code. Hydra's discovery document advertises what the server implements;
+  Cloudflare's registration surface permits two of them, which is the reading the section below guessed.
+  **ADR 42's premise stands**: a third-party grant needs a browser redirect, and the ceremony is the consent.
+- `token_endpoint_auth_method` admits `none`, `client_secret_basic` and `client_secret_post`, so the Node's
+  `client_secret_basic` exchange is a registrable shape. `offline_access` and `openid` are documented as
+  protocol scopes Cloudflare adds or removes itself from `grant_types` and `response_types`, which is the
+  behaviour the scopes receipt observed from the dashboard. The create response carries `client_secret` once.
+- The route was confirmed live, read-only, against this repository's operator account: `GET
+  …/oauth_clients` with wrangler's login token answered **403 `Authentication error` (code 10000)** where a
+  made-up sibling path answered 7000 *No route for that URI*. An expired token answered 401 with the same
+  code. So a token without the permission is refused as an authentication failure, and `mailda install` says
+  which permission rather than repeating the code.
+- **wrangler's login cannot call it.** `wrangler login --scopes-list` names 24 scopes and none governs OAuth
+  clients, so no flag widens the login to cover it. The governing permission group, read from
+  `GET /accounts/{account_id}/iam/permission_groups`, is **OAuth App Registrations Write**
+  (`358d00a81412422280b0055618c81d59`; Read is `c00d4085a8774a6daf8365c054ca6803`). An API token is the
+  only credential that can create the client, and API tokens are created in the dashboard.
+
+**Confirmed against Cloudflare's own documentation, 24 September 2026**, when the question was asked
+whether the token could be avoided. `fundamentals/oauth/create-an-oauth-client` names the two ways to create
+a client, the dashboard with a Super Administrator, Administrator or OAuth Client Write role, or the API with
+*"an API token with the OAuth Clients Write permission"*, and nothing else; the create endpoint's reference
+lists API token and the legacy email-plus-key pair as the only authentication schemes. `fundamentals/oauth`
+states that third-party clients get the Authorization Code flow and *"do not support Client Credentials,
+Implicit, Resource Owner Password Credentials, Device Authorization, or other OAuth grant types"*. The
+discovery document still advertises all five plus a device endpoint, and `registration_endpoint` is null,
+so there is no dynamic client registration either. wrangler's scope list, re-read the same day, is 25 scopes
+and none is IAM or OAuth. So the floor is one API token, created in the dashboard, and one consent click.
+What the dashboard does offer is a **token template URL** (`fundamentals/api/how-to/account-owned-token-template`):
+`permissionGroupKeys=[{key,type}]` plus `accountId` and `name` prefill the form. The key for this permission
+is inferred from its label `oauth_app_registrations_write` by the documented pattern (`dns_admin` → `dns`)
+and is not measured on this permission; the installer prints and opens the link and says to check the tick.
+
+**What that changes.** The dashboard ceremony ADR 42 accepted was a twelve-field form. It is one field now:
+`mailda install` asks for an API token carrying that single permission, creates the client through this
+endpoint with the redirect URI and scopes the Node itself publishes at `GET /api/provider`, registers it
+with `PUT /api/provider/client`, and begins the consent. The token is read with echo off, sent once, never
+stored, and the run ends by saying to delete it. ADR 42 is amended to say why that is not the pasted token it
+rejected. Not measured here: a client created through the endpoint completing a consent. The dashboard-made
+client's consent is measured in `cloudflare-oauth-scopes.md`, and the two register through the same
+surface; the first install to run this path records what the consent reported.
+
+## The contradiction, as recorded on 9 September and resolved above
 
 `grant_types_supported` advertises **five** grant types:
 

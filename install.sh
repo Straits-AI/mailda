@@ -5,8 +5,9 @@
 #
 # macOS, Linux, WSL and Git Bash. It checks for git and Node 22, enables pnpm through corepack, clones the
 # repository into ./mailda (or uses the clone it is run from), installs, and hands over to `mailda install`,
-# which signs you in to Cloudflare, picks the account, deploys, and opens your Node with its claim secret.
-# Nothing in your Cloudflare account changes before that last step asks.
+# which signs you in to Cloudflare, picks the account, deploys, claims the Node, creates its OAuth client
+# from one API token, and opens the consent. Nothing in your Cloudflare account changes before it asks.
+# Later, `pnpm mailda upgrade` from the clone pulls the release, backs the Node up, and redeploys.
 set -euo pipefail
 
 say() { printf '\n%s\n' "$*"; }

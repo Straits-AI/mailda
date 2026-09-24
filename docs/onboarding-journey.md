@@ -94,9 +94,11 @@ The CLI path was six commands when this was written, and three in the README unt
 2026, when a drill on a clean account found the three did not work. It is one now
 (`curl -fsSL https://mailda.site/install.sh | bash`, or `mailda install` from a clone), which asks the
 questions a first install has (the account, if several; the Node's name; and its URL, once, when the name
-is one the account already has and the run is an upgrade) and ends with the claim secret. Whether a run is
-an install or an upgrade is decided by the name, never by a flag: the account's Nodes are listed first, from
-the `ButlerRun` Workflows they register. That is fine for the technical
+is one the account already has and the run is an upgrade), claims the Node from the terminal, and creates
+its Cloudflare OAuth client from one API token (23 September 2026), so the run ends at the consent screen
+rather than at a claim secret and a twelve-field dashboard form. Whether a run is an install or an upgrade
+is decided by the name, never by a flag: the account's Nodes are listed first, from the `ButlerRun`
+Workflows they register. That is fine for the technical
 founder identified above and wrong for anyone else, but anyone else cannot change MX either, so the
 audience is consistent at this stage.
 

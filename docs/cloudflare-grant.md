@@ -37,6 +37,19 @@ gives the Node two values. It is reduced by being *guided*. The Node prints the 
 URI filled in and verifies the result, which is the difference between learning the dashboard and following
 five printed steps.
 
+**Since 23 September 2026 the ordinary path creates the client through Cloudflare's API instead.** The
+OAuth Clients API (`POST /accounts/{account_id}/oauth_clients`) takes the same fields the dashboard form
+does, and `mailda install` fills them from this Node's own `GET /api/provider`: the redirect URI it was
+reached on and `REQUIRED_SCOPES`, minus `offline_access`, which Cloudflare adds itself. What the operator
+supplies is one API token carrying one permission, *OAuth App Registrations Write*; the installer opens
+Cloudflare's token page with that permission, the account and a name prefilled, so the operator's part is
+Continue, Create, copy and paste. The token is read with echo off, used for that one request, never
+stored, and the installer ends by saying to delete it. wrangler's own login cannot do this: none of its
+scopes governs OAuth clients (receipt: [`cloudflare-oauth-endpoints.md`](./receipts/cloudflare-oauth-endpoints.md)).
+The printed steps below remain for the deploy button, whose install has no terminal, and for an operator
+who declines the token. A Node claimed before this existed, or whose install declined, runs the same step
+later with `mailda provider --connect --url <origin>`.
+
 `GET /api/provider` returns those steps beside the state, so an operator with no client sees what to do and an
 operator already connected can check that the redirect URI Cloudflare holds is still the hostname this Node is
 reachable on.
