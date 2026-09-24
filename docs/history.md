@@ -3160,3 +3160,14 @@ commits. The detector is `merge-base` failing, which the update-path test had us
 the same clone joined the release, kept its name, left no conflict marker and a clean tree, and reported
 *current*. The abort path was drilled by accident first: a clone carrying uncommitted files upstream
 lacked conflicted in ten, and the merge was aborted with their names and nothing half-done.
+
+The first real run, on a Mac with a clone from before the verb existed, found the shape wrong. The script
+installed dependencies and handed over to `mailda upgrade`, and the clone's CLI, being the thing that was
+out of date, did not know the verb: it printed its usage and pulled nothing. An updater cannot lean on the
+code it exists to update. So the pull moved into the script: it finds the release remote or adds it,
+fetches, fast-forwards, or joins a history-less clone with the same one-file resolution, refuses a dirty
+tree, installs, and only then hands over to a CLI that is current. `mailda upgrade` keeps its own git half
+for the operator who runs it from a clone directly, which is the one duplication here, and each side says
+why. Drilled three ways against a local release: a clone one release behind fast-forwarded; a
+deploy-button clone joined and kept its name; a dirty tree was refused. pnpm's "update available" box is
+silenced in both scripts, since it is about pnpm and read as a step.

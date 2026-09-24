@@ -36,6 +36,8 @@ else
 fi
 cd "$here"
 
+# pnpm's "update available" box is about pnpm, not this Node, and reads as something to act on. It is not.
+export npm_config_update_notifier=false
 say "== installing dependencies"
 pnpm install --frozen-lockfile
 
