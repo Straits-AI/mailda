@@ -3123,3 +3123,18 @@ acts. Setup renders all five with a count and the next step; the shell shows one
 the two sources it already has, and stays silent about the three it did not read rather than guess. The
 derivation is a pure function with five tests, four mutants seen to fail. The test stub gained scenery
 defaults for `doctor` and delivery events, because both are now read unguarded from the shell.
+
+## The token path moves into the Node, and the Setup screen gets it (24 September 2026)
+
+The founder, on a claimed Node with no grant, asked to continue from the interface and was told the token
+path was CLI-only. That is the parity bug AGENTS.md names in one sentence, and it was there because the
+client creation had been written where the token was first available, in the installer, calling Cloudflare
+directly. It is `POST /api/provider/client` now: the Node takes the token, asks it which account when none
+is given and refuses between several rather than guessing, creates the client with the redirect URI and
+scopes it publishes, registers it through the same code the pasted path uses, and discards the token. A
+test reads the binding and the audit trail for the token's bytes and finds none. The ceremony gained the
+token page link, the permission's name and the unverified prefill, so the screen, the installer and
+`mailda provider --connect` print the Node's words rather than three copies. The CLI module that built the
+request is deleted with its tests; the request is built in one place and tested there. The agent registry
+withholds the route for the reason the grant exists: a token is a person's, and handing one to a machine to
+spend is what the grant makes unnecessary.

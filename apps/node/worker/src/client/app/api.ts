@@ -1679,6 +1679,8 @@ export interface ProviderCeremony {
   scopes: CeremonyScope[];
   /** What in the printed steps this repository has not measured. Required by the contract, shown here. */
   unmeasured: string;
+  /** The one-token path: Cloudflare's token page prefilled, the permission's name, what is unverified. */
+  token: { url: string; permission: string; unmeasured: string };
 }
 
 export function useProvider(): UseQueryResult<
@@ -1807,6 +1809,12 @@ export interface SendingProposal {
 export const setProviderClient = (clientId: string, clientSecret: string) =>
   act<{ provider: ProviderBinding }>(at("PUT", "/api/provider/client"), "PUT", {
     clientId, clientSecret,
+  });
+
+/** The Node creates the client itself from a token it spends once; `accountId` only when the token sees several. */
+export const createProviderClient = (token: string, accountId?: string) =>
+  act<{ provider: ProviderBinding }>(at("POST", "/api/provider/client"), "POST", {
+    token, ...(accountId === undefined ? {} : { accountId }),
   });
 
 /** Begins a consent and answers with the URL to send a browser to. Nothing is granted by asking. */

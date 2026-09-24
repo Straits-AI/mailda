@@ -5,7 +5,6 @@ import { dirname, resolve } from "node:path";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
 import { api, capture, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
-import { API_TOKENS_URL, OAUTH_CLIENTS_PERMISSION, clientRequest, createdClient, tokenTemplateUrl } from "../oauth-client.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 
 /**
@@ -24,10 +23,10 @@ import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
  * The claim is `POST /api/claim` from here, with the secret this run just seeded, so the recovery codes are
  * printed in the same terminal and the session it answers with is what the next step signs in with. The
  * grant used to be a dashboard form of twelve fields, filled after the install from the Node's Setup screen.
- * It is one API token now: the operator creates a token with one permission, pastes it here, and this run
- * creates the OAuth client through Cloudflare's API with the exact redirect URI and scopes the Node
- * publishes, registers it with the Node, and opens the consent. The token is used for that one call, never
- * written anywhere, and the run ends by saying to delete it. Every step still has its own verb
+ * It is one API token now: the operator creates a token with one permission, pastes it here, and the Node
+ * creates its own OAuth client through Cloudflare's API (`POST /api/provider/client`) with the exact
+ * redirect URI and scopes it publishes, then this run opens the consent. The token is sent once, never
+ * written anywhere, and the run ends by saying to delete it. The Setup screen offers the same field. Every step still has its own verb
  * (`mailda claim-secret`, `mailda provider`) and the Setup screen keeps the printed steps, for the deploy
  * button path and for an operator who declines here.
  */
@@ -174,25 +173,6 @@ async function claim(origin, secret, yes) {
  * to prevent. The token is read with echo off, used for one request, and not kept.
  */
 export async function grant(origin, name, cookie, yes, open = true) {
-  const template = tokenTemplateUrl(process.env.CLOUDFLARE_ACCOUNT_ID ?? "", name);
-  process.stdout.write(
-    "\n== the Cloudflare grant\n"
-    + "   The Node acts in your account (routing rules, MX records, delivery events) through a private OAuth\n"
-    + "   client that only members of your account can authorize. Creating it by hand is a twelve-field form;\n"
-    + "   with an API token this run creates it exactly. The token is used once, here, and never stored.\n\n"
-    + "   1. a token form opens in your browser with the one permission filled in\n"
-    + `      (${OAUTH_CLIENTS_PERMISSION}, on this account; check it is ticked, the prefill is Cloudflare's)\n`
-    + `      ${template}\n`
-    + "   2. Continue, Create Token, copy it\n"
-    + "   3. paste it below, and delete the token afterwards; nothing needs it again\n\n"
-    + "   While it exists, that token can edit or delete every OAuth client in the account, not only this\n"
-    + "   one. If the account runs other services, press Enter instead: the Node's Setup screen prints the\n"
-    + "   dashboard steps, and no token ever exists.\n\n",
-  );
-  if (open && !yes) openInBrowser(template);
-  const token = yes ? (process.env.CLOUDFLARE_API_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
-  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen prints the dashboard steps instead.\n"); return null; }
-
   const node = async (method, template, body) => {
     const path = api(method, template);
     const response = await fetch(`${origin}${path}`, {
@@ -203,24 +183,33 @@ export async function grant(origin, name, cookie, yes, open = true) {
     if (!response.ok) fail(`${method} ${path} answered ${response.status}:\n${text}`);
     return JSON.parse(text);
   };
+  // The Node's own ceremony: the token page link, the permission's name, and what is unverified about it.
   const { ceremony } = await node("GET", "/api/provider");
-  const request = clientRequest({ name, redirectUri: ceremony.redirectUri, scopes: ceremony.scopes });
-  const created = await fetch(`https://api.cloudflare.com/client/v4/accounts/${process.env.CLOUDFLARE_ACCOUNT_ID}/oauth_clients`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token.trim()}`, "content-type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  const client = createdClient(created.status, await created.json().catch(() => ({})));
-  if (!client.ok) fail(client.reason);
-  process.stdout.write(`   client ${client.clientId} created with ${client.scopes.length} scopes; redirect ${ceremony.redirectUri}\n`);
-  // Named by Cloudflare, said here: a scope it silently dropped would surface as a refused act months later.
-  const missing = request.scopes.filter((one) => !client.scopes.includes(one));
-  if (missing.length > 0) process.stdout.write(`   note: Cloudflare did not register ${missing.join(", ")}; the consent will report what was granted.\n`);
+  process.stdout.write(
+    "\n== the Cloudflare grant\n"
+    + "   The Node acts in your account (routing rules, MX records, delivery events) through a private OAuth\n"
+    + "   client that only members of your account can authorize. Creating it by hand is a twelve-field form;\n"
+    + "   with an API token the Node creates it exactly. The token is spent on one request and never stored.\n\n"
+    + "   1. a token form opens in your browser with the one permission filled in\n"
+    + `      (${ceremony.token.permission}; pick this account when asked, and check the permission is ticked)\n`
+    + `      ${ceremony.token.url}\n`
+    + "   2. Continue, Create Token, copy it\n"
+    + "   3. paste it below, and delete the token afterwards; nothing needs it again\n\n"
+    + "   While it exists, that token can edit or delete every OAuth client in the account, not only this\n"
+    + "   one. If the account runs other services, press Enter instead: the Node's Setup screen prints the\n"
+    + "   dashboard steps, and no token ever exists.\n\n",
+  );
+  if (open && !yes) openInBrowser(ceremony.token.url);
+  const token = yes ? (process.env.CLOUDFLARE_API_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
+  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen does the same, either way.\n"); return null; }
 
-  const { provider } = await node("PUT", "/api/provider/client", { clientId: client.clientId, clientSecret: client.clientSecret });
-  process.stdout.write(`   registered with the Node. state: ${provider.state}\n`);
+  // The account the CLI already settled, so the Node does not have to ask the token which it can see.
+  const { provider } = await node("POST", "/api/provider/client", {
+    token: token.trim(), ...(process.env.CLOUDFLARE_ACCOUNT_ID ? { accountId: process.env.CLOUDFLARE_ACCOUNT_ID } : {}),
+  });
+  process.stdout.write(`   client ${provider.clientId} created and registered; state: ${provider.state}\n`);
   const { authorize } = await node("POST", "/api/provider/authorize", {});
-  process.stdout.write(`   delete the API token now at ${API_TOKENS_URL}; the Node holds the client and needs nothing else.\n`);
+  process.stdout.write("   delete the API token now, on the page it came from; the Node holds the client and needs nothing else.\n");
   return authorize.url;
 }
 

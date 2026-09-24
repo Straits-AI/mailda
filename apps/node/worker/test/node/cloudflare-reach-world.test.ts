@@ -92,8 +92,15 @@ function pathsIn(source: string): string[] {
  * Permissions* block at all, so nothing documents which scope authorizes them; all that is known is that a
  * grant holding `email-sending.write` reaches them.
  */
-const REACHES: Record<string, { scope: string; reference: string | null }> = {
+const REACHES: Record<string, { scope: string | null; reference: string | null }> = {
   "/accounts": { scope: "account-settings.read", reference: null },
+  /*
+   * Not through the grant at all: reached once with an API token the operator made carrying "OAuth App
+   * Registrations Write", to create the client the grant then belongs to (24 September 2026). `scope: null`
+   * says so, rather than a grant scope that would claim the grant can do this. It cannot, and must not: a
+   * grant able to register OAuth clients could widen itself.
+   */
+  "/accounts/{}/oauth_clients": { scope: null, reference: "OAuth App Registrations Write" },
   // The account's own record: its name, `type` — which decides the ownership claim — and its settings.
   "/accounts/{}": { scope: "account-settings.read", reference: null },
   /*
@@ -169,7 +176,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   });
 
   it("asks for no scope that authorizes nothing", () => {
-    const spent = new Set(Object.values(REACHES).map((one) => one.scope));
+    const spent = new Set(Object.values(REACHES).map((one) => one.scope).filter((one): one is string => one !== null));
     expect([...spent].sort()).toEqual([
       "account-settings.read", "dns.write", "email-routing-rule.write", "email-sending.write", "queues.write",
       "registrar-domains.read", "zone-settings.write", "zone.read",

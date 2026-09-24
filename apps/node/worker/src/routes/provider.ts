@@ -8,6 +8,7 @@ export const provider = {
    *
    * `GET  /api/provider`             — the connection state, the guided ceremony, and no secret
    * `PUT  /api/provider/client`      — the client id and secret the operator created in the dashboard
+   * `POST /api/provider/client`      — create the client through Cloudflare's API from a token used once
    * `POST /api/provider/authorize`   — mint a state and a PKCE challenge, and answer with the URL
    * `POST /api/provider/unselectable`— record that the consent screen did not list the operator's account
    * `GET  /oauth/cloudflare/callback`— where Cloudflare sends the authorization response
@@ -55,6 +56,21 @@ export const provider = {
        * an attacker could choose, and the whole value of storing it is that the exchange sends what the
        * authorization used — which has to be this Node's own hostname or Cloudflare refuses it anyway.
        */
+      redirectUri: `${url.origin}/oauth/cloudflare/callback`,
+    });
+    return Response.json({ provider: await providerStatus(env) });
+  },
+
+  "POST /api/provider/client": async ({ request, env, clock, url, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { createClientThroughApi, providerStatus } = await import("../provider/cloudflare-grant.ts");
+    await createClientThroughApi(env, clock, who.orgId, who.userId, {
+      token: String(body.token ?? ""),
+      accountId: typeof body.accountId === "string" ? body.accountId : null,
+      // Derived, never taken from the body, for `PUT /api/provider/client`'s reason.
       redirectUri: `${url.origin}/oauth/cloudflare/callback`,
     });
     return Response.json({ provider: await providerStatus(env) });

@@ -399,15 +399,40 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
  * operator actually reached this Node on. It is then **stored** at registration, because RFC 6749 requires the
  * token exchange to send the same value the authorization used — see the migration.
  */
+/** The one permission an API token needs for the Node to create its own client (measured 23 September 2026). */
+export const OAUTH_CLIENTS_PERMISSION = "OAuth App Registrations Write";
+
+/**
+ * Cloudflare's token page with that permission prefilled, by its documented template URL
+ * (`fundamentals/api/how-to/account-owned-token-template`). The account form, because this Node does not
+ * know its account id before it holds a grant; the dashboard asks which. The key is the permission's label
+ * without its verb, inferred from the documented pattern and not measured on this permission — which is
+ * what `token.unmeasured` says.
+ */
+export function tokenTemplateUrl(): string {
+  const keys = JSON.stringify([{ key: "oauth_app_registrations", type: "edit" }]);
+  return "https://dash.cloudflare.com/?to=/:account/api-tokens"
+    + `&permissionGroupKeys=${encodeURIComponent(keys)}&name=${encodeURIComponent("Mailda setup, delete after use")}`;
+}
+
 export function ceremony(redirectUri: string): {
   steps: string[];
   redirectUri: string;
   scopes: typeof REQUIRED_SCOPES;
   unmeasured: string;
+  token: { url: string; permission: string; unmeasured: string };
 } {
   return {
     redirectUri,
     scopes: REQUIRED_SCOPES,
+    token: {
+      url: tokenTemplateUrl(),
+      permission: OAUTH_CLIENTS_PERMISSION,
+      unmeasured: "The link prefills the permission by a key inferred from Cloudflare's documented pattern and "
+        + "not measured on this permission: check the one permission is ticked before creating the token. "
+        + "While it exists the token can edit or delete every OAuth client in the account, not only this one; "
+        + "this Node spends it on one request and never stores it, and you delete it afterwards.",
+    },
     steps: [
       "In the Cloudflare dashboard, go to Manage Account → OAuth clients, and create a client.",
       "Set the grant types to Authorization Code **and Refresh Token** — the second is what gets this Node a "
@@ -428,6 +453,119 @@ export function ceremony(redirectUri: string): {
       + "GET /client/v4/oauth/scopes, which needs a token this Node does not have — so they are the right "
       + "shape and may not be the exact set a third-party client may request. Cloudflare names any it "
       + "refuses, and after you consent this Node reports which were actually granted.",
+  };
+}
+
+/**
+ * Creates the Node's private OAuth client through Cloudflare's OAuth Clients API and registers it.
+ *
+ * The token is the operator's, carrying one permission (`OAUTH_CLIENTS_PERMISSION`), made in the dashboard
+ * because nothing else can make one. It is used here for one or two requests and **never stored**: not in
+ * the binding, not in the audit trail, not in an error. What is stored is what `registerClient` stores.
+ *
+ * The client is registered with exactly what this Node publishes in its ceremony: the redirect URI it was
+ * reached on and `REQUIRED_SCOPES` minus `offline_access`, which Cloudflare's create schema documents as a
+ * protocol scope it adds itself when the grant types include `refresh_token`. So the twelve fields the
+ * dashboard form had are filled by the one source the consent is later checked against.
+ *
+ * Measured 23 September 2026 (`docs/receipts/cloudflare-oauth-endpoints.md`): the route exists, a token
+ * without the permission gets 401 or 403 with code 10000, and the create schema admits only
+ * `authorization_code` and `refresh_token`.
+ */
+export async function createClientThroughApi(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string,
+  input: { token: string; accountId: string | null; redirectUri: string },
+): Promise<{ clientId: string; accountId: string; scopes: string[] }> {
+  const token = input.token.trim();
+  if (token === "") {
+    throw unprocessable("E_PROVIDER_TOKEN_EMPTY", {
+      what: "the API token was empty",
+      why: "the Node creates the client through Cloudflare's API, and that call is refused without one",
+      fix: `create a token carrying only "${OAUTH_CLIENTS_PERMISSION}" at ${tokenTemplateUrl()} and paste it`,
+    });
+  }
+  const headers = { authorization: `Bearer ${token}`, accept: "application/json", "content-type": "application/json" };
+  const refused = (status: number, said: string, path: string): never => {
+    if (status === 401 || status === 403) {
+      throw unprocessable("E_PROVIDER_TOKEN_REFUSED", {
+        what: `Cloudflare refused ${path} with ${status}`,
+        why: `the token does not carry "${OAUTH_CLIENTS_PERMISSION}" on this account, has expired, or is not an `
+          + "API token at all (measured: both answer code 10000)",
+        fix: `create a token with exactly that permission, scoped to this account, at ${tokenTemplateUrl()}`,
+      });
+    }
+    throw unprocessable("E_CLOUDFLARE_REFUSED", {
+      what: `Cloudflare refused ${path}`,
+      why: said === "" ? `the API answered ${status}` : said,
+      fix: "read Cloudflare's words above; the redirect URI and scopes sent are this Node's own",
+    });
+  };
+  const call = async <T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> => {
+    const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+      method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }).catch(() => null);
+    if (response === null) {
+      throw unprocessable("E_CLOUDFLARE_UNREACHABLE", {
+        what: `the Cloudflare API could not be reached for ${path}`,
+        why: "a network failure between this Node and api.cloudflare.com; nothing was created",
+        fix: "try again",
+      });
+    }
+    const payload = (await response.json().catch(() => ({}))) as {
+      success?: boolean; result?: T; errors?: Array<{ message?: string; code?: number }>;
+    };
+    if (response.ok && payload.success === true && payload.result !== undefined) return payload.result;
+    const said = (payload.errors ?? []).map((one) => `${one.code ?? "?"} ${one.message ?? ""}`.trim()).join("; ");
+    return refused(response.status, said, path);
+  };
+
+  /*
+   * Which account. The Node holds no grant yet, so it does not know; the token does. `GET /accounts` lists
+   * the accounts a token may act in. One is the answer; several is a question only the operator can answer,
+   * and it is refused with their names rather than guessed.
+   */
+  let accountId = input.accountId;
+  if (accountId === null) {
+    const accounts = await call<Array<{ id: string; name?: string }>>("GET", "/accounts?per_page=50");
+    if (accounts.length === 1) accountId = accounts[0]!.id;
+    else {
+      throw unprocessable("E_PROVIDER_ACCOUNT_AMBIGUOUS", {
+        what: accounts.length === 0
+          ? "the token can see no account"
+          : `the token can see ${accounts.length} accounts: ${accounts.map((one) => `${one.name ?? "?"} (${one.id})`).join(", ")}`,
+        why: "the client is created in one account, and this Node holds no grant yet that would say which",
+        fix: accounts.length === 0
+          ? "create the token scoped to the account this Node runs in"
+          : "pass accountId with the one this Node runs in, or create the token scoped to that account only",
+      });
+    }
+  }
+
+  const created = await call<{ client_id?: unknown; client_secret?: unknown; scopes?: unknown }>(
+    "POST", `/accounts/${accountId}/oauth_clients`, {
+      client_name: `Mailda (${new URL(input.redirectUri).hostname})`,
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      redirect_uris: [input.redirectUri],
+      scopes: REQUIRED_SCOPES.map((one) => one.scope).filter((one) => one.includes(".")),
+      // `client_secret_basic`: how `completeAuthorization` authenticates at the token endpoint.
+      token_endpoint_auth_method: "client_secret_basic",
+    },
+  );
+  if (typeof created.client_id !== "string" || typeof created.client_secret !== "string") {
+    throw unprocessable("E_CLOUDFLARE_REFUSED", {
+      what: "Cloudflare created a client but its answer carried no id or no secret",
+      why: "the secret is returned once, on creation, and a client without it cannot complete a consent",
+      fix: "delete the client in Manage Account → OAuth clients and try again",
+    });
+  }
+  await registerClient(env, ctx, orgId, actorUserId, {
+    clientId: created.client_id, clientSecret: created.client_secret, redirectUri: input.redirectUri,
+  });
+  return {
+    clientId: created.client_id,
+    accountId,
+    scopes: Array.isArray(created.scopes) ? created.scopes.map(String) : [],
   };
 }
 

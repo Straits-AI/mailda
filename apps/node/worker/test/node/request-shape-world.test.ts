@@ -141,6 +141,9 @@ describe("every closed set the contract declares is a closed set the boundary en
        * as connected and can do nothing.
        */
       "PUT /api/provider/client",
+      // The token path (24 September 2026): a misspelled `accountId` silently dropped would make the Node
+      // ask the token which account it sees, and refuse between two, for a value the caller had supplied.
+      "POST /api/provider/client",
       "POST /api/provider/authorize",
     ]));
     expect(sets.some((set) => set.path.join(".") === "conditions")).toBe(true);
@@ -339,7 +342,7 @@ describe("strictness is decided per route, not turned on globally", () => {
     }
     expect(strict.sort()).toEqual([
       "POST /api/agents", "POST /api/mailboxes", "POST /api/policies", "POST /api/provider/authorize",
-      "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
+      "POST /api/provider/client", "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",
       "POST /api/provider/sending", "POST /api/provider/subscription",

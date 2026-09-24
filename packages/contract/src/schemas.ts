@@ -292,6 +292,17 @@ export const providerResponse = z.object({
      * required field rather than a sentence somebody may forget to render.
      */
     unmeasured: z.string().min(1),
+    /**
+     * The shorter path (24 September 2026): one API token, and the Node creates the client itself through
+     * Cloudflare's OAuth Clients API. `url` is Cloudflare's token page with the one permission prefilled,
+     * `permission` its name, and `unmeasured` what this repository has not verified about that prefill —
+     * required, for the reason the field above is.
+     */
+    token: z.object({
+      url: z.string().url(),
+      permission: z.string().min(1),
+      unmeasured: z.string().min(1),
+    }).strict(),
   }).strict(),
 }).strict();
 
@@ -668,6 +679,17 @@ export const providerRoutingRulePutBackRequest = z.object({
 export const providerClientRequest = z.object({
   clientId: z.string().min(1).max(128),
   clientSecret: z.string().min(1).max(512),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+/**
+ * Create the OAuth client through Cloudflare's API from a token used once (`POST /api/provider/client`).
+ *
+ * `token` is never stored: the Node spends it on one or two calls and discards it. `accountId` is only
+ * needed when the token can see several accounts; the Node lists them and refuses with their names.
+ */
+export const providerClientCreateRequest = z.object({
+  token: z.string().min(1).max(512),
+  accountId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
 
 export const providerAuthorizeRequest = z.object({

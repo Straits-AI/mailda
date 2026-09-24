@@ -283,9 +283,10 @@ is inferred from its label `oauth_app_registrations_write` by the documented pat
 and is not measured on this permission; the installer prints and opens the link and says to check the tick.
 
 **What that changes.** The dashboard ceremony ADR 42 accepted was a twelve-field form. It is one field now:
-`mailda install` asks for an API token carrying that single permission, creates the client through this
-endpoint with the redirect URI and scopes the Node itself publishes at `GET /api/provider`, registers it
-with `PUT /api/provider/client`, and begins the consent. The token is read with echo off, sent once, never
+`POST /api/provider/client` takes an API token carrying that single permission, and the Node creates the
+client through this endpoint with the redirect URI and scopes it publishes at `GET /api/provider`,
+registers it, and discards the token. The Setup screen, `mailda install` and `mailda provider --connect`
+all go through that route. The token is read with echo off, sent once, never
 stored, and the run ends by saying to delete it. ADR 42 is amended to say why that is not the pasted token it
 rejected. Not measured here: a client created through the endpoint completing a consent. The dashboard-made
 client's consent is measured in `cloudflare-oauth-scopes.md`, and the two register through the same
