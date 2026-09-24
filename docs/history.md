@@ -3171,3 +3171,12 @@ for the operator who runs it from a clone directly, which is the one duplication
 why. Drilled three ways against a local release: a clone one release behind fast-forwarded; a
 deploy-button clone joined and kept its name; a dirty tree was refused. pnpm's "update available" box is
 silenced in both scripts, since it is about pnpm and read as a step.
+
+### And the verb no longer stops at "current" (25 September 2026)
+
+The second real run pulled the Mac's clone to the release and then `mailda upgrade` read the clone as
+current and stopped, so the Node kept running the old code. "Current" compared the clone with the release
+and was made to end the run, on the reasoning that there was nothing to upgrade to; but a Node does not
+know its commit, so nothing here can read what is deployed, and the clone being current says nothing about
+it. The deploy runs every time now, and its own gate decides: deploying what is already serving costs one
+deployment entry and changes nothing. `--force` went with the early stop.
