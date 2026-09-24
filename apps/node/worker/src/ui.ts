@@ -671,6 +671,11 @@ form > .hint { margin: -.6rem 0 0; }
 
 /* Setup: connecting the Node to its Cloudflare account, as a sequence rather than a dashboard. The blocks
    are numbered steps a person works down, so they carry the same separator the other stacked screens use. */
+/* Setup progress: five derived steps, a chip each; the count above them is the only number. */
+.onboarding { margin: 0 0 1rem; }
+.onboarding ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.onboarding li { display: grid; grid-template-columns: auto auto 1fr; gap: .75rem; align-items: baseline; }
+.onboarding-detail { font-size: .82rem; }
 .setup-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
 .setup-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .setup-block h3 { margin: .8rem 0 .4rem; font-size: .95rem; }

@@ -3104,3 +3104,22 @@ the authorization-code flow only, and there is no dynamic registration. What cou
 token form, and it did: Cloudflare's token template URLs prefill the permission, the account and the name,
 so the installer opens that link and the operator's part is Continue, Create, copy, paste, delete. The
 permission's template key is inferred from its label and said to be, in the receipt and on screen.
+
+## Setup progress, derived from what the Node already serves (24 September 2026)
+
+Finishing a Node's onboarding, the founder could not see how far along it was. The Setup screen's five
+sections each knew their own state; nothing summed them, and nothing on the inbox said setup was unfinished.
+The first idea was a checklist from `doctor`, since every step has a check. Reading the checks showed why
+that would overclaim: `transport_adapters` and `sending_events_consumer` are `ok` on every Node by design,
+and `inbound_routing`'s prose says that nothing having arrived is consistent with both correct setup and
+none. A checklist parsing that prose would be rung four of AGENTS.md §2c, and one reading `ok` would say
+*done* about things doctor deliberately does not decide.
+
+So each step reads a structured field instead: the connection state, `inbound_routing.ok` (an address
+exists, which is exactly what it means), the routing rows (enabled, nothing still required), and the
+delivery-events rows (onboarded for sending; subscription with queue and consumer). Three states, with
+*unknown* kept apart from *to do* because an unread source and a checked failure call for different next
+acts. Setup renders all five with a count and the next step; the shell shows one line on other screens for
+the two sources it already has, and stays silent about the three it did not read rather than guess. The
+derivation is a pure function with five tests, four mutants seen to fail. The test stub gained scenery
+defaults for `doctor` and delivery events, because both are now read unguarded from the shell.

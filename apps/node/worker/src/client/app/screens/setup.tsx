@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
+import { OnboardingProgress } from "../onboarding.tsx";
 import {
   beginConsent, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
   routingRulesOn, takeOverRule,
@@ -836,6 +837,8 @@ export function Setup() {
           {binding.evidence === "reported" ? " Reported by an administrator, not observed by this Node." : ""}
         </p>
       </header>
+
+      <OnboardingProgress binding={binding} />
 
       {binding.state === "grant_refused" && binding.refusedDetail !== null
         ? <Refusal said={binding.refusedDetail} />

@@ -1708,6 +1708,42 @@ export interface RoutingRow {
   error: string | null;
 }
 
+/**
+ * Whether a delivery outcome would ever be seen, per domain this Node sends from (`GET /api/provider/
+ * delivery-events`). Four objects per row, each nullable so absence names which one is missing; the contract
+ * is `providerDeliveryEventsResponse`.
+ */
+export interface DeliveryRow {
+  domain: string;
+  zone: string | null;
+  sending: {
+    name: string;
+    enabled: boolean | null;
+    returnPath: string | null;
+    dkimSelector: string | null;
+    required: Array<{ type: string; name: string; content: string; priority: number | null }>;
+    error: string | null;
+  } | null;
+  subscription: string | null;
+  subscriptionId: string | null;
+  enabled: boolean | null;
+  events: string[];
+  queueId: string | null;
+  queueName: string | null;
+  consumers: string[];
+  error: string | null;
+}
+
+/** Spends the grant, like `useRouting`: read on the Setup screen and nowhere that is merely glanced at. */
+export function useDeliveryEvents(enabled = true): UseQueryResult<{ delivery: DeliveryRow[] }, Error> {
+  return useQuery({
+    queryKey: ["provider-delivery-events"],
+    queryFn: () => read<{ delivery: DeliveryRow[] }>(GET("/api/provider/delivery-events")),
+    enabled,
+    ...AUTHORIZATION_SENSITIVE,
+  });
+}
+
 export function useRouting(): UseQueryResult<{ routing: RoutingRow[] }, Error> {
   return useQuery({
     queryKey: ["provider-routing"],
