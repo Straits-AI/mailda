@@ -3180,3 +3180,13 @@ and was made to end the run, on the reasoning that there was nothing to upgrade 
 know its commit, so nothing here can read what is deployed, and the clone being current says nothing about
 it. The deploy runs every time now, and its own gate decides: deploying what is already serving costs one
 deployment entry and changes nothing. `--force` went with the early stop.
+
+### Pointing at a Node instead of spelling it (25 September 2026)
+
+The first real upgrade printed the account's two Nodes and then *"Node to upgrade [mailda]:"*, a text
+field under a list. The founder asked for arrow keys. `choose()` sits beside `readSecret()` in the CLI's
+support module, raw mode for the same reason, forty lines and no dependency: up and down or j and k move,
+a digit jumps, Enter takes the row, and the list collapses to the question and its answer so the transcript
+stays readable. It answers the account, the Node in `upgrade`, and in `install` the choice between
+upgrading an existing Node and naming a new one, which used to be made by typing a name that happened to
+match. Driven in a pseudo-terminal: down then Enter picks the second row.
