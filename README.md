@@ -74,8 +74,8 @@ into a git-ignored config; first install measured at 108 s.
 curl -fsSL https://mailda.site/update.sh | bash
 ```
 
-It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It fetches the release remote and says *current*
-and stops when this clone already has everything; otherwise it fast-forwards, reinstalls, asks which Node
+It hands over to `pnpm mailda upgrade`, which is the same thing from a clone. It fetches the release remote,
+fast-forwards when the clone is behind and says so, reinstalls, asks which Node
 if the account has several, and then, before the schema is touched, takes a `mailda backup` into a
 git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
 pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,

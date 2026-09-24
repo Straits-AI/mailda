@@ -68,10 +68,9 @@ const USAGE = `mailda — operate a Mailda Node
                                      claim the Node, create its Cloudflare OAuth client from one API token,
                                      and open the consent. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD and
                                      CLOUDFLARE_API_TOKEN instead of asking
-  mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--force] [--contract]
+  mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--contract]
                                      pull the release, back the Node up, list what its schema will do to
-                                     the catalog, then deploy through the canary. Says "current" and stops
-                                     when there is nothing to upgrade to
+                                     the catalog, then deploy through the canary
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check

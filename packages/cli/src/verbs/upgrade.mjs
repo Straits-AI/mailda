@@ -15,8 +15,9 @@ const REPO = resolve(workerDir, "../../..");
  *
  * `mailda install` already upgrades when given an existing name, and it does so with whatever code is in
  * the clone. That is the landmine this verb removes: an operator who never pulled gets a canary, a gate, a
- * promotion and the word "upgraded", and nothing changed. So the first thing this does is ask git whether
- * there is anything to upgrade *to*, and it says "already current" and stops when there is not.
+ * promotion and the word "upgraded", and nothing changed. So the first thing this does is pull the release,
+ * and say how far the clone was behind it. It does not stop when the clone was already current: that says
+ * nothing about the Node, which may be running older code than the clone, and was.
  *
  * The second thing it adds is the backup. The deploy applies expand-phase migrations to the live catalog
  * before the canary is even uploaded, and a backfill runs in place on the customer's only copy of their
@@ -55,12 +56,16 @@ export async function upgrade(argv) {
   }
   const where = distance(git(["rev-list", "--left-right", "--count", `HEAD...${remote}/main`]).text);
   if (where === null) fail(`could not compare this clone with ${remote}/main; \`git status\` in the clone says why.`);
-  process.stdout.write(`\n   code      ${where.behind === 0 ? "current" : `${where.behind} release commit(s) behind`}`
+  /*
+   * "Current" describes the clone against the release and nothing else, so it does not end the run. It did,
+   * until the first real update (25 September 2026): `update.sh` had already pulled the clone to the release,
+   * the verb then read the clone as current and stopped, and the Node kept running the old code. What is
+   * deployed is not readable from here, since a Node does not know its commit, so the deploy always runs;
+   * its own gate compares the canary with what is serving, and deploying code that is already serving costs
+   * one deployment entry and changes nothing.
+   */
+  process.stdout.write(`\n   code      ${where.behind === 0 ? "current with the release" : `${where.behind} release commit(s) behind`}`
     + `${where.ahead > 0 ? `, ${where.ahead} local commit(s) ahead` : ""}\n`);
-  if (where.behind === 0 && !argv.includes("--force")) {
-    process.stdout.write("   Nothing to upgrade to. --force deploys this clone's code anyway.\n\n");
-    return;
-  }
   if (where.behind > 0) {
     if (git(["status", "--porcelain"]).text.trim() !== "") {
       fail("this clone has uncommitted changes, so the release cannot be pulled over them.\n\n"
