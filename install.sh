@@ -7,7 +7,8 @@
 # repository into ./mailda (or uses the clone it is run from), installs, and hands over to `mailda install`,
 # which signs you in to Cloudflare, picks the account, deploys, claims the Node, creates its OAuth client
 # from one API token, and opens the consent. Nothing in your Cloudflare account changes before it asks.
-# Later, `pnpm mailda upgrade` from the clone pulls the release, backs the Node up, and redeploys.
+# Later, `curl -fsSL https://mailda.site/update.sh | bash` in the same directory pulls the release, backs the
+# Node up, and redeploys through the canary; `pnpm mailda upgrade` is the same from the clone.
 set -euo pipefail
 
 say() { printf '\n%s\n' "$*"; }

@@ -12,7 +12,7 @@ const { gaps } = Astro.props;
  * does not make.
  */
 const checks: { check: string; says: string; doc: string; href: string }[] = [
-  { check: "install", says: "One command into your own Cloudflare account: it signs you in, deploys, and opens the Node with its claim secret. Drilled on a clean account; a second Node in the same account is a name.", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
+  { check: "install", says: "One command into your own Cloudflare account: it signs you in, deploys, claims the Node in the same terminal, and connects it to your account from one API token, ending at Cloudflare's consent screen. Drilled on a clean account; a second Node in the same account is a name, and updating is one command too.", doc: "deploy-drill-live-account.md", href: "/docs/receipts/deploy-drill-live-account/" },
   { check: "receiving", says: "Shared inboxes with a queue: claim, hand over, close, a first-response clock per mailbox. Threads, labels, read state, search over subjects, senders and bodies.", doc: "application-shell.md", href: "/docs/product/application-shell/" },
   { check: "mail_security", says: "The receiving server's SPF/DKIM/DMARC verdict on every message; attachments judged by name and magic bytes; links judged against what they say and your own domains; quarantine and suppression, both per mailbox. No model.", doc: "mail-security.md", href: "/docs/product/mail-security/" },
   { check: "sending", says: "Every send is sealed to a manifest first, then held for fifteen seconds, then dispatched. Policies, approvals with two people, domain pauses, rate breakers, a suppression list the provider's own bounces build.", doc: "send-breakers.md", href: "/docs/operating/send-breakers/" },
@@ -104,10 +104,11 @@ const checks: { check: string; says: string; doc: string; href: string }[] = [
         <button type="button" class="copy" data-copy="install-command" aria-label="Copy the install command">copy</button>
       </div>
       <p class="dim">
-        It signs you in to Cloudflare, deploys into your account, and opens the Node with its claim secret.
-        Claim it, then point a subdomain at it from <em>Setup</em>. The Node writes the
-        Cloudflare records through its own grant, reads them back, and refuses if they are not there. If you
-        would rather arrange the account by hand, the dashboard path is written down too.
+        It signs you in to Cloudflare, deploys into your account, claims the Node in the same terminal, and
+        connects it to your account: one API token with a single permission, and the Node creates its own
+        OAuth client and opens the consent. Then point a subdomain at it from <em>Setup</em>. The Node writes
+        the Cloudflare records through its own grant, reads them back, and refuses if they are not there. If
+        you would rather arrange the account by hand, the dashboard path is written down too.
         <a href="/docs/operating/cloudflare-settings/">Every setting it needs, in one page.</a>
       </p>
       <p class="dim">

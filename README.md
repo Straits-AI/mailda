@@ -30,13 +30,15 @@ account if you have several and what to call the Node (`mailda` by default), dep
 D1, R2 and queue, and applies the schema. Then it claims the Node from the same terminal: you choose the
 first administrator's email and password, and the ten recovery codes are printed once. Then it connects
 the Node to your account: you create one API token in the Cloudflare dashboard with a single permission
-(*OAuth App Registrations Write*), paste it, and the installer creates the Node's private OAuth client with
-the exact scopes and redirect URI, registers it, opens the consent in your browser, and tells you to delete
-the token. Decline either question and the Node's own screens do the same thing later. Nothing in your
+(*OAuth App Registrations Write*), paste it, and the Node creates its own private OAuth client with the
+exact scopes and redirect URI, registers it, and the installer opens the consent in your browser and tells
+you to delete the token. Decline either question and the Node's own screens do the same thing later: the
+claim page, and the same token field on *Setup*. Nothing in your
 account changes before it asks. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
 without a bash, run that in PowerShell.
 
-The same command is the upgrade and the second Node. It lists the Nodes the account already has (every
+The same command adds a second Node, and it can redeploy an existing one; updating is its own command,
+below, because an update also has to pull the release and back the Node up first. It lists the Nodes the account already has (every
 Node registers a `ButlerRun` Workflow under its own name), and the name you give decides: an existing name
 is upgraded through the canary, which needs the Node's URL once and remembers it in a git-ignored
 `.mailda/nodes.json`; a new name deploys another Node beside the first, with every resource named from it.
