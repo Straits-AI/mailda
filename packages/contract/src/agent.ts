@@ -431,6 +431,9 @@ export const DECLARED_ROUTES: Record<string, Classification> = {
     + "the mail sits on, and the other consumes a single-use nonce.",
     "GET /api/provider",
     "PUT /api/provider/client",
+    // Creating the client from an API token: the token is a person's, made in the dashboard, and handing
+    // one to a machine to spend is the thing the grant exists to make unnecessary.
+    "POST /api/provider/client",
     "POST /api/provider/authorize",
     // Spends the grant: renews a token and reads the account. An act of running the Node, and one a machine
     // has no errand for — L1 provisions nothing, so nothing an agent may do needs the account's name.

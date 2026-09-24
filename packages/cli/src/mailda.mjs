@@ -32,6 +32,7 @@
 import { doctorExitCode } from "./deploy-parse.mjs";
 import { doctor } from "./verbs/doctor.mjs";
 import { install } from "./verbs/install.mjs";
+import { upgrade } from "./verbs/upgrade.mjs";
 import { provider } from "./verbs/provider.mjs";
 import { deploy, preflight } from "./verbs/deploy.mjs";
 import { claimSecret, setPassword, recoveryCodes } from "./verbs/secrets.mjs";
@@ -43,6 +44,8 @@ import { backup, verifyBackup } from "./verbs/backup.mjs";
 const USAGE = `mailda — operate a Mailda Node
 
   mailda provider [--url <origin>]   this Node's Cloudflare grant: its state, or the printed ceremony
+  mailda provider --connect          create the OAuth client from one API token, register it, open the consent
+                                     (the install's grant step, for a Node claimed without it)
   mailda provider --client-id <id>   register the OAuth client; the secret is read from stdin
   mailda provider --scopes a,b       begin a consent and print the URL to open
   mailda provider --resolve-account  ask Cloudflare which account this grant covers, and record it
@@ -62,7 +65,13 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --buy <domain>               what buying it would cost; add --confirm <digest> to buy
   mailda provider --buy-status <domain>        how a registration is going, and whether to keep waiting
   mailda install [--yes] [--no-open] the first run as one conversation: sign in, pick the account, deploy,
-                                     seed the claim secret, open the Node
+                                     claim the Node, create its Cloudflare OAuth client from one API token,
+                                     and open the consent. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD and
+                                     CLOUDFLARE_API_TOKEN instead of asking
+  mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--force] [--contract]
+                                     pull the release, back the Node up, list what its schema will do to
+                                     the catalog, then deploy through the canary. Says "current" and stops
+                                     when there is nothing to upgrade to
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
@@ -104,6 +113,7 @@ switch (verb) {
   case "search": await search(rest); break;
   case "provider": await provider(rest); break;
   case "install": await install(rest); break;
+  case "upgrade": await upgrade(rest); break;
   default:
     process.stdout.write(USAGE);
     process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);

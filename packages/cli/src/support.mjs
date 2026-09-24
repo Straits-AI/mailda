@@ -484,9 +484,9 @@ export async function claimState(origin) {
  */
 export function readSecret(prompt) {
   if (process.stdin.isTTY !== true) {
-    fail("refusing to read a recovery code from a pipe — run this in a terminal.\n\n"
-      + "  why      a code passed through a pipe or an argument is a code in a shell history, a process\n"
-      + "           list, and whatever captured this session's output\n"
+    fail("refusing to read a secret from a pipe — run this in a terminal.\n\n"
+      + "  why      a code, password or token passed through a pipe or an argument is one in a shell history,\n"
+      + "           a process list, and whatever captured this session's output\n"
       + "  fix      run it interactively");
   }
   process.stdout.write(prompt);

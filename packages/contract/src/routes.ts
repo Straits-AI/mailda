@@ -617,6 +617,14 @@ export const ROUTES = [
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/provider/client",
+    summary: "Create the OAuth client through Cloudflare's API from an API token used once and never stored, "
+      + "with this Node's own redirect URI and scopes, and register it. Discards any grant the previous "
+      + "client obtained",
+    request: S.providerClientCreateRequest, response: S.providerStateResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/authorize",
     summary: "Begin a consent: answers with the URL to send a browser to",
     request: S.providerAuthorizeRequest, response: S.providerAuthorizeResponse,

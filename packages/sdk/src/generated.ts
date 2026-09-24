@@ -1104,6 +1104,15 @@ export class GeneratedClient extends Transport {
   }
 
   /**
+   * Create the OAuth client through Cloudflare's API from an API token used once and never stored, with this Node's own redirect URI and scopes, and register it. Discards any grant the previous client obtained
+   *
+   * `POST /api/provider/client`
+   */
+  async postProviderClient(body: z.infer<typeof S.providerClientCreateRequest>): Promise<z.infer<typeof S.providerStateResponse>> {
+    return await this.json("POST", "/api/provider/client", {}, body) as z.infer<typeof S.providerStateResponse>;
+  }
+
+  /**
    * Begin a consent: answers with the URL to send a browser to
    *
    * `POST /api/provider/authorize`

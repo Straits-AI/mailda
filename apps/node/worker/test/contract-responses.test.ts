@@ -1,5 +1,5 @@
 import { SELF, env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { path, route, schemaCoverage } from "@mailda/contract/routes";
 import { createSystemCtx } from "@mailda/runtime";
@@ -258,6 +258,28 @@ describe("every schema-bearing route answers what the contract says it does", ()
     expect(before.ceremony.unmeasured.length).toBeGreaterThan(40);
     // Real scope strings, because a request naming none is granted none.
     expect(before.ceremony.scopes.map((one) => one.scope)).toContain("account-settings.read");
+
+    /*
+     * The token path first, with Cloudflare stubbed: the Node creates the client itself. The response is the
+     * same state shape, and `.strict()` holds the same secret out of it. The `PUT` below then replaces it,
+     * which is the documented behaviour of registering a different client.
+     */
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).startsWith("https://api.cloudflare.com/")) {
+        return Response.json({ success: true, result: { client_id: "cf-api-made", client_secret: "made-secret" } });
+      }
+      return realFetch(url, init);
+    });
+    try {
+      const made = await answers("POST", "/api/provider/client", {
+        body: { token: "one-use-token", accountId: "1e0170aaabc90ecf5f466128d1f0466a" }, cookie: held,
+      }) as { provider: { state: string; clientId: string } };
+      expect(made.provider.state).toBe("awaiting_consent");
+      expect(made.provider.clientId).toBe("cf-api-made");
+    } finally {
+      vi.stubGlobal("fetch", realFetch);
+    }
 
     const registered = await answers("PUT", "/api/provider/client", {
       body: { clientId: "cf-contract-client", clientSecret: "the-contract-secret" }, cookie: held,
@@ -2183,6 +2205,10 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
      * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
      *
+     * The 139th is `POST /api/provider/client` (24 September 2026): the Node creates its own OAuth client
+     * from an API token it spends once. Same response shape as the `PUT`, so the same `.strict()` holds the
+     * secret out of it.
+     *
      * The 138th is `POST /api/quarantine/:messageId/hold` (#263): the act a customer's own classifier
      * reaches, since the Node keeps none. The reason travels in words and the score on the audit entry.
      *
@@ -2195,7 +2221,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(138);
+    expect(coverage.total).toBe(139);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

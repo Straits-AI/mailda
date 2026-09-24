@@ -49,6 +49,11 @@ const CEREMONY = {
     { scope: "dns.write", why: "write the MX records receiving needs", readOnlyExists: false },
   ],
   unmeasured: "The scope names are not measured against Cloudflare's own list.",
+  token: {
+    url: "https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=x",
+    permission: "OAuth App Registrations Write",
+    unmeasured: "The prefill is inferred.",
+  },
 };
 
 function binding(overrides: Record<string, unknown> = {}) {
@@ -103,8 +108,11 @@ function mount(
     if (call.path.startsWith("/api/provider/subscription") && call.method === "POST") {
       return Response.json(parts.subscribed);
     }
-    if (call.path === "/api/provider") {
+    if (call.path === "/api/provider" && call.method === "GET") {
       return Response.json({ provider: binding(parts.provider), ceremony: CEREMONY });
+    }
+    if (call.path === "/api/provider/client" && call.method === "POST") {
+      return Response.json({ provider: binding({ ...parts.provider, state: "awaiting_consent", clientId: "cf-made" }) });
     }
     return undefined;
   });
@@ -285,5 +293,24 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
     fireEvent.click(screen.getByText("see what subscribing this would do"));
     expect((await screen.findByRole("alert")).textContent).toContain("onboard it first");
     expect((screen.getByText("subscribe this domain") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("the one-token path", () => {
+  beforeEach(reset);
+
+  it("sends the token once to POST /api/provider/client and clears the field, whatever the answer", async () => {
+    mount({ provider: { state: "no_client", clientId: null, accountId: null } });
+    const field = await screen.findByLabelText("API token");
+    fireEvent.change(field, { target: { value: "tok-once" } });
+    fireEvent.click(screen.getByText("create the client"));
+    await waitFor(() => {
+      const sent = calls.find((call) => call.method === "POST" && call.path === "/api/provider/client");
+      expect(sent, "the token was never sent").toBeDefined();
+      expect(sent!.body).toEqual({ token: "tok-once" });
+    });
+    await waitFor(() => expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe(""));
+    // The link is the Node's, not this file's: a URL written here would be the one that goes stale.
+    expect(screen.getByText("open Cloudflare's token page with the permission filled in").getAttribute("href")).toBe(CEREMONY.token.url);
   });
 });

@@ -27,10 +27,14 @@ curl -fsSL https://mailda.site/install.sh | bash
 
 It checks for git and Node 22, clones this repository, installs, signs you in to Cloudflare, asks which
 account if you have several and what to call the Node (`mailda` by default), deploys the Worker with its
-D1, R2 and queue, applies the schema, and opens your new Node with the claim secret beside it. You paste
-the secret and choose the first administrator's email and password. Nothing in your account changes before
-it asks. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows without a bash, run
-that in PowerShell.
+D1, R2 and queue, and applies the schema. Then it claims the Node from the same terminal: you choose the
+first administrator's email and password, and the ten recovery codes are printed once. Then it connects
+the Node to your account: you create one API token in the Cloudflare dashboard with a single permission
+(*OAuth App Registrations Write*), paste it, and the installer creates the Node's private OAuth client with
+the exact scopes and redirect URI, registers it, opens the consent in your browser, and tells you to delete
+the token. Decline either question and the Node's own screens do the same thing later. Nothing in your
+account changes before it asks. From a clone, the same is `pnpm install && pnpm mailda install`; on Windows
+without a bash, run that in PowerShell.
 
 The same command is the upgrade and the second Node. It lists the Nodes the account already has (every
 Node registers a `ButlerRun` Workflow under its own name), and the name you give decides: an existing name
@@ -62,7 +66,16 @@ the CLI.
 the same from a script. Either derives the Worker, the Workflow and every other resource from that name
 into a git-ignored config; first install measured at 108 s.
 
-**Updating an installed Node.** The button clones without history, so the first update is a merge:
+**Updating an installed Node** is `pnpm mailda upgrade`. It fetches the release remote and says *current*
+and stops when this clone already has everything; otherwise it fast-forwards, reinstalls, asks which Node
+if the account has several, and then, before the schema is touched, takes a `mailda backup` into a
+git-ignored `.mailda/backups/<node>/<time>` directory, refusing to go on without one. It lists every
+pending migration by phase, *expand* (adds, safe for the running version) or *contract* (drops or narrows,
+refused unless `--contract`), asks once, and runs the same expand, canary, gate, promote sequence as
+`mailda deploy`. It never creates a Node; `mailda install` with an existing name still upgrades too, but
+with whatever code the clone has, which is why the verb exists.
+
+The button clones without history, so its first update is a merge by hand, once:
 
 ```sh
 git remote add upstream https://github.com/Straits-AI/mailda.git
@@ -71,7 +84,7 @@ git merge upstream/main --allow-unrelated-histories
 # One conflict, in package.json. Keep your own `name`, take upstream's everything else.
 ```
 
-Every later update is `git pull upstream main`. `package.json` is the only file that can conflict, and
+Every later update is `pnpm mailda upgrade`. `package.json` is the only file that can conflict, and
 `test/node/update-path.test.ts` fails if a second one ever joins it.
 
 **Resetting a password.** There is no password-change flow in the product yet. `pnpm run set-password

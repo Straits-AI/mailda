@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { accountsFrom, signedIn } from "../preflight.mjs";
-import { capture, configFor, fail, flag, run, useConfig, workerDir } from "../support.mjs";
+import { api, capture, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
 
 /**
@@ -18,36 +18,22 @@ import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
  *
  * A second Node in the same account is `--name <worker>`, the same flag `mailda deploy` takes: the deploy
  * derives that Node's config, and the claim secret is seeded into that Node's catalog rather than the first's.
+ *
+ * **It goes on to claim the Node and give it its Cloudflare grant** (23 September 2026, ADR 42 as amended).
+ * The claim is `POST /api/claim` from here, with the secret this run just seeded, so the recovery codes are
+ * printed in the same terminal and the session it answers with is what the next step signs in with. The
+ * grant used to be a dashboard form of twelve fields, filled after the install from the Node's Setup screen.
+ * It is one API token now: the operator creates a token with one permission, pastes it here, and the Node
+ * creates its own OAuth client through Cloudflare's API (`POST /api/provider/client`) with the exact
+ * redirect URI and scopes it publishes, then this run opens the consent. The token is sent once, never
+ * written anywhere, and the run ends by saying to delete it. The Setup screen offers the same field. Every step still has its own verb
+ * (`mailda claim-secret`, `mailda provider`) and the Setup screen keeps the printed steps, for the deploy
+ * button path and for an operator who declines here.
  */
 export async function install(argv) {
   process.stdout.write("\n== mailda install\n   One Node, in your Cloudflare account. Nothing is changed until the deploy step.\n");
 
-  // 1. Signed in to Cloudflare. wrangler's own login opens a browser and waits; the terminal is theirs.
-  let whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
-  if (!signedIn(whoami.text)) {
-    process.stdout.write("\n== signing in to Cloudflare\n   A browser opens. Approve wrangler there, then come back here.\n\n");
-    if (run("npx", ["wrangler", "login"]) !== 0) fail("wrangler could not sign in.");
-    whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
-    if (!signedIn(whoami.text)) fail("still not signed in after `wrangler login`.");
-  }
-
-  // 2. Which account. One needs no question; several need a person's answer, and it is kept for the rest
-  //    of this process only, since the id is a fact about their account and not about this clone.
-  const accounts = accountsFrom(whoami.text);
-  const chosen = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
-  if (chosen === "" && accounts.length > 1) {
-    process.stdout.write("\n== which Cloudflare account\n");
-    accounts.forEach((one, i) => process.stdout.write(`   ${i + 1}. ${one.name}  ${one.id}\n`));
-    const answer = await ask(`   number [1-${accounts.length}]: `);
-    const picked = accounts[Number(answer) - 1];
-    if (picked === undefined) fail(`"${answer}" is not one of the numbers above.`);
-    process.env.CLOUDFLARE_ACCOUNT_ID = picked.id;
-  } else if (chosen === "" && accounts.length === 1) {
-    process.env.CLOUDFLARE_ACCOUNT_ID = accounts[0].id;
-  }
-  const account = accounts.find((one) => one.id.toLowerCase() === (process.env.CLOUDFLARE_ACCOUNT_ID ?? "").toLowerCase());
-  process.stdout.write(`\n   account   ${account?.name ?? "?"}  ${process.env.CLOUDFLARE_ACCOUNT_ID ?? "(not chosen)"}\n`);
-  process.stdout.write("   plan      Workers Paid is required to send mail; the Free plan deletes queued delivery events after a day.\n");
+  await signInAndChooseAccount();
 
   // 3. Which Node. A name, chosen freely, with `mailda` as the default; and whether that name is already a
   //    Node in this account. Every Mailda Node registers a Workflow whose class is `ButlerRun`, so the
@@ -105,15 +91,159 @@ export async function install(argv) {
     fail("could not seed the claim secret; `mailda claim-secret` retries it.");
   }
 
+  // 5. The claim, from here. Skipped when the Node's URL is unknown or the operator declines; then the
+  //    ending is the one it always was, and the browser's claim page does the same thing.
+  const yes = argv.includes("--yes");
+  const claimHere = url !== null && (yes
+    ? process.env.MAILDA_EMAIL !== undefined && process.env.MAILDA_PASSWORD !== undefined
+    : /^y(es)?$/i.test((await ask("\n== claim the Node\n   Choose the first administrator here, now? [Y/n]: ")).trim() || "y"));
+  if (!claimHere) {
+    process.stdout.write(
+      "\n== done\n"
+      + `   your Node   ${url ?? "(wrangler did not print the URL; `wrangler deployments list` shows it)"}\n`
+      + `   secret      ${secret}\n\n`
+      + "   Open the URL, paste the secret, and choose the first administrator's email and password.\n"
+      + "   The secret is shown here once and only its hash is stored. Ten recovery codes follow the claim;\n"
+      + "   keep them, they are the only way back in without a password.\n\n",
+    );
+    if (url !== null && !argv.includes("--no-open")) openInBrowser(url);
+    return;
+  }
+  const claimed = await claim(url, secret, yes);
+  process.stdout.write(
+    "\n   claimed. These ten recovery codes are shown once and never again; they are the only way back in\n"
+    + "   without a password, and the only thing that can reopen the key vault after a disaster.\n\n"
+    + claimed.recoveryCodes.map((code) => `      ${code}\n`).join("") + "\n",
+  );
+
+  // 6. The Cloudflare grant: the OAuth client, created through the API instead of a dashboard form.
+  const connected = await grant(url, name, claimed.cookie, yes, !argv.includes("--no-open"));
+
   process.stdout.write(
     "\n== done\n"
-    + `   your Node   ${url ?? "(wrangler did not print the URL; `wrangler deployments list` shows it)"}\n`
-    + `   secret      ${secret}\n\n`
-    + "   Open the URL, paste the secret, and choose the first administrator's email and password.\n"
-    + "   The secret is shown here once and only its hash is stored. Ten recovery codes follow the claim;\n"
-    + "   keep them, they are the only way back in without a password.\n\n",
+    + `   your Node   ${url}\n`
+    + `   signed in   ${claimed.email}\n`
+    + (connected === null
+      ? "   grant       not yet: the Setup screen in the Node prints the steps, or re-run this install\n"
+      : `   grant       consent opened in the browser; if it did not open, visit\n               ${connected}\n`)
+    + "\n",
   );
-  if (url !== null && !argv.includes("--no-open")) openInBrowser(url);
+  if (!argv.includes("--no-open")) openInBrowser(connected ?? url);
+}
+
+/**
+ * `POST /api/claim` with the secret this run seeded. Asked for the organization's name, the administrator's
+ * email and a password typed twice with echo off; a password the Node calls weak is explained in the Node's
+ * words and asked again, because the claim is the irreversible step and a wrong answer must not spend it.
+ */
+async function claim(origin, secret, yes) {
+  const email = yes ? process.env.MAILDA_EMAIL : (await ask("   administrator email: ")).trim();
+  const organization = yes ? (process.env.MAILDA_ORGANIZATION ?? "Mailda")
+    : ((await ask("   organization name [Mailda]: ")).trim() || "Mailda");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let password = process.env.MAILDA_PASSWORD;
+    if (!yes) {
+      password = await readSecret("   password (not echoed): ");
+      const again = await readSecret("   once more: ");
+      if (password !== again) { process.stdout.write("   they differ; again.\n"); continue; }
+    }
+    const response = await fetch(`${origin}${api("POST", "/api/claim")}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret, email, password, organization }),
+    }).catch((error) => fail(`could not reach ${origin}: ${error.message}. The claim secret above still works in the browser.`));
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const cookies = response.headers.getSetCookie?.() ?? [];
+      return { email, recoveryCodes: body.recoveryCodes ?? [], cookie: cookies.map((line) => line.split(";")[0]).join("; ") };
+    }
+    if (body.error === "weak_password" && !yes) { process.stdout.write(`\n   ${body.message}\n\n`); continue; }
+    fail(`the Node refused the claim (${response.status} ${body.error ?? ""}): ${body.message ?? ""}\n`
+      + `The secret above still works at ${origin} unless the refusal says it is already claimed.`);
+  }
+  fail("three passwords refused; the claim secret above still works in the browser.");
+}
+
+/**
+ * Creates the Node's private OAuth client in the operator's account and registers it with the Node, then
+ * begins the consent and returns the URL to open — or `null` when the operator gave no token.
+ *
+ * The scopes and the redirect URI come from the Node's own `GET /api/provider`, never from here: the Node
+ * is the one source of what it needs, and a list typed into the CLI would be the drift the contract exists
+ * to prevent. The token is read with echo off, used for one request, and not kept.
+ */
+export async function grant(origin, name, cookie, yes, open = true) {
+  const node = async (method, template, body) => {
+    const path = api(method, template);
+    const response = await fetch(`${origin}${path}`, {
+      method, headers: { cookie, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    if (!response.ok) fail(`${method} ${path} answered ${response.status}:\n${text}`);
+    return JSON.parse(text);
+  };
+  // The Node's own ceremony: the token page link, the permission's name, and what is unverified about it.
+  const { ceremony } = await node("GET", "/api/provider");
+  process.stdout.write(
+    "\n== the Cloudflare grant\n"
+    + "   The Node acts in your account (routing rules, MX records, delivery events) through a private OAuth\n"
+    + "   client that only members of your account can authorize. Creating it by hand is a twelve-field form;\n"
+    + "   with an API token the Node creates it exactly. The token is spent on one request and never stored.\n\n"
+    + "   1. a token form opens in your browser with the one permission filled in\n"
+    + `      (${ceremony.token.permission}; pick this account when asked, and check the permission is ticked)\n`
+    + `      ${ceremony.token.url}\n`
+    + "   2. Continue, Create Token, copy it\n"
+    + "   3. paste it below, and delete the token afterwards; nothing needs it again\n\n"
+    + "   While it exists, that token can edit or delete every OAuth client in the account, not only this\n"
+    + "   one. If the account runs other services, press Enter instead: the Node's Setup screen prints the\n"
+    + "   dashboard steps, and no token ever exists.\n\n",
+  );
+  if (open && !yes) openInBrowser(ceremony.token.url);
+  const token = yes ? (process.env.CLOUDFLARE_API_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
+  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen does the same, either way.\n"); return null; }
+
+  // The account the CLI already settled, so the Node does not have to ask the token which it can see.
+  const { provider } = await node("POST", "/api/provider/client", {
+    token: token.trim(), ...(process.env.CLOUDFLARE_ACCOUNT_ID ? { accountId: process.env.CLOUDFLARE_ACCOUNT_ID } : {}),
+  });
+  process.stdout.write(`   client ${provider.clientId} created and registered; state: ${provider.state}\n`);
+  const { authorize } = await node("POST", "/api/provider/authorize", {});
+  process.stdout.write("   delete the API token now, on the page it came from; the Node holds the client and needs nothing else.\n");
+  return authorize.url;
+}
+
+
+/**
+ * Steps one and two of an install, shared with `mailda upgrade`: signed in to Cloudflare, and which account.
+ * wrangler's own login opens a browser and waits; the terminal is theirs. One account needs no question;
+ * several need a person's answer, kept for this process only, since the id is a fact about their account and
+ * not about this clone.
+ */
+export async function signInAndChooseAccount() {
+  let whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
+  if (!signedIn(whoami.text)) {
+    process.stdout.write("\n== signing in to Cloudflare\n   A browser opens. Approve wrangler there, then come back here.\n\n");
+    if (run("npx", ["wrangler", "login"]) !== 0) fail("wrangler could not sign in.");
+    whoami = capture("npx", ["wrangler", "whoami"], { quiet: true });
+    if (!signedIn(whoami.text)) fail("still not signed in after `wrangler login`.");
+  }
+
+  const accounts = accountsFrom(whoami.text);
+  const chosen = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+  if (chosen === "" && accounts.length > 1) {
+    process.stdout.write("\n== which Cloudflare account\n");
+    accounts.forEach((one, i) => process.stdout.write(`   ${i + 1}. ${one.name}  ${one.id}\n`));
+    const answer = await ask(`   number [1-${accounts.length}]: `);
+    const picked = accounts[Number(answer) - 1];
+    if (picked === undefined) fail(`"${answer}" is not one of the numbers above.`);
+    process.env.CLOUDFLARE_ACCOUNT_ID = picked.id;
+  } else if (chosen === "" && accounts.length === 1) {
+    process.env.CLOUDFLARE_ACCOUNT_ID = accounts[0].id;
+  }
+  const account = accounts.find((one) => one.id.toLowerCase() === (process.env.CLOUDFLARE_ACCOUNT_ID ?? "").toLowerCase());
+  process.stdout.write(`\n   account   ${account?.name ?? "?"}  ${process.env.CLOUDFLARE_ACCOUNT_ID ?? "(not chosen)"}\n`);
+  process.stdout.write("   plan      Workers Paid is required to send mail; the Free plan deletes queued delivery events after a day.\n");
 }
 
 /**
@@ -121,7 +251,7 @@ export async function install(argv) {
  * every Node registers under its own name. Empty when the list cannot be read; the per-name probe that
  * follows still decides, so an unreadable list costs a suggestion and not a wrong path.
  */
-function existingNodes() {
+export function existingNodes() {
   const listed = capture("npx", ["wrangler", "workflows", "list"], { quiet: true });
   if (listed.status !== 0) return [];
   return listed.text.split("\n")
@@ -134,17 +264,17 @@ function existingNodes() {
 
 /** `.mailda/nodes.json` at the clone's root, git-ignored: `{ "<account>/<name>": "<url>" }`. */
 const NODES_FILE = resolve(workerDir, "../../..", ".mailda", "nodes.json");
-function rememberedUrl(accountId, name) {
+export function rememberedUrl(accountId, name) {
   try { return JSON.parse(readFileSync(NODES_FILE, "utf8"))[`${accountId}/${name}`] ?? null; } catch { return null; }
 }
-function rememberUrl(accountId, name, url) {
+export function rememberUrl(accountId, name, url) {
   let all = {};
   try { all = JSON.parse(readFileSync(NODES_FILE, "utf8")); } catch { /* first Node remembered on this machine */ }
   mkdirSync(dirname(NODES_FILE), { recursive: true });
   writeFileSync(NODES_FILE, `${JSON.stringify({ ...all, [`${accountId}/${name}`]: url }, null, 2)}\n`);
 }
 
-async function ask(prompt) {
+export async function ask(prompt) {
   if (process.stdin.isTTY !== true) {
     fail("mailda install asks questions; run it in a terminal, or pass --yes with CLOUDFLARE_ACCOUNT_ID set "
       + "(and MAILDA_URL, when the account already has a Node).");
@@ -154,7 +284,7 @@ async function ask(prompt) {
 }
 
 /** Best effort, by platform; a failure to open is not a failure to install. */
-function openInBrowser(url) {
+export function openInBrowser(url) {
   const [command, args] = process.platform === "darwin" ? ["open", [url]]
     : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
     : ["xdg-open", [url]];

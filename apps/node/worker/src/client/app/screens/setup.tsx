@@ -2,8 +2,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
+import { OnboardingProgress } from "../onboarding.tsx";
 import {
-  beginConsent, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
+  beginConsent, createProviderClient, onboardReceiving, onboardSending, putBackRule, receivingProposal, reportUnselectable,
   routingRulesOn, takeOverRule,
   resolveProviderAccount, sendingProposal, setProviderClient, subscribeDeliveryEvents, subscriptionProposal,
   useMailboxes, useProvider, useRouting,
@@ -80,6 +81,69 @@ const WORDS: Record<ProviderBinding["state"], string> = {
   grant_refused: "Cloudflare refused this grant.",
 };
 
+/**
+ * The one-token path: the operator makes an API token with one permission, and the Node creates the client
+ * itself with the redirect URI and scopes it publishes, so nothing on the dashboard form can be mistyped.
+ * The token is sent once and the Node never stores it; the field is cleared whether or not it worked.
+ */
+function ClientFromToken({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Promise<void> }) {
+  const [token, setToken] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function create() {
+    setProblem(null);
+    setBusy(true);
+    const outcome = await createProviderClient(token.trim(), accountId.trim() === "" ? undefined : accountId.trim());
+    setBusy(false);
+    setToken("");
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    await done();
+  }
+
+  // Only asked for once Cloudflare said the token sees several accounts; before that it is noise.
+  const ambiguous = problem !== null && problem.includes("E_PROVIDER_ACCOUNT_AMBIGUOUS");
+
+  return (
+    <section className="setup-block" aria-label="Create the client from a token">
+      <h2>1. Let this Node create its client</h2>
+      <p>
+        Create one API token in Cloudflare with a single permission, <span className="mono">{ceremony.token.permission}</span>,
+        and paste it here. This Node creates its own OAuth client with the exact redirect address and
+        permissions listed below, uses the token for that one request, and never stores it. Delete the token
+        afterwards.
+      </p>
+      <p>
+        <a className="linkish" href={ceremony.token.url} target="_blank" rel="noreferrer">open Cloudflare's token page with the permission filled in</a>
+      </p>
+      <p className="dim">{ceremony.token.unmeasured}</p>
+      <Refusal said={problem} />
+      <div className="limits-ask">
+        <label className="field-row" htmlFor="setup-api-token">
+          <span>API token</span>
+          <input
+            id="setup-api-token" type="password" className="mono" value={token} autoComplete="off"
+            onChange={(event) => setToken(event.target.value)}
+          />
+        </label>
+        {ambiguous ? (
+          <label className="field-row" htmlFor="setup-account-id">
+            <span>Account id</span>
+            <input
+              id="setup-account-id" className="mono" value={accountId}
+              onChange={(event) => setAccountId(event.target.value)}
+            />
+          </label>
+        ) : null}
+        <button type="button" className="primary" onClick={() => void create()} disabled={busy || token.trim() === ""}>
+          {busy ? "creating…" : "create the client"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Client({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Promise<void> }) {
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
@@ -99,7 +163,10 @@ function Client({ ceremony, done }: { ceremony: ProviderCeremony; done: () => Pr
 
   return (
     <section className="setup-block" aria-label="Create the client">
-      <h2>1. Create a client, in Cloudflare</h2>
+      <h2>1, by hand. Create a client, in Cloudflare</h2>
+      <p className="dim">
+        The longer path, with no token at any point. Twelve fields; what to put in each is below.
+      </p>
       {/*
         The steps are the Node's, not this file's. `GET /api/provider` returns them, the CLI prints the same
         list, and a second copy written here would be the one that goes stale — which on a setup screen means
@@ -837,6 +904,8 @@ export function Setup() {
         </p>
       </header>
 
+      <OnboardingProgress binding={binding} />
+
       {binding.state === "grant_refused" && binding.refusedDetail !== null
         ? <Refusal said={binding.refusedDetail} />
         : null}
@@ -870,6 +939,7 @@ export function Setup() {
         ? <Connected provider={binding} refresh={refresh} />
         : (
           <>
+            <ClientFromToken ceremony={ceremony} done={refresh} />
             <Client ceremony={ceremony} done={refresh} />
             {/*
               Shown from `awaiting_consent` on, and not before. A consent needs a client; offering the button

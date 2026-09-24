@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unwrapCredential } from "../src/auth/kek.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
-  cloudflareGet, deliveryEventsState, REQUIRED_SCOPE_NAMES, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
+  cloudflareGet, createClientThroughApi, deliveryEventsState, OAUTH_CLIENTS_PERMISSION, REQUIRED_SCOPE_NAMES, REQUIRED_SCOPES, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
   reportUnselectable, resolveAccount, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor,
   STATUS_COLUMNS,
   type ProviderState,
@@ -1796,3 +1796,89 @@ describe("subscribing a sending domain's delivery events to this Node's queue (#
   });
 });
 
+
+/**
+ * The Node creates its own client from a token it spends once (24 September 2026).
+ *
+ * What would render plausibly and be wrong: a client registered with scopes typed somewhere other than the
+ * ceremony; `offline_access` sent as a scope Cloudflare then refuses; the token surviving anywhere; and a
+ * token seeing two accounts being guessed at rather than refused.
+ */
+describe("creating the client through Cloudflare's API", () => {
+  const ACCOUNT = "1e0170aaabc90ecf5f466128d1f0466a";
+
+  function cloudflare(answers: Record<string, { status: number; body: unknown }>) {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), init });
+      const path = new URL(String(url)).pathname.replace("/client/v4", "");
+      const found = Object.entries(answers).find(([key]) => (key.endsWith("/") ? path.startsWith(key) : path === key));
+      if (found === undefined) throw new Error(`unexpected call ${path}`);
+      return new Response(JSON.stringify(found[1].body), { status: found[1].status, headers: { "content-type": "application/json" } });
+    });
+    return calls;
+  }
+
+  it("registers the client Cloudflare returns, with the ceremony's scopes and this Node's redirect URI", async () => {
+    const calls = cloudflare({
+      [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 200, body: { success: true, result: { client_id: "cf-made", client_secret: "s3cret+/=", scopes: ["zone.read", "offline_access"] } } },
+    });
+    const made = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, {
+      token: "tok", accountId: ACCOUNT, redirectUri: REDIRECT,
+    });
+    expect(made.clientId).toBe("cf-made");
+    expect(made.accountId).toBe(ACCOUNT);
+
+    const sent = JSON.parse(String(calls[0]!.init.body)) as Record<string, unknown>;
+    expect(sent.redirect_uris).toEqual([REDIRECT]);
+    expect(sent.grant_types).toEqual(["authorization_code", "refresh_token"]);
+    expect(sent.token_endpoint_auth_method).toBe("client_secret_basic");
+    // The ceremony's list, minus the protocol scope Cloudflare adds itself.
+    expect(sent.scopes).toEqual(REQUIRED_SCOPES.map((one) => one.scope).filter((one) => one.includes(".")));
+    expect(sent.scopes).not.toContain("offline_access");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer tok");
+
+    const status = await providerStatus(testEnv);
+    expect(status.state).toBe("awaiting_consent");
+    expect(status.clientId).toBe("cf-made");
+    const row = await testEnv.CATALOG.prepare("SELECT client_secret FROM provider_binding WHERE id = 1").first<{ client_secret: string }>();
+    expect(await unwrapCredential(testEnv, row!.client_secret)).toBe("s3cret+/=");
+  });
+
+  it("never stores the token: not in the binding, not in the audit trail", async () => {
+    cloudflare({
+      [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 200, body: { success: true, result: { client_id: "c", client_secret: "s" } } },
+    });
+    await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "the-only-copy", accountId: ACCOUNT, redirectUri: REDIRECT });
+    const binding = await testEnv.CATALOG.prepare("SELECT * FROM provider_binding").all();
+    expect(JSON.stringify(binding.results)).not.toContain("the-only-copy");
+    const audit = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE action = 'provider.client_registered'").all();
+    expect(audit.results.length).toBeGreaterThan(0);
+    expect(JSON.stringify(audit.results)).not.toContain("the-only-copy");
+  });
+
+  it("names the permission when Cloudflare answers 403, which is what a token without it gets", async () => {
+    cloudflare({ [`/accounts/${ACCOUNT}/oauth_clients`]: { status: 403, body: { success: false, errors: [{ code: 10000, message: "Authentication error" }] } } });
+    const refusal = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: ACCOUNT, redirectUri: REDIRECT })
+      .then(() => null, (error: Error & { code?: string }) => error);
+    expect(refusal?.code).toBe("E_PROVIDER_TOKEN_REFUSED");
+    expect(refusal?.message).toContain(OAUTH_CLIENTS_PERMISSION);
+    expect((await providerStatus(testEnv)).state).toBe("no_client");
+  });
+
+  it("asks the token which account when none is given, and refuses rather than guesses between two", async () => {
+    const calls = cloudflare({
+      "/accounts": { status: 200, body: { success: true, result: [{ id: ACCOUNT, name: "One" }] } },
+      "/accounts/": { status: 200, body: { success: true, result: { client_id: "c", client_secret: "s" } } },
+    });
+    const made = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: null, redirectUri: REDIRECT });
+    expect(made.accountId).toBe(ACCOUNT);
+    expect(calls[1]!.url).toContain(`/accounts/${ACCOUNT}/oauth_clients`);
+
+    cloudflare({ "/accounts": { status: 200, body: { success: true, result: [{ id: ACCOUNT, name: "One" }, { id: "b".repeat(32), name: "Two" }] } } });
+    const ambiguous = await createClientThroughApi(testEnv, atTime(SEPTEMBER_3), ORG, ADMIN, { token: "t", accountId: null, redirectUri: REDIRECT })
+      .then(() => null, (error: Error & { code?: string }) => error);
+    expect(ambiguous?.code).toBe("E_PROVIDER_ACCOUNT_AMBIGUOUS");
+    expect(ambiguous?.message).toContain("Two");
+  });
+});

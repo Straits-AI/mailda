@@ -620,6 +620,28 @@ Three things the screen must not round off, each with a test:
 - **Refusals arrive whole.** They are four-part and the last part is what to do next, which here is the
   difference between finishing setup and going back to the dashboard to guess.
 
+**The one-token path** (24 September 2026). Section 1 offers two ways to the same client. The first: one
+API token with a single permission, pasted into a password field, and the Node creates the client itself
+through `POST /api/provider/client` with the redirect URI and scopes it publishes, so nothing on the
+dashboard form can be mistyped. The link to Cloudflare's token page, the permission's name and what is
+unverified about the prefill all come from the ceremony, never from this file. The field is cleared whether
+or not the call worked, and the account-id field appears only after Cloudflare said the token sees several
+accounts. The second is the twelve-field form, kept for an operator who wants no token to exist.
+
+**Progress, derived and never stored** (24 September 2026). The screen is five numbered sections and each
+knew its own state, but nothing said *two of five, next is receiving*, and nothing outside Setup said setup
+was unfinished, so an inbox on a Node that cannot receive looked like an inbox. A checklist now sits under
+the heading, and every step reads a structured field the Node already serves, never a sentence: the
+connection state from `GET /api/provider`; `doctor`'s `inbound_routing.ok`, which means an address exists;
+a domain enabled with no record still required from the email-routing read; a domain onboarded for sending,
+and a subscription with a queue and a consumer, from the delivery-events read. Three states per step, and
+*unknown* is its own: a source that could not be read, or one not asked because the connection is not there
+yet, is not the same as *checked and not done*. The last three sources spend the grant, so only Setup reads
+them; the one-line notice above every other screen reads the connection state and `doctor`, both already
+fetched for the rail, and names the first of those two it can see is undone. It says nothing when both are
+fine, rather than guessing at what it did not read. `src/client/app/onboarding.tsx`, with the derivation
+tested in `test/client/onboarding.test.ts`.
+
 `/oauth/cloudflare/callback` now negotiates: HTML for a browser, JSON for everything else. It is where
 Cloudflare sends the operator after they agree (by construction a human is looking at it), and it answered
 with raw JSON, so the last step of a flow written in English ended in a parse. `error_description` is a query

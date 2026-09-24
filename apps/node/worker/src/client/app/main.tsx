@@ -10,6 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { APP_ROUTES } from "../../app-routes.ts";
 import { InstrumentBar, Notices, Rail } from "./chrome.tsx";
+import { SetupUnfinished } from "./onboarding.tsx";
 import { Inbox } from "./screens/inbox.tsx";
 import { Queue } from "./screens/queue.tsx";
 import { Agents } from "./screens/agents.tsx";
@@ -66,6 +67,7 @@ const rootRoute = createRootRoute({
       <div className="app-main">
         {/* Above whatever screen a person came for, because §7's notice is one they must actually meet —
             and on every route rather than one, because there is no route somebody must visit to be told. */}
+        <SetupUnfinished />
         <Notices />
         <Outlet />
       </div>

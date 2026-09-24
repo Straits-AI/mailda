@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
+import { grant, openInBrowser, signInAndChooseAccount } from "./install.mjs";
 /**
  * One domain's price, or the reason there is not one.
  *
@@ -68,6 +69,20 @@ export async function provider(argv) {
     if (!response.ok) fail(`${method} ${path} answered ${response.status}:\n${text}`);
     return JSON.parse(text);
   };
+
+  /*
+   * `--connect`: the grant step of `mailda install`, for a Node that was claimed before that step existed or
+   * whose install declined it. Same function, same one API token, same consent; the account id the API call
+   * needs comes from wrangler's login, which is why this signs in first.
+   */
+  if (argv.includes("--connect")) {
+    await signInAndChooseAccount();
+    const consent = await grant(origin, flag(argv, "name") ?? "mailda", cookie, argv.includes("--yes"), !argv.includes("--no-open"));
+    if (consent === null) return;
+    process.stdout.write(`\n   open this to consent (opening it now):\n   ${consent}\n\n`);
+    if (!argv.includes("--no-open")) openInBrowser(consent);
+    return;
+  }
 
   const clientId = flag(argv, "client-id");
   if (clientId !== null) {
