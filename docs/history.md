@@ -3204,3 +3204,11 @@ token link, in Cloudflare's account form, opened an account picker and then a bl
 uses the documented user-token form with `accountId=*`, which puts the account inside the prefilled form,
 and says what to tick if the prefill still fails. And the inbox's search hint sat too close to the pill;
 it moved from a fifth to half a rem, the spacing scale's next step.
+
+### The token link, third try, by id (25 September 2026)
+
+The user-token form prefilled the name and not the permission: an unknown short key is dropped without a
+word, and this permission's short key is not documented anywhere. Cloudflare's own docs PR on template
+links says what is: account-token links resolve a permission group **id** in the `key` field, user-token
+links take short keys only. The id is exact and was already in the receipt, so the ceremony's link is the
+account form addressed by id. The two inferred keys are recorded here as the two things that did not work.

@@ -403,19 +403,25 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
 export const OAUTH_CLIENTS_PERMISSION = "OAuth App Registrations Write";
 
 /**
+ * The permission group's id, which is global and exact. Read from `GET /accounts/{id}/iam/permission_groups`
+ * on 23 September 2026 (`docs/receipts/cloudflare-oauth-endpoints.md`); the Read form is c00d4085a8774a6daf8365c054ca6803.
+ */
+export const OAUTH_CLIENTS_PERMISSION_ID = "358d00a81412422280b0055618c81d59";
+
+/**
  * Cloudflare's token page with that permission prefilled, by its documented template URL
- * (`fundamentals/api/how-to/account-owned-token-template`). The **user-token** form: the account form
- * (`?to=/:account/api-tokens`) opened an account picker and then a blank form on the first real run
- * (25 September 2026), while the user form carries `accountId=*` and puts the account choice inside the
- * prefilled form. This Node does not know its account id before it holds a grant, so `*`. The key is the
- * permission's label without its verb, inferred from the documented pattern and not measured on this
- * permission — which is what `token.unmeasured` says.
+ * (`fundamentals/api/how-to/account-owned-token-template`). The **account-token** form, addressed by the
+ * permission group **id** in the `key` field: Cloudflare documents that form as the one that resolves ids,
+ * user-token links take short keys only, and this permission's short key is undocumented. Two inferred
+ * short keys were tried on the first real run (25 September 2026) and both were dropped silently, the
+ * name prefilled and the permission blank, which is how an unknown key fails. An account token is also the
+ * right kind: it is scoped to the one account by construction. The dashboard asks which account first,
+ * since this Node does not know its own before it holds a grant.
  */
 export function tokenTemplateUrl(): string {
-  const keys = JSON.stringify([{ key: "oauth_app_registrations", type: "edit" }]);
-  return "https://dash.cloudflare.com/profile/api-tokens"
-    + `?permissionGroupKeys=${encodeURIComponent(keys)}&accountId=*&zoneId=all`
-    + `&name=${encodeURIComponent("Mailda setup, delete after use")}`;
+  const keys = JSON.stringify([{ key: OAUTH_CLIENTS_PERMISSION_ID, type: "edit" }]);
+  return "https://dash.cloudflare.com/?to=/:account/api-tokens"
+    + `&permissionGroupKeys=${encodeURIComponent(keys)}&name=${encodeURIComponent("Mailda setup, delete after use")}`;
 }
 
 export function ceremony(redirectUri: string): {
@@ -431,9 +437,8 @@ export function ceremony(redirectUri: string): {
     token: {
       url: tokenTemplateUrl(),
       permission: OAUTH_CLIENTS_PERMISSION,
-      unmeasured: "The link prefills the permission by a key inferred from Cloudflare's documented pattern and "
-        + "not measured on this permission: if the form opens without it, pick Account → OAuth App "
-        + "Registrations → Write yourself, and restrict the token to this account. "
+      unmeasured: "The link addresses the permission by its group id, as Cloudflare documents for account tokens; "
+        + "if the form still opens without it, pick Account → OAuth App Registrations → Write yourself. "
         + "While it exists the token can edit or delete every OAuth client in the account, not only this one; "
         + "this Node spends it on one request and never stores it, and you delete it afterwards.",
     },
