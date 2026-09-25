@@ -561,6 +561,10 @@ export function readSecret(prompt) {
   return new Promise((done, reject) => {
     let value = "";
     process.stdin.setRawMode(true);
+    // Keystrokes from before the prompt are not an answer to it (see `drainTypeahead` in verbs/install.mjs):
+    // raw mode has just made any pending cooked line readable, so the first fifty milliseconds are discarded.
+    let listening = false;
+    setTimeout(() => { listening = true; }, 50);
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
 
@@ -573,6 +577,7 @@ export function readSecret(prompt) {
     };
 
     const onData = (chunk) => {
+      if (!listening) return;
       for (const char of chunk) {
         if (char === "\r" || char === "\n") return finish(value);
         if (char === "\u0003") return finish(undefined, new Error("cancelled"));

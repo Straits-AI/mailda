@@ -294,8 +294,39 @@ export async function ask(prompt) {
     fail("mailda install asks questions; run it in a terminal, or pass --yes with CLOUDFLARE_ACCOUNT_ID set "
       + "(and MAILDA_URL, when the account already has a Node).");
   }
+  await drainTypeahead();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try { return await rl.question(prompt); } finally { rl.close(); }
+}
+
+/**
+ * Discards keystrokes typed before a question was asked.
+ *
+ * The first real upgrade (25 September 2026) deployed for two minutes and then asked "which domain should
+ * this Node receive mail at? (Enter to skip)", and the question answered itself: an Enter pressed while the
+ * deploy scrolled had sat in the input buffer, and a question that treats an empty line as "skip" took it.
+ * A person cannot have meant an answer to a question they had not yet seen, so whatever is buffered when a
+ * question is about to be asked is thrown away. `readSecret` in support.mjs does the same.
+ */
+export function drainTypeahead() {
+  /*
+   * Raw mode for a moment, because the terminal holds a cooked line until Enter and a paused stream has
+   * nothing to read; turning line discipline off makes whatever was typed readable at once, and fifty
+   * milliseconds is long enough for the kernel to hand it over and short enough not to be felt.
+   */
+  if (process.stdin.isTTY !== true) return Promise.resolve();
+  return new Promise((done) => {
+    const sink = () => { /* discarded */ };
+    process.stdin.setRawMode(true);
+    process.stdin.on("data", sink);
+    process.stdin.resume();
+    setTimeout(() => {
+      process.stdin.removeListener("data", sink);
+      process.stdin.pause();
+      process.stdin.setRawMode(false);
+      done();
+    }, 50);
+  });
 }
 
 /** Best effort, by platform; a failure to open is not a failure to install. */
