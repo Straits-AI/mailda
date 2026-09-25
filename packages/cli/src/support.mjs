@@ -485,14 +485,20 @@ export function choose(prompt, options, { initial = 0 } = {}) {
     fail(`${prompt.trim()} asks for a choice; run this in a terminal, or pass it as a flag or --yes.`);
   }
   let index = Math.max(0, Math.min(initial, options.length - 1));
-  const lines = options.length + 1;
   /*
    * `\r\n`, not `\n`. Raw mode turns off the terminal's output processing along with its input processing, so
    * a bare newline moves down a row without returning to the first column, and each redraw stepped one
    * column further right and left a stray line behind (seen on the first real run, 25 September 2026).
+   *
+   * And the prompt's own newlines count. Every caller passes a prompt that starts with "\n== …", so the
+   * prompt is two rows, not one; a redraw that moved up one row short left the previous list's last row
+   * behind on every arrow press. Seen on the second real run, on the account picker, after the first fix
+   * had been drilled with a one-line prompt. The prompt is split into rows and each is written with CRLF.
    */
+  const promptRows = prompt.split("\n");
+  const lines = promptRows.length + options.length;
   const draw = () => {
-    process.stdout.write(`\x1b[2K\r${prompt}\r\n`);
+    for (const row of promptRows) process.stdout.write(`\x1b[2K\r${row}\r\n`);
     options.forEach((one, i) => {
       const label = typeof one === "string" ? one : one.label;
       process.stdout.write(`\x1b[2K\r   ${i === index ? "›" : " "} ${label}\r\n`);
