@@ -3324,3 +3324,15 @@ a subdomain never enabled it lists what is `missing`, record by record; once ena
 with `errors: null`; for an apex with routing ready it lists the zone's own records. So it is the plan and
 the read-back in one, `POST` on it creates the records, and raw DNS is not needed for receiving at all.
 The receiving code moves onto it, the wrong `fix` goes, and the receipt gains the run and the shapes.
+
+## The Node receives (25 September 2026, 17:08 UTC)
+
+The founder's fourth update run reached the end: deploy, promotion, then the setup with the zone picker,
+the catch-all rows and the mailbox's first address. The receiving proposal read the apex's routing records
+through Email Routing's own endpoint and had nothing to write; the catch-all on `whymelabs.com`, which
+pointed at a Worker named `butler`, was taken over, read back as this Worker, and the previous target
+recorded for the put-back. The eighteen literal rules on the zone, four of them forwards, were untouched,
+verified from the account afterwards. Sending and the delivery-events subscription were already in place
+from the run before. The Node's first address is `hello@whymelabs.com`; every other address at the apex
+is filed if a mailbox holds it and bounced otherwise. What remains unmeasured live: the catch-all put-back,
+and a message actually arriving, which is the founder's next act.

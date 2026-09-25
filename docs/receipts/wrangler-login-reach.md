@@ -74,6 +74,23 @@ written beside a foreign MX rather than refused. The proposal used to refuse tha
 are removed by hand in the dashboard (the zone's DNS, three MX records named `probe`). Harmless meanwhile:
 mail to that subdomain bounces, and nothing routes it.
 
+## The second real run: the catch-all taken over, live (25 September 2026, 17:08 UTC)
+
+The same Node, after receiving moved to Email Routing's own record endpoints. With wrangler's login token
+through the operator headers, on the apex `whymelabs.com` (routing ready, catch-all `worker -> butler`,
+enabled, eighteen literal rules including four forwards):
+
+| act | outcome |
+|---|---|
+| receiving proposal | no refusal; `has MX route1/2/3` from the zone's own routing records; nothing to write |
+| `PUT …/rules/catch_all` → this Worker | 200; read back `worker -> mailda-whymelabs (enabled)`; the previous target recorded |
+| the eighteen literal rules | untouched, verified from the account afterwards |
+| sending | `onboarded already` |
+| delivery-events subscription | `subscribed already` (created by the run before) |
+
+So the catch-all write is measured **changing a live catch-all**, not only permitted. The put-back path
+(`provider.catch_all_put_back`) is still unmeasured live; the recorded `before` is `worker -> butler`.
+
 ## The first real run (25 September 2026)
 
 The founder's Node `mailda-whymelabs`, the apex `whymelabs.com`, wrangler's login token carried on the
