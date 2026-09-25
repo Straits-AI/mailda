@@ -1,6 +1,31 @@
 import { unprocessable } from "../errors.ts";
 import { isAdmin } from "../access.ts";
 import type { Some } from "../router.ts";
+import type { Ctx } from "@mailda/runtime";
+import { withOperator } from "../provider/cloudflare-api.ts";
+
+/**
+ * An operator's own Cloudflare credential for this one request, from two headers (25 September 2026).
+ *
+ * `x-cloudflare-token` and `x-cloudflare-account`: `mailda install` sends wrangler's login token and the
+ * account it settled, so a Node can be set up to receive, send and observe outcomes at install with a
+ * consent the operator already gave, before or instead of the Node's own grant. Administrator-only routes
+ * carry it, the token is used for the request and never stored, and the audit entry says `operator` did it.
+ * Headers rather than body fields so the proposal `GET`s can carry it without a token in a query string.
+ */
+function operatorCtx(request: Request, clock: Ctx): Ctx {
+  const token = request.headers.get("x-cloudflare-token");
+  const accountId = request.headers.get("x-cloudflare-account");
+  if (token === null || token.trim() === "") return clock;
+  if (accountId === null || !/^[0-9a-f]{32}$/.test(accountId)) {
+    throw unprocessable("E_PROVIDER_OPERATOR_ACCOUNT_MISSING", {
+      what: "x-cloudflare-token was sent without a valid x-cloudflare-account",
+      why: "the account is the boundary every read is kept inside, and an operator token can see several",
+      fix: "send x-cloudflare-account with the 32-hex account id the token should act in",
+    });
+  }
+  return withOperator(clock, { token: token.trim(), accountId });
+}
 
 export const provider = {
   /**
@@ -28,9 +53,11 @@ export const provider = {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    const { providerStatus, ceremony } = await import("../provider/cloudflare-grant.ts");
+    const { providerStatus, ceremony, provisionedFacts } = await import("../provider/cloudflare-grant.ts");
     return Response.json({
       provider: await providerStatus(env),
+      // What the install or a grant has been observed to set up, from the audit trail (structured, dated).
+      provisioned: await provisionedFacts(env, who.orgId),
       /*
        * The ceremony is returned beside the state rather than from a second route, because an operator in
        * `no_client` needs the steps and an operator in `consent_granted` needs to be able to check that the
@@ -99,7 +126,7 @@ export const provider = {
     return Response.json({ authorize: { url: begun.url, expiresAt: begun.expiresAt } });
   },
 
-  "GET /api/provider/email-routing": async ({ env, clock, who }) => {
+  "GET /api/provider/email-routing": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -110,10 +137,10 @@ export const provider = {
      * authority to answer a question nothing it may do depends on.
      */
     const { emailRoutingState } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ routing: await emailRoutingState(env, clock, who.orgId) });
+    return Response.json({ routing: await emailRoutingState(env, operatorCtx(request, clock), who.orgId) });
   },
 
-  "GET /api/provider/delivery-events": async ({ env, clock, who }) => {
+  "GET /api/provider/delivery-events": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -123,7 +150,7 @@ export const provider = {
      * three objects is missing instead of saying the question is unanswerable from here.
      */
     const { deliveryEventsState } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ delivery: await deliveryEventsState(env, clock, who.orgId) });
+    return Response.json({ delivery: await deliveryEventsState(env, operatorCtx(request, clock), who.orgId) });
   },
 
   "GET /api/provider/domains/purchase": async ({ env, clock, url, who }) => {
@@ -201,14 +228,14 @@ export const provider = {
     });
   },
 
-  "GET /api/provider/receiving": async ({ env, clock, url, who }) => {
+  "GET /api/provider/receiving": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     const { receivingProposalFor } = await import("../provider/receiving.ts");
     return Response.json({
       proposal: await receivingProposalFor(
-        env, clock, who.orgId, url.searchParams.get("domain") ?? "",
+        env, operatorCtx(request, clock), who.orgId, url.searchParams.get("domain") ?? "",
       ),
     });
   },
@@ -227,20 +254,20 @@ export const provider = {
     const { onboardReceiving } = await import("../provider/receiving.ts");
     return Response.json({
       outcome: await onboardReceiving(
-        env, clock, who.orgId, who.userId,
+        env, operatorCtx(request, clock), who.orgId, who.userId,
         String(body.domain ?? ""), String(body.digest ?? ""), String(body.address ?? ""),
         typeof body.mailboxId === "string" ? body.mailboxId : null,
       ),
     });
   },
 
-  "GET /api/provider/routing-rules": async ({ env, clock, url, who }) => {
+  "GET /api/provider/routing-rules": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
     const { routingRulesFor } = await import("../provider/routing-rules.ts");
     return Response.json({
-      routing: await routingRulesFor(env, clock, who.orgId, url.searchParams.get("domain") ?? ""),
+      routing: await routingRulesFor(env, operatorCtx(request, clock), who.orgId, url.searchParams.get("domain") ?? ""),
     });
   },
 
@@ -253,7 +280,7 @@ export const provider = {
     const { takeOverRule } = await import("../provider/routing-rules.ts");
     return Response.json({
       outcome: await takeOverRule(
-        env, clock, who.orgId, who.userId,
+        env, operatorCtx(request, clock), who.orgId, who.userId,
         String(body.domain ?? ""), String(body.ruleId ?? ""), String(body.digest ?? ""),
         typeof body.mailboxId === "string" ? body.mailboxId : null,
       ),
@@ -268,7 +295,7 @@ export const provider = {
     const { putBackRule } = await import("../provider/routing-rules.ts");
     return Response.json({
       outcome: await putBackRule(
-        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.ruleId ?? ""),
+        env, operatorCtx(request, clock), who.orgId, who.userId, String(body.domain ?? ""), String(body.ruleId ?? ""),
       ),
     });
   },
@@ -294,7 +321,7 @@ export const provider = {
     return Response.json({ ownership: await ownershipFacts(env, clock, who.orgId) });
   },
 
-  "GET /api/provider/sending": async ({ env, clock, url, who }) => {
+  "GET /api/provider/sending": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -307,7 +334,7 @@ export const provider = {
       });
     }
     const { sendingProposalFor } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ proposal: await sendingProposalFor(env, clock, who.orgId, domain) });
+    return Response.json({ proposal: await sendingProposalFor(env, operatorCtx(request, clock), who.orgId, domain) });
   },
 
   "POST /api/provider/sending": async ({ request, env, clock, who }) => {
@@ -323,12 +350,12 @@ export const provider = {
     const { onboardSending } = await import("../provider/cloudflare-grant.ts");
     return Response.json({
       proposal: await onboardSending(
-        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
+        env, operatorCtx(request, clock), who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
       ),
     });
   },
 
-  "GET /api/provider/subscription": async ({ env, clock, url, who }) => {
+  "GET /api/provider/subscription": async ({ request, env, clock, url, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -341,7 +368,7 @@ export const provider = {
       });
     }
     const { subscriptionProposalFor } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ proposal: await subscriptionProposalFor(env, clock, who.orgId, domain) });
+    return Response.json({ proposal: await subscriptionProposalFor(env, operatorCtx(request, clock), who.orgId, domain) });
   },
 
   "POST /api/provider/subscription": async ({ request, env, clock, who }) => {
@@ -354,12 +381,12 @@ export const provider = {
     const { subscribeDeliveryEvents } = await import("../provider/cloudflare-grant.ts");
     return Response.json({
       proposal: await subscribeDeliveryEvents(
-        env, clock, who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
+        env, operatorCtx(request, clock), who.orgId, who.userId, String(body.domain ?? ""), String(body.digest ?? ""),
       ),
     });
   },
 
-  "POST /api/provider/resolve-account": async ({ env, clock, who }) => {
+  "POST /api/provider/resolve-account": async ({ request, env, clock, who }) => {
     if (!(await isAdmin(env, who.orgId, who.userId))) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -369,7 +396,7 @@ export const provider = {
      * would make every status page a consumer of the account's authority.
      */
     const { resolveAccount } = await import("../provider/cloudflare-grant.ts");
-    return Response.json({ account: await resolveAccount(env, clock, who.orgId) });
+    return Response.json({ account: await resolveAccount(env, operatorCtx(request, clock), who.orgId) });
   },
 
   "POST /api/provider/unselectable": async ({ env, clock, who }) => {

@@ -2,11 +2,12 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { contractingAmong } from "../deploy-parse.mjs";
-import { WRANGLER_ARGS, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
+import { WRANGLER_ARGS, api, capture, choose, configFor, fail, flag, readSecret, run, sessionCookie, useConfig, workerDir } from "../support.mjs";
 import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, resolvePackageJson } from "../upgrade-parse.mjs";
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
+import { provisionNode, wranglerToken } from "./provision.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -137,7 +138,31 @@ export async function upgrade(argv) {
   const go = yes ? "y" : await ask("\n   upgrade now? [y/N]: ");
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed; the backup stays.\n\n"); return; }
   await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])]);
-  process.stdout.write(`\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n\n`);
+
+  /*
+   * A Node deployed before the install did the account work has never been set up to receive: no routing,
+   * no grant, and nothing on it looks wrong. The audit trail says so (`provisioned.receiving` is null), and
+   * the upgrade finishes the job the same way the install does, with wrangler's login.
+   */
+  const cookie = await sessionCookie(url);
+  const setUp = { receiving: null, sending: null, deliveryEvents: null };
+  if (cookie !== null) {
+    const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (state !== null && state.provisioned?.receiving === null) {
+      process.stdout.write("\n== this Node has never been set up to receive\n   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n");
+      Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask }));
+    } else if (state !== null) {
+      setUp.receiving = state.provisioned?.receiving?.domain ?? null;
+      setUp.sending = state.provisioned?.sending?.domain ?? null;
+      setUp.deliveryEvents = state.provisioned?.deliveryEvents?.domain ?? null;
+    }
+  }
+  process.stdout.write(
+    `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
+    + `   receiving   ${setUp.receiving ?? "not set up; the Setup screen or mailda provider does it"}\n`
+    + `   sending     ${setUp.sending ?? "not set up"}\n`
+    + `   outcomes    ${setUp.deliveryEvents ?? "not subscribed"}\n\n`,
+  );
 }
 
 function git(args) {

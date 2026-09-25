@@ -5,8 +5,8 @@
 #
 # Run it where the install left the clone: in that directory, or one above it (the install makes ./mailda).
 # It checks the same tools the installer did, brings the clone up to the release, then hands over to
-# `mailda upgrade`, which takes a backup of the Node, lists what the schema will do to the catalog, and
-# deploys through the canary. No git command is yours to type: a clone made by the deploy button, which has
+# `mailda upgrade`, which takes a backup of the Node, lists what the schema will do to the catalog, deploys
+# through the canary, and offers the install's setup step to a Node that was never set up to receive. No git command is yours to type: a clone made by the deploy button, which has
 # no history and no remote, is joined to the release here too. Nothing in your Cloudflare account changes
 # before it asks.
 #

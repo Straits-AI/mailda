@@ -4,7 +4,7 @@ import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
 import { NO_BOUND_ACCOUNT, boundAccount, boundAccountFor, zoneFor } from "./account-routing.ts";
-import { accessTokenFor, cloudflareGet, cloudflareGetAll, cloudflarePost } from "./cloudflare-api.ts";
+import { accessTokenFor, cloudflareGet, cloudflareGetAll, cloudflarePost, operatorOf } from "./cloudflare-api.ts";
 
 /**
  * Whether a delivery outcome would ever be **seen** for one domain this Node sends from (#163 L2).
@@ -203,7 +203,7 @@ export async function deliveryEventsState(
     queueId: null, queueName: null, consumers: [], error: null,
   });
 
-  const accountId = await boundAccount(env);
+  const accountId = await boundAccount(env, ctx);
   if (accountId === null) {
     /*
      * Not an error about Cloudflare — an error about this Node. The account id is filled lazily by
@@ -465,7 +465,10 @@ export async function onboardSending(
      * months later — and `leavesBehind` because an operator reading this trail after un-onboarding needs the
      * record that survived to be named somewhere that was written before it mattered.
      */
-    detail: { zone: proposal.zone, creates: proposal.creates, leavesBehind: proposal.leavesBehind },
+    detail: {
+      zone: proposal.zone, creates: proposal.creates, leavesBehind: proposal.leavesBehind,
+      authority: operatorOf(ctx) === null ? "grant" : "operator",
+    },
   }, (entry) => [entry]);
 
   return await sendingProposalFor(env, ctx, orgId, domain);
@@ -590,7 +593,7 @@ export async function subscriptionProposalFor(
     return { ...body, digest: await subscriptionDigestOf(body) };
   };
 
-  const accountId = await boundAccount(env);
+  const accountId = await boundAccount(env, ctx);
   if (accountId === null) return await without({ error: NO_BOUND_ACCOUNT });
 
   const carrying = await zoneFor(env, ctx, orgId, domain);
@@ -665,7 +668,7 @@ export async function subscribeDeliveryEvents(
     });
   }
 
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   const created = proposal.subscribed !== null ? null : await cloudflarePost<{ id?: string; name?: string }>(
     env, ctx, orgId, `/accounts/${accountId}/event_subscriptions/subscriptions`,
     {
@@ -698,6 +701,7 @@ export async function subscribeDeliveryEvents(
       zone: proposal.zone, sendingDomain: proposal.sendingDomain, queue: proposal.queueName,
       subscriptionId: created?.id ?? proposal.subscribed, events: proposal.events,
       consumerAttached: attached === null ? "already" : attached.consumer_id ?? "attached",
+      authority: operatorOf(ctx) === null ? "grant" : "operator",
     },
   }, (entry) => [entry]);
 

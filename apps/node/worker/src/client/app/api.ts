@@ -1683,12 +1683,29 @@ export interface ProviderCeremony {
   token: { url: string; permission: string; unmeasured: string };
 }
 
+/**
+ * One provisioning act as the audit trail recorded it (25 September 2026): the domain, when, and which
+ * credential acted. "operator" is the installer with wrangler's login. A dated record of an act, not a
+ * live read, and every surface that shows it says so.
+ */
+export interface ProvisionedAct {
+  domain: string;
+  at: string;
+  authority: "grant" | "operator" | "unknown";
+  address: string | null;
+}
+export interface Provisioned {
+  receiving: ProvisionedAct | null;
+  sending: ProvisionedAct | null;
+  deliveryEvents: ProvisionedAct | null;
+}
+
 export function useProvider(): UseQueryResult<
-  { provider: ProviderBinding; ceremony: ProviderCeremony }, Error
+  { provider: ProviderBinding; provisioned: Provisioned; ceremony: ProviderCeremony }, Error
 > {
   return useQuery({
     queryKey: ["provider"],
-    queryFn: () => read<{ provider: ProviderBinding; ceremony: ProviderCeremony }>(GET("/api/provider")),
+    queryFn: () => read<{ provider: ProviderBinding; provisioned: Provisioned; ceremony: ProviderCeremony }>(GET("/api/provider")),
     ...AUTHORIZATION_SENSITIVE,
   });
 }

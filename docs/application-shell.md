@@ -628,6 +628,14 @@ unverified about the prefill all come from the ceremony, never from this file. T
 or not the call worked, and the account-id field appears only after Cloudflare said the token sees several
 accounts. The second is the twelve-field form, kept for an operator who wants no token to exist.
 
+**The connection is optional** (25 September 2026). Since the install sets receiving, sending and delivery
+outcomes up with wrangler's login, section 1 no longer stands between a new Node and its first message. It
+says what a grant is for, changing the Cloudflare setup from this screen later, and offers the same two ways
+to make one. The progress list's first step reads *connected, optional*, and the three steps the screen
+used to read through the grant fall back to `provisioned` from `GET /api/provider` when there is no grant:
+the latest receiving, sending and subscription act from the audit trail, with its date and which credential
+did it. That is a record of an act, not a live read, and the row says so in those words.
+
 **Progress, derived and never stored** (24 September 2026). The screen is five numbered sections and each
 knew its own state, but nothing said *two of five, next is receiving*, and nothing outside Setup said setup
 was unfinished, so an inbox on a Node that cannot receive looked like an inbox. A checklist now sits under

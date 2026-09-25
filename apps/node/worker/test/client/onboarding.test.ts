@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { onboardingSteps, type Sources } from "../../src/client/app/onboarding.tsx";
-import type { DeliveryRow, DoctorReport, ProviderBinding, RoutingRow } from "../../src/client/app/api.ts";
+import type { DeliveryRow, DoctorReport, ProviderBinding, Provisioned, RoutingRow } from "../../src/client/app/api.ts";
 
 /**
  * Onboarding progress is derived from structured fields, and each step's three states are told apart.
@@ -30,6 +30,12 @@ const delivery = (over: Partial<DeliveryRow> = {}): DeliveryRow => ({
   consumers: ["mailda"], error: null, ...over,
 });
 const byId = (sources: Sources) => Object.fromEntries(onboardingSteps(sources).map((step) => [step.id, step.state]));
+const NONE: Provisioned = { receiving: null, sending: null, deliveryEvents: null };
+const RECORD: Provisioned = {
+  receiving: { domain: "mail.example.test", at: "2026-09-24T10:00:00Z", authority: "operator", address: "hello@mail.example.test" },
+  sending: { domain: "mail.example.test", at: "2026-09-24T10:01:00Z", authority: "operator", address: null },
+  deliveryEvents: null,
+};
 
 describe("onboarding steps", () => {
   it("is all done when every source says so", () => {
@@ -37,9 +43,34 @@ describe("onboarding steps", () => {
       .toEqual({ connected: "done", address: "done", routed: "done", sending: "done", outcomes: "done" });
   });
 
-  it("is not connected while a scope is missing, and the later steps are unknown, not to do", () => {
+  it("is not connected while a scope is missing, and without a record the later steps are unknown, not to do", () => {
     const steps = byId({ provider: binding({ scopesMissing: ["dns.write"] }), doctor: doctor(false) });
     expect(steps).toEqual({ connected: "todo", address: "todo", routed: "unknown", sending: "unknown", outcomes: "unknown" });
+  });
+
+  it("calls the connection optional, not to do, when there is no client at all", () => {
+    expect(byId({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: NONE }).connected).toBe("optional");
+    // The count leaves it out: four steps, and the fifth is optional.
+    const counted = onboardingSteps({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: NONE })
+      .filter((step) => step.state !== "optional");
+    expect(counted.map((step) => step.id)).toEqual(["address", "routed", "sending", "outcomes"]);
+  });
+
+  it("stands the audit trail's record in for the account when there is no grant, and calls it a record", () => {
+    const steps = onboardingSteps({ provider: binding({ state: "no_client" }), doctor: doctor(true), provisioned: RECORD });
+    const routed = steps.find((step) => step.id === "routed")!;
+    expect(routed.state).toBe("done");
+    expect(routed.detail).toContain("at install");
+    expect(routed.detail).toContain("a record, not a live read");
+    expect(steps.find((step) => step.id === "sending")!.state).toBe("done");
+    // Nothing recorded for delivery events is to do, not unknown: the record was read and had nothing.
+    expect(steps.find((step) => step.id === "outcomes")!.state).toBe("todo");
+  });
+
+  it("lets a live read win over the record once connected", () => {
+    const steps = byId({ provider: binding(), doctor: doctor(true), provisioned: RECORD, routing: [routing({ enabled: false })], delivery: [] });
+    expect(steps.routed).toBe("todo");
+    expect(steps.sending).toBe("todo");
   });
 
   it("tells an unreadable source from an empty one", () => {

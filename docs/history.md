@@ -3204,3 +3204,34 @@ token link, in Cloudflare's account form, opened an account picker and then a bl
 uses the documented user-token form with `accountId=*`, which puts the account inside the prefilled form,
 and says what to tick if the prefill still fails. And the inbox's search hint sat too close to the pill;
 it moved from a fifth to half a rem, the spacing scale's next step.
+
+## What the token was for: the grant leaves the critical path (25 September 2026)
+
+After a day of trying to make the token step friendlier, the founder asked the question that should have
+come first: what do we need the token for, scope by scope. The answer, read off the reach table the tests
+hold, was that five of the grant's eight scopes are things wrangler's login already carries, by a consent
+every install already has: zones, routing rules, routing settings, queues and subscriptions, sending. The
+three it lacks are raw DNS records, which the subdomain routing endpoint makes unnecessary because it writes
+the MX records itself, the registrar, which is domain purchase, and the plan read, which cannot be read
+anyway. So the grant was buying one thing: a browser doing those acts later, without a terminal.
+
+Measured on `mailda.site` with wrangler's token (`docs/receipts/wrangler-login-reach.md`): every read the
+Setup screen makes answered 200 except raw DNS and the registrar; enabling routing on a throwaway subdomain
+wrote three MX records visible in public DNS; a rule was written and deleted. One residue: the subdomain's
+records cannot be deleted with that token, so `probe.mailda.site` keeps three MX records until somebody
+removes them in the dashboard, and the settings table now says that taking a subdomain out of routing is a
+dashboard act. Tried to be tidy, and was not; written down instead.
+
+The design that follows is a split by what each side holds. The CLI has wrangler's consent, so `mailda
+install` now asks which domain the Node receives at and does receiving, sending and the subscription
+itself; `mailda upgrade` offers the same to a Node never set up. The browser has only what the Node holds,
+so the grant stays for changes made from Setup later, and becomes optional. There is one implementation:
+the Node's provisioning routes accept the operator's credential in two request headers for one request,
+and the two functions that turn a request into a credential are the whole seam. The audit entry names which
+authority acted. ADR 42 is amended rather than reopened; the grant is still the Node's own credential, it
+is just not on the way to a first message any more.
+
+One honesty rule came with it. The progress list read receiving, sending and outcomes through the grant,
+which a Node set up at install may never hold. It now falls back to `provisioned` on `GET /api/provider`,
+the latest act of each kind from the audit trail with its date and authority, and says in those words that
+it is a record of an act and not a live read.
