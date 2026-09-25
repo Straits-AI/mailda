@@ -54,7 +54,7 @@ export function catchAllLine(catchAll) {
 export function domainChoices(zones) {
   return [
     ...zones.map((zone) => ({ label: `${zone.name}   (its own name: a catch-all can route every address here)`, value: zone.name })),
-    { label: "a subdomain of one of these, typed (one rule per address)", value: "typed" },
+    { label: "a subdomain, such as mail.example.com: pick its zone, then type the name (one rule per address)", value: "typed" },
     { label: "skip for now: the Node cannot receive mail until this is done", value: "" },
   ];
 }
@@ -77,9 +77,15 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     const zones = await zonesOf(accountId, token);
     if (zones.length === 0) process.stdout.write("   (no zone could be listed with this token; the domain is typed)\n");
     const picked = zones.length === 0 ? "typed" : await choose("\n   which domain should this Node receive mail at?", domainChoices(zones));
-    domain = picked === "typed"
-      ? (await ask("   the subdomain (e.g. mail.example.com; Enter to skip): ")).trim().toLowerCase()
-      : picked;
+    if (picked !== "typed") domain = picked;
+    else if (zones.length === 0) domain = (await ask("   the domain (e.g. mail.example.com; Enter to skip): ")).trim().toLowerCase();
+    else {
+      // The zone is pointed at and only the label is typed: a subdomain spelled whole is a typo waiting to
+      // happen, and the zone decides which account records it lands in.
+      const zone = zones.length === 1 ? zones[0].name : await choose("\n   under which zone?", zones.map((one) => ({ label: one.name, value: one.name })));
+      const label = (await ask(`   the subdomain's name under ${zone} (e.g. mail; Enter to skip): `)).trim().toLowerCase().replace(/\.$/, "");
+      domain = label === "" ? "" : label.endsWith(`.${zone}`) ? label : `${label}.${zone}`;
+    }
   }
   if (domain === "") {
     process.stdout.write(
