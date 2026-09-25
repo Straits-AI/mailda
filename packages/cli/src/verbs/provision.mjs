@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 
-import { api, capture, fail, wrapAt } from "../support.mjs";
+import { api, capture, choose, fail, wrapAt } from "../support.mjs";
 import { tokenFromWranglerConfig, wranglerConfigPaths } from "../wrangler-config.mjs";
 
 /**
@@ -45,29 +45,47 @@ export function catchAllLine(catchAll) {
   return `${catchAll.action}${to} (${catchAll.enabled ? "enabled" : "disabled"})`;
 }
 
+/**
+ * The rows of the domain picker, from the zones the token can see. Pure, so the shape is tested: every
+ * zone is a row (an apex, where a catch-all is on offer), then "a subdomain, typed", then an explicit skip
+ * that says what it costs. Three runs on 25 September 2026 ended in "skipped" because the question said
+ * "Enter to skip" under a prompt a person had to spell a domain into; a list is answered by pointing.
+ */
+export function domainChoices(zones) {
+  return [
+    ...zones.map((zone) => ({ label: `${zone.name}   (its own name: a catch-all can route every address here)`, value: zone.name })),
+    { label: "a subdomain of one of these, typed (one rule per address)", value: "typed" },
+    { label: "skip for now: the Node cannot receive mail until this is done", value: "" },
+  ];
+}
+
+/** The zones the operator's token can see in this account, or an empty list when the read fails. */
+async function zonesOf(accountId, token) {
+  const response = await fetch(`https://api.cloudflare.com/client/v4/zones?account.id=${encodeURIComponent(accountId)}&per_page=50`, {
+    headers: { authorization: `Bearer ${token}` },
+  }).catch(() => null);
+  const body = await response?.json().catch(() => ({}));
+  const zones = Array.isArray(body?.result) ? body.result : [];
+  return zones.filter((one) => typeof one?.name === "string").map((one) => ({ name: one.name }));
+}
+
 export async function provisionNode({ origin, cookie, accountId, token, yes, ask }) {
   const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false };
-  /*
-   * The skip is a word, not an empty line. Twice on 25 September 2026 this question answered itself with
-   * an empty line the moment it was asked, on a Mac, after a two-minute deploy, and the run said "skipped"
-   * as if a person had chosen that. The cause is not reproduced on Linux. So an empty answer that arrives
-   * faster than anyone could press a key is treated as noise: said aloud, and asked again, three times at
-   * most, and "skip" is what skipping takes.
-   */
   let domain = "";
   if (yes) domain = (process.env.MAILDA_DOMAIN ?? "").trim().toLowerCase();
   else {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const asked = Date.now();
-      const answer = (await ask("   which domain should this Node receive mail at? (type skip to skip): ")).trim().toLowerCase();
-      if (answer !== "" && answer !== "skip") { domain = answer; break; }
-      if (answer === "skip") break;
-      const elapsed = Date.now() - asked;
-      process.stdout.write(`   an empty line arrived ${elapsed} ms after the question${elapsed < 400 ? ", before anyone could have typed" : ""}; asking again.\n`);
-    }
+    const zones = await zonesOf(accountId, token);
+    if (zones.length === 0) process.stdout.write("   (no zone could be listed with this token; the domain is typed)\n");
+    const picked = zones.length === 0 ? "typed" : await choose("\n   which domain should this Node receive mail at?", domainChoices(zones));
+    domain = picked === "typed"
+      ? (await ask("   the subdomain (e.g. mail.example.com; Enter to skip): ")).trim().toLowerCase()
+      : picked;
   }
   if (domain === "") {
-    process.stdout.write("   skipped; the Setup screen in the Node, or `mailda setup`, does this later.\n");
+    process.stdout.write(
+      "   skipped. This Node cannot receive mail until a domain is routed to it: the app shows this step\n"
+      + "   instead of an inbox, and `pnpm mailda setup` asks again without redeploying.\n",
+    );
     return done;
   }
   const address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`   address to receive at [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
@@ -113,11 +131,13 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
       if (proposal.apex === true) {
         catchAll = yes
           ? process.env.MAILDA_CATCH_ALL === "1"
-          : /^y(es)?$/i.test((await ask(
-            `     ${domain} is a zone's own name. Route every address at it to this Node (a catch-all)?\n`
-            + `     Its catch-all currently: ${catchAllLine(proposal.catchAll ?? null)}.\n`
-            + "     Addresses are then managed inside the Node and unknown ones bounce. [y/N]: ",
-          )).trim());
+          : await choose(
+            `\n     ${domain} is a zone's own name. Its catch-all today: ${catchAllLine(proposal.catchAll ?? null)}.\n     How should mail reach this Node?`,
+            [
+              { label: "every address at it: take the catch-all; addresses live in the Node, unknown ones bounce", value: true },
+              { label: `${address} only: one rule; each further address needs its own`, value: false },
+            ],
+          );
         if (!catchAll) {
           process.stdout.write(`     literal   a rule for ${address} only; each further address needs its own\n`
             + `               (\`mailda provider --onboard-receiving ${domain} --address <a>\`), or the catch-all later\n`);

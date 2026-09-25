@@ -302,11 +302,11 @@ export async function ask(prompt) {
 /**
  * Discards keystrokes typed before a question was asked.
  *
- * The first real upgrade (25 September 2026) deployed for two minutes and then asked "which domain should
- * this Node receive mail at? (Enter to skip)", and the question answered itself: an Enter pressed while the
- * deploy scrolled had sat in the input buffer, and a question that treats an empty line as "skip" took it.
- * A person cannot have meant an answer to a question they had not yet seen, so whatever is buffered when a
- * question is about to be asked is thrown away. `readSecret` in support.mjs does the same.
+ * Written on 25 September 2026 for a question that seemed to answer itself after a two-minute deploy. The
+ * real cause turned out to be the prompt ("Enter to skip", under a domain a person had to spell), and the
+ * question is a picker now; this stays because it is right on its own terms: a person cannot have meant an
+ * answer to a question they had not yet seen, so whatever is buffered when a question is about to be asked
+ * is thrown away. `readSecret` in support.mjs does the same.
  */
 export function drainTypeahead() {
   /*
