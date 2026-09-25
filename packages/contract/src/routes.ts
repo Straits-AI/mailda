@@ -697,8 +697,17 @@ export const ROUTES = [
     authority: { scope: "organization", allOf: ["org.admin"] },
     method: "POST", path: "/api/provider/receiving",
     summary: "Write the MX records a subdomain needs and route an address at this Node, refusing unless the "
-      + "digest matches and confirming the records landed before writing the rule",
+      + "digest matches and confirming the records landed before writing the rule. On an apex, catchAll "
+      + "takes over the zone's catch-all instead, recording what it pointed at before",
     request: S.providerReceivingRequest, response: S.providerReceivingOutcomeResponse,
+  },
+  {
+    authority: { scope: "organization", allOf: ["org.admin"] },
+    method: "POST", path: "/api/addresses",
+    summary: "Add an address to a mailbox and, in the same act, route it here: nothing to write when the "
+      + "domain's catch-all already points at this Node, a literal rule otherwise, and a named reason when "
+      + "no credential could write one",
+    request: S.addressCreateRequest, response: S.addressCreatedResponse,
   },
   {
     authority: { scope: "organization", allOf: ["org.admin"] },

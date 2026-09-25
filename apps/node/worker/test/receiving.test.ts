@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beginAuthorization, completeAuthorization, registerClient,
 } from "../src/provider/cloudflare-grant.ts";
-import { onboardReceiving, receivingProposalFor } from "../src/provider/receiving.ts";
+import { addAddress, onboardReceiving, receivingProposalFor } from "../src/provider/receiving.ts";
+import { putBackRule } from "../src/provider/routing-rules.ts";
 
 /**
  * Pointing a subdomain at this Node to receive (#163 L2), and the inert rule it exists to prevent.
@@ -444,5 +445,157 @@ describe("onboarding it", () => {
     expect(detail.zone).toBe("example.test");
     expect(detail.creates).toHaveLength(3);
     expect(detail.address).toBe("restore@mail.example.test");
+  });
+});
+
+/**
+ * The apex catch-all (25 September 2026). Cloudflare's catch-all supports apex domains only, so one rule
+ * can route every address at the apex here, and addresses are then managed inside the Node — which is
+ * safe because `email()` bounces what it does not know. What would render plausibly and be wrong: a
+ * subdomain accepting `catchAll`; the take-over not recording what the catch-all pointed at; a put-back
+ * writing to `/rules/{id}` instead of the catch-all's own endpoint; and an address added under a catch-all
+ * domain trying to write a rule anyway.
+ */
+describe("the apex catch-all", () => {
+  /** `serving()` plus the catch-all endpoint: GET reads it, PUT records what was written and reads back as it. */
+  function servingApex(current: { action: string; value?: string[]; enabled: boolean }) {
+    const calls = serving({ existingMx: [] });
+    const base = globalThis.fetch;
+    let catchAll = { name: "", enabled: current.enabled, matchers: [{ type: "all" }], actions: [{ type: current.action, ...(current.value === undefined ? {} : { value: current.value }) }] };
+    const puts: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      if (path.endsWith("/email/routing/rules/catch_all")) {
+        if (init?.method === "PUT") { puts.push(String(init.body)); catchAll = { ...catchAll, ...(JSON.parse(String(init.body)) as typeof catchAll) }; }
+        return new Response(JSON.stringify({ success: true, result: { id: "catch_all_id", ...catchAll } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    return { calls, puts, current: () => catchAll };
+  }
+
+  it("reports the apex and what its catch-all points at today, and nothing of the kind on a subdomain", async () => {
+    servingApex({ action: "worker", value: ["butler"], enabled: true });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    expect(apex.apex).toBe(true);
+    expect(apex.catchAll).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
+    const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    expect(sub.apex).toBe(false);
+    expect(sub.catchAll).toBeNull();
+  });
+
+  it("refuses catchAll on a subdomain, by name", async () => {
+    servingApex({ action: "drop", enabled: false });
+    const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
+    await expect(onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", sub.digest, "a@mail.example.test", null, true))
+      .rejects.toThrow(/E_RECEIVING_CATCH_ALL_NOT_APEX/);
+  });
+
+  it("takes the catch-all over on the apex: records what it was, writes this Worker, reads it back, writes no MX", async () => {
+    const { calls, puts } = servingApex({ action: "worker", value: ["butler"], enabled: true });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    const outcome = await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    expect(outcome.rule).toBe("catch-all");
+    expect(outcome.catchAll?.before).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
+    expect(outcome.catchAll?.after.destinations).toEqual([testEnv.WORKER_NAME]);
+    expect(outcome.confirmed).toEqual([`catch-all → ${testEnv.WORKER_NAME}`]);
+    expect(outcome.note).toContain("butler");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!)).toMatchObject({ enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] });
+    // No subdomain records and no literal rule: the catch-all is the whole routing.
+    expect(posted(calls, "/dns_records")).toHaveLength(0);
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(0);
+    // The address files, and the two entries say who did what.
+    const address = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ?").bind(ORG).first<{ address: string }>();
+    expect(address?.address).toBe("hello@example.test");
+    const entries = await testEnv.CATALOG.prepare("SELECT action, subject, detail FROM audit_entries WHERE org_id = ? ORDER BY seq").bind(ORG).all<{ action: string; subject: string; detail: string }>();
+    const taken = entries.results.find((one) => one.action === "provider.catch_all_taken_over");
+    expect(taken?.subject).toBe("example.test");
+    expect(JSON.parse(taken!.detail).before).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
+    const onboarded = entries.results.find((one) => one.action === "provider.receiving_onboarded");
+    expect(JSON.parse(onboarded!.detail).catchAll).toBe(true);
+  });
+
+  it("puts the catch-all back to what the take-over recorded, through the catch-all's own endpoint", async () => {
+    const { puts } = servingApex({ action: "worker", value: ["butler"], enabled: true });
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    // The listing shows the catch-all as a rule with `to: "*"`, and put-back is addressed by its id.
+    const { routingRulesFor } = await import("../src/provider/routing-rules.ts");
+    vi.stubGlobal("fetch", ((base) => async (url: string, init?: RequestInit) => {
+      const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+      // The listing is paged (`?page=`), so the match allows a query string and excludes `/rules/{id}`.
+      if (/\/email\/routing\/rules(\?|$)/.test(path) && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify({ success: true, result: [{ id: "catch_all_id", name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    })(globalThis.fetch));
+    const listed = await routingRulesFor(testEnv, atTime(AT + 5000), ORG, "example.test");
+    const rule = listed.rules.find((one) => one.catchAll)!;
+    expect(rule.ours).toBe(true);
+    const back = await putBackRule(testEnv, atTime(AT + 6000), ORG, ADMIN, "example.test", rule.id);
+    expect(back.after).toEqual({ action: "worker", destinations: ["butler"] });
+    expect(puts).toHaveLength(2);
+    expect(JSON.parse(puts[1]!)).toMatchObject({ enabled: true, actions: [{ type: "worker", value: ["butler"] }] });
+    const entry = await testEnv.CATALOG.prepare("SELECT subject FROM audit_entries WHERE org_id = ? AND action = 'provider.catch_all_put_back'").bind(ORG).first<{ subject: string }>();
+    expect(entry?.subject).toBe("example.test");
+  });
+});
+
+describe("adding an address routes it in the same act", () => {
+  it("writes nothing under a domain whose catch-all was taken over, and says so", async () => {
+    const { calls } = (() => {
+      const calls = serving({ existingMx: [] });
+      const base = globalThis.fetch;
+      vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        const path = String(url).replace("https://api.cloudflare.com/client/v4", "");
+        if (path.endsWith("/rules/catch_all")) return new Response(JSON.stringify({ success: true, result: { enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] } }), { status: 200, headers: { "content-type": "application/json" } });
+        return base(url, init);
+      });
+      return { calls };
+    })();
+    const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
+    await onboardReceiving(testEnv, atTime(AT + 4000), ORG, ADMIN, "example.test", apex.digest, "hello@example.test", null, true);
+    const before = calls.length;
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "Sales@Example.test", null);
+    expect(added.routing.state).toBe("catch_all");
+    expect(added.address.address).toBe("sales@example.test");
+    expect(calls.length).toBe(before);
+    const rows = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ? ORDER BY address").bind(ORG).all<{ address: string }>();
+    expect(rows.results.map((one) => one.address)).toEqual(["hello@example.test", "sales@example.test"]);
+  });
+
+  it("writes a literal rule on a subdomain routed by rules, and keeps an existing one", async () => {
+    const calls = serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }] });
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(added.routing.state).toBe("rule_written");
+    expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
+    expect(JSON.parse(posted(calls, "/email/routing/rules")[0]!.body!)).toMatchObject({ matchers: [{ type: "literal", field: "to", value: "sales@mail.example.test" }] });
+  });
+
+  it("names not_written with Cloudflare's own words when the rule write is refused", async () => {
+    serving({ existingMx: [{ content: "route1.mx.cloudflare.net." }] });
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/email/routing/rules") && init?.method === "POST") {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 2015, message: "rules limit reached" }] }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+      return base(url, init);
+    });
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(added.routing.state).toBe("not_written");
+    expect(added.routing.detail).toContain("2015 rules limit reached");
+    expect(added.routing.detail).toContain("mailda provider --onboard-receiving");
+  });
+
+  it("names not_written and the next step when no credential can write a rule, and still adds the address", async () => {
+    await testEnv.CATALOG.prepare("UPDATE provider_binding SET access_token = NULL WHERE id = 1").run();
+    const added = await addAddress(testEnv, atTime(AT + 5000), ORG, ADMIN, "sales@mail.example.test", null);
+    expect(added.routing.state).toBe("not_written");
+    expect(added.routing.detail).toContain("mailda provider --onboard-receiving mail.example.test --address sales@mail.example.test");
+    const row = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ?").bind(ORG).first<{ address: string }>();
+    expect(row?.address).toBe("sales@mail.example.test");
+    const entry = await testEnv.CATALOG.prepare("SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'address.added'").bind(ORG).first<{ detail: string }>();
+    expect(JSON.parse(entry!.detail).routing).toBe("not_written");
   });
 });

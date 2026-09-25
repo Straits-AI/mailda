@@ -676,6 +676,8 @@ form > .hint { margin: -.6rem 0 0; }
 .onboarding ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
 .onboarding li { display: grid; grid-template-columns: auto auto 1fr; gap: .75rem; align-items: baseline; }
 .onboarding-detail { font-size: .82rem; }
+.setup-catch-all { margin: .75rem 0; }
+.setup-catch-all .field-row { display: flex; gap: .5rem; align-items: baseline; }
 .setup-block { margin-top: 2rem; border-top: 1px solid var(--rule-strong); padding-top: 1rem; }
 .setup-block h2 { margin: 0 0 .4rem; font-size: 1.05rem; }
 .setup-block h3 { margin: .8rem 0 .4rem; font-size: .95rem; }

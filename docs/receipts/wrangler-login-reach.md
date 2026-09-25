@@ -12,6 +12,7 @@ values:
   wrangler.login_deletes_subdomain_routing_records: 0
   wrangler.login_reaches_raw_dns_records: 0
   wrangler.login_reaches_registrar: 0
+  wrangler.login_writes_zone_catch_all: 1
 ---
 
 # What wrangler's login can do in the account, measured for the install
@@ -42,6 +43,7 @@ account `1e0170…`, on the zone `mailda.site`. Reads first, then writes on the 
 | `/zones/{zone}/email/routing/rules` (a disabled `drop` rule) | POST | **200**, with an id |
 | `/zones/{zone}/email/routing/rules/{id}` | DELETE | 200 |
 | `/zones/{zone}/email/routing/dns` (body `{name}` and `?name=`) | DELETE | **403** `10000 Authentication error` |
+| `/zones/{zone}/email/routing/rules/catch_all` (mailda.site's own content: disabled, `drop`) | PUT | **200**; read back unchanged. A no-op write, chosen so the permission is measured without moving any mail |
 
 The apex `mailda.site` was untouched throughout; its MX records were the same before and after.
 
@@ -59,7 +61,8 @@ first install runs them, and that install is where they get measured. And nothin
 grant: a Node that holds one still reaches exactly what `cloudflare-oauth-scopes.md` says.
 
 **The boundary it draws.** Wrangler's token may create a subdomain's routing records and may not remove
-them. Taking a subdomain back out of Email Routing is therefore a dashboard act, or an act of a grant
+them, and it may write a zone's catch-all (measured later the same day, when the apex catch-all became the
+receiving step's offer for a zone's own name). Taking a subdomain back out of Email Routing is therefore a dashboard act, or an act of a grant
 holding `dns.write`, and the settings table says so rather than offering an undo the install cannot make.
 
 **Residue.** The cleanup's last step was refused, so `probe.mailda.site` kept its three MX records; they

@@ -1,10 +1,11 @@
 import { operatorOf } from "./cloudflare-api.ts";
+import { providerStatus } from "./grant-oauth.ts";
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
-import { cloudflareGet, cloudflareGetAll, cloudflarePost, zoneFor } from "./cloudflare-grant.ts";
+import { cloudflareGet, cloudflareGetAll, cloudflarePost, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
 
 /**
  * Onboarding a subdomain to **receive** mail (#163 L2, and the half #92's drill ran aground on).
@@ -38,8 +39,15 @@ import { cloudflareGet, cloudflareGetAll, cloudflarePost, zoneFor } from "./clou
  * that made the sending onboard a single `POST` rather than a record list.
  */
 
+/** A zone's catch-all rule as Cloudflare holds it. */
+export interface CatchAllRule { action: string; destinations: string[]; enabled: boolean }
+
 export interface ReceivingProposal {
   domain: string;
+  /** The domain is the zone's own name, so the catch-all is available (Cloudflare: apex only). */
+  apex: boolean;
+  /** The zone's catch-all as it stands, read when `apex`; what a take-over replaces. */
+  catchAll: CatchAllRule | null;
   zone: string | null;
   zoneId: string | null;
   /** Whether the zone itself has Email Routing on. A subdomain cannot receive if its zone does not. */
@@ -101,8 +109,8 @@ export async function receivingProposalFor(
 ): Promise<ReceivingProposal> {
   const blank = async (over: Partial<Omit<ReceivingProposal, "digest">>): Promise<ReceivingProposal> => {
     const body = {
-      domain, zone: null, zoneId: null, zoneRouting: null, enablesZone: null, creates: [], present: [],
-      rule: null, refusal: null, ...over,
+      domain, apex: false, catchAll: null, zone: null, zoneId: null, zoneRouting: null, enablesZone: null,
+      creates: [], present: [], rule: null, refusal: null, ...over,
     };
     return { ...body, digest: await digestOf(body) };
   };
@@ -175,7 +183,16 @@ export async function receivingProposalFor(
    * the rule is what the confirm then creates. MX pointing anywhere else is still somebody's mail host.
    */
   const ours = present.length > 0 && present.every((one) => /\.mx\.cloudflare\.net\.?$/.test(one));
+  /*
+   * The apex, and its catch-all (25 September 2026). Cloudflare's catch-all "supports apex domains only",
+   * so only here can one rule route every address to this Node; the current catch-all is read so an operator
+   * choosing that sees what it replaces. A subdomain's MX is Cloudflare's own routing hosts, same as the
+   * apex's, so `present` on an apex that already routes reads as `ours` and the refusal below stays quiet.
+   */
+  const apex = domain.toLowerCase() === zone.name.toLowerCase();
+  const catchAll = apex ? await catchAllOf(env, ctx, orgId, zone.id) : null;
   const proposal = await blank({
+    apex, catchAll,
     zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
     creates: present.length > 0 ? [] : creates,
     present,
@@ -197,6 +214,18 @@ export interface ReceivingOutcome {
   confirmed: string[];
   rule: string | null;
   note: string | null;
+  /** Set when the catch-all was taken over: what it pointed at before, and what it points at now. */
+  catchAll: { before: CatchAllRule; after: CatchAllRule } | null;
+}
+
+/** The zone's catch-all, read from its own endpoint; null when it cannot be read. */
+export async function catchAllOf(
+  env: Env, ctx: Ctx, orgId: string, zoneId: string,
+): Promise<CatchAllRule | null> {
+  const read = await cloudflareGet<CloudflareRule>(env, ctx, orgId, `/zones/${zoneId}/email/routing/rules/catch_all`);
+  if (!read.ok) return null;
+  const action = read.result.actions?.[0];
+  return { action: action?.type ?? "?", destinations: action?.value ?? [], enabled: read.result.enabled === true };
 }
 
 /**
@@ -240,8 +269,16 @@ export async function mailboxForAddress(
 export async function onboardReceiving(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string,
   domain: string, digest: string, mailboxAddress: string, mailboxId: string | null = null,
+  catchAll = false,
 ): Promise<ReceivingOutcome> {
   const proposal = await receivingProposalFor(env, ctx, orgId, domain);
+  if (catchAll && !proposal.apex) {
+    throw unprocessable("E_RECEIVING_CATCH_ALL_NOT_APEX", {
+      what: `${domain} is not the apex of its zone${proposal.zone === null ? "" : ` (${proposal.zone})`}`,
+      why: "Cloudflare's catch-all supports apex domains only; a subdomain routes by one literal rule per address",
+      fix: `confirm without catchAll, which writes a rule for ${mailboxAddress}, or onboard ${proposal.zone ?? "the apex"} itself`,
+    });
+  }
   if (proposal.refusal !== null) {
     throw unprocessable("E_RECEIVING_WILL_NOT_ONBOARD", {
       what: `this Node will not onboard ${domain} for receiving`,
@@ -295,6 +332,8 @@ export async function onboardReceiving(
       mailboxId: mailbox.id,
       // Which credential did this: the Node's grant, or an operator's own token carried on the request.
       authority: operatorOf(ctx) === null ? "grant" : "operator",
+      // True when the zone's catch-all is what routes here, so adding an address later writes no rule.
+      catchAll,
     },
   }, (entry) => [
     env.CATALOG.prepare(
@@ -341,7 +380,7 @@ export async function onboardReceiving(
     }>>(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/dns`);
     if (!now.ok) {
       return {
-        domain, written: [], confirmed: [], rule: null,
+        domain, written: [], confirmed: [], rule: null, catchAll: null,
         note: `Email Routing was enabled on ${proposal.enablesZone}, and the records it requires could not `
           + `then be read: ${now.error}. Nothing was written on ${domain} and no rule was created — run the `
           + "proposal again, which will now see a routing zone.",
@@ -352,6 +391,37 @@ export async function onboardReceiving(
       .map((one) => ({
         type: "MX", name: domain, content: one.content ?? "?", priority: one.priority ?? null,
       }));
+  }
+
+  /*
+   * The catch-all path (25 September 2026). No MX is written: the apex's records are Cloudflare's own and
+   * came with enabling the zone, and the zone was read back enabled above. The catch-all is replaced with
+   * this Worker, recorded first with what it pointed at, and read back: a PUT that answered 200 is not the
+   * catch-all any more than a POST is a record. Literal rules outrank the catch-all, so mail already routed
+   * by name goes on exactly as before; only unmatched mail changes hands, and this Node bounces what it
+   * does not know.
+   */
+  if (catchAll) {
+    const worker = workerNameFor(env);
+    const before = proposal.catchAll ?? { action: "?", destinations: [], enabled: false };
+    const after: CatchAllRule = { action: "worker", destinations: [worker], enabled: true };
+    await auditedBatch(env, ctx, orgId, {
+      action: "provider.catch_all_taken_over", outcome: "ok", actorUserId, subject: proposal.zone ?? domain,
+      detail: { zone: proposal.zone, before, after, authority: operatorOf(ctx) === null ? "grant" : "operator" },
+    }, (entry) => [entry]);
+    await cloudflarePut(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules/catch_all`, {
+      name: "", enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [worker] }],
+    });
+    const now = await catchAllOf(env, ctx, orgId, proposal.zoneId);
+    const confirmed = now !== null && now.enabled && now.action === "worker" && now.destinations.includes(worker);
+    return {
+      domain, written: [], confirmed: confirmed ? ["catch-all → " + worker] : [], rule: "catch-all",
+      catchAll: { before, after: now ?? after },
+      note: confirmed
+        ? `the catch-all on ${proposal.zone} now routes to this Node; before, it was ${before.enabled ? `${before.action}${before.destinations.length === 0 ? "" : ` → ${before.destinations.join(", ")}`}` : "disabled"}. `
+          + "Every address this Node knows files; every other address on the apex bounces as an unknown recipient."
+        : `the catch-all was written but did not read back as pointing here${now === null ? "" : ` (${now.action} → ${now.destinations.join(", ")}, enabled=${String(now.enabled)})`}; check the zone before relying on it.`,
+    };
   }
 
   const written: string[] = [];
@@ -375,7 +445,7 @@ export async function onboardReceiving(
   const confirmed = back.ok ? back.result.map((one) => one.content ?? "?") : [];
   if (confirmed.length === 0) {
     return {
-      domain, written, confirmed, rule: null,
+      domain, written, confirmed, rule: null, catchAll: null,
       note: "the MX records were accepted but read back empty, so no routing rule was created. A rule "
         + "without records is accepted by Cloudflare and never matches, which is the state this refuses to "
         + "leave behind. Check the zone before retrying.",
@@ -388,23 +458,10 @@ export async function onboardReceiving(
    * whose first had written the rule and whose second had registered the address. The check is on the
    * address, so a rule for a different address on the same domain still gets its own.
    */
-  const rules = await routingRulesOf(env, ctx, orgId, proposal.zoneId);
-  const existing = rules.ok
-    ? rules.result.find((one) => (one.matchers ?? []).some((m) =>
-      m.field === "to" && typeof m.value === "string" && m.value.toLowerCase() === normalized))
-    : undefined;
-  const rule = existing ?? await cloudflarePost<{ name?: string }>(
-    env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/rules`,
-    {
-      name: `mailda ${domain}`,
-      enabled: true,
-      matchers: [{ type: "literal", field: "to", value: normalized }],
-      actions: [{ type: "worker", value: [workerNameFor(env)] }],
-    },
-  );
+  const { rule, existing } = await ensureLiteralRule(env, ctx, orgId, proposal.zoneId, domain, normalized);
 
   return {
-    domain, written, confirmed, rule: rule.name ?? null,
+    domain, written, confirmed, rule: rule.name ?? null, catchAll: null,
     note: existing !== undefined
       ? `a rule named ${existing.name ?? "?"} already routed ${normalized}, and was kept rather than duplicated.`
       : proposal.rule === null
@@ -412,6 +469,110 @@ export async function onboardReceiving(
         : `a routing rule named ${proposal.rule} already existed for this domain. It was inert until now — `
           + "the records it needed did not exist — and both rules will match from here.",
   };
+}
+
+/**
+ * One literal rule routing `address` to this Worker, kept if it already exists (Cloudflare refuses the
+ * duplicate, `2014 Duplicated Zone rule`, met on the #92 drill). Shared by the receiving onboard and by
+ * adding an address (25 September 2026), which is the same act minus the records.
+ */
+export async function ensureLiteralRule(
+  env: Env, ctx: Ctx, orgId: string, zoneId: string, domain: string, address: string,
+): Promise<{ rule: { name?: string }; existing: CloudflareRule | undefined }> {
+  const rules = await routingRulesOf(env, ctx, orgId, zoneId);
+  const existing = rules.ok
+    ? rules.result.find((one) => (one.matchers ?? []).some((m) =>
+      m.field === "to" && typeof m.value === "string" && m.value.toLowerCase() === address))
+    : undefined;
+  const rule = existing ?? await cloudflarePost<{ name?: string }>(
+    env, ctx, orgId, `/zones/${zoneId}/email/routing/rules`,
+    {
+      name: `mailda ${domain}`,
+      enabled: true,
+      matchers: [{ type: "literal", field: "to", value: address }],
+      actions: [{ type: "worker", value: [workerNameFor(env)] }],
+    },
+  );
+  return { rule, existing };
+}
+
+/**
+ * An address on a mailbox, and the routing for it, in one act (25 September 2026).
+ *
+ * The address is written first, in the batch with its audit entry, so the Node knows the recipient before
+ * anything can deliver one. Then the routing: nothing to write when this domain's catch-all was taken over
+ * (`receiving_onboarded` with `catchAll: true`, the latest entry for the domain); a literal rule otherwise,
+ * through whatever credential the request carries; and when none can — no grant, no operator token, or
+ * Cloudflare refuses — the answer names it and the next step, because an address the Node knows and
+ * Cloudflare does not route is silent, which is the one state this refuses to leave unsaid.
+ */
+export async function addAddress(
+  env: Env, ctx: Ctx, orgId: string, actorUserId: string, address: string, mailboxId: string | null,
+): Promise<{
+  address: { id: string; address: string; mailboxId: string };
+  routing: { state: "catch_all" | "rule_written" | "not_written"; detail: string };
+}> {
+  const normalized = address.trim().toLowerCase();
+  const at = normalized.indexOf("@");
+  if (at < 1 || at === normalized.length - 1) {
+    throw unprocessable("E_ADDRESS_MALFORMED", {
+      what: `${JSON.stringify(address)} is not an address`,
+      why: "an address is local@domain, and the domain is what decides how it is routed",
+      fix: "pass an address such as hello@mail.example.com",
+    });
+  }
+  const domain = normalized.slice(at + 1);
+  const mailbox = await mailboxForAddress(env, orgId, mailboxId);
+  const id = ctx.id("addr");
+
+  const routedByCatchAll = await env.CATALOG.prepare(
+    "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'provider.receiving_onboarded' "
+    + "AND subject = ? ORDER BY seq DESC LIMIT 1",
+  ).bind(orgId, domain).first<{ detail: string | null }>().then((row) => {
+    try { return (JSON.parse(row?.detail ?? "{}") as { catchAll?: unknown }).catchAll === true; } catch { return false; }
+  });
+
+  let routing: { state: "catch_all" | "rule_written" | "not_written"; detail: string };
+  if (routedByCatchAll) {
+    routing = { state: "catch_all", detail: `the catch-all on ${domain} routes every address here; nothing to write` };
+  } else {
+    routing = await (async () => {
+      /*
+       * Said first, in its own words: a Node with no grant and no operator token has no credential at all,
+       * and `zoneFor` would report the account as unresolved, which names the wrong next step (measured in
+       * a browser on 25 September 2026: the line pointed at resolve-account on a Node that had never connected).
+       */
+      if (operatorOf(ctx) === null && (await providerStatus(env)).state !== "consent_granted") {
+        return { state: "not_written" as const, detail: "this Node holds no Cloudflare grant and no operator credential came with the request" };
+      }
+      const carrying = await zoneFor(env, ctx, orgId, domain).catch((error: Error) => ({ ok: false as const, error: error.message }));
+      if (!carrying.ok) return { state: "not_written" as const, detail: carrying.error };
+      if (carrying.zone === null) return { state: "not_written" as const, detail: `no zone in this account carries ${domain}` };
+      try {
+        const { existing } = await ensureLiteralRule(env, ctx, orgId, carrying.zone.id, domain, normalized);
+        return { state: "rule_written" as const, detail: existing === undefined ? `a rule now routes ${normalized} to this Node` : `a rule already routed ${normalized} here and was kept` };
+      } catch (error) {
+        return { state: "not_written" as const, detail: (error as Error).message };
+      }
+    })();
+    if (routing.state === "not_written") {
+      routing.detail += `. Mail for ${normalized} does not reach this Node until a rule routes it: `
+        + `mailda provider --onboard-receiving ${domain} --address ${normalized} --url <this Node>`;
+    }
+  }
+
+  await auditedBatch(env, ctx, orgId, {
+    action: "address.added", outcome: "ok", actorUserId, subject: normalized,
+    detail: { mailboxId: mailbox.id, domain, routing: routing.state, routingDetail: routing.detail },
+  }, (entry) => [
+    env.CATALOG.prepare(
+      "INSERT OR IGNORE INTO addresses (id, org_id, address, mailbox_id, created_at) VALUES (?,?,?,?,?)",
+    ).bind(id, orgId, normalized, mailbox.id, new Date(ctx.now()).toISOString()),
+    entry,
+  ]);
+  const row = await env.CATALOG.prepare("SELECT id, mailbox_id FROM addresses WHERE org_id = ? AND address = ?")
+    .bind(orgId, normalized).first<{ id: string; mailbox_id: string }>();
+  return { address: { id: row?.id ?? id, address: normalized, mailboxId: row?.mailbox_id ?? mailbox.id }, routing };
 }
 
 /**

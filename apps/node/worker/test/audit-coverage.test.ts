@@ -206,7 +206,8 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
     exempt: "Written once inside agents' own audited mint, and named in that entry's detail. Nothing widens "
       + "it afterwards: the route that would does not exist, which is what 'pinned' means here.",
   },
-  addresses: { exempt: "Set at claim time and never since; claim itself is audited by node_claim." },
+  // Was exempt as "set at claim time and never since"; `POST /api/addresses` adds one and says how it is routed.
+  addresses: { actions: ["address.added"] },
   node_claim: { exempt: "One-time and self-evidencing: the row's existence is the record." },
   node_capabilities: { exempt: "A cache of what the platform allows, not a decision the Node made." },
   /*
@@ -254,6 +255,9 @@ const CLASSIFIED: Record<string, { actions: readonly string[] } | { exempt: stri
       "provider.receiving_onboarded",
       "provider.routing_rule_taken_over",
       "provider.routing_rule_put_back",
+      // The zone's catch-all pointed here and restored (25 September 2026), against the binding for the same reason.
+      "provider.catch_all_taken_over",
+      "provider.catch_all_put_back",
     ],
   },
   /*

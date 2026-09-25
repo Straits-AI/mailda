@@ -257,8 +257,25 @@ export const provider = {
         env, operatorCtx(request, clock), who.orgId, who.userId,
         String(body.domain ?? ""), String(body.digest ?? ""), String(body.address ?? ""),
         typeof body.mailboxId === "string" ? body.mailboxId : null,
+        body.catchAll === true,
       ),
     });
+  },
+
+  "POST /api/addresses": async ({ request, env, clock, who }) => {
+    if (!(await isAdmin(env, who.orgId, who.userId))) {
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }
+    /*
+     * An address and its routing in one act (25 September 2026). Reads the operator headers like the
+     * provisioning routes, because the rule it may write is the same rule the receiving step writes.
+     */
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const { addAddress } = await import("../provider/receiving.ts");
+    return Response.json(await addAddress(
+      env, operatorCtx(request, clock), who.orgId, who.userId,
+      String(body.address ?? ""), typeof body.mailboxId === "string" ? body.mailboxId : null,
+    ));
   },
 
   "GET /api/provider/routing-rules": async ({ request, env, clock, url, who }) => {

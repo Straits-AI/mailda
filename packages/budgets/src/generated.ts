@@ -336,6 +336,7 @@ export const BUDGETS = {
   "wrangler.login_deletes_subdomain_routing_records": 0,
   "wrangler.login_reaches_raw_dns_records": 0,
   "wrangler.login_reaches_registrar": 0,
+  "wrangler.login_writes_zone_catch_all": 1,
 } as const satisfies Record<string, number>;
 
 export type BudgetName = keyof typeof BUDGETS;
@@ -667,4 +668,5 @@ export const BUDGET_ORIGINS: Record<BudgetName, BudgetOrigin> = {
   "wrangler.login_deletes_subdomain_routing_records": { receipt: "docs/receipts/wrangler-login-reach.md", kind: "platform-limit", measuredOn: "2026-09-25", staleWhen: "wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record); Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar or raw DNS endpoints start answering an `email_routing:write`-shaped token" },
   "wrangler.login_reaches_raw_dns_records": { receipt: "docs/receipts/wrangler-login-reach.md", kind: "platform-limit", measuredOn: "2026-09-25", staleWhen: "wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record); Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar or raw DNS endpoints start answering an `email_routing:write`-shaped token" },
   "wrangler.login_reaches_registrar": { receipt: "docs/receipts/wrangler-login-reach.md", kind: "platform-limit", measuredOn: "2026-09-25", staleWhen: "wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record); Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar or raw DNS endpoints start answering an `email_routing:write`-shaped token" },
+  "wrangler.login_writes_zone_catch_all": { receipt: "docs/receipts/wrangler-login-reach.md", kind: "platform-limit", measuredOn: "2026-09-25", staleWhen: "wrangler's login scope list changes (24 scopes on 4.90.1; `wrangler login --scopes-list` is the record); Cloudflare changes which permission group governs POST or DELETE /zones/{zone_id}/email/routing/dns, or the routing rules endpoints, or /accounts/{account_id}/event_subscriptions/subscriptions; or the registrar or raw DNS endpoints start answering an `email_routing:write`-shaped token" },
 };

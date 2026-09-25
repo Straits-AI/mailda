@@ -138,13 +138,13 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
           domain: "mail.example.com", zone: "example.com", zoneId: "z1", zoneRouting: "ready",
           enablesZone: null,
           creates: [{ type: "MX", name: "mail.example.com", content: "route1.mx.cloudflare.net", priority: 9 }],
-          present: [], rule: null, digest: "d".repeat(64), refusal: null,
+          present: [], rule: null, digest: "d".repeat(64), refusal: null, apex: false, catchAll: null,
         },
       },
       outcome: {
         outcome: {
           domain: "mail.example.com", written: ["MX mail.example.com"],
-          confirmed: ["MX mail.example.com"], rule: "inbox@mail.example.com", note: null,
+          confirmed: ["MX mail.example.com"], rule: "inbox@mail.example.com", note: null, catchAll: null,
         },
       },
     });
@@ -195,7 +195,7 @@ describe("setting a Node up without the Cloudflare dashboard", () => {
         outcome: {
           domain: "mail.example.com", written: ["MX mail.example.com"],
           // The write answered 200 and the read-back found nothing, so the Node made no rule.
-          confirmed: [], rule: null, note: "The records were not visible when read back.",
+          confirmed: [], rule: null, note: "The records were not visible when read back.", catchAll: null,
         },
       },
     });
@@ -313,5 +313,66 @@ describe("the one-token path", () => {
     await waitFor(() => expect((screen.getByLabelText("API token") as HTMLInputElement).value).toBe(""));
     // The link is the Node's, not this file's: a URL written here would be the one that goes stale.
     expect(screen.getByText("open Cloudflare's token page with the permission filled in").getAttribute("href")).toBe(CEREMONY.token.url);
+  });
+});
+
+/**
+ * The apex catch-all (25 September 2026). Cloudflare's catch-all exists for apex zones only, so the box
+ * exists only when the proposal says apex; the current catch-all is shown in the proposal's words, because
+ * taking it over replaces somebody's rule; and `catchAll: true` travels only when ticked, since the Node
+ * refuses it off an apex and an absent key is the plain per-address rule.
+ */
+describe("the apex catch-all", () => {
+  beforeEach(reset);
+  const apex = {
+    proposal: {
+      domain: "example.com", zone: "example.com", zoneId: "z1", zoneRouting: "ready", enablesZone: null,
+      creates: [], present: ["route1.mx.cloudflare.net"], rule: null, digest: "e".repeat(64), refusal: null,
+      apex: true, catchAll: { action: "worker", destinations: ["butler"], enabled: true },
+    },
+  };
+  const takenOver = {
+    outcome: {
+      domain: "example.com", written: [], confirmed: ["route1.mx.cloudflare.net"], rule: "catch-all", note: null,
+      catchAll: { before: { action: "worker", destinations: ["butler"], enabled: true }, after: { action: "worker", destinations: ["mailda"], enabled: true } },
+    },
+  };
+
+  it("offers the box on an apex, names the current catch-all, and sends catchAll only when ticked", async () => {
+    mount({ receiving: apex, outcome: takenOver });
+    await propose("example.com", "hello@example.com");
+    const box = await screen.findByLabelText("Route every address at example.com to this Node (catch-all)");
+    expect(screen.getByText(/Currently: worker → butler, enabled\./)).toBeTruthy();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByText("do this"));
+    await waitFor(() => {
+      const posted = calls.find((one) => one.path === "/api/provider/receiving" && one.method === "POST");
+      expect(posted, "the confirmation was never sent").toBeDefined();
+      expect((posted!.body as { catchAll?: boolean }).catchAll).toBe(true);
+    });
+    // The outcome names what was replaced, so the operator can put it back knowingly.
+    expect(await screen.findByText(/The catch-all on example.com now routes to this Node \(before: worker → butler\)/)).toBeTruthy();
+  });
+
+  it("sends no catchAll key when the box is left alone", async () => {
+    mount({ receiving: apex, outcome: takenOver });
+    await propose("example.com", "hello@example.com");
+    await screen.findByLabelText("Route every address at example.com to this Node (catch-all)");
+    fireEvent.click(screen.getByText("do this"));
+    await waitFor(() => {
+      const posted = calls.find((one) => one.path === "/api/provider/receiving" && one.method === "POST");
+      expect(posted).toBeDefined();
+      expect("catchAll" in (posted!.body as object)).toBe(false);
+    });
+  });
+
+  it("says a subdomain gets one rule per address, and offers no box", async () => {
+    mount({
+      receiving: { proposal: { ...apex.proposal, domain: "mail.example.com", apex: false, catchAll: null } },
+      outcome: takenOver,
+    });
+    await propose("mail.example.com", "hello@mail.example.com");
+    expect(await screen.findByText(/mail.example.com is a subdomain, so each address gets its own rule/)).toBeTruthy();
+    expect(screen.queryByLabelText(/catch-all/)).toBeNull();
   });
 });

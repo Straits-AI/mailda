@@ -1202,12 +1202,21 @@ export class GeneratedClient extends Transport {
   }
 
   /**
-   * Write the MX records a subdomain needs and route an address at this Node, refusing unless the digest matches and confirming the records landed before writing the rule
+   * Write the MX records a subdomain needs and route an address at this Node, refusing unless the digest matches and confirming the records landed before writing the rule. On an apex, catchAll takes over the zone's catch-all instead, recording what it pointed at before
    *
    * `POST /api/provider/receiving`
    */
   async postProviderReceiving(body: z.infer<typeof S.providerReceivingRequest>): Promise<z.infer<typeof S.providerReceivingOutcomeResponse>> {
     return await this.json("POST", "/api/provider/receiving", {}, body) as z.infer<typeof S.providerReceivingOutcomeResponse>;
+  }
+
+  /**
+   * Add an address to a mailbox and, in the same act, route it here: nothing to write when the domain's catch-all already points at this Node, a literal rule otherwise, and a named reason when no credential could write one
+   *
+   * `POST /api/addresses`
+   */
+  async postAddresses(body: z.infer<typeof S.addressCreateRequest>): Promise<z.infer<typeof S.addressCreatedResponse>> {
+    return await this.json("POST", "/api/addresses", {}, body) as z.infer<typeof S.addressCreatedResponse>;
   }
 
   /**
