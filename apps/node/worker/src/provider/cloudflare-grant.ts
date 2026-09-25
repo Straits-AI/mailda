@@ -12,7 +12,7 @@
  * - `ownership.ts`: the facts #165 asks for about who owns what.
  */
 
-export { REQUIRED_SCOPES, REQUIRED_SCOPE_NAMES, type ProviderState, PROVIDER_STATES, type ProviderStatus, STATUS_COLUMNS, providerStatus, ceremony, OAUTH_CLIENTS_PERMISSION, tokenTemplateUrl, createClientThroughApi, type ClientRegistration, registerClient, MIN_STATE_LENGTH, beginAuthorization, type ConsentOutcome, completeAuthorization, reportUnselectable } from "./grant-oauth.ts";
+export { REQUIRED_SCOPES, REQUIRED_SCOPE_NAMES, type ProviderState, PROVIDER_STATES, type ProviderStatus, STATUS_COLUMNS, providerStatus, ceremony, OAUTH_CLIENTS_PERMISSION, OAUTH_CLIENTS_PERMISSION_ID, tokenTemplateUrl, createClientThroughApi, type ClientRegistration, registerClient, MIN_STATE_LENGTH, beginAuthorization, type ConsentOutcome, completeAuthorization, reportUnselectable } from "./grant-oauth.ts";
 export { CLOUDFLARE_OAUTH, cloudflareGet, cloudflarePost, cloudflarePatch, cloudflarePut, cloudflareGetAll } from "./cloudflare-api.ts";
 export { resolveAccount, type RoutingState, boundAccount, boundAccountFor, zoneFor, emailRoutingFor, emailRoutingState } from "./account-routing.ts";
 export { type SendingDomainState, type DeliveryEventsState, deliveryEventsState, type SendingProposal, sendingProposalFor, onboardSending, type SubscriptionProposal, subscriptionProposalFor, subscribeDeliveryEvents } from "./sending-events.ts";

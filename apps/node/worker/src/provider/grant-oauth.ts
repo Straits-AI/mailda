@@ -403,19 +403,25 @@ export async function providerStatus(env: Env): Promise<ProviderStatus> {
 export const OAUTH_CLIENTS_PERMISSION = "OAuth App Registrations Write";
 
 /**
- * Cloudflare's token page with that permission prefilled, by its documented template URL
- * (`fundamentals/api/how-to/account-owned-token-template`). The **user-token** form: the account form
- * (`?to=/:account/api-tokens`) opened an account picker and then a blank form on the first real run
- * (25 September 2026), while the user form carries `accountId=*` and puts the account choice inside the
- * prefilled form. This Node does not know its account id before it holds a grant, so `*`. The key is the
- * permission's label without its verb, inferred from the documented pattern and not measured on this
- * permission — which is what `token.unmeasured` says.
+ * The permission group's id, which is global and exact. Read from `GET /accounts/{id}/iam/permission_groups`
+ * on 23 September 2026 (`docs/receipts/cloudflare-oauth-endpoints.md`); the Read form is c00d4085a8774a6daf8365c054ca6803.
+ */
+export const OAUTH_CLIENTS_PERMISSION_ID = "358d00a81412422280b0055618c81d59";
+
+/**
+ * Cloudflare's account-token page with the token's name prefilled, and **the permission deliberately not**.
+ *
+ * Cloudflare's template links (`fundamentals/api/how-to/account-owned-token-template`) prefill permissions
+ * by short key, or by group id on the account form. Measured on 25 September 2026, three ways, on this
+ * permission: the short key `oauth_app_registrations` (its label without the verb) and the same on the
+ * user form were dropped silently, name prefilled and permission blank; the group id above on the account
+ * form was refused by name, *"requested an entry we don't recognize"*. The dashboard's key vocabulary does
+ * not include this permission, which is three months old. So the link opens the right page for the right
+ * kind of token (an account token is scoped to the one account by construction) and the ceremony says
+ * exactly what to tick. A link that claimed a prefill it cannot make would be the worse instruction.
  */
 export function tokenTemplateUrl(): string {
-  const keys = JSON.stringify([{ key: "oauth_app_registrations", type: "edit" }]);
-  return "https://dash.cloudflare.com/profile/api-tokens"
-    + `?permissionGroupKeys=${encodeURIComponent(keys)}&accountId=*&zoneId=all`
-    + `&name=${encodeURIComponent("Mailda setup, delete after use")}`;
+  return `https://dash.cloudflare.com/?to=/:account/api-tokens&name=${encodeURIComponent("Mailda setup, delete after use")}`;
 }
 
 export function ceremony(redirectUri: string): {
@@ -431,9 +437,9 @@ export function ceremony(redirectUri: string): {
     token: {
       url: tokenTemplateUrl(),
       permission: OAUTH_CLIENTS_PERMISSION,
-      unmeasured: "The link prefills the permission by a key inferred from Cloudflare's documented pattern and "
-        + "not measured on this permission: if the form opens without it, pick Account → OAuth App "
-        + "Registrations → Write yourself, and restrict the token to this account. "
+      unmeasured: "The link opens the account's token page with the name filled in; the permission cannot be "
+        + "prefilled for this one (measured three ways). Create Token → Custom token, then under Permissions "
+        + "pick Account → OAuth App Registrations → Write, nothing else, and Continue. "
         + "While it exists the token can edit or delete every OAuth client in the account, not only this one; "
         + "this Node spends it on one request and never stores it, and you delete it afterwards.",
     },
