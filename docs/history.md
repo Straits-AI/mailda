@@ -3305,3 +3305,22 @@ Two words kept honest. *Taken over* is what the audit entry records this Node as
 the target it replaced. *Confirmed* is a read-back, as it has been for the MX records since #92: the
 catch-all is read again after the write, and the outcome carries what Cloudflare then reported rather than
 what was sent.
+
+## The first real setup run, and what raw DNS had to do with it (25 September 2026)
+
+The founder ran the update against `mailda-whymelabs` with `whymelabs.com` picked from the zone list, the
+first time the setup step reached Cloudflare with wrangler's login. Three of four things worked: the picker,
+sending (`onboarded already`, so no write was measured), and the delivery-events subscription, which was
+created (`mailda-whymelabs-sending-events-whymelabs.com`, six event types into the Node's queue). That last
+one is the subscription write with wrangler's token, inferred until then and measured now.
+
+Receiving refused, and the refusal was ours twice over. The proposal read the apex's existing MX through
+`GET /zones/{zone}/dns_records`, raw DNS, which wrangler's token cannot read: `10000 Authentication error`,
+the boundary the receipt had drawn the day before and the code had not honoured. Then the CLI blamed the
+domain, "must be a subdomain of a zone", which was false. The catch-all question was never reached.
+
+Measured the next morning: Email Routing's own records endpoint answers what raw DNS was being asked. For
+a subdomain never enabled it lists what is `missing`, record by record; once enabled it lists `records`
+with `errors: null`; for an apex with routing ready it lists the zone's own records. So it is the plan and
+the read-back in one, `POST` on it creates the records, and raw DNS is not needed for receiving at all.
+The receiving code moves onto it, the wrong `fix` goes, and the receipt gains the run and the shapes.

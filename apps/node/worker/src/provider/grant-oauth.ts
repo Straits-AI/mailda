@@ -169,7 +169,7 @@ export const REQUIRED_SCOPES = [
      *
      * That consent showed the other half of growing this list: a client may request only what it was
      * registered with, so a scope added here after a client exists answers `invalid_scope` until somebody
-     * adds it to the client in the dashboard. `zone-settings.write` and `dns.write` (#209, #210) were added
+     * adds it to the client in the dashboard. `zone-settings.write` (#209, #210) was added, and `dns.write` with it, which left on 25 September 2026 when raw DNS left the receiving path
      * here without that step and never consented, which `scopesMissing` now reports rather than leaving
      * the first receiving onboarding to discover.
      */
@@ -189,25 +189,6 @@ export const REQUIRED_SCOPES = [
     scope: "email-routing-rule.write",
     why: "the routing rule that sends an address's mail to this Worker. Without it the records receiving "
       + "needs can be written and nothing arrives — measured, on a restore drill",
-    readOnlyExists: true,
-  },
-  {
-    /*
-     * #163 L2's receiving half, and the largest authority this Node asks for. **DNS write on a customer's
-     * zone is the authority to redirect their mail**, so it is requested deliberately and spent by exactly
-     * one path: `onboardReceiving`, which writes the MX records Cloudflare's own Email Routing requires on a
-     * subdomain, read from Cloudflare rather than invented, and nothing else.
-     *
-     * It is here because the alternative was measured and is worse. `POST /email/routing/rules` accepts a
-     * rule for a subdomain that was never onboarded — 200, enabled, `source: "api"` — and the rule is
-     * **inert**, because the name has no MX and mail never reaches Cloudflare at all
-     * (`routing.rule_accepted_for_unonboarded_subdomain: 1`). A Node without this scope can only offer an
-     * operator a routing rule that silently never fires, and shipping that is worse than holding a scope
-     * with a reason written beside it.
-     */
-    scope: "dns.write",
-    why: "the MX records a subdomain needs before it can receive. Cloudflare's rules API accepts a rule "
-      + "without them and that rule never matches, so a Node that cannot write them can only offer silence",
     readOnlyExists: true,
   },
   {

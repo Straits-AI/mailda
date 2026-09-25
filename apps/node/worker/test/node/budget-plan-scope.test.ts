@@ -687,6 +687,8 @@ const FIGURES: Record<string, Classification> = {
     "wrangler.login_creates_subdomain_routing_records", "wrangler.login_deletes_subdomain_routing_records",
     "wrangler.login_reaches_raw_dns_records", "wrangler.login_reaches_registrar",
     "wrangler.login_writes_zone_catch_all",
+    // The delivery-events subscription, created with that token on the first real run (25 September 2026).
+    "wrangler.login_creates_event_subscription",
   ),
 
   // docs/receipts/cloudflare-oauth-node-as-client.md
