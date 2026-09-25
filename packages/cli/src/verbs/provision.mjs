@@ -88,8 +88,8 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     );
     return done;
   }
-  const address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`   address to receive at [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
-  done.address = address;
+  // The address is asked after the catch-all choice, where it can be explained; see there.
+  let address = `hello@${domain}`;
 
   const call = async (method, template, body, query) => {
     const path = api(method, template, query);
@@ -135,14 +135,21 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
             `\n     ${domain} is a zone's own name. Its catch-all today: ${catchAllLine(proposal.catchAll ?? null)}.\n     How should mail reach this Node?`,
             [
               { label: "every address at it: take the catch-all; addresses live in the Node, unknown ones bounce", value: true },
-              { label: `${address} only: one rule; each further address needs its own`, value: false },
+              { label: "one address only: one rule; each further address needs its own", value: false },
             ],
           );
-        if (!catchAll) {
-          process.stdout.write(`     literal   a rule for ${address} only; each further address needs its own\n`
-            + `               (\`mailda provider --onboard-receiving ${domain} --address <a>\`), or the catch-all later\n`);
-        }
       }
+      /*
+       * The mailbox's first address, asked after the routing choice so it can be said what it is: the
+       * catch-all decides where a domain's unmatched mail goes, and a mailbox files the addresses it holds
+       * and needs one to send from (`E_MAILBOX_HAS_NO_ADDRESS` is what a mailbox without one refuses
+       * with). Asked before the catch-all, it read as a second routing act, and the founder asked why.
+       */
+      process.stdout.write(catchAll
+        ? `     every address at ${domain} will reach this Node; the mailbox files the ones it holds. This is its first;\n     more are added on People, with nothing to do in Cloudflare.\n`
+        : `     one rule routes one address to this Node; each further address needs its own\n     (\`mailda provider --onboard-receiving ${domain} --address <a>\`), or take the catch-all later.\n`);
+      address = (yes ? process.env.MAILDA_ADDRESS ?? "" : await ask(`     the mailbox's first address [hello@${domain}]: `)).trim().toLowerCase() || `hello@${domain}`;
+      done.address = address;
       const applied = await call("POST", "/api/provider/receiving", {
         domain, digest: proposal.digest, address, ...(catchAll ? { catchAll: true } : {}),
       });
