@@ -22,6 +22,7 @@ import { Limits } from "./screens/limits.tsx";
 import { Matters } from "./screens/matters.tsx";
 import { Audit, Doctor, Log, Outbox } from "./screens/ledgers.tsx";
 import { Setup } from "./screens/setup.tsx";
+import { Gate } from "./screens/first-run.tsx";
 
 /**
  * The authenticated application (ADR 30).
@@ -59,20 +60,24 @@ import { Setup } from "./screens/setup.tsx";
 
 const rootRoute = createRootRoute({
   component: () => (
-    <div className="app-shell">
-      <Rail />
-      {/* A div, not a `main`. The mount point is `<main id="app">`, and a second `main` landmark inside
-          it is exactly the structural defect axe exists to catch — found by reading the tree of the
-          running shell, not by thinking about it. */}
-      <div className="app-main">
-        {/* Above whatever screen a person came for, because §7's notice is one they must actually meet —
-            and on every route rather than one, because there is no route somebody must visit to be told. */}
-        <SetupUnfinished />
-        <Notices />
-        <Outlet />
+    /* Until the Node has a routed address, an administrator sees the first-run screen and nothing else.
+       The one-line notice below remains for a member, and for an administrator who opened the app anyway. */
+    <Gate>
+      <div className="app-shell">
+        <Rail />
+        {/* A div, not a `main`. The mount point is `<main id="app">`, and a second `main` landmark inside
+            it is exactly the structural defect axe exists to catch — found by reading the tree of the
+            running shell, not by thinking about it. */}
+        <div className="app-main">
+          {/* Above whatever screen a person came for, because §7's notice is one they must actually meet —
+              and on every route rather than one, because there is no route somebody must visit to be told. */}
+          <SetupUnfinished />
+          <Notices />
+          <Outlet />
+        </div>
+        <InstrumentBar />
       </div>
-      <InstrumentBar />
-    </div>
+    </Gate>
   ),
 });
 

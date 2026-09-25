@@ -375,6 +375,30 @@ export function Rail() {
  * A capped list says where it stopped. The Node returns `truncated` on every listing it caps (AGENTS.md §3:
  * a limit you can hit is a limit you must see), and this is the sentence that makes the flag visible.
  */
+/** Copies to the clipboard and says so, because a button that silently succeeds looks broken. */
+export function Copyable({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="setup-copy">
+      <code className="mono">{text}</code>
+      <button
+        type="button"
+        className="linkish"
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).then(
+            () => setCopied(true),
+            // A clipboard that refuses is not a failure worth a banner — the text is on screen and
+            // selectable, which is what it was always the fallback for.
+            () => setCopied(false),
+          );
+        }}
+      >
+        {copied ? "copied" : `copy ${label}`}
+      </button>
+    </span>
+  );
+}
+
 export function Truncated({ when, shown, noun }: { when: boolean; shown: number; noun: string }) {
   if (!when) return null;
   return <p className="notice dim">Showing the newest {shown} {noun}. Older ones exist and are not listed.</p>;

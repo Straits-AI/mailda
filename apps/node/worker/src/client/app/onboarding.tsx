@@ -142,26 +142,45 @@ export function onboardingSteps(sources: Sources): Step[] {
     { id: "routed", label: "Mail routed to this Node", ...routed },
     { id: "sending", label: "A domain onboarded for sending", ...sending },
     { id: "outcomes", label: "Delivery outcomes observed", ...outcomes },
-    { id: "connected", label: "Connected to Cloudflare (optional: for changes from this screen)", ...connected },
+    { id: "connected", label: "Connected to Cloudflare", ...connected },
   ];
 }
 
 const CHIP: Record<StepState, string> = { done: "verdict-ok", todo: "severity-degraded", unknown: "state-outcome_unknown", optional: "severity-report" };
 const WORD: Record<StepState, string> = { done: "done", todo: "to do", unknown: "unknown", optional: "optional" };
 
-/** The five steps and a count, at the top of Setup. Reads the grant-spending sources only once connected. */
-export function OnboardingProgress({ binding, provisioned }: { binding: ProviderBinding; provisioned: Provisioned }) {
-  const connected = binding.state === "consent_granted";
+/**
+ * Whether this Node can be used as an inbox: an address exists and mail is routed to it. Those two are what
+ * `E_MAILBOX_HAS_NO_ADDRESS` and an empty inbox stand for; sending and outcomes are worth doing and are not
+ * what makes the screen a lie. A founder who ran the install, then the update, then opened the app saw an
+ * inbox and took it as ready (25 September 2026). It was not, and nothing said so.
+ */
+export type Readiness = "ready" | "not-ready";
+export function readinessOf(steps: Step[]): Readiness {
+  const done = (id: Step["id"]) => steps.find((step) => step.id === id)?.state === "done";
+  return done("address") && done("routed") ? "ready" : "not-ready";
+}
+
+/**
+ * Readiness from the two cheap sources every screen already has: the connection state with the audit
+ * trail's record, and `doctor`. `unknown` is a `/api/provider` that refused (a member, not an
+ * administrator, gets 404): a member cannot set anything up, so the shell renders as it always did.
+ */
+export function useReadiness(): { state: "loading" | "unknown" | Readiness; steps: Step[]; next: Step | null } {
+  const provider = useProvider();
   const doctor = useDoctor();
-  const routing = useRouting();
-  const delivery = useDeliveryEvents(connected);
+  if (provider.isError) return { state: "unknown", steps: [], next: null };
+  if (provider.isPending || doctor.isPending) return { state: "loading", steps: [], next: null };
   const steps = onboardingSteps({
-    provider: binding,
-    provisioned,
+    provider: provider.data.provider,
+    provisioned: provider.data.provisioned,
     doctor: doctor.isSuccess ? doctor.data : null,
-    routing: !connected ? undefined : routing.isSuccess ? routing.data.routing : routing.isError ? null : undefined,
-    delivery: !connected ? undefined : delivery.isSuccess ? delivery.data.delivery : delivery.isError ? null : undefined,
   });
+  return { state: readinessOf(steps), steps, next: steps.find((step) => step.state === "todo" || step.state === "unknown") ?? null };
+}
+
+/** The five steps and a count, rendered from steps already derived. */
+export function ProgressList({ steps }: { steps: Step[] }) {
   // The optional connection is not counted: a Node is set up without it.
   const counted = steps.filter((step) => step.state !== "optional");
   const done = counted.filter((step) => step.state === "done").length;
@@ -184,6 +203,22 @@ export function OnboardingProgress({ binding, provisioned }: { binding: Provider
       </ol>
     </section>
   );
+}
+
+/** The list at the top of Setup. Reads the grant-spending sources only once connected. */
+export function OnboardingProgress({ binding, provisioned }: { binding: ProviderBinding; provisioned: Provisioned }) {
+  const connected = binding.state === "consent_granted";
+  const doctor = useDoctor();
+  const routing = useRouting();
+  const delivery = useDeliveryEvents(connected);
+  const steps = onboardingSteps({
+    provider: binding,
+    provisioned,
+    doctor: doctor.isSuccess ? doctor.data : null,
+    routing: !connected ? undefined : routing.isSuccess ? routing.data.routing : routing.isError ? null : undefined,
+    delivery: !connected ? undefined : delivery.isSuccess ? delivery.data.delivery : delivery.isError ? null : undefined,
+  });
+  return <ProgressList steps={steps} />;
 }
 
 /**

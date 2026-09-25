@@ -117,6 +117,13 @@ restarting. That is a good design and a rare one.
 
 §5A's thirteen steps, annotated with what they actually feel like.
 
+**Update, 25 September 2026.** The interface now walks this checklist rather than assuming it was walked.
+Until a Node has an address and mail routed to it, opening the Node shows the next step and the two ways
+to do it (`curl -fsSL https://mailda.site/update.sh | bash` from the clone, or connect and set up from
+Setup) instead of an inbox; `mailda setup` does the receiving, sending and outcomes setup on a Node that
+was claimed before the install could. The trigger was a Node that looked ready and refused its first
+reply, which is exactly the step-8 moment this table calls the first one that feels real.
+
 | # | Step | Friction |
 |---|---|---|
 | 1 | Organization | Fine. Name, locale, timezone. |

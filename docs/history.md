@@ -3245,3 +3245,33 @@ One honesty rule came with it. The progress list read receiving, sending and out
 which a Node set up at install may never hold. It now falls back to `provisioned` on `GET /api/provider`,
 the latest act of each kind from the audit trail with its date and authority, and says in those words that
 it is a record of an act and not a live read.
+
+## The inbox that was not ready, and the Node that was never updated (25 September 2026)
+
+The founder, after the install script, the update script and opening the Node: *I ran the setup script,
+then the update script, then I opened the web and saw the inbox. So as a user of course I thought it is
+ready to use. If not, you should only show the next setup steps and guide me until the whole thing is
+ready. This should not be seen in production apps.* The first reply from that inbox had refused with
+`E_MAILBOX_HAS_NO_ADDRESS`. He also said the search hint still touched the search pill, and that such a
+thing should have been looked at before being called fixed.
+
+Two failures, named plainly. An inbox was shown on a Node that could not receive: nothing in the interface
+asked whether the Node was ready before rendering a screen that implied it was. And a spacing change was
+shipped on the strength of a stylesheet edit, never looked at in a browser.
+
+The check of the Node itself found a third fact under both: `mailda-whymelabs` had never been updated.
+Its serving version was still 20 September's; the only later entries were canaries at zero traffic on
+24 September, uploaded and never promoted, so every update run had stopped at the deploy gate. The old
+interface was the one being judged, and no routing rule or subscription pointed at the Node. The reason
+the gate refused is not in this repository's evidence yet; it needs the run's transcript.
+
+The design that follows, built the same day. A first-run gate in the interface: until a Node has an
+address and mail routed to it, every screen but Setup and Doctor is one page, *This Node is not ready to
+use yet*, with the progress list and the next step's action two ways, the update command from the clone,
+which uses wrangler's consent and needs no token, or connect-then-set-up from Setup; an administrator may
+open the app anyway, per tab. The rule is those two facts and no more, because they are the ones whose
+absence makes an inbox lie, and sending is not required to read mail. A `mailda setup` verb does the
+receiving, sending and outcomes setup on a claimed Node without deploying, for the Node claimed before the
+install could. Install, upgrade and setup end with `== next`: the URL, the address to send a test message
+to, and that the app shows the next step until it is ready. And a spacing change is measured in a browser
+before it is called done.

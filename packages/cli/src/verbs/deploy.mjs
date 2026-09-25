@@ -599,9 +599,10 @@ export async function deploy(argv) {
     fail(
       `${gate.why}, so traffic was not moved.\n\n`
       + "  why      the version that was serving before this command ran is still the one serving. There is\n"
-      + "           nothing to roll back, which is why the canary is uploaded before it is promoted.\n"
-      + "  fix      read the findings above. To promote it anyway once you have decided they are\n"
-      + `           acceptable: \`wrangler versions deploy ${version}@100\`.`,
+      + "           nothing to roll back, which is why the canary is uploaded before it is promoted. The Node\n"
+      + "           was NOT updated, and nothing after the deploy ran: no setup of receiving or sending.\n"
+      + "  fix      read the findings above, then re-run the update; that is the retry. To promote this version\n"
+      + `           anyway once you have decided the findings are acceptable: \`wrangler versions deploy ${version}@100\`.`,
     );
   }
 
@@ -647,7 +648,14 @@ export async function deploy(argv) {
       + `  fix      to put the previous version back: \`wrangler versions deploy ${serving}@100\`\n\n`,
     );
   }
-  process.exit(deployExitCode(after));
+  /*
+   * Returned, not exited (25 September 2026). This ended in `process.exit`, which is right for a person
+   * running `mailda deploy` and was wrong for `mailda upgrade`, which calls this and then sets the Node up to
+   * receive: the first real upgrade promoted its version, printed doctor, and stopped here, so the setup
+   * step never ran and the operator opened an inbox on a Node with no address. The dispatcher turns the
+   * code into the exit; a caller in the middle of a sequence reads it and goes on.
+   */
+  return deployExitCode(after);
 }
 
 export async function preflight(argv) {

@@ -33,6 +33,7 @@ import { doctorExitCode } from "./deploy-parse.mjs";
 import { doctor } from "./verbs/doctor.mjs";
 import { install } from "./verbs/install.mjs";
 import { upgrade } from "./verbs/upgrade.mjs";
+import { setup } from "./verbs/setup.mjs";
 import { provider } from "./verbs/provider.mjs";
 import { deploy, preflight } from "./verbs/deploy.mjs";
 import { claimSecret, setPassword, recoveryCodes } from "./verbs/secrets.mjs";
@@ -73,6 +74,10 @@ const USAGE = `mailda — operate a Mailda Node
                                      pull the release, back the Node up, list what its schema will do to
                                      the catalog, deploy through the canary, and finish a Node's setup if
                                      it was never set up to receive
+  mailda setup [--name <worker>] [--url <origin>] [--yes]
+                                     receiving, sending and delivery outcomes for a Node already deployed
+                                     and claimed, with the consent wrangler has; no deploy. --yes reads
+                                     MAILDA_DOMAIN and MAILDA_ADDRESS
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check
@@ -109,7 +114,7 @@ const [verb, ...rest] = process.argv.slice(2);
  */
 try {
   switch (verb) {
-    case "deploy": await deploy(rest); break;
+    case "deploy": process.exit(await deploy(rest)); break;
     case "doctor": process.exit(doctorExitCode(await doctor(rest))); break;
     case "claim-secret": claimSecret(rest); break;
     case "set-password": setPassword(rest); break;
@@ -122,6 +127,7 @@ try {
     case "provider": await provider(rest); break;
     case "install": await install(rest); break;
     case "upgrade": await upgrade(rest); break;
+    case "setup": await setup(rest); break;
     default:
       process.stdout.write(USAGE);
       process.exit(verb === undefined || verb === "--help" || verb === "-h" ? 0 : 1);

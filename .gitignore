@@ -74,3 +74,4 @@ apps/site/.astro/
 
 # `mailda install` remembers each Node's URL here, per account and name, so an upgrade does not ask twice.
 .mailda/
+.gstack/

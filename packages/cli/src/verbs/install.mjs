@@ -6,7 +6,7 @@ import { dirname, resolve } from "node:path";
 import { accountsFrom, signedIn } from "../preflight.mjs";
 import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
-import { provisionNode, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -138,14 +138,12 @@ export async function install(argv) {
     "\n== done\n"
     + `   your Node   ${url}\n`
     + `   signed in   ${claimed.email}\n`
-    + `   receiving   ${setUp.receiving ?? "not set up; the Setup screen or mailda provider does it"}\n`
-    + `   sending     ${setUp.sending ?? "not set up"}\n`
-    + `   outcomes    ${setUp.deliveryEvents ?? "not subscribed"}\n`
     + (connected === null
       ? "   grant       not yet: the Setup screen in the Node prints the steps, or re-run this install\n"
       : `   grant       consent opened in the browser; if it did not open, visit\n               ${connected}\n`)
     + "\n",
   );
+  printNext(url, setUp);
   if (!argv.includes("--no-open")) openInBrowser(connected ?? url);
 }
 

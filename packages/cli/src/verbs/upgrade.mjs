@@ -7,7 +7,7 @@ import { RELEASE_URL, distance, onlyPackageJson, pendingByPhase, releaseRemote, 
 import { backup } from "./backup.mjs";
 import { deploy, firstInstall } from "./deploy.mjs";
 import { ask, existingNodes, rememberUrl, rememberedUrl, signInAndChooseAccount } from "./install.mjs";
-import { provisionNode, wranglerToken } from "./provision.mjs";
+import { printNext, provisionNode, wranglerToken } from "./provision.mjs";
 
 const REPO = resolve(workerDir, "../../..");
 
@@ -137,7 +137,14 @@ export async function upgrade(argv) {
 
   const go = yes ? "y" : await ask("\n   upgrade now? [y/N]: ");
   if (!/^y(es)?$/i.test(go.trim())) { process.stdout.write("   nothing was changed; the backup stays.\n\n"); return; }
-  await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])]);
+  const deployed = await deploy([...nameArgs, "--url", url, ...(argv.includes("--contract") ? ["--contract"] : [])]);
+  if (deployed === 2) {
+    // `refuse` after promotion is the one fault the canary cannot see (a Durable Object runs the promoted
+    // version only after traffic moves). The deploy printed the rollback; setting up receiving on a Node
+    // that refuses would be work on top of a fault, so this ends here and says so.
+    process.stdout.write("\n   the Node reports refuse, so the setup did not run. Fix that first, then re-run the update.\n\n");
+    process.exit(2);
+  }
 
   /*
    * A Node deployed before the install did the account work has never been set up to receive: no routing,
@@ -145,7 +152,7 @@ export async function upgrade(argv) {
    * the upgrade finishes the job the same way the install does, with wrangler's login.
    */
   const cookie = await sessionCookie(url);
-  const setUp = { receiving: null, sending: null, deliveryEvents: null };
+  const setUp = { receiving: null, sending: null, deliveryEvents: null, address: null };
   if (cookie !== null) {
     const state = await fetch(`${url}${api("GET", "/api/provider")}`, { headers: { cookie } }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
     if (state !== null && state.provisioned?.receiving === null) {
@@ -153,16 +160,18 @@ export async function upgrade(argv) {
       Object.assign(setUp, await provisionNode({ origin: url, cookie, accountId, token: await wranglerToken(), yes, ask }));
     } else if (state !== null) {
       setUp.receiving = state.provisioned?.receiving?.domain ?? null;
+      setUp.address = state.provisioned?.receiving?.address ?? null;
       setUp.sending = state.provisioned?.sending?.domain ?? null;
       setUp.deliveryEvents = state.provisioned?.deliveryEvents?.domain ?? null;
     }
   }
   process.stdout.write(
     `\n== upgraded\n   ${name} at ${url}; backup from before it at ${out}\n`
-    + `   receiving   ${setUp.receiving ?? "not set up; the Setup screen or mailda provider does it"}\n`
+    + `   receiving   ${setUp.receiving === null ? "not set up" : `${setUp.address ?? "?"} on ${setUp.receiving}`}\n`
     + `   sending     ${setUp.sending ?? "not set up"}\n`
-    + `   outcomes    ${setUp.deliveryEvents ?? "not subscribed"}\n\n`,
+    + `   outcomes    ${setUp.deliveryEvents === null ? "not subscribed" : `subscribed for ${setUp.deliveryEvents}`}\n`,
   );
+  printNext(url, setUp);
 }
 
 function git(args) {

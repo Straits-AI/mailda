@@ -319,7 +319,15 @@ describe("what an exit code says, which the two commands answer differently", ()
     const body = cli.slice(cli.indexOf("async function doctor(argv)"), cli.indexOf("async function sessionCookie"));
     expect(body).not.toContain("process.exit");
     expect(cli).toContain("process.exit(doctorExitCode(await doctor(rest)))");
-    expect(cli).toContain("process.exit(deployExitCode(after))");
+    /*
+     * And the deploy returns its code the same way (25 September 2026): it used to `process.exit` after its
+     * final doctor, which was right for `mailda deploy` alone and ended `mailda upgrade` before the setup of
+     * receiving ran — the first real upgrade promoted, printed doctor, and stopped. The dispatcher exits.
+     */
+    const deployBody = cli.slice(cli.indexOf("export async function deploy(argv)"), cli.indexOf("export async function preflight(argv)"));
+    expect(deployBody).toContain("return deployExitCode(after)");
+    expect(deployBody.slice(deployBody.indexOf("asking the live Node how it is"))).not.toContain("process.exit");
+    expect(cli).toContain("process.exit(await deploy(rest))");
   });
 });
 
