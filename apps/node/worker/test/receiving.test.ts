@@ -77,11 +77,22 @@ const APEX_MX = [
   { type: "TXT", name: "cf2024-1._domainkey.example.test", content: "\"v=DKIM1; …\"" },
 ];
 
+/** What Email Routing says a never-enabled subdomain is missing: its own MX and SPF, named for the subdomain. */
+const SUB_MISSING = [
+  { type: "MX", name: "mail.example.test", content: "route1.mx.cloudflare.net.", priority: 25, ttl: 1 },
+  { type: "MX", name: "mail.example.test", content: "route2.mx.cloudflare.net.", priority: 34, ttl: 1 },
+  { type: "MX", name: "mail.example.test", content: "route3.mx.cloudflare.net.", priority: 12, ttl: 1 },
+  { type: "TXT", name: "mail.example.test", content: "\"v=spf1 include:_spf.mx.cloudflare.net ~all\"", ttl: 1 },
+];
+
 /**
  * Cloudflare, with the pieces a receiving onboard reads and writes.
  *
- * `existingMx` is what the subdomain already has, and `writtenMx` is what a read-back returns — separate on
- * purpose, so a test can make the write *appear* to succeed and the read-back come back empty.
+ * Raw DNS is not among them (25 September 2026): a subdomain's records are asked for and created through
+ * `…/email/routing/dns?subdomain=`, which answers `{ errors: [{ code, missing }] }` until they exist and
+ * `{ errors: null, records }` once they do. `existingMx` is what the subdomain already has, and `writtenMx`
+ * is what a read-back returns — separate on purpose, so a test can make the write *appear* to succeed and
+ * the read-back come back empty.
  */
 function serving(opts: {
   routingEnabled?: boolean;
@@ -114,7 +125,19 @@ function serving(opts: {
       // Measured: a PATCH { enabled: true } answers success and changes nothing. Answered the same here.
       return ok({ enabled, status: enabled ? "ready" : "unconfigured" });
     }
+    if (path.includes("/email/routing/dns?subdomain=")) {
+      const present = wrote === 0
+        ? (opts.existingMx ?? [])
+        : opts.writtenMx !== undefined ? (opts.writtenMx ?? []) : SUB_MISSING.filter((one) => one.type === "MX");
+      if (present.length > 0) {
+        return ok({ errors: null, records: present.map((one) => ({ type: "MX", name: "mail.example.test", content: one.content, priority: 1, ttl: 1 })) });
+      }
+      // A zone that is not routing lists nothing to be missing either; enabling is what reveals the set.
+      const missing = !enabled ? [] : SUB_MISSING;
+      return ok({ errors: missing.length === 0 ? null : missing.map((one) => ({ code: one.type === "MX" ? "mx.missing" : "spf.missing", missing: one })), records: null });
+    }
     if (path.endsWith("/email/routing/dns")) {
+      if (method === "POST") { wrote += 1; return ok({}); }
       // An un-routed zone lists nothing; enabling is what makes the records appear.
       const listing = opts.enableRevealsMx === true && !enabled ? [] : APEX_MX;
       return ok(opts.routingEnabled === false && !enabled ? [] : listing);
@@ -122,18 +145,6 @@ function serving(opts: {
     if (path.includes("/email/routing/rules")) {
       if (method === "POST") return ok({ name: "mailda mail.example.test" });
       return ok(opts.rules ?? []);
-    }
-    if (path.includes("/dns_records")) {
-      if (method === "POST") { wrote += 1; return ok({ id: `rec_${wrote}` }); }
-      /*
-       * Before any write, the subdomain has whatever it started with. After, it has what was written —
-       * unless a case says otherwise with `writtenMx`, which is how "the POST answered 200 and the record
-       * is not there" is expressed. That case is the one this module exists for, so the stub has to be able
-       * to produce it.
-       */
-      if (wrote === 0) return ok(opts.existingMx ?? []);
-      if (opts.writtenMx !== undefined) return ok(opts.writtenMx ?? []);
-      return ok(APEX_MX.filter((one) => one.type === "MX").map((one) => ({ content: one.content })));
     }
     return ok(null);
   });
@@ -144,20 +155,19 @@ const posted = (calls: Array<{ url: string; method: string; body?: string | null
   calls.filter((one) => one.method === "POST" && one.url.includes(part));
 
 describe("proposing to receive on a subdomain", () => {
-  it("copies the zone's MX and leaves its SPF and DKIM alone", async () => {
+  it("lists exactly what Cloudflare says the subdomain is missing, named for the subdomain", async () => {
     /*
-     * The zone's record list carries SPF and DKIM too, and both belong to **sending** at the apex. Copying
-     * them onto a receiving subdomain would assert a sending posture nobody asked for.
+     * Cloudflare's own list, from the subdomain endpoint: three MX and the subdomain's SPF. Not a copy of
+     * the apex's records, and not read through raw DNS, which wrangler's login cannot reach.
      */
     serving();
     const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
 
     expect(proposal.refusal).toBeNull();
-    expect(proposal.creates).toHaveLength(3);
-    expect(proposal.creates.every((one) => one.type === "MX")).toBe(true);
-    // Named for the subdomain, not the apex the records were read from.
+    expect(proposal.creates).toHaveLength(4);
+    expect(proposal.creates.filter((one) => one.type === "MX")).toHaveLength(3);
     expect(proposal.creates.every((one) => one.name === "mail.example.test")).toBe(true);
-    expect(proposal.creates.map((one) => one.priority).sort((a, b) => (a ?? 0) - (b ?? 0)))
+    expect(proposal.creates.filter((one) => one.type === "MX").map((one) => one.priority).sort((a, b) => (a ?? 0) - (b ?? 0)))
       .toEqual([12, 25, 34]);
   });
 
@@ -188,14 +198,26 @@ describe("proposing to receive on a subdomain", () => {
     serving();
     const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
     expect(proposal.enablesZone).toBeNull();
-    expect(proposal.creates).toHaveLength(3);
+    expect(proposal.creates).toHaveLength(4);
   });
 
-  it("refuses a subdomain that already points somewhere", async () => {
-    serving({ existingMx: [{ content: "mx.somebody-else.net." }] });
+  it("names the credential when the routing state cannot be read, not the records", async () => {
+    /*
+     * The first real setup (25 September 2026) refused with "could not read the MX already on … 10000
+     * Authentication error" — the raw DNS read that wrangler's login cannot make. That read is gone; a
+     * refused routing read says what it is, so the next step is about the credential, not the domain.
+     */
+    serving();
+    const base = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/email/routing/dns?subdomain=")) {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403 });
+      }
+      return base(url, init);
+    });
     const proposal = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
-    expect(proposal.present).toEqual(["mx.somebody-else.net."]);
-    expect(proposal.refusal).toContain("already");
+    expect(proposal.refusal).toContain("credential it holds");
+    expect(proposal.refusal).toContain("10000 Authentication error");
     expect(proposal.creates).toEqual([]);
   });
 
@@ -216,7 +238,7 @@ describe("proposing to receive on a subdomain", () => {
     const outcome = await onboardReceiving(
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", proposal.digest, "inbox@mail.example.test",
     );
-    expect(posted(calls, "/dns_records")).toHaveLength(0);
+    expect(posted(calls, "/email/routing/dns")).toHaveLength(0);
     expect(posted(calls, "/email/routing/rules")).toHaveLength(1);
     expect(outcome.rule).toBe("mailda mail.example.test");
   });
@@ -310,7 +332,7 @@ describe("proposing to receive on a subdomain", () => {
     expect(proposal.present).toEqual([]);
     // Not a refusal: the fix is to write the records, which is exactly what this proposal offers.
     expect(proposal.refusal).toBeNull();
-    expect(proposal.creates).toHaveLength(3);
+    expect(proposal.creates).toHaveLength(4);
   });
 });
 
@@ -327,7 +349,7 @@ describe("onboarding it", () => {
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
     );
 
-    expect(outcome.written).toHaveLength(3);
+    expect(outcome.written).toHaveLength(4);
     expect(outcome.confirmed).toHaveLength(3);
     expect(outcome.rule).toBe("mailda mail.example.test");
 
@@ -340,12 +362,14 @@ describe("onboarding it", () => {
       return hits.length === 0 ? -1 : (last ? hits[hits.length - 1]! : hits[0]!);
     };
     /*
-     * The **last** write and the **last** read-back, not the first of each: the proposal reads `dns_records`
-     * too, so a `findIndex` here matches the proposal's read and compares the wrong pair. An earlier version
-     * of this assertion did exactly that and passed on the order it was meant to check.
+     * The **last** write and the **last** read-back, not the first of each: the proposal reads the subdomain
+     * endpoint too, so a `findIndex` here matches the proposal's read and compares the wrong pair. An earlier
+     * version of this assertion did exactly that and passed on the order it was meant to check. One POST:
+     * the endpoint creates the whole set.
      */
-    const lastWrite = at((one) => one.method === "POST" && one.url.includes("/dns_records"), true);
-    const readBack = at((one) => one.method === "GET" && one.url.includes("/dns_records"), true);
+    expect(posted(calls, "/email/routing/dns")).toHaveLength(1);
+    const lastWrite = at((one) => one.method === "POST" && one.url.endsWith("/email/routing/dns"), true);
+    const readBack = at((one) => one.method === "GET" && one.url.includes("/email/routing/dns?subdomain="), true);
     const rule = at((one) => one.method === "POST" && one.url.includes("/routing/rules"));
 
     expect(lastWrite).toBeGreaterThanOrEqual(0);
@@ -373,6 +397,28 @@ describe("onboarding it", () => {
     expect(posted(calls, "/routing/rules")).toEqual([]);
   });
 
+  it("does not write the rule when the read-back itself is refused", async () => {
+    // A read-back that fails is not a confirmation: the rule is held back exactly as for an empty one.
+    serving();
+    const digest = await digestFor();
+    const calls = serving();
+    const base = globalThis.fetch;
+    let reads = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      // The proposal's read and the pre-write read pass; the read-back after the POST is refused.
+      if (String(url).includes("/email/routing/dns?subdomain=") && (init?.method ?? "GET") === "GET" && ++reads >= 3) {
+        return new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error" }] }), { status: 403 });
+      }
+      return base(url, init);
+    });
+    const outcome = await onboardReceiving(
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
+    );
+    expect(outcome.confirmed).toEqual([]);
+    expect(outcome.rule).toBeNull();
+    expect(posted(calls, "/routing/rules")).toEqual([]);
+  });
+
   it("refuses a digest taken against a different subdomain", async () => {
     serving();
     const other = await digestFor("other.example.test");
@@ -381,7 +427,7 @@ describe("onboarding it", () => {
     await expect(onboardReceiving(
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", other, "restore@mail.example.test",
     )).rejects.toThrow(/E_RECEIVING_STALE/);
-    expect(posted(calls, "/dns_records")).toEqual([]);
+    expect(posted(calls, "/email/routing/dns")).toEqual([]);
   });
 
   it("enables the zone, then reads the records it produces, then writes them", async () => {
@@ -398,10 +444,10 @@ describe("onboarding it", () => {
     );
 
     const enabled = calls.findIndex((one) => one.method === "POST" && one.url.endsWith("/email/routing/enable"));
-    const wrote = calls.findIndex((one) => one.method === "POST" && one.url.includes("/dns_records"));
+    const wrote = calls.findIndex((one) => one.method === "POST" && one.url.endsWith("/email/routing/dns"));
     expect(enabled, "the zone was never enabled").toBeGreaterThanOrEqual(0);
     expect(wrote, "records were written before the zone could list any").toBeGreaterThan(enabled);
-    expect(outcome.written).toHaveLength(3);
+    expect(outcome.written).toHaveLength(4);
     // And the answer is read back: a PATCH is never sent, because it was measured to change nothing.
     expect(calls.some((one) => one.method === "PATCH")).toBe(false);
   });
@@ -415,17 +461,18 @@ describe("onboarding it", () => {
     await expect(onboardReceiving(
       testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", digest, "restore@mail.example.test",
     )).rejects.toThrow(/E_RECEIVING_ZONE_STILL_OFF/);
-    expect(posted(calls, "/dns_records")).toEqual([]);
+    expect(posted(calls, "/email/routing/dns")).toEqual([]);
     expect(posted(calls, "/email/routing/rules")).toEqual([]);
   });
 
   it("writes nothing when the proposal refuses", async () => {
-    const calls = serving({ existingMx: [{ content: "mx.somebody-else.net." }] });
+    // A zone nothing in this account carries: the proposal refuses, and the apply refuses with it.
+    const calls = serving();
     await expect(onboardReceiving(
-      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.example.test", "0".repeat(64),
-      "restore@mail.example.test",
+      testEnv, atTime(AT + 4000), ORG, ADMIN, "mail.nowhere.test", "0".repeat(64),
+      "restore@mail.nowhere.test",
     )).rejects.toThrow(/E_RECEIVING_WILL_NOT_ONBOARD/);
-    expect(posted(calls, "/dns_records")).toEqual([]);
+    expect(posted(calls, "/email/routing/dns")).toEqual([]);
   });
 
   it("records the act before the DNS changes, naming what it was about to write", async () => {
@@ -443,7 +490,7 @@ describe("onboarding it", () => {
     expect(entry?.subject).toBe("mail.example.test");
     const detail = JSON.parse(entry!.detail) as { zone: string; creates: string[]; address: string };
     expect(detail.zone).toBe("example.test");
-    expect(detail.creates).toHaveLength(3);
+    expect(detail.creates).toHaveLength(4);
     expect(detail.address).toBe("restore@mail.example.test");
   });
 });
@@ -479,6 +526,10 @@ describe("the apex catch-all", () => {
     const apex = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "example.test");
     expect(apex.apex).toBe(true);
     expect(apex.catchAll).toEqual({ action: "worker", destinations: ["butler"], enabled: true });
+    // Its records are the zone's own MX, read from the zone list: nothing to create, and the SPF and
+    // DKIM in that same list are sending's, not "present" receiving records.
+    expect(apex.creates).toEqual([]);
+    expect(apex.present).toEqual(["route1.mx.cloudflare.net.", "route2.mx.cloudflare.net.", "route3.mx.cloudflare.net."]);
     const sub = await receivingProposalFor(testEnv, atTime(AT + 3000), ORG, "mail.example.test");
     expect(sub.apex).toBe(false);
     expect(sub.catchAll).toBeNull();
@@ -503,7 +554,7 @@ describe("the apex catch-all", () => {
     expect(puts).toHaveLength(1);
     expect(JSON.parse(puts[0]!)).toMatchObject({ enabled: true, matchers: [{ type: "all" }], actions: [{ type: "worker", value: [testEnv.WORKER_NAME] }] });
     // No subdomain records and no literal rule: the catch-all is the whole routing.
-    expect(posted(calls, "/dns_records")).toHaveLength(0);
+    expect(posted(calls, "/email/routing/dns")).toHaveLength(0);
     expect(posted(calls, "/email/routing/rules")).toHaveLength(0);
     // The address files, and the two entries say who did what.
     const address = await testEnv.CATALOG.prepare("SELECT address FROM addresses WHERE org_id = ?").bind(ORG).first<{ address: string }>();

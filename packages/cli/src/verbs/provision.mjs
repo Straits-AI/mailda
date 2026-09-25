@@ -110,6 +110,22 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     return { ok: true, value: JSON.parse(text) };
   };
   const refused = (text) => { for (const line of text.split("\n")) process.stdout.write(`     ${line}\n`); process.stdout.write("\n"); };
+  /*
+   * A `fix` line only when the refusal does not already carry one, and derived from what it says. The first
+   * real run (25 September 2026) printed "the domain must be a subdomain of a zone in this account" under a
+   * refusal that was really a credential unable to read the zone: a guess, and a wrong one.
+   */
+  const fixFor = (text) => {
+    if (/\bfix\b/i.test(text)) return null;
+    if (/not carried|no zone/i.test(text)) return "the domain must be a subdomain of a zone in this Cloudflare account; try another with `mailda setup`";
+    if (/authentication|could not read/i.test(text)) {
+      return "the credential in use could not read this zone's routing state; run the update again after the fix, "
+        + "or `mailda provider --onboard-receiving` with the Node connected";
+    }
+    return null;
+  };
+  const firstSentence = (text) => text.split(/(?<=[.!?])\s/)[0].trim();
+  let receivingRefusal = null;
 
   // 1. Receiving: the subdomain's records and the rule to this Worker.
   process.stdout.write(`\n   receiving at ${address}\n`);
@@ -122,10 +138,11 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
     for (const one of proposal.present) process.stdout.write(`     has       MX ${one}\n`);
     for (const one of proposal.creates) process.stdout.write(`     writes    MX ${one.name} -> ${one.content} (priority ${one.priority})\n`);
     if (proposal.refusal !== null) {
+      receivingRefusal = proposal.refusal;
       process.stdout.write("     will not set it up:\n");
       for (const line of wrapAt(proposal.refusal, 70)) process.stdout.write(`       ${line}\n`);
-      process.stdout.write("     fix       the domain must be a subdomain of a zone in this Cloudflare account; try another\n"
-        + "               with `mailda setup`\n");
+      const fix = fixFor(proposal.refusal);
+      if (fix !== null) for (const [i, line] of wrapAt(fix, 66).entries()) process.stdout.write(`     ${i === 0 ? "fix      " : "         "} ${line}\n`);
     } else {
       /*
        * A zone's own name can take a catch-all: one rule, and every address decision lives in the Node,
@@ -183,8 +200,8 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
   else {
     const { proposal } = sending.value;
     if (proposal.error !== null) {
-      process.stdout.write(`     unknown   ${proposal.error}\n`
-        + `     fix       \`mailda provider --onboard-sending ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
+      process.stdout.write(`     unknown   ${proposal.error}\n`);
+      if (!/\bfix\b/i.test(proposal.error)) process.stdout.write(`     fix       \`mailda provider --onboard-sending ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
     } else if (proposal.onboarded) { process.stdout.write("     onboarded already\n"); done.sending = domain; }
     else {
       for (const name of proposal.creates) process.stdout.write(`     creates   ${name}\n`);
@@ -201,8 +218,8 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
   else {
     const { proposal } = subscription.value;
     if (proposal.error !== null) {
-      process.stdout.write(`     unknown   ${proposal.error}\n`
-        + `     fix       \`mailda provider --subscribe ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
+      process.stdout.write(`     unknown   ${proposal.error}\n`);
+      if (!/\bfix\b/i.test(proposal.error)) process.stdout.write(`     fix       \`mailda provider --subscribe ${domain} --url ${origin}\` shows the same answer with the Node's next step\n`);
     } else if (proposal.subscribed !== null && proposal.consumerAttached !== false) {
       process.stdout.write(`     subscribed already, as ${proposal.subscribed}\n`); done.deliveryEvents = domain;
     } else {
@@ -210,13 +227,15 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
       if (proposal.consumerAttached === false) process.stdout.write(`     attaches  this Worker as the consumer of ${proposal.queueName}\n`);
       const applied = await call("POST", "/api/provider/subscription", { domain, digest: proposal.digest });
       if (!applied.ok) refused(applied.text);
-      else { process.stdout.write(`     events reach ${applied.value.proposal.queueName} as ${applied.value.proposal.subscribed}\n`); done.deliveryEvents = domain; }
+      else { process.stdout.write(`     subscribed: ${applied.value.proposal.subscribed} (events reach ${applied.value.proposal.queueName})\n`); done.deliveryEvents = domain; }
     }
   }
 
   process.stdout.write(
     "\n   set up\n"
-    + `     receiving   ${done.receiving === null ? "not set up" : `${address} on ${done.receiving}${done.catchAll ? " (catch-all: every address)" : ""}`}\n`
+    + `     receiving   ${done.receiving === null
+      ? (receivingRefusal === null ? "not set up" : `not set up (refused: ${firstSentence(receivingRefusal)})`)
+      : `${address} on ${done.receiving}${done.catchAll ? " (catch-all: every address)" : ""}`}\n`
     + `     sending     ${done.sending ?? "not set up"}\n`
     + `     outcomes    ${done.deliveryEvents === null ? "not subscribed" : `subscribed for ${done.deliveryEvents}`}\n`,
   );

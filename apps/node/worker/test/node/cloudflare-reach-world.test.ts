@@ -122,8 +122,9 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
   },
   /*
    * Receiving on a subdomain (#163 L2). The rules endpoint is reachable with Email Routing's own
-   * permission; `dns_records` is what needs `dns.write`, and it is the only path in this table that changes
-   * where a domain's mail goes.
+   * permission. Raw DNS (`dns_records`) left this table on 25 September 2026: a subdomain's records are
+   * created and read through `…/email/routing/dns`, which the routing permission reaches and wrangler's
+   * login can call; `dns.write` went with it.
    */
   // Measured refused under zone-settings.write on the #92 drill; the picker's Email Routing Rules Edit.
   // The zone's catch-all, taken over from the receiving step on an apex and put back (25 September 2026).
@@ -131,7 +132,6 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
   "/zones/{}/email/routing/rules": { scope: "email-routing-rule.write", reference: null },
   // One rule, read and replaced whole (#258). The same scope as the list; measured with a PUT on 19 Sept.
   "/zones/{}/email/routing/rules/{}": { scope: "email-routing-rule.write", reference: null },
-  "/zones/{}/dns_records": { scope: "dns.write", reference: "DNS Write" },
   // Read to know whether a send's outcome would be seen; `POST`ed to make it so (#222). `queues.read` was
   // measured refused for the write, so the scope is the write form and the read rides on it.
   "/accounts/{}/event_subscriptions/subscriptions": {
@@ -180,7 +180,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
   it("asks for no scope that authorizes nothing", () => {
     const spent = new Set(Object.values(REACHES).map((one) => one.scope).filter((one): one is string => one !== null));
     expect([...spent].sort()).toEqual([
-      "account-settings.read", "dns.write", "email-routing-rule.write", "email-sending.write", "queues.write",
+      "account-settings.read", "email-routing-rule.write", "email-sending.write", "queues.write",
       "registrar-domains.read", "zone-settings.write", "zone.read",
     ]);
 
@@ -193,7 +193,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(idle).toEqual([]);
     // And the other direction: a path whose scope nobody asks for would fail at runtime, not here.
     expect([...spent].filter((one) => !asked.includes(one))).toEqual([]);
-    expect(asked).toHaveLength(9);
+    expect(asked).toHaveLength(8);
   });
 
   it("finds paths at all, so the scan cannot agree with everything by reading nothing", () => {
@@ -205,7 +205,7 @@ describe("every Cloudflare endpoint this Node can reach", () => {
     expect(pathsIn('const m = "`/accounts/{id}/subscriptions` answers 403 here";')).toEqual([]);
     expect(pathsIn('fetch(`https://api.cloudflare.com/client/v4/zones/${z}/thing`)')).toEqual(["/zones/{}/thing"]);
     // The scope scan has the same weakness and the same anti-vacuity check.
-    expect(scopesAskedFor(grant).length).toBe(9);
+    expect(scopesAskedFor(grant).length).toBe(8);
     // And a documented path is not a called one, which is what stripping comments is for.
     expect(pathsIn("/* `/zones/{zone_id}/nothing` */")).toEqual([]);
     expect(scopesAskedFor("nothing here")).toEqual([]);

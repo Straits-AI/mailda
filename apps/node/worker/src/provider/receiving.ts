@@ -22,21 +22,17 @@ import { cloudflareGet, cloudflareGetAll, cloudflarePost, cloudflarePut, zoneFor
  * repository keeps meeting — a success that does nothing — and it is the reason this module writes records
  * *before* it writes a rule, and refuses to write the rule if the records did not land.
  *
- * ## Why this needs `dns.write`, stated where the authority is spent
+ * ## The records are Email Routing's own, written and read through its endpoints
  *
- * The dashboard's **Settings → Subdomains** flow onboards a subdomain *and* writes its records, which is why
- * an operator using it never touches MX by hand. That flow has no API — `routing.subdomain_api_available: 0`
- * is still true. But the two things it does separately both do: a rule, and DNS records. So a Node holding
- * `dns.write` can do end to end what the wizard does, and one without it can only offer the inert half.
- *
- * `dns.write` is the largest authority this Node asks for. It is spent by this function and nowhere else.
- *
- * ## The records come from Cloudflare, not from here
- *
- * `GET /zones/{id}/email/routing/dns` answers with the MX records the zone's Email Routing requires, hosts
- * and priorities included. Those are copied onto the subdomain. A list this repository maintained would be a
- * second copy of somebody else's requirements — the same argument `emailRoutingFor` makes, and the same one
- * that made the sending onboard a single `POST` rather than a record list.
+ * This module used to copy the zone's MX onto the subdomain through raw DNS, which needed the DNS write
+ * scope, the largest authority the Node asked for. On 25 September 2026 the first real setup with wrangler's
+ * login carried on the request refused here with `10000 Authentication error`: that token cannot touch raw
+ * DNS (docs/receipts/wrangler-login-reach.md). Email Routing's own endpoint does the same job for either
+ * credential: `POST /zones/{id}/email/routing/dns { name }` creates a subdomain's records, and the same
+ * endpoint read with `?subdomain=` names what is missing or lists what is present. So raw DNS is gone from
+ * here and the DNS scope with it. An apex's records come with enabling the zone and are read from the zone
+ * list. A list this repository maintained would be a second copy of somebody else's requirements — the
+ * same argument `emailRoutingFor` makes.
  */
 
 /** A zone's catch-all rule as Cloudflare holds it. */
@@ -135,76 +131,66 @@ export async function receivingProposalFor(
   }
   const zoneRouting = routing.result.status ?? null;
   const enablesZone = routing.result.enabled === true ? null : zone.name;
-  const required = await cloudflareGet<Array<{
-    type?: string; name?: string; content?: string; priority?: number;
-  }>>(env, ctx, orgId, `/zones/${zone.id}/email/routing/dns`);
-  if (!required.ok) {
-    return await blank({
-      zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone, refusal: required.error,
-    });
-  }
+  const apex = domain.toLowerCase() === zone.name.toLowerCase();
 
   /*
-   * MX only. The zone's list also carries SPF and DKIM, which belong to **sending** and are written at the
-   * apex — copying them onto a receiving subdomain would assert a sending posture nobody asked for.
+   * Everything below reads Email Routing's endpoints and never raw DNS: the zone list for an apex, the
+   * subdomain endpoint for a subdomain, which names exactly the records missing or lists the ones present.
+   * A zone that is not yet routing lists nothing, and that is the state enabling fixes.
    */
-  const creates = required.result
-    .filter((one) => one.type === "MX")
-    .map((one) => ({
-      type: "MX", name: domain, content: one.content ?? "?", priority: one.priority ?? null,
-    }));
-  if (creates.length === 0) {
+  const state = await routingRecordsOf(env, ctx, orgId, zone.id, apex ? null : domain);
+  if (!state.ok) {
     return await blank({
-      zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
-      /*
-       * A zone that is not yet routing lists no MX, which is not an error — it is the state enabling fixes.
-       * So this only refuses when the zone **is** routing and still offers nothing, which would mean
-       * Cloudflare and its own routing state disagree.
-       */
-      refusal: enablesZone !== null
-        ? null
-        : `Cloudflare lists no MX for ${zone.name} although Email Routing is on there, so there is nothing `
-          + `to copy onto ${domain}`,
+      apex, zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
+      refusal: `this Node could not read the routing state of ${domain} with the credential it holds: ${state.error}`,
     });
   }
-
-  const existing = await cloudflareGet<Array<{ type?: string; content?: string }>>(
-    env, ctx, orgId, `/zones/${zone.id}/dns_records?type=MX&name=${encodeURIComponent(domain)}`,
-  );
   const rules = await routingRulesOf(env, ctx, orgId, zone.id);
   const found = rules.ok ? ruleFor(rules.result, domain) : undefined;
-
-  const present = existing.ok ? existing.result.map((one) => one.content ?? "?") : [];
-  /*
-   * MX already there, and all of it Cloudflare's own routing hosts, is this onboarding **half done** — not a
-   * mail host to refuse. Measured on the #92 drill: the records were written, the rule's `POST` was refused
-   * for a scope the grant lacked, and the next proposal refused itself with *"already has MX"*, so the one
-   * operation that had failed could not be run again. The records are kept, nothing is written twice, and
-   * the rule is what the confirm then creates. MX pointing anywhere else is still somebody's mail host.
-   */
-  const ours = present.length > 0 && present.every((one) => /\.mx\.cloudflare\.net\.?$/.test(one));
-  /*
-   * The apex, and its catch-all (25 September 2026). Cloudflare's catch-all "supports apex domains only",
-   * so only here can one rule route every address to this Node; the current catch-all is read so an operator
-   * choosing that sees what it replaces. A subdomain's MX is Cloudflare's own routing hosts, same as the
-   * apex's, so `present` on an apex that already routes reads as `ours` and the refusal below stays quiet.
-   */
-  const apex = domain.toLowerCase() === zone.name.toLowerCase();
   const catchAll = apex ? await catchAllOf(env, ctx, orgId, zone.id) : null;
-  const proposal = await blank({
+  return await blank({
     apex, catchAll,
     zone: zone.name, zoneId: zone.id, zoneRouting, enablesZone,
-    creates: present.length > 0 ? [] : creates,
-    present,
+    // An apex's records come with enabling the zone: the zone list reports nothing missing, ever.
+    creates: state.missing,
+    present: state.present,
     rule: found?.name ?? null,
-    refusal: !existing.ok
-      ? `this Node could not read the MX already on ${domain}: ${existing.error}. It will not write records `
-        + "it cannot first rule out having written"
-      : present.length > 0 && !ours
-        ? `${domain} already has MX (${present.join(", ")}), so it is already pointed at a mail host`
-        : null,
+    refusal: apex && enablesZone === null && state.present.length === 0
+      ? `Cloudflare lists no MX for ${zone.name} although Email Routing is on there`
+      : null,
   });
-  return proposal;
+}
+
+/** One record as Cloudflare lists it, on the zone or on a subdomain. */
+interface RoutingRecord { type?: string; name?: string; content?: string; priority?: number }
+
+/**
+ * What Email Routing says a domain has and lacks, from its own endpoints.
+ *
+ * The zone list (`…/email/routing/dns`) is the apex's own records, present once the zone is routing. The
+ * subdomain form (`?subdomain=`) answers `{ errors: [{ code: "mx.missing", missing: {…} }, …] }` for a
+ * subdomain never enabled and `{ errors: null, records: […] }` for one that is — measured on
+ * 25 September 2026 against mailda.site. `missing` carries the exact records, so `creates` is Cloudflare's
+ * own list rather than a copy of the apex's.
+ */
+async function routingRecordsOf(
+  env: Env, ctx: Ctx, orgId: string, zoneId: string, subdomain: string | null,
+): Promise<{ ok: true; present: string[]; missing: ReceivingProposal["creates"] } | { ok: false; error: string }> {
+  if (subdomain === null) {
+    const zone = await cloudflareGet<RoutingRecord[]>(env, ctx, orgId, `/zones/${zoneId}/email/routing/dns`);
+    if (!zone.ok) return zone;
+    return { ok: true, present: zone.result.filter((one) => one.type === "MX").map((one) => one.content ?? "?"), missing: [] };
+  }
+  const read = await cloudflareGet<{ errors?: Array<{ code?: string; missing?: RoutingRecord }> | null; records?: RoutingRecord[] | null }>(
+    env, ctx, orgId, `/zones/${zoneId}/email/routing/dns?subdomain=${encodeURIComponent(subdomain)}`,
+  );
+  if (!read.ok) return read;
+  const missing = (read.result.errors ?? [])
+    .map((one) => one.missing)
+    .filter((one): one is RoutingRecord => one !== undefined)
+    .map((one) => ({ type: one.type ?? "?", name: one.name ?? subdomain, content: one.content ?? "?", priority: one.priority ?? null }));
+  const present = (read.result.records ?? []).filter((one) => one.type === "MX").map((one) => one.content ?? "?");
+  return { ok: true, present, missing };
 }
 
 export interface ReceivingOutcome {
@@ -357,7 +343,6 @@ export async function onboardReceiving(
    * The enable runs whenever the zone is off, whether or not MX is already on the subdomain — the two are
    * separate facts, and a resumed onboarding (records present, zone still off) was the case that showed it.
    */
-  let records = proposal.creates;
   if (proposal.enablesZone !== null) {
     await cloudflarePost<{ enabled?: boolean }>(
       env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/enable`, {},
@@ -375,22 +360,6 @@ export async function onboardReceiving(
           + "in the Cloudflare dashboard, then run the proposal again",
       });
     }
-    const now = await cloudflareGet<Array<{
-      type?: string; content?: string; priority?: number;
-    }>>(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/dns`);
-    if (!now.ok) {
-      return {
-        domain, written: [], confirmed: [], rule: null, catchAll: null,
-        note: `Email Routing was enabled on ${proposal.enablesZone}, and the records it requires could not `
-          + `then be read: ${now.error}. Nothing was written on ${domain} and no rule was created — run the `
-          + "proposal again, which will now see a routing zone.",
-      };
-    }
-    records = proposal.present.length > 0 ? [] : now.result
-      .filter((one) => one.type === "MX")
-      .map((one) => ({
-        type: "MX", name: domain, content: one.content ?? "?", priority: one.priority ?? null,
-      }));
   }
 
   /*
@@ -424,29 +393,25 @@ export async function onboardReceiving(
     };
   }
 
-  const written: string[] = [];
-  for (const record of records) {
-    await cloudflarePost<{ id?: string }>(
-      env, ctx, orgId, `/zones/${proposal.zoneId}/dns_records`,
-      { type: "MX", name: record.name, content: record.content, priority: record.priority, ttl: 1 },
-    );
-    written.push(`${record.content} (priority ${record.priority})`);
-  }
-
   /*
-   * **Read back before the rule.** A `POST` that answered 200 is not a record in DNS, and the whole reason
-   * this module exists is that a rule without records is accepted and silent. If the confirmation is empty
-   * the rule is not written, because an unwritten rule is a visible failure and an inert one is not.
+   * The subdomain's records, through Email Routing's own endpoint: one `POST …/email/routing/dns { name }`
+   * creates the set Cloudflare requires, and the same endpoint read back says whether they are there. An
+   * apex writes nothing — its records came with enabling the zone — and is read back from the zone list.
+   * **Read back before the rule**, still: a POST that answered 200 is not a record, and a rule without
+   * records is accepted by Cloudflare and never matches.
    */
-  const back = await cloudflareGet<Array<{ content?: string }>>(
-    env, ctx, orgId,
-    `/zones/${proposal.zoneId}/dns_records?type=MX&name=${encodeURIComponent(domain)}`,
-  );
-  const confirmed = back.ok ? back.result.map((one) => one.content ?? "?") : [];
+  const before = await routingRecordsOf(env, ctx, orgId, proposal.zoneId, proposal.apex ? null : domain);
+  const written: string[] = [];
+  if (!proposal.apex && (!before.ok || before.present.length === 0)) {
+    await cloudflarePost<unknown>(env, ctx, orgId, `/zones/${proposal.zoneId}/email/routing/dns`, { name: domain });
+    written.push(...(before.ok ? before.missing : proposal.creates).map((one) => `${one.content} (priority ${one.priority})`));
+  }
+  const back = await routingRecordsOf(env, ctx, orgId, proposal.zoneId, proposal.apex ? null : domain);
+  const confirmed = back.ok ? back.present : [];
   if (confirmed.length === 0) {
     return {
       domain, written, confirmed, rule: null, catchAll: null,
-      note: "the MX records were accepted but read back empty, so no routing rule was created. A rule "
+      note: "the records were accepted but read back absent, so no routing rule was created. A rule "
         + "without records is accepted by Cloudflare and never matches, which is the state this refuses to "
         + "leave behind. Check the zone before retrying.",
     };

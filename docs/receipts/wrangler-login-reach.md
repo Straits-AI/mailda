@@ -13,6 +13,7 @@ values:
   wrangler.login_reaches_raw_dns_records: 0
   wrangler.login_reaches_registrar: 0
   wrangler.login_writes_zone_catch_all: 1
+  wrangler.login_creates_event_subscription: 1
 ---
 
 # What wrangler's login can do in the account, measured for the install
@@ -55,16 +56,50 @@ the same permission group (`queues:write`) that the 16 September measurement in
 a Node receiving, sending and observing outcomes without the Node holding any grant. The two things it
 cannot do are raw DNS records and the registrar, which is domain purchase.
 
-**What it does not establish.** The subscription *write* and the sending-domain onboarding *write* were
-not re-run with wrangler's token here; both are reads-pass, same-permission-group inferences until the
-first install runs them, and that install is where they get measured. And nothing here is about the
-grant: a Node that holds one still reaches exactly what `cloudflare-oauth-scopes.md` says.
+**What it does not establish.** The sending-domain onboarding *write* was not run with wrangler's token:
+the first real run below met a domain already onboarded, so it stays a same-permission-group inference. The
+subscription write is measured, below. And nothing here is about the grant: a Node that holds one still
+reaches exactly what `cloudflare-oauth-scopes.md` says.
 
 **The boundary it draws.** Wrangler's token may create a subdomain's routing records and may not remove
 them, and it may write a zone's catch-all (measured later the same day, when the apex catch-all became the
 receiving step's offer for a zone's own name). Taking a subdomain back out of Email Routing is therefore a dashboard act, or an act of a grant
 holding `dns.write`, and the settings table says so rather than offering an undo the install cannot make.
+And since receiving reads and writes only Email Routing's own records (26 September 2026), `dns.write` is
+not in the grant either. The cost of that: a subdomain whose MX already points at a foreign mail host is
+not detectable through the routing endpoints, which report only Cloudflare's records, so the records are
+written beside a foreign MX rather than refused. The proposal used to refuse that case by reading raw DNS.
 
 **Residue.** The cleanup's last step was refused, so `probe.mailda.site` kept its three MX records; they
 are removed by hand in the dashboard (the zone's DNS, three MX records named `probe`). Harmless meanwhile:
 mail to that subdomain bounces, and nothing routes it.
+
+## The first real run (25 September 2026)
+
+The founder's Node `mailda-whymelabs`, the apex `whymelabs.com`, wrangler's login token carried on the
+operator headers. Four outcomes:
+
+- **The zone picker worked.** `whymelabs.com` was picked from the account's list.
+- **Receiving refused, and the refusal was ours.** The proposal read `GET /zones/{zone}/dns_records` to learn
+  the MX already on the apex, and the token answered `10000 Authentication error`: the raw-DNS boundary the
+  table above records. The CLI then printed a `fix` that blamed the domain ("must be a subdomain of a zone"),
+  which was wrong. The catch-all question was never reached.
+- **Sending: `onboarded already`.** The domain had been onboarded for sending earlier, so no write happened
+  and none was measured.
+- **Delivery outcomes: the subscription was created.** `mailda-whymelabs-sending-events-whymelabs.com`,
+  publishing message.delivered, deferred, bounced, failed, rejected and complained into
+  `mailda-whymelabs-sending-events`. That is the subscription write with wrangler's token, `queues.write`'s
+  permission group, and the value `wrangler.login_creates_event_subscription` records it.
+
+**Measured afterwards** (26 September 2026 UTC, same token): Email Routing's own records endpoint is both the
+plan and the read-back, so raw DNS is not needed for receiving at all.
+
+| state | `GET /zones/{zone}/email/routing/dns` |
+|:--|:--|
+| a subdomain never enabled, `?subdomain=probe2.mailda.site` | `errors: [{code: "mx.missing", missing: {…the MX record…}} ×3, {code: "spf.missing", …}]`, no `records` |
+| a subdomain enabled, `?subdomain=probe.mailda.site` | `errors: null, records: [MX ×3, TXT spf]` |
+| an apex with routing `ready`, no query | the zone's own records: MX ×3, the DKIM TXT, … |
+
+So a subdomain's plan is the `missing` list, its read-back is `errors: null` with `records`, and an apex's
+records come with enabling routing on the zone. The receiving code is being rewritten onto these
+endpoints; the raw-DNS boundary above then bounds nothing the install does.

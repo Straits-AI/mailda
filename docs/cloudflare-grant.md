@@ -67,6 +67,11 @@ strings, and two real consents proved it had to: **a request naming no scope is 
 
 `readOnlyExists` rides beside each one because four have no `:read` form in Cloudflare's vocabulary. Without
 it an operator reading `zone-settings.write` on the list concludes this Node asked for more than it needed,
+(`dns.write` left the list on 26 September 2026, when receiving moved to Email Routing's own record
+endpoints, which plan and read back a subdomain's records without raw DNS; the trade, stated plainly, is
+that a subdomain whose MX already points at a foreign mail host is no longer detectable before Cloudflare's
+records are written beside it, because only raw DNS showed foreign records and the install's credential
+cannot read it. `docs/receipts/wrangler-login-reach.md` carries the measurement.)
 when write was the only shape the permission comes in.
 
 `unmeasured` remains a **required** field: an operator following printed steps is entitled to know which
@@ -494,10 +499,18 @@ list to be wrong about, the mistake `deploy --plan` already made once, on R2's p
 
 ## Onboarding a subdomain for receiving (#209, #210), and what the restore drill found in it
 
-`POST /api/provider/receiving` enables Email Routing on the zone if it is off, writes the MX records
-Cloudflare lists for the subdomain, reads them back, and only then writes the routing rule that sends one
-address's mail to this Worker. A rule with no records is accepted and never matches. Two things the #92
-restore drill on 16 September 2026 found by running it against a restored Node's grant:
+`POST /api/provider/receiving` enables Email Routing on the zone if it is off, has Email Routing create the
+subdomain's records, reads them back, and only then writes the routing rule that sends one address's mail to
+this Worker. A rule with no records is accepted and never matches.
+
+**The records are Email Routing's, not raw DNS** (since 26 September 2026). The first real run with
+wrangler's login refused at the proposal, because it read `GET /zones/{zone}/dns_records` to see the MX
+already on the apex and that token cannot read raw DNS. Email Routing's own endpoint answers the same
+question without it: `GET /zones/{zone}/email/routing/dns?subdomain=…` lists what is `missing` for a
+subdomain never enabled and `records` once it is, and an apex's records come with enabling routing on the
+zone. That endpoint is the plan and the read-back now, and `POST` on it creates the records
+([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)). Two things the #92 restore drill on 16
+September 2026 found by running it against a restored Node's grant:
 
 - **The rule needs `email-routing-rule.write`.** The reach table had carried the rules endpoint as covered
   by `zone-settings.write`, by inference. A grant holding that and `dns.write` wrote the records and was
