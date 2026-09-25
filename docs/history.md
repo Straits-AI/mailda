@@ -3205,10 +3205,13 @@ uses the documented user-token form with `accountId=*`, which puts the account i
 and says what to tick if the prefill still fails. And the inbox's search hint sat too close to the pill;
 it moved from a fifth to half a rem, the spacing scale's next step.
 
-### The token link, third try, by id (25 September 2026)
+### The token link, three tries, and the honest fourth (25 September 2026)
 
 The user-token form prefilled the name and not the permission: an unknown short key is dropped without a
-word, and this permission's short key is not documented anywhere. Cloudflare's own docs PR on template
-links says what is: account-token links resolve a permission group **id** in the `key` field, user-token
-links take short keys only. The id is exact and was already in the receipt, so the ceremony's link is the
-account form addressed by id. The two inferred keys are recorded here as the two things that did not work.
+word, and this permission's short key is not documented anywhere. Cloudflare's docs PR on template links
+says account-token links resolve a permission group **id** in the `key` field, so the third try addressed
+the exact id. The dashboard refused it by name: *"requested an entry we don't recognize"*. Three measured
+failures on a permission three months old say the template vocabulary does not have it. The link now
+opens the account's token page with the name filled in and nothing else claimed, and the ceremony spells
+the tick: Account → OAuth App Registrations → Write. The receipt records all three, so the next person
+does not try them a fourth time.
