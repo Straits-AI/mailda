@@ -357,11 +357,14 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Only meaningful on an apex; reset with every proposal so a tick for one domain cannot carry to the next.
+  const [catchAll, setCatchAll] = useState(false);
 
   async function propose() {
     setProblem(null);
     setOutcome(null);
     setPlan(null);
+    setCatchAll(false);
     setBusy(true);
     const answer = await receivingProposal(domain.trim());
     setBusy(false);
@@ -373,7 +376,7 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
     if (plan === null) return;
     setProblem(null);
     setBusy(true);
-    const answer = await onboardReceiving(plan.domain, plan.digest, address.trim(), mailboxId === "" ? undefined : mailboxId);
+    const answer = await onboardReceiving(plan.domain, plan.digest, address.trim(), mailboxId === "" ? undefined : mailboxId, plan.apex && catchAll);
     setBusy(false);
     if (!answer.ok) { setProblem(answer.message); return; }
     const done = answer.value.outcome;
@@ -384,11 +387,16 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
      * a domain receives mail when nothing reaches Cloudflare at all.
      */
     setOutcome(
-      done.confirmed.length === 0
-        ? `Nothing was confirmed in DNS for ${done.domain}, so no routing rule was made.`
-          + `${done.note === null ? "" : ` ${done.note}`}`
-        : `${done.domain} now has ${done.confirmed.length} confirmed record(s)`
-          + `${done.rule === null ? " and no rule" : ` and mail is routed to ${done.rule}`}.`,
+      done.catchAll !== null
+        ? `The catch-all on ${done.domain} now routes to this Node (before: ${done.catchAll.before.action}`
+          + `${done.catchAll.before.destinations.length === 0 ? "" : ` → ${done.catchAll.before.destinations.join(", ")}`}`
+          + `${done.catchAll.before.enabled ? "" : ", disabled"}). Addresses are managed on this Node from here; `
+          + "put it back from Routing rules."
+        : done.confirmed.length === 0
+          ? `Nothing was confirmed in DNS for ${done.domain}, so no routing rule was made.`
+            + `${done.note === null ? "" : ` ${done.note}`}`
+          : `${done.domain} now has ${done.confirmed.length} confirmed record(s)`
+            + `${done.rule === null ? " and no rule" : ` and mail is routed to ${done.rule}`}.`,
     );
     await refresh();
   }
@@ -514,6 +522,35 @@ function Receiving({ refresh }: { refresh: () => Promise<void> }) {
           )}
           {plan.present.length === 0 ? null : (
             <p className="dim">Already there: {plan.present.join(", ")}</p>
+          )}
+          {/*
+            Cloudflare's catch-all exists for apex zones only. On an apex it is one rule and every address
+            decision is then this Node's, which already bounces an address it does not know; literal rules
+            already on the zone keep priority over it. On a subdomain each address needs its own rule, and
+            the screen says so rather than offering a box that cannot work.
+          */}
+          {plan.apex ? (
+            <div className="setup-catch-all">
+              <label className="field-row" htmlFor="setup-receive-catch-all">
+                <input
+                  id="setup-receive-catch-all" type="checkbox" checked={catchAll}
+                  onChange={(event) => setCatchAll(event.target.checked)}
+                />
+                <span>Route every address at {plan.domain} to this Node (catch-all)</span>
+              </label>
+              <p className="dim">
+                {plan.catchAll === null
+                  ? "No catch-all is set on this zone today."
+                  : `Currently: ${plan.catchAll.action}${plan.catchAll.destinations.length === 0 ? "" : ` → ${plan.catchAll.destinations.join(", ")}`}, ${plan.catchAll.enabled ? "enabled" : "disabled"}.`}
+                {" "}Addresses are then managed on this Node, an address it does not know bounces, and rules
+                already on the zone for single addresses keep priority.
+              </p>
+            </div>
+          ) : (
+            <p className="dim">
+              {plan.domain} is a subdomain, so each address gets its own rule; adding an address later
+              writes one the same way.
+            </p>
           )}
           <button
             type="button"

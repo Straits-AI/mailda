@@ -53,6 +53,7 @@ export function FirstRun({ steps, next, onOpenAnyway }: { steps: Step[]; next: S
           <p className="dim">
             The browser has no wrangler, so this way needs the Node's own credential:{" "}
             <Link to="/setup" className="linkish">connect this Node (one API token), then set up receiving there</Link>.
+            On an apex domain the catch-all is one act, and addresses are then managed on this Node.
           </p>
         </section>
       )}

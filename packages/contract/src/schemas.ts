@@ -598,6 +598,13 @@ export const providerPurchaseRequest = z.object({
  * marks it enabled, and it never matches — mail to that name never reaches Cloudflare at all. A surface that
  * showed only "a rule exists" would report that as configured.
  */
+/** A zone's catch-all rule as Cloudflare holds it: where unmatched mail goes today. */
+export const catchAllRule = z.object({
+  action: z.string(),
+  destinations: z.array(z.string()),
+  enabled: z.boolean(),
+}).strict();
+
 export const providerReceivingProposalResponse = z.object({
   proposal: z.object({
     domain: z.string().min(1),
@@ -623,6 +630,14 @@ export const providerReceivingProposalResponse = z.object({
     rule: z.string().nullable(),
     digest: z.string().length(64),
     refusal: z.string().nullable(),
+    /**
+     * Whether the domain is the zone's own name (25 September 2026). Cloudflare's catch-all "supports apex
+     * domains only", so this is the one case where one rule can route every address here and addresses
+     * are managed inside the Node; a subdomain needs a literal rule per address.
+     */
+    apex: z.boolean(),
+    /** The zone's current catch-all rule, read when `apex`; null otherwise. What a take-over replaces. */
+    catchAll: catchAllRule.nullable(),
   }).strict(),
 }).strict();
 
@@ -634,6 +649,8 @@ export const providerReceivingOutcomeResponse = z.object({
     confirmed: z.array(z.string()),
     rule: z.string().nullable(),
     note: z.string().nullable(),
+    /** Set when the catch-all was taken over: what it pointed at before, and what it points at now. */
+    catchAll: z.object({ before: catchAllRule, after: catchAllRule }).strict().nullable(),
   }).strict(),
 }).strict();
 
@@ -644,7 +661,36 @@ export const providerReceivingRequest = z.object({
   address: z.string().min(3).max(320),
   /** The mailbox the address files into. Optional when the organization has exactly one. */
   mailboxId: z.string().min(1).max(64).optional(),
+  /**
+   * Take over the zone's catch-all instead of writing one literal rule. Apex only; refused elsewhere.
+   * Every address the Node knows then files, every other bounces as an unknown recipient.
+   */
+  catchAll: z.boolean().optional(),
 }).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+/** An address on a mailbox, and the routing rule the same act tried to write for it (25 September 2026). */
+export const addressCreateRequest = z.object({
+  address: z.string().min(3).max(320),
+  /** The mailbox it files into. Optional when the organization has exactly one. */
+  mailboxId: z.string().min(1).max(64).optional(),
+}).strict().meta({ refusal: "E_PROVIDER_FIELD_UNKNOWN" });
+
+export const addressCreatedResponse = z.object({
+  address: z.object({
+    id: z.string().min(1),
+    address: z.string().min(3),
+    mailboxId: z.string().min(1),
+  }).strict(),
+  /**
+   * Whether mail for it reaches this Node: `catch_all` when the domain's catch-all already routes here;
+   * `rule_written` when a literal rule was written and read back in this act; `not_written` with the
+   * reason and the next step, because an address the Node knows and Cloudflare does not route is silent.
+   */
+  routing: z.object({
+    state: z.enum(["catch_all", "rule_written", "not_written"]),
+    detail: z.string().min(1),
+  }).strict(),
+}).strict();
 
 /** The routing rules already on a zone (#258): what routes where, and whether each already names this Worker. */
 export const providerRoutingRulesResponse = z.object({

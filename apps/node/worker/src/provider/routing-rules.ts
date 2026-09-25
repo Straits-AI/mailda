@@ -4,7 +4,7 @@ import { auditedBatch } from "../audit.ts";
 import { conflict, unprocessable } from "../errors.ts";
 import { sha256Hex } from "../evidence-store.ts";
 import { cloudflareGet, cloudflarePut, zoneFor } from "./cloudflare-grant.ts";
-import { type CloudflareRule, mailboxForAddress, routingRulesOf, workerNameFor } from "./receiving.ts";
+import { type CloudflareRule, catchAllOf, mailboxForAddress, routingRulesOf, workerNameFor } from "./receiving.ts";
 
 /**
  * The routing rules already on a zone, and taking one over (#258).
@@ -139,7 +139,8 @@ export async function takeOverRule(
       what: `rule ${ruleId} does not match one literal address`,
       why: "this Node files mail for addresses it knows; a catch-all pointed here would have every other "
         + "address rejected as an unknown recipient",
-      fix: "take over rules for single addresses, and leave the catch-all where it is",
+      fix: "the catch-all is taken over from the receiving step with catchAll: true, or "
+        + "`mailda provider --onboard-receiving <apex> --catch-all`; take over rules for single addresses here",
     });
   }
   if (digest !== rule.digest) {
@@ -178,10 +179,19 @@ export async function putBackRule(
   env: Env, ctx: Ctx, orgId: string, actorUserId: string, domain: string, ruleId: string,
 ): Promise<TakeoverOutcome> {
   const { listing, rule, raw } = await ruleNow(env, ctx, orgId, domain, ruleId);
+  /*
+   * The catch-all (25 September 2026) was taken over by the receiving step, which recorded it under its own
+   * action against the zone; it is written back through its own endpoint, since `/rules/{id}` is not how
+   * Cloudflare addresses it. Same rules as any put-back: never taken, never restored; changed since, never
+   * overwritten.
+   */
   const last = await env.CATALOG.prepare(
-    "SELECT detail FROM audit_entries WHERE org_id = ? AND action = 'provider.routing_rule_taken_over' "
-    + "AND subject = ? ORDER BY seq DESC LIMIT 1",
-  ).bind(orgId, ruleId).first<{ detail: string | null }>();
+    "SELECT detail FROM audit_entries WHERE org_id = ? AND action = ? AND subject = ? ORDER BY seq DESC LIMIT 1",
+  ).bind(
+    orgId,
+    rule.catchAll ? "provider.catch_all_taken_over" : "provider.routing_rule_taken_over",
+    rule.catchAll ? (listing.zone ?? domain) : ruleId,
+  ).first<{ detail: string | null }>();
   const recorded = typeof last?.detail === "string"
     ? (JSON.parse(last.detail) as { before?: { action?: string; destinations?: string[] } }).before
     : undefined;
@@ -201,6 +211,20 @@ export async function putBackRule(
   }
   const before = { action: rule.action, destinations: rule.destinations };
   const after = { action: recorded.action, destinations: recorded.destinations ?? [] };
+  if (rule.catchAll) {
+    const wasEnabled = (recorded as { enabled?: boolean }).enabled === true;
+    await auditedBatch(env, ctx, orgId, {
+      action: "provider.catch_all_put_back", outcome: "ok", actorUserId, subject: listing.zone ?? domain,
+      detail: { zone: listing.zone, before: { ...before, enabled: true }, after: { ...after, enabled: wasEnabled } },
+    }, (entry) => [entry]);
+    await cloudflarePut(env, ctx, orgId, `/zones/${listing.zoneId}/email/routing/rules/catch_all`, {
+      name: raw.name ?? "", enabled: wasEnabled, matchers: [{ type: "all" }],
+      actions: [{ type: after.action, ...(after.destinations.length === 0 ? {} : { value: after.destinations }) }],
+    });
+    // Read back rather than trusted, for the reason the take-over is.
+    const now = await catchAllOf(env, ctx, orgId, listing.zoneId!);
+    return { ruleId, to: "*", before, after: now === null ? after : { action: now.action, destinations: now.destinations } };
+  }
   await auditedBatch(env, ctx, orgId, {
     action: "provider.routing_rule_put_back", outcome: "ok", actorUserId, subject: ruleId,
     detail: { zone: listing.zone, to: rule.to, name: rule.name, before, after },

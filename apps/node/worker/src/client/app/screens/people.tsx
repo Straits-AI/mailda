@@ -3,10 +3,11 @@ import { useState } from "react";
 
 import { Nothing } from "../chrome.tsx";
 import {
-  GRANTABLE_RELATIONS, createMailbox, createTeam, grant, invite, revokeAccess, revokeInvitation, setTeamMember,
+  GRANTABLE_RELATIONS, addAddress, createMailbox, createTeam, grant, invite, revokeAccess, revokeInvitation, setTeamMember,
   forgetPasskey, registerPasskey,
   useInvitations, useMailboxes, useMe, usePasskeys, usePeople, useTeamMembers, useTeams,
   type PersonRow, type TeamRow,
+  type AddressRouting, type MailboxQueue,
 } from "../api.ts";
 
 /**
@@ -92,10 +93,10 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
       <h2>Mailboxes</h2>
       <p className="dim">
         A shared inbox with its own queue. You may read and send from it as soon as it exists; grant others
-        below. An address reaches it from Setup → Receiving, which asks which mailbox to route at.
+        below, and add the addresses it receives at.
       </p>
       {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
-      {made === null ? null : <p className="notice" role="status">{made} exists. Route an address at it from Setup.</p>}
+      {made === null ? null : <p className="notice" role="status">{made} exists. Add an address to it below.</p>}
       <p className="field-row">
         <label htmlFor="new-mailbox-name">Name</label>
         {" "}
@@ -103,6 +104,66 @@ function NewMailbox({ onCreated }: { onCreated: () => Promise<void> }) {
         {" "}
         <button className="quiet" type="button" onClick={() => void create()} disabled={busy || name.trim() === ""}>
           create a mailbox
+        </button>
+      </p>
+    </section>
+  );
+}
+
+/**
+ * An address on a mailbox, in one act (25 September 2026). The Node writes the routing rule in the same
+ * request when it can, and says so; when it cannot, the address still exists and the notice names the
+ * command that finishes it. Nothing here claims mail arrives: `rule_written` means a rule was read back.
+ */
+const ROUTING_WORDS: Record<AddressRouting["state"], string | null> = {
+  catch_all: "routed by the domain's catch-all; nothing to do in Cloudflare",
+  rule_written: "routing rule written",
+  not_written: null,
+};
+
+function NewAddress({ boxes, onAdded }: { boxes: MailboxQueue[]; onAdded: () => Promise<void> }) {
+  const [address, setAddress] = useState("");
+  const [mailboxId, setMailboxId] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [routing, setRouting] = useState<{ address: string; routing: AddressRouting } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    setBusy(true);
+    setProblem(null);
+    setRouting(null);
+    const chosen = mailboxId !== "" ? mailboxId : boxes.length === 1 ? boxes[0]!.id : undefined;
+    const outcome = await addAddress(address.trim(), chosen);
+    setBusy(false);
+    if (!outcome.ok) { setProblem(outcome.message); return; }
+    setRouting({ address: outcome.value.address.address, routing: outcome.value.routing });
+    setAddress("");
+    await onAdded();
+  }
+
+  return (
+    <section className="people-teams" aria-label="A new address">
+      <h3>Add an address</h3>
+      {problem === null ? null : <pre className="notice bad butler-findings" role="alert">{problem}</pre>}
+      {routing === null ? null : (
+        <p className="notice" role="status">
+          {routing.address}: {ROUTING_WORDS[routing.routing.state] ?? routing.routing.detail}
+        </p>
+      )}
+      <p className="field-row">
+        <label htmlFor="new-address">Address</label>
+        {" "}
+        <input id="new-address" className="mono" value={address} placeholder="hello@example.com" onChange={(event) => setAddress(event.target.value)} />
+        {" "}
+        {boxes.length > 1 ? (
+          <select aria-label="Mailbox" value={mailboxId} onChange={(event) => setMailboxId(event.target.value)}>
+            <option value="">mailbox…</option>
+            {boxes.map((box) => <option key={box.id} value={box.id}>{box.name}</option>)}
+          </select>
+        ) : null}
+        {" "}
+        <button className="quiet" type="button" onClick={() => void add()} disabled={busy || address.trim() === "" || (boxes.length > 1 && mailboxId === "")}>
+          add the address
         </button>
       </p>
     </section>
@@ -601,6 +662,7 @@ export function People() {
 
       <Invite onInvited={refresh} />
       <NewMailbox onCreated={refresh} />
+      <NewAddress boxes={boxes} onAdded={refresh} />
 
       <Teams people={rows} />
     </>

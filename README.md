@@ -68,8 +68,11 @@ subscription is created from the Node's own Setup screen once the Node holds a g
 **A domain that already routes mail.** Setup lists the Email Routing rules on your zone and lets you
 point one at the Node. That replaces where the address goes (Cloudflare allows one action per rule), the
 previous destination is kept on the audit trail, and *put back* restores it. Existing rules for other
-addresses and the catch-all are left alone. `mailda provider --routing-rules <domain>` is the same from
-the CLI.
+addresses are left alone. On a zone's own name the receiving step offers the **catch-all** instead: one
+rule pointing the whole domain here, its previous target kept for a put-back, and every address from then
+on managed on People inside the Node; on a subdomain Cloudflare allows literal rules only, so adding an
+address on People writes its rule in the same act. `mailda provider --routing-rules <domain>` is the same
+from the CLI.
 
 **A second Node in the same account.** Give the installer a new name; `mailda deploy --name <worker>` is
 the same from a script. Either derives the Worker, the Workflow and every other resource from that name

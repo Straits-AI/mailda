@@ -553,6 +553,11 @@ export const AUDIT_ACTIONS = {
   "mailbox.created": {
     says: "An administrator created a mailbox, named, and was granted read and send on it.",
   },
+  /** An address added to a mailbox outside the provisioning acts, and whether the same act routed it. */
+  "address.added": {
+    says: "An administrator added an address to a mailbox. Whether mail for it reaches this Node is on the "
+      + "entry: the catch-all already routes it, a rule was written, or nothing could be written and why.",
+  },
   /** A mailbox's attachment limits (0065): the bound and the list, before and after. */
   "mailbox.attachment_limits_set": {
     says: "An administrator changed the attachment size bound or the allowed-type list on a mailbox.",
@@ -940,6 +945,19 @@ export const AUDIT_ACTIONS = {
   },
   "provider.routing_rule_put_back": {
     says: "An administrator restored a routing rule to the action it had before this Node took it over.",
+  },
+  /**
+   * The zone's catch-all pointed at this Node (25 September 2026). Its own entry beside `receiving_onboarded`
+   * because it is a different size of act: every address on the apex that no literal rule names now
+   * reaches this Node, which files the ones it knows and bounces the rest. What it pointed at before is on
+   * the entry, and a put-back restores it.
+   */
+  "provider.catch_all_taken_over": {
+    says: "An administrator pointed the zone's catch-all at this Node. What it pointed at before is on this "
+      + "entry, and a put-back restores it.",
+  },
+  "provider.catch_all_put_back": {
+    says: "An administrator restored the zone's catch-all to what it pointed at before this Node took it over.",
   },
   "provider.receiving_onboarded": {
     says: "An administrator pointed a subdomain at this Node to receive mail, and this Node wrote the MX "

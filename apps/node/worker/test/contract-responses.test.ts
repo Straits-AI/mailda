@@ -445,6 +445,20 @@ describe("every schema-bearing route answers what the contract says it does", ()
     })).rejects.toThrow(/E_RECEIVING_WILL_NOT_ONBOARD|E_PROVIDER_NO_ACCOUNT|answered 4/);
 
     /*
+     * Adding an address (25 September 2026) answers 200 on this fixture with `routing.state: "not_written"`
+     * and the reason — no account, no grant — plus the next step. The address itself is written: a Node
+     * that knows a recipient and cannot route it is a known state, said by name, not a refusal.
+     */
+    await testEnv.CATALOG.prepare("INSERT INTO mailboxes (id, org_id, name, created_at) VALUES (?,?,?,?)")
+      .bind("mbx_contract_addr", ORG, "Enquiries", new Date().toISOString()).run();
+    const added = await answers("POST", "/api/addresses", {
+      cookie: held, body: { address: "Hello@mail.example.test" },
+    }) as { address: { address: string; mailboxId: string }; routing: { state: string; detail: string } };
+    expect(added.address.address).toBe("hello@mail.example.test");
+    expect(added.routing.state).toBe("not_written");
+    expect(added.routing.detail).toContain("mailda provider --onboard-receiving mail.example.test --address hello@mail.example.test");
+
+    /*
      * The zone's rules (#258). The listing **answers** with its error, the way the proposals do, and both
      * writes refuse: no rule can be replaced on a zone this Node cannot first read.
      */
@@ -2239,6 +2253,9 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * subdomain has no MX — enabled, `source: "api"`, and never matching. So the records are read back
      * before the rule is written, and an empty read-back leaves no rule at all rather than an inert one.
      *
+     * The 140th is `POST /api/addresses` (25 September 2026): an address on a mailbox and, in the same act,
+     * the routing for it — nothing to write under a catch-all, a literal rule otherwise, or a named reason.
+     *
      * The 139th is `POST /api/provider/client` (24 September 2026): the Node creates its own OAuth client
      * from an API token it spends once. Same response shape as the `PUT`, so the same `.strict()` holds the
      * secret out of it.
@@ -2255,7 +2272,7 @@ describe("the coverage of step 2 is a number, and it only goes up", () => {
      * queue by id, which is Cloudflare's; `.strict()` on the response is what keeps that disclosure
      * described rather than incidental.
      */
-    expect(coverage.total).toBe(139);
+    expect(coverage.total).toBe(140);
     /*
      * **Every describable route is described.** The floor is the whole set now, so this asserts equality
      * rather than a minimum: a route added without a schema fails here, which is what step 3 needs to be

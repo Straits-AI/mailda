@@ -559,6 +559,21 @@ export async function setResponseTarget(
   return { ok: false, message: body?.message ?? `This Node answered ${response.status}.` };
 }
 
+/**
+ * An address on a mailbox, and whether mail for it reaches this Node (`POST /api/addresses`).
+ *
+ * `routing` is the half a screen must not drop: an address the Node knows and Cloudflare does not route is
+ * silent, and `not_written` carries the reason and the command that finishes it.
+ */
+export interface AddressRouting {
+  state: "catch_all" | "rule_written" | "not_written";
+  detail: string;
+}
+export const addAddress = (address: string, mailboxId?: string) =>
+  act<{ address: { id: string; address: string; mailboxId: string }; routing: AddressRouting }>(
+    at("POST", "/api/addresses"), "POST", { address, ...(mailboxId === undefined ? {} : { mailboxId }) },
+  );
+
 /** Creates a mailbox, named. Administrator only, audited; the creator may read and send from it. */
 export async function createMailbox(name: string): Promise<{ ok: true; mailboxId: string } | { ok: false; message: string }> {
   const response = await apiFetch(at("POST", "/api/mailboxes"), {
@@ -1797,15 +1812,24 @@ export interface ReceivingProposal {
   rule: string | null;
   digest: string;
   refusal: string | null;
+  /** Whether the domain is the zone's apex. Cloudflare's catch-all exists for apex zones only. */
+  apex: boolean;
+  /** The zone's current catch-all rule, when apex; null otherwise. Shown so a take-over names what it replaces. */
+  catchAll: CatchAllRule | null;
 }
+
+export interface CatchAllRule { action: string; destinations: string[]; enabled: boolean }
 
 export interface ReceivingOutcome {
   domain: string;
   written: string[];
   /** Read back from Cloudflare. A write that answered 200 is not yet a record in DNS. */
   confirmed: string[];
+  /** The rule's name, or "catch-all" when the zone's catch-all was taken over. */
   rule: string | null;
   note: string | null;
+  /** What the catch-all was and is now, when it was taken over; null otherwise. */
+  catchAll: { before: CatchAllRule; after: CatchAllRule } | null;
 }
 
 export interface SendingProposal {
@@ -1867,9 +1891,10 @@ async function proposalFor<T>(
 export const receivingProposal = (domain: string) =>
   proposalFor<{ proposal: ReceivingProposal }>(GET("/api/provider/receiving"), domain);
 
-export const onboardReceiving = (domain: string, digest: string, address: string, mailboxId?: string) =>
+/** `catchAll` is sent only when asked for: the Node refuses it off an apex, and an absent key is the plain rule. */
+export const onboardReceiving = (domain: string, digest: string, address: string, mailboxId?: string, catchAll?: boolean) =>
   act<{ outcome: ReceivingOutcome }>(at("POST", "/api/provider/receiving"), "POST", {
-    domain, digest, address, ...(mailboxId === undefined ? {} : { mailboxId }),
+    domain, digest, address, ...(mailboxId === undefined ? {} : { mailboxId }), ...(catchAll ? { catchAll: true } : {}),
   });
 
 /** A routing rule already on a zone (#258). `digest` is what a take-over quotes. */

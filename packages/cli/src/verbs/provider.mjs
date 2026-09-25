@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { api, fail, flag, sessionCookie, wrapAt } from "../support.mjs";
+import { catchAllLine } from "./provision.mjs";
 import { grant, openInBrowser, signInAndChooseAccount } from "./install.mjs";
 /**
  * One domain's price, or the reason there is not one.
@@ -227,6 +228,10 @@ export async function provider(argv) {
         )) process.stdout.write(`               ${line}\n`);
       }
       for (const one of proposal.present) process.stdout.write(`     has       MX ${one}\n`);
+      // A zone's own name may take a catch-all (apex only); what it routes today is the thing to know first.
+      if (proposal.apex === true) {
+        process.stdout.write(`     apex      yes; catch-all today: ${catchAllLine(proposal.catchAll ?? null)}\n`);
+      }
       /*
        * An existing rule is printed **with what it is worth**, not as a tick. A rule whose subdomain has no
        * MX is accepted by Cloudflare, enabled, and never matches — the defect this command exists for.
@@ -259,7 +264,10 @@ export async function provider(argv) {
           : `\n   the records will be whatever Cloudflare requires once ${proposal.zone} is routing —\n`
             + `   read from it, not invented here\n`
         + `\n   confirm: mailda provider --onboard-receiving ${proposal.domain} \\\n`
-        + `              --address <you>@${proposal.domain} --confirm ${proposal.digest}\n\n`,
+        + `              --address <you>@${proposal.domain} --confirm ${proposal.digest}\n`
+        + (proposal.apex === true
+          ? "   add --catch-all to route every address at it here instead of one rule per address\n\n"
+          : "\n"),
       );
       return;
     }
@@ -269,12 +277,16 @@ export async function provider(argv) {
       domain: receiving, digest: confirming, address,
       // The mailbox it files into. Omitted when the organization has one; refused when it has several.
       ...(flag(argv, "mailbox") === null ? {} : { mailboxId: flag(argv, "mailbox") }),
+      ...(argv.includes("--catch-all") ? { catchAll: true } : {}),
     });
     process.stdout.write(`\n   ${outcome.domain}\n`);
     for (const one of outcome.written) process.stdout.write(`     wrote     MX ${one}\n`);
     // Read back, because a write that answered 200 is not a record in DNS.
     for (const one of outcome.confirmed) process.stdout.write(`     confirmed MX ${one}\n`);
-    if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
+    if (outcome.catchAll !== null && outcome.catchAll !== undefined) {
+      process.stdout.write(`     catch-all ${catchAllLine(outcome.catchAll.before)} -> ${catchAllLine(outcome.catchAll.after)}\n`
+        + `               put back: mailda provider --put-back <id> --domain ${outcome.domain}, the id from --routing-rules\n`);
+    } else if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
     if (outcome.note !== null) {
       process.stdout.write("\n");
       for (const line of wrapAt(outcome.note, 72)) process.stdout.write(`   ${line}\n`);

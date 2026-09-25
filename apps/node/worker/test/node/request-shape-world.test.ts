@@ -86,6 +86,9 @@ describe("every closed set the contract declares is a closed set the boundary en
        */
       "POST /api/agents",
       "POST /api/mailboxes",
+      // An address and its routing in one act: a misspelled `mailboxId` dropped would file into the one
+      // mailbox when the organization has several, which the Node refuses by name; strict says so first.
+      "POST /api/addresses",
       "POST /api/policies",
       "PUT /api/policies/:policyId/draft",
       /*
@@ -341,7 +344,7 @@ describe("strictness is decided per route, not turned on globally", () => {
       }
     }
     expect(strict.sort()).toEqual([
-      "POST /api/agents", "POST /api/mailboxes", "POST /api/policies", "POST /api/provider/authorize",
+      "POST /api/addresses", "POST /api/agents", "POST /api/mailboxes", "POST /api/policies", "POST /api/provider/authorize",
       "POST /api/provider/client", "POST /api/provider/domains/check", "POST /api/provider/domains/purchase",
       "POST /api/provider/receiving",
       "POST /api/provider/routing-rules/put-back", "POST /api/provider/routing-rules/take-over",

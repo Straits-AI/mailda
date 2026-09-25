@@ -126,6 +126,8 @@ const REACHES: Record<string, { scope: string | null; reference: string | null }
    * where a domain's mail goes.
    */
   // Measured refused under zone-settings.write on the #92 drill; the picker's Email Routing Rules Edit.
+  // The zone's catch-all, taken over from the receiving step on an apex and put back (25 September 2026).
+  "/zones/{}/email/routing/rules/catch_all": { scope: "email-routing-rule.write", reference: "Email Routing Rules Write" },
   "/zones/{}/email/routing/rules": { scope: "email-routing-rule.write", reference: null },
   // One rule, read and replaced whole (#258). The same scope as the list; measured with a PUT on 19 Sept.
   "/zones/{}/email/routing/rules/{}": { scope: "email-routing-rule.write", reference: null },

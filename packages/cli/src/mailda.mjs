@@ -55,7 +55,8 @@ const USAGE = `mailda — operate a Mailda Node
   mailda provider --onboard-sending <domain>   what onboarding it for sending would do; add --confirm <digest> to do it
   mailda provider --subscribe <domain>         subscribe its delivery events to this Node's queue; add --confirm <digest> to do it
   mailda provider --onboard-receiving <domain> point a subdomain at this Node to receive; --address and --confirm to do it,
-                                              --mailbox <id> when the organization has more than one
+                                              --mailbox <id> when the organization has more than one; --catch-all on a
+                                              zone's own name routes every address here (addresses then live in the Node)
   mailda provider --routing-rules <domain>     the routing rules already on its zone, and which point here
   mailda provider --take-over <rule id> --domain <domain>  point that rule at this Node; --confirm <digest> to do it
   mailda provider --put-back <rule id> --domain <domain>   restore the action a take-over replaced
@@ -69,7 +70,8 @@ const USAGE = `mailda — operate a Mailda Node
                                      claim the Node, set it up to receive, send and observe outcomes with
                                      wrangler's own login, then (optional) its Cloudflare grant from one API
                                      token. --yes reads MAILDA_EMAIL, MAILDA_PASSWORD, MAILDA_DOMAIN,
-                                     MAILDA_ADDRESS, CLOUDFLARE_API_TOKEN and MAILDA_GRANT_TOKEN
+                                     MAILDA_ADDRESS, MAILDA_CATCH_ALL=1 (apex only), CLOUDFLARE_API_TOKEN
+                                     and MAILDA_GRANT_TOKEN
   mailda upgrade [--name <worker>] [--url <origin>] [--yes] [--contract]
                                      pull the release, back the Node up, list what its schema will do to
                                      the catalog, deploy through the canary, and finish a Node's setup if
@@ -77,7 +79,7 @@ const USAGE = `mailda — operate a Mailda Node
   mailda setup [--name <worker>] [--url <origin>] [--yes]
                                      receiving, sending and delivery outcomes for a Node already deployed
                                      and claimed, with the consent wrangler has; no deploy. --yes reads
-                                     MAILDA_DOMAIN and MAILDA_ADDRESS
+                                     MAILDA_DOMAIN, MAILDA_ADDRESS and MAILDA_CATCH_ALL=1
   mailda deploy --plan               say what a deploy would create, adopt or unwind, and act on nothing
   mailda deploy [--url <origin>] [--name <worker>]
                                      deploy, migrate, attach the events consumer, then check

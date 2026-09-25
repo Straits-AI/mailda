@@ -533,9 +533,35 @@ reports success. Three routes cover that case, all administrator-only and withhe
   take-over, is refused rather than overwritten. The address row stays; an address that files and nothing
   routes is harmless.
 
-Not built, on purpose: editing forward destinations, deleting rules, or taking over the catch-all. The
-first two would make this Node a routing-rule editor; the third would have every address without its own
-rule rejected here as an unknown recipient.
+Not built, on purpose: editing forward destinations or deleting rules. Either would make this Node a
+routing-rule editor.
+
+**The catch-all, built 25 September 2026, through the receiving step only.** This paragraph used to refuse
+it on the ground that every address without its own rule would be rejected here as an unknown recipient.
+That is true, and it is what a mail server does: known addresses file, unknown ones bounce with *No such
+recipient at this Mailda Node*, which the `email()` handler has always answered. Literal rules keep their
+priority over the catch-all, so a zone's existing forwards keep working. What made the refusal right was
+the *route* it was on: the take-over of one rule is a decision about one address, and the catch-all is a
+decision about a whole domain. So `POST /api/provider/routing-rules/take-over` still refuses the catch-all,
+and the receiving step takes it instead, where the proposal shows the whole domain. When the domain asked
+for is a zone's own name, `GET /api/provider/receiving` reports `apex: true` and the zone's current
+catch-all (its action, destinations and whether it is on); confirming with `catchAll: true` points it at
+this Worker and writes `provider.catch_all_taken_over` to the audit trail with `before` and `after`.
+`POST /api/provider/routing-rules/put-back` restores it from that entry (`provider.catch_all_put_back`).
+Measured: `PUT /zones/{zone_id}/email/routing/rules/catch_all` is permitted to wrangler's login and to the
+grant's `email-routing-rule.write` ([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)).
+
+### Apex or subdomain
+
+Cloudflare decides what "route this domain here" can mean, by the domain's shape: *"Catch-all entries
+support apex domains only. To route mail sent to an Email Routing subdomain, list each literal recipient
+address."* So a Node receiving at a zone's own name can take the catch-all and manage every address inside
+the Node, on the People screen, with no further act in Cloudflare. A Node receiving at a subdomain needs one
+literal rule per address, and adding an address on People writes that rule in the same act when the Node
+holds a credential (the grant, or the operator's token on a CLI request); when it holds none the response
+says `routing: not_written` and names the command that writes it, rather than an address that files and
+nothing routes. On either shape the operator's act is the same, add an address, and the difference is what
+the Node does behind it and says about it.
 
 And the half-done case is resumable at every step: MX already on the name that is entirely Cloudflare's
 own routing hosts reads as this Node's earlier attempt, kept and not rewritten, rather than as somebody

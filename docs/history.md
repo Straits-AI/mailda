@@ -3275,3 +3275,33 @@ receiving, sending and outcomes setup on a claimed Node without deploying, for t
 install could. Install, upgrade and setup end with `== next`: the URL, the address to send a test message
 to, and that the app shows the next step until it is ready. And a spacing change is measured in a browser
 before it is called done.
+
+## The catch-all, and why Cloudflare decides it by the shape of the domain (25 September 2026)
+
+The founder, told that a Node receives at one address until more are added, asked: *"I thought it should
+work on the catch-all and then the address logic is all internally managed instead of managed in
+Cloudflare?"* That is the obvious design, and the Node was already built for it: the `email()` handler has
+rejected unknown recipients since Layer 1, and the blueprint lists catch-all routes among the address types.
+Per-address rules were an implementation choice, and one this document had defended by refusing to take the
+catch-all over at all.
+
+Cloudflare's own rule settles how far the obvious design goes: *"Catch-all entries support apex domains
+only. To route mail sent to an Email Routing subdomain, list each literal recipient address."* So a Node at
+a zone's own name, which is the founder's case (`whymelabs.com`, whose catch-all today goes to a Worker
+named `butler` beside many literal rules that keep their priority), can take the catch-all and manage every
+address on People. A Node at a subdomain, the shape the installer proposes so the apex keeps its mail,
+needs one literal rule per address, and the most the Node can do is write that rule in the same act as the
+address, and say when it could not.
+
+Measured before building: `PUT /zones/{zone_id}/email/routing/rules/catch_all` is permitted to wrangler's
+login, by a write of `mailda.site`'s own catch-all content (disabled, `drop`) that answered 200 and read
+back unchanged, so nothing moved. Literal rules take priority over the catch-all, so a zone's forwards
+survive the take-over. The receiving proposal now reports `apex` and the current catch-all; confirming with
+`catchAll: true` points it at this Worker and records the previous target, and the put-back restores it.
+The one-rule take-over still refuses the catch-all, since it is a decision about a domain and not an
+address, and the receiving step is where the whole domain is shown.
+
+Two words kept honest. *Taken over* is what the audit entry records this Node asked Cloudflare for, with
+the target it replaced. *Confirmed* is a read-back, as it has been for the MX records since #92: the
+catch-all is read again after the write, and the outcome carries what Cloudflare then reported rather than
+what was sent.

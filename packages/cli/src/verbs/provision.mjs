@@ -38,8 +38,15 @@ export async function wranglerToken() {
     + "           write Email Routing, Email Sending and Queues in this account");
 }
 
+/** The zone's catch-all as Cloudflare holds it, in one line: `worker -> butler (enabled)`, or `nothing`. */
+export function catchAllLine(catchAll) {
+  if (catchAll === null) return "nothing";
+  const to = catchAll.destinations.length === 0 ? "" : ` -> ${catchAll.destinations.join(", ")}`;
+  return `${catchAll.action}${to} (${catchAll.enabled ? "enabled" : "disabled"})`;
+}
+
 export async function provisionNode({ origin, cookie, accountId, token, yes, ask }) {
-  const done = { receiving: null, sending: null, deliveryEvents: null, address: null };
+  const done = { receiving: null, sending: null, deliveryEvents: null, address: null, catchAll: false };
   const domain = (yes ? process.env.MAILDA_DOMAIN ?? "" : await ask("   which domain should this Node receive mail at? (Enter to skip): ")).trim().toLowerCase();
   if (domain === "") {
     process.stdout.write("   skipped; the Setup screen in the Node, or `mailda provider`, does this later.\n");
@@ -78,15 +85,42 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
       process.stdout.write("     fix       the domain must be a subdomain of a zone in this Cloudflare account; try another\n"
         + "               with `mailda setup`\n");
     } else {
-      const applied = await call("POST", "/api/provider/receiving", { domain, digest: proposal.digest, address });
+      /*
+       * A zone's own name can take a catch-all: one rule, and every address decision lives in the Node,
+       * which bounces the ones it does not know. Cloudflare offers this for apex zones only; a subdomain
+       * needs a literal rule per address (docs/receipts/wrangler-login-reach.md). Asked, never assumed:
+       * the catch-all is the whole domain's unmatched mail, and where it goes today is printed first.
+       */
+      let catchAll = false;
+      if (proposal.apex === true) {
+        catchAll = yes
+          ? process.env.MAILDA_CATCH_ALL === "1"
+          : /^y(es)?$/i.test((await ask(
+            `     ${domain} is a zone's own name. Route every address at it to this Node (a catch-all)?\n`
+            + `     Its catch-all currently: ${catchAllLine(proposal.catchAll ?? null)}.\n`
+            + "     Addresses are then managed inside the Node and unknown ones bounce. [y/N]: ",
+          )).trim());
+        if (!catchAll) {
+          process.stdout.write(`     literal   a rule for ${address} only; each further address needs its own\n`
+            + `               (\`mailda provider --onboard-receiving ${domain} --address <a>\`), or the catch-all later\n`);
+        }
+      }
+      const applied = await call("POST", "/api/provider/receiving", {
+        domain, digest: proposal.digest, address, ...(catchAll ? { catchAll: true } : {}),
+      });
       if (!applied.ok) refused(applied.text);
       else {
         const { outcome } = applied.value;
         for (const one of outcome.confirmed) process.stdout.write(`     confirmed MX ${one}\n`);
-        if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
+        if (outcome.catchAll !== null && outcome.catchAll !== undefined) {
+          process.stdout.write(`     catch-all ${catchAllLine(outcome.catchAll.before)} -> ${catchAllLine(outcome.catchAll.after)}\n`
+            + `               put back: mailda provider --put-back <id> --domain ${domain}, the id being the catch-all's\n`
+            + `               row in \`mailda provider --routing-rules ${domain}\`\n`);
+          done.catchAll = true;
+        } else if (outcome.rule !== null) process.stdout.write(`     rule      ${outcome.rule}\n`);
         if (outcome.note !== null) for (const line of wrapAt(outcome.note, 70)) process.stdout.write(`     ${line}\n`);
         // Set up, not verified: the read-back proves the records, and delivery is proven by a message.
-        if (outcome.confirmed.length > 0) done.receiving = domain;
+        if (outcome.confirmed.length > 0 || done.catchAll) done.receiving = domain;
       }
     }
   }
@@ -131,7 +165,7 @@ export async function provisionNode({ origin, cookie, accountId, token, yes, ask
 
   process.stdout.write(
     "\n   set up\n"
-    + `     receiving   ${done.receiving === null ? "not set up" : `${address} on ${done.receiving}`}\n`
+    + `     receiving   ${done.receiving === null ? "not set up" : `${address} on ${done.receiving}${done.catchAll ? " (catch-all: every address)" : ""}`}\n`
     + `     sending     ${done.sending ?? "not set up"}\n`
     + `     outcomes    ${done.deliveryEvents === null ? "not subscribed" : `subscribed for ${done.deliveryEvents}`}\n`,
   );
@@ -157,6 +191,9 @@ export function printNext(origin, setUp) {
       "   then        the app shows the next setup step instead of an inbox until this Node has a routed\n"
       + "               address; `mailda setup` runs this step again, with another domain\n",
     );
+  }
+  if (setUp.catchAll === true) {
+    process.stdout.write("   addresses   add more on People; no Cloudflare step is needed for this domain\n");
   }
   if (setUp.receiving !== null && setUp.deliveryEvents === null) {
     process.stdout.write("   outcomes    not subscribed: replies hand over but their delivery stays unobserved; `mailda setup` retries\n");

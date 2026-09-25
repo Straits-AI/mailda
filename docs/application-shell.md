@@ -632,6 +632,12 @@ a digest over it; confirming sends the digest back and the Node refuses unless t
 hashes the same. A button that posted a bare "yes" would mean *apply whatever this has become*, which on a
 zone somebody has edited since is a different act from the one that was read.
 
+**Apex or subdomain** (25 September 2026). When the domain typed is a zone's own name the proposal says so and
+offers the catch-all: one rule pointing the whole domain here, the zone's current catch-all shown beside it
+(where it goes today, and that a put-back restores it), and every address thereafter managed on People with
+no further act in Cloudflare. On a subdomain Cloudflare allows literal rules only, and the screen says that
+each address gets its own rule, written when the address is added.
+
 Three things the screen must not round off, each with a test:
 
 - **`enablesZone` with an empty `creates` is the largest act on the page, not the smallest.** Enabling Email
@@ -743,6 +749,12 @@ Two endpoints were added because the reads did not exist:
 
 It does not offer `supervised.read`: that is time-boxed, needs two approvals and cites a matter (§7), and
 listing it would be offering a door that answers with a lecture.
+
+**Adding an address writes its routing rule** (25 September 2026), when the Node holds a credential and the
+domain is on a subdomain; on an apex whose catch-all points here nothing else is needed. The screen shows
+the outcome beside the address: routed, already routed by the catch-all, or `not written` with the command
+that writes it. The last is said in those words: an address that files and nothing routes is the state the
+receiving step exists to prevent, and a green row over it would be the lie.
 
 ### Inviting somebody (#83)
 
