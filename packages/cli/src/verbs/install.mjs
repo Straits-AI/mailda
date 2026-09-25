@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { accountsFrom, signedIn } from "../preflight.mjs";
 import { api, capture, choose, configFor, fail, flag, readSecret, run, useConfig, workerDir } from "../support.mjs";
 import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
+import { provisionNode, wranglerToken } from "./provision.mjs";
 
 /**
  * `mailda install`: the first run, as one conversation (#269).
@@ -23,10 +24,12 @@ import { deploy, firstInstall, installedUrl } from "./deploy.mjs";
  * The claim is `POST /api/claim` from here, with the secret this run just seeded, so the recovery codes are
  * printed in the same terminal and the session it answers with is what the next step signs in with. The
  * grant used to be a dashboard form of twelve fields, filled after the install from the Node's Setup screen.
- * It is one API token now: the operator creates a token with one permission, pastes it here, and the Node
- * creates its own OAuth client through Cloudflare's API (`POST /api/provider/client`) with the exact
- * redirect URI and scopes it publishes, then this run opens the consent. The token is sent once, never
- * written anywhere, and the run ends by saying to delete it. The Setup screen offers the same field. Every step still has its own verb
+ * **Since 25 September 2026 the account work happens here, with wrangler's login**, and the grant is
+ * optional. After the claim, one question — which domain receives — and the Node is set up to receive, send
+ * and observe outcomes through its own provisioning routes, carrying wrangler's token for each request
+ * (`provision.mjs`). The grant, one API token the operator makes by hand, is only for changing that setup
+ * from the browser later; Enter skips it and nothing below needs it. Under `--yes`, `CLOUDFLARE_API_TOKEN`
+ * is the operator token for the account work and `MAILDA_GRANT_TOKEN` is the grant step's. Every step still has its own verb
  * (`mailda claim-secret`, `mailda provider`) and the Setup screen keeps the printed steps, for the deploy
  * button path and for an operator who declines here.
  */
@@ -118,13 +121,26 @@ export async function install(argv) {
     + claimed.recoveryCodes.map((code) => `      ${code}\n`).join("") + "\n",
   );
 
-  // 6. The Cloudflare grant: the OAuth client, created through the API instead of a dashboard form.
+  // 6. The account work, with the consent wrangler already has: receiving, sending, delivery outcomes.
+  process.stdout.write(
+    "\n== setting up receiving, sending and delivery outcomes\n"
+    + "   Uses the consent you already gave wrangler; nothing is changed before the plan is shown.\n",
+  );
+  const setUp = await provisionNode({
+    origin: url, cookie: claimed.cookie, accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+    token: await wranglerToken(), yes, ask,
+  });
+
+  // 7. The Cloudflare grant, optional: the OAuth client, created through the API from one token.
   const connected = await grant(url, name, claimed.cookie, yes, !argv.includes("--no-open"));
 
   process.stdout.write(
     "\n== done\n"
     + `   your Node   ${url}\n`
     + `   signed in   ${claimed.email}\n`
+    + `   receiving   ${setUp.receiving ?? "not set up; the Setup screen or mailda provider does it"}\n`
+    + `   sending     ${setUp.sending ?? "not set up"}\n`
+    + `   outcomes    ${setUp.deliveryEvents ?? "not subscribed"}\n`
     + (connected === null
       ? "   grant       not yet: the Setup screen in the Node prints the steps, or re-run this install\n"
       : `   grant       consent opened in the browser; if it did not open, visit\n               ${connected}\n`)
@@ -188,10 +204,11 @@ export async function grant(origin, name, cookie, yes, open = true) {
   // The Node's own ceremony: the token page link, the permission's name, and what is unverified about it.
   const { ceremony } = await node("GET", "/api/provider");
   process.stdout.write(
-    "\n== the Cloudflare grant\n"
-    + "   The Node acts in your account (routing rules, MX records, delivery events) through a private OAuth\n"
-    + "   client that only members of your account can authorize. Creating it by hand is a twelve-field form;\n"
-    + "   with an API token the Node creates it exactly. The token is spent on one request and never stored.\n\n"
+    "\n== the Cloudflare grant (optional)\n"
+    + "   Only to change this Node's Cloudflare setup from the browser later: another domain, a sending\n"
+    + "   domain, buying a domain. Enter skips it; nothing below needs it. The Node acts through a private\n"
+    + "   OAuth client only members of your account can authorize; with an API token the Node creates it\n"
+    + "   exactly, spends the token on one request, and never stores it.\n\n"
     + "   1. a token form opens in your browser with the one permission filled in\n"
     + `      (${ceremony.token.permission}; pick this account when asked, and check the permission is ticked)\n`
     + `      ${ceremony.token.url}\n`
@@ -202,8 +219,8 @@ export async function grant(origin, name, cookie, yes, open = true) {
     + "   dashboard steps, and no token ever exists.\n\n",
   );
   if (open && !yes) openInBrowser(ceremony.token.url);
-  const token = yes ? (process.env.CLOUDFLARE_API_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
-  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen does the same, either way.\n"); return null; }
+  const token = yes ? (process.env.MAILDA_GRANT_TOKEN ?? "") : await readSecret("   API token (Enter to skip): ");
+  if (token.trim() === "") { process.stdout.write("   skipped; the Node's Setup screen offers the same field whenever it is wanted.\n"); return null; }
 
   // The account the CLI already settled, so the Node does not have to ask the token which it can see.
   const { provider } = await node("POST", "/api/provider/client", {

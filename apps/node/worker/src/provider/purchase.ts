@@ -113,7 +113,7 @@ async function existingRegistration(
 export async function purchaseProposalFor(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<PurchaseProposal> {
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   const [price] = await checkDomains(env, ctx, orgId, [domain]);
 
   const found = await existingRegistration(env, ctx, orgId, accountId, domain);
@@ -208,7 +208,7 @@ function outcomeOf(domain: string, status: {
 export async function purchaseStatus(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<PurchaseOutcome> {
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   const answer = await cloudflareGet<{
     state?: string; completed?: boolean; error?: { code?: string; message?: string };
   }>(
@@ -254,7 +254,7 @@ export async function buyDomain(
     });
   }
 
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   /*
    * **The audit entry is written before the charge, not after.** A `POST` whose answer never arrives has
    * still spent money, and an entry written only on success would leave that charge with no record at all —

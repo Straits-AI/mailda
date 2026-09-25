@@ -73,6 +73,7 @@ function binding(overrides: Record<string, unknown> = {}) {
 }
 
 const NO_RECORDS = { routing: [] };
+const NOTHING_PROVISIONED = { receiving: null, sending: null, deliveryEvents: null };
 
 /**
  * One handler for the whole surface.
@@ -109,7 +110,7 @@ function mount(
       return Response.json(parts.subscribed);
     }
     if (call.path === "/api/provider" && call.method === "GET") {
-      return Response.json({ provider: binding(parts.provider), ceremony: CEREMONY });
+      return Response.json({ provider: binding(parts.provider), provisioned: NOTHING_PROVISIONED, ceremony: CEREMONY });
     }
     if (call.path === "/api/provider/client" && call.method === "POST") {
       return Response.json({ provider: binding({ ...parts.provider, state: "awaiting_consent", clientId: "cf-made" }) });

@@ -94,10 +94,11 @@ The CLI path was six commands when this was written, and three in the README unt
 2026, when a drill on a clean account found the three did not work. It is one now
 (`curl -fsSL https://mailda.site/install.sh | bash`, or `mailda install` from a clone), which asks the
 questions a first install has (the account, if several; the Node's name; and its URL, once, when the name
-is one the account already has and the run is an upgrade), claims the Node from the terminal, and creates
-its Cloudflare OAuth client from one API token (23 September 2026), so the run ends at the consent screen
-rather than at a claim secret and a twelve-field dashboard form; the Setup screen offers the same token
-field for a Node claimed without it. Updating is one command too (`curl -fsSL https://mailda.site/update.sh |
+is one the account already has and the run is an upgrade), claims the Node from the terminal, asks which
+domain it receives at, and sets up receiving, sending and delivery outcomes with wrangler's login
+(25 September 2026), so the run ends with a Node that receives, and no dashboard, token or OAuth client
+was needed. The Node's own grant, one API token and a consent, is optional and only for changing that setup
+from the browser later; the Setup screen offers it and says what it is for. Updating is one command too (`curl -fsSL https://mailda.site/update.sh |
 bash` in the same directory, 24 September 2026): it pulls the release, joins a deploy-button clone to the
 release history when it has none, backs the Node up, lists what the schema will do, and redeploys through
 the canary, with no git command typed. Whether a run of the installer is an install or a redeploy is

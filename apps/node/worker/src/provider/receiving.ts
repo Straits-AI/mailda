@@ -1,3 +1,4 @@
+import { operatorOf } from "./cloudflare-api.ts";
 import type { Ctx } from "@mailda/runtime";
 
 import { auditedBatch } from "../audit.ts";
@@ -292,6 +293,8 @@ export async function onboardReceiving(
       creates: proposal.creates.map((one) => `${one.content} (priority ${one.priority})`),
       address: normalized,
       mailboxId: mailbox.id,
+      // Which credential did this: the Node's grant, or an operator's own token carried on the request.
+      authority: operatorOf(ctx) === null ? "grant" : "operator",
     },
   }, (entry) => [
     env.CATALOG.prepare(

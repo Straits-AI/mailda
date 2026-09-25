@@ -600,6 +600,31 @@ read side matches an apex as covering a subdomain, because for sending it does; 
 exact name, because onboarding does. Reusing either match for the other would be wrong in a different
 direction each way.
 
+## The operator's own credential, for one request, and the grant made optional (25 September 2026)
+
+Every provisioning route (`GET`/`POST /api/provider/receiving`, `/sending`, `/subscription`, the
+email-routing and delivery-events reads, the routing-rule routes and `resolve-account`) accepts two request
+headers, `x-cloudflare-token` and `x-cloudflare-account`. When they are present the Node reads and writes
+the account with that token, inside that account, for that request, and never stores either. The seam is
+the two functions that turn a request context into a credential, `accessTokenFor` and `boundAccount`; the
+provisioning code above them does not know which it was given. The audit entry does: its detail carries
+`authority: "operator"` or `"grant"`.
+
+`mailda install` uses it with wrangler's login token, which the operator consented to before anything was
+deployed and which reaches every endpoint the grant does but raw DNS and the registrar
+([`wrangler-login-reach.md`](./receipts/wrangler-login-reach.md)). After the claim it asks which domain the
+Node receives at and an address, and does receiving, sending and the delivery-events subscription. A Node is
+receiving when the install ends. `mailda upgrade` offers the same to a Node that was never set up.
+
+That takes the grant off the critical path. It stays the Node's own credential for what a browser needs
+later and a terminal does not have: another receiving domain, a sending domain, taking over a routing rule,
+buying a domain. The Setup screen calls the connection optional and says what it is for. Its ceremony is
+unchanged, and so is everything above about what a person must still do to make one.
+
+Headers rather than body fields, so the proposal `GET`s can carry the credential without a token in a query
+string. Administrator-only, as the routes already were. The same trust as `POST /api/provider/client`'s
+token: the operator's, sent to the operator's own Node, once.
+
 ## Still owed by this layer
 
 Stated here rather than left to be discovered:

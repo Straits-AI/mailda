@@ -9,6 +9,30 @@ import { conflict, unprocessable } from "../errors.ts";
  *
  * @see docs/receipts/cloudflare-oauth-endpoints.md
  */
+/**
+ * An operator's own Cloudflare credential, carried on the request for one call (25 September 2026).
+ *
+ * The Node's provisioning code — receiving, sending, delivery events, routing rules — reads the account
+ * through the Node's grant. The grant exists so a browser can do those things later; at install there is a
+ * better credential already consented to: wrangler's login, which `mailda install` holds and which reaches
+ * every endpoint the grant does except raw DNS and the registrar (measured, `docs/receipts/wrangler-login-reach.md`).
+ * So an administrator may send that token and its account id with one request, in two headers, and every
+ * read and write in that request uses them instead of the grant. Nothing is stored: the authority lives on
+ * the request's `Ctx` and dies with it. It is the same trust as `POST /api/provider/client`'s token — the
+ * operator's, sent to the operator's own Node, once.
+ *
+ * On the `Ctx` rather than threaded through every signature: the two functions that turn a `Ctx` into a
+ * credential (`accessTokenFor` here, `boundAccount` in `account-routing.ts`) are the whole seam.
+ */
+export interface OperatorAuthority { token: string; accountId: string }
+export type ProviderCtx = Ctx & { operator?: OperatorAuthority };
+export function operatorOf(ctx: Ctx): OperatorAuthority | null {
+  return (ctx as ProviderCtx).operator ?? null;
+}
+export function withOperator(ctx: Ctx, operator: OperatorAuthority | null): Ctx {
+  return operator === null ? ctx : { now: () => ctx.now(), id: (p: string) => ctx.id(p), random: (n: number) => ctx.random(n), operator } as ProviderCtx;
+}
+
 export const CLOUDFLARE_OAUTH = {
   issuer: "https://dash.cloudflare.com",
   authorize: "https://dash.cloudflare.com/oauth2/auth",
@@ -76,6 +100,8 @@ export interface TokenResponse {
  * refused* is only legible while they are there.
  */
 export async function accessTokenFor(env: Env, ctx: Ctx, orgId: string): Promise<string> {
+  const operator = operatorOf(ctx);
+  if (operator !== null) return operator.token;
   const row = await env.CATALOG.prepare(
     "SELECT client_id, client_secret, access_token, refresh_token, access_expires_at, refused_at "
     + "FROM provider_binding WHERE id = 1",

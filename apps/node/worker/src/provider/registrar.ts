@@ -148,7 +148,7 @@ export async function checkDomains(
     });
   }
 
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   const answer = await cloudflarePost<{ domains?: CloudflareDomain[] }>(
     env, ctx, orgId, `/accounts/${accountId}/registrar/domain-check`, { domains: names },
   );
@@ -183,7 +183,7 @@ export async function searchDomains(
       fix: "pass a keyword or a domain name, such as `mailda` or `mailda.com`",
     });
   }
-  const accountId = await boundAccountFor(env);
+  const accountId = await boundAccountFor(env, ctx);
   const answer = await cloudflareGet<{ domains?: CloudflareDomain[] }>(
     env, ctx, orgId,
     /*

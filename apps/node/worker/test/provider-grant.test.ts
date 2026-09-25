@@ -3,9 +3,12 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { unwrapCredential } from "../src/auth/kek.ts";
+import { auditedBatch } from "../src/audit.ts";
+import { accessTokenFor } from "../src/provider/cloudflare-api.ts";
 import {
   beginAuthorization, ceremony, CLOUDFLARE_OAUTH, completeAuthorization, MIN_STATE_LENGTH,
   cloudflareGet, createClientThroughApi, deliveryEventsState, OAUTH_CLIENTS_PERMISSION, REQUIRED_SCOPE_NAMES, REQUIRED_SCOPES, onboardSending, PROVIDER_STATES, providerStatus, registerClient,
+  boundAccount, operatorOf, provisionedFacts, withOperator,
   reportUnselectable, resolveAccount, sendingProposalFor, subscribeDeliveryEvents, subscriptionProposalFor,
   STATUS_COLUMNS,
   type ProviderState,
@@ -1880,5 +1883,67 @@ describe("creating the client through Cloudflare's API", () => {
       .then(() => null, (error: Error & { code?: string }) => error);
     expect(ambiguous?.code).toBe("E_PROVIDER_ACCOUNT_AMBIGUOUS");
     expect(ambiguous?.message).toContain("Two");
+  });
+});
+
+/**
+ * An operator's own credential, carried on the request for one call (25 September 2026).
+ *
+ * The seam is two functions: `accessTokenFor` and `boundAccount`. With an operator on the `Ctx` they answer
+ * the operator's token and account without a binding row; without one they behave as before, which the
+ * first assertion pins so the override cannot become the default by accident.
+ */
+describe("an operator's credential on the request", () => {
+  const ACCOUNT = "1e0170aaabc90ecf5f466128d1f0466a";
+  const operator = withOperator(atTime(SEPTEMBER_3), { token: "wrangler-token", accountId: ACCOUNT });
+
+  it("is absent from an ordinary context, so a Node without a grant still refuses", async () => {
+    expect(operatorOf(atTime(SEPTEMBER_3))).toBeNull();
+    await expect(accessTokenFor(testEnv, atTime(SEPTEMBER_3), ORG)).rejects.toThrow(/E_PROVIDER_NO_GRANT/);
+    expect(await boundAccount(testEnv, atTime(SEPTEMBER_3))).toBeNull();
+  });
+
+  it("answers the operator's token and account with no binding row at all", async () => {
+    expect(await accessTokenFor(testEnv, operator, ORG)).toBe("wrangler-token");
+    expect(await boundAccount(testEnv, operator)).toBe(ACCOUNT);
+    // And the context still keeps time and mints ids, so nothing downstream notices the wrapping.
+    expect(operator.now()).toBe(SEPTEMBER_3);
+    expect(operator.id("x").startsWith("x_")).toBe(true);
+  });
+
+  it("reaches Cloudflare with that token, for a read that would otherwise need the grant", async () => {
+    const { calls } = answering(200, { success: true, result: [] });
+    const zones = await cloudflareGet(testEnv, operator, ORG, "/zones?name=example.test");
+    expect(zones.ok).toBe(true);
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer wrangler-token");
+  });
+});
+
+/**
+ * What the audit trail says was set up, as `GET /api/provider` reports it. A record of an act, dated and
+ * naming the credential; null when nothing was ever done, "unknown" for an entry from before the field.
+ */
+describe("provisioned facts from the audit trail", () => {
+  beforeEach(async () => {
+    await testEnv.CATALOG.prepare("DELETE FROM audit_entries WHERE org_id = ?").bind(ORG).run();
+  });
+
+  it("is all null on a Node nothing has set up", async () => {
+    expect(await provisionedFacts(testEnv, ORG)).toEqual({ receiving: null, sending: null, deliveryEvents: null });
+  });
+
+  it("reports the latest act per kind, with who acted and the address", async () => {
+    const record = (at: number, action: "provider.receiving_onboarded" | "provider.sending_onboarded", subject: string, detail: Record<string, unknown>) =>
+      auditedBatch(testEnv, atTime(at), ORG, { action, outcome: "ok", actorUserId: ADMIN, subject, detail }, (entry) => [entry]);
+    await record(SEPTEMBER_3, "provider.receiving_onboarded", "old.example.test", { address: "a@old.example.test", authority: "grant" });
+    await record(SEPTEMBER_3 + 1000, "provider.receiving_onboarded", "mail.example.test", { address: "hello@mail.example.test", authority: "operator" });
+    await record(SEPTEMBER_3 + 2000, "provider.sending_onboarded", "mail.example.test", {});
+    const facts = await provisionedFacts(testEnv, ORG);
+    expect(facts.receiving).toEqual({
+      domain: "mail.example.test", at: new Date(SEPTEMBER_3 + 1000).toISOString(), authority: "operator", address: "hello@mail.example.test",
+    });
+    // An entry written before `authority` existed says so rather than guessing.
+    expect(facts.sending?.authority).toBe("unknown");
+    expect(facts.deliveryEvents).toBeNull();
   });
 });

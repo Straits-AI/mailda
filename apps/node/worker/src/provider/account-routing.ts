@@ -1,7 +1,7 @@
 import type { Ctx } from "@mailda/runtime";
 
 import { unprocessable } from "../errors.ts";
-import { cloudflareGet } from "./cloudflare-api.ts";
+import { operatorOf, cloudflareGet } from "./cloudflare-api.ts";
 
 /**
  * Which account this grant covers.
@@ -76,7 +76,9 @@ export interface RoutingState {
  * be a bug. `resolveAccount` fills it, and deliberately leaves it null when a grant covers more than one
  * account, which its own comment calls *"a real answer and not an error"*.
  */
-export async function boundAccount(env: Env): Promise<string | null> {
+export async function boundAccount(env: Env, ctx?: Ctx): Promise<string | null> {
+  const operator = ctx === undefined ? null : operatorOf(ctx);
+  if (operator !== null) return operator.accountId;
   const row = await env.CATALOG.prepare(
     "SELECT account_id FROM provider_binding WHERE id = 1",
   ).first<{ account_id: string | null }>();
@@ -90,8 +92,8 @@ export async function boundAccount(env: Env): Promise<string | null> {
  * where a null would mean *ask Cloudflare about no account in particular*. Separate rather than a flag,
  * because the two behaviours are different enough that a boolean would hide which one a call site meant.
  */
-export async function boundAccountFor(env: Env): Promise<string> {
-  const accountId = await boundAccount(env);
+export async function boundAccountFor(env: Env, ctx?: Ctx): Promise<string> {
+  const accountId = await boundAccount(env, ctx);
   if (accountId === null) {
     throw unprocessable("E_PROVIDER_NO_ACCOUNT", {
       what: "this Node has not determined which Cloudflare account it is bound to",
@@ -138,7 +140,7 @@ export const NO_BOUND_ACCOUNT =
 export async function zoneFor(
   env: Env, ctx: Ctx, orgId: string, domain: string,
 ): Promise<{ ok: true; zone: { id: string; name: string } | null } | { ok: false; error: string }> {
-  const accountId = await boundAccount(env);
+  const accountId = await boundAccount(env, ctx);
   if (accountId === null) return { ok: false, error: NO_BOUND_ACCOUNT };
 
   const labels = domain.split(".");
